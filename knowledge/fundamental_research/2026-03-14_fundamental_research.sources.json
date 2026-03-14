@@ -1,0 +1,4 @@
+{
+  "mode": "safe_no_tavily",
+  "reason": "Tavily exhausted or disabled"
+}
