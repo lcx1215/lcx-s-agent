@@ -14,3 +14,11 @@ LEARN_ON
 
 *.bak.*
 *.swp
+
+node_modules/
+**/node_modules/
+dist/
+ui/dist/
+extensions/**/node_modules/
+packages/**/node_modules/
+.env.lobster
