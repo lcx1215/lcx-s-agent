@@ -19,12 +19,16 @@ Recommended next slice order
    - src/agents/system-prompt.ts
    - src/hooks/bundled/README.md
 2. Runtime seams
-   - scripts/bundle-a2ui.sh
-   - build/copy surfaces only if they affect build correctness
+   - shared scripts only if they affect build correctness or operator robustness
+   - build/copy surfaces only if they change outputs or break builds
 3. Preserve local overlay
    - learning/frontier/fundamental hooks
    - memory helper substrate
    - local sync/audit scripts
+
+Completed bounded refreshes already on this branch
+- scripts/committer
+- scripts/bundle-a2ui.sh
 
 Stop if
 - the work expands into a full upstream merge
