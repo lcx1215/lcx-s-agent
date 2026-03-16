@@ -150,6 +150,20 @@ Automatically materializes a research-only downstream decision queue from local 
 openclaw hooks enable fundamental-review-queue
 ```
 
+### 📝 fundamental-review-brief
+
+Automatically materializes a compact research brief from local `fundamental-review-queue` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/review-queues/*.json`, joins them with risk-handoff evidence context, and writes a research-only brief for deeper review, follow-up work, and blocked targets.
+**Output**: `<workspace>/bank/fundamental/review-briefs/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-review-brief-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-review-brief
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.
