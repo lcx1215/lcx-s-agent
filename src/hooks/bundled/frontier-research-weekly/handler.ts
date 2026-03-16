@@ -7,6 +7,7 @@ import { resolveStateDir } from "../../../config/paths.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import { resolveAgentIdFromSessionKey } from "../../../routing/session-key.js";
 import type { HookHandler } from "../../hooks.js";
+import { renderUpgradePrompt } from "../upgrade-memory.js";
 import {
   countTop,
   formatIsoWeek,
@@ -40,16 +41,23 @@ function parseResearchCardContent(name: string, content: string): ParsedResearch
   if (!fileMatch) {
     return undefined;
   }
-  const extract = (pattern: RegExp, fallback: string) => content.match(pattern)?.[1]?.trim() || fallback;
+  const extract = (pattern: RegExp, fallback: string) =>
+    content.match(pattern)?.[1]?.trim() || fallback;
   return {
     name,
     date: fileMatch[1],
     title: extract(/^- title:\s*(.+)$/m, "Untitled research card"),
     materialType: extract(/^- material_type:\s*(.+)$/m, "paper"),
     methodFamily: extract(/^- method_family:\s*(.+)$/m, "frontier-method"),
-    claimedContribution: extract(/^- claimed_contribution:\s*(.+)$/m, "No claimed contribution captured."),
+    claimedContribution: extract(
+      /^- claimed_contribution:\s*(.+)$/m,
+      "No claimed contribution captured.",
+    ),
     dataSetup: extract(/^- data_setup:\s*(.+)$/m, "No data setup captured."),
-    evaluationProtocol: extract(/^- evaluation_protocol:\s*(.+)$/m, "No evaluation protocol captured."),
+    evaluationProtocol: extract(
+      /^- evaluation_protocol:\s*(.+)$/m,
+      "No evaluation protocol captured.",
+    ),
     keyResults: extract(/^- key_results:\s*(.+)$/m, "No key results captured."),
     leakage: extract(/^- possible_leakage_points:\s*(.+)$/m, "No leakage note captured."),
     overfitting: extract(/^- overfitting_risks:\s*(.+)$/m, "No overfitting note captured."),
@@ -59,7 +67,10 @@ function parseResearchCardContent(name: string, content: string): ParsedResearch
   };
 }
 
-async function loadRecentResearchCards(memoryDir: string, now: Date): Promise<ParsedResearchCard[]> {
+async function loadRecentResearchCards(
+  memoryDir: string,
+  now: Date,
+): Promise<ParsedResearchCard[]> {
   const weekStart = toUtcDateOnly(now);
   weekStart.setUTCDate(weekStart.getUTCDate() - 6);
   try {
@@ -79,7 +90,7 @@ async function loadRecentResearchCards(memoryDir: string, now: Date): Promise<Pa
         const date = new Date(`${card.date}T00:00:00.000Z`);
         return date >= weekStart && date <= toUtcDateOnly(now);
       })
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .toSorted((a, b) => b.date.localeCompare(a.date));
   } catch {
     return [];
   }
@@ -91,12 +102,27 @@ function renderWeeklyMethodsReview(params: {
   weekKey: string;
   rangeLabel: string;
 }): string {
-  const verdicts = countTop(params.cards.map((card) => card.verdict), 4);
+  const verdicts = countTop(
+    params.cards.map((card) => card.verdict),
+    4,
+  );
   const families = countTop(params.cards.map((card) => card.methodFamily));
-  const adoptableIdeas = countTop(params.cards.map((card) => card.adoptableIdea), 3);
-  const leakageRisks = countTop(params.cards.map((card) => card.leakage), 3);
-  const overfittingRisks = countTop(params.cards.map((card) => card.overfitting), 3);
-  const evaluationProtocols = countTop(params.cards.map((card) => card.evaluationProtocol), 3);
+  const adoptableIdeas = countTop(
+    params.cards.map((card) => card.adoptableIdea),
+    3,
+  );
+  const leakageRisks = countTop(
+    params.cards.map((card) => card.leakage),
+    3,
+  );
+  const overfittingRisks = countTop(
+    params.cards.map((card) => card.overfitting),
+    3,
+  );
+  const evaluationProtocols = countTop(
+    params.cards.map((card) => card.evaluationProtocol),
+    3,
+  );
 
   const cardsByVerdict = (verdict: string) =>
     params.cards.filter((card) => card.verdict === verdict).map((card) => `- ${card.title}`);
@@ -189,30 +215,57 @@ function renderFrontierUpgrade(params: {
     params.cards.find((card) => card.verdict === "worth_reproducing") ??
     params.cards.find((card) => card.verdict === "watch_for_followup") ??
     params.cards[0];
-  const topLeakage = primaryCandidate?.leakage ?? countTop(params.cards.map((card) => card.leakage), 1)[0]?.value;
+  const topLeakage =
+    primaryCandidate?.leakage ??
+    countTop(
+      params.cards.map((card) => card.leakage),
+      1,
+    )[0]?.value;
   const topEvaluation =
     primaryCandidate?.evaluationProtocol ??
-    countTop(params.cards.map((card) => card.evaluationProtocol), 1)[0]?.value;
+    countTop(
+      params.cards.map((card) => card.evaluationProtocol),
+      1,
+    )[0]?.value;
   const topIdea =
-    primaryCandidate?.adoptableIdea ?? countTop(params.cards.map((card) => card.adoptableIdea), 1)[0]?.value;
+    primaryCandidate?.adoptableIdea ??
+    countTop(
+      params.cards.map((card) => card.adoptableIdea),
+      1,
+    )[0]?.value;
 
-  return [
-    `# Frontier Upgrade Prompt: ${params.weekKey}`,
-    "",
-    "Read this before starting another paper, whitepaper, or method-heavy research session.",
-    "",
-    `- **Window**: ${params.rangeLabel}`,
-    `- **Primary Research Candidate**: ${primaryCandidate?.title ?? "No candidate captured yet."}`,
-    `- **Primary Verdict**: ${primaryCandidate?.verdict ?? "watch_for_followup"}`,
-    `- **Main Leakage Check**: ${topLeakage ?? "No leakage risk captured yet."}`,
-    `- **Default Evaluation Standard**: ${topEvaluation ?? "No evaluation standard captured yet."}`,
-    `- **Method To Reuse**: ${topIdea ?? "No reusable method note captured yet."}`,
-    `- **Replication Cost Bias**: ${primaryCandidate?.replicationCost ?? "medium"}`,
-    "",
-    "## Default Upgrade Cue",
-    `Before forming a verdict, check ${topLeakage ?? "the main leakage path"} and require ${topEvaluation ?? "a leakage-safe evaluation protocol"} before trusting reported gains.`,
-    "",
-  ].join("\n");
+  return renderUpgradePrompt({
+    heading: `Frontier Upgrade Prompt: ${params.weekKey}`,
+    intro: "Read this before starting another paper, whitepaper, or method-heavy research session.",
+    rangeLabel: params.rangeLabel,
+    bullets: [
+      {
+        label: "Primary Research Candidate",
+        value: primaryCandidate?.title ?? "No candidate captured yet.",
+      },
+      {
+        label: "Primary Verdict",
+        value: primaryCandidate?.verdict ?? "watch_for_followup",
+      },
+      {
+        label: "Main Leakage Check",
+        value: topLeakage ?? "No leakage risk captured yet.",
+      },
+      {
+        label: "Default Evaluation Standard",
+        value: topEvaluation ?? "No evaluation standard captured yet.",
+      },
+      {
+        label: "Method To Reuse",
+        value: topIdea ?? "No reusable method note captured yet.",
+      },
+      {
+        label: "Replication Cost Bias",
+        value: primaryCandidate?.replicationCost ?? "medium",
+      },
+    ],
+    cueBody: `Before forming a verdict, check ${topLeakage ?? "the main leakage path"} and require ${topEvaluation ?? "a leakage-safe evaluation protocol"} before trusting reported gains.`,
+  });
 }
 
 function buildMemoryNotes(params: {
@@ -267,7 +320,7 @@ const saveFrontierResearchWeeklyReview: HookHandler = async (event) => {
     await writeMemoryNotes(memoryDir, notes);
 
     log.info(
-      `Frontier weekly review saved to ${path.join(memoryDir, notes[0]!.filename).replace(os.homedir(), "~")}`,
+      `Frontier weekly review saved to ${path.join(memoryDir, notes[0].filename).replace(os.homedir(), "~")}`,
     );
   } catch (err) {
     log.error("Failed to save frontier weekly review", { error: String(err) });

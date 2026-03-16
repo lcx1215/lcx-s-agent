@@ -201,7 +201,13 @@ describe("buildAgentSystemPrompt", () => {
       "For math, study, proof, derivation, or review-heavy tasks: first look for recent learning-upgrade prompts, then weekly learning summaries",
     );
     expect(prompt).toContain(
+      "For company, issuer, or fundamental research planning tasks: first look for recent fundamental-scoring-gate, fundamental-snapshot, fundamental-snapshot-bridge, fundamental-readiness, or fundamental-intake notes in memory",
+    );
+    expect(prompt).toContain(
       "For paper, whitepaper, or method-heavy research tasks: first look for recent frontier-upgrade prompts, then weekly methods reviews",
+    );
+    expect(prompt).toContain(
+      "For operating review, weekly planning, or risk-gate questions: first look for unified risk views, daily risk-audit snapshots, branch summaries",
     );
   });
 

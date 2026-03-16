@@ -1,19 +1,7 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { resolveAgentWorkspaceDir } from "../../../agents/agent-scope.js";
-import type { OpenClawConfig } from "../../../config/config.js";
-import { resolveStateDir } from "../../../config/paths.js";
-import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
-import { resolveAgentIdFromSessionKey } from "../../../routing/session-key.js";
-import { hasInterSessionUserProvenance } from "../../../sessions/input-provenance.js";
-import type { HookHandler } from "../../hooks.js";
-import { generateSlugViaLLM } from "../../llm-slug-generator.js";
+import { compactText, createSessionArtifactHandler, type SessionTurn } from "../artifact-memory.js";
 
 const log = createSubsystemLogger("hooks/learning-review");
-
-type SessionTurn = { role: "user" | "assistant"; text: string };
 
 const LEARNING_KEYWORDS = [
   "prove",
@@ -49,64 +37,25 @@ const LEARNING_KEYWORDS = [
   "数学",
 ];
 
-function looksLikeLearningSession(turns: SessionTurn[]): boolean {
-  const joined = turns
-    .map((turn) => turn.text.toLowerCase())
-    .join("\n");
+export type LearningReviewHints = {
+  principle: string;
+  mistake: string;
+  drill: string;
+  transfer: string;
+};
+
+export type LearningSessionSummary = {
+  topic: string;
+  hints: LearningReviewHints;
+};
+
+export function looksLikeLearningSession(turns: SessionTurn[]): boolean {
+  const joined = turns.map((turn) => turn.text.toLowerCase()).join("\n");
   return LEARNING_KEYWORDS.some((keyword) => joined.includes(keyword));
 }
 
-async function getSessionTurns(sessionFilePath: string, messageCount = 18): Promise<SessionTurn[]> {
-  try {
-    const content = await fs.readFile(sessionFilePath, "utf-8");
-    const lines = content.trim().split("\n").filter(Boolean);
-    const turns: SessionTurn[] = [];
-
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line);
-        if (entry.type !== "message" || !entry.message) {
-          continue;
-        }
-        const msg = entry.message;
-        const role = msg.role;
-        if ((role !== "user" && role !== "assistant") || !msg.content) {
-          continue;
-        }
-        if (role === "user" && hasInterSessionUserProvenance(msg)) {
-          continue;
-        }
-        const text = Array.isArray(msg.content)
-          ? // oxlint-disable-next-line typescript/no-explicit-any
-            msg.content.find((c: any) => c.type === "text")?.text
-          : msg.content;
-        if (!text || text.startsWith("/")) {
-          continue;
-        }
-        turns.push({ role, text: String(text).trim() });
-      } catch {
-        // Ignore bad JSONL rows.
-      }
-    }
-
-    return turns.slice(-messageCount);
-  } catch {
-    return [];
-  }
-}
-
-function compactText(text: string, max = 280): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= max) {
-    return normalized;
-  }
-  return `${normalized.slice(0, max - 1).trimEnd()}…`;
-}
-
-function inferTopic(turns: SessionTurn[]): string {
-  const joined = turns
-    .map((turn) => turn.text.toLowerCase())
-    .join("\n");
+export function inferTopic(turns: SessionTurn[]): string {
+  const joined = turns.map((turn) => turn.text.toLowerCase()).join("\n");
   if (joined.includes("probability") || joined.includes("bayes") || joined.includes("概率")) {
     return "probability-and-statistics";
   }
@@ -137,7 +86,7 @@ function inferTopic(turns: SessionTurn[]): string {
   return "math-reasoning";
 }
 
-function reviewHintsForTopic(topic: string) {
+export function reviewHintsForTopic(topic: string): LearningReviewHints {
   switch (topic) {
     case "probability-and-statistics":
       return {
@@ -184,138 +133,29 @@ function reviewHintsForTopic(topic: string) {
   }
 }
 
-async function findPreviousSessionFile(params: {
-  sessionsDir: string;
-  currentSessionFile?: string;
-  sessionId?: string;
-}): Promise<string | undefined> {
-  try {
-    const files = await fs.readdir(params.sessionsDir);
-    const fileSet = new Set(files);
-    const trimmedSessionId = params.sessionId?.trim();
-
-    if (params.currentSessionFile) {
-      const base = path.basename(params.currentSessionFile).split(".reset.")[0];
-      if (base && fileSet.has(base)) {
-        return path.join(params.sessionsDir, base);
-      }
-    }
-
-    if (trimmedSessionId) {
-      const canonical = `${trimmedSessionId}.jsonl`;
-      if (fileSet.has(canonical)) {
-        return path.join(params.sessionsDir, canonical);
-      }
-      const topicVariants = files
-        .filter(
-          (name) =>
-            name.startsWith(`${trimmedSessionId}-topic-`) &&
-            name.endsWith(".jsonl") &&
-            !name.includes(".reset."),
-        )
-        .toSorted()
-        .toReversed();
-      if (topicVariants.length > 0) {
-        return path.join(params.sessionsDir, topicVariants[0]);
-      }
-    }
-  } catch {
-    // Ignore lookup errors.
-  }
-  return undefined;
+export function summarizeLearningSession(turns: SessionTurn[]): LearningSessionSummary {
+  const topic = inferTopic(turns);
+  return {
+    topic,
+    hints: reviewHintsForTopic(topic),
+  };
 }
 
-async function resolveSessionFile(params: {
-  workspaceDir: string;
-  sessionId?: string;
-  sessionFile?: string;
-}): Promise<string | undefined> {
-  const sessionsDirs = new Set<string>();
-  if (params.sessionFile) {
-    sessionsDirs.add(path.dirname(params.sessionFile));
-  }
-  sessionsDirs.add(path.join(params.workspaceDir, "sessions"));
+const saveLearningReview = createSessionArtifactHandler({
+  logger: log,
+  successMessage: "Learning review",
+  failureMessage: "Failed to save learning review",
+  messageCount: 18,
+  slugPrefix: "review",
+  shouldPersist: looksLikeLearningSession,
+  fallbackSlug: (turns) => `review-${inferTopic(turns)}`,
+  renderContent: ({ event, sessionId, turns, dateStr, timeStr }) => {
+    const { topic, hints } = summarizeLearningSession(turns);
+    const latestTurns = turns.toReversed();
+    const latestUser = latestTurns.find((turn) => turn.role === "user")?.text ?? "";
+    const latestAssistant = latestTurns.find((turn) => turn.role === "assistant")?.text ?? "";
 
-  for (const sessionsDir of sessionsDirs) {
-    const recovered = await findPreviousSessionFile({
-      sessionsDir,
-      currentSessionFile: params.sessionFile,
-      sessionId: params.sessionId,
-    });
-    if (recovered) {
-      return recovered;
-    }
-  }
-  return params.sessionFile;
-}
-
-async function generateReviewSlug(params: {
-  turns: SessionTurn[];
-  cfg?: OpenClawConfig;
-}): Promise<string> {
-  const isTestEnv =
-    process.env.OPENCLAW_TEST_FAST === "1" ||
-    process.env.VITEST === "true" ||
-    process.env.VITEST === "1" ||
-    process.env.NODE_ENV === "test";
-
-  if (!isTestEnv && params.cfg) {
-    const sessionContent = params.turns.map((turn) => `${turn.role}: ${turn.text}`).join("\n");
-    const slug = await generateSlugViaLLM({ sessionContent, cfg: params.cfg });
-    if (slug) {
-      return `review-${slug}`;
-    }
-  }
-
-  return `review-${inferTopic(params.turns)}`;
-}
-
-const saveLearningReview: HookHandler = async (event) => {
-  if (event.type !== "command" || (event.action !== "new" && event.action !== "reset")) {
-    return;
-  }
-
-  try {
-    const context = event.context || {};
-    const cfg = context.cfg as OpenClawConfig | undefined;
-    const agentId = resolveAgentIdFromSessionKey(event.sessionKey);
-    const workspaceDir = cfg
-      ? resolveAgentWorkspaceDir(cfg, agentId)
-      : path.join(resolveStateDir(process.env, os.homedir), "workspace");
-    const memoryDir = path.join(workspaceDir, "memory");
-    await fs.mkdir(memoryDir, { recursive: true });
-
-    const sessionEntry = (context.previousSessionEntry || context.sessionEntry || {}) as Record<
-      string,
-      unknown
-    >;
-    const sessionId = sessionEntry.sessionId as string | undefined;
-    const sessionFile = await resolveSessionFile({
-      workspaceDir,
-      sessionId,
-      sessionFile: sessionEntry.sessionFile as string | undefined,
-    });
-    if (!sessionFile) {
-      return;
-    }
-
-    const turns = await getSessionTurns(sessionFile);
-    if (!looksLikeLearningSession(turns)) {
-      return;
-    }
-
-    const now = new Date(event.timestamp);
-    const dateStr = now.toISOString().split("T")[0];
-    const timeStr = now.toISOString().split("T")[1].split(".")[0];
-    const topic = inferTopic(turns);
-    const hints = reviewHintsForTopic(topic);
-    const latestUser = [...turns].reverse().find((turn) => turn.role === "user")?.text ?? "";
-    const latestAssistant =
-      [...turns].reverse().find((turn) => turn.role === "assistant")?.text ?? "";
-    const slug = await generateReviewSlug({ turns, cfg });
-    const filename = `${dateStr}-${slug}.md`;
-
-    const entry = [
+    return [
       `# Learning Review: ${dateStr} ${timeStr} UTC`,
       "",
       `- **Session Key**: ${event.sessionKey}`,
@@ -338,26 +178,7 @@ const saveLearningReview: HookHandler = async (event) => {
       ...turns.slice(-8).map((turn) => `- ${turn.role}: ${compactText(turn.text, 160)}`),
       "",
     ].join("\n");
-
-    await writeFileWithinRoot({
-      rootDir: memoryDir,
-      relativePath: filename,
-      data: entry,
-      encoding: "utf-8",
-    });
-
-    log.info(`Learning review saved to ${path.join(memoryDir, filename).replace(os.homedir(), "~")}`);
-  } catch (err) {
-    if (err instanceof Error) {
-      log.error("Failed to save learning review", {
-        errorName: err.name,
-        errorMessage: err.message,
-        stack: err.stack,
-      });
-    } else {
-      log.error("Failed to save learning review", { error: String(err) });
-    }
-  }
-};
+  },
+});
 
 export default saveLearningReview;

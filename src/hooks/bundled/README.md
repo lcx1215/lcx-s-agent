@@ -46,6 +46,76 @@ Automatically saves a structured frontier research card when a paper or method-h
 openclaw hooks enable frontier-research
 ```
 
+### 🏢 fundamental-intake
+
+Automatically saves a controlled fundamental research intake note and manifest scaffold when an issuer/company research planning session resets.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Detects fundamental research planning requests, infers a structured intake spec, writes a memory note, and generates manifest-first scaffold JSON files under `bank/fundamental/`, including a document naming pattern and `.meta.json` sidecar convention for later readiness checks.
+**Output**: `<workspace>/memory/YYYY-MM-DD-fundamental-intake-<slug>.md`, `<workspace>/bank/fundamental/intakes/*.json`, `<workspace>/bank/fundamental/manifests/*.json`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-intake
+```
+
+### 🧱 fundamental-manifest-bridge
+
+Automatically upgrades local fundamental manifests from scaffold-only objects into explicit readiness state.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Scans `bank/fundamental/manifests/*.json`, inspects only the local document workspace referenced by each manifest, prefers `.meta.json` sidecars over filename heuristics when classifying documents, updates readiness fields in place, and writes a readiness sidecar plus memory note.
+**Output**: updated `<workspace>/bank/fundamental/manifests/*.json`, `<workspace>/bank/fundamental/readiness/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-readiness-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-manifest-bridge
+```
+
+### 📦 fundamental-snapshot-bridge
+
+Automatically emits minimal fundamental snapshot-input artifacts from local manifest and readiness state.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/manifests/*.json` plus `bank/fundamental/readiness/*.json`, determines which named targets satisfy minimum snapshot-entry conditions, and writes a snapshot-input sidecar plus a memory note with ready vs blocked targets.
+**Output**: `<workspace>/bank/fundamental/snapshot-inputs/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-snapshot-bridge-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-snapshot-bridge
+```
+
+### 🪪 fundamental-snapshot
+
+Automatically materializes a minimal `fundamental_snapshot` from manifest, readiness, and snapshot-input artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads local manifest/readiness/snapshot-input artifacts, summarizes target-level document and source coverage, marks evidence readiness level plus scoring gate state, and writes a minimal `fundamental_snapshot` JSON plus memory note.
+**Output**: `<workspace>/bank/fundamental/snapshots/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-snapshot-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-snapshot
+```
+
+### 🚧 fundamental-scoring-gate
+
+Automatically materializes a minimal downstream scoring-gate input from local `fundamental_snapshot` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/snapshots/*.json`, converts target-level snapshot states into explicit blocked/partial/allowed scoring decisions, preserves fallback exposure and missing critical inputs, and writes a structured scoring-gate JSON plus a memory note.
+**Output**: `<workspace>/bank/fundamental/scoring-gates/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-scoring-gate-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-scoring-gate
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.

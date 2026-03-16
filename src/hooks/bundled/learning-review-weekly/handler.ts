@@ -7,6 +7,7 @@ import { resolveStateDir } from "../../../config/paths.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import { resolveAgentIdFromSessionKey } from "../../../routing/session-key.js";
 import type { HookHandler } from "../../hooks.js";
+import { renderUpgradePrompt } from "../upgrade-memory.js";
 import {
   countTop,
   formatIsoWeek,
@@ -46,7 +47,8 @@ function parseReviewContent(name: string, content: string): ParsedReview | undef
   if (!fileMatch) {
     return undefined;
   }
-  const extract = (pattern: RegExp, fallback: string) => content.match(pattern)?.[1]?.trim() || fallback;
+  const extract = (pattern: RegExp, fallback: string) =>
+    content.match(pattern)?.[1]?.trim() || fallback;
   return {
     name,
     date: fileMatch[1],
@@ -82,8 +84,9 @@ function buildTopicRollups(reviews: ParsedReview[]): TopicRollup[] {
     });
   }
 
-  return [...rollups.values()].sort(
-    (a, b) => b.count - a.count || b.lastSeen.localeCompare(a.lastSeen) || a.topic.localeCompare(b.topic),
+  return [...rollups.values()].toSorted(
+    (a, b) =>
+      b.count - a.count || b.lastSeen.localeCompare(a.lastSeen) || a.topic.localeCompare(b.topic),
   );
 }
 
@@ -127,7 +130,8 @@ function nextWeekFocus(rollups: TopicRollup[]): string[] {
   const weakTopics = rollups.filter((rollup) => rollup.count === 1);
   const source = weakTopics.length > 0 ? weakTopics : rollups.slice(0, 2);
   return source.map((rollup) => {
-    const drill = countTop(rollup.microDrills, 1)[0]?.value ?? "repeat the topic with one short drill";
+    const drill =
+      countTop(rollup.microDrills, 1)[0]?.value ?? "repeat the topic with one short drill";
     return `- ${rollup.topic}: ${drill}`;
   });
 }
@@ -152,33 +156,69 @@ function buildUpgradePrompt(params: {
   const parkTopic =
     topicRollups.find((rollup) => classifyTopicState(rollup, newestReviewDate) === "stable") ??
     weakTopic;
-  const topMistake = countTop(params.reviews.map((review) => review.mistakePattern), 1)[0]?.value;
-  const topPrinciple = countTop(params.reviews.map((review) => review.corePrinciple), 1)[0]?.value;
-  const topTransfer = countTop(params.reviews.map((review) => review.transferHint), 1)[0]?.value;
+  const topMistake = countTop(
+    params.reviews.map((review) => review.mistakePattern),
+    1,
+  )[0]?.value;
+  const topPrinciple = countTop(
+    params.reviews.map((review) => review.corePrinciple),
+    1,
+  )[0]?.value;
+  const topTransfer = countTop(
+    params.reviews.map((review) => review.transferHint),
+    1,
+  )[0]?.value;
   const nextDrill = weakTopic
     ? countTop(weakTopic.microDrills, 1)[0]?.value
-    : countTop(params.reviews.map((review) => review.microDrill), 1)[0]?.value;
+    : countTop(
+        params.reviews.map((review) => review.microDrill),
+        1,
+      )[0]?.value;
 
-  return [
-    `# Learning Upgrade Prompt: ${params.weekKey}`,
-    "",
-    "Read this before starting another math, study, proof, or derivation-heavy session.",
-    "",
-    `- **Window**: ${params.rangeLabel}`,
-    `- **Main Failure To Avoid**: ${topMistake ?? "No recurring failure captured yet."}`,
-    `- **Default Method To Apply**: ${topPrinciple ?? "No default method captured yet."}`,
-    `- **Stable Topic To Reuse**: ${stableTopic?.topic ?? "No stable topic yet."} (${stableTopic ? classifyTopicState(stableTopic, newestReviewDate) : "stable"})`,
-    `- **Top Topic To Reinforce**: ${weakTopic?.topic ?? stableTopic?.topic ?? "No topic captured yet."} (${weakTopic ? classifyTopicState(weakTopic, newestReviewDate) : "new"})`,
-    `- **Do Now**: ${doNowTopic?.topic ?? "No priority topic yet."} (do-now)`,
-    `- **Do Next**: ${doNextTopic?.topic ?? "No next topic yet."} (do-next)`,
-    `- **Park**: ${parkTopic?.topic ?? "No parked topic yet."} (park)`,
-    `- **Next Micro-Drill**: ${nextDrill ?? "Repeat the latest topic with one short drill."}`,
-    `- **Transfer Reminder**: ${topTransfer ?? "No transfer reminder captured yet."}`,
-    "",
-    "## Default Upgrade Cue",
-    `Before solving, explicitly apply ${topPrinciple ?? "the strongest known principle"} and avoid ${topMistake ?? "the last observed failure mode"}.`,
-    "",
-  ].join("\n");
+  return renderUpgradePrompt({
+    heading: `Learning Upgrade Prompt: ${params.weekKey}`,
+    intro: "Read this before starting another math, study, proof, or derivation-heavy session.",
+    rangeLabel: params.rangeLabel,
+    bullets: [
+      {
+        label: "Main Failure To Avoid",
+        value: topMistake ?? "No recurring failure captured yet.",
+      },
+      {
+        label: "Default Method To Apply",
+        value: topPrinciple ?? "No default method captured yet.",
+      },
+      {
+        label: "Stable Topic To Reuse",
+        value: `${stableTopic?.topic ?? "No stable topic yet."} (${stableTopic ? classifyTopicState(stableTopic, newestReviewDate) : "stable"})`,
+      },
+      {
+        label: "Top Topic To Reinforce",
+        value: `${weakTopic?.topic ?? stableTopic?.topic ?? "No topic captured yet."} (${weakTopic ? classifyTopicState(weakTopic, newestReviewDate) : "new"})`,
+      },
+      {
+        label: "Do Now",
+        value: `${doNowTopic?.topic ?? "No priority topic yet."} (do-now)`,
+      },
+      {
+        label: "Do Next",
+        value: `${doNextTopic?.topic ?? "No next topic yet."} (do-next)`,
+      },
+      {
+        label: "Park",
+        value: `${parkTopic?.topic ?? "No parked topic yet."} (park)`,
+      },
+      {
+        label: "Next Micro-Drill",
+        value: nextDrill ?? "Repeat the latest topic with one short drill.",
+      },
+      {
+        label: "Transfer Reminder",
+        value: topTransfer ?? "No transfer reminder captured yet.",
+      },
+    ],
+    cueBody: `Before solving, explicitly apply ${topPrinciple ?? "the strongest known principle"} and avoid ${topMistake ?? "the last observed failure mode"}.`,
+  });
 }
 
 async function loadRecentReviews(memoryDir: string, now: Date): Promise<ParsedReview[]> {
@@ -200,7 +240,7 @@ async function loadRecentReviews(memoryDir: string, now: Date): Promise<ParsedRe
         const date = new Date(`${review.date}T00:00:00.000Z`);
         return date >= weekStart && date <= toUtcDateOnly(now);
       })
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .toSorted((a, b) => b.date.localeCompare(a.date));
   } catch {
     return [];
   }
@@ -214,9 +254,15 @@ function renderWeeklySummary(params: {
 }): string {
   const topicRollups = buildTopicRollups(params.reviews);
   const newestReviewDate = topicRollups[0]?.lastSeen ?? "";
-  const stableTopics = topicRollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "stable");
-  const fragileTopics = topicRollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "fragile");
-  const newTopics = topicRollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "new");
+  const stableTopics = topicRollups.filter(
+    (rollup) => classifyTopicState(rollup, newestReviewDate) === "stable",
+  );
+  const fragileTopics = topicRollups.filter(
+    (rollup) => classifyTopicState(rollup, newestReviewDate) === "fragile",
+  );
+  const newTopics = topicRollups.filter(
+    (rollup) => classifyTopicState(rollup, newestReviewDate) === "new",
+  );
   const doNowTopics = topicRollups.filter(
     (rollup) => toPriority(classifyTopicState(rollup, newestReviewDate)) === "do-now",
   );
@@ -230,7 +276,10 @@ function renderWeeklySummary(params: {
   const mistakes = countTop(params.reviews.map((review) => review.mistakePattern));
   const principles = countTop(params.reviews.map((review) => review.corePrinciple));
   const drills = countTop(params.reviews.map((review) => review.microDrill));
-  const transfers = countTop(params.reviews.map((review) => review.transferHint), 2);
+  const transfers = countTop(
+    params.reviews.map((review) => review.transferHint),
+    2,
+  );
   const nextFocus = nextWeekFocus(topicRollups);
   const upgradePrompt = buildUpgradePrompt(params)
     .split("\n")
@@ -370,7 +419,7 @@ const saveWeeklyLearningReview: HookHandler = async (event) => {
     await writeMemoryNotes(memoryDir, notes);
 
     log.info(
-      `Weekly learning review saved to ${path.join(memoryDir, notes[0]!.filename).replace(os.homedir(), "~")}`,
+      `Weekly learning review saved to ${path.join(memoryDir, notes[0].filename).replace(os.homedir(), "~")}`,
     );
   } catch (err) {
     log.error("Failed to save weekly learning review", { error: String(err) });

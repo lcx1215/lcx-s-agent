@@ -59,7 +59,16 @@ describe("learning-review-bootstrap hook", () => {
     await writeWorkspaceFile({
       dir: memoryDir,
       name: "2026-W11-learning-upgrade.md",
-      content: "# Learning Upgrade Prompt\n\n- Default Method To Apply: check dimensions first",
+      content: [
+        "# Learning Upgrade Prompt: 2026-W11",
+        "",
+        "- **Window**: 2026-03-09 to 2026-03-15",
+        "- **Main Failure To Avoid**: skipped dimension checks",
+        "- **Default Method To Apply**: check dimensions first",
+        "- **Stable Topic To Reuse**: linear-algebra",
+        "- **Top Topic To Reinforce**: probability-and-statistics",
+        "- **Next Micro-Drill**: define A and B before using Bayes",
+      ].join("\n"),
     });
     await writeWorkspaceFile({
       dir: memoryDir,
@@ -81,10 +90,15 @@ describe("learning-review-bootstrap hook", () => {
     const event = createHookEvent("agent", "bootstrap", "agent:main:main", context);
     await handler(event);
 
-    const injected = context.bootstrapFiles.find((file) => file.path.endsWith("_learning-review-bootstrap.md"));
+    const injected = context.bootstrapFiles.find((file) =>
+      file.path.endsWith("_learning-review-bootstrap.md"),
+    );
     expect(injected).toBeTruthy();
     expect(injected?.name).toBe("memory.md");
     expect(injected?.content).toContain("Recent Learning Reviews");
+    expect(injected?.content).toContain("Immediate Study Cue");
+    expect(injected?.content).toContain("- avoid: skipped dimension checks");
+    expect(injected?.content).toContain("- apply: check dimensions first");
     expect(injected?.content).toContain("Priority Learning Upgrade");
     expect(injected?.content).toContain("2026-W11-learning-upgrade.md");
     expect(injected?.content).toContain("2026-W11-learning-weekly-review.md");
@@ -122,7 +136,9 @@ describe("learning-review-bootstrap hook", () => {
   });
 
   it("still injects aggregated learning memory when only upgrade and weekly notes exist", async () => {
-    const workspaceDir = await makeTempWorkspace("openclaw-learning-review-bootstrap-aggregate-only-");
+    const workspaceDir = await makeTempWorkspace(
+      "openclaw-learning-review-bootstrap-aggregate-only-",
+    );
     const memoryDir = path.join(workspaceDir, "memory");
     await fs.mkdir(memoryDir, { recursive: true });
     await writeWorkspaceFile({
@@ -145,7 +161,9 @@ describe("learning-review-bootstrap hook", () => {
     const event = createHookEvent("agent", "bootstrap", "agent:main:main", context);
     await handler(event);
 
-    const injected = context.bootstrapFiles.find((file) => file.path.endsWith("_learning-review-bootstrap.md"));
+    const injected = context.bootstrapFiles.find((file) =>
+      file.path.endsWith("_learning-review-bootstrap.md"),
+    );
     expect(injected?.content).toContain("2026-W11-learning-upgrade.md");
     expect(injected?.content).toContain("2026-W11-learning-weekly-review.md");
   });
