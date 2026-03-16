@@ -276,6 +276,20 @@ Automatically materializes a single research-only memo from target reports, coll
 openclaw hooks enable fundamental-review-memo
 ```
 
+### 📌 fundamental-collection-follow-up-tracker
+
+Automatically materializes a research-only tracker for missing materials, missing metadata, and next collection actions.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/review-memos/*.json` and `bank/fundamental/collection-packets/*.json`, falls back to target packets and manifest patch review inputs when needed, and writes a concise tracker for follow-up and blocked targets only.
+**Output**: `<workspace>/bank/fundamental/collection-follow-up-trackers/*.json`, `<workspace>/bank/fundamental/follow-up-trackers/<manifest-id>.md`, `<workspace>/memory/YYYY-MM-DD-fundamental-collection-follow-up-tracker-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-collection-follow-up-tracker
+```
+
 ### 🧾 fundamental-manifest-patch-review
 
 Automatically reviews proposal-only fundamental manifest patch artifacts before any manual collection work.
