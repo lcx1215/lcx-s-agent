@@ -71,6 +71,12 @@ Run:
 scripts/upstream-sync-audit.sh
 ```
 
+Or use the wrapper:
+
+```bash
+scripts/upstream-refresh-check.sh
+```
+
 Use the result to answer:
 
 - is this still a diverged overlay repo
