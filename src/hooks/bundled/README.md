@@ -122,6 +122,20 @@ Automatically materializes a minimal downstream scoring-gate input from local `f
 openclaw hooks enable fundamental-scoring-gate
 ```
 
+### 🛂 fundamental-risk-handoff
+
+Automatically materializes a minimal downstream risk-handoff artifact from local `fundamental-scoring-gate` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/scoring-gates/*.json`, converts target-level scoring decisions into explicit handoff decisions for later controlled risk-review consumers, preserves fallback exposure and missing critical inputs, and writes a structured risk-handoff JSON plus a memory note.
+**Output**: `<workspace>/bank/fundamental/risk-handoffs/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-risk-handoff-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-risk-handoff
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.
