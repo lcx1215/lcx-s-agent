@@ -234,6 +234,20 @@ Automatically materializes first-pass terminal deliverables from local `fundamen
 openclaw hooks enable fundamental-target-deliverables
 ```
 
+### 📝 fundamental-dossier-drafts
+
+Automatically materializes research-only dossier drafts from dossier-ready local `fundamental-target-packets` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/target-packets/*.json`, skips blocked or collection-only targets, and writes first-pass dossier draft Markdown only for dossier-ready targets.
+**Output**: `<workspace>/bank/fundamental/dossier-drafts/*.json`, `<workspace>/bank/fundamental/drafts/<manifest-id>/*.md`, `<workspace>/memory/YYYY-MM-DD-fundamental-dossier-drafts-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-dossier-drafts
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.
