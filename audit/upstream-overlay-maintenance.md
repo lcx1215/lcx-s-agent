@@ -107,6 +107,10 @@ When doing a generic upstream refresh pass, use this order:
 
 For `src/agents/subagent-announce.ts`, use `audit/subagent-announce-runtime-seam.md` and split work into prompt-only, retry/timeout, and routing slices instead of treating the whole file as one change.
 
+That first bounded `subagent-announce` pass is now complete.
+
+Do not keep reopening that file during routine refresh work unless there is a concrete second-round routing semantics reason.
+
 ### Step 4. Preserve local truths
 
 Do not remove or weaken these local behaviors during upstream alignment:
@@ -162,7 +166,13 @@ As of 2026-03-16, the first shared-hotspot integration pass is complete:
 
 - `session-memory` restored workspace-bound behavior on the shared helper substrate
 - `system-prompt` re-absorbed current generic guardrails while keeping Lobster recall rules
+- `subagent-announce` completed a first bounded seam pass covering prompt guidance, retry/timeout policy, and delivery provenance/internal-classification
 - bundled-hook documentation now distinguishes core hooks from Lobster overlay hooks
+
+Current follow-up rule:
+
+- for upstream maintenance, pause further `subagent-announce` slicing unless a new bounded semantics issue appears
+- for product work, return focus to Lobster overlay priorities rather than extending shared-seam cleanup indefinitely
 
 ## Summary
 

@@ -14,15 +14,16 @@ scripts/upstream-sync-audit.sh "$SOURCE_REMOTE" "$PUBLISH_REMOTE" "$BRANCH_NAME"
 cat <<'EOF'
 
 Recommended next slice order
-1. Shared hotspots
+1. Shared hotspots only if new upstream changes justify reopening them
    - src/hooks/bundled/session-memory/handler.ts
    - src/agents/system-prompt.ts
-   - src/agents/subagent-announce.ts
    - src/hooks/bundled/README.md
-2. Runtime seams
+2. Second-round runtime seams only when explicitly justified
+   - src/agents/subagent-announce.ts (routing/wake/registry semantics only; first bounded pass already complete)
+3. Runtime seams
    - shared scripts only if they affect build correctness or operator robustness
    - build/copy surfaces only if they change outputs or break builds
-3. Preserve local overlay
+4. Preserve local overlay
    - learning/frontier/fundamental hooks
    - memory helper substrate
    - local sync/audit scripts
@@ -30,6 +31,9 @@ Recommended next slice order
 Completed bounded refreshes already on this branch
 - scripts/committer
 - scripts/bundle-a2ui.sh
+- src/agents/subagent-announce.ts prompt-only guidance
+- src/agents/subagent-announce.ts retry/timeout policy
+- src/agents/subagent-announce.ts delivery provenance/internal-classification
 
 Stop if
 - the work expands into a full upstream merge

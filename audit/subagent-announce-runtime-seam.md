@@ -6,6 +6,28 @@ Compared against: `upstream/main`
 
 This audit treats `src/agents/subagent-announce.ts` as a bounded runtime-policy seam.
 
+## Current Status
+
+The first bounded integration pass for this seam is complete.
+
+Completed in this pass:
+
+- prompt-only guidance re-absorbed current push-based orchestration guardrails in `buildSubagentSystemPrompt(...)`
+- retry/timeout policy re-absorbed the `gateway timeout` no-retry behavior for completion direct send
+- completion-routing semantics re-absorbed delivery provenance and internal requester classification for cron sessions
+
+Explicitly not touched in this pass:
+
+- the local completion direct `send` path
+- direct vs queued dispatch ordering
+- wake/registry replacement flow and larger completion-routing semantics
+
+Current judgment:
+
+- this seam is no longer a missing shared hotspot
+- it is also not "fully aligned" with upstream
+- any further work here should count as a second-round integration pass, not an opportunistic follow-up
+
 ## Why This File Is Special
 
 Unlike the Lobster memory/fundamental overlay, this file is a shared OpenClaw runtime path that exists both locally and upstream.
@@ -128,7 +150,7 @@ Judgment:
 
 ## What Is Safe To Do Later
 
-Possible bounded future slices inside this seam:
+Possible future slices inside this seam, if this file must be reopened:
 
 ### Slice A. Prompt-only guidance audit
 
@@ -139,7 +161,7 @@ Scope:
 
 Goal:
 
-- decide which upstream orchestration guardrails should be re-absorbed without changing delivery mechanics
+- completed in the first bounded pass
 
 ### Slice B. Retry/timeout policy audit
 
@@ -151,7 +173,7 @@ Scope:
 
 Goal:
 
-- decide whether local timeout/retry policy is deliberate or accidental drift
+- completed in the first bounded pass
 
 ### Slice C. Completion routing audit
 
@@ -164,8 +186,8 @@ Scope:
 
 Goal:
 
-- treat delivery correctness as the primary outcome
-- this is the highest-value and highest-risk slice
+- partially completed in the first bounded pass
+- remaining work would be second-round semantics, not a small follow-up
 
 ## What Should Not Be Done Casually
 
@@ -178,19 +200,25 @@ Do not:
 
 ## Current Recommendation
 
-When this seam is worked on next, use this order:
+Do not keep chipping away at this file by default.
 
-1. prompt-only guidance audit
-2. retry/timeout policy audit
-3. completion routing audit
+Only reopen it when there is a clear need for a second-round bounded pass.
 
-That order keeps the lowest-risk behavioral surface first and the highest-risk routing logic last.
+If reopened, use this order:
+
+1. completion routing semantics that were explicitly deferred in the first pass
+2. wake/registry interaction audit
+3. direct `send` vs agent-injected completion delivery policy audit
+
+That order keeps the remaining highest-risk routing work isolated instead of mixing it back into small maintenance slices.
 
 ## Summary
 
 `src/agents/subagent-announce.ts` is now confirmed as a real shared runtime-policy seam.
 
-It should be handled as:
+The first high-value bounded integration pass is complete.
+
+It should continue to be handled as:
 
 - bounded
 - test-driven

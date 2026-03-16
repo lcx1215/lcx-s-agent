@@ -12,6 +12,7 @@ The first shared-hotspot integration pass is complete:
 
 - `session-memory` has been reconciled onto the shared helper substrate and the workspace-bound session-key behavior has been restored locally.
 - `system-prompt` now keeps Lobster memory recall rules while re-absorbing current generic upstream guardrails that still match the local tool surface.
+- `subagent-announce` has completed a first bounded integration pass across prompt guidance, retry/timeout policy, and delivery provenance/internal-classification.
 - `src/hooks/bundled/README.md` now documents Lobster-specific hook coverage as explicit overlay rather than implicitly blending it into upstream-owned bundled-hook documentation.
 
 ## Scope
@@ -172,23 +173,30 @@ Lower than `session-memory` and `system-prompt`, but still a recurring manual me
 
 `src/agents/subagent-announce.ts` is a shared runtime file with substantial upstream drift, but it is not part of the Lobster overlay itself.
 
-The current local file appears to differ in real runtime behavior, including:
+The current local file still differs in real runtime behavior, including:
 
 - announce timeout defaults
-- retry handling around gateway timeout behavior
 - completion delivery message shaping
 - completion origin / direct-delivery resolution details
 - direct vs queued completion delivery semantics
 
+The first bounded integration pass has already absorbed:
+
+- prompt-only orchestration guardrails in `buildSubagentSystemPrompt(...)`
+- `gateway timeout` no-retry handling for completion direct send
+- delivery provenance and cron internal-requester classification
+
 ### Integration judgment
 
-This is a newly identified shared hotspot, and it is not a low-risk doc-only seam.
+This is a real shared hotspot, and it is not a low-risk doc-only seam.
 
 It should be treated as a bounded runtime-policy seam:
 
 - too large for casual "while we're here" refreshes
 - worth auditing explicitly when future upstream session-routing or announce behavior matters
 - not something to merge opportunistically alongside Lobster memory/fundamental work
+
+At the same time, it no longer needs immediate follow-up work for the first pass.
 
 ### Must retain locally
 
@@ -203,7 +211,9 @@ It should be treated as a bounded runtime-policy seam:
 
 ### Priority
 
-Below `session-memory` and `system-prompt` for current Lobster work, but above `README` for runtime impact.
+First bounded pass complete.
+
+Only reopen for a second-round semantics audit when there is a concrete upstream/runtime reason.
 
 ## Practical integration order
 
@@ -213,6 +223,8 @@ When doing the first bounded upstream integration pass, use this order:
 2. `src/agents/system-prompt.ts`
 3. `src/agents/subagent-announce.ts`
 4. `src/hooks/bundled/README.md`
+
+That first pass is now complete to bounded scope.
 
 ## Summary
 
@@ -224,3 +236,9 @@ The shared hotspots are not equal:
 - `bundled/README` is mostly a documentation-overlay integration problem
 
 That means future upstream refresh work should not treat them as one class of conflict.
+
+For `subagent-announce`, the correct current status is:
+
+- first bounded integration pass complete
+- remaining work deferred intentionally
+- do not keep extending that seam while higher-value Lobster product work is waiting
