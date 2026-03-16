@@ -192,6 +192,20 @@ Automatically materializes target-level research work packets from local `fundam
 openclaw hooks enable fundamental-review-workbench
 ```
 
+### 🧾 fundamental-target-packets
+
+Automatically materializes dossier-ready and collection-ready target packets from local `fundamental-review-workbench` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/review-workbenches/*.json`, falls back to upstream fundamental review artifacts when needed, and writes deeper-review dossiers, follow-up collection packets, and blocked hold packets.
+**Output**: `<workspace>/bank/fundamental/target-packets/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-target-packets-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-target-packets
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.
