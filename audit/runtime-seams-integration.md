@@ -16,9 +16,10 @@ This audit covers the first outer runtime seam pass after the shared-hotspot pas
 
 ## Status
 
-The first runtime seam pass is complete for the highest-value shared script:
+The first runtime seam pass is complete for the two highest-value shared scripts:
 
 - `scripts/committer` has been brought back in line with upstream's git-lock retry behavior.
+- `scripts/bundle-a2ui.sh` now preserves the local safer hash invocation while restoring upstream-compatible local `rolldown` fallback paths.
 
 ## 1. scripts/committer
 
@@ -106,24 +107,20 @@ Reason:
 
 ### Current assessment
 
-For the current repository environment, build correctness is not currently broken:
+This seam has now been partially realigned:
 
-- `pnpm build` passed during recent integration work
-- the current hash invocation is functionally equivalent for the script's input passing
+- the local stdin-fed hash invocation is retained
+- upstream-compatible local `rolldown` binary fallbacks are restored
 
-But compatibility risk is still higher here than in the copy scripts:
-
-- if `rolldown` is not on PATH
-- and `pnpm dlx` is unavailable or undesirable in a given environment
-- upstream's extra local binary fallbacks may succeed where the local script would fail
+That means the immediate build-compatibility risk is reduced without reverting the local hash-call cleanup.
 
 ### Current policy
 
-Treat `scripts/bundle-a2ui.sh` as the next build-surface seam worth revisiting if:
+Treat `scripts/bundle-a2ui.sh` as a monitored shared build seam:
 
-- build failures start appearing in offline or locked-down environments
-- upstream changes bundling fallback behavior again
-- we do a broader build-pipeline refresh pass
+- keep the current hash invocation unless it proves incorrect
+- prefer retaining upstream-compatible bundler fallbacks
+- revisit only if upstream changes bundling behavior again or build failures reappear
 
 ## 4. Local sync/audit scripts
 
