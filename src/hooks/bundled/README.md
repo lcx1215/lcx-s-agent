@@ -136,6 +136,20 @@ Automatically materializes a minimal downstream risk-handoff artifact from local
 openclaw hooks enable fundamental-risk-handoff
 ```
 
+### 🧭 fundamental-review-queue
+
+Automatically materializes a research-only downstream decision queue from local `fundamental-risk-handoff` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/risk-handoffs/*.json`, converts target-level handoff decisions into watchlist candidates, blocked targets, follow-up tasks, missing-document requests, and review priority ranking, then writes a structured review-queue JSON plus a memory note.
+**Output**: `<workspace>/bank/fundamental/review-queues/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-review-queue-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-review-queue
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.
