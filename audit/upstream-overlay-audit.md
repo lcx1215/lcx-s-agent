@@ -117,6 +117,10 @@ Recommended path:
 4. Refresh upstream only in bounded slices, starting with shared hotspots and surrounding script/runtime seams.
 5. Consider a later structural extraction of the Lobster overlay if repeated upstream refreshes keep colliding on the same files.
 
+See also:
+
+- `audit/upstream-overlay-maintenance.md` for the standing maintenance policy and slice order.
+
 ## Non-Goals
 
 This audit does not claim:

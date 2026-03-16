@@ -6,6 +6,14 @@ Compared against: `upstream/main`
 
 This audit focuses only on the shared hotspots that exist both locally and upstream.
 
+## Status
+
+The first shared-hotspot integration pass is complete:
+
+- `session-memory` has been reconciled onto the shared helper substrate and the workspace-bound session-key behavior has been restored locally.
+- `system-prompt` now keeps Lobster memory recall rules while re-absorbing current generic upstream guardrails that still match the local tool surface.
+- `src/hooks/bundled/README.md` now documents Lobster-specific hook coverage as explicit overlay rather than implicitly blending it into upstream-owned bundled-hook documentation.
+
 ## Scope
 
 - `src/hooks/bundled/session-memory/handler.ts`
