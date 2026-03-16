@@ -164,6 +164,20 @@ Automatically materializes a compact research brief from local `fundamental-revi
 openclaw hooks enable fundamental-review-brief
 ```
 
+### 📋 fundamental-review-plan
+
+Automatically materializes a structured research work plan from local `fundamental-review-brief` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/review-briefs/*.json`, falls back to `review-queue` and `risk-handoff` artifacts when needed, and writes target-level deeper-review, follow-up collection, and blocked-monitoring work items.
+**Output**: `<workspace>/bank/fundamental/review-plans/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-review-plan-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-review-plan
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.
