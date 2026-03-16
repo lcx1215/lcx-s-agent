@@ -248,6 +248,20 @@ Automatically materializes research-only dossier drafts from dossier-ready local
 openclaw hooks enable fundamental-dossier-drafts
 ```
 
+### 📄 fundamental-target-reports
+
+Automatically materializes research-only target reports from dossier-ready local `fundamental-target-packets` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/target-packets/*.json`, skips blocked or collection-only targets, and writes more formal report Markdown only for dossier-ready targets.
+**Output**: `<workspace>/bank/fundamental/target-reports/*.json`, `<workspace>/bank/fundamental/reports/<manifest-id>/*.md`, `<workspace>/memory/YYYY-MM-DD-fundamental-target-reports-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-target-reports
+```
+
 ### 🧾 fundamental-manifest-patch-review
 
 Automatically reviews proposal-only fundamental manifest patch artifacts before any manual collection work.
