@@ -41,7 +41,8 @@ for remote_name in "$SOURCE_REMOTE" "$PUBLISH_REMOTE"; do
 done
 
 log "Fetching ${SOURCE_REMOTE}/${BRANCH_NAME} and ${PUBLISH_REMOTE}/${BRANCH_NAME}..."
-git fetch "$SOURCE_REMOTE" "$PUBLISH_REMOTE"
+git fetch "$SOURCE_REMOTE"
+git fetch "$PUBLISH_REMOTE"
 
 SOURCE_REF="refs/remotes/${SOURCE_REMOTE}/${BRANCH_NAME}"
 PUBLISH_REF="refs/remotes/${PUBLISH_REMOTE}/${BRANCH_NAME}"
