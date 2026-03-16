@@ -4,7 +4,7 @@ This directory contains hooks that ship with OpenClaw. These hooks are automatic
 
 ## Available Hooks
 
-### OpenClaw Core Hooks (continued)
+### OpenClaw Core Hooks
 
 ### 💾 session-memory
 
@@ -178,7 +178,7 @@ Builds a weekly methods review from recent frontier research cards.
 openclaw hooks enable frontier-research-weekly
 ```
 
-### OpenClaw Core Hooks
+### OpenClaw Core Hooks (continued)
 
 ### 📎 bootstrap-extra-files
 
