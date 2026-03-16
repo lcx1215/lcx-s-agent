@@ -206,6 +206,20 @@ Automatically materializes dossier-ready and collection-ready target packets fro
 openclaw hooks enable fundamental-target-packets
 ```
 
+### 🗂️ fundamental-target-workfiles
+
+Automatically materializes per-target workfiles from local `fundamental-target-packets` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/target-packets/*.json`, falls back to upstream fundamental review artifacts when needed, and writes per-target dossier, collection, and hold Markdown workfiles plus an index JSON.
+**Output**: `<workspace>/bank/fundamental/target-workfiles/*.json`, `<workspace>/bank/fundamental/workfiles/<manifest-id>/**/*.md`, `<workspace>/memory/YYYY-MM-DD-fundamental-target-workfiles-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-target-workfiles
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.
