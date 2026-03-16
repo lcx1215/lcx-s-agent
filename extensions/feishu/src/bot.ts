@@ -17,6 +17,7 @@ import { createFeishuClient } from "./client.js";
 import { tryRecordMessage, tryRecordMessagePersistent } from "./dedup.js";
 import { maybeCreateDynamicAgent } from "./dynamic-agent.js";
 import { normalizeFeishuExternalKey } from "./external-keys.js";
+import { normalizeFeishuCommandText } from "./feishu-command-handler.js";
 import { downloadMessageResourceFeishu } from "./media.js";
 import { extractMentionTargets, isMentionForwardRequest } from "./mention.js";
 import {
@@ -959,6 +960,14 @@ export async function handleFeishuMessage(params: {
   if (ctx.mentionTargets && ctx.mentionTargets.length > 0) {
     const names = ctx.mentionTargets.map((t) => t.name).join(", ");
     log(`feishu[${account.accountId}]: detected @ forward request, targets: [${names}]`);
+  }
+
+  const normalizedCommandText = normalizeFeishuCommandText(ctx.content);
+  if (normalizedCommandText !== ctx.content) {
+    log(
+      `feishu[${account.accountId}]: normalized natural-language control input to ${normalizedCommandText.split(/\s+/, 2)[0]}`,
+    );
+    ctx = { ...ctx, content: normalizedCommandText };
   }
 
   const historyLimit = Math.max(

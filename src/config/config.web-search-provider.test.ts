@@ -7,7 +7,7 @@ vi.mock("../runtime.js", () => ({
 }));
 
 const { __testing } = await import("../agents/tools/web-search.js");
-const { resolveSearchProvider } = __testing;
+const { resolveSearchProvider, missingSearchKeyPayload } = __testing;
 
 describe("web search provider config", () => {
   it("accepts perplexity provider and config", () => {
@@ -131,5 +131,53 @@ describe("web search provider auto-detection", () => {
         typeof resolveSearchProvider
       >[0]),
     ).toBe("gemini");
+  });
+
+  it("falls back to brave for unsupported provider strings", () => {
+    expect(
+      resolveSearchProvider({ provider: "tavily" } as unknown as Parameters<
+        typeof resolveSearchProvider
+      >[0]),
+    ).toBe("brave");
+  });
+
+  it("prefers brave over nested provider-specific keys during auto-detection", () => {
+    process.env.BRAVE_API_KEY = "test-brave-key";
+    expect(
+      resolveSearchProvider({
+        gemini: { apiKey: "test-gemini-key" },
+        perplexity: { apiKey: "test-perplexity-key" },
+      } as unknown as Parameters<typeof resolveSearchProvider>[0]),
+    ).toBe("brave");
+  });
+
+  it("prefers gemini over kimi and perplexity nested keys when brave is unavailable", () => {
+    expect(
+      resolveSearchProvider({
+        gemini: { apiKey: "test-gemini-key" },
+        kimi: { apiKey: "test-kimi-key" },
+        perplexity: { apiKey: "test-perplexity-key" },
+      } as unknown as Parameters<typeof resolveSearchProvider>[0]),
+    ).toBe("gemini");
+  });
+});
+
+describe("web search provider error payloads", () => {
+  it("returns actionable kimi missing-key guidance", () => {
+    expect(missingSearchKeyPayload("kimi")).toEqual(
+      expect.objectContaining({
+        error: "missing_kimi_api_key",
+        docs: "https://docs.openclaw.ai/tools/web",
+      }),
+    );
+  });
+
+  it("returns actionable gemini missing-key guidance", () => {
+    expect(missingSearchKeyPayload("gemini")).toEqual(
+      expect.objectContaining({
+        error: "missing_gemini_api_key",
+        docs: "https://docs.openclaw.ai/tools/web",
+      }),
+    );
   });
 });

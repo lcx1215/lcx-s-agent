@@ -401,6 +401,10 @@ function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDE
     }
   }
 
+  if (raw !== "") {
+    logVerbose(`web_search: unsupported provider "${raw}", falling back to "brave"`);
+  }
+
   return "brave";
 }
 
@@ -1458,6 +1462,7 @@ export function createWebSearchTool(options?: {
 
 export const __testing = {
   resolveSearchProvider,
+  missingSearchKeyPayload,
   inferPerplexityBaseUrlFromApiKey,
   resolvePerplexityBaseUrl,
   isDirectPerplexityBaseUrl,
