@@ -220,6 +220,20 @@ Automatically materializes per-target workfiles from local `fundamental-target-p
 openclaw hooks enable fundamental-target-workfiles
 ```
 
+### 📚 fundamental-target-deliverables
+
+Automatically materializes first-pass terminal deliverables from local `fundamental-target-packets` artifacts.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/target-packets/*.json`, falls back to upstream fundamental review artifacts when needed, and writes dossier skeletons, proposal-only manifest patch JSON, and blocked hold memos.
+**Output**: `<workspace>/bank/fundamental/target-deliverables/*.json`, `<workspace>/bank/fundamental/deliverables/<manifest-id>/**/*`, `<workspace>/memory/YYYY-MM-DD-fundamental-target-deliverables-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-target-deliverables
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.

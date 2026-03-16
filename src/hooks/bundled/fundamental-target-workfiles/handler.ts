@@ -399,7 +399,7 @@ async function loadReviewWorkbenchesWithFallback(workspaceDir: string): Promise<
   );
 }
 
-async function loadTargetPacketsWithFallback(workspaceDir: string): Promise<
+export async function loadTargetPacketsWithFallback(workspaceDir: string): Promise<
   Array<{
     relativePath: string;
     targetPackets: FundamentalTargetPacketsArtifact;
