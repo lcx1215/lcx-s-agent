@@ -1,11 +1,19 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
+import {
+  listAgentEntries,
+  resolveDefaultAgentId,
+  resolveAgentWorkspaceDir,
+} from "../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resolveStateDir } from "../../config/paths.js";
 import { writeFileWithinRoot } from "../../infra/fs-safe.js";
-import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import {
+  parseAgentSessionKey,
+  resolveAgentIdFromSessionKey,
+  toAgentStoreSessionKey,
+} from "../../routing/session-key.js";
 import { hasInterSessionUserProvenance } from "../../sessions/input-provenance.js";
 import type { HookEvent, HookHandler } from "../hooks.js";
 import { generateSlugViaLLM } from "../llm-slug-generator.js";
@@ -19,6 +27,7 @@ export type ResolvedMemorySessionContext = {
   sessionEntry: SessionEntryRecord;
   sessionId?: string;
   sessionFile?: string;
+  displaySessionKey: string;
 };
 
 type ArtifactLogger = {
@@ -232,10 +241,16 @@ export async function resolveMemorySessionContext(params: {
 }): Promise<ResolvedMemorySessionContext> {
   const context = params.event.context || {};
   const cfg = context.cfg as OpenClawConfig | undefined;
+  const contextWorkspaceDir =
+    typeof context.workspaceDir === "string" && context.workspaceDir.trim().length > 0
+      ? context.workspaceDir
+      : undefined;
   const agentId = resolveAgentIdFromSessionKey(params.event.sessionKey);
-  const workspaceDir = cfg
-    ? resolveAgentWorkspaceDir(cfg, agentId)
-    : path.join(resolveStateDir(process.env, os.homedir), "workspace");
+  const workspaceDir =
+    contextWorkspaceDir ||
+    (cfg
+      ? resolveAgentWorkspaceDir(cfg, agentId)
+      : path.join(resolveStateDir(process.env, os.homedir), "workspace"));
   const memoryDir = path.join(workspaceDir, "memory");
   await fs.mkdir(memoryDir, { recursive: true });
 
@@ -249,6 +264,17 @@ export async function resolveMemorySessionContext(params: {
     sessionFile: sessionEntry.sessionFile as string | undefined,
     fallbackToLatestNonReset: params.fallbackToLatestNonReset,
   });
+  let displaySessionKey = params.event.sessionKey;
+  if (cfg && contextWorkspaceDir) {
+    const workspaceAgentId = resolveAgentIdForWorkspaceDir(cfg, contextWorkspaceDir);
+    const parsed = parseAgentSessionKey(params.event.sessionKey);
+    if (workspaceAgentId && parsed && workspaceAgentId !== parsed.agentId) {
+      displaySessionKey = toAgentStoreSessionKey({
+        agentId: workspaceAgentId,
+        requestKey: parsed.rest,
+      });
+    }
+  }
 
   return {
     cfg,
@@ -257,7 +283,32 @@ export async function resolveMemorySessionContext(params: {
     sessionEntry,
     sessionId,
     sessionFile,
+    displaySessionKey,
   };
+}
+
+function resolveAgentIdForWorkspaceDir(
+  cfg: OpenClawConfig,
+  workspaceDir: string,
+): string | undefined {
+  const targetDir = path.resolve(workspaceDir);
+  const candidateAgentIds = new Set<string>();
+
+  candidateAgentIds.add(resolveDefaultAgentId(cfg));
+  for (const entry of listAgentEntries(cfg)) {
+    if (typeof entry.id === "string" && entry.id.trim().length > 0) {
+      candidateAgentIds.add(entry.id);
+    }
+  }
+
+  for (const candidateAgentId of candidateAgentIds) {
+    const candidateDir = path.resolve(resolveAgentWorkspaceDir(cfg, candidateAgentId));
+    if (candidateDir === targetDir) {
+      return candidateAgentId;
+    }
+  }
+
+  return undefined;
 }
 
 export function createSessionArtifactHandler(params: {
