@@ -248,6 +248,34 @@ Automatically materializes research-only dossier drafts from dossier-ready local
 openclaw hooks enable fundamental-dossier-drafts
 ```
 
+### 🧾 fundamental-manifest-patch-review
+
+Automatically reviews proposal-only fundamental manifest patch artifacts before any manual collection work.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Finds follow-up collection patch proposals from local fundamental target packets, checks target-directory and metadata-sidecar requirements, and writes a review JSON plus memory note.
+**Output**: `<workspace>/bank/fundamental/manifest-patch-reviews/*.json`, `<workspace>/memory/YYYY-MM-DD-fundamental-manifest-patch-review-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-manifest-patch-review
+```
+
+### 📥 fundamental-collection-packets
+
+Automatically materializes proposal-only collection work packets from fundamental manifest patch proposals.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Finds follow-up collection patch proposals from local fundamental target packets and writes concrete per-target collection packets with destination, naming rules, manual checks, and next steps.
+**Output**: `<workspace>/bank/fundamental/collection-packets/*.json`, `<workspace>/bank/fundamental/collection-work/<manifest-id>/*.md`, `<workspace>/memory/YYYY-MM-DD-fundamental-collection-packets-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-collection-packets
+```
+
 ### 🧩 learning-review-bootstrap
 
 Injects recent learning review notes into bootstrap context for future study sessions.

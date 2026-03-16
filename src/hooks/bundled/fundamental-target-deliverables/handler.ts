@@ -186,7 +186,7 @@ function renderDossierSkeleton(params: {
   ].join("\n");
 }
 
-function buildCollectionManifestPatch(params: {
+export function buildCollectionManifestPatch(params: {
   nowIso: string;
   manifestPath: string;
   manifest: FundamentalManifestScaffold | undefined;
