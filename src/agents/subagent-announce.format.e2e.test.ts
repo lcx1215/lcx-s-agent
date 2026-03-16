@@ -561,6 +561,25 @@ describe("subagent announce formatting", () => {
     expect(agentSpy).not.toHaveBeenCalled();
   });
 
+  it("does not retry completion direct send on gateway timeout", async () => {
+    sendSpy.mockRejectedValueOnce(new Error("gateway timeout after 60000ms"));
+
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "run-direct-completion-gateway-timeout",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      requesterOrigin: { channel: "slack", to: "channel:C123", accountId: "acct-1" },
+      ...defaultOutcomeAnnounce,
+      expectsCompletionMessage: true,
+      roundOneReply: "final answer",
+    });
+
+    expect(didAnnounce).toBe(false);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(agentSpy).not.toHaveBeenCalled();
+  });
+
   it("retries direct agent announce on transient channel-unavailable errors", async () => {
     agentSpy
       .mockRejectedValueOnce(new Error("No active WhatsApp Web listener (account: default)"))
