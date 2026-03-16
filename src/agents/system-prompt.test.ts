@@ -144,6 +144,9 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("## Skills (mandatory)");
     expect(prompt).toContain("<available_skills>");
+    expect(prompt).toContain(
+      "When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
+    );
   });
 
   it("omits skills in minimal prompt mode when skillsPrompt is absent", () => {
@@ -243,6 +246,9 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Do not poll `subagents list` / `sessions_list` in a loop");
     expect(prompt).toContain(
       "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.",
+    );
+    expect(prompt).toContain(
+      "When exec returns approval-pending, include the concrete /approve command from tool output",
     );
   });
 
@@ -464,8 +470,11 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("## OpenClaw Self-Update");
+    expect(prompt).toContain("config.schema");
     expect(prompt).toContain("config.apply");
+    expect(prompt).toContain("config.patch");
     expect(prompt).toContain("update.run");
+    expect(prompt).not.toContain("config.schema.lookup");
   });
 
   it("includes skills guidance when skills prompt is present", () => {
