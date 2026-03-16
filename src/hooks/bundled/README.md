@@ -4,6 +4,8 @@ This directory contains hooks that ship with OpenClaw. These hooks are automatic
 
 ## Available Hooks
 
+### OpenClaw Core Hooks (continued)
+
 ### 💾 session-memory
 
 Automatically saves session context to memory when you issue `/new` or `/reset`.
@@ -17,6 +19,10 @@ Automatically saves session context to memory when you issue `/new` or `/reset`.
 ```bash
 openclaw hooks enable session-memory
 ```
+
+### Lobster Overlay Hooks
+
+These hooks are local Lobster overlays on top of the upstream bundled-hook surface. They extend the built-in memory/research pipeline but are not currently part of upstream OpenClaw.
 
 ### 🧠 learning-review
 
@@ -171,6 +177,8 @@ Builds a weekly methods review from recent frontier research cards.
 ```bash
 openclaw hooks enable frontier-research-weekly
 ```
+
+### OpenClaw Core Hooks
 
 ### 📎 bootstrap-extra-files
 
