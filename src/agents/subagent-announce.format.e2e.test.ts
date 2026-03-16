@@ -1541,6 +1541,12 @@ describe("subagent announce formatting", () => {
     expect(call?.params?.deliver).toBe(false);
     expect(call?.params?.channel).toBeUndefined();
     expect(call?.params?.to).toBeUndefined();
+    expect(call?.params?.inputProvenance).toMatchObject({
+      kind: "inter_session",
+      sourceSessionKey: "agent:main:subagent:worker",
+      sourceChannel: "webchat",
+      sourceTool: "subagent_announce",
+    });
   });
 
   it.each([
@@ -1954,6 +1960,47 @@ describe("subagent announce formatting", () => {
     // The channel should match requesterOrigin, NOT the stale session entry.
     expect(call?.params?.channel).toBe("telegram");
     expect(call?.params?.to).toBe("telegram:123");
+    expect(call?.params?.inputProvenance).toMatchObject({
+      kind: "inter_session",
+      sourceSessionKey: "agent:main:subagent:test",
+      sourceChannel: "webchat",
+      sourceTool: "subagent_announce",
+    });
+  });
+
+  it("keeps queued announce internal for cron requester sessions", async () => {
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(true);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+    sessionStore = {
+      "agent:main:cron:daily-review": {
+        sessionId: "session-cron-internal",
+        lastChannel: "telegram",
+        lastTo: "telegram:123",
+        queueMode: "collect",
+        queueDebounceMs: 0,
+      },
+    };
+
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "run-cron-internal-queued",
+      requesterSessionKey: "agent:main:cron:daily-review",
+      requesterDisplayKey: "agent:main:cron:daily-review",
+      ...defaultOutcomeAnnounce,
+    });
+
+    expect(didAnnounce).toBe(true);
+    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    expect(call?.params?.sessionKey).toBe("agent:main:cron:daily-review");
+    expect(call?.params?.deliver).toBe(false);
+    expect(call?.params?.channel).toBeUndefined();
+    expect(call?.params?.to).toBeUndefined();
+    expect(call?.params?.inputProvenance).toMatchObject({
+      kind: "inter_session",
+      sourceSessionKey: "agent:main:subagent:test",
+      sourceChannel: "webchat",
+      sourceTool: "subagent_announce",
+    });
   });
 
   it("routes or falls back for ended parent subagent sessions (#18037)", async () => {

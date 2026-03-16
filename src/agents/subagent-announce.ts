@@ -14,6 +14,7 @@ import type { ConversationRef } from "../infra/outbound/session-binding-service.
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { normalizeAccountId, normalizeMainKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
+import { isCronSessionKey } from "../sessions/session-key-utils.js";
 import { extractTextFromChatContent } from "../shared/chat-content.js";
 import {
   type DeliveryContext,
@@ -21,7 +22,11 @@ import {
   mergeDeliveryContext,
   normalizeDeliveryContext,
 } from "../utils/delivery-context.js";
-import { isDeliverableMessageChannel, isInternalMessageChannel } from "../utils/message-channel.js";
+import {
+  INTERNAL_MESSAGE_CHANNEL,
+  isDeliverableMessageChannel,
+  isInternalMessageChannel,
+} from "../utils/message-channel.js";
 import {
   buildAnnounceIdFromChildRun,
   buildAnnounceIdempotencyKey,
@@ -74,6 +79,10 @@ function resolveSubagentAnnounceTimeoutMs(cfg: ReturnType<typeof loadConfig>): n
     return DEFAULT_SUBAGENT_ANNOUNCE_TIMEOUT_MS;
   }
   return Math.min(Math.max(1, Math.floor(configured)), MAX_TIMER_SAFE_TIMEOUT_MS);
+}
+
+function isInternalAnnounceRequesterSession(sessionKey: string | undefined): boolean {
+  return getSubagentDepthFromSessionStore(sessionKey) >= 1 || isCronSessionKey(sessionKey);
 }
 
 function buildCompletionDeliveryMessage(params: {
@@ -604,8 +613,7 @@ async function resolveSubagentCompletionOrigin(params: {
 async function sendAnnounce(item: AnnounceQueueItem) {
   const cfg = loadConfig();
   const announceTimeoutMs = resolveSubagentAnnounceTimeoutMs(cfg);
-  const requesterDepth = getSubagentDepthFromSessionStore(item.sessionKey);
-  const requesterIsSubagent = requesterDepth >= 1;
+  const requesterIsSubagent = isInternalAnnounceRequesterSession(item.sessionKey);
   const origin = item.origin;
   const threadId =
     origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
@@ -629,6 +637,12 @@ async function sendAnnounce(item: AnnounceQueueItem) {
       threadId: requesterIsSubagent ? undefined : threadId,
       deliver: !requesterIsSubagent,
       internalEvents: item.internalEvents,
+      inputProvenance: {
+        kind: "inter_session",
+        sourceSessionKey: item.sourceSessionKey,
+        sourceChannel: item.sourceChannel ?? INTERNAL_MESSAGE_CHANNEL,
+        sourceTool: item.sourceTool ?? "subagent_announce",
+      },
       idempotencyKey,
     },
     timeoutMs: announceTimeoutMs,
@@ -682,6 +696,9 @@ async function maybeQueueSubagentAnnounce(params: {
   steerMessage: string;
   summaryLine?: string;
   requesterOrigin?: DeliveryContext;
+  sourceSessionKey?: string;
+  sourceChannel?: string;
+  sourceTool?: string;
   internalEvents?: AgentInternalEvent[];
   signal?: AbortSignal;
 }): Promise<"steered" | "queued" | "none"> {
@@ -727,6 +744,9 @@ async function maybeQueueSubagentAnnounce(params: {
         enqueuedAt: Date.now(),
         sessionKey: canonicalKey,
         origin,
+        sourceSessionKey: params.sourceSessionKey,
+        sourceChannel: params.sourceChannel,
+        sourceTool: params.sourceTool,
       },
       settings: queueSettings,
       send: sendAnnounce,
@@ -750,6 +770,9 @@ async function sendSubagentAnnounceDirectly(params: {
   currentRunId?: string;
   completionDirectOrigin?: DeliveryContext;
   directOrigin?: DeliveryContext;
+  sourceSessionKey?: string;
+  sourceChannel?: string;
+  sourceTool?: string;
   requesterIsSubagent: boolean;
   signal?: AbortSignal;
 }): Promise<SubagentAnnounceDeliveryResult> {
@@ -893,6 +916,12 @@ async function sendSubagentAnnounceDirectly(params: {
             accountId: shouldDeliverExternally ? directOrigin?.accountId : undefined,
             to: shouldDeliverExternally ? directTo : undefined,
             threadId: shouldDeliverExternally ? threadId : undefined,
+            inputProvenance: {
+              kind: "inter_session",
+              sourceSessionKey: params.sourceSessionKey,
+              sourceChannel: params.sourceChannel ?? INTERNAL_MESSAGE_CHANNEL,
+              sourceTool: params.sourceTool ?? "subagent_announce",
+            },
             idempotencyKey: params.directIdempotencyKey,
           },
           expectFinal: true,
@@ -924,6 +953,9 @@ async function deliverSubagentAnnouncement(params: {
   requesterOrigin?: DeliveryContext;
   completionDirectOrigin?: DeliveryContext;
   directOrigin?: DeliveryContext;
+  sourceSessionKey?: string;
+  sourceChannel?: string;
+  sourceTool?: string;
   targetRequesterSessionKey: string;
   requesterIsSubagent: boolean;
   expectsCompletionMessage: boolean;
@@ -945,6 +977,9 @@ async function deliverSubagentAnnouncement(params: {
         steerMessage: params.steerMessage,
         summaryLine: params.summaryLine,
         requesterOrigin: params.requesterOrigin,
+        sourceSessionKey: params.sourceSessionKey,
+        sourceChannel: params.sourceChannel,
+        sourceTool: params.sourceTool,
         internalEvents: params.internalEvents,
         signal: params.signal,
       }),
@@ -960,6 +995,9 @@ async function deliverSubagentAnnouncement(params: {
         completionRouteMode: params.completionRouteMode,
         spawnMode: params.spawnMode,
         directOrigin: params.directOrigin,
+        sourceSessionKey: params.sourceSessionKey,
+        sourceChannel: params.sourceChannel,
+        sourceTool: params.sourceTool,
         requesterIsSubagent: params.requesterIsSubagent,
         expectsCompletionMessage: params.expectsCompletionMessage,
         signal: params.signal,
@@ -1415,6 +1453,9 @@ export async function runSubagentAnnounceFlow(params: {
           : targetRequesterOrigin,
       completionDirectOrigin,
       directOrigin,
+      sourceSessionKey: params.childSessionKey,
+      sourceChannel: INTERNAL_MESSAGE_CHANNEL,
+      sourceTool: "subagent_announce",
       targetRequesterSessionKey,
       requesterIsSubagent,
       expectsCompletionMessage: expectsCompletionMessage,
