@@ -105,6 +105,8 @@ When doing a generic upstream refresh pass, use this order:
 4. `src/hooks/bundled/README.md`
 5. neighboring scripts/runtime surfaces only if required by the above
 
+For `src/agents/subagent-announce.ts`, use `audit/subagent-announce-runtime-seam.md` and split work into prompt-only, retry/timeout, and routing slices instead of treating the whole file as one change.
+
 ### Step 4. Preserve local truths
 
 Do not remove or weaken these local behaviors during upstream alignment:

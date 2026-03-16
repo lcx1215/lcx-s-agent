@@ -40,4 +40,5 @@ Reference docs
 - audit/upstream-overlay-maintenance.md
 - audit/shared-hotspots-integration.md
 - audit/runtime-seams-integration.md
+- audit/subagent-announce-runtime-seam.md
 EOF
