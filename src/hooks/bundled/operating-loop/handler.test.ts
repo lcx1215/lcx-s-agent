@@ -6,6 +6,16 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import { writeWorkspaceFile } from "../../../test-helpers/workspace.js";
 import { createHookEvent } from "../../hooks.js";
 import type { HookHandler } from "../../hooks.js";
+import {
+  summarizeFundamentalIntakeSession,
+  type FundamentalDocumentMetadata,
+  type FundamentalManifestScaffold,
+} from "../fundamental-intake/handler.js";
+import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
+import { buildFundamentalRiskHandoff } from "../fundamental-risk-handoff/handler.js";
+import { buildFundamentalScoringGate } from "../fundamental-scoring-gate/handler.js";
+import { buildSnapshotInput } from "../fundamental-snapshot-bridge/handler.js";
+import { buildFundamentalSnapshot } from "../fundamental-snapshot/handler.js";
 
 let handler: HookHandler;
 let suiteWorkspaceRoot = "";
@@ -40,6 +50,151 @@ function createSessionContent(
     .join("\n");
 }
 
+function createFundamentalManifestFixture(requestText: string): FundamentalManifestScaffold {
+  return summarizeFundamentalIntakeSession(
+    [
+      {
+        role: "user",
+        text: requestText,
+      },
+      {
+        role: "assistant",
+        text: "I will keep this fundamental workflow manifest-first and approval-gated.",
+      },
+    ],
+    "2026-03-15T12:00:00.000Z",
+  ).manifestScaffold;
+}
+
+async function writeFundamentalDocument(params: {
+  workspaceDir: string;
+  manifest: FundamentalManifestScaffold;
+  fileName: string;
+  metadata: FundamentalDocumentMetadata;
+}) {
+  const targetDir = params.manifest.documentWorkspace.targetDirs[0]?.dir;
+  if (!targetDir) {
+    throw new Error("manifest fixture missing target dir");
+  }
+  const absoluteTargetDir = path.join(params.workspaceDir, targetDir);
+  await fs.mkdir(absoluteTargetDir, { recursive: true });
+  const filePath = path.join(absoluteTargetDir, params.fileName);
+  await fs.writeFile(filePath, "fixture", "utf-8");
+  await fs.writeFile(
+    `${filePath}.meta.json`,
+    `${JSON.stringify(params.metadata, null, 2)}\n`,
+    "utf-8",
+  );
+}
+
+async function seedFundamentalScoringArtifacts(params: {
+  workspaceDir: string;
+  manifest: FundamentalManifestScaffold;
+  writeRiskHandoff?: boolean;
+}) {
+  await writeFundamentalDocument({
+    workspaceDir: params.workspaceDir,
+    manifest: params.manifest,
+    fileName: "aapl--annual_report--issuer_primary--20260315.pdf",
+    metadata: {
+      version: 1,
+      targetLabel: "AAPL",
+      category: "annual_report",
+      sourceType: "issuer_primary",
+    },
+  });
+  await writeFundamentalDocument({
+    workspaceDir: params.workspaceDir,
+    manifest: params.manifest,
+    fileName: "aapl--annual_report--regulatory_filing--20260315.pdf",
+    metadata: {
+      version: 1,
+      targetLabel: "AAPL",
+      category: "annual_report",
+      sourceType: "regulatory_filing",
+    },
+  });
+  await writeFundamentalDocument({
+    workspaceDir: params.workspaceDir,
+    manifest: params.manifest,
+    fileName: "aapl--investor_presentation--company_presentation--20260315.pdf",
+    metadata: {
+      version: 1,
+      targetLabel: "AAPL",
+      category: "investor_presentation",
+      sourceType: "company_presentation",
+    },
+  });
+
+  const manifestPath = `bank/fundamental/manifests/2026-03-15-fundamental-manifest-${params.manifest.manifestId}.json`;
+  const bridged = await bridgeManifest({
+    workspaceDir: params.workspaceDir,
+    nowIso: "2026-03-15T12:00:00.000Z",
+    manifestPath,
+    manifest: {
+      ...params.manifest,
+      reviewGate: {
+        ...params.manifest.reviewGate,
+        status: "approved_for_collection",
+      },
+    },
+  });
+  const snapshotInput = buildSnapshotInput({
+    nowIso: "2026-03-15T12:00:00.000Z",
+    manifestPath,
+    readinessPath: `bank/fundamental/readiness/${params.manifest.manifestId}.json`,
+    manifest: bridged.manifest,
+    readiness: bridged.readiness,
+  });
+  const snapshot = buildFundamentalSnapshot({
+    nowIso: "2026-03-15T12:00:00.000Z",
+    manifestPath,
+    readinessPath: `bank/fundamental/readiness/${params.manifest.manifestId}.json`,
+    snapshotInputPath: `bank/fundamental/snapshot-inputs/${params.manifest.manifestId}.json`,
+    manifest: bridged.manifest,
+    readiness: bridged.readiness,
+    snapshotInput,
+  });
+  const scoringGate = buildFundamentalScoringGate({
+    nowIso: "2026-03-15T12:00:00.000Z",
+    snapshotPath: `bank/fundamental/snapshots/${params.manifest.manifestId}.json`,
+    snapshot,
+  });
+
+  const manifestsDir = path.join(params.workspaceDir, "bank", "fundamental", "manifests");
+  const scoringGatesDir = path.join(params.workspaceDir, "bank", "fundamental", "scoring-gates");
+  await fs.mkdir(manifestsDir, { recursive: true });
+  await fs.mkdir(scoringGatesDir, { recursive: true });
+  await fs.writeFile(
+    path.join(manifestsDir, `2026-03-15-fundamental-manifest-${params.manifest.manifestId}.json`),
+    `${JSON.stringify(bridged.manifest, null, 2)}\n`,
+    "utf-8",
+  );
+  await fs.writeFile(
+    path.join(scoringGatesDir, `${params.manifest.manifestId}.json`),
+    `${JSON.stringify(scoringGate, null, 2)}\n`,
+    "utf-8",
+  );
+
+  if (!params.writeRiskHandoff) {
+    return;
+  }
+
+  const handoff = buildFundamentalRiskHandoff({
+    nowIso: "2026-03-15T12:00:00.000Z",
+    scoringGatePath: `bank/fundamental/scoring-gates/${params.manifest.manifestId}.json`,
+    manifestRiskHandoffStatus: bridged.manifest.riskHandoff.status,
+    scoringGate,
+  });
+  const handoffDir = path.join(params.workspaceDir, "bank", "fundamental", "risk-handoffs");
+  await fs.mkdir(handoffDir, { recursive: true });
+  await fs.writeFile(
+    path.join(handoffDir, `${params.manifest.manifestId}.json`),
+    `${JSON.stringify(handoff, null, 2)}\n`,
+    "utf-8",
+  );
+}
+
 beforeAll(async () => {
   ({ default: handler } = await import("./handler.js"));
   suiteWorkspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-operating-loop-"));
@@ -61,6 +216,12 @@ describe("operating-loop hook", () => {
     const sessionsDir = path.join(workspaceDir, "sessions");
     await fs.mkdir(memoryDir, { recursive: true });
     await fs.mkdir(sessionsDir, { recursive: true });
+    await seedFundamentalScoringArtifacts({
+      workspaceDir,
+      manifest: createFundamentalManifestFixture(
+        "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+      ),
+    });
 
     await writeWorkspaceFile({
       dir: memoryDir,
@@ -231,10 +392,17 @@ describe("operating-loop hook", () => {
     expect(branchSummary).toContain("# Branch Summary: 2026-03-15");
     expect(branchSummary).toContain("learning_focus: linear-algebra");
     expect(branchSummary).toContain("top_decision: worth_reproducing: WaveLSFormer");
+    expect(branchSummary).toContain("fundamental_handoff: ready=1 partial=0 blocked=0");
+    expect(branchSummary).toContain("fundamental-risk-handoff");
 
     expect(riskAudit).toContain("# Risk Audit Snapshot: 2026-03-15");
-    expect(riskAudit).toContain("**Risk Scope**: methods-only");
+    expect(riskAudit).toContain("**Top Decision**: ready_for_risk_review: AAPL");
+    expect(riskAudit).toContain("**Risk Scope**: methods+fundamental-handoff");
+    expect(riskAudit).toContain("**Fundamental Handoff Count**: 1");
     expect(riskAudit).toContain("temporal windowing can leak future information");
+    expect(riskAudit).toContain(
+      "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations. | decision=ready | ready=1/1",
+    );
 
     expect(weeklyLoop).toContain("# Weekly Learning Loop: 2026-W11");
     expect(weeklyLoop).toContain("learning_principle: check dimensions first (1)");
@@ -245,9 +413,13 @@ describe("operating-loop hook", () => {
     expect(weeklyLoop).toContain("session: 2026-03-15 2026-03-15-simple-math.md");
 
     expect(unifiedRiskView).toContain("# Unified Risk View");
-    expect(unifiedRiskView).toContain("top_decision: worth_reproducing: WaveLSFormer");
+    expect(unifiedRiskView).toContain("top_decision: ready_for_risk_review: AAPL");
     expect(unifiedRiskView).toContain("approved_assets: []");
-    expect(unifiedRiskView).toContain("blackout_status: method_only_no_asset_gate");
+    expect(unifiedRiskView).toContain("blackout_status: mixed_research_no_asset_gate");
+    expect(unifiedRiskView).toContain(
+      "source_branch: frontier_research_branch+fundamental_research_branch",
+    );
+    expect(unifiedRiskView).toContain("ready_targets: 1");
     expect(unifiedRiskView).toContain("risk_audit_path: memory/2026-03-15-risk-audit-snapshot.md");
   });
 

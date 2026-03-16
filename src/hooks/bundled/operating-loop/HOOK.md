@@ -1,6 +1,6 @@
 ---
 name: operating-loop
-description: "Write daily operating artifacts, a weekly learning loop, and a unified methods-only risk view from current memory notes"
+description: "Write daily operating artifacts, a weekly learning loop, and a unified research risk view from current notes and local fundamental handoffs"
 homepage: https://docs.openclaw.ai/automation/hooks#operating-loop
 metadata:
   {
@@ -24,7 +24,8 @@ When you run `/new` or `/reset`, this hook:
 
 1. reads the current transcript
 2. merges it with current `session-memory`, `learning-review`, and `frontier-research` notes
-3. writes daily operating logs, a weekly learning loop, and a stable unified risk view
+3. reads local fundamental scoring-gate and risk-handoff artifacts when they exist
+4. writes daily operating logs, a weekly learning loop, and a stable unified risk view
 
 ## Output
 
@@ -40,4 +41,4 @@ Writes these files under `<workspace>/memory/`:
 
 ## Guardrail
 
-The unified risk view is intentionally methods-only. It does not invent asset approvals, vetoes, or execution-level risk state when those inputs do not exist in the repo.
+The unified risk view may include fundamental handoff summaries, but it still does not invent asset approvals, vetoes, or execution-level risk state when those inputs do not exist in the repo.

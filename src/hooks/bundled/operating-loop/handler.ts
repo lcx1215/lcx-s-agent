@@ -12,6 +12,12 @@ import {
   looksLikeFrontierResearchSession,
   summarizeFrontierResearchSession,
 } from "../frontier-research/handler.js";
+import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
+import {
+  buildFundamentalRiskHandoff,
+  type FundamentalRiskHandoffArtifact,
+} from "../fundamental-risk-handoff/handler.js";
+import type { FundamentalScoringGateArtifact } from "../fundamental-scoring-gate/handler.js";
 import { looksLikeLearningSession, summarizeLearningSession } from "../learning-review/handler.js";
 import {
   countTop,
@@ -64,6 +70,13 @@ type FrontierSnapshot = {
   adoptableIdea: string;
   replicationCost: string;
   verdict: "archive_for_knowledge" | "watch_for_followup" | "worth_reproducing" | "ignore";
+};
+
+type FundamentalRiskSnapshot = {
+  date: string;
+  name: string;
+  artifactPath: string;
+  handoff: FundamentalRiskHandoffArtifact;
 };
 
 function extractMatch(content: string, pattern: RegExp, fallback: string): string {
@@ -325,6 +338,97 @@ async function loadExistingSnapshots(memoryDir: string): Promise<{
   }
 }
 
+async function loadJsonArtifacts<T>(params: {
+  dirPath: string;
+  relativePrefix: string;
+}): Promise<Array<{ name: string; relativePath: string; data: T }>> {
+  try {
+    const fileNames = (await fs.readdir(params.dirPath))
+      .filter((name) => name.endsWith(".json"))
+      .toSorted();
+    return await Promise.all(
+      fileNames.map(async (name) => {
+        const relativePath = `${params.relativePrefix}/${name}`;
+        const raw = await fs.readFile(path.join(params.dirPath, name), "utf-8");
+        return {
+          name,
+          relativePath,
+          data: JSON.parse(raw) as T,
+        };
+      }),
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function loadFundamentalRiskSnapshots(
+  workspaceDir: string,
+): Promise<FundamentalRiskSnapshot[]> {
+  const [manifests, scoringGates, persistedHandoffs] = await Promise.all([
+    loadJsonArtifacts<FundamentalManifestScaffold>({
+      dirPath: path.join(workspaceDir, "bank", "fundamental", "manifests"),
+      relativePrefix: "bank/fundamental/manifests",
+    }),
+    loadJsonArtifacts<FundamentalScoringGateArtifact>({
+      dirPath: path.join(workspaceDir, "bank", "fundamental", "scoring-gates"),
+      relativePrefix: "bank/fundamental/scoring-gates",
+    }),
+    loadJsonArtifacts<FundamentalRiskHandoffArtifact>({
+      dirPath: path.join(workspaceDir, "bank", "fundamental", "risk-handoffs"),
+      relativePrefix: "bank/fundamental/risk-handoffs",
+    }),
+  ]);
+
+  const manifestById = new Map(manifests.map(({ data }) => [data.manifestId, data]));
+  const persistedById = new Map(
+    persistedHandoffs.map(({ data, name, relativePath }) => [
+      data.manifestId,
+      {
+        date: data.generatedAt.slice(0, 10),
+        name,
+        artifactPath: relativePath,
+        handoff: data,
+      } satisfies FundamentalRiskSnapshot,
+    ]),
+  );
+
+  const snapshots = new Map<string, FundamentalRiskSnapshot>();
+  for (const [manifestId, snapshot] of persistedById) {
+    snapshots.set(manifestId, snapshot);
+  }
+
+  for (const { data: scoringGate, relativePath, name } of scoringGates) {
+    const manifest = manifestById.get(scoringGate.manifestId);
+    if (!manifest) {
+      continue;
+    }
+
+    const persisted = persistedById.get(scoringGate.manifestId);
+    if (persisted && persisted.handoff.generatedAt >= scoringGate.generatedAt) {
+      snapshots.set(scoringGate.manifestId, persisted);
+      continue;
+    }
+
+    const synthesized = buildFundamentalRiskHandoff({
+      nowIso: scoringGate.generatedAt,
+      scoringGatePath: relativePath,
+      manifestRiskHandoffStatus: manifest.riskHandoff.status,
+      scoringGate,
+    });
+    snapshots.set(scoringGate.manifestId, {
+      date: synthesized.generatedAt.slice(0, 10),
+      name,
+      artifactPath: `bank/fundamental/risk-handoffs/${scoringGate.manifestId}.json`,
+      handoff: synthesized,
+    });
+  }
+
+  return [...snapshots.values()].toSorted(
+    (a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name),
+  );
+}
+
 function verdictRank(verdict: FrontierSnapshot["verdict"]): number {
   switch (verdict) {
     case "worth_reproducing":
@@ -338,7 +442,18 @@ function verdictRank(verdict: FrontierSnapshot["verdict"]): number {
   }
 }
 
-function pickTopDecision(cards: FrontierSnapshot[]): string {
+function riskHandoffRank(decision: FundamentalRiskHandoffArtifact["handoffDecision"]): number {
+  switch (decision) {
+    case "ready":
+      return 5;
+    case "partial":
+      return 3;
+    default:
+      return 1;
+  }
+}
+
+function pickTopFrontierDecision(cards: FrontierSnapshot[]) {
   const candidate = cards
     .toSorted(
       (a, b) =>
@@ -349,9 +464,137 @@ function pickTopDecision(cards: FrontierSnapshot[]): string {
     .at(0);
 
   if (!candidate) {
+    return undefined;
+  }
+
+  return {
+    label: `${candidate.verdict}: ${candidate.title}`,
+    rank: verdictRank(candidate.verdict),
+  };
+}
+
+function pickTopDecision(cards: FrontierSnapshot[]): string {
+  const candidate = pickTopFrontierDecision(cards);
+  if (!candidate) {
     return "no_frontier_input";
   }
-  return `${candidate.verdict}: ${candidate.title}`;
+  return candidate.label;
+}
+
+function pickTopFundamentalDecision(handoffs: FundamentalRiskSnapshot[]) {
+  const candidate = handoffs
+    .flatMap((snapshot) =>
+      snapshot.handoff.targetDecisions.map((target) => ({
+        label:
+          target.handoffDecision === "ready"
+            ? `ready_for_risk_review: ${target.targetLabel}`
+            : target.handoffDecision === "partial"
+              ? `partial_risk_review: ${target.targetLabel}`
+              : `blocked_for_risk_review: ${target.targetLabel}`,
+        rank: riskHandoffRank(target.handoffDecision),
+        date: snapshot.date,
+        targetLabel: target.targetLabel,
+      })),
+    )
+    .toSorted(
+      (a, b) =>
+        b.rank - a.rank ||
+        b.date.localeCompare(a.date) ||
+        a.targetLabel.localeCompare(b.targetLabel),
+    )
+    .at(0);
+
+  return candidate;
+}
+
+function pickTopUnifiedDecision(params: {
+  frontierSnapshots: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
+}): string {
+  const frontier = pickTopFrontierDecision(params.frontierSnapshots);
+  const fundamental = pickTopFundamentalDecision(params.fundamentalHandoffs);
+  if (fundamental && (!frontier || fundamental.rank > frontier.rank)) {
+    return fundamental.label;
+  }
+  if (frontier) {
+    return frontier.label;
+  }
+  if (fundamental) {
+    return fundamental.label;
+  }
+  return "no_risk_input";
+}
+
+function summarizeFundamentalHandoffs(handoffs: FundamentalRiskSnapshot[]) {
+  return handoffs.reduce(
+    (summary, snapshot) => {
+      if (snapshot.handoff.handoffDecision === "ready") {
+        summary.readyArtifacts += 1;
+      } else if (snapshot.handoff.handoffDecision === "partial") {
+        summary.partialArtifacts += 1;
+      } else {
+        summary.blockedArtifacts += 1;
+      }
+      summary.readyTargets += snapshot.handoff.handoffSummary.readyTargets;
+      summary.partialTargets += snapshot.handoff.handoffSummary.partialTargets;
+      summary.blockedTargets += snapshot.handoff.handoffSummary.blockedTargets;
+      return summary;
+    },
+    {
+      totalArtifacts: handoffs.length,
+      readyArtifacts: 0,
+      partialArtifacts: 0,
+      blockedArtifacts: 0,
+      readyTargets: 0,
+      partialTargets: 0,
+      blockedTargets: 0,
+    },
+  );
+}
+
+function deriveRiskScope(params: {
+  frontierSnapshots: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
+}): string {
+  if (params.frontierSnapshots.length > 0 && params.fundamentalHandoffs.length > 0) {
+    return "methods+fundamental-handoff";
+  }
+  if (params.fundamentalHandoffs.length > 0) {
+    return "fundamental-handoff-only";
+  }
+  return "methods-only";
+}
+
+function deriveUnifiedBlackoutStatus(params: {
+  frontierSnapshots: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
+}): string {
+  if (params.frontierSnapshots.length > 0 && params.fundamentalHandoffs.length > 0) {
+    return "mixed_research_no_asset_gate";
+  }
+  if (params.fundamentalHandoffs.length > 0) {
+    return "fundamental_handoff_no_asset_gate";
+  }
+  if (params.frontierSnapshots.length > 0) {
+    return "method_only_no_asset_gate";
+  }
+  return "no_frontier_input";
+}
+
+function deriveUnifiedSourceBranch(params: {
+  frontierSnapshots: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
+}): string {
+  if (params.frontierSnapshots.length > 0 && params.fundamentalHandoffs.length > 0) {
+    return "frontier_research_branch+fundamental_research_branch";
+  }
+  if (params.fundamentalHandoffs.length > 0) {
+    return "fundamental_research_branch";
+  }
+  if (params.frontierSnapshots.length > 0) {
+    return "frontier_research_branch";
+  }
+  return "none";
 }
 
 function filterByWindow<T extends { date: string }>(items: T[], fromDate: Date, toDate: Date): T[] {
@@ -435,6 +678,7 @@ function renderDailyBranchSummary(params: {
   sessionSnapshots: SessionSnapshot[];
   learningSnapshots: LearningSnapshot[];
   frontierSnapshots: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
 }) {
   const topTopic = countTop(
     params.learningSnapshots.map((snapshot) => snapshot.topic),
@@ -448,6 +692,7 @@ function renderDailyBranchSummary(params: {
     params.frontierSnapshots.map((snapshot) => snapshot.methodFamily),
     1,
   )[0]?.value;
+  const handoffSummary = summarizeFundamentalHandoffs(params.fundamentalHandoffs);
   return [
     `# Branch Summary: ${params.dateStr}`,
     "",
@@ -460,11 +705,13 @@ function renderDailyBranchSummary(params: {
     `- default_learning_principle: ${topPrinciple ?? "none"}`,
     `- frontier_focus: ${topMethod ?? "none"}`,
     `- top_decision: ${pickTopDecision(params.frontierSnapshots)}`,
+    `- fundamental_handoff: ready=${handoffSummary.readyTargets} partial=${handoffSummary.partialTargets} blocked=${handoffSummary.blockedTargets}`,
     "",
     "## Source Chains",
     "- session-memory",
     "- learning-review",
     "- frontier-research",
+    ...(params.fundamentalHandoffs.length > 0 ? ["- fundamental-risk-handoff"] : []),
     "",
   ].join("\n");
 }
@@ -472,6 +719,7 @@ function renderDailyBranchSummary(params: {
 function renderRiskAuditSnapshot(params: {
   dateStr: string;
   frontierSnapshots: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
 }) {
   const verdicts = countTop(
     params.frontierSnapshots.map((snapshot) => snapshot.verdict),
@@ -488,12 +736,20 @@ function renderRiskAuditSnapshot(params: {
   const candidates = params.frontierSnapshots.filter(
     (snapshot) => snapshot.verdict === "worth_reproducing",
   );
+  const handoffSummary = summarizeFundamentalHandoffs(params.fundamentalHandoffs);
+  const missingInputs = countTop(
+    params.fundamentalHandoffs.flatMap((snapshot) =>
+      snapshot.handoff.targetDecisions.flatMap((target) => target.missingCriticalInputs),
+    ),
+    5,
+  );
   return [
     `# Risk Audit Snapshot: ${params.dateStr}`,
     "",
-    `- **Top Decision**: ${pickTopDecision(params.frontierSnapshots)}`,
-    `- **Risk Scope**: methods-only`,
+    `- **Top Decision**: ${pickTopUnifiedDecision(params)}`,
+    `- **Risk Scope**: ${deriveRiskScope(params)}`,
     `- **Frontier Input Count**: ${params.frontierSnapshots.length}`,
+    `- **Fundamental Handoff Count**: ${params.fundamentalHandoffs.length}`,
     "",
     "## Verdict Distribution",
     ...(verdicts.length > 0
@@ -518,6 +774,23 @@ function renderRiskAuditSnapshot(params: {
         )
       : ["- No method cleared the reproduction threshold today."]),
     "",
+    "## Fundamental Handoff Decisions",
+    ...(params.fundamentalHandoffs.length > 0
+      ? params.fundamentalHandoffs.map(
+          (snapshot) =>
+            `- ${snapshot.handoff.requestTitle} | decision=${snapshot.handoff.handoffDecision} | ready=${snapshot.handoff.handoffSummary.readyTargets}/${snapshot.handoff.handoffSummary.totalTargets}`,
+        )
+      : ["- No fundamental handoff state captured yet."]),
+    "",
+    "## Fundamental Blocking Inputs",
+    ...(missingInputs.length > 0
+      ? missingInputs.map((entry) => `- ${entry.value} (${entry.count})`)
+      : ["- No fundamental blockers captured yet."]),
+    "",
+    `- **Fundamental Ready Targets**: ${handoffSummary.readyTargets}`,
+    `- **Fundamental Partial Targets**: ${handoffSummary.partialTargets}`,
+    `- **Fundamental Blocked Targets**: ${handoffSummary.blockedTargets}`,
+    "",
   ].join("\n");
 }
 
@@ -525,20 +798,37 @@ function renderUnifiedRiskView(params: {
   dateStr: string;
   nowIso: string;
   frontierSnapshots: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
 }) {
+  const handoffSummary = summarizeFundamentalHandoffs(params.fundamentalHandoffs);
   return [
     "# Unified Risk View",
     "",
-    `- top_decision: ${pickTopDecision(params.frontierSnapshots)}`,
+    `- top_decision: ${pickTopUnifiedDecision(params)}`,
     "- approved_assets: []",
     "- vetoed_assets: []",
-    `- blackout_status: ${params.frontierSnapshots.length > 0 ? "method_only_no_asset_gate" : "no_frontier_input"}`,
-    "- source_branch: frontier_research_branch",
+    `- blackout_status: ${deriveUnifiedBlackoutStatus(params)}`,
+    `- source_branch: ${deriveUnifiedSourceBranch(params)}`,
     `- risk_audit_path: memory/${params.dateStr}-risk-audit-snapshot.md`,
     `- updated_at: ${params.nowIso}`,
     "",
+    "## Fundamental Handoffs",
+    ...(params.fundamentalHandoffs.length > 0
+      ? [
+          `- artifacts: ${handoffSummary.totalArtifacts}`,
+          `- ready_targets: ${handoffSummary.readyTargets}`,
+          `- partial_targets: ${handoffSummary.partialTargets}`,
+          `- blocked_targets: ${handoffSummary.blockedTargets}`,
+        ]
+      : ["- none"]),
+    "",
     "## Notes",
-    "- This view is derived from frontier method cards only.",
+    ...(params.fundamentalHandoffs.length > 0
+      ? [
+          "- This view combines frontier method signals with fundamental risk-handoff summaries.",
+          "- Fundamental handoff targets are not asset approvals; they only indicate readiness for later controlled risk review.",
+        ]
+      : ["- This view is derived from frontier method cards only."]),
     "- Asset-level approvals or vetoes are intentionally left empty because this repo does not provide that runtime state yet.",
     "",
   ].join("\n");
@@ -652,6 +942,7 @@ function buildNotes(params: {
   dailySessions: SessionSnapshot[];
   dailyLearning: LearningSnapshot[];
   dailyFrontier: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
   weeklySessions: SessionSnapshot[];
   weeklyLearning: LearningSnapshot[];
   weeklyFrontier: FrontierSnapshot[];
@@ -687,6 +978,7 @@ function buildNotes(params: {
         sessionSnapshots: params.dailySessions,
         learningSnapshots: params.dailyLearning,
         frontierSnapshots: params.dailyFrontier,
+        fundamentalHandoffs: params.fundamentalHandoffs,
       }),
     },
     {
@@ -694,6 +986,7 @@ function buildNotes(params: {
       content: renderRiskAuditSnapshot({
         dateStr: params.dateStr,
         frontierSnapshots: params.dailyFrontier,
+        fundamentalHandoffs: params.fundamentalHandoffs,
       }),
     },
     {
@@ -714,6 +1007,7 @@ function buildNotes(params: {
         nowIso: params.nowIso,
         frontierSnapshots:
           params.dailyFrontier.length > 0 ? params.dailyFrontier : params.weeklyFrontier,
+        fundamentalHandoffs: params.fundamentalHandoffs,
       }),
     },
   ];
@@ -725,7 +1019,7 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
   }
 
   try {
-    const { memoryDir, sessionId, sessionFile } = await resolveMemorySessionContext({
+    const { workspaceDir, memoryDir, sessionId, sessionFile } = await resolveMemorySessionContext({
       event,
       fallbackToLatestNonReset: true,
     });
@@ -741,6 +1035,7 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
       : [];
     const { sessionSnapshots, learningSnapshots, frontierSnapshots } =
       await loadExistingSnapshots(memoryDir);
+    const fundamentalHandoffs = await loadFundamentalRiskSnapshots(workspaceDir);
     const commandSource = event.context?.commandSource;
     const source = typeof commandSource === "string" ? commandSource : "unknown";
 
@@ -778,6 +1073,7 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
       dailySessions.length === 0 &&
       dailyLearning.length === 0 &&
       dailyFrontier.length === 0 &&
+      fundamentalHandoffs.length === 0 &&
       weeklySessions.length === 0 &&
       weeklyLearning.length === 0 &&
       weeklyFrontier.length === 0
@@ -796,6 +1092,7 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
         dailySessions,
         dailyLearning,
         dailyFrontier,
+        fundamentalHandoffs,
         weeklySessions,
         weeklyLearning,
         weeklyFrontier,
