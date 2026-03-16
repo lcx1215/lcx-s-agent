@@ -11,6 +11,7 @@ This audit covers the first outer runtime seam pass after the shared-hotspot pas
 - `scripts/committer`
 - `scripts/copy-hook-metadata.ts`
 - `scripts/copy-export-html-templates.ts`
+- `scripts/bundle-a2ui.sh`
 - local sync/audit helper scripts in `scripts/`
 
 ## Status
@@ -81,7 +82,50 @@ Do not spend integration budget on this until one of these becomes true:
 - upstream changes the copy semantics
 - the scripts become part of a broader build-surface refresh
 
-## 3. Local sync/audit scripts
+## 3. bundle-a2ui.sh
+
+### Observed drift
+
+Local `scripts/bundle-a2ui.sh` differs from upstream in two meaningful places:
+
+- the hash computation now uses stdin-fed Node source plus `process.argv.slice(2)` instead of `--eval` plus `slice(1)`
+- the rolldown execution path was simplified to:
+  - use `rolldown` if present on PATH
+  - otherwise fall back to `pnpm dlx rolldown`
+
+Upstream still carries extra fallbacks for specific local `node_modules/.pnpm/.../rolldown/bin/cli.mjs` paths.
+
+### Integration judgment
+
+This is the only build-copy surface in this pass with potential correctness impact.
+
+Reason:
+
+- the copy scripts still produce the same files
+- `bundle-a2ui.sh` can affect whether bundling succeeds in constrained environments
+
+### Current assessment
+
+For the current repository environment, build correctness is not currently broken:
+
+- `pnpm build` passed during recent integration work
+- the current hash invocation is functionally equivalent for the script's input passing
+
+But compatibility risk is still higher here than in the copy scripts:
+
+- if `rolldown` is not on PATH
+- and `pnpm dlx` is unavailable or undesirable in a given environment
+- upstream's extra local binary fallbacks may succeed where the local script would fail
+
+### Current policy
+
+Treat `scripts/bundle-a2ui.sh` as the next build-surface seam worth revisiting if:
+
+- build failures start appearing in offline or locked-down environments
+- upstream changes bundling fallback behavior again
+- we do a broader build-pipeline refresh pass
+
+## 4. Local sync/audit scripts
 
 Examples:
 
@@ -99,9 +143,10 @@ They should be preserved locally unless the maintenance model itself changes.
 
 If a later pass is needed, inspect in this order:
 
-1. hook/build scripts whose behavior affects artifact packaging
-2. surrounding script surfaces touched by upstream build pipeline changes
-3. logging-only script drift last
+1. `scripts/bundle-a2ui.sh`
+2. hook/build scripts whose behavior affects artifact packaging
+3. surrounding script surfaces touched by upstream build pipeline changes
+4. logging-only script drift last
 
 ## Summary
 
@@ -109,4 +154,5 @@ The first runtime seam pass confirms:
 
 - shared operator tooling is worth aligning when it improves robustness
 - build-log-only drift is usually not worth immediate refresh
+- `bundle-a2ui.sh` is the only build-copy seam in this pass with non-trivial compatibility risk
 - local sync/audit scripts remain explicit overlay
