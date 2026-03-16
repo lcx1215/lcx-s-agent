@@ -56,6 +56,7 @@ These paths exist both locally and upstream, so they are the highest-value manua
 - `src/hooks/bundled/session-memory/handler.test.ts`
 - `src/agents/system-prompt.ts`
 - `src/agents/system-prompt.test.ts`
+- `src/agents/subagent-announce.ts`
 - `src/hooks/bundled/README.md`
 
 Interpretation:
@@ -86,6 +87,7 @@ Always manually inspect:
 
 - `src/hooks/bundled/session-memory/handler.ts`
 - `src/agents/system-prompt.ts`
+- `src/agents/subagent-announce.ts`
 - `src/hooks/bundled/README.md`
 
 ### Priority 2

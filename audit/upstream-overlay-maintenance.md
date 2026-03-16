@@ -38,6 +38,7 @@ Examples:
 - `src/hooks/bundled/session-memory/handler.test.ts`
 - `src/agents/system-prompt.ts`
 - `src/agents/system-prompt.test.ts`
+- `src/agents/subagent-announce.ts`
 - `src/hooks/bundled/README.md`
 
 Default rule:
@@ -100,8 +101,9 @@ When doing a generic upstream refresh pass, use this order:
 
 1. `src/hooks/bundled/session-memory/handler.ts`
 2. `src/agents/system-prompt.ts`
-3. `src/hooks/bundled/README.md`
-4. neighboring scripts/runtime surfaces only if required by the above
+3. `src/agents/subagent-announce.ts`
+4. `src/hooks/bundled/README.md`
+5. neighboring scripts/runtime surfaces only if required by the above
 
 ### Step 4. Preserve local truths
 

@@ -20,6 +20,7 @@ The first shared-hotspot integration pass is complete:
 - `src/hooks/bundled/session-memory/handler.test.ts`
 - `src/agents/system-prompt.ts`
 - `src/agents/system-prompt.test.ts`
+- `src/agents/subagent-announce.ts`
 - `src/hooks/bundled/README.md`
 
 ## 1. session-memory
@@ -165,13 +166,53 @@ That means:
 
 Lower than `session-memory` and `system-prompt`, but still a recurring manual merge point.
 
+## 4. subagent-announce
+
+### Current local position
+
+`src/agents/subagent-announce.ts` is a shared runtime file with substantial upstream drift, but it is not part of the Lobster overlay itself.
+
+The current local file appears to differ in real runtime behavior, including:
+
+- announce timeout defaults
+- retry handling around gateway timeout behavior
+- completion delivery message shaping
+- completion origin / direct-delivery resolution details
+- direct vs queued completion delivery semantics
+
+### Integration judgment
+
+This is a newly identified shared hotspot, and it is not a low-risk doc-only seam.
+
+It should be treated as a bounded runtime-policy seam:
+
+- too large for casual "while we're here" refreshes
+- worth auditing explicitly when future upstream session-routing or announce behavior matters
+- not something to merge opportunistically alongside Lobster memory/fundamental work
+
+### Must retain locally
+
+- any behavior that current Lobster runtime depends on for subagent completion routing
+- any local fixes already embedded in the current announce flow
+
+### Good candidates to absorb from upstream later
+
+- generic robustness fixes in announce retry and routing
+- queue/delivery correctness fixes that do not conflict with Lobster-specific runtime assumptions
+- new tests or extracted seams if upstream later isolates this file better
+
+### Priority
+
+Below `session-memory` and `system-prompt` for current Lobster work, but above `README` for runtime impact.
+
 ## Practical integration order
 
 When doing the first bounded upstream integration pass, use this order:
 
 1. `src/hooks/bundled/session-memory/handler.ts`
 2. `src/agents/system-prompt.ts`
-3. `src/hooks/bundled/README.md`
+3. `src/agents/subagent-announce.ts`
+4. `src/hooks/bundled/README.md`
 
 ## Summary
 
@@ -179,6 +220,7 @@ The shared hotspots are not equal:
 
 - `session-memory` is mostly a helper-boundary integration problem
 - `system-prompt` is a policy-overlay plus upstream-guardrail integration problem
+- `subagent-announce` is a runtime-policy seam with substantial upstream drift
 - `bundled/README` is mostly a documentation-overlay integration problem
 
 That means future upstream refresh work should not treat them as one class of conflict.

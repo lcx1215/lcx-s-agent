@@ -17,6 +17,7 @@ Recommended next slice order
 1. Shared hotspots
    - src/hooks/bundled/session-memory/handler.ts
    - src/agents/system-prompt.ts
+   - src/agents/subagent-announce.ts
    - src/hooks/bundled/README.md
 2. Runtime seams
    - shared scripts only if they affect build correctness or operator robustness

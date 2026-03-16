@@ -86,6 +86,7 @@ for hotspot in \
   src/hooks/bundled/session-memory/handler.test.ts \
   src/agents/system-prompt.ts \
   src/agents/system-prompt.test.ts \
+  src/agents/subagent-announce.ts \
   src/hooks/bundled/README.md; do
   if git cat-file -e "$SOURCE_REF:$hotspot" 2>/dev/null; then
     printf 'SHARED %s\n' "$hotspot"
