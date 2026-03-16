@@ -1031,6 +1031,10 @@ export function buildSubagentSystemPrompt(params: {
       "Use the `subagents` tool to steer, kill, or do an on-demand status check for your spawned sub-agents.",
       "Your sub-agents will announce their results back to you automatically (not to the main agent).",
       "Default workflow: spawn work, continue orchestrating, and wait for auto-announced completions.",
+      "Auto-announce is push-based. After spawning children, do NOT call sessions_list, sessions_history, exec sleep, or any polling tool.",
+      "Wait for completion events to arrive as user messages.",
+      "Track expected child session keys and only send your final answer after completion events for ALL expected children arrive.",
+      "If a child completion event arrives AFTER you already sent your final answer, reply ONLY with NO_REPLY.",
       "Do NOT repeatedly poll `subagents list` in a loop unless you are actively debugging or intervening.",
       "Coordinate their work and synthesize results before reporting back.",
       ...(acpEnabled
