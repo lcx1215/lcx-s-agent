@@ -262,6 +262,20 @@ Automatically materializes research-only target reports from dossier-ready local
 openclaw hooks enable fundamental-target-reports
 ```
 
+### 🗒️ fundamental-review-memo
+
+Automatically materializes a single research-only memo from target reports, collection packets, and blocked target state.
+
+**Events**: `command:new`, `command:reset`
+**What it does**: Reads `bank/fundamental/target-reports/*.json` and `bank/fundamental/collection-packets/*.json`, falls back to target packets and manifest patch review inputs when needed, and writes one memo with report-review targets, collection follow-ups, and blocked targets.
+**Output**: `<workspace>/bank/fundamental/review-memos/*.json`, `<workspace>/bank/fundamental/memos/<manifest-id>.md`, `<workspace>/memory/YYYY-MM-DD-fundamental-review-memo-<manifest-id>.md`
+
+**Enable**:
+
+```bash
+openclaw hooks enable fundamental-review-memo
+```
+
 ### 🧾 fundamental-manifest-patch-review
 
 Automatically reviews proposal-only fundamental manifest patch artifacts before any manual collection work.
