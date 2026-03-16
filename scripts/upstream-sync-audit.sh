@@ -78,3 +78,43 @@ git diff --name-status "$SOURCE_REF" HEAD -- \
   src/agents/system-prompt.test.ts \
   scripts \
   | sed -n '1,120p'
+
+log ""
+log "Shared hotspots"
+for hotspot in \
+  src/hooks/bundled/session-memory/handler.ts \
+  src/hooks/bundled/session-memory/handler.test.ts \
+  src/agents/system-prompt.ts \
+  src/agents/system-prompt.test.ts \
+  src/hooks/bundled/README.md; do
+  if git cat-file -e "$SOURCE_REF:$hotspot" 2>/dev/null; then
+    printf 'SHARED %s\n' "$hotspot"
+  fi
+done
+
+log ""
+log "Known local overlay"
+for overlay_path in \
+  src/hooks/bundled/artifact-memory.ts \
+  src/hooks/bundled/bootstrap-memory.ts \
+  src/hooks/bundled/weekly-memory.ts \
+  src/hooks/bundled/upgrade-memory.ts \
+  src/hooks/bundled/operating-loop/handler.ts \
+  src/hooks/bundled/fundamental-intake/handler.ts \
+  src/hooks/bundled/fundamental-manifest-bridge/handler.ts \
+  src/hooks/bundled/fundamental-snapshot-bridge/handler.ts \
+  src/hooks/bundled/fundamental-snapshot/handler.ts \
+  src/hooks/bundled/fundamental-scoring-gate/handler.ts \
+  src/hooks/bundled/learning-review/handler.ts \
+  src/hooks/bundled/frontier-research/handler.ts \
+  src/hooks/bundled/learning-review-weekly/handler.ts \
+  src/hooks/bundled/frontier-research-weekly/handler.ts \
+  src/hooks/bundled/learning-review-bootstrap/handler.ts \
+  src/hooks/bundled/frontier-research-bootstrap/handler.ts \
+  scripts/auto-sync-repo.sh \
+  scripts/sync-upstream-fork.sh \
+  scripts/upstream-sync-audit.sh; do
+  if ! git cat-file -e "$SOURCE_REF:$overlay_path" 2>/dev/null; then
+    printf 'OVERLAY %s\n' "$overlay_path"
+  fi
+done
