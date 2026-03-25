@@ -246,7 +246,16 @@ describe("buildAgentSystemPrompt", () => {
       "For current market, index, rate, or macro-event questions where freshness matters: use web_search first when available, then reason from the retrieved facts instead of relying on stale training priors.",
     );
     expect(prompt).toContain(
+      "Anchor risk/reward claims to a few fresh hard datapoints when available: current rates or rate expectations, the relevant ETF or index move, and cross-asset confirmation. Do not pad with stale quote tables.",
+    );
+    expect(prompt).toContain(
       "Always ask what is already priced by consensus and where the marginal surprise or pricing gap could still matter.",
+    );
+    expect(prompt).toContain(
+      "If the live-data layer looks stale, cached, or contradictory, say so explicitly, list the missing anchors, and do not fake a confident market ranking.",
+    );
+    expect(prompt).toContain(
+      "Before finalizing, do one short red-team pass: what regime, narrative, or data path would invalidate the view?",
     );
     expect(prompt).toContain(
       "If you cannot identify the current structural narrative or the pricing gap, say the analysis is still generic and not yet decision-useful.",
