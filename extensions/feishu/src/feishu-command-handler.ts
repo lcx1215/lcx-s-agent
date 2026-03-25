@@ -42,6 +42,8 @@ type FeishuBeforeResetRunner = {
 function normalizeFeishuAliasCandidate(messageText: string): string {
   return messageText
     .trim()
+    .replace(/^[>\-\u2022\u00b7]+\s*/u, "")
+    .replace(/[\u200b-\u200d\ufeff]/gu, "")
     .replace(/[。！？!?]+$/u, "")
     .replace(/\s+/g, " ");
 }

@@ -111,7 +111,7 @@ describe("buildFeishuAgentBody", () => {
     });
 
     expect(body).toContain(
-      "[System: Treat this as macro and major-asset research. Focus on causal links between events, inflation, rates, duration, and ETF or major-asset impact. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks.]",
+      "[System: Treat this as macro and major-asset research. Skip textbook 101 summaries and generic index quote recaps unless the user explicitly asks for basics. Focus on current structural narrative, what is already priced by consensus, where the marginal surprise or pricing gap still is, and whether rates, dollar, duration, or related assets confirm the same story. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks. If the answer is still generic, say so instead of pretending it is decision-useful.]",
     );
     expect(body).toContain("查一下最近美国非农、通胀预期和 QQQ / TLT 的关系");
   });
@@ -161,7 +161,7 @@ describe("buildFeishuAgentBody", () => {
     });
 
     expect(body).toContain(
-      "[System: Treat this as macro and major-asset research. Focus on causal links between events, inflation, rates, duration, and ETF or major-asset impact. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks.]",
+      "[System: Treat this as macro and major-asset research. Skip textbook 101 summaries and generic index quote recaps unless the user explicitly asks for basics. Focus on current structural narrative, what is already priced by consensus, where the marginal surprise or pricing gap still is, and whether rates, dollar, duration, or related assets confirm the same story. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks. If the answer is still generic, say so instead of pretending it is decision-useful.]",
     );
     expect(body).toContain("去看看几个指数最新的风险和潜在收益");
   });
