@@ -20,6 +20,12 @@ describe("normalizeFeishuCommandText", () => {
       "继续分析一下这家公司的财报差异",
     );
     expect(normalizeFeishuCommandText("把这些内容整理成一个表格")).toBe("把这些内容整理成一个表格");
+    expect(
+      normalizeFeishuCommandText("继续这个研究线，查一下最近英伟达 AI capex 指引和 QQQ 的关系"),
+    ).toBe("继续这个研究线，查一下最近英伟达 AI capex 指引和 QQQ 的关系");
+    expect(normalizeFeishuCommandText("查一下最近美国非农对 QQQ 和 TLT 的影响")).toBe(
+      "查一下最近美国非农对 QQQ 和 TLT 的影响",
+    );
   });
 });
 
