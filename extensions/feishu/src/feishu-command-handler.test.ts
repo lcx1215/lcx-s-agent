@@ -27,6 +27,18 @@ describe("normalizeFeishuCommandText", () => {
       "查一下最近美国非农对 QQQ 和 TLT 的影响",
     );
   });
+
+  it("keeps realistic research prompts out of reset alias handling", () => {
+    const cases = [
+      "把这些内容整理进当前基本面研究，并补一个 AAPL 和微软的 follow-up 清单",
+      "查一下最近美国非农、通胀预期和 QQQ / TLT 的关系",
+      "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
+    ];
+
+    for (const message of cases) {
+      expect(normalizeFeishuCommandText(message)).toBe(message);
+    }
+  });
 });
 
 describe("handleFeishuCommand", () => {
@@ -60,5 +72,33 @@ describe("handleFeishuCommand", () => {
         sessionKey: "agent:main:feishu:dm:ou-1",
       },
     );
+  });
+
+  it("does not treat realistic research prompts as reset commands", async () => {
+    const runBeforeReset = vi.fn(async () => {});
+
+    const messages = [
+      "把这些内容整理进当前基本面研究，并补一个 AAPL 和微软的 follow-up 清单",
+      "查一下最近美国非农、通胀预期和 QQQ / TLT 的关系",
+      "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
+    ];
+
+    for (const message of messages) {
+      await expect(
+        handleFeishuCommand(
+          message,
+          "agent:main:feishu:dm:ou-1",
+          { runBeforeReset },
+          {
+            cfg: {},
+            sessionEntry: {},
+            commandSource: "feishu",
+            timestamp: 123,
+          },
+        ),
+      ).resolves.toBe(false);
+    }
+
+    expect(runBeforeReset).not.toHaveBeenCalled();
   });
 });
