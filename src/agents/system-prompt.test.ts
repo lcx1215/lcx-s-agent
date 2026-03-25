@@ -243,6 +243,9 @@ describe("buildAgentSystemPrompt", () => {
       "For macro, ETF, or major-asset analysis: skip textbook 101 explanations unless the user explicitly asks for basics.",
     );
     expect(prompt).toContain(
+      "For current market, index, rate, or macro-event questions where freshness matters: use web_search first when available, then reason from the retrieved facts instead of relying on stale training priors.",
+    );
+    expect(prompt).toContain(
       "Always ask what is already priced by consensus and where the marginal surprise or pricing gap could still matter.",
     );
     expect(prompt).toContain(

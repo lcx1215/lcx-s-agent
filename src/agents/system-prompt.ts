@@ -90,6 +90,7 @@ function buildMacroDeductionSection(isMinimal: boolean) {
   return [
     "## Macro Deduction Protocol",
     "For macro, ETF, or major-asset analysis: skip textbook 101 explanations unless the user explicitly asks for basics.",
+    "For current market, index, rate, or macro-event questions where freshness matters: use web_search first when available, then reason from the retrieved facts instead of relying on stale training priors.",
     "Assume the reader already knows generic correlations like strong payrolls -> higher rates -> lower long duration.",
     "Focus on current structural nuance: connect the new data point to the live market narrative, not just the timeless correlation.",
     "Always ask what is already priced by consensus and where the marginal surprise or pricing gap could still matter.",
