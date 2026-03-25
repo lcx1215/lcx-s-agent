@@ -882,7 +882,7 @@ function inferFeishuResearchIntentNotice(content: string): string | undefined {
   }
 
   const hasMacroCue =
-    /(非农|cpi|ppi|fomc|通胀|通胀预期|利率|美债|收益率|期限溢价|美元|油价|就业|加息|降息|qqq|tlt|spy|iwm|dxy|macro|inflation|payroll|treasury|yield|duration|fomc|rates?)/u.test(
+    /(非农|cpi|ppi|fomc|通胀|通胀预期|利率|美债|收益率|期限溢价|美元|油价|就业|加息|降息|qqq|tlt|spy|iwm|dxy|etf|指数|大类资产|风险|潜在收益|macro|inflation|payroll|treasury|yield|duration|fomc|rates?)/u.test(
       normalized,
     );
   const hasFundamentalCue =
@@ -891,6 +891,10 @@ function inferFeishuResearchIntentNotice(content: string): string | undefined {
     );
   const hasFrontierCue =
     /(paper|论文|方法|method|frontier|leakage|overfitting|复现|replication|baseline)/u.test(
+      normalized,
+    );
+  const hasLearningCue =
+    /(学学|学习|复盘|开源|新技术|源码|技术栈|原理|教程|文档|study|learn|open source)/u.test(
       normalized,
     );
 
@@ -902,6 +906,9 @@ function inferFeishuResearchIntentNotice(content: string): string | undefined {
   }
   if (hasFrontierCue && !hasFundamentalCue) {
     return "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Do not rewrite it into a fundamental intake.]";
+  }
+  if (hasLearningCue && !hasFundamentalCue && !hasFrontierCue) {
+    return "[System: Treat this as learning or open-source study work. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. Do not rewrite it into a fundamental intake or reset alias.]";
   }
 
   return undefined;

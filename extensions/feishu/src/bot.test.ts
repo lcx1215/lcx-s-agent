@@ -133,6 +133,38 @@ describe("buildFeishuAgentBody", () => {
       "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
     );
   });
+
+  it("adds a learning intent notice for open-source study prompts", () => {
+    const body = buildFeishuAgentBody({
+      ctx: {
+        content: "今天你去学学开源的新技术，顺手总结一下关键原理和坑",
+        senderName: "Sender Name",
+        senderOpenId: "ou-sender",
+        messageId: "msg-learning-42",
+      },
+    });
+
+    expect(body).toContain(
+      "[System: Treat this as learning or open-source study work. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. Do not rewrite it into a fundamental intake or reset alias.]",
+    );
+    expect(body).toContain("今天你去学学开源的新技术，顺手总结一下关键原理和坑");
+  });
+
+  it("adds a macro intent notice for plain-language index risk prompts", () => {
+    const body = buildFeishuAgentBody({
+      ctx: {
+        content: "去看看几个指数最新的风险和潜在收益",
+        senderName: "Sender Name",
+        senderOpenId: "ou-sender",
+        messageId: "msg-index-risk-42",
+      },
+    });
+
+    expect(body).toContain(
+      "[System: Treat this as macro and major-asset research. Focus on causal links between events, inflation, rates, duration, and ETF or major-asset impact. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks.]",
+    );
+    expect(body).toContain("去看看几个指数最新的风险和潜在收益");
+  });
 });
 
 describe("handleFeishuMessage command authorization", () => {
