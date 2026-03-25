@@ -95,12 +95,75 @@ type FundamentalFollowUpTrackerSnapshot = {
   tracker: FundamentalCollectionFollowUpTrackerArtifact;
 };
 
+type WorkingMemoryDiscipline = {
+  freshness: "fresh" | "warm" | "stale";
+  anchor: string;
+  anchorDate: string;
+  drillDownOnlyBefore: string;
+};
+
 function extractMatch(content: string, pattern: RegExp, fallback: string): string {
   return content.match(pattern)?.[1]?.trim() || fallback;
 }
 
 function formatDateFromTimestamp(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function daysBetweenDateOnly(laterDate: string, earlierDate: string): number {
+  const later = Date.parse(`${laterDate}T00:00:00.000Z`);
+  const earlier = Date.parse(`${earlierDate}T00:00:00.000Z`);
+  if (Number.isNaN(later) || Number.isNaN(earlier)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor((later - earlier) / 86_400_000));
+}
+
+function shiftDateOnly(date: string, days: number): string {
+  const parsed = Date.parse(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed)) {
+    return date;
+  }
+  return new Date(parsed + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+function deriveWorkingMemoryDiscipline(params: {
+  nowIso: string;
+  sessionSnapshots: SessionSnapshot[];
+  reviewMemos: FundamentalReviewMemoSnapshot[];
+  followUpTrackers: FundamentalFollowUpTrackerSnapshot[];
+}): WorkingMemoryDiscipline {
+  const currentDate = params.nowIso.slice(0, 10);
+  const trackerDate = params.followUpTrackers[0]?.tracker.generatedAt.slice(0, 10);
+  if (trackerDate) {
+    const ageDays = daysBetweenDateOnly(currentDate, trackerDate);
+    return {
+      freshness: ageDays <= 3 ? "fresh" : ageDays <= 10 ? "warm" : "stale",
+      anchor: "fundamental-collection-follow-up-tracker",
+      anchorDate: trackerDate,
+      drillDownOnlyBefore: shiftDateOnly(trackerDate, -14),
+    };
+  }
+
+  const memoDate = params.reviewMemos[0]?.memo.generatedAt.slice(0, 10);
+  if (memoDate) {
+    const ageDays = daysBetweenDateOnly(currentDate, memoDate);
+    return {
+      freshness: ageDays <= 3 ? "fresh" : ageDays <= 10 ? "warm" : "stale",
+      anchor: "fundamental-review-memo",
+      anchorDate: memoDate,
+      drillDownOnlyBefore: shiftDateOnly(memoDate, -14),
+    };
+  }
+
+  const sessionDate = params.sessionSnapshots[0]?.date ?? currentDate;
+  const ageDays = daysBetweenDateOnly(currentDate, sessionDate);
+  return {
+    freshness: ageDays <= 1 ? "fresh" : ageDays <= 7 ? "warm" : "stale",
+    anchor: "session-memory",
+    anchorDate: sessionDate,
+    drillDownOnlyBefore: shiftDateOnly(sessionDate, -14),
+  };
 }
 
 function sameSession(
@@ -790,6 +853,12 @@ function renderCurrentResearchLine(params: {
     frontierSnapshots: params.frontierSnapshots,
     fundamentalHandoffs: params.fundamentalHandoffs,
   });
+  const workingMemory = deriveWorkingMemoryDiscipline({
+    nowIso: params.nowIso,
+    sessionSnapshots: params.sessionSnapshots,
+    reviewMemos: params.reviewMemos,
+    followUpTrackers: params.followUpTrackers,
+  });
 
   let currentFocus = "session_only";
   let nextStep = latestSession?.intake ?? "No active research line captured yet.";
@@ -861,6 +930,13 @@ function renderCurrentResearchLine(params: {
     "",
     "## Next Step",
     `- ${nextStep}`,
+    "",
+    "## Working Memory Discipline",
+    `- freshness: ${workingMemory.freshness}`,
+    `- primary_anchor: ${workingMemory.anchor}`,
+    `- anchor_date: ${workingMemory.anchorDate}`,
+    `- drill_down_only_before: ${workingMemory.drillDownOnlyBefore}`,
+    "- recall_order: current-research-line -> primary_anchor -> unified-risk-view/review-memo -> older drill-down artifacts",
     "",
     "## Guardrails",
     "- Research-first operating memory only; this is not an execution approval surface.",

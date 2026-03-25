@@ -479,6 +479,14 @@ describe("operating-loop hook", () => {
     expect(currentResearchLine).toContain("review_memo_status: follow_up_collection_needed");
     expect(currentResearchLine).toContain("follow_up_tracker_status: follow_up_active");
     expect(currentResearchLine).toContain("top_follow_up: AAPL: repair metadata sidecars");
+    expect(currentResearchLine).toContain("freshness: fresh");
+    expect(currentResearchLine).toContain(
+      "primary_anchor: fundamental-collection-follow-up-tracker",
+    );
+    expect(currentResearchLine).toContain("drill_down_only_before: 2026-03-01");
+    expect(currentResearchLine).toContain(
+      "recall_order: current-research-line -> primary_anchor -> unified-risk-view/review-memo -> older drill-down artifacts",
+    );
     expect(currentResearchLine).toContain("Research-first operating memory only");
 
     expect(riskAudit).toContain("# Risk Audit Snapshot: 2026-03-15");
