@@ -50,6 +50,7 @@ function buildMemorySection(params: {
     "## Memory Recall",
     "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/current-research-line.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
     "For math, study, proof, derivation, or review-heavy tasks: first look for recent learning-upgrade prompts, then weekly learning summaries, then learning-review notes, mistake patterns, drills, or prior worked examples in memory before solving from scratch.",
+    "For macro, ETF, major-asset, or watchlist-risk questions: first look for current-research-line, then unified risk views, branch summaries, daily risk-audit snapshots, and recent review memos before forming a fresh view from scratch.",
     "For company, issuer, or fundamental research planning tasks: first look for current-research-line, then recent fundamental-collection-follow-up-tracker, fundamental-review-memo, fundamental-target-reports, fundamental-collection-packets, fundamental-manifest-patch-review, fundamental-dossier-drafts, fundamental-target-deliverables, fundamental-target-workfiles, fundamental-target-packets, fundamental-review-workbench, fundamental-review-plan, fundamental-review-brief, fundamental-review-queue, fundamental-risk-handoff, fundamental-scoring-gate, fundamental-snapshot, fundamental-snapshot-bridge, fundamental-readiness, or fundamental-intake notes in memory, then use any referenced bank/fundamental intake, manifest, readiness, snapshot-input, snapshot, scoring-gate, risk-handoff, review-queue, review-brief, review-plan, review-workbench, target-packets, target-workfiles, target-deliverables, dossier-drafts, manifest-patch-reviews, collection-packets, target-reports, review-memos, or collection-follow-up-trackers paths before proposing a new scaffold from scratch.",
     "For paper, whitepaper, or method-heavy research tasks: first look for recent frontier-upgrade prompts, then weekly methods reviews, then replication backlog notes, frontier research cards, or prior leakage and overfitting audits in memory before forming a fresh verdict.",
     "For operating review, weekly planning, or risk-gate questions: first look for current-research-line, then unified risk views, daily risk-audit snapshots, branch summaries, intake/fetch/review logs, then weekly learning loops before answering from scratch.",
@@ -78,6 +79,23 @@ function buildStrategyDoctrineSection() {
     "Treat shorting as secondary / defensive / future hedge capability, not a co-equal mainline.",
     "Prefer macroeconomic and fundamental deduction plus causal reasoning over naive historical pattern fitting.",
     "Be skeptical of attractive backtests: explicitly consider overfitting, survivor bias, sample-out logic, and cross-validation mindset.",
+    "",
+  ];
+}
+
+function buildMacroDeductionSection(isMinimal: boolean) {
+  if (isMinimal) {
+    return [];
+  }
+  return [
+    "## Macro Deduction Protocol",
+    "For macro, ETF, or major-asset analysis: skip textbook 101 explanations unless the user explicitly asks for basics.",
+    "Assume the reader already knows generic correlations like strong payrolls -> higher rates -> lower long duration.",
+    "Focus on current structural nuance: connect the new data point to the live market narrative, not just the timeless correlation.",
+    "Always ask what is already priced by consensus and where the marginal surprise or pricing gap could still matter.",
+    "Do cross-asset confirmation instead of single-ticker storytelling: check whether rates, dollar, duration, credit, or related risk assets support the same narrative.",
+    "Prefer causal reasoning and current regime analysis over attractive but shallow historical pattern fitting.",
+    "If you cannot identify the current structural narrative or the pricing gap, say the analysis is still generic and not yet decision-useful.",
     "",
   ];
 }
@@ -427,6 +445,7 @@ export function buildAgentSystemPrompt(params: {
     citationsMode: params.memoryCitationsMode,
   });
   const strategyDoctrineSection = buildStrategyDoctrineSection();
+  const macroDeductionSection = buildMacroDeductionSection(isMinimal);
   const docsSection = buildDocsSection({
     docsPath: params.docsPath,
     isMinimal,
@@ -501,6 +520,7 @@ export function buildAgentSystemPrompt(params: {
     ...skillsSection,
     ...memorySection,
     ...strategyDoctrineSection,
+    ...macroDeductionSection,
     // Skip self-update for subagent/none modes
     hasGateway && !isMinimal ? "## OpenClaw Self-Update" : "",
     hasGateway && !isMinimal

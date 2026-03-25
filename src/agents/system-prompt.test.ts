@@ -207,6 +207,9 @@ describe("buildAgentSystemPrompt", () => {
       "For math, study, proof, derivation, or review-heavy tasks: first look for recent learning-upgrade prompts, then weekly learning summaries",
     );
     expect(prompt).toContain(
+      "For macro, ETF, major-asset, or watchlist-risk questions: first look for current-research-line, then unified risk views, branch summaries, daily risk-audit snapshots, and recent review memos before forming a fresh view from scratch.",
+    );
+    expect(prompt).toContain(
       "For company, issuer, or fundamental research planning tasks: first look for current-research-line, then recent fundamental-collection-follow-up-tracker, fundamental-review-memo, fundamental-target-reports, fundamental-collection-packets, fundamental-manifest-patch-review, fundamental-dossier-drafts, fundamental-target-deliverables, fundamental-target-workfiles, fundamental-target-packets, fundamental-review-workbench, fundamental-review-plan, fundamental-review-brief, fundamental-review-queue, fundamental-risk-handoff, fundamental-scoring-gate, fundamental-snapshot, fundamental-snapshot-bridge, fundamental-readiness, or fundamental-intake notes in memory",
     );
     expect(prompt).toContain(
@@ -234,6 +237,16 @@ describe("buildAgentSystemPrompt", () => {
     );
     expect(prompt).toContain(
       "Be skeptical of attractive backtests: explicitly consider overfitting, survivor bias, sample-out logic, and cross-validation mindset.",
+    );
+    expect(prompt).toContain("## Macro Deduction Protocol");
+    expect(prompt).toContain(
+      "For macro, ETF, or major-asset analysis: skip textbook 101 explanations unless the user explicitly asks for basics.",
+    );
+    expect(prompt).toContain(
+      "Always ask what is already priced by consensus and where the marginal surprise or pricing gap could still matter.",
+    );
+    expect(prompt).toContain(
+      "If you cannot identify the current structural narrative or the pricing gap, say the analysis is still generic and not yet decision-useful.",
     );
   });
 
