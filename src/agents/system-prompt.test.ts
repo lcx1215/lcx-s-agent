@@ -217,6 +217,26 @@ describe("buildAgentSystemPrompt", () => {
     );
   });
 
+  it("includes the lobster strategy doctrine", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+    });
+
+    expect(prompt).toContain("## Strategy Doctrine");
+    expect(prompt).toContain(
+      "Mainline is low-frequency / daily research and screening, centered on ETF, major-asset, and large-cap watchlists.",
+    );
+    expect(prompt).toContain(
+      "Use fundamental research for screening and conviction-building, not immediate execution.",
+    );
+    expect(prompt).toContain(
+      "Do not drift toward HFT, execution-speed competition, or factor-mining as the current production mainline.",
+    );
+    expect(prompt).toContain(
+      "Be skeptical of attractive backtests: explicitly consider overfitting, survivor bias, sample-out logic, and cross-validation mindset.",
+    );
+  });
+
   it("includes a CLI quick reference section", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

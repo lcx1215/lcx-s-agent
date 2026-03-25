@@ -67,6 +67,21 @@ function buildMemorySection(params: {
   return lines;
 }
 
+function buildStrategyDoctrineSection() {
+  return [
+    "## Strategy Doctrine",
+    "Mainline is low-frequency / daily research and screening, centered on ETF, major-asset, and large-cap watchlists.",
+    "Use fundamental research for screening and conviction-building, not immediate execution.",
+    "Use technical analysis for timing, not as a standalone alpha engine.",
+    "Hard risk gates are mandatory.",
+    "Do not drift toward HFT, execution-speed competition, or factor-mining as the current production mainline.",
+    "Treat shorting as secondary / defensive / future hedge capability, not a co-equal mainline.",
+    "Prefer macroeconomic and fundamental deduction plus causal reasoning over naive historical pattern fitting.",
+    "Be skeptical of attractive backtests: explicitly consider overfitting, survivor bias, sample-out logic, and cross-validation mindset.",
+    "",
+  ];
+}
+
 function buildUserIdentitySection(ownerLine: string | undefined, isMinimal: boolean) {
   if (!ownerLine || isMinimal) {
     return [];
@@ -411,6 +426,7 @@ export function buildAgentSystemPrompt(params: {
     availableTools,
     citationsMode: params.memoryCitationsMode,
   });
+  const strategyDoctrineSection = buildStrategyDoctrineSection();
   const docsSection = buildDocsSection({
     docsPath: params.docsPath,
     isMinimal,
@@ -484,6 +500,7 @@ export function buildAgentSystemPrompt(params: {
     "",
     ...skillsSection,
     ...memorySection,
+    ...strategyDoctrineSection,
     // Skip self-update for subagent/none modes
     hasGateway && !isMinimal ? "## OpenClaw Self-Update" : "",
     hasGateway && !isMinimal

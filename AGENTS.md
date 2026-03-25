@@ -8,6 +8,24 @@
 - GitHub searching footgun: don't limit yourself to the first 500 issues or PRs when wanting to search all. Unless you're supposed to look at the most recent, keep going until you've reached the last page in the search
 - Security advisory analysis: before triage/severity decisions, read `SECURITY.md` to align with OpenClaw's trust model and design boundaries.
 
+## Lobster Strategy And Memory Doctrine
+
+- Mainline remains low-frequency / daily research and screening.
+- Primary path is ETF / major-asset / large-cap watchlist research.
+- Fundamental research is for screening and conviction-building, not immediate execution.
+- Technical analysis is for timing, not a standalone alpha engine.
+- Hard risk gates are mandatory.
+- Do not drift toward HFT / execution-speed competition.
+- Factor mining belongs only in a future isolated lab branch, not the current production mainline.
+- Shorting is secondary / defensive / future hedge capability, not a co-equal current mainline.
+- Prefer macroeconomic / fundamental deduction and causal reasoning over naive historical pattern fitting.
+- Be skeptical of attractive backtests; explicitly check overfitting, survivor bias, sample-out logic, and cross-validation mindset.
+- Continue using structured system-level memory; do not pursue model-internal memory work here.
+- Prefer `memory/current-research-line.md` and other compact summaries before broad artifact recall.
+- Prefer consolidation, summaries, and downranking of stale artifacts over adding new memory layers.
+- Do not reopen broad architecture refactors, add new providers or fake integrations, or broaden into new branches unless explicitly requested.
+- Prefer bounded improvements with real end-user value over new intermediate layers.
+
 ## Project Structure & Module Organization
 
 - Source code: `src/` (CLI wiring in `src/cli`, commands in `src/commands`, web provider in `src/provider-web.ts`, infra in `src/infra`, media pipeline in `src/media`).
