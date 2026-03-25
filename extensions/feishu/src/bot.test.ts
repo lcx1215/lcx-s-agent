@@ -424,6 +424,44 @@ describe("handleFeishuMessage command authorization", () => {
     );
   });
 
+  it("keeps macro research prompts as natural language before dispatch", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(true);
+    mockResolveCommandAuthorizedFromAuthorizers.mockReturnValue(true);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const message = "查一下最近美国非农、通胀预期和 QQQ / TLT 的关系";
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-attacker",
+        },
+      },
+      message: {
+        message_id: "msg-macro-natural-language",
+        chat_id: "oc-dm",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: message }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        RawBody: message,
+        CommandBody: message,
+      }),
+    );
+  });
+
   it("skips sender-name lookup when resolveSenderNames is false", async () => {
     const cfg: ClawdbotConfig = {
       channels: {
