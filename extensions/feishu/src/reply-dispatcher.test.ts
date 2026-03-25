@@ -335,6 +335,31 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     );
   });
 
+  it("drops blank reply targets before dispatch", async () => {
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: { log: vi.fn(), error: vi.fn() } as never,
+      chatId: "oc_chat",
+      replyToMessageId: "   ",
+      rootId: "   ",
+      replyInThread: true,
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await options.deliver({ text: "```ts\nconst x = 1\n```" }, { kind: "final" });
+
+    expect(streamingInstances).toHaveLength(1);
+    expect(streamingInstances[0].start).toHaveBeenCalledWith("oc_chat", "chat_id", {
+      replyToMessageId: undefined,
+      replyInThread: true,
+      rootId: undefined,
+    });
+    expect(sendMessageFeishuMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ replyToMessageId: "   " }),
+    );
+  });
+
   it("passes replyInThread to sendMarkdownCardFeishu for card text", async () => {
     resolveFeishuAccountMock.mockReturnValue({
       accountId: "main",

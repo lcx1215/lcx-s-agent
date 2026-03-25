@@ -27,6 +27,11 @@ function shouldUseCard(text: string): boolean {
 const TYPING_INDICATOR_MAX_AGE_MS = 2 * 60_000;
 const MS_EPOCH_MIN = 1_000_000_000_000;
 
+function normalizeReplyTargetId(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
 function normalizeEpochMs(timestamp: number | undefined): number | undefined {
   if (!Number.isFinite(timestamp) || timestamp === undefined || timestamp <= 0) {
     return undefined;
@@ -61,14 +66,16 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     cfg,
     agentId,
     chatId,
-    replyToMessageId,
+    replyToMessageId: rawReplyToMessageId,
     skipReplyToInMessages,
     replyInThread,
     threadReply,
-    rootId,
+    rootId: rawRootId,
     mentionTargets,
     accountId,
   } = params;
+  const replyToMessageId = normalizeReplyTargetId(rawReplyToMessageId);
+  const rootId = normalizeReplyTargetId(rawRootId);
   const sendReplyToMessageId = skipReplyToInMessages ? undefined : replyToMessageId;
   const threadReplyMode = threadReply === true;
   const effectiveReplyInThread = threadReplyMode ? true : replyInThread;
