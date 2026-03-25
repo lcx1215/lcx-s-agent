@@ -20,6 +20,7 @@
 - Shorting is secondary / defensive / future hedge capability, not a co-equal current mainline.
 - Prefer macroeconomic / fundamental deduction and causal reasoning over naive historical pattern fitting.
 - Be skeptical of attractive backtests; explicitly check overfitting, survivor bias, sample-out logic, and cross-validation mindset.
+- Before finalizing macro or strategy conclusions, force one red-team pass: if this view is wrong, what regime, narrative, or data path would invalidate it, and what evidence would falsify the thesis.
 - Continue using structured system-level memory; do not pursue model-internal memory work here.
 - Prefer `memory/current-research-line.md` and other compact summaries before broad artifact recall.
 - Prefer consolidation, summaries, and downranking of stale artifacts over adding new memory layers.
