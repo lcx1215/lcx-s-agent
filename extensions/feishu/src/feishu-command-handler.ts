@@ -44,6 +44,7 @@ function normalizeFeishuAliasCandidate(messageText: string): string {
     .replace(/[\u200b-\u200d\ufeff]/gu, "")
     .trim()
     .replace(/^[>\-*\u2022\u00b7]+\s*/u, "")
+    .replace(/^(?:\d+[.)]\s*)+/u, "")
     .replace(/[。！？!?]+$/u, "")
     .trim()
     .replace(/\s+/g, " ");

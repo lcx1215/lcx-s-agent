@@ -11,6 +11,7 @@ describe("normalizeFeishuCommandText", () => {
     expect(normalizeFeishuCommandText("继续")).toBe("/new 继续");
     expect(normalizeFeishuCommandText("继续这个研究线。")).toBe("/new 继续这个研究线");
     expect(normalizeFeishuCommandText("- 继续这个研究线")).toBe("/new 继续这个研究线");
+    expect(normalizeFeishuCommandText("1. 继续这个研究线")).toBe("/new 继续这个研究线");
     expect(normalizeFeishuCommandText("\u200b继续这个研究线")).toBe("/new 继续这个研究线");
     expect(normalizeFeishuCommandText("\u200b- 继续这个研究线")).toBe("/new 继续这个研究线");
     expect(normalizeFeishuCommandText("把这些内容整理进当前基本面研究")).toBe(
