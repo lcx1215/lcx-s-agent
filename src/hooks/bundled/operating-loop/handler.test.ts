@@ -216,12 +216,86 @@ describe("operating-loop hook", () => {
     const sessionsDir = path.join(workspaceDir, "sessions");
     await fs.mkdir(memoryDir, { recursive: true });
     await fs.mkdir(sessionsDir, { recursive: true });
+    const manifest = createFundamentalManifestFixture(
+      "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+    );
     await seedFundamentalScoringArtifacts({
       workspaceDir,
-      manifest: createFundamentalManifestFixture(
-        "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
-      ),
+      manifest,
     });
+    const reviewMemoDir = path.join(workspaceDir, "bank", "fundamental", "review-memos");
+    const followUpDir = path.join(
+      workspaceDir,
+      "bank",
+      "fundamental",
+      "collection-follow-up-trackers",
+    );
+    await fs.mkdir(reviewMemoDir, { recursive: true });
+    await fs.mkdir(followUpDir, { recursive: true });
+    await fs.writeFile(
+      path.join(reviewMemoDir, `${manifest.manifestId}.json`),
+      `${JSON.stringify(
+        {
+          version: 1,
+          generatedAt: "2026-03-15T12:00:00.000Z",
+          manifestId: manifest.manifestId,
+          manifestPath: `bank/fundamental/manifests/2026-03-15-fundamental-manifest-${manifest.manifestId}.json`,
+          targetReportsPath: `bank/fundamental/target-reports/${manifest.manifestId}.json`,
+          collectionPacketsPath: `bank/fundamental/collection-packets/${manifest.manifestId}.json`,
+          targetPacketsPath: `bank/fundamental/target-packets/${manifest.manifestId}.json`,
+          memoStatus: "follow_up_collection_needed",
+          reportReviewTargets: [],
+          collectionFollowUpTargets: [],
+          blockedTargets: [],
+          reviewFocus: ["Collect management guidance for AAPL before final report review."],
+          nextActions: [
+            "AAPL: repair metadata sidecars and confirm investor presentation coverage.",
+          ],
+          notes: ["Use this memo to drive the next research step, not execution."],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(followUpDir, `${manifest.manifestId}.json`),
+      `${JSON.stringify(
+        {
+          version: 1,
+          generatedAt: "2026-03-15T12:00:00.000Z",
+          manifestId: manifest.manifestId,
+          manifestPath: `bank/fundamental/manifests/2026-03-15-fundamental-manifest-${manifest.manifestId}.json`,
+          reviewMemoPath: `bank/fundamental/review-memos/${manifest.manifestId}.json`,
+          collectionPacketsPath: `bank/fundamental/collection-packets/${manifest.manifestId}.json`,
+          targetPacketsPath: `bank/fundamental/target-packets/${manifest.manifestId}.json`,
+          trackerStatus: "follow_up_active",
+          followUpTargets: [
+            {
+              targetLabel: "AAPL",
+              reviewPriority: "high",
+              blockerReason: "missing_metadata_sidecar",
+              recommendation: "metadata_repair_then_review",
+              missingMaterials: ["management guidance"],
+              missingMetadata: true,
+              nextRequiredCollectionAction:
+                "Repair metadata sidecars, then re-check the investor presentation coverage for AAPL.",
+              collectionWorkfilePath: `bank/fundamental/collection-work/${manifest.manifestId}/aapl.md`,
+              patchPath: `bank/fundamental/deliverables/${manifest.manifestId}/manifest-patches/aapl.json`,
+              manualChecks: ["Confirm source type matches each local document."],
+            },
+          ],
+          blockedTargets: [],
+          nextCollectionPriorities: [
+            "AAPL: repair metadata sidecars, then re-check the investor presentation coverage for AAPL. (high, missing_metadata_sidecar)",
+          ],
+          notes: ["This tracker only records collection gaps, priorities, and next steps."],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf-8",
+    );
 
     await writeWorkspaceFile({
       dir: memoryDir,
@@ -350,6 +424,7 @@ describe("operating-loop hook", () => {
     expect(files).toContain("2026-03-15-fetch-log.md");
     expect(files).toContain("2026-03-15-review-log.md");
     expect(files).toContain("2026-03-15-branch-summary.md");
+    expect(files).toContain("current-research-line.md");
     expect(files).toContain("2026-03-15-risk-audit-snapshot.md");
     expect(files).toContain("2026-W11-weekly-learning-loop.md");
     expect(files).toContain("unified-risk-view.md");
@@ -359,6 +434,10 @@ describe("operating-loop hook", () => {
     const reviewLog = await fs.readFile(path.join(memoryDir, "2026-03-15-review-log.md"), "utf-8");
     const branchSummary = await fs.readFile(
       path.join(memoryDir, "2026-03-15-branch-summary.md"),
+      "utf-8",
+    );
+    const currentResearchLine = await fs.readFile(
+      path.join(memoryDir, "current-research-line.md"),
       "utf-8",
     );
     const riskAudit = await fs.readFile(
@@ -394,6 +473,13 @@ describe("operating-loop hook", () => {
     expect(branchSummary).toContain("top_decision: worth_reproducing: WaveLSFormer");
     expect(branchSummary).toContain("fundamental_handoff: ready=1 partial=0 blocked=0");
     expect(branchSummary).toContain("fundamental-risk-handoff");
+
+    expect(currentResearchLine).toContain("# Current Research Line");
+    expect(currentResearchLine).toContain("current_focus: fundamental_follow_up");
+    expect(currentResearchLine).toContain("review_memo_status: follow_up_collection_needed");
+    expect(currentResearchLine).toContain("follow_up_tracker_status: follow_up_active");
+    expect(currentResearchLine).toContain("top_follow_up: AAPL: repair metadata sidecars");
+    expect(currentResearchLine).toContain("Research-first operating memory only");
 
     expect(riskAudit).toContain("# Risk Audit Snapshot: 2026-03-15");
     expect(riskAudit).toContain("**Top Decision**: ready_for_risk_review: AAPL");

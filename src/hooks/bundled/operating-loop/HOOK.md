@@ -35,6 +35,7 @@ Writes these files under `<workspace>/memory/`:
 - `YYYY-MM-DD-fetch-log.md`
 - `YYYY-MM-DD-review-log.md`
 - `YYYY-MM-DD-branch-summary.md`
+- `current-research-line.md`
 - `YYYY-MM-DD-risk-audit-snapshot.md`
 - `YYYY-Www-weekly-learning-loop.md`
 - `unified-risk-view.md`

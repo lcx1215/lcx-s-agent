@@ -201,16 +201,19 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("## Memory Recall");
     expect(prompt).toContain(
+      "run memory_search on MEMORY.md + memory/current-research-line.md + memory/*.md",
+    );
+    expect(prompt).toContain(
       "For math, study, proof, derivation, or review-heavy tasks: first look for recent learning-upgrade prompts, then weekly learning summaries",
     );
     expect(prompt).toContain(
-      "For company, issuer, or fundamental research planning tasks: first look for recent fundamental-collection-follow-up-tracker, fundamental-review-memo, fundamental-target-reports, fundamental-collection-packets, fundamental-manifest-patch-review, fundamental-dossier-drafts, fundamental-target-deliverables, fundamental-target-workfiles, fundamental-target-packets, fundamental-review-workbench, fundamental-review-plan, fundamental-review-brief, fundamental-review-queue, fundamental-risk-handoff, fundamental-scoring-gate, fundamental-snapshot, fundamental-snapshot-bridge, fundamental-readiness, or fundamental-intake notes in memory",
+      "For company, issuer, or fundamental research planning tasks: first look for current-research-line, then recent fundamental-collection-follow-up-tracker, fundamental-review-memo, fundamental-target-reports, fundamental-collection-packets, fundamental-manifest-patch-review, fundamental-dossier-drafts, fundamental-target-deliverables, fundamental-target-workfiles, fundamental-target-packets, fundamental-review-workbench, fundamental-review-plan, fundamental-review-brief, fundamental-review-queue, fundamental-risk-handoff, fundamental-scoring-gate, fundamental-snapshot, fundamental-snapshot-bridge, fundamental-readiness, or fundamental-intake notes in memory",
     );
     expect(prompt).toContain(
       "For paper, whitepaper, or method-heavy research tasks: first look for recent frontier-upgrade prompts, then weekly methods reviews",
     );
     expect(prompt).toContain(
-      "For operating review, weekly planning, or risk-gate questions: first look for unified risk views, daily risk-audit snapshots, branch summaries",
+      "For operating review, weekly planning, or risk-gate questions: first look for current-research-line, then unified risk views, daily risk-audit snapshots, branch summaries",
     );
   });
 

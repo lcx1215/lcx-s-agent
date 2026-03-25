@@ -12,7 +12,9 @@ import {
   looksLikeFrontierResearchSession,
   summarizeFrontierResearchSession,
 } from "../frontier-research/handler.js";
+import type { FundamentalCollectionFollowUpTrackerArtifact } from "../fundamental-collection-follow-up-tracker/handler.js";
 import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
+import type { FundamentalReviewMemoArtifact } from "../fundamental-review-memo/handler.js";
 import {
   buildFundamentalRiskHandoff,
   type FundamentalRiskHandoffArtifact,
@@ -77,6 +79,20 @@ type FundamentalRiskSnapshot = {
   name: string;
   artifactPath: string;
   handoff: FundamentalRiskHandoffArtifact;
+};
+
+type FundamentalReviewMemoSnapshot = {
+  date: string;
+  name: string;
+  artifactPath: string;
+  memo: FundamentalReviewMemoArtifact;
+};
+
+type FundamentalFollowUpTrackerSnapshot = {
+  date: string;
+  name: string;
+  artifactPath: string;
+  tracker: FundamentalCollectionFollowUpTrackerArtifact;
 };
 
 function extractMatch(content: string, pattern: RegExp, fallback: string): string {
@@ -429,6 +445,46 @@ async function loadFundamentalRiskSnapshots(
   );
 }
 
+async function loadFundamentalReviewMemoSnapshots(
+  workspaceDir: string,
+): Promise<FundamentalReviewMemoSnapshot[]> {
+  const memos = await loadJsonArtifacts<FundamentalReviewMemoArtifact>({
+    dirPath: path.join(workspaceDir, "bank", "fundamental", "review-memos"),
+    relativePrefix: "bank/fundamental/review-memos",
+  });
+  return memos
+    .map(({ data, name, relativePath }) => ({
+      date: data.generatedAt.slice(0, 10),
+      name,
+      artifactPath: relativePath,
+      memo: data,
+    }))
+    .toSorted(
+      (a, b) =>
+        b.memo.generatedAt.localeCompare(a.memo.generatedAt) || a.name.localeCompare(b.name),
+    );
+}
+
+async function loadFundamentalFollowUpTrackerSnapshots(
+  workspaceDir: string,
+): Promise<FundamentalFollowUpTrackerSnapshot[]> {
+  const trackers = await loadJsonArtifacts<FundamentalCollectionFollowUpTrackerArtifact>({
+    dirPath: path.join(workspaceDir, "bank", "fundamental", "collection-follow-up-trackers"),
+    relativePrefix: "bank/fundamental/collection-follow-up-trackers",
+  });
+  return trackers
+    .map(({ data, name, relativePath }) => ({
+      date: data.generatedAt.slice(0, 10),
+      name,
+      artifactPath: relativePath,
+      tracker: data,
+    }))
+    .toSorted(
+      (a, b) =>
+        b.tracker.generatedAt.localeCompare(a.tracker.generatedAt) || a.name.localeCompare(b.name),
+    );
+}
+
 function verdictRank(verdict: FrontierSnapshot["verdict"]): number {
   switch (verdict) {
     case "worth_reproducing":
@@ -716,6 +772,103 @@ function renderDailyBranchSummary(params: {
   ].join("\n");
 }
 
+function renderCurrentResearchLine(params: {
+  nowIso: string;
+  sessionSnapshots: SessionSnapshot[];
+  learningSnapshots: LearningSnapshot[];
+  frontierSnapshots: FrontierSnapshot[];
+  fundamentalHandoffs: FundamentalRiskSnapshot[];
+  reviewMemos: FundamentalReviewMemoSnapshot[];
+  followUpTrackers: FundamentalFollowUpTrackerSnapshot[];
+}) {
+  const latestSession = params.sessionSnapshots[0];
+  const latestLearning = params.learningSnapshots[0];
+  const latestFrontier = params.frontierSnapshots[0];
+  const latestMemo = params.reviewMemos[0];
+  const latestTracker = params.followUpTrackers[0];
+  const topUnifiedDecision = pickTopUnifiedDecision({
+    frontierSnapshots: params.frontierSnapshots,
+    fundamentalHandoffs: params.fundamentalHandoffs,
+  });
+
+  let currentFocus = "session_only";
+  let nextStep = latestSession?.intake ?? "No active research line captured yet.";
+  if (latestTracker) {
+    currentFocus =
+      latestTracker.tracker.trackerStatus === "follow_up_active"
+        ? "fundamental_follow_up"
+        : latestTracker.tracker.trackerStatus === "manual_review_required"
+          ? "fundamental_manual_review"
+          : "fundamental_blocked";
+    nextStep =
+      latestTracker.tracker.nextCollectionPriorities[0] ??
+      latestTracker.tracker.notes[0] ??
+      nextStep;
+  } else if (latestMemo) {
+    currentFocus =
+      latestMemo.memo.memoStatus === "ready_for_report_review"
+        ? "fundamental_report_review"
+        : latestMemo.memo.memoStatus === "follow_up_collection_needed"
+          ? "fundamental_follow_up"
+          : "fundamental_blocked";
+    nextStep = latestMemo.memo.nextActions[0] ?? latestMemo.memo.notes[0] ?? nextStep;
+  } else if (latestFrontier) {
+    currentFocus = "frontier_method_review";
+    nextStep = `${latestFrontier.verdict}: ${latestFrontier.title}`;
+  } else if (latestLearning) {
+    currentFocus = "learning_review";
+    nextStep = latestLearning.microDrill;
+  }
+
+  return [
+    "# Current Research Line",
+    "",
+    `- updated_at: ${params.nowIso}`,
+    `- current_focus: ${currentFocus}`,
+    `- top_decision: ${topUnifiedDecision}`,
+    `- unified_risk_view_path: memory/unified-risk-view.md`,
+    "",
+    "## Current Session",
+    ...(latestSession
+      ? [
+          `- source: ${latestSession.source}`,
+          `- session_id: ${latestSession.sessionId}`,
+          `- intake: ${latestSession.intake}`,
+        ]
+      : ["- none"]),
+    "",
+    "## Fundamental State",
+    ...(latestMemo
+      ? [
+          `- review_memo_status: ${latestMemo.memo.memoStatus}`,
+          `- review_memo_path: ${latestMemo.artifactPath}`,
+          `- review_focus: ${latestMemo.memo.reviewFocus[0] ?? "none"}`,
+        ]
+      : ["- review_memo_status: none"]),
+    ...(latestTracker
+      ? [
+          `- follow_up_tracker_status: ${latestTracker.tracker.trackerStatus}`,
+          `- follow_up_tracker_path: ${latestTracker.artifactPath}`,
+          `- top_follow_up: ${latestTracker.tracker.nextCollectionPriorities[0] ?? "none"}`,
+        ]
+      : ["- follow_up_tracker_status: none"]),
+    "",
+    "## Learning And Method Context",
+    `- learning_focus: ${latestLearning?.topic ?? "none"}`,
+    `- learning_principle: ${latestLearning?.corePrinciple ?? "none"}`,
+    `- frontier_focus: ${latestFrontier?.title ?? "none"}`,
+    `- frontier_verdict: ${latestFrontier?.verdict ?? "none"}`,
+    "",
+    "## Next Step",
+    `- ${nextStep}`,
+    "",
+    "## Guardrails",
+    "- Research-first operating memory only; this is not an execution approval surface.",
+    "- Fundamental notes build screening and conviction, but hard risk gates still remain mandatory.",
+    "",
+  ].join("\n");
+}
+
 function renderRiskAuditSnapshot(params: {
   dateStr: string;
   frontierSnapshots: FrontierSnapshot[];
@@ -943,6 +1096,8 @@ function buildNotes(params: {
   dailyLearning: LearningSnapshot[];
   dailyFrontier: FrontierSnapshot[];
   fundamentalHandoffs: FundamentalRiskSnapshot[];
+  reviewMemos: FundamentalReviewMemoSnapshot[];
+  followUpTrackers: FundamentalFollowUpTrackerSnapshot[];
   weeklySessions: SessionSnapshot[];
   weeklyLearning: LearningSnapshot[];
   weeklyFrontier: FrontierSnapshot[];
@@ -979,6 +1134,21 @@ function buildNotes(params: {
         learningSnapshots: params.dailyLearning,
         frontierSnapshots: params.dailyFrontier,
         fundamentalHandoffs: params.fundamentalHandoffs,
+      }),
+    },
+    {
+      filename: "current-research-line.md",
+      content: renderCurrentResearchLine({
+        nowIso: params.nowIso,
+        sessionSnapshots:
+          params.dailySessions.length > 0 ? params.dailySessions : params.weeklySessions,
+        learningSnapshots:
+          params.dailyLearning.length > 0 ? params.dailyLearning : params.weeklyLearning,
+        frontierSnapshots:
+          params.dailyFrontier.length > 0 ? params.dailyFrontier : params.weeklyFrontier,
+        fundamentalHandoffs: params.fundamentalHandoffs,
+        reviewMemos: params.reviewMemos,
+        followUpTrackers: params.followUpTrackers,
       }),
     },
     {
@@ -1035,7 +1205,11 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
       : [];
     const { sessionSnapshots, learningSnapshots, frontierSnapshots } =
       await loadExistingSnapshots(memoryDir);
-    const fundamentalHandoffs = await loadFundamentalRiskSnapshots(workspaceDir);
+    const [fundamentalHandoffs, reviewMemos, followUpTrackers] = await Promise.all([
+      loadFundamentalRiskSnapshots(workspaceDir),
+      loadFundamentalReviewMemoSnapshots(workspaceDir),
+      loadFundamentalFollowUpTrackerSnapshots(workspaceDir),
+    ]);
     const commandSource = event.context?.commandSource;
     const source = typeof commandSource === "string" ? commandSource : "unknown";
 
@@ -1093,6 +1267,8 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
         dailyLearning,
         dailyFrontier,
         fundamentalHandoffs,
+        reviewMemos,
+        followUpTrackers,
         weeklySessions,
         weeklyLearning,
         weeklyFrontier,
