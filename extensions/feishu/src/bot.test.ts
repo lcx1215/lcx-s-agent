@@ -1459,6 +1459,52 @@ describe("handleFeishuMessage command authorization", () => {
     );
   });
 
+  it("ignores blank root_id and still uses message_id as the first topic root", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          groups: {
+            "oc-group": {
+              requireMention: false,
+              groupSessionScope: "group_topic",
+              replyInThread: "enabled",
+            },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-topic-init" } },
+      message: {
+        message_id: "msg-empty-root",
+        chat_id: "oc-group",
+        chat_type: "group",
+        root_id: "   ",
+        thread_id: "   ",
+        message_type: "text",
+        content: JSON.stringify({ text: "create topic from blank root" }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockResolveAgentRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        peer: { kind: "group", id: "oc-group:topic:msg-empty-root" },
+        parentPeer: { kind: "group", id: "oc-group" },
+      }),
+    );
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "msg-empty-root",
+        rootId: undefined,
+      }),
+    );
+  });
+
   it("keeps topic session key stable after first turn creates a thread", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
 

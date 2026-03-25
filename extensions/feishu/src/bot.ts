@@ -348,6 +348,15 @@ function parseMessageContent(content: string, messageType: string): string {
   }
 }
 
+function normalizeFeishuMessageId(value: string | undefined): string {
+  return value?.trim() || "";
+}
+
+function normalizeOptionalFeishuMessageId(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
 /**
  * Parse merge_forward message content and fetch sub-messages.
  * Returns formatted text content of all sub-messages.
@@ -787,8 +796,8 @@ export function parseFeishuMessageEvent(
   const senderFallbackId = senderOpenId || senderUserId || "";
 
   const ctx: FeishuMessageContext = {
-    chatId: event.message.chat_id,
-    messageId: event.message.message_id,
+    chatId: event.message.chat_id.trim(),
+    messageId: normalizeFeishuMessageId(event.message.message_id),
     senderId: senderUserId || senderOpenId || "",
     // Keep the historical field name, but fall back to user_id when open_id is unavailable
     // (common in some mobile app deliveries).
@@ -796,9 +805,9 @@ export function parseFeishuMessageEvent(
     chatType: event.message.chat_type,
     mentionedBot,
     hasAnyMention,
-    rootId: event.message.root_id || undefined,
-    parentId: event.message.parent_id || undefined,
-    threadId: event.message.thread_id || undefined,
+    rootId: normalizeOptionalFeishuMessageId(event.message.root_id),
+    parentId: normalizeOptionalFeishuMessageId(event.message.parent_id),
+    threadId: normalizeOptionalFeishuMessageId(event.message.thread_id),
     content,
     contentType: event.message.message_type,
   };
