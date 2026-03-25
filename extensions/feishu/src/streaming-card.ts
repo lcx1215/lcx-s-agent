@@ -85,6 +85,11 @@ function truncateSummary(text: string, max = 50): string {
   return clean.length <= max ? clean : clean.slice(0, max - 3) + "...";
 }
 
+function normalizeReplyTargetId(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
 export function mergeStreamingText(
   previousText: string | undefined,
   nextText: string | undefined,
@@ -135,6 +140,8 @@ export class FeishuStreamingSession {
     if (this.state) {
       return;
     }
+    const rootId = normalizeReplyTargetId(options?.rootId);
+    const replyToMessageId = normalizeReplyTargetId(options?.replyToMessageId);
 
     const apiBase = resolveApiBase(this.creds.domain);
     const cardJson: Record<string, unknown> = {
@@ -183,24 +190,24 @@ export class FeishuStreamingSession {
 
     // Topic-group replies require root_id routing. Prefer create+root_id when available.
     let sendRes;
-    if (options?.rootId) {
+    if (rootId) {
       const createData = {
         receive_id: receiveId,
         msg_type: "interactive",
         content: cardContent,
-        root_id: options.rootId,
+        root_id: rootId,
       };
       sendRes = await this.client.im.message.create({
         params: { receive_id_type: receiveIdType },
         data: createData,
       });
-    } else if (options?.replyToMessageId) {
+    } else if (replyToMessageId) {
       sendRes = await this.client.im.message.reply({
-        path: { message_id: options.replyToMessageId },
+        path: { message_id: replyToMessageId },
         data: {
           msg_type: "interactive",
           content: cardContent,
-          ...(options.replyInThread ? { reply_in_thread: true } : {}),
+          ...(options?.replyInThread ? { reply_in_thread: true } : {}),
         },
       });
     } else {
