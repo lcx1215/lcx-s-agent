@@ -348,6 +348,82 @@ describe("handleFeishuMessage command authorization", () => {
     );
   });
 
+  it("keeps fundamental research prompts as natural language before dispatch", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(true);
+    mockResolveCommandAuthorizedFromAuthorizers.mockReturnValue(true);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const message = "把这些内容整理进当前基本面研究，并补一个 AAPL 和微软的 follow-up 清单";
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-attacker",
+        },
+      },
+      message: {
+        message_id: "msg-fundamental-natural-language",
+        chat_id: "oc-dm",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: message }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        RawBody: message,
+        CommandBody: message,
+      }),
+    );
+  });
+
+  it("keeps frontier research prompts as natural language before dispatch", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(true);
+    mockResolveCommandAuthorizedFromAuthorizers.mockReturnValue(true);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const message = "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险";
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-attacker",
+        },
+      },
+      message: {
+        message_id: "msg-frontier-natural-language",
+        chat_id: "oc-dm",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: message }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        RawBody: message,
+        CommandBody: message,
+      }),
+    );
+  });
+
   it("skips sender-name lookup when resolveSenderNames is false", async () => {
     const cfg: ClawdbotConfig = {
       channels: {
