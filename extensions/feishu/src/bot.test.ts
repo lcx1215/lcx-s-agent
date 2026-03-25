@@ -99,6 +99,40 @@ describe("buildFeishuAgentBody", () => {
       '[message_id: msg-42]\nSender Name: [Replying to: "previous message"]\n\nhello world\n\n[System: Your reply will automatically @mention: Target User. Do not write @xxx yourself.]\n\n[System: The bot encountered a Feishu API permission error. Please inform the user about this issue and provide the permission grant URL for the admin to authorize. Permission grant URL: https://open.feishu.cn/app/cli_test]',
     );
   });
+
+  it("adds a macro intent notice for high-confidence macro prompts", () => {
+    const body = buildFeishuAgentBody({
+      ctx: {
+        content: "查一下最近美国非农、通胀预期和 QQQ / TLT 的关系",
+        senderName: "Sender Name",
+        senderOpenId: "ou-sender",
+        messageId: "msg-macro-42",
+      },
+    });
+
+    expect(body).toContain(
+      "[System: Treat this as macro and major-asset research. Focus on causal links between events, inflation, rates, duration, and ETF or major-asset impact. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks.]",
+    );
+    expect(body).toContain("查一下最近美国非农、通胀预期和 QQQ / TLT 的关系");
+  });
+
+  it("adds a frontier intent notice for leakage and overfitting prompts", () => {
+    const body = buildFeishuAgentBody({
+      ctx: {
+        content: "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
+        senderName: "Sender Name",
+        senderOpenId: "ou-sender",
+        messageId: "msg-frontier-42",
+      },
+    });
+
+    expect(body).toContain(
+      "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Do not rewrite it into a fundamental intake.]",
+    );
+    expect(body).toContain(
+      "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
+    );
+  });
 });
 
 describe("handleFeishuMessage command authorization", () => {

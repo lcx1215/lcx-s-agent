@@ -834,8 +834,15 @@ export function buildFeishuAgentBody(params: {
 }): string {
   const { ctx, quotedContent, permissionErrorForAgent, botOpenId } = params;
   let messageBody = ctx.content;
+  const intentNotice = inferFeishuResearchIntentNotice(ctx.content);
+  if (intentNotice) {
+    messageBody = `${intentNotice}\n\n${messageBody}`;
+  }
   if (quotedContent) {
     messageBody = `[Replying to: "${quotedContent}"]\n\n${ctx.content}`;
+    if (intentNotice) {
+      messageBody = `[Replying to: "${quotedContent}"]\n\n${intentNotice}\n\n${ctx.content}`;
+    }
   }
 
   // DMs already have per-sender sessions, but this label still improves attribution.
@@ -866,6 +873,38 @@ export function buildFeishuAgentBody(params: {
   }
 
   return messageBody;
+}
+
+function inferFeishuResearchIntentNotice(content: string): string | undefined {
+  const normalized = content.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const hasMacroCue =
+    /(非农|cpi|ppi|fomc|通胀|通胀预期|利率|美债|收益率|期限溢价|美元|油价|就业|加息|降息|qqq|tlt|spy|iwm|dxy|macro|inflation|payroll|treasury|yield|duration|fomc|rates?)/u.test(
+      normalized,
+    );
+  const hasFundamentalCue =
+    /(基本面|财报|年报|季报|指引|电话会|公司|企业|issuer|company|watchlist|follow-up|follow up|fundamental|annual report|quarterly report|investor presentation)/u.test(
+      normalized,
+    );
+  const hasFrontierCue =
+    /(paper|论文|方法|method|frontier|leakage|overfitting|复现|replication|baseline)/u.test(
+      normalized,
+    );
+
+  if (hasMacroCue && !hasFundamentalCue && !hasFrontierCue) {
+    return "[System: Treat this as macro and major-asset research. Focus on causal links between events, inflation, rates, duration, and ETF or major-asset impact. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks.]";
+  }
+  if (hasFundamentalCue && !hasFrontierCue) {
+    return "[System: Treat this as fundamental research or watchlist maintenance. Prefer current fundamental artifacts, follow-up trackers, and review memos. Do not rewrite it into a reset alias.]";
+  }
+  if (hasFrontierCue && !hasFundamentalCue) {
+    return "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Do not rewrite it into a fundamental intake.]";
+  }
+
+  return undefined;
 }
 
 export async function handleFeishuMessage(params: {
