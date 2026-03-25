@@ -406,12 +406,18 @@ describe("handleFeishuMessage command authorization", () => {
 
     await dispatchMessage({ cfg, event });
 
+    expect(mockShouldComputeCommandAuthorized).toHaveBeenCalledWith("/new 继续这个研究线", cfg);
     expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
       expect.objectContaining({
         RawBody: "/new 继续这个研究线",
         CommandBody: "/new 继续这个研究线",
+        BodyForAgent: expect.stringContaining("继续这个研究线"),
       }),
     );
+    const finalizeArg = mockFinalizeInboundContext.mock.calls[0]?.[0] as {
+      BodyForAgent?: string;
+    };
+    expect(finalizeArg.BodyForAgent).not.toContain("/new 继续这个研究线");
   });
 
   it("keeps fundamental research prompts as natural language before dispatch", async () => {

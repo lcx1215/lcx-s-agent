@@ -1022,7 +1022,6 @@ export async function handleFeishuMessage(params: {
     log(
       `feishu[${account.accountId}]: normalized natural-language control input to ${normalizedCommandText.split(/\s+/, 2)[0]}`,
     );
-    ctx = { ...ctx, content: normalizedCommandText };
   }
 
   const historyLimit = Math.max(
@@ -1145,7 +1144,7 @@ export async function handleFeishuMessage(params: {
       accountId: account.accountId,
     });
     const shouldComputeCommandAuthorized = core.channel.commands.shouldComputeCommandAuthorized(
-      ctx.content,
+      normalizedCommandText,
       cfg,
     );
     const storeAllowFrom =
@@ -1362,6 +1361,9 @@ export async function handleFeishuMessage(params: {
           }))
         : undefined;
 
+    // Keep the user's natural-language body for the model, but feed the
+    // normalized command text into the command path so explicit Feishu aliases
+    // can reuse the existing /new and /reset flow.
     // --- Shared context builder for dispatch ---
     const buildCtxPayloadForAgent = (
       agentSessionKey: string,
@@ -1374,8 +1376,8 @@ export async function handleFeishuMessage(params: {
         InboundHistory: inboundHistory,
         ReplyToId: ctx.parentId,
         RootMessageId: ctx.rootId,
-        RawBody: ctx.content,
-        CommandBody: ctx.content,
+        RawBody: normalizedCommandText,
+        CommandBody: normalizedCommandText,
         From: feishuFrom,
         To: feishuTo,
         SessionKey: agentSessionKey,
