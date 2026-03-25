@@ -288,7 +288,8 @@ export async function sendImageFeishu(params: {
   replyInThread?: boolean;
   accountId?: string;
 }): Promise<SendMediaResult> {
-  const { cfg, to, imageKey, replyToMessageId, replyInThread, accountId } = params;
+  const { cfg, to, imageKey, replyInThread, accountId } = params;
+  const replyToMessageId = params.replyToMessageId?.trim() || undefined;
   const { client, receiveId, receiveIdType } = resolveFeishuSendTarget({
     cfg,
     to,
@@ -334,7 +335,8 @@ export async function sendFileFeishu(params: {
   replyInThread?: boolean;
   accountId?: string;
 }): Promise<SendMediaResult> {
-  const { cfg, to, fileKey, replyToMessageId, replyInThread, accountId } = params;
+  const { cfg, to, fileKey, replyInThread, accountId } = params;
+  const replyToMessageId = params.replyToMessageId?.trim() || undefined;
   const msgType = params.msgType ?? "file";
   const { client, receiveId, receiveIdType } = resolveFeishuSendTarget({
     cfg,

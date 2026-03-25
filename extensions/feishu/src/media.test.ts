@@ -227,6 +227,23 @@ describe("sendMediaFeishu msg_type routing", () => {
     expect(callData).not.toHaveProperty("reply_in_thread");
   });
 
+  it("drops blank reply targets for media replies", async () => {
+    await sendMediaFeishu({
+      cfg: {} as any,
+      to: "user:ou_target",
+      mediaBuffer: Buffer.from("video"),
+      fileName: "reply.mp4",
+      replyToMessageId: "   ",
+    });
+
+    expect(messageReplyMock).not.toHaveBeenCalled();
+    expect(messageCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ msg_type: "file" }),
+      }),
+    );
+  });
+
   it("passes mediaLocalRoots as localRoots to loadWebMedia for local paths (#27884)", async () => {
     loadWebMediaMock.mockResolvedValue({
       buffer: Buffer.from("local-file"),
