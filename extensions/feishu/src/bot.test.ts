@@ -511,6 +511,104 @@ describe("handleFeishuMessage command authorization", () => {
     );
   });
 
+  it("keeps fundamental research prompts as natural language in group topic sessions", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          groups: {
+            "oc-group": {
+              requireMention: false,
+              groupSessionScope: "group_topic_sender",
+            },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    const message = "把这些内容整理进当前基本面研究，并补一个 AAPL 和微软的 follow-up 清单";
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-topic-user",
+        },
+      },
+      message: {
+        message_id: "msg-topic-fundamental-natural-language",
+        chat_id: "oc-group",
+        chat_type: "group",
+        root_id: "om_root_topic",
+        message_type: "text",
+        content: JSON.stringify({ text: message }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockResolveAgentRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        peer: { kind: "group", id: "oc-group:topic:om_root_topic:sender:ou-topic-user" },
+        parentPeer: { kind: "group", id: "oc-group" },
+      }),
+    );
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        RawBody: message,
+        CommandBody: message,
+      }),
+    );
+  });
+
+  it("keeps frontier research prompts as natural language in group topic sessions", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          groups: {
+            "oc-group": {
+              requireMention: false,
+              groupSessionScope: "group_topic_sender",
+            },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    const message = "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险";
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-topic-user",
+        },
+      },
+      message: {
+        message_id: "msg-topic-frontier-natural-language",
+        chat_id: "oc-group",
+        chat_type: "group",
+        root_id: "om_root_topic",
+        message_type: "text",
+        content: JSON.stringify({ text: message }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockResolveAgentRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        peer: { kind: "group", id: "oc-group:topic:om_root_topic:sender:ou-topic-user" },
+        parentPeer: { kind: "group", id: "oc-group" },
+      }),
+    );
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        RawBody: message,
+        CommandBody: message,
+      }),
+    );
+  });
+
   it("skips sender-name lookup when resolveSenderNames is false", async () => {
     const cfg: ClawdbotConfig = {
       channels: {
