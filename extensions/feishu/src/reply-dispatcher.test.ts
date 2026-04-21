@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveFeishuAccountMock = vi.hoisted(() => vi.fn());
 const getFeishuRuntimeMock = vi.hoisted(() => vi.fn());
@@ -43,13 +46,19 @@ vi.mock("./streaming-card.js", () => ({
   },
 }));
 
+import { normalizeFeishuDisplayText } from "./display-text.js";
 import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
+import { resolveFeishuReplyFlowAuditPath } from "./reply-flow-audit.js";
 
 describe("createFeishuReplyDispatcher streaming behavior", () => {
+  let stateDir: string;
+
   beforeEach(() => {
     vi.clearAllMocks();
     streamingInstances.length = 0;
     sendMediaFeishuMock.mockResolvedValue(undefined);
+    stateDir = path.join(os.tmpdir(), `openclaw-feishu-reply-flow-${Date.now()}-${Math.random()}`);
+    process.env.OPENCLAW_STATE_DIR = stateDir;
 
     resolveFeishuAccountMock.mockReturnValue({
       accountId: "main",
@@ -87,6 +96,11 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         },
       },
     });
+  });
+
+  afterEach(async () => {
+    delete process.env.OPENCLAW_STATE_DIR;
+    await fs.rm(stateDir, { recursive: true, force: true });
   });
 
   it("skips typing indicator when account typingIndicator is disabled", async () => {
@@ -185,6 +199,136 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
   });
 
+  it("records outbound attempt and result audit entries for final replies", async () => {
+    sendMessageFeishuMock.mockResolvedValue({ messageId: "om_reply_1", chatId: "oc_chat" });
+
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+      inboundMessageId: "om_inbound_1",
+      sessionKey: "agent:main:feishu:dm:ou-user",
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await options.deliver({ text: "plain text" }, { kind: "final" });
+
+    const auditPath = resolveFeishuReplyFlowAuditPath();
+    const lines = (await fs.readFile(auditPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({
+      kind: "feishu_reply_flow",
+      stage: "outbound_attempt",
+      messageId: "om_inbound_1",
+      chatId: "oc_chat",
+      sessionKey: "agent:main:feishu:dm:ou-user",
+      agentId: "agent",
+      sendMode: "message",
+      replyKind: "final",
+      textPreview: "plain text",
+    });
+    expect(lines[1]).toMatchObject({
+      kind: "feishu_reply_flow",
+      stage: "outbound_result",
+      messageId: "om_inbound_1",
+      deliveryMessageId: "om_reply_1",
+      sendMode: "message",
+    });
+  });
+
+  it("records dispatch_error audit entries when a final reply send fails", async () => {
+    sendMessageFeishuMock.mockRejectedValueOnce(new Error("invalid receive_id"));
+
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: { error: vi.fn() } as never,
+      chatId: "oc_chat",
+      inboundMessageId: "om_inbound_error",
+      sessionKey: "agent:main:feishu:dm:ou-user",
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await expect(options.deliver({ text: "plain text" }, { kind: "final" })).rejects.toThrow(
+      "invalid receive_id",
+    );
+    await options.onError?.(new Error("invalid receive_id"), { kind: "final" });
+
+    const auditPath = resolveFeishuReplyFlowAuditPath();
+    const lines = (await fs.readFile(auditPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(lines.at(-1)).toMatchObject({
+      kind: "feishu_reply_flow",
+      stage: "dispatch_error",
+      messageId: "om_inbound_error",
+      sessionKey: "agent:main:feishu:dm:ou-user",
+      agentId: "agent",
+      replyKind: "final",
+      error: "Error: invalid receive_id",
+    });
+  });
+
+  it("normalizes markdown tables and code fences before sending to Feishu", async () => {
+    resolveFeishuAccountMock.mockReturnValue({
+      accountId: "main",
+      appId: "app_id",
+      appSecret: "app_secret",
+      domain: "feishu",
+      config: {
+        renderMode: "raw",
+        streaming: false,
+      },
+    });
+
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await options.deliver(
+      {
+        text: [
+          "## 今日关注",
+          "",
+          "| 指标 | 数值 | 结论 |",
+          "|------|------|------|",
+          "| VIX | 27.44 | 偏高 |",
+          "",
+          "```json",
+          '{ \"repair_candidate\": \"continuation-routing\" }',
+          "```",
+        ].join("\n"),
+      },
+      { kind: "final" },
+    );
+
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: [
+          "Data freshness status: provisional.",
+          "Source reliability status: verified.",
+          "Research freshness status: fresh.",
+          "Exact prices, percentage moves, and VIX/DXY levels are withheld because market data is degraded, stale, or lacks an explicit timestamp.",
+          "",
+          "今日关注",
+          "",
+          '{ \"repair_candidate\": \"continuation-routing\" }',
+        ].join("\n"),
+      }),
+    );
+  });
+
   it("suppresses internal block payload delivery", async () => {
     createFeishuReplyDispatcher({
       cfg: {} as never,
@@ -241,7 +385,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(streamingInstances).toHaveLength(1);
     expect(streamingInstances[0].start).toHaveBeenCalledTimes(1);
     expect(streamingInstances[0].close).toHaveBeenCalledTimes(1);
-    expect(streamingInstances[0].close).toHaveBeenCalledWith("```md\npartial answer\n```");
+    expect(streamingInstances[0].close).toHaveBeenCalledWith("partial answer");
   });
 
   it("sends media-only payloads as attachments", async () => {
@@ -429,6 +573,28 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         replyToMessageId: "om_msg",
         replyInThread: true,
       }),
+    );
+  });
+});
+
+describe("normalizeFeishuDisplayText", () => {
+  it("turns heavy markdown into operator-readable plain text", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        [
+          "## Daily Workface",
+          "",
+          "| Item | Value |",
+          "|------|-------|",
+          "| Tokens | 12345 |",
+          "",
+          "```ts",
+          "const ready = true;",
+          "```",
+        ].join("\n"),
+      ),
+    ).toBe(
+      ["Daily Workface", "", "- Item: Tokens; Value: 12345", "", "const ready = true;"].join("\n"),
     );
   });
 });

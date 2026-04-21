@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { ClawdbotConfig, PluginRuntime, RuntimeEnv } from "openclaw/plugin-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPluginRuntimeMock } from "../../test-utils/plugin-runtime-mock.js";
@@ -9,6 +12,7 @@ import {
   resolveBroadcastAgents,
   toMessageResourceType,
 } from "./bot.js";
+import { resolveFeishuReplyFlowAuditPath } from "./reply-flow-audit.js";
 import { setFeishuRuntime } from "./runtime.js";
 
 const {
@@ -20,7 +24,14 @@ const {
   mockResolveAgentRoute,
 } = vi.hoisted(() => ({
   mockCreateFeishuReplyDispatcher: vi.fn(() => ({
-    dispatcher: vi.fn(),
+    dispatcher: {
+      markComplete: vi.fn(),
+      waitForIdle: vi.fn(async () => {}),
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => false),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),
+    },
     replyOptions: {},
     markDispatchIdle: vi.fn(),
   })),
@@ -139,6 +150,10 @@ describe("handleFeishuMessage command authorization", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.OPENCLAW_STATE_DIR = path.join(
+      os.tmpdir(),
+      `openclaw-feishu-bot-audit-${Date.now()}-${Math.random()}`,
+    );
     mockShouldComputeCommandAuthorized.mockReset().mockReturnValue(true);
     mockResolveAgentRoute.mockReturnValue({
       agentId: "main",
@@ -196,6 +211,132 @@ describe("handleFeishuMessage command authorization", () => {
         },
       }),
     );
+  });
+
+  it("records inbound route and dispatch lifecycle audit entries", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-observe",
+        },
+      },
+      message: {
+        message_id: "msg-audit",
+        chat_id: "oc-dm",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: "hello from feishu" }),
+        create_time: String(Date.now()),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    const auditPath = resolveFeishuReplyFlowAuditPath();
+    const lines = (await fs.readFile(auditPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(lines.map((line) => line.stage)).toEqual([
+      "inbound",
+      "route",
+      "dispatch_start",
+      "dispatch_complete",
+    ]);
+    expect(lines[0]).toMatchObject({
+      kind: "feishu_reply_flow",
+      stage: "inbound",
+      accountId: "default",
+      messageId: "msg-audit",
+      chatId: "oc-dm",
+      chatType: "p2p",
+      contentType: "text",
+      textPreview: "hello from feishu",
+    });
+    expect(lines[1]).toMatchObject({
+      stage: "route",
+      sessionKey: "agent:main:feishu:dm:ou-attacker",
+      agentId: "main",
+      routeMatchedBy: "default",
+    });
+    expect(lines[3]).toMatchObject({
+      stage: "dispatch_complete",
+      queuedFinal: false,
+      replyCount: 1,
+    });
+  });
+
+  it("records inbound pairing gate and pairing reply failure audit entries", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+    mockUpsertPairingRequest.mockResolvedValueOnce({ code: "ABCDEFGH", created: true });
+    mockSendMessageFeishu.mockRejectedValueOnce(new Error("invalid receive_id"));
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "pairing",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-pairing",
+        },
+      },
+      message: {
+        message_id: "msg-pairing-audit",
+        chat_id: "oc-pairing-chat",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: "hello pairing" }),
+        create_time: String(Date.now()),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    const auditPath = resolveFeishuReplyFlowAuditPath();
+    const lines = (await fs.readFile(auditPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(lines.map((line) => line.stage)).toEqual([
+      "inbound",
+      "outbound_attempt",
+      "dispatch_error",
+      "gate_drop",
+    ]);
+    expect(lines[0]).toMatchObject({
+      stage: "inbound",
+      messageId: "msg-pairing-audit",
+      chatId: "oc-pairing-chat",
+    });
+    expect(lines[1]).toMatchObject({
+      stage: "outbound_attempt",
+      replyKind: "pairing",
+      sendMode: "message",
+    });
+    expect(lines[2]).toMatchObject({
+      stage: "dispatch_error",
+      replyKind: "pairing",
+      error: "Error: invalid receive_id",
+    });
+    expect(lines[3]).toMatchObject({
+      stage: "gate_drop",
+      error: "unauthorized-dm:pairing",
+    });
   });
 
   it("does not enqueue inbound preview text as system events", async () => {

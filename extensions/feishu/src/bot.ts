@@ -27,6 +27,7 @@ import {
 } from "./policy.js";
 import { parsePostContent } from "./post.js";
 import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
+import { recordFeishuReplyFlowAudit } from "./reply-flow-audit.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { getMessageFeishu, sendMessageFeishu } from "./send.js";
 import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
@@ -1074,6 +1075,16 @@ export async function handleFeishuMessage(params: {
   }
 
   try {
+    await recordFeishuReplyFlowAudit({
+      stage: "inbound",
+      accountId: account.accountId,
+      messageId: ctx.messageId,
+      chatId: ctx.chatId,
+      chatType: ctx.chatType,
+      contentType: ctx.contentType,
+      textPreview: ctx.content,
+    });
+
     const core = getFeishuRuntime();
     const pairing = createScopedPairingAccess({
       core,
@@ -1107,7 +1118,17 @@ export async function handleFeishuMessage(params: {
         if (created) {
           log(`feishu[${account.accountId}]: pairing request sender=${ctx.senderOpenId}`);
           try {
-            await sendMessageFeishu({
+            await recordFeishuReplyFlowAudit({
+              stage: "outbound_attempt",
+              accountId: account.accountId,
+              messageId: ctx.messageId,
+              chatId: ctx.chatId,
+              chatType: ctx.chatType,
+              sendMode: "message",
+              replyKind: "pairing",
+              textPreview: `pairing:${ctx.senderOpenId}`,
+            });
+            const result = await sendMessageFeishu({
               cfg,
               to: `chat:${ctx.chatId}`,
               text: core.channel.pairing.buildPairingReply({
@@ -1117,13 +1138,49 @@ export async function handleFeishuMessage(params: {
               }),
               accountId: account.accountId,
             });
+            await recordFeishuReplyFlowAudit({
+              stage: "outbound_result",
+              accountId: account.accountId,
+              messageId: ctx.messageId,
+              chatId: ctx.chatId,
+              chatType: ctx.chatType,
+              sendMode: "message",
+              replyKind: "pairing",
+              deliveryMessageId: result.messageId,
+            });
           } catch (err) {
+            await recordFeishuReplyFlowAudit({
+              stage: "dispatch_error",
+              accountId: account.accountId,
+              messageId: ctx.messageId,
+              chatId: ctx.chatId,
+              chatType: ctx.chatType,
+              sendMode: "message",
+              replyKind: "pairing",
+              error: String(err),
+            });
             log(
               `feishu[${account.accountId}]: pairing reply failed for ${ctx.senderOpenId}: ${String(err)}`,
             );
           }
         }
+        await recordFeishuReplyFlowAudit({
+          stage: "gate_drop",
+          accountId: account.accountId,
+          messageId: ctx.messageId,
+          chatId: ctx.chatId,
+          chatType: ctx.chatType,
+          error: `unauthorized-dm:${dmPolicy}`,
+        });
       } else {
+        await recordFeishuReplyFlowAudit({
+          stage: "gate_drop",
+          accountId: account.accountId,
+          messageId: ctx.messageId,
+          chatId: ctx.chatId,
+          chatType: ctx.chatType,
+          error: `unauthorized-dm:${dmPolicy}`,
+        });
         log(
           `feishu[${account.accountId}]: blocked unauthorized sender ${ctx.senderOpenId} (dmPolicy=${dmPolicy})`,
         );
@@ -1213,7 +1270,6 @@ export async function handleFeishuMessage(params: {
     // System events are prepended to future prompts and can be misread as
     // authoritative transcript turns.
     log(`feishu[${account.accountId}]: ${inboundLabel}: ${preview}`);
-
     // Resolve media from message
     const mediaMaxBytes = (feishuCfg?.mediaMaxMb ?? 30) * 1024 * 1024; // 30MB default
     const mediaList = await resolveFeishuMediaList({
@@ -1339,6 +1395,18 @@ export async function handleFeishuMessage(params: {
       : undefined;
     const replyTargetMessageId = ctx.rootId ?? ctx.messageId;
     const threadReply = isGroup ? (groupSession?.threadReply ?? false) : false;
+    await recordFeishuReplyFlowAudit({
+      stage: "route",
+      accountId: account.accountId,
+      messageId: ctx.messageId,
+      chatId: ctx.chatId,
+      chatType: ctx.chatType,
+      sessionKey: route.sessionKey,
+      agentId: route.agentId,
+      routeMatchedBy: route.matchedBy,
+      contentType: ctx.contentType,
+      textPreview: ctx.content,
+    });
 
     if (broadcastAgents) {
       // Cross-account dedup: in multi-account setups, Feishu delivers the same
@@ -1396,6 +1464,8 @@ export async function handleFeishuMessage(params: {
             mentionTargets: ctx.mentionTargets,
             accountId: account.accountId,
             messageCreateTimeMs,
+            inboundMessageId: ctx.messageId,
+            sessionKey: agentSessionKey,
           });
 
           log(
@@ -1494,9 +1564,23 @@ export async function handleFeishuMessage(params: {
         mentionTargets: ctx.mentionTargets,
         accountId: account.accountId,
         messageCreateTimeMs,
+        inboundMessageId: ctx.messageId,
+        sessionKey: route.sessionKey,
       });
 
       log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);
+      await recordFeishuReplyFlowAudit({
+        stage: "dispatch_start",
+        accountId: account.accountId,
+        messageId: ctx.messageId,
+        chatId: ctx.chatId,
+        chatType: ctx.chatType,
+        sessionKey: route.sessionKey,
+        agentId: route.agentId,
+        routeMatchedBy: route.matchedBy,
+        contentType: ctx.contentType,
+        textPreview: ctx.content,
+      });
       const { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
         dispatcher,
         onSettled: () => {
@@ -1522,8 +1606,28 @@ export async function handleFeishuMessage(params: {
       log(
         `feishu[${account.accountId}]: dispatch complete (queuedFinal=${queuedFinal}, replies=${counts.final})`,
       );
+      await recordFeishuReplyFlowAudit({
+        stage: "dispatch_complete",
+        accountId: account.accountId,
+        messageId: ctx.messageId,
+        chatId: ctx.chatId,
+        chatType: ctx.chatType,
+        sessionKey: route.sessionKey,
+        agentId: route.agentId,
+        routeMatchedBy: route.matchedBy,
+        queuedFinal,
+        replyCount: counts.final,
+      });
     }
   } catch (err) {
+    await recordFeishuReplyFlowAudit({
+      stage: "dispatch_error",
+      accountId: account.accountId,
+      messageId: ctx.messageId,
+      chatId: ctx.chatId,
+      chatType: ctx.chatType,
+      error: String(err),
+    });
     error(`feishu[${account.accountId}]: failed to dispatch message: ${String(err)}`);
   }
 }

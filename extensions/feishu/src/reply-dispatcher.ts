@@ -8,9 +8,11 @@ import {
 } from "openclaw/plugin-sdk";
 import { resolveFeishuAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
+import { normalizeFeishuDisplayText } from "./display-text.js";
 import { sendMediaFeishu } from "./media.js";
 import type { MentionTarget } from "./mention.js";
 import { buildMentionedCardContent } from "./mention.js";
+import { recordFeishuReplyFlowAudit } from "./reply-flow-audit.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { sendMarkdownCardFeishu, sendMessageFeishu } from "./send.js";
 import { FeishuStreamingSession } from "./streaming-card.js";
@@ -53,6 +55,8 @@ export type CreateFeishuReplyDispatcherParams = {
   /** Epoch ms when the inbound message was created. Used to suppress typing
    *  indicators on old/replayed messages after context compaction (#30418). */
   messageCreateTimeMs?: number;
+  inboundMessageId?: string;
+  sessionKey?: string;
 };
 
 export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherParams) {
@@ -68,6 +72,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     rootId,
     mentionTargets,
     accountId,
+    inboundMessageId,
+    sessionKey,
   } = params;
   const sendReplyToMessageId = skipReplyToInMessages ? undefined : replyToMessageId;
   const threadReplyMode = threadReply === true;
@@ -235,6 +241,44 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     lastPartial = "";
   };
 
+  const auditBase = {
+    accountId: account.accountId,
+    messageId: inboundMessageId,
+    chatId,
+    sessionKey,
+    agentId,
+  } as const;
+
+  const recordOutboundAttempt = async (params: {
+    sendMode: "message" | "card" | "media";
+    replyKind?: string;
+    text?: string;
+  }) => {
+    await recordFeishuReplyFlowAudit({
+      ...auditBase,
+      stage: "outbound_attempt",
+      sendMode: params.sendMode,
+      replyKind: params.replyKind,
+      textPreview: params.text,
+    });
+  };
+
+  const recordOutboundResult = async (params: {
+    sendMode: "message" | "card" | "media";
+    replyKind?: string;
+    text?: string;
+    deliveryMessageId?: string;
+  }) => {
+    await recordFeishuReplyFlowAudit({
+      ...auditBase,
+      stage: "outbound_result",
+      sendMode: params.sendMode,
+      replyKind: params.replyKind,
+      textPreview: params.text,
+      deliveryMessageId: params.deliveryMessageId,
+    });
+  };
+
   const { dispatcher, replyOptions, markDispatchIdle } =
     core.channel.reply.createReplyDispatcherWithTyping({
       responsePrefix: prefixContext.responsePrefix,
@@ -247,7 +291,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         void typingCallbacks.onReplyStart?.();
       },
       deliver: async (payload: ReplyPayload, info) => {
-        const text = payload.text ?? "";
+        const rawText = payload.text ?? "";
+        const text = normalizeFeishuDisplayText(rawText);
         const mediaList =
           payload.mediaUrls && payload.mediaUrls.length > 0
             ? payload.mediaUrls
@@ -262,7 +307,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         }
 
         if (hasText) {
-          const useCard = renderMode === "card" || (renderMode === "auto" && shouldUseCard(text));
+          const useCard =
+            renderMode === "card" || (renderMode === "auto" && shouldUseCard(rawText));
 
           if (info?.kind === "block") {
             // Drop internal block chunks unless we can safely consume them as
@@ -296,13 +342,24 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             // Send media even when streaming handled the text
             if (hasMedia) {
               for (const mediaUrl of mediaList) {
-                await sendMediaFeishu({
+                await recordOutboundAttempt({
+                  sendMode: "media",
+                  replyKind: info?.kind,
+                  text: mediaUrl,
+                });
+                const result = await sendMediaFeishu({
                   cfg,
                   to: chatId,
                   mediaUrl,
                   replyToMessageId: sendReplyToMessageId,
                   replyInThread: effectiveReplyInThread,
                   accountId,
+                });
+                await recordOutboundResult({
+                  sendMode: "media",
+                  replyKind: info?.kind,
+                  text: mediaUrl,
+                  deliveryMessageId: result?.messageId,
                 });
               }
             }
@@ -316,7 +373,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               textChunkLimit,
               chunkMode,
             )) {
-              await sendMarkdownCardFeishu({
+              await recordOutboundAttempt({
+                sendMode: "card",
+                replyKind: info?.kind,
+                text: chunk,
+              });
+              const result = await sendMarkdownCardFeishu({
                 cfg,
                 to: chatId,
                 text: chunk,
@@ -324,6 +386,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                 replyInThread: effectiveReplyInThread,
                 mentions: first ? mentionTargets : undefined,
                 accountId,
+              });
+              await recordOutboundResult({
+                sendMode: "card",
+                replyKind: info?.kind,
+                text: chunk,
+                deliveryMessageId: result?.messageId,
               });
               first = false;
             }
@@ -334,7 +402,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               textChunkLimit,
               chunkMode,
             )) {
-              await sendMessageFeishu({
+              await recordOutboundAttempt({
+                sendMode: "message",
+                replyKind: info?.kind,
+                text: chunk,
+              });
+              const result = await sendMessageFeishu({
                 cfg,
                 to: chatId,
                 text: chunk,
@@ -343,6 +416,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                 mentions: first ? mentionTargets : undefined,
                 accountId,
               });
+              await recordOutboundResult({
+                sendMode: "message",
+                replyKind: info?.kind,
+                text: chunk,
+                deliveryMessageId: result?.messageId,
+              });
               first = false;
             }
           }
@@ -350,7 +429,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
         if (hasMedia) {
           for (const mediaUrl of mediaList) {
-            await sendMediaFeishu({
+            await recordOutboundAttempt({
+              sendMode: "media",
+              replyKind: info?.kind,
+              text: mediaUrl,
+            });
+            const result = await sendMediaFeishu({
               cfg,
               to: chatId,
               mediaUrl,
@@ -358,10 +442,22 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               replyInThread: effectiveReplyInThread,
               accountId,
             });
+            await recordOutboundResult({
+              sendMode: "media",
+              replyKind: info?.kind,
+              text: mediaUrl,
+              deliveryMessageId: result?.messageId,
+            });
           }
         }
       },
       onError: async (error, info) => {
+        await recordFeishuReplyFlowAudit({
+          ...auditBase,
+          stage: "dispatch_error",
+          replyKind: info.kind,
+          error: String(error),
+        });
         params.runtime.error?.(
           `feishu[${account.accountId}] ${info.kind} reply failed: ${String(error)}`,
         );
