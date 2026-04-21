@@ -46,7 +46,6 @@ vi.mock("./streaming-card.js", () => ({
   },
 }));
 
-import { normalizeFeishuDisplayText } from "./display-text.js";
 import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
 import { resolveFeishuReplyFlowAuditPath } from "./reply-flow-audit.js";
 
@@ -276,59 +275,6 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
   });
 
-  it("normalizes markdown tables and code fences before sending to Feishu", async () => {
-    resolveFeishuAccountMock.mockReturnValue({
-      accountId: "main",
-      appId: "app_id",
-      appSecret: "app_secret",
-      domain: "feishu",
-      config: {
-        renderMode: "raw",
-        streaming: false,
-      },
-    });
-
-    createFeishuReplyDispatcher({
-      cfg: {} as never,
-      agentId: "agent",
-      runtime: {} as never,
-      chatId: "oc_chat",
-    });
-
-    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
-    await options.deliver(
-      {
-        text: [
-          "## 今日关注",
-          "",
-          "| 指标 | 数值 | 结论 |",
-          "|------|------|------|",
-          "| VIX | 27.44 | 偏高 |",
-          "",
-          "```json",
-          '{ \"repair_candidate\": \"continuation-routing\" }',
-          "```",
-        ].join("\n"),
-      },
-      { kind: "final" },
-    );
-
-    expect(sendMessageFeishuMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: [
-          "Data freshness status: provisional.",
-          "Source reliability status: verified.",
-          "Research freshness status: fresh.",
-          "Exact prices, percentage moves, and VIX/DXY levels are withheld because market data is degraded, stale, or lacks an explicit timestamp.",
-          "",
-          "今日关注",
-          "",
-          '{ \"repair_candidate\": \"continuation-routing\" }',
-        ].join("\n"),
-      }),
-    );
-  });
-
   it("suppresses internal block payload delivery", async () => {
     createFeishuReplyDispatcher({
       cfg: {} as never,
@@ -385,7 +331,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(streamingInstances).toHaveLength(1);
     expect(streamingInstances[0].start).toHaveBeenCalledTimes(1);
     expect(streamingInstances[0].close).toHaveBeenCalledTimes(1);
-    expect(streamingInstances[0].close).toHaveBeenCalledWith("partial answer");
+    expect(streamingInstances[0].close).toHaveBeenCalledWith("```md\npartial answer\n```");
   });
 
   it("sends media-only payloads as attachments", async () => {
@@ -573,28 +519,6 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         replyToMessageId: "om_msg",
         replyInThread: true,
       }),
-    );
-  });
-});
-
-describe("normalizeFeishuDisplayText", () => {
-  it("turns heavy markdown into operator-readable plain text", () => {
-    expect(
-      normalizeFeishuDisplayText(
-        [
-          "## Daily Workface",
-          "",
-          "| Item | Value |",
-          "|------|-------|",
-          "| Tokens | 12345 |",
-          "",
-          "```ts",
-          "const ready = true;",
-          "```",
-        ].join("\n"),
-      ),
-    ).toBe(
-      ["Daily Workface", "", "- Item: Tokens; Value: 12345", "", "const ready = true;"].join("\n"),
     );
   });
 });

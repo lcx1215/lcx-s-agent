@@ -8,7 +8,6 @@ import {
 } from "openclaw/plugin-sdk";
 import { resolveFeishuAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
-import { normalizeFeishuDisplayText } from "./display-text.js";
 import { sendMediaFeishu } from "./media.js";
 import type { MentionTarget } from "./mention.js";
 import { buildMentionedCardContent } from "./mention.js";
@@ -291,8 +290,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         void typingCallbacks.onReplyStart?.();
       },
       deliver: async (payload: ReplyPayload, info) => {
-        const rawText = payload.text ?? "";
-        const text = normalizeFeishuDisplayText(rawText);
+        const text = payload.text ?? "";
         const mediaList =
           payload.mediaUrls && payload.mediaUrls.length > 0
             ? payload.mediaUrls
@@ -307,8 +305,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         }
 
         if (hasText) {
-          const useCard =
-            renderMode === "card" || (renderMode === "auto" && shouldUseCard(rawText));
+          const useCard = renderMode === "card" || (renderMode === "auto" && shouldUseCard(text));
 
           if (info?.kind === "block") {
             // Drop internal block chunks unless we can safely consume them as
