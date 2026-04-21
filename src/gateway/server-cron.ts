@@ -29,6 +29,7 @@ import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
+import { recordGatewayCronFeishuDailyBriefAudit } from "./feishu-daily-brief-audit.js";
 
 export type GatewayCronState = {
   cron: CronService;
@@ -496,6 +497,12 @@ export function buildGatewayCronService(params: {
           runLogPrune,
         ).catch((err) => {
           cronLogger.warn({ err: String(err), logPath }, "cron: run log append failed");
+        });
+        void recordGatewayCronFeishuDailyBriefAudit({
+          job,
+          event: evt,
+        }).catch((err) => {
+          cronLogger.warn({ err: String(err), jobId: evt.jobId }, "cron: daily brief audit failed");
         });
       }
     },

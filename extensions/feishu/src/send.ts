@@ -1,6 +1,7 @@
 import type { ClawdbotConfig } from "openclaw/plugin-sdk";
 import { resolveFeishuAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
+import { normalizeFeishuDisplayText } from "./display-text.js";
 import type { MentionTarget } from "./mention.js";
 import { buildMentionedMessage, buildMentionedCardContent } from "./mention.js";
 import { parsePostContent } from "./post.js";
@@ -231,7 +232,7 @@ export async function sendMessageFeishu(
   });
 
   // Build message content (with @mention support)
-  let rawText = text ?? "";
+  let rawText = normalizeFeishuDisplayText(text ?? "");
   if (mentions && mentions.length > 0) {
     rawText = buildMentionedMessage(mentions, rawText);
   }
@@ -391,12 +392,20 @@ export async function sendMarkdownCardFeishu(params: {
   accountId?: string;
 }): Promise<FeishuSendResult> {
   const { cfg, to, text, replyToMessageId, replyInThread, mentions, accountId } = params;
-  let cardText = text;
+  let cardText = normalizeFeishuDisplayText(text ?? "");
   if (mentions && mentions.length > 0) {
-    cardText = buildMentionedCardContent(mentions, text);
+    cardText = buildMentionedCardContent(mentions, cardText);
   }
   const card = buildMarkdownCard(cardText);
-  return sendCardFeishu({ cfg, to, card, replyToMessageId, replyInThread, accountId });
+  const result = await sendCardFeishu({
+    cfg,
+    to,
+    card,
+    replyToMessageId,
+    replyInThread,
+    accountId,
+  });
+  return result;
 }
 
 /**
