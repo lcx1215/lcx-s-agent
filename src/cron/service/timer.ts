@@ -28,6 +28,7 @@ import { DEFAULT_JOB_TIMEOUT_MS, resolveCronJobTimeoutMs } from "./timeout-polic
 export { DEFAULT_JOB_TIMEOUT_MS } from "./timeout-policy.js";
 
 const MAX_TIMER_DELAY_MS = 60_000;
+const TIMEOUT_ERROR_GRACE_MS = 250;
 
 /**
  * Minimum gap between consecutive fires of the same cron job.  This is a
@@ -60,19 +61,44 @@ export async function executeJobCoreWithTimeout(
 
   const runAbortController = new AbortController();
   let timeoutId: NodeJS.Timeout | undefined;
+  let graceId: NodeJS.Timeout | undefined;
+  const corePromise = executeJobCore(state, job, runAbortController.signal);
   try {
     return await Promise.race([
-      executeJobCore(state, job, runAbortController.signal),
-      new Promise<never>((_, reject) => {
+      corePromise,
+      new Promise<Awaited<ReturnType<typeof executeJobCore>>>((resolve, reject) => {
         timeoutId = setTimeout(() => {
           runAbortController.abort(timeoutErrorMessage());
-          reject(new Error(timeoutErrorMessage()));
+          void Promise.race([
+            corePromise.then(
+              (result) => ({ kind: "result" as const, result }),
+              (error) => ({ kind: "error" as const, error }),
+            ),
+            new Promise<{ kind: "timeout" }>((resolve) => {
+              graceId = setTimeout(() => resolve({ kind: "timeout" }), TIMEOUT_ERROR_GRACE_MS);
+            }),
+          ]).then((outcome) => {
+            if (outcome.kind === "result") {
+              resolve(outcome.result);
+              return;
+            }
+            if (outcome.kind === "error") {
+              reject(
+                isAbortError(outcome.error) ? new Error(timeoutErrorMessage()) : outcome.error,
+              );
+              return;
+            }
+            reject(new Error(timeoutErrorMessage()));
+          });
         }, jobTimeoutMs);
       }),
     ]);
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);
+    }
+    if (graceId) {
+      clearTimeout(graceId);
     }
   }
 }
@@ -92,7 +118,11 @@ function isAbortError(err: unknown): boolean {
   if (!(err instanceof Error)) {
     return false;
   }
-  return err.name === "AbortError" || err.message === timeoutErrorMessage();
+  return (
+    err.name === "AbortError" ||
+    err.message === timeoutErrorMessage() ||
+    /^aborted$/i.test(err.message.trim())
+  );
 }
 /**
  * Exponential backoff delays (in ms) indexed by consecutive error count.
@@ -988,6 +1018,20 @@ export async function executeJobCore(
   });
 
   if (abortSignal?.aborted) {
+    const explicitError = typeof res.error === "string" ? res.error.trim() : "";
+    if (res.status === "error" && explicitError && !isAbortError(new Error(explicitError))) {
+      return {
+        status: "error",
+        error: explicitError,
+        delivered: res.delivered,
+        deliveryAttempted: res.deliveryAttempted,
+        sessionId: res.sessionId,
+        sessionKey: res.sessionKey,
+        model: res.model,
+        provider: res.provider,
+        usage: res.usage,
+      };
+    }
     return { status: "error", error: timeoutErrorMessage() };
   }
 

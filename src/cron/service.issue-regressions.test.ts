@@ -1112,6 +1112,89 @@ describe("Cron issue regressions", () => {
     expect(job?.state.lastError).toContain("timed out");
   });
 
+  it("preserves a late inner failover timeout instead of flattening it to cron timeout", async () => {
+    vi.useRealTimers();
+    const store = makeStorePath();
+    const scheduledAt = Date.parse("2026-02-15T13:30:00.000Z");
+    const cronJob = createIsolatedRegressionJob({
+      id: "late-failover-timeout",
+      name: "late failover timeout",
+      scheduledAt,
+      schedule: { kind: "at", at: new Date(scheduledAt).toISOString() },
+      payload: { kind: "agentTurn", message: "work", timeoutSeconds: FAST_TIMEOUT_SECONDS },
+      state: { nextRunAtMs: scheduledAt },
+    });
+    await writeCronJobs(store.storePath, [cronJob]);
+
+    let now = scheduledAt;
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: store.storePath,
+      log: noopLogger,
+      nowMs: () => now,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: vi.fn(async ({ abortSignal }: { abortSignal?: AbortSignal }) => {
+        await new Promise<void>((resolve) => {
+          if (!abortSignal) {
+            return;
+          }
+          if (abortSignal.aborted) {
+            resolve();
+            return;
+          }
+          abortSignal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        now += 10;
+        throw new Error("FailoverError: LLM request timed out.");
+      }),
+    });
+
+    await runMissedJobs(state);
+
+    const job = state.store?.jobs.find((entry) => entry.id === "late-failover-timeout");
+    expect(job?.state.lastStatus).toBe("error");
+    expect(job?.state.lastError).toBe("Error: FailoverError: LLM request timed out.");
+    expect(job?.state.runningAtMs).toBeUndefined();
+  });
+
+  it("preserves a specific isolated error returned after abort instead of flattening it to cron timeout", async () => {
+    const now = Date.parse("2026-02-15T13:31:00.000Z");
+    const abortController = new AbortController();
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: makeStorePath().storePath,
+      log: noopLogger,
+      nowMs: () => now,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: vi.fn(async () => {
+        abortController.abort("cron: job execution timed out");
+        return {
+          status: "error" as const,
+          error: "FailoverError: LLM request timed out.",
+          summary: undefined,
+        };
+      }),
+    });
+
+    const result = await executeJobCore(
+      state,
+      createIsolatedRegressionJob({
+        id: "preserve-post-abort-error",
+        name: "preserve post abort error",
+        scheduledAt: now,
+        schedule: { kind: "at", at: new Date(now).toISOString() },
+        payload: { kind: "agentTurn", message: "work" },
+      }),
+      abortController.signal,
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.error).toBe("FailoverError: LLM request timed out.");
+  });
+
   it("respects abort signals while retrying main-session wake-now heartbeat runs", async () => {
     const abortController = new AbortController();
     const runHeartbeatOnce = vi.fn(
