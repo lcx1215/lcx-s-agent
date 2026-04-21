@@ -11,7 +11,10 @@ import { createFeishuClient } from "./client.js";
 import { sendMediaFeishu } from "./media.js";
 import type { MentionTarget } from "./mention.js";
 import { buildMentionedCardContent } from "./mention.js";
-import { recordFeishuReplyFlowAudit } from "./reply-flow-audit.js";
+import {
+  createFeishuReplyFlowCorrelationId,
+  recordFeishuReplyFlowAudit,
+} from "./reply-flow-audit.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { sendMarkdownCardFeishu, sendMessageFeishu } from "./send.js";
 import { FeishuStreamingSession } from "./streaming-card.js";
@@ -40,6 +43,7 @@ function normalizeEpochMs(timestamp: number | undefined): number | undefined {
 export type CreateFeishuReplyDispatcherParams = {
   cfg: ClawdbotConfig;
   agentId: string;
+  correlationId?: string;
   runtime: RuntimeEnv;
   chatId: string;
   replyToMessageId?: string;
@@ -74,6 +78,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     inboundMessageId,
     sessionKey,
   } = params;
+  const correlationId =
+    params.correlationId ?? createFeishuReplyFlowCorrelationId(inboundMessageId ?? chatId);
   const sendReplyToMessageId = skipReplyToInMessages ? undefined : replyToMessageId;
   const threadReplyMode = threadReply === true;
   const effectiveReplyInThread = threadReplyMode ? true : replyInThread;
@@ -242,6 +248,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
   const auditBase = {
     accountId: account.accountId,
+    correlationId,
     messageId: inboundMessageId,
     chatId,
     sessionKey,
@@ -266,7 +273,16 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     sendMode: "message" | "card" | "media";
     replyKind?: string;
     text?: string;
-    deliveryMessageId?: string;
+    result?: {
+      messageId?: string;
+      deliveryStatus?: "success";
+      feishuCode?: number;
+      feishuMsg?: string;
+      outboundMessageType?: string;
+      receiveIdType?: string;
+      usedReplyTarget?: boolean;
+      usedFallbackCreate?: boolean;
+    };
   }) => {
     await recordFeishuReplyFlowAudit({
       ...auditBase,
@@ -274,7 +290,14 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       sendMode: params.sendMode,
       replyKind: params.replyKind,
       textPreview: params.text,
-      deliveryMessageId: params.deliveryMessageId,
+      deliveryMessageId: params.result?.messageId,
+      deliveryStatus: params.result?.deliveryStatus,
+      feishuCode: params.result?.feishuCode,
+      feishuMsg: params.result?.feishuMsg,
+      outboundMessageType: params.result?.outboundMessageType,
+      receiveIdType: params.result?.receiveIdType,
+      usedReplyTarget: params.result?.usedReplyTarget,
+      usedFallbackCreate: params.result?.usedFallbackCreate,
     });
   };
 
@@ -356,7 +379,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                   sendMode: "media",
                   replyKind: info?.kind,
                   text: mediaUrl,
-                  deliveryMessageId: result?.messageId,
+                  result,
                 });
               }
             }
@@ -388,7 +411,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                 sendMode: "card",
                 replyKind: info?.kind,
                 text: chunk,
-                deliveryMessageId: result?.messageId,
+                result,
               });
               first = false;
             }
@@ -417,7 +440,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                 sendMode: "message",
                 replyKind: info?.kind,
                 text: chunk,
-                deliveryMessageId: result?.messageId,
+                result,
               });
               first = false;
             }
@@ -443,7 +466,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               sendMode: "media",
               replyKind: info?.kind,
               text: mediaUrl,
-              deliveryMessageId: result?.messageId,
+              result,
             });
           }
         }

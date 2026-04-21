@@ -252,8 +252,10 @@ describe("handleFeishuMessage command authorization", () => {
       "dispatch_start",
       "dispatch_complete",
     ]);
+    expect(new Set(lines.map((line) => line.correlationId))).toHaveLength(1);
     expect(lines[0]).toMatchObject({
       kind: "feishu_reply_flow",
+      correlationId: expect.any(String),
       stage: "inbound",
       accountId: "default",
       messageId: "msg-audit",
@@ -318,6 +320,7 @@ describe("handleFeishuMessage command authorization", () => {
       "dispatch_error",
       "gate_drop",
     ]);
+    expect(new Set(lines.map((line) => line.correlationId))).toHaveLength(1);
     expect(lines[0]).toMatchObject({
       stage: "inbound",
       messageId: "msg-pairing-audit",

@@ -58,6 +58,13 @@ export type FeishuMessageContext = {
 export type FeishuSendResult = {
   messageId: string;
   chatId: string;
+  deliveryStatus: "success";
+  feishuCode?: number;
+  feishuMsg?: string;
+  outboundMessageType: string;
+  receiveIdType: FeishuIdType;
+  usedReplyTarget: boolean;
+  usedFallbackCreate: boolean;
 };
 
 export type FeishuProbeResult = BaseProbeResult<string> & {

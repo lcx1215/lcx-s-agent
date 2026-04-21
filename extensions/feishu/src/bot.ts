@@ -27,7 +27,10 @@ import {
 } from "./policy.js";
 import { parsePostContent } from "./post.js";
 import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
-import { recordFeishuReplyFlowAudit } from "./reply-flow-audit.js";
+import {
+  createFeishuReplyFlowCorrelationId,
+  recordFeishuReplyFlowAudit,
+} from "./reply-flow-audit.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { getMessageFeishu, sendMessageFeishu } from "./send.js";
 import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
@@ -1074,8 +1077,11 @@ export async function handleFeishuMessage(params: {
   } else {
   }
 
+  const correlationId = createFeishuReplyFlowCorrelationId(ctx.messageId);
+
   try {
     await recordFeishuReplyFlowAudit({
+      correlationId,
       stage: "inbound",
       accountId: account.accountId,
       messageId: ctx.messageId,
@@ -1119,6 +1125,7 @@ export async function handleFeishuMessage(params: {
           log(`feishu[${account.accountId}]: pairing request sender=${ctx.senderOpenId}`);
           try {
             await recordFeishuReplyFlowAudit({
+              correlationId,
               stage: "outbound_attempt",
               accountId: account.accountId,
               messageId: ctx.messageId,
@@ -1139,6 +1146,7 @@ export async function handleFeishuMessage(params: {
               accountId: account.accountId,
             });
             await recordFeishuReplyFlowAudit({
+              correlationId,
               stage: "outbound_result",
               accountId: account.accountId,
               messageId: ctx.messageId,
@@ -1147,9 +1155,17 @@ export async function handleFeishuMessage(params: {
               sendMode: "message",
               replyKind: "pairing",
               deliveryMessageId: result.messageId,
+              deliveryStatus: result.deliveryStatus,
+              feishuCode: result.feishuCode,
+              feishuMsg: result.feishuMsg,
+              outboundMessageType: result.outboundMessageType,
+              receiveIdType: result.receiveIdType,
+              usedReplyTarget: result.usedReplyTarget,
+              usedFallbackCreate: result.usedFallbackCreate,
             });
           } catch (err) {
             await recordFeishuReplyFlowAudit({
+              correlationId,
               stage: "dispatch_error",
               accountId: account.accountId,
               messageId: ctx.messageId,
@@ -1165,6 +1181,7 @@ export async function handleFeishuMessage(params: {
           }
         }
         await recordFeishuReplyFlowAudit({
+          correlationId,
           stage: "gate_drop",
           accountId: account.accountId,
           messageId: ctx.messageId,
@@ -1174,6 +1191,7 @@ export async function handleFeishuMessage(params: {
         });
       } else {
         await recordFeishuReplyFlowAudit({
+          correlationId,
           stage: "gate_drop",
           accountId: account.accountId,
           messageId: ctx.messageId,
@@ -1396,6 +1414,7 @@ export async function handleFeishuMessage(params: {
     const replyTargetMessageId = ctx.rootId ?? ctx.messageId;
     const threadReply = isGroup ? (groupSession?.threadReply ?? false) : false;
     await recordFeishuReplyFlowAudit({
+      correlationId,
       stage: "route",
       accountId: account.accountId,
       messageId: ctx.messageId,
@@ -1454,6 +1473,7 @@ export async function handleFeishuMessage(params: {
           const { dispatcher, replyOptions, markDispatchIdle } = createFeishuReplyDispatcher({
             cfg,
             agentId,
+            correlationId,
             runtime: runtime as RuntimeEnv,
             chatId: ctx.chatId,
             replyToMessageId: replyTargetMessageId,
@@ -1554,6 +1574,7 @@ export async function handleFeishuMessage(params: {
       const { dispatcher, replyOptions, markDispatchIdle } = createFeishuReplyDispatcher({
         cfg,
         agentId: route.agentId,
+        correlationId,
         runtime: runtime as RuntimeEnv,
         chatId: ctx.chatId,
         replyToMessageId: replyTargetMessageId,
@@ -1570,6 +1591,7 @@ export async function handleFeishuMessage(params: {
 
       log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);
       await recordFeishuReplyFlowAudit({
+        correlationId,
         stage: "dispatch_start",
         accountId: account.accountId,
         messageId: ctx.messageId,
@@ -1607,6 +1629,7 @@ export async function handleFeishuMessage(params: {
         `feishu[${account.accountId}]: dispatch complete (queuedFinal=${queuedFinal}, replies=${counts.final})`,
       );
       await recordFeishuReplyFlowAudit({
+        correlationId,
         stage: "dispatch_complete",
         accountId: account.accountId,
         messageId: ctx.messageId,
@@ -1621,6 +1644,7 @@ export async function handleFeishuMessage(params: {
     }
   } catch (err) {
     await recordFeishuReplyFlowAudit({
+      correlationId,
       stage: "dispatch_error",
       accountId: account.accountId,
       messageId: ctx.messageId,

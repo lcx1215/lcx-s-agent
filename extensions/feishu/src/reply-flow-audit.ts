@@ -14,6 +14,7 @@ export type FeishuReplyFlowAuditStage =
 
 export type FeishuReplyFlowAuditRecord = {
   kind: "feishu_reply_flow";
+  correlationId: string;
   stage: FeishuReplyFlowAuditStage;
   recordedAtMs: number;
   recordedAt: string;
@@ -29,6 +30,13 @@ export type FeishuReplyFlowAuditRecord = {
   replyKind?: string;
   sendMode?: "message" | "card" | "media";
   deliveryMessageId?: string;
+  deliveryStatus?: "success";
+  feishuCode?: number;
+  feishuMsg?: string;
+  outboundMessageType?: string;
+  receiveIdType?: string;
+  usedReplyTarget?: boolean;
+  usedFallbackCreate?: boolean;
   queuedFinal?: boolean;
   replyCount?: number;
   error?: string;
@@ -57,6 +65,17 @@ function sanitizePreview(text?: string): string | undefined {
   return normalized.slice(0, 280);
 }
 
+function compactMessageId(messageId: string): string {
+  return messageId.replace(/[^a-zA-Z0-9]+/g, "").slice(-12) || "msg";
+}
+
+export function createFeishuReplyFlowCorrelationId(
+  messageId: string,
+  recordedAtMs = Date.now(),
+): string {
+  return ["ff", recordedAtMs.toString(36), compactMessageId(messageId)].join("-");
+}
+
 export async function recordFeishuReplyFlowAudit(
   params: Omit<
     FeishuReplyFlowAuditRecord,
@@ -69,6 +88,7 @@ export async function recordFeishuReplyFlowAudit(
   const recordedAtMs = Date.now();
   const record: FeishuReplyFlowAuditRecord = {
     kind: "feishu_reply_flow",
+    correlationId: params.correlationId,
     stage: params.stage,
     recordedAtMs,
     recordedAt: new Date(recordedAtMs).toISOString(),
@@ -84,6 +104,13 @@ export async function recordFeishuReplyFlowAudit(
     replyKind: params.replyKind,
     sendMode: params.sendMode,
     deliveryMessageId: params.deliveryMessageId,
+    deliveryStatus: params.deliveryStatus,
+    feishuCode: params.feishuCode,
+    feishuMsg: params.feishuMsg,
+    outboundMessageType: params.outboundMessageType,
+    receiveIdType: params.receiveIdType,
+    usedReplyTarget: params.usedReplyTarget,
+    usedFallbackCreate: params.usedFallbackCreate,
     queuedFinal: params.queuedFinal,
     replyCount: params.replyCount,
     error: params.error,

@@ -259,10 +259,20 @@ export async function sendMessageFeishu(
         },
       });
       assertFeishuMessageApiSuccess(fallback, "Feishu send failed");
-      return toFeishuSendResult(fallback, receiveId);
+      return toFeishuSendResult(fallback, receiveId, {
+        outboundMessageType: msgType,
+        receiveIdType,
+        usedReplyTarget: false,
+        usedFallbackCreate: true,
+      });
     }
     assertFeishuMessageApiSuccess(response, "Feishu reply failed");
-    return toFeishuSendResult(response, receiveId);
+    return toFeishuSendResult(response, receiveId, {
+      outboundMessageType: msgType,
+      receiveIdType,
+      usedReplyTarget: true,
+      usedFallbackCreate: false,
+    });
   }
 
   const response = await client.im.message.create({
@@ -274,7 +284,12 @@ export async function sendMessageFeishu(
     },
   });
   assertFeishuMessageApiSuccess(response, "Feishu send failed");
-  return toFeishuSendResult(response, receiveId);
+  return toFeishuSendResult(response, receiveId, {
+    outboundMessageType: msgType,
+    receiveIdType,
+    usedReplyTarget: false,
+    usedFallbackCreate: false,
+  });
 }
 
 export type SendFeishuCardParams = {
@@ -311,10 +326,20 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
         },
       });
       assertFeishuMessageApiSuccess(fallback, "Feishu card send failed");
-      return toFeishuSendResult(fallback, receiveId);
+      return toFeishuSendResult(fallback, receiveId, {
+        outboundMessageType: "interactive",
+        receiveIdType,
+        usedReplyTarget: false,
+        usedFallbackCreate: true,
+      });
     }
     assertFeishuMessageApiSuccess(response, "Feishu card reply failed");
-    return toFeishuSendResult(response, receiveId);
+    return toFeishuSendResult(response, receiveId, {
+      outboundMessageType: "interactive",
+      receiveIdType,
+      usedReplyTarget: true,
+      usedFallbackCreate: false,
+    });
   }
 
   const response = await client.im.message.create({
@@ -326,7 +351,12 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
     },
   });
   assertFeishuMessageApiSuccess(response, "Feishu card send failed");
-  return toFeishuSendResult(response, receiveId);
+  return toFeishuSendResult(response, receiveId, {
+    outboundMessageType: "interactive",
+    receiveIdType,
+    usedReplyTarget: false,
+    usedFallbackCreate: false,
+  });
 }
 
 export async function updateCardFeishu(params: {

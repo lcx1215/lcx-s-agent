@@ -199,7 +199,17 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
   });
 
   it("records outbound attempt and result audit entries for final replies", async () => {
-    sendMessageFeishuMock.mockResolvedValue({ messageId: "om_reply_1", chatId: "oc_chat" });
+    sendMessageFeishuMock.mockResolvedValue({
+      messageId: "om_reply_1",
+      chatId: "oc_chat",
+      deliveryStatus: "success",
+      feishuCode: 0,
+      feishuMsg: "ok",
+      outboundMessageType: "post",
+      receiveIdType: "chat_id",
+      usedReplyTarget: false,
+      usedFallbackCreate: false,
+    });
 
     createFeishuReplyDispatcher({
       cfg: {} as never,
@@ -220,6 +230,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       .map((line) => JSON.parse(line));
 
     expect(lines).toHaveLength(2);
+    expect(lines[0].correlationId).toBe(lines[1].correlationId);
     expect(lines[0]).toMatchObject({
       kind: "feishu_reply_flow",
       stage: "outbound_attempt",
@@ -236,6 +247,13 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       stage: "outbound_result",
       messageId: "om_inbound_1",
       deliveryMessageId: "om_reply_1",
+      deliveryStatus: "success",
+      feishuCode: 0,
+      feishuMsg: "ok",
+      outboundMessageType: "post",
+      receiveIdType: "chat_id",
+      usedReplyTarget: false,
+      usedFallbackCreate: false,
       sendMode: "message",
     });
   });
@@ -273,6 +291,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       replyKind: "final",
       error: "Error: invalid receive_id",
     });
+    expect(lines[0].correlationId).toBe(lines.at(-1)?.correlationId);
   });
 
   it("suppresses internal block payload delivery", async () => {

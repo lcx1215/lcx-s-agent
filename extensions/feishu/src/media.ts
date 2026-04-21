@@ -8,6 +8,7 @@ import { normalizeFeishuExternalKey } from "./external-keys.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { assertFeishuMessageApiSuccess, toFeishuSendResult } from "./send-result.js";
 import { resolveFeishuSendTarget } from "./send-target.js";
+import type { FeishuSendResult } from "./types.js";
 
 export type DownloadImageResult = {
   buffer: Buffer;
@@ -155,10 +156,7 @@ export type UploadFileResult = {
   fileKey: string;
 };
 
-export type SendMediaResult = {
-  messageId: string;
-  chatId: string;
-};
+export type SendMediaResult = FeishuSendResult;
 
 /**
  * Upload an image to Feishu and get an image_key for sending.
@@ -306,7 +304,12 @@ export async function sendImageFeishu(params: {
       },
     });
     assertFeishuMessageApiSuccess(response, "Feishu image reply failed");
-    return toFeishuSendResult(response, receiveId);
+    return toFeishuSendResult(response, receiveId, {
+      outboundMessageType: "image",
+      receiveIdType,
+      usedReplyTarget: true,
+      usedFallbackCreate: false,
+    });
   }
 
   const response = await client.im.message.create({
@@ -318,7 +321,12 @@ export async function sendImageFeishu(params: {
     },
   });
   assertFeishuMessageApiSuccess(response, "Feishu image send failed");
-  return toFeishuSendResult(response, receiveId);
+  return toFeishuSendResult(response, receiveId, {
+    outboundMessageType: "image",
+    receiveIdType,
+    usedReplyTarget: false,
+    usedFallbackCreate: false,
+  });
 }
 
 /**
@@ -353,7 +361,12 @@ export async function sendFileFeishu(params: {
       },
     });
     assertFeishuMessageApiSuccess(response, "Feishu file reply failed");
-    return toFeishuSendResult(response, receiveId);
+    return toFeishuSendResult(response, receiveId, {
+      outboundMessageType: msgType,
+      receiveIdType,
+      usedReplyTarget: true,
+      usedFallbackCreate: false,
+    });
   }
 
   const response = await client.im.message.create({
@@ -365,7 +378,12 @@ export async function sendFileFeishu(params: {
     },
   });
   assertFeishuMessageApiSuccess(response, "Feishu file send failed");
-  return toFeishuSendResult(response, receiveId);
+  return toFeishuSendResult(response, receiveId, {
+    outboundMessageType: msgType,
+    receiveIdType,
+    usedReplyTarget: false,
+    usedFallbackCreate: false,
+  });
 }
 
 /**

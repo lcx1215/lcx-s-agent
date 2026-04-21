@@ -1,3 +1,5 @@
+import type { FeishuIdType, FeishuSendResult } from "./types.js";
+
 export type FeishuMessageApiResponse = {
   code?: number;
   msg?: string;
@@ -18,12 +20,22 @@ export function assertFeishuMessageApiSuccess(
 export function toFeishuSendResult(
   response: FeishuMessageApiResponse,
   chatId: string,
-): {
-  messageId: string;
-  chatId: string;
-} {
+  options: {
+    outboundMessageType: string;
+    receiveIdType: FeishuIdType;
+    usedReplyTarget: boolean;
+    usedFallbackCreate: boolean;
+  },
+): FeishuSendResult {
   return {
     messageId: response.data?.message_id ?? "unknown",
     chatId,
+    deliveryStatus: "success",
+    feishuCode: response.code,
+    feishuMsg: response.msg,
+    outboundMessageType: options.outboundMessageType,
+    receiveIdType: options.receiveIdType,
+    usedReplyTarget: options.usedReplyTarget,
+    usedFallbackCreate: options.usedFallbackCreate,
   };
 }
