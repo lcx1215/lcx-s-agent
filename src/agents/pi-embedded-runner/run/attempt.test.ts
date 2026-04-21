@@ -7,6 +7,8 @@ import {
   resolveOllamaCompatNumCtxEnabled,
   resolvePromptBuildHookResult,
   resolvePromptModeForSession,
+  resolveSuppressedAutoRetryError,
+  shouldSuppressEmbeddedAutoRetry,
   shouldInjectOllamaCompatNumCtx,
   wrapOllamaCompatNumCtx,
   wrapStreamFnTrimToolCallNames,
@@ -80,6 +82,35 @@ describe("resolvePromptModeForSession", () => {
   it("uses full mode for cron sessions", () => {
     expect(resolvePromptModeForSession("agent:main:cron:job-1")).toBe("full");
     expect(resolvePromptModeForSession("agent:main:cron:job-1:run:run-abc")).toBe("full");
+  });
+});
+
+describe("shouldSuppressEmbeddedAutoRetry", () => {
+  it("suppresses auto retry for unsupported-model provider errors", () => {
+    expect(
+      shouldSuppressEmbeddedAutoRetry(
+        "HTTP 500 api_error: your current token plan not support model, MiniMax-M2.5-highspeed (2061)",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not suppress auto retry for timeout-shaped transient failures", () => {
+    expect(shouldSuppressEmbeddedAutoRetry("LLM request timed out.")).toBe(false);
+  });
+});
+
+describe("resolveSuppressedAutoRetryError", () => {
+  it("returns an explicit prompt error for permanent provider/model failures", () => {
+    const result = resolveSuppressedAutoRetryError(
+      "HTTP 500 api_error: your current token plan not support model, MiniMax-M2.5-highspeed (2061)",
+    );
+
+    expect(result).toBeInstanceOf(Error);
+    expect(result?.message).toContain("not support model");
+  });
+
+  it("does not synthesize prompt errors for transient retryable failures", () => {
+    expect(resolveSuppressedAutoRetryError("LLM request timed out.")).toBeNull();
   });
 });
 

@@ -6,7 +6,12 @@ import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
 import { AUTH_STORE_LOCK_OPTIONS, AUTH_STORE_VERSION, log } from "./constants.js";
 import { syncExternalCliCredentials } from "./external-cli-sync.js";
 import { ensureAuthStoreFile, resolveAuthStorePath, resolveLegacyAuthStorePath } from "./paths.js";
-import type { AuthProfileCredential, AuthProfileStore, ProfileUsageStats } from "./types.js";
+import type {
+  AuthProfileCredential,
+  AuthProfileStore,
+  ModelTimeoutCooldownStats,
+  ProfileUsageStats,
+} from "./types.js";
 
 type LegacyAuthStore = Record<string, AuthProfileCredential>;
 type CredentialRejectReason = "non_object" | "invalid_type" | "missing_provider";
@@ -75,6 +80,22 @@ export function replaceRuntimeAuthProfileStoreSnapshots(
 
 export function clearRuntimeAuthProfileStoreSnapshots(): void {
   runtimeAuthStoreSnapshots.clear();
+}
+
+function syncRuntimeAuthProfileStoreMetadata(
+  agentDir: string | undefined,
+  store: AuthProfileStore,
+): void {
+  const snapshot = runtimeAuthStoreSnapshots.get(resolveRuntimeStoreKey(agentDir));
+  if (!snapshot) {
+    return;
+  }
+  snapshot.order = store.order ? structuredClone(store.order) : undefined;
+  snapshot.lastGood = store.lastGood ? structuredClone(store.lastGood) : undefined;
+  snapshot.usageStats = store.usageStats ? structuredClone(store.usageStats) : undefined;
+  snapshot.modelTimeoutCooldowns = store.modelTimeoutCooldowns
+    ? structuredClone(store.modelTimeoutCooldowns)
+    : undefined;
 }
 
 export async function updateAuthProfileStoreWithLock(params: {
@@ -236,6 +257,10 @@ function coerceAuthStore(raw: unknown): AuthProfileStore | null {
       record.usageStats && typeof record.usageStats === "object"
         ? (record.usageStats as Record<string, ProfileUsageStats>)
         : undefined,
+    modelTimeoutCooldowns:
+      record.modelTimeoutCooldowns && typeof record.modelTimeoutCooldowns === "object"
+        ? (record.modelTimeoutCooldowns as Record<string, ModelTimeoutCooldownStats>)
+        : undefined,
   };
 }
 
@@ -263,7 +288,8 @@ function mergeAuthProfileStores(
     Object.keys(override.profiles).length === 0 &&
     !override.order &&
     !override.lastGood &&
-    !override.usageStats
+    !override.usageStats &&
+    !override.modelTimeoutCooldowns
   ) {
     return base;
   }
@@ -273,6 +299,7 @@ function mergeAuthProfileStores(
     order: mergeRecord(base.order, override.order),
     lastGood: mergeRecord(base.lastGood, override.lastGood),
     usageStats: mergeRecord(base.usageStats, override.usageStats),
+    modelTimeoutCooldowns: mergeRecord(base.modelTimeoutCooldowns, override.modelTimeoutCooldowns),
   };
 }
 
@@ -504,6 +531,8 @@ export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string)
     order: store.order ?? undefined,
     lastGood: store.lastGood ?? undefined,
     usageStats: store.usageStats ?? undefined,
+    modelTimeoutCooldowns: store.modelTimeoutCooldowns ?? undefined,
   } satisfies AuthProfileStore;
   saveJsonFile(authPath, payload);
+  syncRuntimeAuthProfileStoreMetadata(agentDir, store);
 }

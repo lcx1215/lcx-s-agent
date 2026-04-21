@@ -64,6 +64,15 @@ describe("failover-error", () => {
     );
   });
 
+  it("treats unsupported-model plan errors as model_not_found instead of timeout", () => {
+    expect(
+      resolveFailoverReasonFromError({
+        message:
+          "HTTP 500 api_error: your current token plan not support model, MiniMax-M2.5-highspeed (2061)",
+      }),
+    ).toBe("model_not_found");
+  });
+
   it("treats AbortError reason=abort as timeout", () => {
     const err = Object.assign(new Error("aborted"), {
       name: "AbortError",

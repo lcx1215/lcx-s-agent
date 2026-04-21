@@ -17,9 +17,12 @@ import { runWithModelFallback } from "../../agents/model-fallback.js";
 import {
   getModelRefStatus,
   isCliProvider,
+  modelKey,
   normalizeModelSelection,
+  normalizeModelRef,
   resolveAllowedModelRef,
   resolveConfiguredModelRef,
+  resolveModelRefFromString,
   resolveHooksGmailModel,
   resolveThinkingDefault,
 } from "../../agents/model-selection.js";
@@ -68,6 +71,106 @@ import {
 import { resolveCronAgentSessionKey } from "./session-key.js";
 import { resolveCronSession } from "./session.js";
 import { resolveCronSkillsSnapshot } from "./skills-snapshot.js";
+
+const DEFAULT_CRON_AGENT_ATTEMPT_TIMEOUT_MS = 180_000;
+const DEFAULT_CRON_MAX_MODEL_CANDIDATES = 2;
+const DEFAULT_CRON_FALLBACK_RESERVE_MS = 60_000;
+const MIN_CRON_MODEL_ATTEMPT_TIMEOUT_MS = 15_000;
+
+function resolveCronFallbackPlan(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  provider: string;
+  model: string;
+  payloadFallbacks?: string[];
+}): { fallbacksOverride?: string[]; totalCandidates: number } {
+  const normalizedPrimary = normalizeModelRef(params.provider, params.model);
+  const seen = new Set<string>([modelKey(normalizedPrimary.provider, normalizedPrimary.model)]);
+
+  const collectUniqueFallbacks = (rawFallbacks: string[] | undefined) => {
+    if (!rawFallbacks || rawFallbacks.length === 0) {
+      return [];
+    }
+    const configuredPrimary = resolveConfiguredModelRef({
+      cfg: params.cfg,
+      defaultProvider: DEFAULT_PROVIDER,
+      defaultModel: DEFAULT_MODEL,
+    });
+    const parsedFallbacks = rawFallbacks
+      .map((raw) =>
+        resolveModelRefFromString({
+          raw: String(raw ?? ""),
+          defaultProvider: configuredPrimary.provider,
+        }),
+      )
+      .flatMap((resolved) => (resolved ? [resolved.ref] : []));
+    const uniqueFallbacks = [];
+    for (const ref of parsedFallbacks) {
+      const key = modelKey(ref.provider, ref.model);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      uniqueFallbacks.push(ref);
+    }
+    return uniqueFallbacks;
+  };
+
+  if (params.payloadFallbacks !== undefined) {
+    const payloadCandidates = collectUniqueFallbacks(params.payloadFallbacks);
+    return {
+      fallbacksOverride: params.payloadFallbacks,
+      totalCandidates: 1 + payloadCandidates.length,
+    };
+  }
+
+  const configuredFallbacks = resolveAgentModelFallbacksOverride(params.cfg, params.agentId) ?? [];
+  const uniqueFallbacks = collectUniqueFallbacks(configuredFallbacks);
+  const differentProvider = uniqueFallbacks.filter(
+    (candidate) => candidate.provider !== normalizedPrimary.provider,
+  );
+  const sameProvider = uniqueFallbacks.filter(
+    (candidate) => candidate.provider === normalizedPrimary.provider,
+  );
+  const selectedFallbacks = [...differentProvider, ...sameProvider]
+    .slice(0, Math.max(0, DEFAULT_CRON_MAX_MODEL_CANDIDATES - 1))
+    .map((candidate) => `${candidate.provider}/${candidate.model}`);
+  return {
+    fallbacksOverride: selectedFallbacks,
+    totalCandidates: 1 + selectedFallbacks.length,
+  };
+}
+
+function resolveCronModelAttemptTimeoutMs(params: {
+  totalTimeoutMs: number;
+  explicitTimeoutSeconds?: number;
+  runStartedAtMs: number;
+  remainingCandidates: number;
+}): number {
+  if (params.explicitTimeoutSeconds === undefined) {
+    return params.totalTimeoutMs;
+  }
+  const elapsedMs = Math.max(0, Date.now() - params.runStartedAtMs);
+  const remainingBudgetMs = Math.max(
+    MIN_CRON_MODEL_ATTEMPT_TIMEOUT_MS,
+    params.totalTimeoutMs - elapsedMs,
+  );
+  const remainingCandidates = Math.max(1, params.remainingCandidates);
+  if (remainingCandidates <= 1) {
+    return remainingBudgetMs;
+  }
+  const evenlySplitBudget = Math.max(
+    MIN_CRON_MODEL_ATTEMPT_TIMEOUT_MS,
+    Math.floor(remainingBudgetMs / remainingCandidates),
+  );
+  const reservedForRemaining =
+    DEFAULT_CRON_FALLBACK_RESERVE_MS * Math.max(0, remainingCandidates - 1);
+  const currentAttemptBudget = remainingBudgetMs - reservedForRemaining;
+  if (currentAttemptBudget <= MIN_CRON_MODEL_ATTEMPT_TIMEOUT_MS) {
+    return evenlySplitBudget;
+  }
+  return Math.max(MIN_CRON_MODEL_ATTEMPT_TIMEOUT_MS, currentAttemptBudget);
+}
 
 export type RunCronAgentTurnResult = {
   /** Last non-empty agent text output (not truncated). */
@@ -324,11 +427,15 @@ export async function runCronIsolatedAgentTurn(params: {
     thinkLevel = "high";
   }
 
-  const timeoutMs = resolveAgentTimeoutMs({
+  const configuredTimeoutMs = resolveAgentTimeoutMs({
     cfg: cfgWithAgentDefaults,
     overrideSeconds:
       params.job.payload.kind === "agentTurn" ? params.job.payload.timeoutSeconds : undefined,
   });
+  const timeoutMs =
+    params.job.payload.kind === "agentTurn" && params.job.payload.timeoutSeconds === undefined
+      ? Math.min(configuredTimeoutMs, DEFAULT_CRON_AGENT_ATTEMPT_TIMEOUT_MS)
+      : configuredTimeoutMs;
 
   const agentPayload = params.job.payload.kind === "agentTurn" ? params.job.payload : null;
   const deliveryPlan = resolveCronDeliveryPlan(params.job);
@@ -451,6 +558,13 @@ export async function runCronIsolatedAgentTurn(params: {
       params.job.payload.kind === "agentTurn" && Array.isArray(params.job.payload.fallbacks)
         ? params.job.payload.fallbacks
         : undefined;
+    const fallbackPlan = resolveCronFallbackPlan({
+      cfg: params.cfg,
+      agentId,
+      provider,
+      model,
+      payloadFallbacks,
+    });
     let bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
       cronSession.sessionEntry.systemPromptReport,
     );
@@ -459,12 +573,27 @@ export async function runCronIsolatedAgentTurn(params: {
       provider,
       model,
       agentDir,
-      fallbacksOverride:
-        payloadFallbacks ?? resolveAgentModelFallbacksOverride(params.cfg, agentId),
-      run: async (providerOverride, modelOverride) => {
+      fallbacksOverride: fallbackPlan.fallbacksOverride,
+      onError: async ({
+        provider: fallbackAttemptProvider,
+        model: fallbackAttemptModel,
+        error,
+      }) => {
+        logWarn(
+          `[cron:${params.job.id}] fallback candidate ${fallbackAttemptProvider}/${fallbackAttemptModel}: ${String(error)}`,
+        );
+      },
+      run: async (providerOverride, modelOverride, fallbackMeta) => {
         if (abortSignal?.aborted) {
           throw new Error(abortReason());
         }
+        const attemptTimeoutMs = resolveCronModelAttemptTimeoutMs({
+          totalTimeoutMs: timeoutMs,
+          explicitTimeoutSeconds: agentPayload?.timeoutSeconds,
+          runStartedAtMs: runStartedAt,
+          remainingCandidates:
+            fallbackMeta.remainingRunnableCandidates || fallbackPlan.totalCandidates,
+        });
         const bootstrapPromptWarningSignature =
           bootstrapPromptWarningSignaturesSeen[bootstrapPromptWarningSignaturesSeen.length - 1];
         if (isCliProvider(providerOverride, cfgWithAgentDefaults)) {
@@ -487,7 +616,7 @@ export async function runCronIsolatedAgentTurn(params: {
             provider: providerOverride,
             model: modelOverride,
             thinkLevel,
-            timeoutMs,
+            timeoutMs: attemptTimeoutMs,
             runId: cronSession.sessionEntry.sessionId,
             cliSessionId,
             bootstrapPromptWarningSignaturesSeen,
@@ -518,7 +647,7 @@ export async function runCronIsolatedAgentTurn(params: {
           authProfileIdSource,
           thinkLevel,
           verboseLevel: resolvedVerboseLevel,
-          timeoutMs,
+          timeoutMs: attemptTimeoutMs,
           bootstrapContextMode: agentPayload?.lightContext ? "lightweight" : undefined,
           bootstrapContextRunKind: "cron",
           runId: cronSession.sessionEntry.sessionId,

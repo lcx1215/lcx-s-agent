@@ -4,8 +4,11 @@ import {
   resolveAgentModelPrimaryValue,
 } from "../config/model-input.js";
 import {
+  clearExpiredModelTimeoutCooldowns,
+  clearModelTimeoutCooldown,
   ensureAuthProfileStore,
   getSoonestCooldownExpiry,
+  isProviderModelInTimeoutCooldown,
   isProfileInCooldown,
   resolveProfilesUnavailableReason,
   resolveAuthProfileOrder,
@@ -102,6 +105,13 @@ type ModelFallbackErrorHandler = (attempt: {
   total: number;
 }) => void | Promise<void>;
 
+export type ModelFallbackRunMeta = {
+  attempt: number;
+  total: number;
+  remainingCandidates: number;
+  remainingRunnableCandidates: number;
+};
+
 type ModelFallbackRunResult<T> = {
   result: T;
   provider: string;
@@ -124,14 +134,15 @@ function buildFallbackSuccess<T>(params: {
 }
 
 async function runFallbackCandidate<T>(params: {
-  run: (provider: string, model: string) => Promise<T>;
+  run: (provider: string, model: string, meta: ModelFallbackRunMeta) => Promise<T>;
   provider: string;
   model: string;
+  meta: ModelFallbackRunMeta;
 }): Promise<{ ok: true; result: T } | { ok: false; error: unknown }> {
   try {
     return {
       ok: true,
-      result: await params.run(params.provider, params.model),
+      result: await params.run(params.provider, params.model, params.meta),
     };
   } catch (err) {
     if (shouldRethrowAbort(err)) {
@@ -142,15 +153,17 @@ async function runFallbackCandidate<T>(params: {
 }
 
 async function runFallbackAttempt<T>(params: {
-  run: (provider: string, model: string) => Promise<T>;
+  run: (provider: string, model: string, meta: ModelFallbackRunMeta) => Promise<T>;
   provider: string;
   model: string;
   attempts: FallbackAttempt[];
+  meta: ModelFallbackRunMeta;
 }): Promise<{ success: ModelFallbackRunResult<T> } | { error: unknown }> {
   const runResult = await runFallbackCandidate({
     run: params.run,
     provider: params.provider,
     model: params.model,
+    meta: params.meta,
   });
   if (runResult.ok) {
     return {
@@ -432,6 +445,35 @@ function resolveCooldownDecision(params: {
   };
 }
 
+function countRemainingRunnableTimeoutCandidates(params: {
+  authStore: ReturnType<typeof ensureAuthProfileStore>;
+  candidates: ModelCandidate[];
+  startIndex: number;
+}): number {
+  let remaining = 0;
+  for (let i = params.startIndex; i < params.candidates.length; i += 1) {
+    const candidate = params.candidates[i];
+    const hasAlternativeCandidate = params.candidates
+      .slice(i + 1)
+      .some(
+        (nextCandidate) =>
+          !isProviderModelInTimeoutCooldown(
+            params.authStore,
+            nextCandidate.provider,
+            nextCandidate.model,
+          ),
+      );
+    if (
+      hasAlternativeCandidate &&
+      isProviderModelInTimeoutCooldown(params.authStore, candidate.provider, candidate.model)
+    ) {
+      continue;
+    }
+    remaining += 1;
+  }
+  return Math.max(1, remaining);
+}
+
 export async function runWithModelFallback<T>(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;
@@ -439,7 +481,7 @@ export async function runWithModelFallback<T>(params: {
   agentDir?: string;
   /** Optional explicit fallbacks list; when provided (even empty), replaces agents.defaults.model.fallbacks. */
   fallbacksOverride?: string[];
-  run: (provider: string, model: string) => Promise<T>;
+  run: (provider: string, model: string, meta: ModelFallbackRunMeta) => Promise<T>;
   onError?: ModelFallbackErrorHandler;
 }): Promise<ModelFallbackRunResult<T>> {
   const candidates = resolveFallbackCandidates({
@@ -459,6 +501,37 @@ export async function runWithModelFallback<T>(params: {
   for (let i = 0; i < candidates.length; i += 1) {
     const candidate = candidates[i];
     if (authStore) {
+      clearExpiredModelTimeoutCooldowns(authStore);
+      const hasAlternativeCandidate = candidates
+        .slice(i + 1)
+        .some(
+          (nextCandidate) =>
+            !isProviderModelInTimeoutCooldown(
+              authStore,
+              nextCandidate.provider,
+              nextCandidate.model,
+            ),
+        );
+      if (
+        hasAlternativeCandidate &&
+        isProviderModelInTimeoutCooldown(authStore, candidate.provider, candidate.model)
+      ) {
+        const message = `Model ${candidate.provider}/${candidate.model} is in timeout cooldown`;
+        attempts.push({
+          provider: candidate.provider,
+          model: candidate.model,
+          error: message,
+          reason: "timeout",
+        });
+        await params.onError?.({
+          provider: candidate.provider,
+          model: candidate.model,
+          error: new Error(message),
+          attempt: i + 1,
+          total: candidates.length,
+        });
+        continue;
+      }
       const profileIds = resolveAuthProfileOrder({
         cfg: params.cfg,
         store: authStore,
@@ -491,6 +564,13 @@ export async function runWithModelFallback<T>(params: {
             error: decision.error,
             reason: decision.reason,
           });
+          await params.onError?.({
+            provider: candidate.provider,
+            model: candidate.model,
+            error: new Error(decision.error),
+            attempt: i + 1,
+            total: candidates.length,
+          });
           continue;
         }
 
@@ -500,8 +580,33 @@ export async function runWithModelFallback<T>(params: {
       }
     }
 
-    const attemptRun = await runFallbackAttempt({ run: params.run, ...candidate, attempts });
+    const remainingRunnableCandidates = authStore
+      ? countRemainingRunnableTimeoutCandidates({
+          authStore,
+          candidates,
+          startIndex: i,
+        })
+      : Math.max(1, candidates.length - i);
+    const attemptRun = await runFallbackAttempt({
+      run: params.run,
+      ...candidate,
+      attempts,
+      meta: {
+        attempt: i + 1,
+        total: candidates.length,
+        remainingCandidates: Math.max(1, candidates.length - i),
+        remainingRunnableCandidates,
+      },
+    });
     if ("success" in attemptRun) {
+      if (authStore) {
+        await clearModelTimeoutCooldown({
+          store: authStore,
+          provider: candidate.provider,
+          model: candidate.model,
+          agentDir: params.agentDir,
+        });
+      }
       return attemptRun.success;
     }
     const err = attemptRun.error;
@@ -582,7 +687,17 @@ export async function runWithImageModelFallback<T>(params: {
 
   for (let i = 0; i < candidates.length; i += 1) {
     const candidate = candidates[i];
-    const attemptRun = await runFallbackAttempt({ run: params.run, ...candidate, attempts });
+    const attemptRun = await runFallbackAttempt({
+      run: async (provider, model) => params.run(provider, model),
+      ...candidate,
+      attempts,
+      meta: {
+        attempt: i + 1,
+        total: candidates.length,
+        remainingCandidates: Math.max(1, candidates.length - i),
+        remainingRunnableCandidates: Math.max(1, candidates.length - i),
+      },
+    });
     if ("success" in attemptRun) {
       return attemptRun.success;
     }

@@ -5,24 +5,33 @@ import { makeModelFallbackCfg } from "./test-helpers/model-fallback-config-fixtu
 
 // Mock auth-profiles module — must be before importing model-fallback
 vi.mock("./auth-profiles.js", () => ({
+  clearExpiredModelTimeoutCooldowns: vi.fn(),
+  clearModelTimeoutCooldown: vi.fn(async () => {}),
   ensureAuthProfileStore: vi.fn(),
   getSoonestCooldownExpiry: vi.fn(),
+  isProviderModelInTimeoutCooldown: vi.fn(() => false),
   isProfileInCooldown: vi.fn(),
   resolveProfilesUnavailableReason: vi.fn(),
   resolveAuthProfileOrder: vi.fn(),
 }));
 
 import {
+  clearExpiredModelTimeoutCooldowns,
+  clearModelTimeoutCooldown,
   ensureAuthProfileStore,
   getSoonestCooldownExpiry,
+  isProviderModelInTimeoutCooldown,
   isProfileInCooldown,
   resolveProfilesUnavailableReason,
   resolveAuthProfileOrder,
 } from "./auth-profiles.js";
 import { _probeThrottleInternals, runWithModelFallback } from "./model-fallback.js";
 
+const mockedClearExpiredModelTimeoutCooldowns = vi.mocked(clearExpiredModelTimeoutCooldowns);
+const mockedClearModelTimeoutCooldown = vi.mocked(clearModelTimeoutCooldown);
 const mockedEnsureAuthProfileStore = vi.mocked(ensureAuthProfileStore);
 const mockedGetSoonestCooldownExpiry = vi.mocked(getSoonestCooldownExpiry);
+const mockedIsProviderModelInTimeoutCooldown = vi.mocked(isProviderModelInTimeoutCooldown);
 const mockedIsProfileInCooldown = vi.mocked(isProfileInCooldown);
 const mockedResolveProfilesUnavailableReason = vi.mocked(resolveProfilesUnavailableReason);
 const mockedResolveAuthProfileOrder = vi.mocked(resolveAuthProfileOrder);
@@ -38,7 +47,14 @@ function expectFallbackUsed(
 ) {
   expect(result.result).toBe("ok");
   expect(run).toHaveBeenCalledTimes(1);
-  expect(run).toHaveBeenCalledWith("anthropic", "claude-haiku-3-5");
+  expect(run).toHaveBeenCalledWith(
+    "anthropic",
+    "claude-haiku-3-5",
+    expect.objectContaining({
+      remainingCandidates: 1,
+      remainingRunnableCandidates: 1,
+    }),
+  );
   expect(result.attempts[0]?.reason).toBe("rate_limit");
 }
 
@@ -52,7 +68,14 @@ function expectPrimaryProbeSuccess(
 ) {
   expect(result.result).toBe(expectedResult);
   expect(run).toHaveBeenCalledTimes(1);
-  expect(run).toHaveBeenCalledWith("openai", "gpt-4.1-mini");
+  expect(run).toHaveBeenCalledWith(
+    "openai",
+    "gpt-4.1-mini",
+    expect.objectContaining({
+      attempt: 1,
+      total: 2,
+    }),
+  );
 }
 
 describe("runWithModelFallback – probe logic", () => {
@@ -83,6 +106,9 @@ describe("runWithModelFallback – probe logic", () => {
       profiles: {},
     };
     mockedEnsureAuthProfileStore.mockReturnValue(fakeStore);
+    mockedClearExpiredModelTimeoutCooldowns.mockReset();
+    mockedClearModelTimeoutCooldown.mockReset();
+    mockedIsProviderModelInTimeoutCooldown.mockReturnValue(false);
 
     // Default: resolveAuthProfileOrder returns profiles only for "openai" provider
     mockedResolveAuthProfileOrder.mockImplementation(({ provider }: { provider: string }) => {
@@ -135,7 +161,14 @@ describe("runWithModelFallback – probe logic", () => {
 
     expect(result.result).toBe("ok");
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith("anthropic", "claude-haiku-3-5");
+    expect(run).toHaveBeenCalledWith(
+      "anthropic",
+      "claude-haiku-3-5",
+      expect.objectContaining({
+        remainingCandidates: 1,
+        remainingRunnableCandidates: 1,
+      }),
+    );
     expect(result.attempts[0]?.reason).toBe("billing");
   });
 
@@ -197,8 +230,24 @@ describe("runWithModelFallback – probe logic", () => {
 
     expect(result.result).toBe("fallback-ok");
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run).toHaveBeenNthCalledWith(1, "openai", "gpt-4.1-mini");
-    expect(run).toHaveBeenNthCalledWith(2, "anthropic", "claude-haiku-3-5");
+    expect(run).toHaveBeenNthCalledWith(
+      1,
+      "openai",
+      "gpt-4.1-mini",
+      expect.objectContaining({
+        attempt: 1,
+        total: 3,
+      }),
+    );
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      "anthropic",
+      "claude-haiku-3-5",
+      expect.objectContaining({
+        attempt: 2,
+        remainingCandidates: 2,
+      }),
+    );
   });
 
   it("throttles probe when called within 30s interval", async () => {
@@ -319,7 +368,17 @@ describe("runWithModelFallback – probe logic", () => {
       run,
     });
 
-    expect(run).toHaveBeenNthCalledWith(1, "openai", "gpt-4.1-mini");
-    expect(run).toHaveBeenNthCalledWith(2, "openai", "gpt-4.1-mini");
+    expect(run).toHaveBeenNthCalledWith(
+      1,
+      "openai",
+      "gpt-4.1-mini",
+      expect.objectContaining({ attempt: 1 }),
+    );
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      "openai",
+      "gpt-4.1-mini",
+      expect.objectContaining({ attempt: 1 }),
+    );
   });
 });

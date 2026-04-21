@@ -1,7 +1,14 @@
 import type { OpenClawConfig } from "../../config/config.js";
-import { normalizeProviderId } from "../model-selection.js";
+import { modelKey, normalizeModelRef, normalizeProviderId } from "../model-selection.js";
 import { saveAuthProfileStore, updateAuthProfileStoreWithLock } from "./store.js";
-import type { AuthProfileFailureReason, AuthProfileStore, ProfileUsageStats } from "./types.js";
+import type {
+  AuthProfileFailureReason,
+  AuthProfileStore,
+  ModelTimeoutCooldownStats,
+  ProfileUsageStats,
+} from "./types.js";
+
+const DEFAULT_MODEL_TIMEOUT_COOLDOWN_MS = 5 * 60 * 1000;
 
 const FAILURE_REASON_PRIORITY: AuthProfileFailureReason[] = [
   "auth_permanent",
@@ -157,6 +164,132 @@ export function getSoonestCooldownExpiry(
     }
   }
   return soonest;
+}
+
+export function resolveProviderModelCooldownKey(provider: string, model: string): string {
+  const normalized = normalizeModelRef(provider, model);
+  return modelKey(normalized.provider, normalized.model);
+}
+
+function resolveActiveModelTimeoutWindow(
+  stats: Pick<ModelTimeoutCooldownStats, "cooldownUntil"> | undefined,
+  now: number,
+): number | null {
+  const until = stats?.cooldownUntil;
+  return typeof until === "number" && Number.isFinite(until) && until > now ? until : null;
+}
+
+export function isProviderModelInTimeoutCooldown(
+  store: AuthProfileStore,
+  provider: string,
+  model: string,
+  now?: number,
+): boolean {
+  const ts = now ?? Date.now();
+  return (
+    resolveActiveModelTimeoutWindow(
+      store.modelTimeoutCooldowns?.[resolveProviderModelCooldownKey(provider, model)],
+      ts,
+    ) !== null
+  );
+}
+
+export function clearExpiredModelTimeoutCooldowns(store: AuthProfileStore, now?: number): boolean {
+  const cooldowns = store.modelTimeoutCooldowns;
+  if (!cooldowns) {
+    return false;
+  }
+  const ts = now ?? Date.now();
+  let mutated = false;
+  for (const [key, stats] of Object.entries(cooldowns)) {
+    if (!stats) {
+      continue;
+    }
+    if (resolveActiveModelTimeoutWindow(stats, ts) !== null) {
+      continue;
+    }
+    delete cooldowns[key];
+    mutated = true;
+  }
+  if (mutated && Object.keys(cooldowns).length === 0) {
+    store.modelTimeoutCooldowns = undefined;
+  }
+  return mutated;
+}
+
+export async function markModelTimeoutCooldown(params: {
+  store: AuthProfileStore;
+  provider: string;
+  model: string;
+  profileId?: string;
+  agentDir?: string;
+  cooldownMs?: number;
+}): Promise<void> {
+  const key = resolveProviderModelCooldownKey(params.provider, params.model);
+  const now = Date.now();
+  const cooldownMs =
+    typeof params.cooldownMs === "number" &&
+    Number.isFinite(params.cooldownMs) &&
+    params.cooldownMs > 0
+      ? params.cooldownMs
+      : DEFAULT_MODEL_TIMEOUT_COOLDOWN_MS;
+  const updated = await updateAuthProfileStoreWithLock({
+    agentDir: params.agentDir,
+    updater: (freshStore) => {
+      freshStore.modelTimeoutCooldowns = freshStore.modelTimeoutCooldowns ?? {};
+      freshStore.modelTimeoutCooldowns[key] = {
+        cooldownUntil: now + cooldownMs,
+        lastTimeoutAt: now,
+        lastProfileId: params.profileId,
+      };
+      return true;
+    },
+  });
+  if (updated) {
+    params.store.modelTimeoutCooldowns = updated.modelTimeoutCooldowns;
+    return;
+  }
+  params.store.modelTimeoutCooldowns = params.store.modelTimeoutCooldowns ?? {};
+  params.store.modelTimeoutCooldowns[key] = {
+    cooldownUntil: now + cooldownMs,
+    lastTimeoutAt: now,
+    lastProfileId: params.profileId,
+  };
+  saveAuthProfileStore(params.store, params.agentDir);
+}
+
+export async function clearModelTimeoutCooldown(params: {
+  store: AuthProfileStore;
+  provider: string;
+  model: string;
+  agentDir?: string;
+}): Promise<void> {
+  const key = resolveProviderModelCooldownKey(params.provider, params.model);
+  const updated = await updateAuthProfileStoreWithLock({
+    agentDir: params.agentDir,
+    updater: (freshStore) => {
+      if (!freshStore.modelTimeoutCooldowns?.[key]) {
+        return false;
+      }
+      delete freshStore.modelTimeoutCooldowns[key];
+      if (Object.keys(freshStore.modelTimeoutCooldowns).length === 0) {
+        freshStore.modelTimeoutCooldowns = undefined;
+      }
+      return true;
+    },
+  });
+  if (updated) {
+    params.store.modelTimeoutCooldowns = updated.modelTimeoutCooldowns;
+    return;
+  }
+  if (!params.store.modelTimeoutCooldowns?.[key]) {
+    return;
+  }
+  delete params.store.modelTimeoutCooldowns[key];
+  if (Object.keys(params.store.modelTimeoutCooldowns).length === 0) {
+    params.store.modelTimeoutCooldowns = undefined;
+  }
+  saveAuthProfileStore(params.store, params.agentDir);
 }
 
 /**

@@ -124,8 +124,17 @@ const TRANSIENT_PATTERNS: Record<string, RegExp> = {
   server_error: /\b5\d{2}\b/,
 };
 
+const NON_TRANSIENT_ERROR_PATTERNS = [
+  /model not found|model_not_found|unknown model|unsupported model|not support model|does not support model|doesn't support model/i,
+  /invalid[_ ]?api[_ ]?key|api key revoked|auth[_ ]?permanent|permission_error|unauthorized|forbidden/i,
+  /payment required|insufficient credits|insufficient balance|credit balance|billing/i,
+] as const;
+
 function isTransientCronError(error: string | undefined, retryOn?: CronRetryOn[]): boolean {
   if (!error || typeof error !== "string") {
+    return false;
+  }
+  if (NON_TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(error))) {
     return false;
   }
   const keys = retryOn?.length ? retryOn : (Object.keys(TRANSIENT_PATTERNS) as CronRetryOn[]);

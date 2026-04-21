@@ -57,6 +57,12 @@ export type ProfileUsageStats = {
   lastFailureAt?: number;
 };
 
+export type ModelTimeoutCooldownStats = {
+  cooldownUntil?: number;
+  lastTimeoutAt?: number;
+  lastProfileId?: string;
+};
+
 export type AuthProfileStore = {
   version: number;
   profiles: Record<string, AuthProfileCredential>;
@@ -69,6 +75,8 @@ export type AuthProfileStore = {
   lastGood?: Record<string, string>;
   /** Usage statistics per profile for round-robin rotation */
   usageStats?: Record<string, ProfileUsageStats>;
+  /** Short-lived timeout memory per provider/model candidate. */
+  modelTimeoutCooldowns?: Record<string, ModelTimeoutCooldownStats>;
 };
 
 export type AuthProfileIdRepairResult = {

@@ -40,6 +40,7 @@ export const getCliSessionIdMock = createMock();
 export const updateSessionStoreMock = createMock();
 export const resolveCronSessionMock = createMock();
 export const logWarnMock = createMock();
+export const resolveAgentTimeoutMsMock = createMock();
 
 vi.mock("../../agents/agent-scope.js", () => ({
   resolveAgentConfig: resolveAgentConfigMock,
@@ -98,7 +99,7 @@ vi.mock("../../agents/date-time.js", () => ({
 }));
 
 vi.mock("../../agents/timeout.js", () => ({
-  resolveAgentTimeoutMs: vi.fn().mockReturnValue(60_000),
+  resolveAgentTimeoutMs: resolveAgentTimeoutMsMock,
 }));
 
 vi.mock("../../agents/usage.js", () => ({
@@ -260,6 +261,8 @@ export function resetRunCronIsolatedAgentTurnHarness(): void {
 
   runWithModelFallbackMock.mockReset();
   runWithModelFallbackMock.mockResolvedValue(makeDefaultModelFallbackResult());
+  resolveAgentTimeoutMsMock.mockReset();
+  resolveAgentTimeoutMsMock.mockReturnValue(60_000);
   runEmbeddedPiAgentMock.mockReset();
   runEmbeddedPiAgentMock.mockResolvedValue(makeDefaultEmbeddedResult());
 

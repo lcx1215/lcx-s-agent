@@ -10,6 +10,7 @@ import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import { hasConfiguredModelFallbacks } from "../agent-scope.js";
 import {
   isProfileInCooldown,
+  markModelTimeoutCooldown,
   markAuthProfileFailure,
   markAuthProfileGood,
   markAuthProfileUsed,
@@ -130,6 +131,48 @@ function resolveMaxRunRetryIterations(profileCandidateCount: number): number {
     Math.max(1, profileCandidateCount) * RUN_RETRY_ITERATIONS_PER_PROFILE;
   return Math.min(MAX_RUN_RETRY_ITERATIONS, Math.max(MIN_RUN_RETRY_ITERATIONS, scaled));
 }
+
+function resolveRemainingProfileBudget(params: {
+  totalTimeoutMs: number;
+  startedAtMs: number;
+  profileIndex: number;
+  profileCandidates: Array<string | undefined>;
+  lockedProfileId?: string;
+  authStore: ReturnType<typeof ensureAuthProfileStore>;
+}): { remainingBudgetMs: number; remainingProfiles: number; attemptTimeoutMs: number } {
+  const totalTimeoutMs = Math.max(1, params.totalTimeoutMs);
+  const elapsedMs = Math.max(0, Date.now() - params.startedAtMs);
+  const remainingBudgetMs = Math.max(1, totalTimeoutMs - elapsedMs);
+  let remainingProfiles = 0;
+  for (let i = params.profileIndex; i < params.profileCandidates.length; i += 1) {
+    const candidate = params.profileCandidates[i];
+    if (!candidate) {
+      continue;
+    }
+    if (candidate !== params.lockedProfileId && isProfileInCooldown(params.authStore, candidate)) {
+      continue;
+    }
+    remainingProfiles += 1;
+  }
+  if (remainingProfiles <= 1) {
+    return {
+      remainingBudgetMs,
+      remainingProfiles: Math.max(1, remainingProfiles),
+      attemptTimeoutMs: remainingBudgetMs,
+    };
+  }
+  return {
+    remainingBudgetMs,
+    remainingProfiles,
+    // Leave time for later profile rotations instead of letting the first
+    // profile consume the entire cron/isolated-agent timeout budget.
+    attemptTimeoutMs: Math.max(1, Math.floor(remainingBudgetMs / remainingProfiles)),
+  };
+}
+
+export const _timeoutBudgetInternals = {
+  resolveRemainingProfileBudget,
+} as const;
 
 const hasUsageValues = (
   usage: ReturnType<typeof normalizeUsage>,
@@ -665,7 +708,9 @@ export async function runEmbeddedPiAgent(
         agentDir?: RunEmbeddedPiAgentParams["agentDir"];
       }) => {
         const { profileId, reason } = failure;
-        if (!profileId || !reason || reason === "timeout") {
+        // Timeout and model-not-found are model-specific failures. Do not
+        // poison the whole provider profile for other models on the same key.
+        if (!profileId || !reason || reason === "timeout" || reason === "model_not_found") {
           return;
         }
         await markAuthProfileFailure({
@@ -717,6 +762,15 @@ export async function runEmbeddedPiAgent(
           const prompt =
             provider === "anthropic" ? scrubAnthropicRefusalMagic(params.prompt) : params.prompt;
 
+          const { attemptTimeoutMs } = resolveRemainingProfileBudget({
+            totalTimeoutMs: params.timeoutMs,
+            startedAtMs: started,
+            profileIndex,
+            profileCandidates,
+            lockedProfileId,
+            authStore,
+          });
+
           const attempt = await runEmbeddedAttempt({
             sessionId: params.sessionId,
             sessionKey: params.sessionKey,
@@ -757,7 +811,7 @@ export async function runEmbeddedPiAgent(
             toolResultFormat: resolvedToolResultFormat,
             execOverrides: params.execOverrides,
             bashElevated: params.bashElevated,
-            timeoutMs: params.timeoutMs,
+            timeoutMs: attemptTimeoutMs,
             runId: params.runId,
             abortSignal: params.abortSignal,
             shouldEmitToolResult: params.shouldEmitToolResult,
@@ -1071,6 +1125,15 @@ export async function runEmbeddedPiAgent(
               profileId: lastProfileId,
               reason: promptFailoverReason,
             });
+            if (promptFailoverReason === "timeout") {
+              await markModelTimeoutCooldown({
+                store: authStore,
+                provider,
+                model: modelId,
+                profileId: lastProfileId,
+                agentDir,
+              });
+            }
             if (
               isFailoverErrorMessage(errorText) &&
               promptFailoverReason !== "timeout" &&
@@ -1170,8 +1233,14 @@ export async function runEmbeddedPiAgent(
                 profileId: lastProfileId,
                 reason,
               });
-              if (timedOut && !isProbeSession) {
-                log.warn(`Profile ${lastProfileId} timed out. Trying next account...`);
+              if (reason === "timeout") {
+                await markModelTimeoutCooldown({
+                  store: authStore,
+                  provider,
+                  model: modelId,
+                  profileId: lastProfileId,
+                  agentDir,
+                });
               }
               if (cloudCodeAssistFormatError) {
                 log.warn(
@@ -1182,10 +1251,18 @@ export async function runEmbeddedPiAgent(
 
             const rotated = await advanceAuthProfile();
             if (rotated) {
+              if (timedOut && !isProbeSession) {
+                log.warn(`Profile ${lastProfileId} timed out. Trying next account...`);
+              }
               continue;
             }
 
             if (fallbackConfigured) {
+              if (timedOut && !isProbeSession) {
+                log.warn(
+                  `Profile ${lastProfileId} timed out. Escalating to model fallback for ${provider}/${modelId}.`,
+                );
+              }
               // Prefer formatted error message (user-friendly) over raw errorMessage
               const message =
                 (lastAssistant

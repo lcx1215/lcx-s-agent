@@ -51,6 +51,7 @@ import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-strea
 import { createOpenAIWebSocketStreamFn, releaseWsSession } from "../../openai-ws-stream.js";
 import { resolveOwnerDisplaySetting } from "../../owner-display.js";
 import {
+  classifyFailoverReason,
   downgradeOpenAIFunctionCallReasoningPairs,
   isCloudCodeAssistFormatError,
   resolveBootstrapMaxChars,
@@ -213,6 +214,23 @@ export function shouldInjectOllamaCompatNumCtx(params: {
     config: params.config,
     providerId: params.providerId,
   });
+}
+
+export function shouldSuppressEmbeddedAutoRetry(errorMessage?: string): boolean {
+  const message = errorMessage?.trim();
+  if (!message) {
+    return false;
+  }
+  const reason = classifyFailoverReason(message);
+  return reason === "model_not_found" || reason === "billing" || reason === "auth_permanent";
+}
+
+export function resolveSuppressedAutoRetryError(errorMessage?: string): Error | null {
+  const message = errorMessage?.trim();
+  if (!message || !shouldSuppressEmbeddedAutoRetry(message)) {
+    return null;
+  }
+  return new Error(message);
 }
 
 export function wrapOllamaCompatNumCtx(baseFn: StreamFn | undefined, numCtx: number): StreamFn {
@@ -1299,6 +1317,28 @@ export async function runEmbeddedAttempt(
         getCompactionCount,
       } = subscription;
 
+      let suppressedAutoRetryError: Error | null = null;
+
+      const unsubscribeAutoRetrySuppression = activeSession.subscribe((event) => {
+        if (event.type !== "auto_retry_start") {
+          return;
+        }
+        const suppressionError = resolveSuppressedAutoRetryError(event.errorMessage);
+        if (!suppressionError) {
+          return;
+        }
+        // pi-coding-agent marks broad "500" errors retryable. Permanent
+        // provider/model failures should stop here instead of burning another
+        // in-attempt continue() cycle.
+        suppressedAutoRetryError ??= suppressionError;
+        queueMicrotask(() => {
+          log.warn(
+            `embedded auto-retry suppressed: runId=${params.runId} sessionId=${params.sessionId} error=${event.errorMessage}`,
+          );
+          activeSession.abortRetry();
+        });
+      });
+
       const queueHandle: EmbeddedPiQueueHandle = {
         queueMessage: async (text: string) => {
           await activeSession.steer(text);
@@ -1526,6 +1566,11 @@ export async function runEmbeddedAttempt(
           );
         }
 
+        if (!promptError && suppressedAutoRetryError) {
+          promptError = suppressedAutoRetryError;
+          promptErrorSource = "prompt";
+        }
+
         // Capture snapshot before compaction wait so we have complete messages if timeout occurs
         // Check compaction state before and after to avoid race condition where compaction starts during capture
         // Use session state (not subscription) for snapshot decisions - need instantaneous compaction status
@@ -1652,6 +1697,13 @@ export async function runEmbeddedAttempt(
         if (!isProbeSession && (aborted || timedOut) && !timedOutDuringCompaction) {
           log.debug(
             `run cleanup: runId=${params.runId} sessionId=${params.sessionId} aborted=${aborted} timedOut=${timedOut}`,
+          );
+        }
+        try {
+          unsubscribeAutoRetrySuppression();
+        } catch (err) {
+          log.error(
+            `CRITICAL: auto-retry suppression unsubscribe failed: runId=${params.runId} ${String(err)}`,
           );
         }
         try {

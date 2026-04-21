@@ -1499,4 +1499,39 @@ describe("Cron issue regressions", () => {
     expect(job.state.nextRunAtMs).toBe(endedAt + 30_000);
     expect(job.enabled).toBe(true);
   });
+
+  it("does not retry one-shot jobs for unsupported-model provider errors", () => {
+    const startedAt = Date.parse("2026-03-02T12:10:00.000Z");
+    const endedAt = startedAt + 25;
+    const state = createCronServiceState({
+      cronEnabled: true,
+      storePath: "/tmp/cron-unsupported-model.json",
+      log: noopLogger,
+      nowMs: () => endedAt,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: createDefaultIsolatedRunner(),
+    });
+    const job = createIsolatedRegressionJob({
+      id: "apply-result-unsupported-model",
+      name: "apply-result-unsupported-model",
+      scheduledAt: startedAt,
+      schedule: { kind: "at", at: new Date(startedAt + 60_000).toISOString() },
+      payload: { kind: "agentTurn", message: "ping" },
+      state: { nextRunAtMs: startedAt + 60_000, runningAtMs: startedAt - 500 },
+    });
+
+    const shouldDelete = applyJobResult(state, job, {
+      status: "error",
+      error:
+        "FailoverError: HTTP 500 api_error: your current token plan not support model, MiniMax-M2.5-highspeed (2061)",
+      startedAt,
+      endedAt,
+    });
+
+    expect(shouldDelete).toBe(false);
+    expect(job.enabled).toBe(false);
+    expect(job.state.nextRunAtMs).toBeUndefined();
+    expect(job.state.lastError).toContain("not support model");
+  });
 });
