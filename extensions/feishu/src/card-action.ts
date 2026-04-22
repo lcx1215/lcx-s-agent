@@ -1,22 +1,28 @@
 import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
 import { resolveFeishuAccount } from "./accounts.js";
 import { handleFeishuMessage, type FeishuMessageEvent } from "./bot.js";
+import { getMessageFeishu } from "./send.js";
 
 export type FeishuCardActionEvent = {
-  operator: {
-    open_id: string;
-    user_id: string;
-    union_id: string;
+  open_id?: string;
+  user_id?: string;
+  union_id?: string;
+  tenant_key?: string;
+  open_message_id?: string;
+  operator?: {
+    open_id?: string;
+    user_id?: string;
+    union_id?: string;
   };
   token: string;
   action: {
     value: Record<string, unknown>;
     tag: string;
   };
-  context: {
-    open_id: string;
-    user_id: string;
-    chat_id: string;
+  context?: {
+    open_id?: string;
+    user_id?: string;
+    chat_id?: string;
   };
 };
 
@@ -30,6 +36,10 @@ export async function handleFeishuCardAction(params: {
   const { cfg, event, runtime, accountId } = params;
   const account = resolveFeishuAccount({ cfg, accountId });
   const log = runtime?.log ?? console.log;
+  const senderOpenId = event.operator?.open_id ?? event.open_id ?? "";
+  const senderUserId = event.operator?.user_id ?? event.user_id;
+  const senderUnionId = event.operator?.union_id ?? event.union_id;
+  const replyTargetMessageId = event.open_message_id?.trim() || `card-action-${event.token}`;
 
   // Extract action value
   const actionValue = event.action.value;
@@ -46,27 +56,35 @@ export async function handleFeishuCardAction(params: {
     content = String(actionValue);
   }
 
+  let chatId = event.context?.chat_id?.trim() || "";
+  if (!chatId && event.open_message_id?.trim()) {
+    const sourceMessage = await getMessageFeishu({
+      cfg,
+      messageId: event.open_message_id,
+      accountId,
+    });
+    chatId = sourceMessage?.chatId ?? "";
+  }
+
   // Construct a synthetic message event
   const messageEvent: FeishuMessageEvent = {
     sender: {
       sender_id: {
-        open_id: event.operator.open_id,
-        user_id: event.operator.user_id,
-        union_id: event.operator.union_id,
+        open_id: senderOpenId,
+        user_id: senderUserId,
+        union_id: senderUnionId,
       },
     },
     message: {
-      message_id: `card-action-${event.token}`,
-      chat_id: event.context.chat_id || event.operator.open_id,
-      chat_type: event.context.chat_id ? "group" : "p2p",
+      message_id: replyTargetMessageId,
+      chat_id: chatId || senderOpenId,
+      chat_type: chatId ? "group" : "p2p",
       message_type: "text",
       content: JSON.stringify({ text: content }),
     },
   };
 
-  log(
-    `feishu[${account.accountId}]: handling card action from ${event.operator.open_id}: ${content}`,
-  );
+  log(`feishu[${account.accountId}]: handling card action from ${senderOpenId}: ${content}`);
 
   // Dispatch as normal message
   await handleFeishuMessage({

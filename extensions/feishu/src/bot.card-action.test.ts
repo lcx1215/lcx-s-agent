@@ -11,7 +11,12 @@ vi.mock("./bot.js", () => ({
   handleFeishuMessage: vi.fn(),
 }));
 
+vi.mock("./send.js", () => ({
+  getMessageFeishu: vi.fn(),
+}));
+
 import { handleFeishuMessage } from "./bot.js";
+import { getMessageFeishu } from "./send.js";
 
 describe("Feishu Card Action Handler", () => {
   const cfg = {} as any; // Minimal mock
@@ -32,6 +37,7 @@ describe("Feishu Card Action Handler", () => {
         event: expect.objectContaining({
           message: expect.objectContaining({
             content: '{"text":"/ping"}',
+            message_id: "card-action-tok1",
             chat_id: "chat1",
           }),
         }),
@@ -54,7 +60,49 @@ describe("Feishu Card Action Handler", () => {
         event: expect.objectContaining({
           message: expect.objectContaining({
             content: '{"text":"{\\"key\\":\\"val\\"}"}',
+            message_id: "card-action-tok2",
             chat_id: "u123", // Fallback to open_id
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("uses the official open_message_id and resolves chat_id from the source message", async () => {
+    vi.mocked(getMessageFeishu).mockResolvedValueOnce({
+      messageId: "om_open_msg_1",
+      chatId: "chat_from_message",
+      messageType: "interactive",
+      content: "source card",
+      createTime: undefined,
+      senderId: undefined,
+      senderType: undefined,
+    });
+
+    const event: FeishuCardActionEvent = {
+      open_id: "ou_card_actor",
+      user_id: "uid-card",
+      union_id: "un-card",
+      open_message_id: "om_open_msg_1",
+      token: "tok3",
+      action: { value: { text: "/help" }, tag: "button" },
+    };
+
+    await handleFeishuCardAction({ cfg, event, runtime });
+
+    expect(getMessageFeishu).toHaveBeenCalledWith({
+      cfg,
+      messageId: "om_open_msg_1",
+      accountId: undefined,
+    });
+    expect(handleFeishuMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          message: expect.objectContaining({
+            message_id: "om_open_msg_1",
+            content: '{"text":"/help"}',
+            chat_id: "chat_from_message",
+            chat_type: "group",
           }),
         }),
       }),
