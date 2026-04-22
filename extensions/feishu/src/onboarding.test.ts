@@ -49,6 +49,33 @@ describe("feishuOnboardingAdapter.configure", () => {
       }),
     ).resolves.toBeTruthy();
   });
+
+  it("shows both Feishu and Lark platform URLs when credentials are missing", async () => {
+    const note = vi.fn(async () => undefined);
+    const text = vi
+      .fn()
+      .mockResolvedValueOnce("secret_from_prompt")
+      .mockResolvedValueOnce("cli_from_prompt")
+      .mockResolvedValueOnce("/feishu/events")
+      .mockResolvedValueOnce("oc_group_1");
+
+    const prompter = {
+      note,
+      text,
+      confirm: vi.fn(async () => true),
+      select: vi.fn().mockResolvedValueOnce("feishu").mockResolvedValueOnce("allowlist"),
+    } as never;
+
+    await feishuOnboardingAdapter.configure({
+      cfg: {} as never,
+      prompter,
+      ...baseConfigureContext,
+    });
+
+    const helpText = note.mock.calls.find((call) => call[1] === "Feishu credentials")?.[0];
+    expect(helpText).toContain("open.feishu.cn");
+    expect(helpText).toContain("open.larksuite.com/app");
+  });
 });
 
 describe("feishuOnboardingAdapter.getStatus", () => {
