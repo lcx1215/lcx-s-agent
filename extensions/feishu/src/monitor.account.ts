@@ -38,6 +38,26 @@ export type FeishuReactionCreatedEvent = {
   action_time?: string;
 };
 
+export type FeishuBotP2PChatEnteredEvent = {
+  event_id?: string;
+  token?: string;
+  create_time?: string;
+  event_type?: string;
+  tenant_key?: string;
+  ts?: string;
+  uuid?: string;
+  type?: string;
+  app_id?: string;
+  chat_id?: string;
+  operator_id?: {
+    union_id?: string;
+    user_id?: string;
+    open_id?: string;
+  };
+  last_message_id?: string;
+  last_message_create_time?: string;
+};
+
 type ResolveReactionSyntheticEventParams = {
   cfg: ClawdbotConfig;
   accountId: string;
@@ -410,6 +430,19 @@ function registerEventHandlers(
         log(`feishu[${accountId}]: bot removed from chat ${event.chat_id}`);
       } catch (err) {
         error(`feishu[${accountId}]: error handling bot removed event: ${String(err)}`);
+      }
+    },
+    "im.chat.access_event.bot_p2p_chat_entered_v1": async (data) => {
+      try {
+        const event = data as FeishuBotP2PChatEnteredEvent;
+        // The product contract still starts pairing on first DM message; this event
+        // is informational so we log it explicitly instead of letting the SDK warn.
+        log(
+          `feishu[${accountId}]: user opened p2p chat ${event.chat_id ?? "unknown"} ` +
+            `(operator=${event.operator_id?.open_id ?? "unknown"})`,
+        );
+      } catch (err) {
+        error(`feishu[${accountId}]: error handling p2p chat entered event: ${String(err)}`);
       }
     },
     "im.message.reaction.created_v1": async (data) => {
