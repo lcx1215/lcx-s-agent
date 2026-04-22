@@ -37,6 +37,7 @@ import { runReplyAgent } from "./agent-runner.js";
 import { applySessionHints } from "./body.js";
 import type { buildCommandContext } from "./commands.js";
 import type { InlineDirectives } from "./directive-handling.js";
+import { summarizeRecentFeishuReplyFlowEvidence } from "./feishu-reply-flow-evidence.js";
 import { buildGroupChatContext, buildGroupIntro } from "./groups.js";
 import { buildInboundMetaSystemPrompt, buildInboundUserContextPrefix } from "./inbound-meta.js";
 import type { createModelSelectionState } from "./model-selection.js";
@@ -52,6 +53,15 @@ import { appendUntrustedContext } from "./untrusted-context.js";
 
 type AgentDefaults = NonNullable<OpenClawConfig["agents"]>["defaults"];
 type ExecOverrides = Pick<ExecToolDefaults, "host" | "security" | "ask" | "node">;
+
+function shouldInjectFeishuReplyFlowEvidence(params: {
+  originatingChannel?: string;
+  provider?: string;
+}): boolean {
+  const originatingChannel = params.originatingChannel?.trim().toLowerCase();
+  const provider = params.provider?.trim().toLowerCase();
+  return originatingChannel === "feishu" || provider === "feishu";
+}
 
 function buildResetSessionNoticeText(params: {
   provider: string;
@@ -273,6 +283,17 @@ export async function runPreparedReply(
     groupIntro,
     groupSystemPrompt,
   ].filter(Boolean);
+  if (
+    shouldInjectFeishuReplyFlowEvidence({
+      originatingChannel: ctx.OriginatingChannel ?? sessionCtx.OriginatingChannel,
+      provider: sessionCtx.Provider,
+    })
+  ) {
+    const feishuReplyFlowEvidence = await summarizeRecentFeishuReplyFlowEvidence();
+    if (feishuReplyFlowEvidence) {
+      extraSystemPromptParts.push(feishuReplyFlowEvidence);
+    }
+  }
   const baseBody = sessionCtx.BodyStripped ?? sessionCtx.Body ?? "";
   // Use CommandBody/RawBody for bare reset detection (clean message without structural context).
   const rawBodyTrimmed = (ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "").trim();

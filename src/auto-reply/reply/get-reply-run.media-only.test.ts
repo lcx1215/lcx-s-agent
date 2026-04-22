@@ -40,6 +40,10 @@ vi.mock("../command-detection.js", () => ({
   hasControlCommand: vi.fn().mockReturnValue(false),
 }));
 
+vi.mock("./feishu-reply-flow-evidence.js", () => ({
+  summarizeRecentFeishuReplyFlowEvidence: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("./agent-runner.js", () => ({
   runReplyAgent: vi.fn().mockResolvedValue({ text: "ok" }),
 }));
@@ -80,6 +84,7 @@ vi.mock("./typing-mode.js", () => ({
 }));
 
 import { runReplyAgent } from "./agent-runner.js";
+import { summarizeRecentFeishuReplyFlowEvidence } from "./feishu-reply-flow-evidence.js";
 import { routeReply } from "./route-reply.js";
 import { buildQueuedSystemPrompt } from "./session-updates.js";
 import { resolveTypingMode } from "./typing-mode.js";
@@ -339,5 +344,39 @@ describe("runPreparedReply media-only handling", () => {
     expect(call?.commandBody).not.toContain("Runtime System Events");
     expect(call?.followupRun.run.extraSystemPrompt).toContain("Runtime System Events");
     expect(call?.followupRun.run.extraSystemPrompt).toContain("Model switched.");
+  });
+
+  it("injects recent Feishu reply-flow evidence into Feishu reply runs", async () => {
+    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockResolvedValueOnce(
+      "## Recent Feishu/Lark Reply Flow Evidence\nLatest completed correlationId: ff-123",
+    );
+
+    await runPreparedReply(
+      baseParams({
+        ctx: {
+          Body: "status",
+          RawBody: "status",
+          CommandBody: "status",
+          OriginatingChannel: "feishu",
+          OriginatingTo: "oc-room",
+          ChatType: "group",
+        },
+        sessionCtx: {
+          Body: "status",
+          BodyStripped: "status",
+          Provider: "feishu",
+          ChatType: "group",
+          OriginatingChannel: "feishu",
+          OriginatingTo: "oc-room",
+        },
+      }),
+    );
+
+    const call = vi.mocked(runReplyAgent).mock.calls.at(-1)?.[0];
+    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
+    expect(call?.followupRun.run.extraSystemPrompt).toContain(
+      "## Recent Feishu/Lark Reply Flow Evidence",
+    );
+    expect(call?.followupRun.run.extraSystemPrompt).toContain("Latest completed correlationId");
   });
 });
