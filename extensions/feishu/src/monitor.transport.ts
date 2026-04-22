@@ -92,15 +92,20 @@ export function verifyFeishuCardActionWebhook(params: {
 }
 
 async function readWebhookRequestJson(req: http.IncomingMessage): Promise<unknown> {
-  let chunks = "";
-  for await (const chunk of req) {
-    chunks += typeof chunk === "string" ? chunk : chunk.toString("utf8");
-  }
-  try {
-    return JSON.parse(chunks);
-  } catch {
-    return "";
-  }
+  return new Promise((resolve) => {
+    let chunks = "";
+    req.on("data", (chunk) => {
+      chunks += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(chunks));
+      } catch {
+        resolve("");
+      }
+    });
+    req.on("error", () => resolve(""));
+  });
 }
 
 function isWebhookJsonObject(data: unknown): data is Record<string, unknown> {
@@ -197,45 +202,46 @@ export async function monitorWebhook({
       return;
     }
 
-    void Promise.resolve()
-      .then(async () => {
-        if (req.url !== path) {
-          return;
-        }
+    const processWebhookRequest = async () => {
+      if (req.url !== path) {
+        return;
+      }
 
-        const data = await readWebhookRequestJson(req);
-        if (!isWebhookJsonObject(data)) {
-          res.statusCode = 400;
-          res.end("Bad Request");
-          return;
-        }
-        const { isChallenge, challenge } = Lark.generateChallenge(data, {
-          encryptKey: eventDispatcher.encryptKey,
-        });
-        if (isChallenge) {
-          res.end(JSON.stringify(challenge));
-          return;
-        }
+      const data = await readWebhookRequestJson(req);
+      if (!isWebhookJsonObject(data)) {
+        res.statusCode = 400;
+        res.end("Bad Request");
+        return;
+      }
+      const { isChallenge, challenge } = Lark.generateChallenge(data, {
+        encryptKey: eventDispatcher.encryptKey,
+      });
+      if (isChallenge) {
+        res.end(JSON.stringify(challenge));
+        return;
+      }
 
-        if (
-          isFeishuCardActionPayload(data) &&
-          !verifyFeishuCardActionWebhook({
-            data,
-            headers: req.headers,
-            verificationToken: account.verificationToken,
-          })
-        ) {
-          error(`feishu[${accountId}]: rejected unverified card action callback`);
-          res.statusCode = 401;
-          res.end("Unauthorized");
-          return;
-        }
+      if (
+        isFeishuCardActionPayload(data) &&
+        !verifyFeishuCardActionWebhook({
+          data,
+          headers: req.headers,
+          verificationToken: account.verificationToken,
+        })
+      ) {
+        error(`feishu[${accountId}]: rejected unverified card action callback`);
+        res.statusCode = 401;
+        res.end("Unauthorized");
+        return;
+      }
 
-        const value = await eventDispatcher.invoke(
-          Object.assign(Object.create({ headers: req.headers }), data),
-        );
-        res.end(JSON.stringify(value));
-      })
+      const value = await eventDispatcher.invoke(
+        Object.assign(Object.create({ headers: req.headers }), data),
+      );
+      res.end(JSON.stringify(value));
+    };
+
+    void processWebhookRequest()
       .catch((err) => {
         if (!guard.isTripped()) {
           error(`feishu[${accountId}]: webhook handler error: ${String(err)}`);
