@@ -53,6 +53,16 @@ const routeStatus: RouteSpec = {
   },
 };
 
+const routeCapabilities: RouteSpec = {
+  match: (path) => path[0] === "capabilities",
+  run: async (argv) => {
+    const json = hasFlag(argv, "--json");
+    const { capabilitiesCommand } = await import("../../commands/capabilities.js");
+    await capabilitiesCommand({ json }, defaultRuntime);
+    return true;
+  },
+};
+
 const routeSessions: RouteSpec = {
   // Fast-path only bare `sessions`; subcommands (e.g. `sessions cleanup`)
   // must fall through to Commander so nested handlers run.
@@ -251,6 +261,7 @@ const routeModelsStatus: RouteSpec = {
 const routes: RouteSpec[] = [
   routeHealth,
   routeStatus,
+  routeCapabilities,
   routeSessions,
   routeAgentsList,
   routeMemoryStatus,

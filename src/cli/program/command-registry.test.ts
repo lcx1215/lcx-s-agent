@@ -60,6 +60,7 @@ describe("command-registry", () => {
     const names = getCoreCliCommandNames();
     expect(names).toContain("agent");
     expect(names).toContain("agents");
+    expect(names).toContain("capabilities");
   });
 
   it("returns only commands that support subcommands", () => {
@@ -71,6 +72,7 @@ describe("command-registry", () => {
     expect(names).toContain("sessions");
     expect(names).not.toContain("agent");
     expect(names).not.toContain("status");
+    expect(names).not.toContain("capabilities");
     expect(names).not.toContain("doctor");
   });
 

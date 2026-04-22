@@ -192,6 +192,19 @@ const coreEntries: CoreCliEntry[] = [
   {
     commands: [
       {
+        name: "capabilities",
+        description: "Show configured model capabilities and provider-native tool reality",
+        hasSubcommands: false,
+      },
+    ],
+    register: async ({ program }) => {
+      const mod = await import("../capabilities-cli.js");
+      mod.registerCapabilitiesCli(program);
+    },
+  },
+  {
+    commands: [
+      {
         name: "browser",
         description: "Manage OpenClaw's dedicated browser (Chrome/Chromium)",
         hasSubcommands: true,

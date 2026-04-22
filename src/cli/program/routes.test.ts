@@ -3,6 +3,7 @@ import { findRoutedCommand } from "./routes.js";
 
 const runConfigGetMock = vi.hoisted(() => vi.fn(async () => {}));
 const runConfigUnsetMock = vi.hoisted(() => vi.fn(async () => {}));
+const capabilitiesCommandMock = vi.hoisted(() => vi.fn(async () => {}));
 const modelsListCommandMock = vi.hoisted(() => vi.fn(async () => {}));
 const modelsStatusCommandMock = vi.hoisted(() => vi.fn(async () => {}));
 
@@ -14,6 +15,10 @@ vi.mock("../config-cli.js", () => ({
 vi.mock("../../commands/models.js", () => ({
   modelsListCommand: modelsListCommandMock,
   modelsStatusCommand: modelsStatusCommandMock,
+}));
+
+vi.mock("../../commands/capabilities.js", () => ({
+  capabilitiesCommand: capabilitiesCommandMock,
 }));
 
 describe("program routes", () => {
@@ -35,6 +40,15 @@ describe("program routes", () => {
   it("matches status route and always loads plugins for security parity", () => {
     const route = expectRoute(["status"]);
     expect(route?.loadPlugins).toBe(true);
+  });
+
+  it("matches capabilities route", async () => {
+    const route = expectRoute(["capabilities"]);
+    await expect(route?.run(["node", "openclaw", "capabilities", "--json"])).resolves.toBe(true);
+    expect(capabilitiesCommandMock).toHaveBeenCalledWith(
+      expect.objectContaining({ json: true }),
+      expect.any(Object),
+    );
   });
 
   it("matches health route and preloads plugins only for text output", () => {
