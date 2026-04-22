@@ -110,6 +110,26 @@ describe("buildFeishuAgentBody", () => {
       '[message_id: msg-42]\nSender Name: [Replying to: "previous message"]\n\nhello world\n\n[System: Your reply will automatically @mention: Target User. Do not write @xxx yourself.]\n\n[System: The bot encountered a Feishu API permission error. Please inform the user about this issue and provide the permission grant URL for the admin to authorize. Permission grant URL: https://open.feishu.cn/app/cli_test]',
     );
   });
+
+  it("normalizes permission notice wording and grant URL for Lark", () => {
+    const body = buildFeishuAgentBody({
+      ctx: {
+        content: "hello world",
+        senderName: "Sender Name",
+        senderOpenId: "ou-sender",
+        messageId: "msg-43",
+      },
+      permissionErrorForAgent: {
+        code: 99991672,
+        message: "permission denied",
+        grantUrl: "https://open.feishu.cn/app/cli_test",
+      },
+      domain: "lark",
+    });
+
+    expect(body).toContain("The bot encountered a Lark API permission error");
+    expect(body).toContain("Permission grant URL: https://open.larksuite.com/app/cli_test");
+  });
 });
 
 describe("handleFeishuMessage command authorization", () => {

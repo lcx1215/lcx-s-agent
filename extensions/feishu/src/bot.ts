@@ -33,7 +33,12 @@ import {
 } from "./reply-flow-audit.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { getMessageFeishu, sendMessageFeishu } from "./send.js";
-import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
+import type {
+  FeishuDomain,
+  FeishuMessageContext,
+  FeishuMediaInfo,
+  ResolvedFeishuAccount,
+} from "./types.js";
 import type { DynamicAgentCreationConfig } from "./types.js";
 
 // --- Permission error extraction ---
@@ -60,6 +65,20 @@ function correctFeishuScopeInUrl(url: string): string {
     corrected = corrected.replaceAll(wrong, right);
   }
   return corrected;
+}
+
+function normalizeFeishuGrantUrlForDomain(url: string | undefined, domain: FeishuDomain): string {
+  if (!url) {
+    return "";
+  }
+  if (domain !== "lark") {
+    return url;
+  }
+  return url.replace("https://open.feishu.cn/", "https://open.larksuite.com/");
+}
+
+function describeFeishuPlatform(domain: FeishuDomain): "Feishu" | "Lark" {
+  return domain === "lark" ? "Lark" : "Feishu";
 }
 
 function shouldSuppressPermissionErrorNotice(permissionError: PermissionError): boolean {
@@ -825,8 +844,9 @@ export function buildFeishuAgentBody(params: {
   quotedContent?: string;
   permissionErrorForAgent?: PermissionError;
   botOpenId?: string;
+  domain?: FeishuDomain;
 }): string {
-  const { ctx, quotedContent, permissionErrorForAgent, botOpenId } = params;
+  const { ctx, quotedContent, permissionErrorForAgent, botOpenId, domain = "feishu" } = params;
   let messageBody = ctx.content;
   if (quotedContent) {
     messageBody = `[Replying to: "${quotedContent}"]\n\n${ctx.content}`;
@@ -855,8 +875,9 @@ export function buildFeishuAgentBody(params: {
   messageBody = `[message_id: ${ctx.messageId}]\n${messageBody}`;
 
   if (permissionErrorForAgent) {
-    const grantUrl = permissionErrorForAgent.grantUrl ?? "";
-    messageBody += `\n\n[System: The bot encountered a Feishu API permission error. Please inform the user about this issue and provide the permission grant URL for the admin to authorize. Permission grant URL: ${grantUrl}]`;
+    const platform = describeFeishuPlatform(domain);
+    const grantUrl = normalizeFeishuGrantUrlForDomain(permissionErrorForAgent.grantUrl, domain);
+    messageBody += `\n\n[System: The bot encountered a ${platform} API permission error. Please inform the user about this issue and provide the permission grant URL for the admin to authorize. Permission grant URL: ${grantUrl}]`;
   }
 
   return messageBody;
@@ -1327,6 +1348,7 @@ export async function handleFeishuMessage(params: {
       quotedContent,
       permissionErrorForAgent,
       botOpenId,
+      domain: account.domain,
     });
     const envelopeFrom = isGroup ? `${ctx.chatId}:${ctx.senderOpenId}` : ctx.senderOpenId;
     if (permissionErrorForAgent) {

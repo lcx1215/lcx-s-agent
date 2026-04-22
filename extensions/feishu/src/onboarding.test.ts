@@ -72,7 +72,7 @@ describe("feishuOnboardingAdapter.configure", () => {
       ...baseConfigureContext,
     });
 
-    const helpText = note.mock.calls.find((call) => call[1] === "Feishu credentials")?.[0];
+    const helpText = note.mock.calls.find((call) => call[1] === "Feishu / Lark credentials")?.[0];
     expect(helpText).toContain("open.feishu.cn");
     expect(helpText).toContain("open.larksuite.com/app");
   });

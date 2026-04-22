@@ -117,7 +117,7 @@ async function noteFeishuCredentialHelp(prompter: WizardPrompter): Promise<void>
       "Tip: you can also set FEISHU_APP_ID / FEISHU_APP_SECRET env vars.",
       `Docs: ${formatDocsLink("/channels/feishu", "feishu")}`,
     ].join("\n"),
-    "Feishu credentials",
+    "Feishu / Lark credentials",
   );
 }
 
@@ -127,7 +127,7 @@ async function promptFeishuAppId(params: {
 }): Promise<string> {
   const appId = String(
     await params.prompter.text({
-      message: "Enter Feishu App ID",
+      message: "Enter Feishu / Lark App ID",
       initialValue: params.initialValue,
       validate: (value) => (value?.trim() ? undefined : "Required"),
     }),
@@ -282,8 +282,8 @@ export const feishuOnboardingAdapter: ChannelOnboardingAdapter = {
       canUseEnv,
       hasConfigToken: hasConfigSecret,
       envPrompt: "FEISHU_APP_ID + FEISHU_APP_SECRET detected. Use env vars?",
-      keepPrompt: "Feishu App Secret already configured. Keep it?",
-      inputPrompt: "Enter Feishu App Secret",
+      keepPrompt: "Feishu / Lark App Secret already configured. Keep it?",
+      inputPrompt: "Enter Feishu / Lark App Secret",
       preferredEnvVar: "FEISHU_APP_SECRET",
     });
 
@@ -375,8 +375,8 @@ export const feishuOnboardingAdapter: ChannelOnboardingAdapter = {
         canUseEnv: false,
         hasConfigToken: hasConfiguredSecretInput(currentVerificationToken),
         envPrompt: "",
-        keepPrompt: "Feishu verification token already configured. Keep it?",
-        inputPrompt: "Enter Feishu verification token",
+        keepPrompt: "Feishu / Lark verification token already configured. Keep it?",
+        inputPrompt: "Enter Feishu / Lark verification token",
         preferredEnvVar: "FEISHU_VERIFICATION_TOKEN",
       });
       if (verificationTokenResult.action === "set") {
@@ -394,7 +394,7 @@ export const feishuOnboardingAdapter: ChannelOnboardingAdapter = {
       const currentWebhookPath = (next.channels?.feishu as FeishuConfig | undefined)?.webhookPath;
       const webhookPath = String(
         await prompter.text({
-          message: "Feishu webhook path",
+          message: "Feishu / Lark webhook path",
           initialValue: currentWebhookPath ?? "/feishu/events",
           validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
         }),
@@ -414,7 +414,7 @@ export const feishuOnboardingAdapter: ChannelOnboardingAdapter = {
     // Domain selection
     const currentDomain = (next.channels?.feishu as FeishuConfig | undefined)?.domain ?? "feishu";
     const domain = await prompter.select({
-      message: "Which Feishu domain?",
+      message: "Which Feishu or Lark domain?",
       options: [
         { value: "feishu", label: "Feishu (feishu.cn) - China" },
         { value: "lark", label: "Lark (larksuite.com) - International" },
