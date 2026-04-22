@@ -108,4 +108,34 @@ describe("Feishu Card Action Handler", () => {
       }),
     );
   });
+
+  it("uses nested context target fields for real card callbacks", async () => {
+    const event: FeishuCardActionEvent = {
+      operator: { open_id: "ou_real_actor", user_id: "uid-real", union_id: "un-real" },
+      token: "tok4",
+      action: { value: { text: "/help", marker: "cb-oldfmt" }, tag: "button" },
+      context: {
+        open_message_id: "om_nested_ctx_1",
+        open_chat_id: "oc_group_from_context",
+      },
+    };
+
+    await handleFeishuCardAction({ cfg, event, runtime });
+
+    expect(handleFeishuMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          message: expect.objectContaining({
+            message_id: "om_nested_ctx_1",
+            content: '{"text":"/help"}',
+            chat_id: "oc_group_from_context",
+            chat_type: "group",
+          }),
+        }),
+      }),
+    );
+    expect(getMessageFeishu).not.toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: "om_nested_ctx_1" }),
+    );
+  });
 });

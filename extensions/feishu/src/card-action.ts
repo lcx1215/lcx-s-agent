@@ -9,6 +9,8 @@ export type FeishuCardActionEvent = {
   union_id?: string;
   tenant_key?: string;
   open_message_id?: string;
+  open_chat_id?: string;
+  chat_id?: string;
   operator?: {
     open_id?: string;
     user_id?: string;
@@ -23,6 +25,8 @@ export type FeishuCardActionEvent = {
     open_id?: string;
     user_id?: string;
     chat_id?: string;
+    open_chat_id?: string;
+    open_message_id?: string;
   };
 };
 
@@ -39,7 +43,10 @@ export async function handleFeishuCardAction(params: {
   const senderOpenId = event.operator?.open_id ?? event.open_id ?? "";
   const senderUserId = event.operator?.user_id ?? event.user_id;
   const senderUnionId = event.operator?.union_id ?? event.union_id;
-  const replyTargetMessageId = event.open_message_id?.trim() || `card-action-${event.token}`;
+  const replyTargetMessageId =
+    event.open_message_id?.trim() ||
+    event.context?.open_message_id?.trim() ||
+    `card-action-${event.token}`;
 
   // Extract action value
   const actionValue = event.action.value;
@@ -56,11 +63,16 @@ export async function handleFeishuCardAction(params: {
     content = String(actionValue);
   }
 
-  let chatId = event.context?.chat_id?.trim() || "";
-  if (!chatId && event.open_message_id?.trim()) {
+  let chatId =
+    event.context?.chat_id?.trim() ||
+    event.context?.open_chat_id?.trim() ||
+    (typeof event.chat_id === "string" ? event.chat_id : "").trim() ||
+    (typeof event.open_chat_id === "string" ? event.open_chat_id : "").trim() ||
+    "";
+  if (!chatId && replyTargetMessageId && !replyTargetMessageId.startsWith("card-action-")) {
     const sourceMessage = await getMessageFeishu({
       cfg,
-      messageId: event.open_message_id,
+      messageId: replyTargetMessageId,
       accountId,
     });
     chatId = sourceMessage?.chatId ?? "";
