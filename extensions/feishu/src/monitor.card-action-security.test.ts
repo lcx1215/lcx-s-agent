@@ -63,4 +63,14 @@ describe("verifyFeishuCardActionWebhook", () => {
       }),
     ).toBe(true);
   });
+
+  it("rejects non-object webhook bodies", () => {
+    expect(
+      verifyFeishuCardActionWebhook({
+        data: "",
+        headers: {},
+        verificationToken: "verify_token",
+      }),
+    ).toBe(false);
+  });
 });

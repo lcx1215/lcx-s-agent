@@ -103,6 +103,10 @@ async function readWebhookRequestJson(req: http.IncomingMessage): Promise<unknow
   }
 }
 
+function isWebhookJsonObject(data: unknown): data is Record<string, unknown> {
+  return typeof data === "object" && data !== null;
+}
+
 export async function monitorWebSocket({
   account,
   accountId,
@@ -200,6 +204,11 @@ export async function monitorWebhook({
         }
 
         const data = await readWebhookRequestJson(req);
+        if (!isWebhookJsonObject(data)) {
+          res.statusCode = 400;
+          res.end("Bad Request");
+          return;
+        }
         const { isChallenge, challenge } = Lark.generateChallenge(data, {
           encryptKey: eventDispatcher.encryptKey,
         });
