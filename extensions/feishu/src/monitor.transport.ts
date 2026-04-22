@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import * as http from "http";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import {
@@ -24,6 +25,83 @@ export type MonitorTransportParams = {
   abortSignal?: AbortSignal;
   eventDispatcher: Lark.EventDispatcher;
 };
+
+function pickFeishuHeaderValue(headers: http.IncomingHttpHeaders, key: string): string | undefined {
+  const value = headers[key];
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return typeof value === "string" ? value : undefined;
+}
+
+function isFeishuCardActionPayload(data: unknown): boolean {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as {
+    header?: { event_type?: unknown };
+    event?: { type?: unknown };
+  };
+  return (
+    payload.header?.event_type === "card.action.trigger" ||
+    payload.event?.type === "card.action.trigger"
+  );
+}
+
+export function verifyFeishuCardActionWebhook(params: {
+  data: unknown;
+  headers: http.IncomingHttpHeaders;
+  verificationToken?: string;
+}): boolean {
+  const verificationToken = params.verificationToken?.trim();
+  if (!verificationToken) {
+    return true;
+  }
+
+  if (!params.data || typeof params.data !== "object") {
+    return false;
+  }
+  const payload = params.data as {
+    header?: { token?: unknown };
+    verification_token?: unknown;
+  };
+
+  const bodyToken =
+    typeof payload.verification_token === "string" ? payload.verification_token.trim() : "";
+  if (bodyToken && bodyToken === verificationToken) {
+    return true;
+  }
+
+  const headerToken = typeof payload.header?.token === "string" ? payload.header.token.trim() : "";
+  if (headerToken && headerToken === verificationToken) {
+    return true;
+  }
+
+  const timestamp = pickFeishuHeaderValue(params.headers, "x-lark-request-timestamp")?.trim();
+  const nonce = pickFeishuHeaderValue(params.headers, "x-lark-request-nonce")?.trim();
+  const signature = pickFeishuHeaderValue(params.headers, "x-lark-signature")?.trim();
+  if (!timestamp || !nonce || !signature) {
+    return false;
+  }
+
+  const computedSignature = crypto
+    .createHash("sha1")
+    .update(`${timestamp}${nonce}${verificationToken}${JSON.stringify(params.data)}`)
+    .digest("hex");
+  return computedSignature === signature;
+}
+
+async function readWebhookRequestJson(req: http.IncomingMessage): Promise<unknown> {
+  let chunks = "";
+  for await (const chunk of req) {
+    chunks += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+  }
+  try {
+    return JSON.parse(chunks);
+  } catch {
+    return "";
+  }
+}
 
 export async function monitorWebSocket({
   account,
@@ -86,7 +164,6 @@ export async function monitorWebhook({
   log(`feishu[${accountId}]: starting Webhook server on ${host}:${port}, path ${path}...`);
 
   const server = http.createServer();
-  const webhookHandler = Lark.adaptDefault(path, eventDispatcher, { autoChallenge: true });
 
   server.on("request", (req, res) => {
     res.on("finish", () => {
@@ -116,7 +193,40 @@ export async function monitorWebhook({
       return;
     }
 
-    void Promise.resolve(webhookHandler(req, res))
+    void Promise.resolve()
+      .then(async () => {
+        if (req.url !== path) {
+          return;
+        }
+
+        const data = await readWebhookRequestJson(req);
+        const { isChallenge, challenge } = Lark.generateChallenge(data, {
+          encryptKey: eventDispatcher.encryptKey,
+        });
+        if (isChallenge) {
+          res.end(JSON.stringify(challenge));
+          return;
+        }
+
+        if (
+          isFeishuCardActionPayload(data) &&
+          !verifyFeishuCardActionWebhook({
+            data,
+            headers: req.headers,
+            verificationToken: account.verificationToken,
+          })
+        ) {
+          error(`feishu[${accountId}]: rejected unverified card action callback`);
+          res.statusCode = 401;
+          res.end("Unauthorized");
+          return;
+        }
+
+        const value = await eventDispatcher.invoke(
+          Object.assign(Object.create({ headers: req.headers }), data),
+        );
+        res.end(JSON.stringify(value));
+      })
       .catch((err) => {
         if (!guard.isTripped()) {
           error(`feishu[${accountId}]: webhook handler error: ${String(err)}`);
@@ -130,21 +240,29 @@ export async function monitorWebhook({
   httpServers.set(accountId, server);
 
   return new Promise((resolve, reject) => {
+    const closeServer = async () => {
+      if (!server.listening) {
+        return;
+      }
+      await new Promise<void>((closeResolve) => {
+        server.close(() => closeResolve());
+      });
+    };
+
     const cleanup = () => {
-      server.close();
       httpServers.delete(accountId);
       botOpenIds.delete(accountId);
     };
 
-    const handleAbort = () => {
+    const handleAbort = async () => {
       log(`feishu[${accountId}]: abort signal received, stopping Webhook server`);
+      await closeServer();
       cleanup();
       resolve();
     };
 
     if (abortSignal?.aborted) {
-      cleanup();
-      resolve();
+      void handleAbort();
       return;
     }
 
