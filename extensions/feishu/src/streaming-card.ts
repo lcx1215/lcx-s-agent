@@ -4,6 +4,7 @@
 
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
+import { recordFeishuDailyBriefAudit } from "./delivery-audit.js";
 import type { FeishuDomain } from "./types.js";
 
 type Credentials = { appId: string; appSecret: string; domain?: FeishuDomain };
@@ -325,10 +326,20 @@ export class FeishuStreamingSession {
       })
       .catch((e) => this.log?.(`Close failed: ${String(e)}`));
 
+    await recordFeishuDailyBriefAudit({
+      messageId: this.state.messageId,
+      deliveryType: "interactive",
+      text,
+    });
+
     this.log?.(`Closed streaming: cardId=${this.state.cardId}`);
   }
 
   isActive(): boolean {
     return this.state !== null && !this.closed;
+  }
+
+  getMessageId(): string | undefined {
+    return this.state?.messageId;
   }
 }

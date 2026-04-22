@@ -238,7 +238,25 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       if (mentionTargets?.length) {
         text = buildMentionedCardContent(mentionTargets, text);
       }
+      await recordOutboundAttempt({
+        sendMode: "card",
+        replyKind: "final",
+        text,
+      });
       await streaming.close(text);
+      await recordOutboundResult({
+        sendMode: "card",
+        replyKind: "final",
+        text,
+        result: {
+          messageId: streaming.getMessageId(),
+          deliveryStatus: "success",
+          outboundMessageType: "interactive",
+          receiveIdType: resolveReceiveIdType(chatId),
+          usedReplyTarget: Boolean(replyToMessageId) && !rootId,
+          usedFallbackCreate: false,
+        },
+      });
     }
     streaming = null;
     streamingStartPromise = null;

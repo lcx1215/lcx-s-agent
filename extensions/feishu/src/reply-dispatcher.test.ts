@@ -31,6 +31,7 @@ vi.mock("./typing.js", () => ({
 vi.mock("./streaming-card.js", () => ({
   FeishuStreamingSession: class {
     active = false;
+    messageId = "om_stream_1";
     start = vi.fn(async () => {
       this.active = true;
     });
@@ -39,6 +40,7 @@ vi.mock("./streaming-card.js", () => ({
       this.active = false;
     });
     isActive = vi.fn(() => this.active);
+    getMessageId = vi.fn(() => this.messageId);
 
     constructor() {
       streamingInstances.push(this);
@@ -256,6 +258,55 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       usedFallbackCreate: false,
       sendMode: "message",
     });
+  });
+
+  it("records outbound attempt and result audit entries for streaming card replies", async () => {
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+      replyToMessageId: "om_parent",
+      inboundMessageId: "om_inbound_stream",
+      sessionKey: "agent:main:feishu:group:oc_chat",
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await options.deliver({ text: "```txt\ncard-path-ok\n```" }, { kind: "final" });
+
+    const auditPath = resolveFeishuReplyFlowAuditPath();
+    const lines = (await fs.readFile(auditPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0].correlationId).toBe(lines[1].correlationId);
+    expect(lines[0]).toMatchObject({
+      kind: "feishu_reply_flow",
+      stage: "outbound_attempt",
+      messageId: "om_inbound_stream",
+      chatId: "oc_chat",
+      sessionKey: "agent:main:feishu:group:oc_chat",
+      agentId: "agent",
+      sendMode: "card",
+      replyKind: "final",
+      textPreview: "```txt card-path-ok ```",
+    });
+    expect(lines[1]).toMatchObject({
+      kind: "feishu_reply_flow",
+      stage: "outbound_result",
+      messageId: "om_inbound_stream",
+      deliveryMessageId: "om_stream_1",
+      deliveryStatus: "success",
+      outboundMessageType: "interactive",
+      receiveIdType: "chat_id",
+      usedReplyTarget: true,
+      usedFallbackCreate: false,
+      sendMode: "card",
+    });
+    expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
   });
 
   it("records dispatch_error audit entries when a final reply send fails", async () => {
