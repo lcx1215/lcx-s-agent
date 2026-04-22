@@ -21,8 +21,9 @@ def load_module(path: Path):
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     module = load_module(repo_root / "lobster_orchestrator.py")
+    helper = load_module(repo_root / "scripts" / "learning_report_delivery.py")
 
-    muted = module.classify_report_delivery(
+    muted = helper.classify_report_delivery(
         {
             "code": 0,
             "stdout": json.dumps(
@@ -35,7 +36,7 @@ def main() -> int:
     assert muted["status"] == "skipped", muted
     assert muted["delivered"] is False, muted
 
-    delivered = module.classify_report_delivery(
+    delivered = helper.classify_report_delivery(
         {
             "code": 0,
             "stdout": json.dumps(
@@ -48,11 +49,11 @@ def main() -> int:
     assert delivered["status"] == "delivered", delivered
     assert delivered["delivered"] is True, delivered
 
-    malformed = module.classify_report_delivery({"code": 0, "stdout": "not json", "stderr": ""})
+    malformed = helper.classify_report_delivery({"code": 0, "stdout": "not json", "stderr": ""})
     assert malformed["status"] == "malformed", malformed
     assert malformed["delivered"] is False, malformed
 
-    failed = module.classify_report_delivery({"code": 7, "stdout": "", "stderr": "network broke"})
+    failed = helper.classify_report_delivery({"code": 7, "stdout": "", "stderr": "network broke"})
     assert failed["status"] == "failed", failed
     assert failed["delivered"] is False, failed
 
