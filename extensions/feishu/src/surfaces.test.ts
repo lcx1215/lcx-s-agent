@@ -552,6 +552,12 @@ describe("buildFeishuSurfaceNotice", () => {
     expect(notice).toContain(
       "Feishu status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
     );
+    expect(notice).toContain(
+      "Treat questions like 现在在干什么, 修到哪了, 还剩多少, 是不是 live 了, 现在能用了吗, and what remains as status-readback requests.",
+    );
+    expect(notice).toContain(
+      "Answer them from evidence order first, not from narrative memory or optimistic progress prose.",
+    );
     expect(notice).toContain("use current evidence instead of chat memory alone");
     expect(notice).toContain("dev-fixed means local implementation or tests");
     expect(notice).toContain(

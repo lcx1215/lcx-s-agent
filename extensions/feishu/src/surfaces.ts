@@ -168,6 +168,7 @@ const CONTROL_ROOM_GROUNDING_CONTRACT_LINES = [
 
 const FEISHU_SHARED_STATUS_BOUNDARY_LINES = [
   "[System: Feishu status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven, use current evidence instead of chat memory alone.]",
+  "[System: Treat questions like 现在在干什么, 修到哪了, 还剩多少, 是不是 live 了, 现在能用了吗, and what remains as status-readback requests. Answer them from evidence order first, not from narrative memory or optimistic progress prose.]",
   "[System: Keep status labels literal across every Feishu surface: dev-fixed means local implementation or tests; live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path.]",
   "[System: If status evidence is missing, stale, or inferred, say unproven or unknown and name the next check.]",
 ];
