@@ -558,6 +558,10 @@ describe("buildFeishuSurfaceNotice", () => {
     expect(notice).toContain(
       "Answer them from evidence order first, not from narrative memory or optimistic progress prose.",
     );
+    expect(notice).toContain(
+      "Status-readback evidence order: current repo state, scoped diff or commit receipt, targeted test or lint receipt, migration/build/restart receipt, live probe receipt, and visible Lark/Feishu reply-flow evidence.",
+    );
+    expect(notice).toContain("Say which layer is present and which layer is still missing.");
     expect(notice).toContain("use current evidence instead of chat memory alone");
     expect(notice).toContain("dev-fixed means local implementation or tests");
     expect(notice).toContain(
