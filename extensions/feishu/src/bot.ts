@@ -4020,7 +4020,6 @@ export async function handleFeishuMessage(params: {
           "without lane pinning, specialist conversations can jump workflows and contaminate the wrong session",
         suggestedScope:
           "keep specialist chats pinned to their configured lane; only route across surfaces via control_room or explicit operator intent",
-        repairTicketThreshold: 2,
       }),
     ).catch(() => {});
   }
