@@ -549,6 +549,15 @@ describe("buildFeishuSurfaceNotice", () => {
     expect(notice).toContain(
       "If the work intent is ambiguous, default to the smallest useful mode that keeps progress visible",
     );
+    expect(notice).toContain(
+      "Feishu status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
+    );
+    expect(notice).toContain("use current evidence instead of chat memory alone");
+    expect(notice).toContain("dev-fixed means local implementation or tests");
+    expect(notice).toContain(
+      "live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
+    );
+    expect(notice).toContain("say unproven or unknown and name the next check");
     expect(notice).toContain("Configured target chat for this surface = oc-tech");
     expect(notice).toContain("arrived via configured surface fundamental_research");
   });
@@ -578,6 +587,9 @@ describe("buildFeishuSurfaceNotice", () => {
 
     expect(notice).toContain("Feishu operating surface target = control_room");
     expect(notice).toContain(
+      "Feishu status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
+    );
+    expect(notice).toContain(
       "you may directly create or update low-risk artifacts such as HOOK notes, correction notes, weekly reviews, learning summaries",
     );
     expect(notice).toContain(
@@ -602,6 +614,7 @@ describe("buildFeishuSurfaceNotice", () => {
 
     expect(notice).toContain("Feishu operating surface target = learning_command");
     expect(notice).toContain("Surface role contract = learning council orchestrator");
+    expect(notice).toContain("use current evidence instead of chat memory alone");
     expect(notice).toContain("Speak human-first. Start with 2-4 plain-language bullets");
     expect(notice).toContain("Learning council mode is active");
     expect(notice).toContain("Kimi = synthesis lane");

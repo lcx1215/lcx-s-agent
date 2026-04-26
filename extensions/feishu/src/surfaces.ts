@@ -166,6 +166,12 @@ const CONTROL_ROOM_GROUNDING_CONTRACT_LINES = [
   "[System: If the required evidence is missing, stale, or only inferred, say unproven or unknown in plain language and give the single next check that would resolve it.]",
 ];
 
+const FEISHU_SHARED_STATUS_BOUNDARY_LINES = [
+  "[System: Feishu status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven, use current evidence instead of chat memory alone.]",
+  "[System: Keep status labels literal across every Feishu surface: dev-fixed means local implementation or tests; live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path.]",
+  "[System: If status evidence is missing, stale, or inferred, say unproven or unknown and name the next check.]",
+];
+
 function inferIntentSurfaces(params: {
   content: string;
   normalizedCommandText?: string;
@@ -824,6 +830,7 @@ export function buildFeishuSurfaceNotice(
     "[System: Before acting, classify the operator's work intent from the current message: direct answer, bounded continuation, learning or research, correction or review, search or health check, or explicit implementation. Then stay inside that one mode unless the operator clearly asks for mixed work.]",
     "[System: If the work intent is ambiguous, default to the smallest useful mode that keeps progress visible: answer or bounded next-step guidance first, not silent escalation into implementation.]",
   ]);
+  appendNoticeLines(lines, FEISHU_SHARED_STATUS_BOUNDARY_LINES);
 
   if (
     targetSurface === "control_room" ||
