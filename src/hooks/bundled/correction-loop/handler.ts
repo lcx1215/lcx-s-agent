@@ -1,10 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import {
-  shouldEscalateOperationalIssueToCodex,
-  writeAndMaybeDispatchCodexEscalation,
-} from "../../../infra/codex-escalation.js";
 import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { recordOperationalAnomaly } from "../../../infra/operational-anomalies.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
@@ -439,7 +435,7 @@ const saveCorrectionLoopArtifacts: HookHandler = async (event) => {
       const category = inferCorrectionCategory(issue.normalizedText);
       const foundationTemplate = inferFoundationTemplateArea(issue.normalizedText);
       const repairTicketPath = buildCorrectionLoopRepairTicketRelativePath(issue.issueKey);
-      const anomalyResult = await recordOperationalAnomaly({
+      await recordOperationalAnomaly({
         workspaceDir,
         category,
         severity: "medium",
@@ -453,7 +449,7 @@ const saveCorrectionLoopArtifacts: HookHandler = async (event) => {
           "source=operator_correction",
         ],
         impact: "a repeated user-observed failure is degrading trust or operating reliability",
-        repairTicketThreshold: Number.MAX_SAFE_INTEGER,
+        repairTicketThreshold: false,
       });
       await writeFileWithinRoot({
         rootDir: workspaceDir,
@@ -469,30 +465,6 @@ const saveCorrectionLoopArtifacts: HookHandler = async (event) => {
         encoding: "utf-8",
         mkdir: true,
       });
-      if (shouldEscalateOperationalIssueToCodex(category)) {
-        await writeAndMaybeDispatchCodexEscalation({
-          workspaceDir,
-          category,
-          issueKey: issue.issueKey,
-          source: "correction-loop",
-          severity: "medium",
-          foundationTemplate,
-          occurrences: totalOccurrences,
-          lastSeen: `${dateStr} ${timeStr} UTC`,
-          repairTicketPath,
-          anomalyRecordPath: anomalyResult.recordPath,
-          problem: compactText(issue.normalizedText),
-          evidenceLines: [
-            `repeated operator correction detected (${totalOccurrences} occurrences)`,
-            `session_key=${displaySessionKey}`,
-          ],
-          impactLine:
-            "user-facing trust or operating reliability is at risk if this issue keeps recurring",
-          suggestedScopeLine:
-            "smallest-safe-patch only; do not broaden providers, memory architecture, or doctrine without explicit approval",
-          generatedAt: now.toISOString(),
-        });
-      }
       log.info("Correction loop escalated repeated issue into repair ticket", {
         issueKey: issue.issueKey,
         occurrences: totalOccurrences,

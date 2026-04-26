@@ -12,7 +12,6 @@ import {
   buildWatchtowerArtifactDir,
   isCorrectionNoteFilename,
   parseLearningCouncilAdoptionLedger,
-  parseCodexEscalationArtifact,
   parseCorrectionNoteArtifact,
   parseRepairTicketArtifact,
   renderLearningCouncilAdoptionLedger,
@@ -319,49 +318,6 @@ describe("correction-loop hook", () => {
     expect(anomaly.occurrenceCount).toBe(1);
     expect(anomaly.source).toBe("correction-loop");
     expect(anomaly.foundationTemplate).toBe("outcome-review");
-
-    await expect(
-      fs.access(path.join(tempDir, buildWatchtowerArtifactDir("codexEscalations"))),
-    ).rejects.toThrow();
-  });
-
-  it("writes a codex escalation packet for repeated write/edit failures", async () => {
-    const tempDir = await createCaseWorkspace("workspace");
-    const repeatedIssue = "你还是无法保存文件，修改后没有真正落盘。";
-
-    await runResetWithSession({
-      tempDir,
-      sessionContent: createMockSessionContent([
-        { role: "assistant", content: "我已经改好了并保存。" },
-        { role: "user", content: `反馈：${repeatedIssue}` },
-      ]),
-      timestamp: "2026-04-11T11:00:00.000Z",
-    });
-
-    await runResetWithSession({
-      tempDir,
-      sessionContent: createMockSessionContent([
-        { role: "assistant", content: "我已经再次保存成功。" },
-        { role: "user", content: `纠正：重复出现，${repeatedIssue}` },
-      ]),
-      timestamp: "2026-04-11T11:00:01.000Z",
-    });
-
-    const codexDir = path.join(tempDir, buildWatchtowerArtifactDir("codexEscalations"));
-    const packetFiles = await fs.readdir(codexDir);
-    expect(packetFiles.length).toBe(1);
-
-    const packetContent = await fs.readFile(path.join(codexDir, packetFiles[0]), "utf-8");
-    const parsedPacket = parseCodexEscalationArtifact(packetContent);
-    expect(parsedPacket).toBeTruthy();
-    expect(parsedPacket?.category).toBe("write_edit_failure");
-    expect(parsedPacket?.source).toBe("correction-loop");
-    expect(parsedPacket?.occurrences).toBe(2);
-    expect(parsedPacket?.repairTicketPath).toContain("repair-tickets");
-    expect(parsedPacket?.problem).toContain("保存文件");
-    expect(parsedPacket?.lastSeenDateKey).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
-    expect(parsedPacket?.generatedDateKey).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
-    expect(parsedPacket?.lastSeenDateKey).toBe(parsedPacket?.generatedDateKey);
   });
 
   it("does nothing for ordinary sessions without correction prefixes", async () => {

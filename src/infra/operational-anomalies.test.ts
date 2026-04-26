@@ -2,11 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  buildWatchtowerArtifactDir,
-  parseCodexEscalationArtifact,
-  parseRepairTicketArtifact,
-} from "../hooks/bundled/lobster-brain-registry.js";
+import { parseRepairTicketArtifact } from "../hooks/bundled/lobster-brain-registry.js";
 import { recordOperationalAnomaly } from "./operational-anomalies.js";
 
 const tempDirs: string[] = [];
@@ -49,7 +45,7 @@ describe("recordOperationalAnomaly", () => {
     expect(record.foundationTemplate).toBe("risk-transmission");
   });
 
-  it("dedupes repeated anomalies and escalates them into repair tickets", async () => {
+  it("dedupes repeated anomalies into repair tickets", async () => {
     const workspaceDir = await makeWorkspaceDir();
 
     await recordOperationalAnomaly({
@@ -77,8 +73,6 @@ describe("recordOperationalAnomaly", () => {
 
     expect(second.recordPath).toBeTruthy();
     expect(second.ticketPath).toBeTruthy();
-    expect(second.codexPacketPath).toBeTruthy();
-    expect(second.codexCommandStatus).toBe("disabled");
 
     const record = JSON.parse(
       await fs.readFile(path.join(workspaceDir, second.recordPath!), "utf-8"),
@@ -98,21 +92,46 @@ describe("recordOperationalAnomaly", () => {
     expect(parsedTicket?.foundationTemplate).toBe("execution-hygiene");
     expect(parsedTicket?.occurrences).toBe(2);
     expect(parsedTicket?.lastSeenDateKey).toBe("2026-03-26");
+  });
 
-    const packet = await fs.readFile(path.join(workspaceDir, second.codexPacketPath!), "utf-8");
-    const parsedPacket = parseCodexEscalationArtifact(packet);
-    expect(parsedPacket).toBeTruthy();
-    expect(parsedPacket?.category).toBe("write_edit_failure");
-    expect(parsedPacket?.repairTicketPath).toBe(second.ticketPath);
-    expect(parsedPacket?.anomalyRecordPath).toBe(second.recordPath);
-    expect(parsedPacket?.occurrences).toBe(2);
-    expect(parsedPacket?.source).toBe("feishu.dispatch");
-    expect(parsedPacket?.lastSeenDateKey).toBe("2026-03-26");
-    expect(parsedPacket?.generatedDateKey).toBe("2026-03-26");
+  it("can record repeated anomalies without writing a generic repair ticket", async () => {
+    const workspaceDir = await makeWorkspaceDir();
 
-    const codexDirEntries = await fs.readdir(
-      path.join(workspaceDir, buildWatchtowerArtifactDir("codexEscalations")),
-    );
-    expect(codexDirEntries.length).toBe(1);
+    await recordOperationalAnomaly({
+      workspaceDir,
+      category: "correction_loop_repeat",
+      severity: "medium",
+      source: "correction-loop",
+      problem: "operator correction repeated",
+      evidence: ["issue_key=abc123"],
+      impact: "trust is degraded",
+      fingerprint: "abc123",
+      nowIso: "2026-03-26T12:00:00.000Z",
+      repairTicketThreshold: false,
+    });
+    const second = await recordOperationalAnomaly({
+      workspaceDir,
+      category: "correction_loop_repeat",
+      severity: "medium",
+      source: "correction-loop",
+      problem: "operator correction repeated",
+      evidence: ["issue_key=abc123"],
+      impact: "trust is degraded",
+      fingerprint: "abc123",
+      nowIso: "2026-03-26T13:00:00.000Z",
+      repairTicketThreshold: false,
+    });
+
+    expect(second.recordPath).toBeTruthy();
+    expect(second.ticketPath).toBeUndefined();
+
+    const record = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, second.recordPath!), "utf-8"),
+    ) as { occurrenceCount: number };
+    expect(record.occurrenceCount).toBe(2);
+
+    await expect(
+      fs.access(path.join(workspaceDir, "bank", "watchtower", "repair-tickets")),
+    ).rejects.toThrow();
   });
 });

@@ -8,10 +8,6 @@ import {
   buildWatchtowerAnomalyRepairTicketRelativePath,
   renderRepairTicketArtifact,
 } from "../hooks/bundled/lobster-brain-registry.js";
-import {
-  shouldEscalateOperationalIssueToCodex,
-  writeAndMaybeDispatchCodexEscalation,
-} from "./codex-escalation.js";
 import { writeFileWithinRoot } from "./fs-safe.js";
 
 export type OperationalAnomalySeverity = "low" | "medium" | "high";
@@ -123,12 +119,10 @@ export async function recordOperationalAnomaly(params: {
   suggestedScope?: string;
   fingerprint?: string;
   nowIso?: string;
-  repairTicketThreshold?: number;
+  repairTicketThreshold?: number | false;
 }): Promise<{
   recordPath?: string;
   ticketPath?: string;
-  codexPacketPath?: string;
-  codexCommandStatus?: "disabled" | "dispatched" | "spawn_failed";
   record?: OperationalAnomalyRecord;
 }> {
   const workspaceDir = resolveOperationalWorkspaceDir(params);
@@ -190,6 +184,9 @@ export async function recordOperationalAnomaly(params: {
   });
 
   const repairTicketThreshold = params.repairTicketThreshold ?? 2;
+  if (repairTicketThreshold === false) {
+    return { recordPath, record };
+  }
   if (record.occurrenceCount >= repairTicketThreshold) {
     await writeFileWithinRoot({
       rootDir: workspaceDir,
@@ -198,32 +195,6 @@ export async function recordOperationalAnomaly(params: {
       encoding: "utf-8",
       mkdir: true,
     });
-    if (shouldEscalateOperationalIssueToCodex(record.category)) {
-      const escalation = await writeAndMaybeDispatchCodexEscalation({
-        workspaceDir,
-        category: record.category,
-        issueKey: record.fingerprint,
-        source: record.source,
-        severity: record.severity,
-        foundationTemplate: record.foundationTemplate ?? "general",
-        occurrences: record.occurrenceCount,
-        lastSeen: record.lastSeenAt,
-        repairTicketPath: ticketPath,
-        anomalyRecordPath: recordPath,
-        problem: record.problem,
-        evidenceLines: record.evidence,
-        impactLine: record.impact,
-        suggestedScopeLine: record.suggestedScope,
-        generatedAt: nowIso,
-      });
-      return {
-        recordPath,
-        ticketPath,
-        codexPacketPath: escalation.packetPath,
-        codexCommandStatus: escalation.commandStatus,
-        record,
-      };
-    }
     return { recordPath, ticketPath, record };
   }
 
