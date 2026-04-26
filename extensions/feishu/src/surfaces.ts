@@ -159,6 +159,13 @@ function appendNoticeLines(lines: string[], notices: string[]): void {
   lines.push(...notices);
 }
 
+const CONTROL_ROOM_GROUNDING_CONTRACT_LINES = [
+  "[System: Control-room grounding contract: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven, first check the freshest available state evidence instead of answering from chat memory alone.]",
+  "[System: Evidence order for control-room status claims: current-research-line and protected summaries first; then Feishu surface lines, work receipts, learning timebox/session state, watchtower anomalies, and recent reply-flow evidence when available.]",
+  "[System: State labels must stay literal: dev-fixed means local implementation or tests only; live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started/running/completed/blocked/unproven must not be blended into one success label.]",
+  "[System: If the required evidence is missing, stale, or only inferred, say unproven or unknown in plain language and give the single next check that would resolve it.]",
+];
+
 function inferIntentSurfaces(params: {
   content: string;
   normalizedCommandText?: string;
@@ -928,6 +935,7 @@ export function buildFeishuControlRoomOrchestrationNotice(
       "[System: Control-room orchestration mode is active.]",
       `[System: Publish mode = ${plan.publishMode}.]`,
       `[System: Expand follow-up detected. Deepen only this specialist slice: ${plan.expandSurface}.]`,
+      ...CONTROL_ROOM_GROUNDING_CONTRACT_LINES,
       "[System: Keep the reply in the control room. Start with one clear summary sentence, then expand only the requested specialist detail. Do not tell the user to manually message another group.]",
       "[System: Sound like an orchestrator, not a confused support bot. Stay concrete and brief.]",
       "[System: Keep workflow or file-maintenance notes secondary. Do not lead with internal status or file-update phrasing.]",
@@ -938,6 +946,7 @@ export function buildFeishuControlRoomOrchestrationNotice(
     "[System: Control-room orchestration mode is active.]",
     `[System: Publish mode = ${plan.publishMode}.]`,
     `[System: Internally fan this request out to the relevant specialist surfaces: ${surfaces}.]`,
+    ...CONTROL_ROOM_GROUNDING_CONTRACT_LINES,
     "[System: Optimize for a normal user. Do not make the user remember multiple groups or internal topology.]",
     "[System: Return one clear control-room summary first. Keep it simple for a non-technical user: what matters, what to watch, and what action or next step is most sensible.]",
     "[System: For daily or morning reports, combine the seven decision foundations into one concise brief when relevant: market/risk picture, position sizing, cross-asset transmission, outcome review, behavior drift, business quality follow-ups, catalyst map, plus operational health.]",

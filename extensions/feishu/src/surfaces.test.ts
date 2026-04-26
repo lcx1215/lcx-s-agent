@@ -1596,6 +1596,14 @@ describe("buildFeishuControlRoomOrchestrationNotice", () => {
     expect(notice).toContain("Control-room orchestration mode is active");
     expect(notice).toContain("Publish mode = classified_publish");
     expect(notice).toContain("technical_daily, fundamental_research");
+    expect(notice).toContain("Control-room grounding contract");
+    expect(notice).toContain("current-research-line and protected summaries first");
+    expect(notice).toContain("dev-fixed means local implementation or tests only");
+    expect(notice).toContain(
+      "live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
+    );
+    expect(notice).toContain("started/running/completed/blocked/unproven");
+    expect(notice).toContain("say unproven or unknown");
     expect(notice).toContain("Optimize for a normal user");
     expect(notice).toContain("Return one clear control-room summary first");
     expect(notice).toContain(
@@ -1725,6 +1733,8 @@ describe("buildFeishuControlRoomOrchestrationNotice", () => {
     expect(notice).toContain("Publish mode = summary_only");
     expect(notice).toContain("Expand follow-up detected");
     expect(notice).toContain("ops_audit");
+    expect(notice).toContain("Control-room grounding contract");
+    expect(notice).toContain("reply-flow evidence when available");
     expect(notice).toContain("Keep the reply in the control room");
     expect(notice).toContain("Sound like an orchestrator");
     expect(notice).toContain("workflow or file-maintenance notes secondary");
