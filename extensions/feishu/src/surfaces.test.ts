@@ -353,6 +353,32 @@ describe("resolveFeishuSurfaceRouting", () => {
     expect(routing.targetChatId).toBe("oc-learning");
   });
 
+  it("routes vertical stock and ETF capability learning asks to learning_command", () => {
+    const examples = [
+      "把语言接口，大脑做好，我们就开始让它学吧，学垂直的股市能力，etf能力这种垂直的",
+      "让它开始学ETF能力，后面要能做日频研究和风险控制",
+      "接下来学垂直金融能力，股票、指数、大类资产这些都要能筛",
+      "你去补齐持仓分析和基本面判断能力，不是泛泛学点东西",
+    ];
+
+    for (const content of examples) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg: {
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+            technical_daily: { chatId: "oc-tech" },
+            fundamental_research: { chatId: "oc-fundamental" },
+          },
+        } as FeishuConfig,
+        chatId: "oc-random",
+        content,
+      });
+
+      expect(routing.targetSurface, content).toBe("learning_command");
+      expect(routing.targetChatId, content).toBe("oc-learning");
+    }
+  });
+
   it("routes explicit technical-slice summary asks to technical_daily", () => {
     const routing = resolveFeishuSurfaceRouting({
       cfg: {
@@ -1089,6 +1115,21 @@ describe("resolveFeishuControlRoomOrchestration", () => {
       targetSurface: "learning_command",
       content:
         "我是学ds和统计的中国散户，你别给我讲市场大词，直接告诉我：如果我做ETF轮动，用样本外、walk-forward、bootstrap，什么结果才算没有自欺欺人？",
+    });
+
+    expect(plan).toEqual({
+      mode: "aggregate",
+      specialistSurfaces: ["learning_command"],
+      publishMode: "classified_publish",
+      replyContract: "default",
+    });
+  });
+
+  it("keeps vertical stock and ETF capability asks on the learning-only aggregate path", () => {
+    const plan = resolveFeishuControlRoomOrchestration({
+      currentSurface: "control_room",
+      targetSurface: "learning_command",
+      content: "把语言接口和大脑做好，接下来让它学垂直的股市能力、ETF能力和持仓风控能力",
     });
 
     expect(plan).toEqual({

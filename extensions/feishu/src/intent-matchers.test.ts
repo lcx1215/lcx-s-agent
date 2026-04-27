@@ -28,6 +28,7 @@ import {
   looksLikeSourceGroundingAsk,
   looksLikeStrategicLearningAsk,
   looksLikeTemporalScopeControlAsk,
+  looksLikeVerticalFinanceLearningAsk,
 } from "./intent-matchers.js";
 
 describe("feishu intent matchers", () => {
@@ -41,6 +42,22 @@ describe("feishu intent matchers", () => {
     expect(
       looksLikeLearningWorkflowAuditAsk("后台那条学习链是不是半路断过，然后又装作啥事没有"),
     ).toBe(true);
+  });
+
+  it("detects vertical finance learning asks by family cues", () => {
+    const positiveCases = [
+      "把语言接口，大脑做好，我们就开始让它学吧，学垂直的股市能力，etf能力这种垂直的",
+      "让它开始学ETF能力，后面要能做日频研究和风险控制",
+      "接下来学垂直金融能力，股票、指数、大类资产这些都要能筛",
+      "你去补齐持仓分析和基本面判断能力，不是泛泛学点东西",
+    ];
+
+    for (const phrase of positiveCases) {
+      expect(looksLikeVerticalFinanceLearningAsk(phrase), phrase).toBe(true);
+    }
+
+    expect(looksLikeVerticalFinanceLearningAsk("继续分析一下 QQQ 今天的技术面")).toBe(false);
+    expect(looksLikeVerticalFinanceLearningAsk("帮我总结一下这篇普通文章")).toBe(false);
   });
 
   it("detects correction carryover asks by family cues", () => {

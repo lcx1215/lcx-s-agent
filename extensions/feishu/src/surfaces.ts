@@ -7,6 +7,7 @@ import {
   looksLikeMethodLearningTopic,
   looksLikeSourceGroundingAsk,
   looksLikeStrategicLearningAsk,
+  looksLikeVerticalFinanceLearningAsk,
   normalizeFeishuIntentText,
 } from "./intent-matchers.js";
 import type { FeishuConfig } from "./types.js";
@@ -207,6 +208,7 @@ function inferIntentSurfaces(params: {
   );
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeStrategicLearningAsk(normalized));
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeMethodLearningTopic(normalized));
+  addIntentSurfaceIf(surfaces, "learning_command", looksLikeVerticalFinanceLearningAsk(normalized));
   addIntentSurfaceIf(
     surfaces,
     "knowledge_maintenance",
@@ -458,6 +460,15 @@ export function resolveFeishuControlRoomOrchestration(params: {
   }
 
   if (looksLikeMethodLearningTopic(params.content)) {
+    return {
+      mode: "aggregate",
+      specialistSurfaces: ["learning_command"],
+      publishMode: requestedPublishMode ?? "classified_publish",
+      replyContract: "default",
+    };
+  }
+
+  if (looksLikeVerticalFinanceLearningAsk(params.content)) {
     return {
       mode: "aggregate",
       specialistSurfaces: ["learning_command"],

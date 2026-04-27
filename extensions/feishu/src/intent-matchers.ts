@@ -15,6 +15,23 @@ export function looksLikeMethodLearningTopic(text: string): boolean {
   return hasLearningIntent && hasMethodCue;
 }
 
+export function looksLikeVerticalFinanceLearningAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasLearningIntent =
+    /(开始学|开始学习|去学|学一下|学学|学习|学会|训练|练出|练好|补一下|补齐|补强|提升|强化|加强|研究一下|研究明白|搞懂|内化|做成能力|能力做好|能力补齐|接下来学|让它学|让你学|你去学)/u.test(
+      normalized,
+    );
+  const hasVerticalCue =
+    /(垂直|专业|专门|vertical|domain|领域|主线|能力|脑子|大脑|语言接口|对话接口|研究能力|分析能力|判断能力|筛选能力|过滤能力)/u.test(
+      normalized,
+    );
+  const hasFinanceDomain =
+    /(股市|股票|美股|a股|港股|市场|金融|finance|etf|指数|index|大类资产|major asset|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|daily[-\s]?frequency|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation)/u.test(
+      normalized,
+    );
+  return hasLearningIntent && hasVerticalCue && hasFinanceDomain;
+}
+
 export function looksLikeStrategicLearningAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   if (
