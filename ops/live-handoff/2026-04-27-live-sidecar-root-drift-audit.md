@@ -184,6 +184,32 @@ backup source hashes, and root-drift gates line up. It does not copy files into
 `~/Library/LaunchAgents`, does not call `launchctl bootstrap`, and does not
 change live sidecar state.
 
+## Install Dry-Run Receipt
+
+Current dev/GitHub status:
+
+```text
+installDryRun=ready_receipt_generated
+noLiveLaunchAgentChange=true
+scheduler.changed=true
+host_watchdog.changed=true
+```
+
+Generated receipt:
+
+```text
+ops/live-handoff/launchagent-candidates/live-sidecar-install-dry-run-receipt.json
+```
+
+This receipt records the exact `cp`, backup, `launchctl bootout`, `launchctl
+bootstrap`, and rollback commands that would be used in a later live migration.
+It also records the current live plist hashes and expected candidate hashes.
+
+Important boundary: this step still does not copy either plist, does not create
+backup files, and does not run `launchctl`. A direct read of the live plists
+after the dry-run still shows both sidecars pointing at
+`/Users/liuchengxu/Desktop/openclaw`.
+
 ## Out Of Scope
 
 - No plist changes in this audit step.

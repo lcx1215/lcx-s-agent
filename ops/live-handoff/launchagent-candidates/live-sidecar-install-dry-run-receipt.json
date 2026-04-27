@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-27T21:56:22.981Z",
+  "targetRoot": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
+  "legacyRoot": "/Users/liuchengxu/Desktop/openclaw",
+  "outputDir": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates",
+  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-install-dry-run-receipt.json",
+  "noLiveLaunchAgentChange": true,
+  "preflightReady": true,
+  "blockedReasons": [],
+  "actions": [
+    {
+      "sidecar": "scheduler",
+      "label": "ai.openclaw.lobster.scheduler",
+      "sourceCandidatePath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/ai.openclaw.lobster.scheduler.smoke.plist",
+      "targetPlistPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+      "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T21-56-22-981Z",
+      "sourceCandidateSha256": "825db3307a689d952e144467b30840326b9dc3a7a713a32edcb8cb1e6ac3318c",
+      "currentPlistSha256": "611fd100cce53a552000b89f31474b77830be68053da0fc2a613143eae4f2c5e",
+      "expectedTargetSha256AfterCopy": "825db3307a689d952e144467b30840326b9dc3a7a713a32edcb8cb1e6ac3318c",
+      "currentDiffSummary": {
+        "changed": true,
+        "removedLineCount": 35,
+        "addedLineCount": 35,
+        "preview": [
+          "-     <key>Label</key>",
+          "-     <string>ai.openclaw.lobster.scheduler</string>",
+          "-     <key>ProgramArguments</key>",
+          "-     <array>",
+          "-       <string>/usr/bin/python3</string>",
+          "-       <string>/Users/liuchengxu/Desktop/openclaw/daily_learning_runner.py</string>",
+          "+ <dict>",
+          "+   <key>Label</key>",
+          "+   <string>ai.openclaw.lobster.scheduler</string>",
+          "+   <key>ProgramArguments</key>",
+          "+   <array>",
+          "+     <string>/usr/bin/python3</string>"
+        ]
+      },
+      "wouldRun": [
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T21-56-22-981Z\"",
+        "cp \"/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/ai.openclaw.lobster.scheduler.smoke.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
+        "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" || true",
+        "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\""
+      ],
+      "rollbackCommands": [
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T21-56-22-981Z\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
+        "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" || true",
+        "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\""
+      ]
+    },
+    {
+      "sidecar": "host_watchdog",
+      "label": "ai.openclaw.lobster.host_watchdog",
+      "sourceCandidatePath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/ai.openclaw.lobster.host_watchdog.smoke.plist",
+      "targetPlistPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist",
+      "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T21-56-22-981Z",
+      "sourceCandidateSha256": "f29413d82957b3f088e5c58a9fe558b87731f545c6b1bfcd5c6870a262767184",
+      "currentPlistSha256": "4e52d3b7c86fa7c5c5a2f651b1e43bf601e50ac17c655a84cf9cf19861ed1f48",
+      "expectedTargetSha256AfterCopy": "f29413d82957b3f088e5c58a9fe558b87731f545c6b1bfcd5c6870a262767184",
+      "currentDiffSummary": {
+        "changed": true,
+        "removedLineCount": 30,
+        "addedLineCount": 32,
+        "preview": [
+          "-     <key>Label</key>",
+          "-     <string>ai.openclaw.lobster.host_watchdog</string>",
+          "-     <key>ProgramArguments</key>",
+          "-     <array>",
+          "-       <string>/usr/bin/python3</string>",
+          "-       <string>/Users/liuchengxu/Desktop/openclaw/scripts/lobster_host_watchdog.py</string>",
+          "+ <dict>",
+          "+   <key>Label</key>",
+          "+   <string>ai.openclaw.lobster.host_watchdog</string>",
+          "+   <key>ProgramArguments</key>",
+          "+   <array>",
+          "+     <string>/usr/bin/python3</string>"
+        ]
+      },
+      "wouldRun": [
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T21-56-22-981Z\"",
+        "cp \"/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/ai.openclaw.lobster.host_watchdog.smoke.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\"",
+        "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" || true",
+        "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\""
+      ],
+      "rollbackCommands": [
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T21-56-22-981Z\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\"",
+        "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" || true",
+        "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\""
+      ]
+    }
+  ],
+  "executionBoundary": [
+    "This receipt is dry-run only.",
+    "No plist was copied.",
+    "No backup was written.",
+    "No launchctl command was executed.",
+    "Candidates remain smoke-mode LaunchAgents with --dry-run --write-receipt."
+  ]
+}
