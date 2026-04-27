@@ -71,6 +71,37 @@ Start with `ai.openclaw.lobster.scheduler`, not Feishu proxy.
 4. Leave `ai.openclaw.feishu.proxy` unchanged until scheduler and watchdog have
    a clean-root replacement.
 
+## Scheduler Migration Progress
+
+Current dev/GitHub status:
+
+```text
+schedulerDryRun=migration_ready
+mode=dry_run_no_launchagent_change_no_lark_send
+launchAgent.pointsAtLegacyRoot=true
+```
+
+The clean repo now has tracked scheduler compatibility entrypoints:
+
+```text
+daily_learning_runner.py
+lobster_orchestrator.py
+scripts/lobster_paths.py
+```
+
+Important boundary: this does not mean the live scheduler has been migrated.
+The live LaunchAgent still points at `/Users/liuchengxu/Desktop/openclaw`. The
+clean-root scheduler entrypoint is intentionally fail-closed for live `cycle`
+unless `OPENCLAW_SCHEDULER_ENABLE_CYCLE=1` is explicitly set during an approved
+live migration.
+
+Verified smoke:
+
+```text
+python3 daily_learning_runner.py --dry-run
+status: cycle_blocked_fail_closed
+```
+
 ## Out Of Scope
 
 - No plist changes in this audit step.
