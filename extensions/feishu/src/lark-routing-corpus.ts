@@ -8,6 +8,7 @@ import {
   looksLikeEvidenceShapeScopeAsk,
   looksLikeExecutionAuthorityScopeAsk,
   looksLikeFailureReportScopeAsk,
+  looksLikeHighStakesRiskScopeAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikeProgressStatusScopeAsk,
   looksLikeResultShapeScopeAsk,
@@ -30,7 +31,12 @@ export type LarkRoutingFamily =
   | "live_permission_receipt"
   | "live_probe_failure"
   | "live_stop_boundary"
-  | "external_source_coverage_honesty";
+  | "external_source_coverage_honesty"
+  | "trading_execution_order"
+  | "trading_order_type_education"
+  | "position_risk_adjustment"
+  | "bracket_exit_plan"
+  | "trading_execution_boundary";
 
 export type LarkRoutingGuardMatcher =
   | "batchQueue"
@@ -40,10 +46,12 @@ export type LarkRoutingGuardMatcher =
   | "evidenceShape"
   | "executionAuthority"
   | "failureReport"
+  | "highStakesRisk"
   | "outOfScope"
   | "progressStatus"
   | "resultShape"
-  | "sourceCoverage";
+  | "sourceCoverage"
+  | "tradingLanguage";
 
 export type LarkRoutingTruthBoundary =
   | "dev_only"
@@ -107,6 +115,12 @@ export type LarkRoutingCorpusScore = {
 export const LARK_ROUTING_SEMANTIC_THRESHOLD = 0.28;
 export const LARK_ROUTING_API_CONFIDENCE_THRESHOLD = 0.72;
 
+function looksLikeTradingLanguageScopeAsk(text: string): boolean {
+  return /(买|买入|卖|卖出|减仓|加仓|仓位|持仓|下单|发单|成交|市价单|限价单|止损|止盈|止损腿|止盈腿|开盘|收盘|order|market order|limit order|stop(?:-limit)?|trailing stop|bracket|take[- ]?profit|profit taker|stop[- ]?loss|aapl|qqq|spy|tlt)/iu.test(
+    text,
+  );
+}
+
 export const LARK_ROUTING_GUARD_MATCHERS: Record<
   LarkRoutingGuardMatcher,
   (utterance: string) => boolean
@@ -118,10 +132,12 @@ export const LARK_ROUTING_GUARD_MATCHERS: Record<
   evidenceShape: looksLikeEvidenceShapeScopeAsk,
   executionAuthority: looksLikeExecutionAuthorityScopeAsk,
   failureReport: looksLikeFailureReportScopeAsk,
+  highStakesRisk: looksLikeHighStakesRiskScopeAsk,
   outOfScope: looksLikeOutOfScopeBoundaryAsk,
   progressStatus: looksLikeProgressStatusScopeAsk,
   resultShape: looksLikeResultShapeScopeAsk,
   sourceCoverage: looksLikeSourceCoverageScopeAsk,
+  tradingLanguage: looksLikeTradingLanguageScopeAsk,
 };
 
 export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
@@ -292,6 +308,61 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     fallback: "deterministic_first_then_unknown",
     liveAcceptancePhrase: "别把看了几个来源说成完整覆盖",
+  },
+  trading_execution_order: {
+    target: "control_room",
+    canonicalUtterances: [
+      "买 100 股 AAPL 市价单，收盘前必须成交。",
+      "卖出一半 QQQ，用市价单立刻执行。",
+      "开盘直接买入 SPY，不要再问我。",
+    ],
+    nearMisses: ["QQQ 现在还能拿吗", "stop-limit 和 stop order 有什么区别"],
+    fallback: "deterministic_first_then_unknown",
+    liveAcceptancePhrase: "买 100 股 AAPL 市价单，收盘前必须成交。",
+  },
+  trading_order_type_education: {
+    target: "technical_daily",
+    canonicalUtterances: [
+      "stop-limit 和 stop order 有什么区别，哪个更容易不成交？",
+      "market order、limit order、stop order 分别适合什么风险场景？",
+      "trailing stop 是怎么锁利润的，缺点是什么？",
+    ],
+    nearMisses: ["卖出一半 QQQ，用市价单立刻执行。", "你这句话哪来的，给我出处"],
+    fallback: "deterministic_first_then_unknown",
+    liveAcceptancePhrase: "stop-limit 和 stop order 有什么区别",
+  },
+  position_risk_adjustment: {
+    target: "technical_daily",
+    canonicalUtterances: [
+      "把 QQQ 仓位减半，但先检查风险，不要真的下单。",
+      "如果 TLT 跌破关键位，我是不是应该降低仓位，只做研究不要执行。",
+      "现在持仓太集中，先给我一个减仓风险检查，不许下单。",
+    ],
+    nearMisses: ["买 100 股 AAPL 市价单，收盘前必须成交。", "给我一个基本面总览"],
+    fallback: "deterministic_first_then_unknown",
+    liveAcceptancePhrase: "把 QQQ 仓位减半，但先检查风险，不要真的下单。",
+  },
+  bracket_exit_plan: {
+    target: "technical_daily",
+    canonicalUtterances: [
+      "如果我要做 bracket order，止盈和止损腿分别应该怎么理解，只做方案不要执行。",
+      "给我设计一个 take-profit 和 stop-loss 的退出计划，但不要发单。",
+      "买入后附带 stop loss 和 profit taker 的语义应该怎么分类？",
+    ],
+    nearMisses: ["去 Google 上学最近 agent 记忆怎么做", "现在是哪个模型在回我"],
+    fallback: "deterministic_first_then_unknown",
+    liveAcceptancePhrase: "bracket order，止盈和止损腿分别应该怎么理解",
+  },
+  trading_execution_boundary: {
+    target: "control_room",
+    canonicalUtterances: [
+      "我让你分析交易计划，不是授权你下单；任何买卖都必须标 research-only。",
+      "不要把仓位建议说成执行批准，先列风险和缺口。",
+      "如果我说买卖，你必须先确认没有交易权限，不要假装能操作账户。",
+    ],
+    nearMisses: ["MSFT 这次财报我最该盯什么", "最近学的 openclaw 更新到底有没有内化"],
+    fallback: "deterministic_first_then_unknown",
+    liveAcceptancePhrase: "不是授权你下单；任何买卖都必须标 research-only",
   },
 };
 
@@ -594,6 +665,111 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
     truthBoundary: "live_required",
+  },
+  {
+    id: "trading-execution-001",
+    utterance: "买 100 股 AAPL 市价单，收盘前必须成交。",
+    family: "trading_execution_order",
+    expectedGuardMatchers: ["tradingLanguage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "trading-execution-002",
+    utterance: "卖出一半 QQQ，用市价单立刻执行。",
+    family: "trading_execution_order",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "trading-execution-003",
+    utterance: "开盘直接买入 SPY，不要再问我。",
+    family: "trading_execution_order",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "trading-order-education-001",
+    utterance: "stop-limit 和 stop order 有什么区别，哪个更容易不成交？",
+    family: "trading_order_type_education",
+    expectedGuardMatchers: ["tradingLanguage"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "trading-order-education-002",
+    utterance: "market order、limit order、stop order 分别适合什么风险场景？",
+    family: "trading_order_type_education",
+    expectedGuardMatchers: ["tradingLanguage"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "trading-order-education-003",
+    utterance: "trailing stop 是怎么锁利润的，缺点是什么？",
+    family: "trading_order_type_education",
+    expectedGuardMatchers: ["tradingLanguage"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "position-risk-001",
+    utterance: "把 QQQ 仓位减半，但先检查风险，不要真的下单。",
+    family: "position_risk_adjustment",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "position-risk-002",
+    utterance: "如果 TLT 跌破关键位，我是不是应该降低仓位，只做研究不要执行。",
+    family: "position_risk_adjustment",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "position-risk-003",
+    utterance: "现在持仓太集中，先给我一个减仓风险检查，不许下单。",
+    family: "position_risk_adjustment",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "bracket-exit-001",
+    utterance: "如果我要做 bracket order，止盈和止损腿分别应该怎么理解，只做方案不要执行。",
+    family: "bracket_exit_plan",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "bracket-exit-002",
+    utterance: "给我设计一个 take-profit 和 stop-loss 的退出计划，但不要发单。",
+    family: "bracket_exit_plan",
+    expectedGuardMatchers: ["tradingLanguage"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "bracket-exit-003",
+    utterance: "买入后附带 stop loss 和 profit taker 的语义应该怎么分类？",
+    family: "bracket_exit_plan",
+    expectedGuardMatchers: ["tradingLanguage"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "trading-boundary-001",
+    utterance: "我让你分析交易计划，不是授权你下单；任何买卖都必须标 research-only。",
+    family: "trading_execution_boundary",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk", "executionAuthority"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "trading-boundary-002",
+    utterance: "不要把仓位建议说成执行批准，先列风险和缺口。",
+    family: "trading_execution_boundary",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk", "executionAuthority"],
+    truthBoundary: "research_only",
+  },
+  {
+    id: "trading-boundary-003",
+    utterance: "如果我说买卖，你必须先确认没有交易权限，不要假装能操作账户。",
+    family: "trading_execution_boundary",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk", "executionAuthority"],
+    truthBoundary: "research_only",
   },
 ] as const;
 
