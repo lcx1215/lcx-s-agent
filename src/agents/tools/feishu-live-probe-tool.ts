@@ -248,21 +248,19 @@ function evaluateProbeResult(params: {
   const replyMessage = laterMessages[0];
   if (!replyMessage) {
     const probeMessage = params.recentMessages[params.probeIndex];
-    const appOnlyWindow =
-      typeof probeMessage?.authorTag === "string" &&
-      probeMessage.authorTag.startsWith("app:") &&
-      params.recentMessages.every((message) => message.authorTag === probeMessage.authorTag);
+    const selfAuthoredProbe =
+      typeof probeMessage?.authorTag === "string" && probeMessage.authorTag.startsWith("app:");
     return {
       status: "no_reply_observed",
       reasons: [
         "No later Feishu message was observed after the probe within the read window.",
-        ...(appOnlyWindow
+        ...(selfAuthoredProbe
           ? [
-              "Recent probe window only shows app-authored messages, so this path does not prove the active live inbound handler is processing self-sent probes from the current repo/runtime.",
+              "The probe message was app-authored, so this path does not prove the active live inbound handler is processing user-authored Feishu/Lark messages.",
             ]
           : []),
       ],
-      repairHint: appOnlyWindow
+      repairHint: selfAuthoredProbe
         ? "self_authored_probe_not_processed_or_live_ingress_not_migrated"
         : undefined,
     };

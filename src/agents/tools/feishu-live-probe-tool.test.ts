@@ -81,11 +81,52 @@ describe("feishu_live_probe", () => {
       "- repair_hint: self_authored_probe_not_processed_or_live_ingress_not_migrated",
     );
     expect(receipt).toContain("No later Feishu message was observed after the probe");
-    expect(receipt).toContain("Recent probe window only shows app-authored messages");
+    expect(receipt).toContain("The probe message was app-authored");
     const index = await fs.readFile(path.join(workspaceDir, indexPath as string), "utf8");
     expect(index).toContain("# Feishu Live Probe Index");
     expect(index).toContain("learning_command | no_reply_observed");
     expect(index).toContain("self_authored_probe_not_processed_or_live_ingress_not_migrated");
+  });
+
+  it("keeps the self-authored repair hint when older user messages are in the read window", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-live-probe-"));
+    const tool = createFeishuLiveProbeTool({
+      workspaceDir,
+      config: buildConfig(),
+      sendProbe: vi.fn().mockResolvedValue({ messageId: "msg-probe" }),
+      readProbe: vi.fn().mockResolvedValue([
+        {
+          messageId: "msg-probe",
+          timestamp: "2026-04-12T15:00:00.000Z",
+          authorTag: "app:bot",
+          content: "probe text",
+        },
+        {
+          messageId: "msg-user-older",
+          timestamp: "2026-04-12T14:59:00.000Z",
+          authorTag: "user:owner",
+          content: "older user message",
+        },
+      ]),
+      sleep: vi.fn().mockResolvedValue(undefined),
+      now: () => new Date("2026-04-12T15:00:00.000Z"),
+    });
+
+    const result = await tool.execute("call-older-user", {
+      surface: "learning_command",
+      message: "probe text",
+      waitMs: 10,
+      limit: 5,
+    });
+
+    expect(result.details).toMatchObject({
+      ok: false,
+      status: "no_reply_observed",
+      repairHint: "self_authored_probe_not_processed_or_live_ingress_not_migrated",
+    });
+    expect((result.details as { reasons?: string[] }).reasons).toContain(
+      "The probe message was app-authored, so this path does not prove the active live inbound handler is processing user-authored Feishu/Lark messages.",
+    );
   });
 
   it("fails when the reply contains a forbidden phrase", async () => {
