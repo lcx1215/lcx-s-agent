@@ -259,6 +259,51 @@ def build_absorption_plan(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_routing_evalset(absorption_plan: dict[str, Any]) -> dict[str, Any]:
+    cases = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for family_row in absorption_plan.get("candidate_families", []) or []:
+        if not isinstance(family_row, dict):
+            continue
+        family = str(family_row.get("family") or "").strip() or "unknown"
+        for sample in family_row.get("candidate_samples", []) or []:
+            if not isinstance(sample, dict):
+                continue
+            utterance = normalize_space(str(sample.get("utterance") or ""))
+            expected_action = str(sample.get("expected_action") or "").strip()
+            expected_topic = str(sample.get("expected_topic") or "").strip()
+            if not utterance or not expected_action:
+                continue
+            key = (utterance, expected_action, family, expected_topic)
+            if key in seen:
+                continue
+            seen.add(key)
+            cases.append(
+                {
+                    "id": f"feedback-{len(cases) + 1:04d}",
+                    "utterance": utterance,
+                    "expected": {
+                        "action": expected_action,
+                        "family": family,
+                        "topic": expected_topic,
+                        "queued": bool(sample.get("queued")),
+                        "executed": bool(sample.get("executed")),
+                        "has_artifact": bool(sample.get("has_artifact")),
+                        "quality_status": str(sample.get("quality_status") or ""),
+                    },
+                    "source": "nlu_feedback_absorption_plan",
+                    "promotion_status": "candidate",
+                }
+            )
+    return {
+        "ok": True,
+        "schema": "lobster.routing_evalset.v1",
+        "created_at": now_iso(),
+        "case_count": len(cases),
+        "cases": cases,
+    }
+
+
 def print_json(obj: dict[str, Any]) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
@@ -320,6 +365,9 @@ def main() -> int:
         return 0
     if cmd == "absorb":
         print_json(build_absorption_plan(summary))
+        return 0
+    if cmd == "evalset":
+        print_json(build_routing_evalset(build_absorption_plan(summary)))
         return 0
     print_json({"ok": False, "error": f"unknown command: {cmd}"})
     return 2

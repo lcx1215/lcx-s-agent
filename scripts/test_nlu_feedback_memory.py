@@ -160,6 +160,16 @@ def main() -> int:
         assert "not_all_executed" in by_family["options"]["reasons"], by_family
         assert by_family["frontier_paper"]["candidate_samples"][0]["expected_topic"] == "前沿金融论文", by_family
 
+        evalset = module.build_routing_evalset(plan)
+        assert evalset["schema"] == "lobster.routing_evalset.v1", evalset
+        assert evalset["case_count"] == 2, evalset
+        first_case = evalset["cases"][0]
+        assert first_case["id"] == "feedback-0001", evalset
+        assert first_case["source"] == "nlu_feedback_absorption_plan", first_case
+        assert first_case["promotion_status"] == "candidate", first_case
+        assert {case["expected"]["family"] for case in evalset["cases"]} == {"frontier_paper", "options"}, evalset
+        assert any(case["expected"]["topic"] == "前沿金融论文" for case in evalset["cases"]), evalset
+
         cli = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "absorb", str(event_path)],
             cwd=str(ROOT),
@@ -171,6 +181,18 @@ def main() -> int:
         cli_plan = json.loads((cli.stdout or "").strip())
         assert cli_plan["candidate_count"] == 2, cli_plan
         assert cli_plan["promotion_policy"]["requires_review"] is True, cli_plan
+
+        cli_eval = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "evalset", str(event_path)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli_eval.returncode == 0, cli_eval.stderr
+        cli_evalset = json.loads((cli_eval.stdout or "").strip())
+        assert cli_evalset["case_count"] == 2, cli_evalset
+        assert cli_evalset["cases"][0]["expected"]["action"] == "learn_topic", cli_evalset
 
     print("OK nlu_feedback_memory")
     return 0
