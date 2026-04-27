@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// CLI entrypoint that checks Node compatibility before loading the built runtime.
+
 import module from "node:module";
 
 const MIN_NODE_MAJOR = 22;
