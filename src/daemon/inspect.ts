@@ -7,6 +7,7 @@ import {
   resolveGatewaySystemdServiceName,
   resolveGatewayWindowsTaskName,
 } from "./constants.js";
+import { readLaunchAgentProgramArgumentsFromFile } from "./launchd-plist.js";
 import { execSchtasks } from "./schtasks-exec.js";
 
 export type ExtraGatewayService = {
@@ -159,6 +160,28 @@ type ServiceFileEntry = {
   contents: string;
 };
 
+function appendDetailPart(parts: string[], label: string, value: string | undefined) {
+  const trimmed = value?.trim();
+  if (trimmed) {
+    parts.push(`${label}: ${trimmed}`);
+  }
+}
+
+async function renderLaunchdServiceDetail(plistPath: string): Promise<string> {
+  const parts = [`plist: ${plistPath}`];
+  const command = await readLaunchAgentProgramArgumentsFromFile(plistPath);
+  if (!command) {
+    return parts.join(", ");
+  }
+
+  appendDetailPart(parts, "program", command.programArguments[1] ?? command.programArguments[0]);
+  appendDetailPart(parts, "cwd", command.workingDirectory);
+  appendDetailPart(parts, "OPENCLAW_ROOT", command.environment?.OPENCLAW_ROOT);
+  appendDetailPart(parts, "OPENCLAW_BIN", command.environment?.OPENCLAW_BIN);
+  appendDetailPart(parts, "LOBSTER_COMMAND_BIN", command.environment?.LOBSTER_COMMAND_BIN);
+  return parts.join(", ");
+}
+
 async function collectServiceFiles(params: {
   dir: string;
   extension: string;
@@ -206,7 +229,7 @@ async function scanLaunchdDir(params: {
       results.push({
         platform: "darwin",
         label,
-        detail: `plist: ${fullPath}`,
+        detail: await renderLaunchdServiceDetail(fullPath),
         scope: params.scope,
         marker: isLegacyLabel(label) ? "clawdbot" : "moltbot",
         legacy: true,
@@ -222,7 +245,7 @@ async function scanLaunchdDir(params: {
     results.push({
       platform: "darwin",
       label,
-      detail: `plist: ${fullPath}`,
+      detail: await renderLaunchdServiceDetail(fullPath),
       scope: params.scope,
       marker,
       legacy: marker !== "openclaw" || isLegacyLabel(label),

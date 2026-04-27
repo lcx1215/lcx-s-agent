@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findExtraGatewayServices } from "./inspect.js";
 
@@ -83,5 +86,81 @@ describe("findExtraGatewayServices (win32)", () => {
         legacy: true,
       },
     ]);
+  });
+});
+
+describe("findExtraGatewayServices (darwin)", () => {
+  const originalPlatform = process.platform;
+  let tempDir: string | undefined;
+
+  beforeEach(async () => {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "darwin",
+    });
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-inspect-"));
+  });
+
+  afterEach(async () => {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: originalPlatform,
+    });
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true });
+      tempDir = undefined;
+    }
+  });
+
+  it("includes launchd program and root details for extra gateway-like services", async () => {
+    const home = tempDir ?? "";
+    const launchAgentsDir = path.join(home, "Library", "LaunchAgents");
+    await fs.mkdir(launchAgentsDir, { recursive: true });
+    const plistPath = path.join(launchAgentsDir, "ai.openclaw.feishu.proxy.plist");
+    await fs.writeFile(
+      plistPath,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>ai.openclaw.feishu.proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/opt/homebrew/bin/python3</string>
+      <string>/Users/example/Desktop/openclaw/feishu_event_proxy.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/example/Desktop/openclaw</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>OPENCLAW_ROOT</key>
+      <string>/Users/example/Desktop/openclaw</string>
+      <key>OPENCLAW_BIN</key>
+      <string>/Users/example/Desktop/openclaw/send_feishu_reply.sh</string>
+    </dict>
+  </dict>
+</plist>`,
+      "utf8",
+    );
+
+    const result = await findExtraGatewayServices({ HOME: home });
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        platform: "darwin",
+        label: "ai.openclaw.feishu.proxy",
+        scope: "user",
+        marker: "openclaw",
+        legacy: false,
+        detail: expect.stringContaining(
+          "program: /Users/example/Desktop/openclaw/feishu_event_proxy.py",
+        ),
+      }),
+    ]);
+    expect(result[0]?.detail).toContain("cwd: /Users/example/Desktop/openclaw");
+    expect(result[0]?.detail).toContain("OPENCLAW_ROOT: /Users/example/Desktop/openclaw");
+    expect(result[0]?.detail).toContain(
+      "OPENCLAW_BIN: /Users/example/Desktop/openclaw/send_feishu_reply.sh",
+    );
   });
 });
