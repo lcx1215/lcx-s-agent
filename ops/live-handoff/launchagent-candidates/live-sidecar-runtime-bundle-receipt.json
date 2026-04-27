@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-27T22:11:37.742Z",
+  "generatedAt": "2026-04-27T22:22:27.667Z",
   "sourceRoot": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
   "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
   "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
@@ -9,6 +9,888 @@
   "blockedReasons": [],
   "files": [
     {
+      "relativePath": ".detect-secrets.cfg",
+      "sourceSha256": "7cec8eeea51d1cd832506831ab6c22c6e06e5c8a632b98e45836bfa1bb144728",
+      "targetSha256": "7cec8eeea51d1cd832506831ab6c22c6e06e5c8a632b98e45836bfa1bb144728",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".dockerignore",
+      "sourceSha256": "352aff9232fd22f674763ed37ae824ccb0fa2711469a7a64c54d838655a82cb9",
+      "targetSha256": "352aff9232fd22f674763ed37ae824ccb0fa2711469a7a64c54d838655a82cb9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".env.example",
+      "sourceSha256": "f7a0515e15180eed4bdd41a2a6491ef0d498476857233af89e57824f0412618a",
+      "targetSha256": "f7a0515e15180eed4bdd41a2a6491ef0d498476857233af89e57824f0412618a",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".gitattributes",
+      "sourceSha256": "80602ee5b583153b68e5325f27f88da5602b94fe794f936dadd58f5e37bd04da",
+      "targetSha256": "80602ee5b583153b68e5325f27f88da5602b94fe794f936dadd58f5e37bd04da",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/FUNDING.yml",
+      "sourceSha256": "e673c3bb4127818cc6b8f3b6e87f6b103fb7da9af6191fc40cdc32fbbe740cf4",
+      "targetSha256": "e673c3bb4127818cc6b8f3b6e87f6b103fb7da9af6191fc40cdc32fbbe740cf4",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/ISSUE_TEMPLATE/bug_report.yml",
+      "sourceSha256": "db7560ac7eed24df1eaa7b7a6ec89a727112129270d13df8148351a8c5f43215",
+      "targetSha256": "db7560ac7eed24df1eaa7b7a6ec89a727112129270d13df8148351a8c5f43215",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/ISSUE_TEMPLATE/config.yml",
+      "sourceSha256": "6be3de8a936f3e98d80b0cae9eab9d44ede438b7e7397f27c00b35aed8ea3439",
+      "targetSha256": "6be3de8a936f3e98d80b0cae9eab9d44ede438b7e7397f27c00b35aed8ea3439",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/ISSUE_TEMPLATE/feature_request.yml",
+      "sourceSha256": "a9f58d4cb91bdbf30694a7c60fc259205e1cc1500c37a17a0fcdf5633987cf58",
+      "targetSha256": "a9f58d4cb91bdbf30694a7c60fc259205e1cc1500c37a17a0fcdf5633987cf58",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/actionlint.yaml",
+      "sourceSha256": "2217db161679e4b69691e17e1bac7a2fab66dedc0bb135cd95afe8fa123ae565",
+      "targetSha256": "2217db161679e4b69691e17e1bac7a2fab66dedc0bb135cd95afe8fa123ae565",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/actions/detect-docs-changes/action.yml",
+      "sourceSha256": "444508d495d6b8233fb4ef4573569e3f245da47ffa898e6c69653e9bbdc569e6",
+      "targetSha256": "444508d495d6b8233fb4ef4573569e3f245da47ffa898e6c69653e9bbdc569e6",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/actions/setup-node-env/action.yml",
+      "sourceSha256": "3731889e6753199d4821c7d9c711a5331b13962a3aa3439b9e11d0dd96634172",
+      "targetSha256": "3731889e6753199d4821c7d9c711a5331b13962a3aa3439b9e11d0dd96634172",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/actions/setup-pnpm-store-cache/action.yml",
+      "sourceSha256": "11d5677188f4c70d67c7b68d72fd872a04f1719e07bb9f6fb2f3fc21f0ff4b0b",
+      "targetSha256": "11d5677188f4c70d67c7b68d72fd872a04f1719e07bb9f6fb2f3fc21f0ff4b0b",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/dependabot.yml",
+      "sourceSha256": "6259cb59c84d7a179b390eb0df7154d06cd117ae34cfcebcdcfa96b7fb2b0b7e",
+      "targetSha256": "6259cb59c84d7a179b390eb0df7154d06cd117ae34cfcebcdcfa96b7fb2b0b7e",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/instructions/copilot.instructions.md",
+      "sourceSha256": "1a66e12d7b3518f9c5fb9301e6986f6baad2d13f364d5f2e4fe847069becfb53",
+      "targetSha256": "1a66e12d7b3518f9c5fb9301e6986f6baad2d13f364d5f2e4fe847069becfb53",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/labeler.yml",
+      "sourceSha256": "68fc335d5f8f3a7ade57b0d80d1e8b94050587c4ab24d297ec27b44f4fefa1ec",
+      "targetSha256": "68fc335d5f8f3a7ade57b0d80d1e8b94050587c4ab24d297ec27b44f4fefa1ec",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/pull_request_template.md",
+      "sourceSha256": "d3cbacb09897f891cf73fcd098be39d3ab7228e324c19457439091c4a2b5a2a8",
+      "targetSha256": "d3cbacb09897f891cf73fcd098be39d3ab7228e324c19457439091c4a2b5a2a8",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/auto-response.yml",
+      "sourceSha256": "d8a700eae96767458594b01a0d88a350df9df1769d46c3dfab6691ca15d90670",
+      "targetSha256": "d8a700eae96767458594b01a0d88a350df9df1769d46c3dfab6691ca15d90670",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/ci.yml",
+      "sourceSha256": "231a1e5ba87ada2a84c74ea46eb1990b727f1bc9cf00d970ccf50a4ca8803470",
+      "targetSha256": "231a1e5ba87ada2a84c74ea46eb1990b727f1bc9cf00d970ccf50a4ca8803470",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/docker-release.yml",
+      "sourceSha256": "c7bd74dce692b0c1bb1abb4ce79736e284c1a18ae708ebde97f69dff060ed8be",
+      "targetSha256": "c7bd74dce692b0c1bb1abb4ce79736e284c1a18ae708ebde97f69dff060ed8be",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/install-smoke.yml",
+      "sourceSha256": "73724ef3840414cad12819be20f158ec330769a7382a038e7f55b05824698fdc",
+      "targetSha256": "73724ef3840414cad12819be20f158ec330769a7382a038e7f55b05824698fdc",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/labeler.yml",
+      "sourceSha256": "8d08065348f2bc614cafccc462142f37404c5697bebb4b3678df214aabb34ee5",
+      "targetSha256": "8d08065348f2bc614cafccc462142f37404c5697bebb4b3678df214aabb34ee5",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/lcx-agent-progress-wave.yml",
+      "sourceSha256": "f1849101352300842f8570339020692d703067ba19a241e9f6992b582b3587a0",
+      "targetSha256": "f1849101352300842f8570339020692d703067ba19a241e9f6992b582b3587a0",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/sandbox-common-smoke.yml",
+      "sourceSha256": "acd6f5966187ea4986cf2c45d9b20690f1dc7f73731717868ed174d73fc9de67",
+      "targetSha256": "acd6f5966187ea4986cf2c45d9b20690f1dc7f73731717868ed174d73fc9de67",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/stale.yml",
+      "sourceSha256": "1bbedd2c285a0ef9971d4acab41501a2b8a96d6158ce2cdd08a4444b8aa7cacf",
+      "targetSha256": "1bbedd2c285a0ef9971d4acab41501a2b8a96d6158ce2cdd08a4444b8aa7cacf",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".github/workflows/workflow-sanity.yml",
+      "sourceSha256": "f7bbac159593c7b8fa8b8fb7603647be3e437c583e59abb9b99b02822bd7b1f4",
+      "targetSha256": "f7bbac159593c7b8fa8b8fb7603647be3e437c583e59abb9b99b02822bd7b1f4",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".gitignore",
+      "sourceSha256": "a2a47711c56052020415556e287c1372585ec6e70ac63c7840ca7b248b0d22a7",
+      "targetSha256": "a2a47711c56052020415556e287c1372585ec6e70ac63c7840ca7b248b0d22a7",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".mailmap",
+      "sourceSha256": "396582cac8f604a5fd20fe4f25c100526d7f93ddcf04806ec7fed4a6dca326da",
+      "targetSha256": "396582cac8f604a5fd20fe4f25c100526d7f93ddcf04806ec7fed4a6dca326da",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".markdownlint-cli2.jsonc",
+      "sourceSha256": "06dbb3f5724af5464adfc040a9a18dbb901f0eed3aa682a2789077d3fc696afd",
+      "targetSha256": "06dbb3f5724af5464adfc040a9a18dbb901f0eed3aa682a2789077d3fc696afd",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".mcp.json",
+      "sourceSha256": "74ade658291ea18b076d4410a43d50b740197a5314229ab2ec67dac8551cb3b5",
+      "targetSha256": "74ade658291ea18b076d4410a43d50b740197a5314229ab2ec67dac8551cb3b5",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".npmrc",
+      "sourceSha256": "e27955ade6d104f7e2b3fe1b5eca57253ee10f229b83ddecb632f86a4e0ef540",
+      "targetSha256": "e27955ade6d104f7e2b3fe1b5eca57253ee10f229b83ddecb632f86a4e0ef540",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".oxfmtrc.jsonc",
+      "sourceSha256": "d740351fe8b4fb6a59dfc2f9dc1e9b0b6721fd830d9b0c5d8b49c28f79f30b5b",
+      "targetSha256": "d740351fe8b4fb6a59dfc2f9dc1e9b0b6721fd830d9b0c5d8b49c28f79f30b5b",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".oxlintrc.json",
+      "sourceSha256": "b3c50be95db511f6dcdbdf5085e8ea5ef4001e39ee60b8a26ec4361cd8e59100",
+      "targetSha256": "b3c50be95db511f6dcdbdf5085e8ea5ef4001e39ee60b8a26ec4361cd8e59100",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/README.md",
+      "sourceSha256": "1d174bd800af94ae536d8fbc4ca983d122aae260dd635b36515c1a9dbe3bca12",
+      "targetSha256": "1d174bd800af94ae536d8fbc4ca983d122aae260dd635b36515c1a9dbe3bca12",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/extensions/diff.ts",
+      "sourceSha256": "aca7127f3566ff703c87321d7575b39d43e7e580b711b2fe5a0fa84f26177d3f",
+      "targetSha256": "aca7127f3566ff703c87321d7575b39d43e7e580b711b2fe5a0fa84f26177d3f",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/extensions/files.ts",
+      "sourceSha256": "f2a06d9132867d7b2a0d8d6e3b1c2aa934974de99e99f4495d0234664e2cb886",
+      "targetSha256": "f2a06d9132867d7b2a0d8d6e3b1c2aa934974de99e99f4495d0234664e2cb886",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/extensions/prompt-url-widget.ts",
+      "sourceSha256": "727ee410d861e872cc44b9236240dcf1be1db30354f3c562472ea1aabdfd7b06",
+      "targetSha256": "727ee410d861e872cc44b9236240dcf1be1db30354f3c562472ea1aabdfd7b06",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/extensions/redraws.ts",
+      "sourceSha256": "8da914f59eb5c6fb9db5d9291c6d2846e2d4e9cc8d614b0f7242bdaf21e4089d",
+      "targetSha256": "8da914f59eb5c6fb9db5d9291c6d2846e2d4e9cc8d614b0f7242bdaf21e4089d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/extensions/ui/paged-select.ts",
+      "sourceSha256": "89c43761760550ef58f4a2c2cae2073f9520fbfa02aead26b77172723e314ee2",
+      "targetSha256": "89c43761760550ef58f4a2c2cae2073f9520fbfa02aead26b77172723e314ee2",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/git/.gitignore",
+      "sourceSha256": "240a3e0d37d2e86b614063f5347eb02d4f99ca6c254de6b82871ff8d95532a7d",
+      "targetSha256": "240a3e0d37d2e86b614063f5347eb02d4f99ca6c254de6b82871ff8d95532a7d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/prompts/cl.md",
+      "sourceSha256": "7751922901badd1661286d5cd6b4fc1b24211f2da8d82aeb6216cb38d520132d",
+      "targetSha256": "7751922901badd1661286d5cd6b4fc1b24211f2da8d82aeb6216cb38d520132d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/prompts/is.md",
+      "sourceSha256": "67a6b4803c72930d207a2323de5c149824b3365d8818e1b2088cd6f32de5f176",
+      "targetSha256": "67a6b4803c72930d207a2323de5c149824b3365d8818e1b2088cd6f32de5f176",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/prompts/landpr.md",
+      "sourceSha256": "2f0d30aa4f2765cbaa705fee485c60daa544c32360717f8751c8bfe001b13c9c",
+      "targetSha256": "2f0d30aa4f2765cbaa705fee485c60daa544c32360717f8751c8bfe001b13c9c",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pi/prompts/reviewpr.md",
+      "sourceSha256": "48caafb92e4292b0ef3b7c9fcb6de7568d88239f3f1eaf3c8956c597823ea029",
+      "targetSha256": "48caafb92e4292b0ef3b7c9fcb6de7568d88239f3f1eaf3c8956c597823ea029",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".pre-commit-config.yaml",
+      "sourceSha256": "56aeb55a0ecc762d58e42fd3e08e1519dc5ad77da576077fe5bf794c4df93def",
+      "targetSha256": "56aeb55a0ecc762d58e42fd3e08e1519dc5ad77da576077fe5bf794c4df93def",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".secrets.baseline",
+      "sourceSha256": "449b1a2bdc79c876be2af2f4b10049fe43c6b080929ed5c3cbde7146cdc724a2",
+      "targetSha256": "449b1a2bdc79c876be2af2f4b10049fe43c6b080929ed5c3cbde7146cdc724a2",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".shellcheckrc",
+      "sourceSha256": "3f61aaca71bfdbb101bd4e432a3f14627825def1b628d8ea92596545d7564246",
+      "targetSha256": "3f61aaca71bfdbb101bd4e432a3f14627825def1b628d8ea92596545d7564246",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".swiftformat",
+      "sourceSha256": "bfe38eed66df13dc4c9cb5fdbf396b6ed183aa6eaf4a2e4c7f4f5cf1f00a8a8c",
+      "targetSha256": "bfe38eed66df13dc4c9cb5fdbf396b6ed183aa6eaf4a2e4c7f4f5cf1f00a8a8c",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".swiftlint.yml",
+      "sourceSha256": "d78d97d1cb3388ded27f8cdba2cdc81c7b81a44a81fbc4fcabada60ac51aa86f",
+      "targetSha256": "d78d97d1cb3388ded27f8cdba2cdc81c7b81a44a81fbc4fcabada60ac51aa86f",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".vscode/README.md",
+      "sourceSha256": "1828cc3562b2cc8dd73abf8b7897ebaa2a39c72909d8b958bc39afe865229333",
+      "targetSha256": "1828cc3562b2cc8dd73abf8b7897ebaa2a39c72909d8b958bc39afe865229333",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".vscode/extensions.json",
+      "sourceSha256": "e569e464c6a5ec053b998ebffeb39cf2ce9657dce54b269092cbf5109b482813",
+      "targetSha256": "e569e464c6a5ec053b998ebffeb39cf2ce9657dce54b269092cbf5109b482813",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": ".vscode/settings.json",
+      "sourceSha256": "ac8967d57f68f044bc25403460f5352e0b49a8739040201e3bd31aaea49c42d3",
+      "targetSha256": "ac8967d57f68f044bc25403460f5352e0b49a8739040201e3bd31aaea49c42d3",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "AGENTS.md",
+      "sourceSha256": "72b664cc404a98b07c402364bb640889513cae539dd5f284609884f9455acaa7",
+      "targetSha256": "72b664cc404a98b07c402364bb640889513cae539dd5f284609884f9455acaa7",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "CHANGELOG.md",
+      "sourceSha256": "2416914c2b6425a8c4be4bf71641899748f0530adfecfebd8c0d706d649e0217",
+      "targetSha256": "2416914c2b6425a8c4be4bf71641899748f0530adfecfebd8c0d706d649e0217",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "CLAUDE.md",
+      "sourceSha256": "72b664cc404a98b07c402364bb640889513cae539dd5f284609884f9455acaa7",
+      "targetSha256": "72b664cc404a98b07c402364bb640889513cae539dd5f284609884f9455acaa7",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "CONTRIBUTING.md",
+      "sourceSha256": "bbb6d61b6bcfa5d0e2e4866a70f7df618b45b75bf4bf5f9392e995f8aa2b8918",
+      "targetSha256": "bbb6d61b6bcfa5d0e2e4866a70f7df618b45b75bf4bf5f9392e995f8aa2b8918",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Dockerfile",
+      "sourceSha256": "9f03a775be13a13cdf038fc267fe70f47b888c226de1e6d6bb1e0a1186066dd7",
+      "targetSha256": "9f03a775be13a13cdf038fc267fe70f47b888c226de1e6d6bb1e0a1186066dd7",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Dockerfile.sandbox",
+      "sourceSha256": "c494c38247aeac4c5c5f81fc6f84b6edb6e94c598f9b868b27515f26b6573b13",
+      "targetSha256": "c494c38247aeac4c5c5f81fc6f84b6edb6e94c598f9b868b27515f26b6573b13",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Dockerfile.sandbox-browser",
+      "sourceSha256": "ea61317db2e3090dfa10b75604e6e2a2c647663be7f0fda4aaf774d725eb8ade",
+      "targetSha256": "ea61317db2e3090dfa10b75604e6e2a2c647663be7f0fda4aaf774d725eb8ade",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Dockerfile.sandbox-common",
+      "sourceSha256": "20c17f77ff9d25edc537a995212c4b4db853432c0bdf24a37dd13c55469367ce",
+      "targetSha256": "20c17f77ff9d25edc537a995212c4b4db853432c0bdf24a37dd13c55469367ce",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "LICENSE",
+      "sourceSha256": "28b13edecbff33bc88cbae60ed7e832ec7d1e25631bd250bd73efb7ee680e22d",
+      "targetSha256": "28b13edecbff33bc88cbae60ed7e832ec7d1e25631bd250bd73efb7ee680e22d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "MEMORY.md",
+      "sourceSha256": "639a868406846ee50c6a7e8c7dc9ec6e236962a5a500ad10364df57a850754b9",
+      "targetSha256": "639a868406846ee50c6a7e8c7dc9ec6e236962a5a500ad10364df57a850754b9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "README.md",
+      "sourceSha256": "301a76d2a83f99dc1e1c968b68307bc512c63183a51574829502d7daf1b4f212",
+      "targetSha256": "301a76d2a83f99dc1e1c968b68307bc512c63183a51574829502d7daf1b4f212",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "SECURITY.md",
+      "sourceSha256": "191cd7c9791541203c44e808ccbe9eaca885a28e1fcefb8a2b5584efd5a33f68",
+      "targetSha256": "191cd7c9791541203c44e808ccbe9eaca885a28e1fcefb8a2b5584efd5a33f68",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/.github/workflows/ci.yml",
+      "sourceSha256": "c650a82d2c7597919d707ad4e3627460a7e7f2bce4c2641d317ada5b07eb644d",
+      "targetSha256": "c650a82d2c7597919d707ad4e3627460a7e7f2bce4c2641d317ada5b07eb644d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/.gitignore",
+      "sourceSha256": "cff8357dec43e20266dfe87a07e642fe0af7e43838048e89f382f9e9d72f3cb4",
+      "targetSha256": "cff8357dec43e20266dfe87a07e642fe0af7e43838048e89f382f9e9d72f3cb4",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/.swiftformat",
+      "sourceSha256": "294aaf01ee0350e62fc1a857a364986a73ee364b94e4b01c846f71a22cdb758d",
+      "targetSha256": "294aaf01ee0350e62fc1a857a364986a73ee364b94e4b01c846f71a22cdb758d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/.swiftlint.yml",
+      "sourceSha256": "f5f3f652694596625fefedd4ea824ecb3c7ace14f1bd39ab19b7b4e9727b6a84",
+      "targetSha256": "f5f3f652694596625fefedd4ea824ecb3c7ace14f1bd39ab19b7b4e9727b6a84",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/CHANGELOG.md",
+      "sourceSha256": "7d6e707f509478d39a29bc9bfc20fb5b96765d7cbabc8840b650b45201e89ae0",
+      "targetSha256": "7d6e707f509478d39a29bc9bfc20fb5b96765d7cbabc8840b650b45201e89ae0",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/LICENSE",
+      "sourceSha256": "62316704df7426e5a79d2827ff8aca36e9abb3a73b8e68557030749ebefec667",
+      "targetSha256": "62316704df7426e5a79d2827ff8aca36e9abb3a73b8e68557030749ebefec667",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/LOBSTER.md",
+      "sourceSha256": "be5c524174db94e52e2d0184e39184f743ecb1738da504f2ed8f90ea5e53ef01",
+      "targetSha256": "be5c524174db94e52e2d0184e39184f743ecb1738da504f2ed8f90ea5e53ef01",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Package.resolved",
+      "sourceSha256": "0a69fa6371b3bf1f0b1a8a280beda47781483f10eeab98a3d507ba62b770e888",
+      "targetSha256": "0a69fa6371b3bf1f0b1a8a280beda47781483f10eeab98a3d507ba62b770e888",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Package.swift",
+      "sourceSha256": "c0677e232394b5f6b0191b6dbb5bae553d55264f65ae725cd03a8ffdfda9cdd3",
+      "targetSha256": "c0677e232394b5f6b0191b6dbb5bae553d55264f65ae725cd03a8ffdfda9cdd3",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/README.md",
+      "sourceSha256": "2a9d3265972e047fdb442cd70f209521892c239e82dd0240200e8c429f3b6fe5",
+      "targetSha256": "2a9d3265972e047fdb442cd70f209521892c239e82dd0240200e8c429f3b6fe5",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleCore/Config/Config.swift",
+      "sourceSha256": "8721cf060c5492d8b884b02b523aa38316d53f6946cc99ec6da5297382427911",
+      "targetSha256": "8721cf060c5492d8b884b02b523aa38316d53f6946cc99ec6da5297382427911",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleCore/Hooks/HookExecutor.swift",
+      "sourceSha256": "45d3b48eb0872fa6ee31688a57339a2c32614fe322637b2a739361468688f82a",
+      "targetSha256": "45d3b48eb0872fa6ee31688a57339a2c32614fe322637b2a739361468688f82a",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleCore/Speech/BufferConverter.swift",
+      "sourceSha256": "0d0a1e6c4b979be9cf38c2ea844cdac59238cf108a26ad7c53c3e21749a3e6d1",
+      "targetSha256": "0d0a1e6c4b979be9cf38c2ea844cdac59238cf108a26ad7c53c3e21749a3e6d1",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleCore/Speech/SpeechPipeline.swift",
+      "sourceSha256": "d170f20ba8f1ca75fc4ce39ad055d326a2a38bce6615da95b3effccdca515f00",
+      "targetSha256": "d170f20ba8f1ca75fc4ce39ad055d326a2a38bce6615da95b3effccdca515f00",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleCore/Support/AttributedString+Sentences.swift",
+      "sourceSha256": "dcbaa11076a51c577a3d76bf5ce4f8983534109dffb34a3f0aaeed66fc4e6cf4",
+      "targetSha256": "dcbaa11076a51c577a3d76bf5ce4f8983534109dffb34a3f0aaeed66fc4e6cf4",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleCore/Support/Logging.swift",
+      "sourceSha256": "f14edf59d332e297adc5fe378bf8def24a0216161c818de589791da798bdc2f0",
+      "targetSha256": "f14edf59d332e297adc5fe378bf8def24a0216161c818de589791da798bdc2f0",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleCore/Support/OutputFormat.swift",
+      "sourceSha256": "7034485339c311fc55d3588d07b5c185e861b2bb95a0ce10ca7e30c8b9bef097",
+      "targetSha256": "7034485339c311fc55d3588d07b5c185e861b2bb95a0ce10ca7e30c8b9bef097",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleCore/Support/TranscriptsStore.swift",
+      "sourceSha256": "b6f7ae78ce47f3b60be6db8355468875c99c6c3d8ece5bb5cc6580f04c9bafb6",
+      "targetSha256": "b6f7ae78ce47f3b60be6db8355468875c99c6c3d8ece5bb5cc6580f04c9bafb6",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/SwabbleKit/WakeWordGate.swift",
+      "sourceSha256": "88934f9139f5073e4b5947f7047538f8a37872e4fae615f5f9019ed685a166d9",
+      "targetSha256": "88934f9139f5073e4b5947f7047538f8a37872e4fae615f5f9019ed685a166d9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/CLI/CLIRegistry.swift",
+      "sourceSha256": "2614f64179d14390a7ae993792e9bd5d38b1fdeb813226d1bcf8089303788c59",
+      "targetSha256": "2614f64179d14390a7ae993792e9bd5d38b1fdeb813226d1bcf8089303788c59",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/DoctorCommand.swift",
+      "sourceSha256": "890b8787d14ca03364fae2c476f8e034e148ee58795d56139a1ef5691981c22e",
+      "targetSha256": "890b8787d14ca03364fae2c476f8e034e148ee58795d56139a1ef5691981c22e",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/HealthCommand.swift",
+      "sourceSha256": "49ddd1a0e59c47d700b1d9b8b183c1cc912f43989e22062363f917eb6a564460",
+      "targetSha256": "49ddd1a0e59c47d700b1d9b8b183c1cc912f43989e22062363f917eb6a564460",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/MicCommands.swift",
+      "sourceSha256": "a83b6dd384c381c1d58fd55d172661dd65e9c3560d1edc7ece8a7db352b8ec56",
+      "targetSha256": "a83b6dd384c381c1d58fd55d172661dd65e9c3560d1edc7ece8a7db352b8ec56",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/ServeCommand.swift",
+      "sourceSha256": "cd087d88756bf9b079eb194ec09ba7ddccb897781170c674da41db4dd03dc82d",
+      "targetSha256": "cd087d88756bf9b079eb194ec09ba7ddccb897781170c674da41db4dd03dc82d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/ServiceCommands.swift",
+      "sourceSha256": "f7a94c1d54da582b63be2fbd369f4007ed9ebf6b716a9ec1b4edab03a5d5128f",
+      "targetSha256": "f7a94c1d54da582b63be2fbd369f4007ed9ebf6b716a9ec1b4edab03a5d5128f",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/SetupCommand.swift",
+      "sourceSha256": "cbd6c3d6e750f2c38d9f0ebeeed9c7dc1cd973d59109dca6da001f9e913aaf0d",
+      "targetSha256": "cbd6c3d6e750f2c38d9f0ebeeed9c7dc1cd973d59109dca6da001f9e913aaf0d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/StartStopCommands.swift",
+      "sourceSha256": "c40bc446cf54e95f14e4423d0c537590b7bc48529bffb24b9830e30260cfe37f",
+      "targetSha256": "c40bc446cf54e95f14e4423d0c537590b7bc48529bffb24b9830e30260cfe37f",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/StatusCommand.swift",
+      "sourceSha256": "55b317f9c480cb9e94467e7055a416c4587e22f7c596ea51917251e6f471e6e9",
+      "targetSha256": "55b317f9c480cb9e94467e7055a416c4587e22f7c596ea51917251e6f471e6e9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/TailLogCommand.swift",
+      "sourceSha256": "7c46b9a06cfda4c1fc55bc027ec8862c2a5f65602c7ea07e314f1bd145893e5a",
+      "targetSha256": "7c46b9a06cfda4c1fc55bc027ec8862c2a5f65602c7ea07e314f1bd145893e5a",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/TestHookCommand.swift",
+      "sourceSha256": "f770dfd9019b65d24a6c1283c8a4ad4ebea3ed6d3ff17bc70f22aed94f20c488",
+      "targetSha256": "f770dfd9019b65d24a6c1283c8a4ad4ebea3ed6d3ff17bc70f22aed94f20c488",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/Commands/TranscribeCommand.swift",
+      "sourceSha256": "80fa230a1f7dfd3f6e85cb8ec4b425689a223ac4dfd48342bc84bd2ce9816910",
+      "targetSha256": "80fa230a1f7dfd3f6e85cb8ec4b425689a223ac4dfd48342bc84bd2ce9816910",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Sources/swabble/main.swift",
+      "sourceSha256": "148af2b4120be49baab8114670ce8e47c80bbf3891be73c47b82b02be5ef59f4",
+      "targetSha256": "148af2b4120be49baab8114670ce8e47c80bbf3891be73c47b82b02be5ef59f4",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Tests/SwabbleKitTests/WakeWordGateTests.swift",
+      "sourceSha256": "861d10e5b5495d034f90958f6930c57dd307483beaa36d40a5e7f141e6123b46",
+      "targetSha256": "861d10e5b5495d034f90958f6930c57dd307483beaa36d40a5e7f141e6123b46",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/Tests/swabbleTests/ConfigTests.swift",
+      "sourceSha256": "c633429b8eed12f8597448b03788370e824075af33793d21c146baf677c97ddb",
+      "targetSha256": "c633429b8eed12f8597448b03788370e824075af33793d21c146baf677c97ddb",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/docs/spec.md",
+      "sourceSha256": "e1626074eba09044d7bf0e4eeb677bd2c5777cb2bd1f115a12bd76f12cf33db9",
+      "targetSha256": "e1626074eba09044d7bf0e4eeb677bd2c5777cb2bd1f115a12bd76f12cf33db9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/scripts/format.sh",
+      "sourceSha256": "ed82b1410f121f3b1436d54099143d7010035ba702c64f21d2669fce9dd3f2ae",
+      "targetSha256": "ed82b1410f121f3b1436d54099143d7010035ba702c64f21d2669fce9dd3f2ae",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "Swabble/scripts/lint.sh",
+      "sourceSha256": "55a6b11a1c41001ab69518efe2fe586d5484853fb23644218e5c4780faa3abce",
+      "targetSha256": "55a6b11a1c41001ab69518efe2fe586d5484853fb23644218e5c4780faa3abce",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "VISION.md",
+      "sourceSha256": "e350de2970549de51b809faffd7f1d4aa858abe3b9e9dfd75e6ab6cdad556c6d",
+      "targetSha256": "e350de2970549de51b809faffd7f1d4aa858abe3b9e9dfd75e6ab6cdad556c6d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "appcast.xml",
+      "sourceSha256": "6b4f0c7b48fad906a42e1a98c69a2f7e8c1cf98eb8b5d567a16039db497b6d30",
+      "targetSha256": "6b4f0c7b48fad906a42e1a98c69a2f7e8c1cf98eb8b5d567a16039db497b6d30",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/README.md",
+      "sourceSha256": "96a513a71959ddd0369d19f82293063546c30f75f60ca2a7a8a2df0e7c4a7809",
+      "targetSha256": "96a513a71959ddd0369d19f82293063546c30f75f60ca2a7a8a2df0e7c4a7809",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/avatar-placeholder.svg",
+      "sourceSha256": "7d7eb6f52c118e0bfcd7cfe80ca43938379d9ba02df8cef06c8d4d91d1f97593",
+      "targetSha256": "7d7eb6f52c118e0bfcd7cfe80ca43938379d9ba02df8cef06c8d4d91d1f97593",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/README.md",
+      "sourceSha256": "a6e8b8e6d419fc9f5e7e5f9e9997dc184bca0491e9fbe9a42a3774d447c39d2d",
+      "targetSha256": "a6e8b8e6d419fc9f5e7e5f9e9997dc184bca0491e9fbe9a42a3774d447c39d2d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/background-utils.js",
+      "sourceSha256": "b879a363d890d2caac673160a91f4f77a86aefd441fa0c51e22a3b5a0cfc8f06",
+      "targetSha256": "b879a363d890d2caac673160a91f4f77a86aefd441fa0c51e22a3b5a0cfc8f06",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/background.js",
+      "sourceSha256": "ed092fa9ad7f4fb1ebb606d34c219240607be42b2706feee126634d67de10b17",
+      "targetSha256": "ed092fa9ad7f4fb1ebb606d34c219240607be42b2706feee126634d67de10b17",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/icons/icon128.png",
+      "sourceSha256": "a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d",
+      "targetSha256": "a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/icons/icon16.png",
+      "sourceSha256": "f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0",
+      "targetSha256": "f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/icons/icon32.png",
+      "sourceSha256": "092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268",
+      "targetSha256": "092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/icons/icon48.png",
+      "sourceSha256": "02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4",
+      "targetSha256": "02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/manifest.json",
+      "sourceSha256": "50b73c9b49b059887a486d8154b39b9df6e6af2912c217f0a47f1afdd5310d5f",
+      "targetSha256": "50b73c9b49b059887a486d8154b39b9df6e6af2912c217f0a47f1afdd5310d5f",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/options-validation.js",
+      "sourceSha256": "7b6a3a67de6a28850b0d63ba8a1c0d44f23ea6ca41860ce77ec7653225794482",
+      "targetSha256": "7b6a3a67de6a28850b0d63ba8a1c0d44f23ea6ca41860ce77ec7653225794482",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/options.html",
+      "sourceSha256": "d7d79c46f60654dc4b042595579499c7a1b84c8d6c5cc5c8ce8898b9c76cb6ab",
+      "targetSha256": "d7d79c46f60654dc4b042595579499c7a1b84c8d6c5cc5c8ce8898b9c76cb6ab",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/chrome-extension/options.js",
+      "sourceSha256": "65cf33c745d837abb631f13a0f9e20d58ad1b7d2d45f5266bdf9cdafcfeada4d",
+      "targetSha256": "65cf33c745d837abb631f13a0f9e20d58ad1b7d2d45f5266bdf9cdafcfeada4d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/dmg-background-small.png",
+      "sourceSha256": "e7f1d169b295579cd2e0d3aecddec9fa8403ced7bb11ef0f38d75196eb0fc53f",
+      "targetSha256": "e7f1d169b295579cd2e0d3aecddec9fa8403ced7bb11ef0f38d75196eb0fc53f",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "assets/dmg-background.png",
+      "sourceSha256": "781f65f78828c978168d82ec2d0d116b9d49a20a63c723b46efa8d0ccf0d57a8",
+      "targetSha256": "781f65f78828c978168d82ec2d0d116b9d49a20a63c723b46efa8d0ccf0d57a8",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "audit/README.md",
+      "sourceSha256": "0fa95ad41986d78c9170c4a74d021e7e702653657bb834d6c50d1ca2d19067de",
+      "targetSha256": "0fa95ad41986d78c9170c4a74d021e7e702653657bb834d6c50d1ca2d19067de",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "audit/feishu-input-smoke.md",
+      "sourceSha256": "c9fbb5e3852626cd69f5b19ba42356d463363d5fea24ea79d98e7e4101ac1156",
+      "targetSha256": "c9fbb5e3852626cd69f5b19ba42356d463363d5fea24ea79d98e7e4101ac1156",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "audit/runtime-seams-integration.md",
+      "sourceSha256": "430470762a789d65a60b096cb4133fc319256148681115f7d720769e0102b60b",
+      "targetSha256": "430470762a789d65a60b096cb4133fc319256148681115f7d720769e0102b60b",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "audit/shared-hotspots-integration.md",
+      "sourceSha256": "3093dea55efb6d6d97a57a28da2d9ff40383c68afc5d07be939a07e4ede549da",
+      "targetSha256": "3093dea55efb6d6d97a57a28da2d9ff40383c68afc5d07be939a07e4ede549da",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "audit/subagent-announce-runtime-seam.md",
+      "sourceSha256": "7b16d1ab5baa2e020e511f987632d4275421c86e66a749571ae57164909163c0",
+      "targetSha256": "7b16d1ab5baa2e020e511f987632d4275421c86e66a749571ae57164909163c0",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "audit/upstream-overlay-audit.md",
+      "sourceSha256": "6c3ec8b9b6fa875a2454d185d21f246a814a982ffb42b0dc0aac39f6c6d164e9",
+      "targetSha256": "6c3ec8b9b6fa875a2454d185d21f246a814a982ffb42b0dc0aac39f6c6d164e9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "audit/upstream-overlay-maintenance.md",
+      "sourceSha256": "151d993c0399113af268115c07d0f0b7325234a4399aec1c5b230c3aef87e34c",
+      "targetSha256": "151d993c0399113af268115c07d0f0b7325234a4399aec1c5b230c3aef87e34c",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "changelog/README.md",
+      "sourceSha256": "a160548956d982f7666a03de11a401535772266e3c3a9cb1b8544c2c0e205451",
+      "targetSha256": "a160548956d982f7666a03de11a401535772266e3c3a9cb1b8544c2c0e205451",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "changelog/fragments/pr-30356.md",
+      "sourceSha256": "79c1ed4394c123cf8e31214d82ed31dcbc3da674a884248efd22c4fb2baf1797",
+      "targetSha256": "79c1ed4394c123cf8e31214d82ed31dcbc3da674a884248efd22c4fb2baf1797",
+      "copied": true,
+      "executable": false
+    },
+    {
       "relativePath": "daily_learning_runner.py",
       "sourceSha256": "db5d0d8fd8e5805fc85eea70d6658f9481572c051fc8e3a22a42d2c205a010ec",
       "targetSha256": "db5d0d8fd8e5805fc85eea70d6658f9481572c051fc8e3a22a42d2c205a010ec",
@@ -16,41 +898,527 @@
       "executable": true
     },
     {
-      "relativePath": "lobster_orchestrator.py",
-      "sourceSha256": "cc838c9d00679b75b90ce7a4158c3b020320d4990fdfeddf3692e7718020cf5c",
-      "targetSha256": "cc838c9d00679b75b90ce7a4158c3b020320d4990fdfeddf3692e7718020cf5c",
-      "copied": true,
-      "executable": true
-    },
-    {
-      "relativePath": "scripts/lobster_paths.py",
-      "sourceSha256": "7c6565da41caf66bbe785d5fa2ec31e4ac5efd78f03594542dbde08cde25b9cb",
-      "targetSha256": "7c6565da41caf66bbe785d5fa2ec31e4ac5efd78f03594542dbde08cde25b9cb",
+      "relativePath": "docker-compose.yml",
+      "sourceSha256": "567d955dc203138650876c62d6c718c6aa0caf63220d7aee95468aa669728619",
+      "targetSha256": "567d955dc203138650876c62d6c718c6aa0caf63220d7aee95468aa669728619",
       "copied": true,
       "executable": false
     },
     {
-      "relativePath": "scripts/branch_freshness.py",
-      "sourceSha256": "a85cf4dd884f80f02bf6e653b044b3b7565eaba8146e0af0cb380f6d9323342e",
-      "targetSha256": "a85cf4dd884f80f02bf6e653b044b3b7565eaba8146e0af0cb380f6d9323342e",
+      "relativePath": "docker-setup.sh",
+      "sourceSha256": "2230d901ee43321255a2403f2fa32f16011fc5e4fe61a6590ecd60879d3fcae8",
+      "targetSha256": "2230d901ee43321255a2403f2fa32f16011fc5e4fe61a6590ecd60879d3fcae8",
       "copied": true,
       "executable": false
     },
     {
-      "relativePath": "scripts/lobster_host_watchdog.py",
-      "sourceSha256": "0c67845f88a5da0180e5bdd22edd2b399b283477d0345ab558008868fd9db167",
-      "targetSha256": "0c67845f88a5da0180e5bdd22edd2b399b283477d0345ab558008868fd9db167",
+      "relativePath": "docs.acp.md",
+      "sourceSha256": "503ba5de14679f706fd165ba243a6c18f41bbd2b310ef26385d272c29f5676b8",
+      "targetSha256": "503ba5de14679f706fd165ba243a6c18f41bbd2b310ef26385d272c29f5676b8",
       "copied": true,
-      "executable": true
+      "executable": false
+    },
+    {
+      "relativePath": "docs/.i18n/README.md",
+      "sourceSha256": "2dd3d194e291f952563e6a4f5eb91a2b21686136d46613877b7a787d916903ab",
+      "targetSha256": "2dd3d194e291f952563e6a4f5eb91a2b21686136d46613877b7a787d916903ab",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/.i18n/glossary.ja-JP.json",
+      "sourceSha256": "8d21b961b117af851fcb8b95ef546145ef92804ddd2c5dfd37764cd367ef4f3b",
+      "targetSha256": "8d21b961b117af851fcb8b95ef546145ef92804ddd2c5dfd37764cd367ef4f3b",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/.i18n/glossary.zh-CN.json",
+      "sourceSha256": "f9245eaa11b6de67df94ea6093bc89ebb83202dadf26e9b5ebde02720bea2eb0",
+      "targetSha256": "f9245eaa11b6de67df94ea6093bc89ebb83202dadf26e9b5ebde02720bea2eb0",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/.i18n/ja-JP.tm.jsonl",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "targetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/.i18n/zh-CN.tm.jsonl",
+      "sourceSha256": "a48a3ecf6d80c00dc5830375de71e8ba0c66758824bfc232ab66bcbd699e753a",
+      "targetSha256": "a48a3ecf6d80c00dc5830375de71e8ba0c66758824bfc232ab66bcbd699e753a",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/CNAME",
+      "sourceSha256": "1befee0ebe2c9be72e55e1d366a93440ab7085b2d7ca230d9ce95931e539e98c",
+      "targetSha256": "1befee0ebe2c9be72e55e1d366a93440ab7085b2d7ca230d9ce95931e539e98c",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/README.md",
+      "sourceSha256": "184294772214c153b9057ce91f0970d67b73d26eaf0c426d9c1b022aa4b23f64",
+      "targetSha256": "184294772214c153b9057ce91f0970d67b73d26eaf0c426d9c1b022aa4b23f64",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/install-script.svg",
+      "sourceSha256": "ff8f7694a67094557febac0c5fb14c685c0c326f37775e18596861266c9d3d38",
+      "targetSha256": "ff8f7694a67094557febac0c5fb14c685c0c326f37775e18596861266c9d3d38",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/lcx-agent-daily-progress-wave.svg",
+      "sourceSha256": "8f6040ad6f9307abb3a9649a6a2bf3068f324343a70ce949660a469d92076089",
+      "targetSha256": "8f6040ad6f9307abb3a9649a6a2bf3068f324343a70ce949660a469d92076089",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/lobster-daily-progress-wave.svg",
+      "sourceSha256": "8f6040ad6f9307abb3a9649a6a2bf3068f324343a70ce949660a469d92076089",
+      "targetSha256": "8f6040ad6f9307abb3a9649a6a2bf3068f324343a70ce949660a469d92076089",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/macos-onboarding/01-macos-warning.jpeg",
+      "sourceSha256": "e7b3a4b37bba63ab75d889c15458cd493d3a74f7c8670a32b1050cffdecfbdd9",
+      "targetSha256": "e7b3a4b37bba63ab75d889c15458cd493d3a74f7c8670a32b1050cffdecfbdd9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/macos-onboarding/02-local-networks.jpeg",
+      "sourceSha256": "71d220843a7176cf9ed92659b742d3b54fd635d958fb39b5e46851813a86fdd6",
+      "targetSha256": "71d220843a7176cf9ed92659b742d3b54fd635d958fb39b5e46851813a86fdd6",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/macos-onboarding/03-security-notice.png",
+      "sourceSha256": "8ba598219f5c91844d364cf68dac6ce7af6a5d487ba612d4bba6f971f5b8a02a",
+      "targetSha256": "8ba598219f5c91844d364cf68dac6ce7af6a5d487ba612d4bba6f971f5b8a02a",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/macos-onboarding/04-choose-gateway.png",
+      "sourceSha256": "9864c8d35ad02fbae27b1ed6521597764675f959021645f5d8926929a423ac4e",
+      "targetSha256": "9864c8d35ad02fbae27b1ed6521597764675f959021645f5d8926929a423ac4e",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/macos-onboarding/05-permissions.png",
+      "sourceSha256": "571c5ba9131d941b15687972803f756c766976f0bcde4d8e4a1028cffb967758",
+      "targetSha256": "571c5ba9131d941b15687972803f756c766976f0bcde4d8e4a1028cffb967758",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/openclaw-logo-text-dark.png",
+      "sourceSha256": "13ccf8f9f40a72761aafee4306f5244d136137d5aea4e3e4993f8166c6899183",
+      "targetSha256": "13ccf8f9f40a72761aafee4306f5244d136137d5aea4e3e4993f8166c6899183",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/openclaw-logo-text.png",
+      "sourceSha256": "f3ba91ff5f677b7afd199aab9128c7a0d905275823e153fea551473b279879f3",
+      "targetSha256": "f3ba91ff5f677b7afd199aab9128c7a0d905275823e153fea551473b279879f3",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/pixel-lobster.svg",
+      "sourceSha256": "1ee82ff331b7295074bf6f60a0812c5f64daad65b2395d5d5e47a6c6c5180a7c",
+      "targetSha256": "1ee82ff331b7295074bf6f60a0812c5f64daad65b2395d5d5e47a6c6c5180a7c",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/agents-ui.jpg",
+      "sourceSha256": "6437b3d5cfec32d6435f7c34dd2f0bf154d3e8e818d97aaffad118dd38029eaf",
+      "targetSha256": "6437b3d5cfec32d6435f7c34dd2f0bf154d3e8e818d97aaffad118dd38029eaf",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/bambu-cli.png",
+      "sourceSha256": "1407340aacfb846dea3121ab4824fe7a19401c7552de1aa563762ffc183419d2",
+      "targetSha256": "1407340aacfb846dea3121ab4824fe7a19401c7552de1aa563762ffc183419d2",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/codexmonitor.png",
+      "sourceSha256": "bff3e4a10d0702c5c530e66125754eb9876ac8b157f3702bac13423c08a82680",
+      "targetSha256": "bff3e4a10d0702c5c530e66125754eb9876ac8b157f3702bac13423c08a82680",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/gohome-grafana.png",
+      "sourceSha256": "c5ed27283ba07ccf01e9a771369200b44821768e03cd15a1938e2c0b777f7f5a",
+      "targetSha256": "c5ed27283ba07ccf01e9a771369200b44821768e03cd15a1938e2c0b777f7f5a",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/ios-testflight.jpg",
+      "sourceSha256": "0661a0624e6b8aa003dd377beb3da2020868bc6afc62548e2722b1c92fa607b9",
+      "targetSha256": "0661a0624e6b8aa003dd377beb3da2020868bc6afc62548e2722b1c92fa607b9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/oura-health.png",
+      "sourceSha256": "701bbebf718cd6f3172c05bd36ff5c1279f54d1bb9014719d467dada46eb2bbf",
+      "targetSha256": "701bbebf718cd6f3172c05bd36ff5c1279f54d1bb9014719d467dada46eb2bbf",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/padel-cli.svg",
+      "sourceSha256": "975210748666b41d0da1b8d0d1a268c862ebd30e38027c437f66dab1112a4e3b",
+      "targetSha256": "975210748666b41d0da1b8d0d1a268c862ebd30e38027c437f66dab1112a4e3b",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/padel-screenshot.jpg",
+      "sourceSha256": "f7eed45a23cf1a684eee9304bc0f9626db6fa72191b045a7c7dace67eeefc914",
+      "targetSha256": "f7eed45a23cf1a684eee9304bc0f9626db6fa72191b045a7c7dace67eeefc914",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/papla-tts.jpg",
+      "sourceSha256": "dea1377c24c0bad33555e648edeba863597f1b1d33747fb6dd865b515d6262de",
+      "targetSha256": "dea1377c24c0bad33555e648edeba863597f1b1d33747fb6dd865b515d6262de",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/pr-review-telegram.jpg",
+      "sourceSha256": "0af6093c601749cfa74646d687f7677c431747522f2056bf9c17c1c35f27494e",
+      "targetSha256": "0af6093c601749cfa74646d687f7677c431747522f2056bf9c17c1c35f27494e",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/roborock-screenshot.jpg",
+      "sourceSha256": "c8d737bf0ca489b590d517a6e14b26d1a51ce27877d87c85cd87e4cd5d679624",
+      "targetSha256": "c8d737bf0ca489b590d517a6e14b26d1a51ce27877d87c85cd87e4cd5d679624",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/roborock-status.svg",
+      "sourceSha256": "1e08512387510a47bb82a3689eb76438462551167090c41ed0b33f39042ae7eb",
+      "targetSha256": "1e08512387510a47bb82a3689eb76438462551167090c41ed0b33f39042ae7eb",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/roof-camera-sky.jpg",
+      "sourceSha256": "13c04d0fa3dcb88b550348ac6b76eb69770dfc15b7c2467e9ad9f8189b243d65",
+      "targetSha256": "13c04d0fa3dcb88b550348ac6b76eb69770dfc15b7c2467e9ad9f8189b243d65",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/snag.png",
+      "sourceSha256": "4bf4b4c17338465e9c2b9d98d1c18af47cd248aa5a8837221f8c3eae24b1c65e",
+      "targetSha256": "4bf4b4c17338465e9c2b9d98d1c18af47cd248aa5a8837221f8c3eae24b1c65e",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/tesco-shop.jpg",
+      "sourceSha256": "bf01b012d62f882fcf99a5069ac0db279fd5501d823f5158c65b2c28fd6f6069",
+      "targetSha256": "bf01b012d62f882fcf99a5069ac0db279fd5501d823f5158c65b2c28fd6f6069",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/wienerlinien.png",
+      "sourceSha256": "d29025b9096209bc2cd9ee6b38d6b81393cbfb6a5555341f64510c91eb07aee9",
+      "targetSha256": "d29025b9096209bc2cd9ee6b38d6b81393cbfb6a5555341f64510c91eb07aee9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/wine-cellar-skill.jpg",
+      "sourceSha256": "690a119a3b33f006355475a2a9fb86755c219ef7d552851d1fedad331837237d",
+      "targetSha256": "690a119a3b33f006355475a2a9fb86755c219ef7d552851d1fedad331837237d",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/winix-air-purifier.jpg",
+      "sourceSha256": "021c8734ef12a61a7884287d906e58155ad207ca9432568c149f0b327d1d57d1",
+      "targetSha256": "021c8734ef12a61a7884287d906e58155ad207ca9432568c149f0b327d1d57d1",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/showcase/xuezh-pronunciation.jpeg",
+      "sourceSha256": "09db1c5c02d88d10ba7aea17f8f025463c07cb34aa31c5d9dc015bf924f2e45b",
+      "targetSha256": "09db1c5c02d88d10ba7aea17f8f025463c07cb34aa31c5d9dc015bf924f2e45b",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/sponsors/blacksmith.svg",
+      "sourceSha256": "7c0ba65d792d24a9cb2abf83e5635d13c295f0ad7ccc0f0f7eb71b71f14a8dad",
+      "targetSha256": "7c0ba65d792d24a9cb2abf83e5635d13c295f0ad7ccc0f0f7eb71b71f14a8dad",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/sponsors/convex.svg",
+      "sourceSha256": "12c51d06cc8fac381a06afbb0dfbab19715852c63a39386c9f1947fddd20c600",
+      "targetSha256": "12c51d06cc8fac381a06afbb0dfbab19715852c63a39386c9f1947fddd20c600",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/sponsors/openai.svg",
+      "sourceSha256": "877b7a4c83e851e76b486042bc3fc9dc1ffc760c841aea6f2f972674cf43a8be",
+      "targetSha256": "877b7a4c83e851e76b486042bc3fc9dc1ffc760c841aea6f2f972674cf43a8be",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/assets/sponsors/vercel.svg",
+      "sourceSha256": "a58639860d1c09fff205f2b502f1a734ef9e2777880d827f8ff7c35b9d01d05c",
+      "targetSha256": "a58639860d1c09fff205f2b502f1a734ef9e2777880d827f8ff7c35b9d01d05c",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/auth-credential-semantics.md",
+      "sourceSha256": "b2ce16fb9b447a17ef3cc40ae9419a1113ac6c7e64554fe035cef8f81e5b8adf",
+      "targetSha256": "b2ce16fb9b447a17ef3cc40ae9419a1113ac6c7e64554fe035cef8f81e5b8adf",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/automation/auth-monitoring.md",
+      "sourceSha256": "eef179af9545ed7ab881f3ccbef998869437fb50cdb4088de8da7223b614fa2b",
+      "targetSha256": "eef179af9545ed7ab881f3ccbef998869437fb50cdb4088de8da7223b614fa2b",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/automation/cron-jobs.md",
+      "sourceSha256": "50afaa0a4eda0fa8ebd6f8b548847aeeaca1cd73c6c9a26f5dc60e77d990b2be",
+      "targetSha256": "50afaa0a4eda0fa8ebd6f8b548847aeeaca1cd73c6c9a26f5dc60e77d990b2be",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/automation/cron-vs-heartbeat.md",
+      "sourceSha256": "f41e6321e67971407b9e51e8288b6215d56f0008ee5a58713789eadb6e56cba9",
+      "targetSha256": "f41e6321e67971407b9e51e8288b6215d56f0008ee5a58713789eadb6e56cba9",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/automation/gmail-pubsub.md",
+      "sourceSha256": "0c8a87516e12091f96209f570012cdba895265af3d48ba848e0260535535bd18",
+      "targetSha256": "0c8a87516e12091f96209f570012cdba895265af3d48ba848e0260535535bd18",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/automation/hooks.md",
+      "sourceSha256": "c6da083334fcbc1d1f40f247dd29d7935c08f73e53c761ff1feba3942591e175",
+      "targetSha256": "c6da083334fcbc1d1f40f247dd29d7935c08f73e53c761ff1feba3942591e175",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/automation/poll.md",
+      "sourceSha256": "760339865d27ec40def7996cac1d294d58ab580748ad6b32cc34d285d0314eaf",
+      "targetSha256": "760339865d27ec40def7996cac1d294d58ab580748ad6b32cc34d285d0314eaf",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/automation/troubleshooting.md",
+      "sourceSha256": "da9ccbd94651fedba573f4f344c1981d6e38d2023c19edd737dc71ce35a4bac2",
+      "targetSha256": "da9ccbd94651fedba573f4f344c1981d6e38d2023c19edd737dc71ce35a4bac2",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/automation/webhook.md",
+      "sourceSha256": "0d56ba4dee4d4ca7f23fde673d3bb33cf6c2dbe08751b0921b7574b11d8d458e",
+      "targetSha256": "0d56ba4dee4d4ca7f23fde673d3bb33cf6c2dbe08751b0921b7574b11d8d458e",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/brave-search.md",
+      "sourceSha256": "713e59e4433040e37cded566b8fe3610bb53841e3266709505ac9eeeda042304",
+      "targetSha256": "713e59e4433040e37cded566b8fe3610bb53841e3266709505ac9eeeda042304",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/bluebubbles.md",
+      "sourceSha256": "ab674b6ca7bfc6a5b5ce874fcc0b7abba576652b377e40eb3c707b60e9dc887e",
+      "targetSha256": "ab674b6ca7bfc6a5b5ce874fcc0b7abba576652b377e40eb3c707b60e9dc887e",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/broadcast-groups.md",
+      "sourceSha256": "c3f86ecf5e6642a140e670b647bd94e4ecc0a5d087963a1b63f895f8fb61cd74",
+      "targetSha256": "c3f86ecf5e6642a140e670b647bd94e4ecc0a5d087963a1b63f895f8fb61cd74",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/channel-routing.md",
+      "sourceSha256": "0fd17f592ef24891ad8721a4cc34fe4b430fa568be843ee81d13def6e45dfa8f",
+      "targetSha256": "0fd17f592ef24891ad8721a4cc34fe4b430fa568be843ee81d13def6e45dfa8f",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/discord.md",
+      "sourceSha256": "7c2a4831fa7c41d5c88c3c34ad574ec293d1210b53ae34c9deb99e0f6c686f0c",
+      "targetSha256": "7c2a4831fa7c41d5c88c3c34ad574ec293d1210b53ae34c9deb99e0f6c686f0c",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/feishu.md",
+      "sourceSha256": "62465607df9a595074c75112e1095c53a4abb6635fd41e16754905c53682a316",
+      "targetSha256": "62465607df9a595074c75112e1095c53a4abb6635fd41e16754905c53682a316",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/googlechat.md",
+      "sourceSha256": "63af1b6326be96cc47be45e90bafefe3465195c2dedff4ed1c19bf07bd2f8f80",
+      "targetSha256": "63af1b6326be96cc47be45e90bafefe3465195c2dedff4ed1c19bf07bd2f8f80",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/group-messages.md",
+      "sourceSha256": "181a72f12f5021af77c2e4c913120f711e0c0bc271d218d75cb6fe80dab675bb",
+      "targetSha256": "181a72f12f5021af77c2e4c913120f711e0c0bc271d218d75cb6fe80dab675bb",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/groups.md",
+      "sourceSha256": "3464d9d4f283ea437a6e4ac3984df163f44715c51469e449241bf7a4d9ba6332",
+      "targetSha256": "3464d9d4f283ea437a6e4ac3984df163f44715c51469e449241bf7a4d9ba6332",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/imessage.md",
+      "sourceSha256": "9c8c5818b23fd3f2fad100fcd3cb4506f0ba7654d3d7c48835e0772e86f72cfd",
+      "targetSha256": "9c8c5818b23fd3f2fad100fcd3cb4506f0ba7654d3d7c48835e0772e86f72cfd",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/index.md",
+      "sourceSha256": "b9dd7d014ec72f37cdc36f13510d4933c5e769910e1f1f1761b2364f364a7dd0",
+      "targetSha256": "b9dd7d014ec72f37cdc36f13510d4933c5e769910e1f1f1761b2364f364a7dd0",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/irc.md",
+      "sourceSha256": "82ec2803ee4d34f480f75bd1714239761c533a482a559e9a57049256ff0aabba",
+      "targetSha256": "82ec2803ee4d34f480f75bd1714239761c533a482a559e9a57049256ff0aabba",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/line.md",
+      "sourceSha256": "46badab228c37f9c4424855736d494ec03d2ce8d7caaf558f8aca158cfbbee3b",
+      "targetSha256": "46badab228c37f9c4424855736d494ec03d2ce8d7caaf558f8aca158cfbbee3b",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/location.md",
+      "sourceSha256": "5602ef105c3da7e47497bfed8fc343dd8d7f3c019ff7e423a08b25092c5a1837",
+      "targetSha256": "5602ef105c3da7e47497bfed8fc343dd8d7f3c019ff7e423a08b25092c5a1837",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/matrix.md",
+      "sourceSha256": "b1190c8cd14158c5c37fe047b790d0ef5dba8ce073fa36c91e079c9a721b7fe4",
+      "targetSha256": "b1190c8cd14158c5c37fe047b790d0ef5dba8ce073fa36c91e079c9a721b7fe4",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/mattermost.md",
+      "sourceSha256": "07b2cd82fdbd51aef660bdddc581abfac0d99693fc08cb83e7f57aad488b26ba",
+      "targetSha256": "07b2cd82fdbd51aef660bdddc581abfac0d99693fc08cb83e7f57aad488b26ba",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/msteams.md",
+      "sourceSha256": "9559705b08291578f9d476ea4924d53aa77ae81d682a95d93e9b148430007e32",
+      "targetSha256": "9559705b08291578f9d476ea4924d53aa77ae81d682a95d93e9b148430007e32",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/nextcloud-talk.md",
+      "sourceSha256": "2769144221e41391fc903a8a9289165fb9ffcc795dd54615e5009f1d6f48df3f",
+      "targetSha256": "2769144221e41391fc903a8a9289165fb9ffcc795dd54615e5009f1d6f48df3f",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/nostr.md",
+      "sourceSha256": "6b9fe4c74bf5e7c0f59bbaa129ec5270fd29a248551a8a9a7dde6cff8fb46111",
+      "targetSha256": "6b9fe4c74bf5e7c0f59bbaa129ec5270fd29a248551a8a9a7dde6cff8fb46111",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "docs/channels/pairing.md",
+      "sourceSha256": "65894ceee288fcd03547a4570ee06b9bdc6721cf6e32745a5f9507c34935eba3",
+      "targetSha256": "65894ceee288fcd03547a4570ee06b9bdc6721cf6e32745a5f9507c34935eba3",
+      "copied": true,
+      "executable": false
     }
   ],
+  "fileCount": 7127,
+  "omittedFileCount": 6927,
   "compileCheck": {
     "command": "python3 -m py_compile daily_learning_runner.py lobster_orchestrator.py scripts/lobster_paths.py scripts/branch_freshness.py scripts/lobster_host_watchdog.py",
     "code": 0,
     "stderr": ""
   },
   "boundary": [
-    "Copies only the scheduler and host-watchdog compatibility sidecar files.",
+    "Copies the tracked workspace source needed by the agent-system loop.",
+    "Full-workspace mode also copies tracked source needed by the agent-system loop, excluding memory, dist, apps, and node_modules.",
     "Does not copy Feishu/Lark proxy code.",
     "Does not copy secrets or .env.lobster.",
     "Does not modify LaunchAgents.",

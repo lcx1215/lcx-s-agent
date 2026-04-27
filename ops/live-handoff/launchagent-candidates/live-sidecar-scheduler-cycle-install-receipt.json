@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-27T22:22:48.291Z",
+  "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
+  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-scheduler-cycle-install-receipt.json",
+  "executed": true,
+  "ok": true,
+  "blockedReasons": [],
+  "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T22-22-48-291Z",
+  "targetPlistSha256": "a8ada8f0530feb0dc3f3bd164c21072a07136f9fb9830e7833667978231525c4",
+  "commandResults": [
+    {
+      "command": "plutil -lint /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+      "code": 0,
+      "stdout": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist: OK\n",
+      "stderr": ""
+    },
+    {
+      "command": "launchctl bootout gui/501 /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+      "code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "launchctl bootstrap gui/501 /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+      "code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "launchctl kickstart -k gui/501/ai.openclaw.lobster.scheduler",
+      "code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "boundary": [
+    "Installs only the scheduler LaunchAgent.",
+    "Does not modify Feishu/Lark proxy or host watchdog plist.",
+    "Runs the bounded agent-system loop command and writes scheduler receipts.",
+    "Does not grant trading execution authority."
+  ]
+}

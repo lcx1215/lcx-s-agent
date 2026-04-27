@@ -44,6 +44,34 @@ describe("scheduler clean-root entrypoints", () => {
     expect(payload.reason).toContain("OPENCLAW_SCHEDULER_ENABLE_CYCLE=1");
   });
 
+  it("runs an enabled cycle command and writes a bounded report receipt", () => {
+    const reportPath = path.join(repoRoot, "branches/_system/scheduler_cycle_report.json");
+    const failurePath = path.join(repoRoot, "branches/_system/scheduler_cycle_failure.json");
+    fs.rmSync(reportPath, { force: true });
+    fs.rmSync(failurePath, { force: true });
+    const command = [
+      "python3",
+      "-c",
+      JSON.stringify(
+        "import json; print(json.dumps({'ok': True, 'scope': 'test_cycle', 'checks': [{'name': 'stub', 'ok': True, 'durationMs': 1}], 'liveTouched': False, 'providerConfigTouched': False, 'protectedMemoryTouched': False, 'remoteFetchOccurred': False, 'executionAuthorityGranted': False, 'summary': 'stub cycle passed'}))",
+      ),
+    ].join(" ");
+    const result = runPython(["daily_learning_runner.py", "--write-receipt"], {
+      env: {
+        OPENCLAW_SCHEDULER_ENABLE_CYCLE: "1",
+        OPENCLAW_SCHEDULER_CYCLE_COMMAND: command,
+      },
+    });
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.status).toBe("cycle_completed");
+    expect(payload.cycleResult.scope).toBe("test_cycle");
+    expect(payload.boundary.liveFeishuLarkSend).toBe(false);
+    expect(fs.existsSync(reportPath)).toBe(true);
+    expect(fs.existsSync(failurePath)).toBe(false);
+    fs.rmSync(reportPath, { force: true });
+  });
+
   it("writes receipts only when explicitly requested", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-scheduler-test-"));
     const heartbeatPath = path.join(repoRoot, "branches/_system/scheduler_heartbeat.json");

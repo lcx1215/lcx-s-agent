@@ -4,12 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
 from scripts.lobster_paths import ROOT, load_state_json, save_state_json
 
 ENABLE_CYCLE_ENV = "OPENCLAW_SCHEDULER_ENABLE_CYCLE"
+CYCLE_COMMAND_ENV = "OPENCLAW_SCHEDULER_CYCLE_COMMAND"
+DEFAULT_CYCLE_COMMAND = "pnpm exec tsx scripts/dev/agent-system-loop-smoke.ts"
 
 
 def utc_now_iso() -> str:
@@ -75,11 +78,93 @@ def run_cycle(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0 if args.dry_run else 2
 
-    payload["status"] = "cycle_enabled_but_no_legacy_orchestrator_ported"
-    payload["reason"] = "clean-root scheduler entrypoint exists, but legacy branch cycle stages are not ported"
-    save_state_json("scheduler_cycle_smoke.json", payload)
+    result = run_agent_system_loop(os.environ.get(CYCLE_COMMAND_ENV, DEFAULT_CYCLE_COMMAND))
+    payload["status"] = "cycle_completed" if result["ok"] else "cycle_failed"
+    payload["cycleCommand"] = result["command"]
+    payload["cycleDurationMs"] = result["duration_ms"]
+    payload["cycleResult"] = result["summary"]
+    payload["boundary"]["cycleReceiptOnly"] = True
+    payload["boundary"]["liveFeishuLarkSend"] = False
+    if args.write_receipt:
+        save_state_json(
+            "scheduler_cycle_report.json" if result["ok"] else "scheduler_cycle_failure.json",
+            payload,
+        )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 3
+    return 0 if result["ok"] else 3
+
+
+def parse_json_output(stdout: str) -> dict[str, Any]:
+    text = stdout.strip()
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {"value": data}
+    except Exception:
+        start = text.rfind("\n{")
+        if start >= 0:
+            try:
+                data = json.loads(text[start + 1 :])
+                return data if isinstance(data, dict) else {"value": data}
+            except Exception:
+                pass
+    return {"stdout_tail": text[-2000:]}
+
+
+def summarize_cycle_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    checks = payload.get("checks")
+    summary: dict[str, Any] = {
+        "ok": payload.get("ok"),
+        "scope": payload.get("scope"),
+        "summary": payload.get("summary"),
+        "liveTouched": payload.get("liveTouched"),
+        "providerConfigTouched": payload.get("providerConfigTouched"),
+        "protectedMemoryTouched": payload.get("protectedMemoryTouched"),
+        "remoteFetchOccurred": payload.get("remoteFetchOccurred"),
+        "executionAuthorityGranted": payload.get("executionAuthorityGranted"),
+    }
+    if isinstance(checks, list):
+        summary["checkCount"] = len(checks)
+        summary["checks"] = [
+            {
+                "name": item.get("name"),
+                "ok": item.get("ok"),
+                "durationMs": item.get("durationMs"),
+            }
+            for item in checks
+            if isinstance(item, dict)
+        ]
+    return {key: value for key, value in summary.items() if value is not None}
+
+
+def run_agent_system_loop(command: str) -> dict[str, Any]:
+    started = datetime.now(timezone.utc)
+    result = subprocess.run(
+        command,
+        cwd=str(ROOT),
+        env=os.environ.copy(),
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    duration_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+    payload = parse_json_output(result.stdout)
+    ok = result.returncode == 0 and payload.get("ok") is True
+    return {
+        "ok": ok,
+        "command": command,
+        "duration_ms": duration_ms,
+        "code": result.returncode,
+        "summary": summarize_cycle_payload(payload)
+        if ok
+        else {
+            "code": result.returncode,
+            "stdout_tail": (result.stdout or "")[-2000:],
+            "stderr_tail": (result.stderr or "")[-2000:],
+        },
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:

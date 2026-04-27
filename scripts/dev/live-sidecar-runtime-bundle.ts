@@ -14,6 +14,7 @@ type Args = {
   targetRoot: string;
   outputDir: string;
   write: boolean;
+  fullWorkspace: boolean;
   json: boolean;
 };
 
@@ -39,6 +40,8 @@ export type RuntimeBundleReceipt = {
     copied: boolean;
     executable: boolean;
   }>;
+  fileCount: number;
+  omittedFileCount: number;
   compileCheck: {
     command: string;
     code: number | null;
@@ -65,6 +68,7 @@ function parseArgs(argv: string[]): Args {
     targetRoot: path.resolve(readValue("--target-root") ?? DEFAULT_RUNTIME_BUNDLE_ROOT),
     outputDir: path.resolve(readValue("--output-dir") ?? DEFAULT_OUTPUT_DIR),
     write: argv.includes("--write"),
+    fullWorkspace: argv.includes("--full-workspace"),
     json: argv.includes("--json"),
   };
 }
@@ -87,6 +91,40 @@ function buildFileList(sourceRoot: string, targetRoot: string): BundleFile[] {
     target: path.join(targetRoot, file.relativePath),
     executable: file.executable,
   }));
+}
+
+function listGitTrackedFiles(sourceRoot: string): string[] {
+  const result = spawnSync("git", ["-C", sourceRoot, "ls-files"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    return [];
+  }
+  return (result.stdout || "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith("memory/"))
+    .filter((line) => !line.startsWith("dist/"))
+    .filter((line) => !line.startsWith("apps/"))
+    .filter((line) => !line.startsWith("node_modules/"));
+}
+
+function buildWorkspaceFileList(sourceRoot: string, targetRoot: string): BundleFile[] {
+  const tracked = listGitTrackedFiles(sourceRoot);
+  const required = new Set(REQUIRED_FILES.map((file) => file.relativePath));
+  const merged = new Set([...tracked, ...required]);
+  return Array.from(merged)
+    .toSorted()
+    .map((relativePath) => {
+      const requiredFile = REQUIRED_FILES.find((file) => file.relativePath === relativePath);
+      return {
+        source: path.join(sourceRoot, relativePath),
+        target: path.join(targetRoot, relativePath),
+        executable: requiredFile?.executable ?? false,
+      };
+    });
 }
 
 function copyFile(file: BundleFile): void {
@@ -125,13 +163,16 @@ export function buildRuntimeBundleReceipt(params: {
   targetRoot: string;
   outputDir: string;
   write?: boolean;
+  fullWorkspace?: boolean;
   generatedAt?: string;
   compileCheck?: RuntimeBundleReceipt["compileCheck"];
 }): RuntimeBundleReceipt {
   const sourceRoot = path.resolve(params.sourceRoot);
   const targetRoot = path.resolve(params.targetRoot);
   const outputDir = path.resolve(params.outputDir);
-  const files = buildFileList(sourceRoot, targetRoot);
+  const files = params.fullWorkspace
+    ? buildWorkspaceFileList(sourceRoot, targetRoot)
+    : buildFileList(sourceRoot, targetRoot);
   const blockedReasons: string[] = [];
 
   if (isDesktopPath(targetRoot)) {
@@ -160,7 +201,7 @@ export function buildRuntimeBundleReceipt(params: {
     blockedReasons.push(`py_compile failed: ${compileCheck.stderr || "unknown error"}`);
   }
 
-  const receiptFiles = files.map((file) => {
+  const allReceiptFiles = files.map((file) => {
     const sourceSha256 = sha256IfExists(file.source);
     const targetSha256 = sha256IfExists(file.target);
     return {
@@ -171,6 +212,7 @@ export function buildRuntimeBundleReceipt(params: {
       executable: file.executable,
     };
   });
+  const receiptFiles = params.fullWorkspace ? allReceiptFiles.slice(0, 200) : allReceiptFiles;
 
   return {
     schemaVersion: 1,
@@ -182,13 +224,20 @@ export function buildRuntimeBundleReceipt(params: {
     readyForLaunchAgent:
       blockedReasons.length === 0 &&
       Boolean(params.write) &&
-      receiptFiles.every((file) => file.copied) &&
+      allReceiptFiles.every((file) => file.copied) &&
       (!compileCheck || compileCheck.code === 0),
     blockedReasons,
     files: receiptFiles,
+    fileCount: allReceiptFiles.length,
+    omittedFileCount: Math.max(allReceiptFiles.length - receiptFiles.length, 0),
     compileCheck,
     boundary: [
-      "Copies only the scheduler and host-watchdog compatibility sidecar files.",
+      params.fullWorkspace
+        ? "Copies the tracked workspace source needed by the agent-system loop."
+        : "Copies only the scheduler and host-watchdog compatibility sidecar files.",
+      params.fullWorkspace
+        ? "Full-workspace mode also copies tracked source needed by the agent-system loop, excluding memory, dist, apps, and node_modules."
+        : "Minimal mode copies only the Python sidecar compatibility runtime.",
       "Does not copy Feishu/Lark proxy code.",
       "Does not copy secrets or .env.lobster.",
       "Does not modify LaunchAgents.",

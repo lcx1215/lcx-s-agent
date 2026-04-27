@@ -318,9 +318,66 @@ learning-cycle enablement. The scheduler remains fail-closed unless
 `OPENCLAW_SCHEDULER_ENABLE_CYCLE=1` is explicitly set during a separate approved
 live migration.
 
+## Scheduler Controlled Cycle Install
+
+Current live status:
+
+```text
+schedulerCycleInstall=applied
+targetRoot=/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw
+OPENCLAW_SCHEDULER_ENABLE_CYCLE=1
+OPENCLAW_SCHEDULER_CYCLE_COMMAND=pnpm exec tsx scripts/dev/agent-system-loop-smoke.ts
+scheduler.runs=1
+scheduler.last_exit_code=0
+host_watchdog.runs=3
+host_watchdog.last_exit_code=0
+```
+
+Generated receipt:
+
+```text
+ops/live-handoff/launchagent-candidates/live-sidecar-scheduler-cycle-install-receipt.json
+```
+
+The scheduler LaunchAgent now runs a controlled cycle from the non-Desktop
+runtime bundle. The cycle is not a trading loop and does not send Lark messages.
+It runs the full local agent-system gate and writes a bounded scheduler receipt:
+
+```text
+status=cycle_completed
+cycleMode=live_guarded
+cycleResult.scope=dev_full_system_language_brain_analysis_memory_loop
+cycleResult.checkCount=5
+cycleResult.liveTouched=false
+cycleResult.providerConfigTouched=false
+cycleResult.protectedMemoryTouched=false
+cycleResult.remoteFetchOccurred=false
+cycleResult.executionAuthorityGranted=false
+```
+
+The five checks covered by the controlled cycle are:
+
+```text
+finance-pipeline-all
+finance-multi-candidate
+finance-event-review
+lark-brain-language-loop
+lark-routing-and-distillation-tests
+```
+
+Runtime receipt path:
+
+```text
+/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/branches/_system/scheduler_cycle_report.json
+```
+
+Important boundary: this makes the scheduler sidecar live for a bounded
+language/brain/analysis/memory eval cycle. It still does not migrate the
+Feishu/Lark proxy, does not grant execution authority, and does not turn the
+system into an autonomous trading agent.
+
 ## Out Of Scope
 
-- No production scheduler cycle enablement.
 - No deletion of old `Desktop/openclaw`.
 - No migration of Feishu proxy yet.
 - No Feishu/Lark proxy restart in this audit step.
