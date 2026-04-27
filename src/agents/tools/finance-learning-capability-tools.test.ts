@@ -274,10 +274,30 @@ describe("finance learning capability tools", () => {
         applicationMode: "reuse_guidance_bounded_research_answer",
         candidateCount: 1,
         answerSkeleton: expect.objectContaining({
+          requiredSections: [
+            "Retrieved capability used",
+            "Fresh inputs checked",
+            "Causal link tested",
+            "Risk and overfitting checks",
+            "Red-team invalidation",
+            "Research-only conclusion",
+          ],
           requiredNextChecks: expect.arrayContaining(["credit spreads", "funding stress proxies"]),
+          requiredEvidenceCategories: expect.arrayContaining([
+            "credit_evidence",
+            "liquidity_evidence",
+          ]),
+          causalChecks: expect.arrayContaining([
+            "Liquidity stress can transmit through funding conditions into cross-asset regime pressure.",
+          ]),
+          implementationChecks: expect.arrayContaining([
+            "Structured indicator ingestion and manual interpretation.",
+          ]),
           riskChecks: expect.arrayContaining([
             "Narrative overreach and regime misclassification during transient headline shocks.",
           ]),
+          applyOrRefuseRule:
+            "If any required input, evidence family, causal check, or risk check is missing for the current question, say the retained capability is not ready to apply instead of filling the gap with generic commentary.",
           noActionBoundary:
             "This application is research-only and does not approve trades, auto-promotion, doctrine mutation, or standalone prediction.",
         }),
@@ -286,6 +306,15 @@ describe("finance learning capability tools", () => {
             capabilityName: "Liquidity regime mapper",
             applicationBoundary: "research_only",
             requiredInputs: ["credit spreads", "funding stress proxies"],
+            requiredEvidenceCategories: expect.arrayContaining([
+              "credit_evidence",
+              "liquidity_evidence",
+            ]),
+            applicationChecklist: expect.arrayContaining([
+              "Refresh inputs: credit spreads, funding stress proxies",
+              "Check evidence families: credit_evidence, liquidity_evidence, macro_rates_evidence, inflation_evidence, causal_chain_evidence, backtest_or_empirical_evidence",
+              "Implementation constraint: Structured indicator ingestion and manual interpretation.",
+            ]),
             doNotUseFor:
               "Do not use this capability as trading execution approval, doctrine mutation, or a standalone prediction without fresh evidence and risk review.",
           }),

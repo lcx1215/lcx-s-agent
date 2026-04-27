@@ -40,6 +40,11 @@ function optionalString(value: unknown): string | null {
 
 function formatCapabilityUse(candidate: Record<string, unknown>) {
   const reuseGuidance = asRecord(candidate.reuseGuidance);
+  const requiredInputs = stringArray(reuseGuidance.requiredInputs);
+  const requiredEvidenceCategories = stringArray(reuseGuidance.requiredEvidenceCategories);
+  const riskChecks = stringArray(reuseGuidance.riskChecks);
+  const causalCheck = optionalString(reuseGuidance.causalCheck);
+  const implementationCheck = optionalString(reuseGuidance.implementationCheck);
   return {
     capabilityName: optionalString(candidate.capabilityName),
     sourceArticlePath: optionalString(candidate.sourceArticlePath),
@@ -48,12 +53,19 @@ function formatCapabilityUse(candidate: Record<string, unknown>) {
     applicationBoundary: optionalString(reuseGuidance.applicationBoundary),
     attachmentPoint: optionalString(reuseGuidance.attachmentPoint),
     useFor: optionalString(reuseGuidance.useFor),
-    requiredInputs: stringArray(reuseGuidance.requiredInputs),
-    requiredEvidenceCategories: stringArray(reuseGuidance.requiredEvidenceCategories),
-    causalCheck: optionalString(reuseGuidance.causalCheck),
-    riskChecks: stringArray(reuseGuidance.riskChecks),
-    implementationCheck: optionalString(reuseGuidance.implementationCheck),
+    requiredInputs,
+    requiredEvidenceCategories,
+    causalCheck,
+    riskChecks,
+    implementationCheck,
     doNotUseFor: optionalString(reuseGuidance.doNotUseFor),
+    applicationChecklist: [
+      `Refresh inputs: ${requiredInputs.join(", ")}`,
+      `Check evidence families: ${requiredEvidenceCategories.join(", ")}`,
+      causalCheck ? `Validate causal link: ${causalCheck}` : null,
+      implementationCheck ? `Implementation constraint: ${implementationCheck}` : null,
+      `Run risk checks: ${riskChecks.join(" | ")}`,
+    ].filter((item): item is string => Boolean(item)),
   };
 }
 
@@ -110,8 +122,13 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
       const missingReuseGuidance = appliedCapabilities.filter(
         (candidate) =>
           !candidate.applicationBoundary ||
+          !candidate.attachmentPoint ||
           !candidate.useFor ||
+          candidate.requiredInputs.length === 0 ||
+          candidate.requiredEvidenceCategories.length === 0 ||
+          !candidate.causalCheck ||
           candidate.riskChecks.length === 0 ||
+          !candidate.implementationCheck ||
           !candidate.doNotUseFor,
       );
       if (missingReuseGuidance.length > 0) {
@@ -129,13 +146,31 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
         answerSkeleton: {
           summary:
             "A bounded research answer can use the retained capabilities below, but must stay inside their application boundaries and refresh required inputs before any conclusion.",
+          requiredSections: [
+            "Retrieved capability used",
+            "Fresh inputs checked",
+            "Causal link tested",
+            "Risk and overfitting checks",
+            "Red-team invalidation",
+            "Research-only conclusion",
+          ],
           requiredNextChecks: [
             ...new Set(appliedCapabilities.flatMap((candidate) => candidate.requiredInputs)),
           ],
+          requiredEvidenceCategories: [
+            ...new Set(
+              appliedCapabilities.flatMap((candidate) => candidate.requiredEvidenceCategories),
+            ),
+          ],
           causalChecks: appliedCapabilities.map((candidate) => candidate.causalCheck),
+          implementationChecks: appliedCapabilities.map(
+            (candidate) => candidate.implementationCheck,
+          ),
           riskChecks: [
             ...new Set(appliedCapabilities.flatMap((candidate) => candidate.riskChecks)),
           ],
+          applyOrRefuseRule:
+            "If any required input, evidence family, causal check, or risk check is missing for the current question, say the retained capability is not ready to apply instead of filling the gap with generic commentary.",
           redTeam:
             "If fresh evidence conflicts with the required inputs, causal checks, or risk checks, downgrade or discard the capability for this question.",
           noActionBoundary:
