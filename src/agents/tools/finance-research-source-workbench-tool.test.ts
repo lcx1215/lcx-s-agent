@@ -53,6 +53,8 @@ describe("finance research source workbench tool", () => {
         retrievalMethod: "manual_paste",
         collectionPosture: "manual_only",
         extractionToolTarget: "finance_article_extract_capability_input",
+        extractionReadyNow: true,
+        requiresManualCaptureBeforeExtraction: false,
         metadataPreservedForAudit: true,
         noRemoteFetchOccurred: true,
       }),
@@ -92,6 +94,8 @@ This article lays out a bounded research method using funding spreads, liquidity
         retrievalMethod: "local_file",
         collectionPosture: "allowed",
         extractionToolTarget: "finance_article_extract_capability_input",
+        extractionReadyNow: true,
+        requiresManualCaptureBeforeExtraction: false,
         noRemoteFetchOccurred: true,
       }),
     );
@@ -122,13 +126,17 @@ This article lays out a bounded research method using funding spreads, liquidity
         sourceFamily: "public_web_reference",
         retrievalMethod: "user_provided_url",
         collectionPosture: "manual_only",
-        extractionToolTarget: "finance_article_extract_capability_input",
+        extractionToolTarget: null,
+        extractionReadyNow: false,
+        requiresManualCaptureBeforeExtraction: true,
+        extractionToolTargetAfterManualCapture: "finance_article_extract_capability_input",
         noRemoteFetchOccurred: true,
       }),
     );
 
     const artifact = await readArtifact(workspaceDir, result.details.artifactPath);
     expect(artifact).toContain("**Source Family**: public_web_reference");
+    expect(artifact).toContain("**Extraction Target**: ");
     expect(artifact).toContain("Metadata-only reference. No remote content was fetched.");
   });
 
@@ -152,6 +160,8 @@ This article lays out a bounded research method using funding spreads, liquidity
         sourceFamily: "public_web_reference",
         retrievalMethod: "manual_paste",
         collectionPosture: "manual_only",
+        extractionReadyNow: true,
+        extractionToolTarget: "finance_article_extract_capability_input",
       }),
     );
   });
@@ -206,6 +216,9 @@ This article lays out a bounded research method using funding spreads, liquidity
         ok: true,
         sourceFamily: "academic_preprint",
         collectionPosture: "manual_only",
+        extractionReadyNow: false,
+        extractionToolTarget: null,
+        requiresManualCaptureBeforeExtraction: true,
       }),
     );
 
@@ -222,6 +235,9 @@ This article lays out a bounded research method using funding spreads, liquidity
         ok: true,
         sourceFamily: "github_repository",
         collectionPosture: "manual_only",
+        extractionReadyNow: false,
+        extractionToolTarget: null,
+        requiresManualCaptureBeforeExtraction: true,
       }),
     );
 

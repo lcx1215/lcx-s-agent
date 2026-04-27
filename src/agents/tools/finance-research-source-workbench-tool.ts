@@ -522,6 +522,10 @@ export function createFinanceResearchSourceWorkbenchTool(options?: {
         localFilePath: localFilePath ?? undefined,
         pastedText: pastedText ?? undefined,
       });
+      const extractionReadyNow = normalizedContent.contentKind === "normalized_local_content";
+      const extractionToolTarget = extractionReadyNow
+        ? "finance_article_extract_capability_input"
+        : null;
 
       const sourceFamily = inferSourceFamily({
         sourceName,
@@ -558,7 +562,7 @@ export function createFinanceResearchSourceWorkbenchTool(options?: {
           title,
           publishDate: publishDate ?? undefined,
           retrievalNotes,
-          extractionTarget: "finance_article_extract_capability_input",
+          extractionTarget: extractionToolTarget,
           contentKind: normalizedContent.contentKind,
           sourceContent: normalizedContent.localContent,
         }),
@@ -578,10 +582,14 @@ export function createFinanceResearchSourceWorkbenchTool(options?: {
         reliabilityNotes: sourceEntry.reliabilityNotes,
         sourceUrlOrIdentifier,
         metadataPreservedForAudit: true,
-        extractionToolTarget: "finance_article_extract_capability_input",
+        extractionReadyNow,
+        requiresManualCaptureBeforeExtraction: !extractionReadyNow,
+        extractionToolTarget,
+        extractionToolTargetAfterManualCapture: "finance_article_extract_capability_input",
         noRemoteFetchOccurred: true,
-        action:
-          "This workbench created a local finance research source artifact only. It did not fetch remote content automatically, did not create trading rules, and did not mutate doctrine cards.",
+        action: extractionReadyNow
+          ? "This workbench created a local finance research source artifact from local/manual content only. It did not fetch remote content automatically, did not create trading rules, and did not mutate doctrine cards."
+          : "This workbench created a metadata-only finance research source artifact. It did not fetch remote content automatically; capture local/manual article content before extraction, capability attachment, or doctrine review.",
       });
     },
   };
