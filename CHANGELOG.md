@@ -1,3 +1,5 @@
+<!-- Owns user-facing release notes assembled from shipped OpenClaw changes. -->
+
 # Changelog
 
 Docs: https://docs.openclaw.ai
