@@ -168,6 +168,97 @@ def summarize_feedback_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def family_absorption_reason(family_score: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    count = int(family_score.get("count") or 0)
+    executed = int(family_score.get("executed") or 0)
+    artifacts = int(family_score.get("artifacts") or 0)
+    usable_quality = int(family_score.get("usable_quality") or 0)
+    failures = int(family_score.get("failures") or 0)
+    score = float(family_score.get("score") or 0)
+    if count < 3:
+        reasons.append("low_sample_count")
+    if executed < count:
+        reasons.append("not_all_executed")
+    if artifacts < executed:
+        reasons.append("missing_artifacts")
+    if usable_quality < artifacts:
+        reasons.append("weak_quality_signal")
+    if failures:
+        reasons.append("has_failures")
+    if score < 70:
+        reasons.append("score_below_target")
+    return reasons
+
+
+def recommended_absorption_action(reasons: list[str]) -> str:
+    if "has_failures" in reasons:
+        return "review_failed_routes_before_rule_promotion"
+    if "low_sample_count" in reasons:
+        return "collect_more_real_lark_utterances"
+    if "not_all_executed" in reasons:
+        return "add_immediate_vs_queue_eval_cases"
+    if "missing_artifacts" in reasons or "weak_quality_signal" in reasons:
+        return "connect_feedback_to_learning_artifact_quality_eval"
+    return "eligible_for_corpus_promotion_review"
+
+
+def build_absorption_plan(summary: dict[str, Any]) -> dict[str, Any]:
+    samples = summary.get("samples", []) if isinstance(summary.get("samples"), list) else []
+    by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for sample in samples:
+        family = str(sample.get("family") or "").strip() or "unknown"
+        by_family[family].append(sample)
+
+    candidates = []
+    for family, score in (summary.get("families") or {}).items():
+        if not isinstance(score, dict):
+            continue
+        reasons = family_absorption_reason(score)
+        rows = by_family.get(family, [])
+        candidate_samples = [
+            {
+                "utterance": str(row.get("utterance") or ""),
+                "expected_action": str(row.get("action") or ""),
+                "expected_family": family,
+                "expected_topic": str(row.get("topic") or ""),
+                "status": str(row.get("status") or ""),
+                "queued": bool(row.get("queued")),
+                "executed": bool(row.get("executed")),
+                "has_artifact": bool(row.get("has_artifact")),
+                "quality_status": str(row.get("quality_status") or ""),
+            }
+            for row in rows[:20]
+        ]
+        candidates.append(
+            {
+                "family": family,
+                "score": score.get("score", 0),
+                "reasons": reasons,
+                "recommended_action": recommended_absorption_action(reasons),
+                "sample_count": score.get("count", 0),
+                "candidate_samples": candidate_samples,
+            }
+        )
+
+    candidates.sort(key=lambda item: (float(item.get("score") or 0), str(item.get("family") or "")))
+    return {
+        "ok": True,
+        "schema": "lobster.nlu_feedback_absorption_plan.v1",
+        "source_schema": summary.get("schema"),
+        "event_count": summary.get("event_count", 0),
+        "sample_count": summary.get("sample_count", 0),
+        "candidate_count": len(candidates),
+        "candidate_families": candidates,
+        "promotion_policy": {
+            "auto_promote": False,
+            "requires_review": True,
+            "target_score": 70,
+            "min_samples_per_family": 3,
+        },
+    }
+
+
 def print_json(obj: dict[str, Any]) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
@@ -226,6 +317,9 @@ def main() -> int:
         return 0
     if cmd == "samples":
         print_json({"ok": True, "samples": summary["samples"]})
+        return 0
+    if cmd == "absorb":
+        print_json(build_absorption_plan(summary))
         return 0
     print_json({"ok": False, "error": f"unknown command: {cmd}"})
     return 2

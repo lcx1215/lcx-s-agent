@@ -151,6 +151,27 @@ def main() -> int:
         assert summary["families"]["frontier_paper"]["usable_quality"] == 1, summary
         assert summary["families"]["options"]["executed"] == 0, summary
 
+        plan = module.build_absorption_plan(summary)
+        assert plan["schema"] == "lobster.nlu_feedback_absorption_plan.v1", plan
+        assert plan["promotion_policy"]["auto_promote"] is False, plan
+        assert plan["candidate_count"] == 2, plan
+        by_family = {row["family"]: row for row in plan["candidate_families"]}
+        assert by_family["options"]["recommended_action"] == "collect_more_real_lark_utterances", by_family
+        assert "not_all_executed" in by_family["options"]["reasons"], by_family
+        assert by_family["frontier_paper"]["candidate_samples"][0]["expected_topic"] == "前沿金融论文", by_family
+
+        cli = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "absorb", str(event_path)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli.returncode == 0, cli.stderr
+        cli_plan = json.loads((cli.stdout or "").strip())
+        assert cli_plan["candidate_count"] == 2, cli_plan
+        assert cli_plan["promotion_policy"]["requires_review"] is True, cli_plan
+
     print("OK nlu_feedback_memory")
     return 0
 
