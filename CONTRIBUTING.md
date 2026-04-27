@@ -1,3 +1,5 @@
+<!-- Owns contribution workflow expectations for OpenClaw and the Lobster fork. -->
+
 # Contributing to OpenClaw
 
 Welcome to the lobster tank! 🦞
