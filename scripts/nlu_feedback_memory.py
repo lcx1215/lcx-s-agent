@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -304,6 +305,111 @@ def build_routing_evalset(absorption_plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def run_deterministic_parser(utterance: str) -> dict[str, Any]:
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "feishu_nlu_parser.py"), utterance],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    raw = (proc.stdout or "").strip()
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "error": (proc.stderr or raw or "parser failed")[:500],
+            "code": proc.returncode,
+        }
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return {"ok": False, "error": "non-json parser output", "raw": raw[:500]}
+    return obj if isinstance(obj, dict) else {"ok": False, "error": "unexpected parser output"}
+
+
+def first_parser_task(parser_result: dict[str, Any]) -> dict[str, Any]:
+    tasks = parser_result.get("tasks", []) if isinstance(parser_result.get("tasks"), list) else []
+    first = tasks[0] if tasks and isinstance(tasks[0], dict) else {}
+    return {
+        "action": str(first.get("action") or ""),
+        "family": str(first.get("family") or ""),
+        "topic": str(first.get("topic") or ""),
+        "needs_clarification": bool(parser_result.get("needs_clarification")),
+        "confidence": parser_result.get("confidence", 0),
+    }
+
+
+def evaluate_routing_evalset(evalset: dict[str, Any]) -> dict[str, Any]:
+    cases = evalset.get("cases", []) if isinstance(evalset.get("cases"), list) else []
+    results = []
+    by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        expected = case.get("expected", {}) if isinstance(case.get("expected"), dict) else {}
+        utterance = str(case.get("utterance") or "")
+        parser_result = run_deterministic_parser(utterance)
+        predicted = first_parser_task(parser_result) if parser_result.get("ok", True) else {
+            "action": "",
+            "family": "",
+            "topic": "",
+            "needs_clarification": True,
+            "confidence": 0,
+        }
+        action_match = predicted["action"] == str(expected.get("action") or "")
+        family_match = predicted["family"] == str(expected.get("family") or "")
+        topic_match = predicted["topic"] == str(expected.get("topic") or "")
+        passed = action_match and family_match and topic_match and not predicted["needs_clarification"]
+        row = {
+            "id": case.get("id", ""),
+            "utterance": utterance,
+            "expected": expected,
+            "predicted": predicted,
+            "passed": passed,
+            "matches": {
+                "action": action_match,
+                "family": family_match,
+                "topic": topic_match,
+            },
+            "parser_ok": parser_result.get("ok", True),
+            "error": parser_result.get("error", ""),
+        }
+        results.append(row)
+        family = str(expected.get("family") or "unknown")
+        by_family[family].append(row)
+
+    family_scores = {}
+    for family, rows in sorted(by_family.items(), key=lambda item: item[0]):
+        total = len(rows)
+        passed = sum(1 for row in rows if row["passed"])
+        action_hits = sum(1 for row in rows if row["matches"]["action"])
+        family_hits = sum(1 for row in rows if row["matches"]["family"])
+        topic_hits = sum(1 for row in rows if row["matches"]["topic"])
+        family_scores[family] = {
+            "count": total,
+            "passed": passed,
+            "accuracy": round(passed / total, 4) if total else 0,
+            "action_accuracy": round(action_hits / total, 4) if total else 0,
+            "family_accuracy": round(family_hits / total, 4) if total else 0,
+            "topic_accuracy": round(topic_hits / total, 4) if total else 0,
+            "failures": [row for row in rows if not row["passed"]][:10],
+        }
+
+    total = len(results)
+    passed = sum(1 for row in results if row["passed"])
+    return {
+        "ok": True,
+        "schema": "lobster.routing_eval_result.v1",
+        "created_at": now_iso(),
+        "case_count": total,
+        "passed": passed,
+        "accuracy": round(passed / total, 4) if total else 0,
+        "families": family_scores,
+        "failures": [row for row in results if not row["passed"]][:20],
+    }
+
+
 def print_json(obj: dict[str, Any]) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
@@ -368,6 +474,10 @@ def main() -> int:
         return 0
     if cmd == "evalset":
         print_json(build_routing_evalset(build_absorption_plan(summary)))
+        return 0
+    if cmd == "run-eval":
+        evalset = build_routing_evalset(build_absorption_plan(summary))
+        print_json(evaluate_routing_evalset(evalset))
         return 0
     print_json({"ok": False, "error": f"unknown command: {cmd}"})
     return 2

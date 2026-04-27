@@ -194,6 +194,24 @@ def main() -> int:
         assert cli_evalset["case_count"] == 2, cli_evalset
         assert cli_evalset["cases"][0]["expected"]["action"] == "learn_topic", cli_evalset
 
+        eval_result = module.evaluate_routing_evalset(evalset)
+        assert eval_result["schema"] == "lobster.routing_eval_result.v1", eval_result
+        assert eval_result["case_count"] == 2, eval_result
+        assert eval_result["families"]["frontier_paper"]["action_accuracy"] == 1, eval_result
+        assert "topic_accuracy" in eval_result["families"]["options"], eval_result
+
+        cli_run_eval = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "run-eval", str(event_path)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli_run_eval.returncode == 0, cli_run_eval.stderr
+        cli_eval_result = json.loads((cli_run_eval.stdout or "").strip())
+        assert cli_eval_result["schema"] == "lobster.routing_eval_result.v1", cli_eval_result
+        assert cli_eval_result["case_count"] == 2, cli_eval_result
+
     print("OK nlu_feedback_memory")
     return 0
 
