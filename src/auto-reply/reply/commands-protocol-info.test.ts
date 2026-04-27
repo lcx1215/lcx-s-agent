@@ -176,6 +176,11 @@ describe("commands-protocol-info", () => {
       const statusReadbackReply = buildProtocolInfoReply({
         text: "现在修到哪了",
         cfg,
+        feishuReplyFlowEvidence: [
+          "## Recent Feishu/Lark Reply Flow Evidence",
+          "Reply-path status evidence: visible_reply_delivered",
+          "Boundary: this proves only the recorded reply delivery layer.",
+        ].join("\n"),
       });
       expect(statusReadbackReply?.text).toContain("🧭 Status readback");
       expect(statusReadbackReply?.text).toContain(
@@ -197,6 +202,15 @@ describe("commands-protocol-info", () => {
         "Latest learning session receipt: running (2026-04-23T10-00-00.000Z__oc-learning)",
       );
       expect(statusReadbackReply?.text).toContain("Latest write anomaly: none found");
+      expect(statusReadbackReply?.text).toContain(
+        "Visible Lark/Feishu reply-flow evidence: present",
+      );
+      expect(statusReadbackReply?.text).toContain(
+        "Reply-path status evidence: visible_reply_delivered",
+      );
+      expect(statusReadbackReply?.text).toContain(
+        "Boundary: this proves only the recorded reply delivery layer.",
+      );
       expect(statusReadbackReply?.text).toContain(
         "Next check: name the first missing evidence layer",
       );

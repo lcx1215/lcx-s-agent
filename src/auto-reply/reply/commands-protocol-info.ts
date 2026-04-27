@@ -370,6 +370,7 @@ export function buildProtocolInfoReply(params: {
   provider?: string;
   model?: string;
   sessionEntry?: ProtocolInfoSessionState;
+  feishuReplyFlowEvidence?: string;
 }) {
   const kind = resolveProtocolInfoQuestionKind(params.text);
   if (!kind) {
@@ -489,6 +490,12 @@ export function buildProtocolInfoReply(params: {
       if (workflowRisk.problem) {
         lines.push(`Workflow risk problem: ${workflowRisk.problem}`);
       }
+    }
+    if (params.feishuReplyFlowEvidence?.trim()) {
+      lines.push("Visible Lark/Feishu reply-flow evidence: present");
+      lines.push(params.feishuReplyFlowEvidence.trim());
+    } else {
+      lines.push("Visible Lark/Feishu reply-flow evidence: missing from this status reply.");
     }
     lines.push(
       "Next check: name the first missing evidence layer instead of collapsing dev-fixed, live-fixed, started, running, completed, blocked, and unproven into one success label.",

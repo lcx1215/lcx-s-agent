@@ -1045,6 +1045,9 @@ describe("handleCommands context", () => {
       expect(result.reply?.text).toContain(
         "Live-fixed: unproven unless migration, build, restart, live probe, and visible Lark/Feishu reply evidence are all present.",
       );
+      expect(result.reply?.text).toContain(
+        "Visible Lark/Feishu reply-flow evidence: missing from this status reply.",
+      );
       expect(result.reply?.text).toContain("Next check: name the first missing evidence layer");
       expect(result.reply?.text).not.toContain("ℹ️ Help");
     },
