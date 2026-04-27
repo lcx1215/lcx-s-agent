@@ -101,6 +101,11 @@ function truncate(value: string, maxChars: number): string {
   return `${value.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
+function redactLiveId(value: string): string {
+  const normalized = normalizeOneLine(value);
+  return normalized ? `redacted:${normalized.length}` : "redacted:0";
+}
+
 function resolveFeishuSurfaceChatId(cfg: OpenClawConfig, surface?: string): string | null {
   const candidate = normalizeBlock(surface);
   if (!candidate) {
@@ -303,7 +308,7 @@ function renderProbeReceipt(params: {
     "",
     `- created_at: ${params.createdAt}`,
     `- surface: ${params.surfaceLabel}`,
-    `- chat_id: ${params.chatId}`,
+    `- chat_id: ${redactLiveId(params.chatId)}`,
     `- status: ${params.status}`,
     `- sent_message_id: ${params.sentMessageId ?? ""}`,
     `- reply_message_id: ${params.replyMessage?.messageId ?? ""}`,
@@ -537,7 +542,7 @@ export function createFeishuLiveProbeTool(options?: {
         ok: evaluation.status === "passed",
         status: evaluation.status,
         surface: target.surfaceLabel,
-        chatId: target.chatId,
+        chatId: redactLiveId(target.chatId),
         sentMessageId: sendResult.messageId ?? null,
         replyMessageId: evaluation.replyMessage?.messageId ?? null,
         replyPreview: evaluation.replyMessage

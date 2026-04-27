@@ -61,7 +61,7 @@ describe("feishu_live_probe", () => {
       ok: false,
       status: "no_reply_observed",
       surface: "learning_command",
-      chatId: "oc_learning",
+      chatId: "redacted:11",
       sentMessageId: "msg-probe",
       repairHint: "self_authored_probe_not_processed_or_live_ingress_not_migrated",
     });
@@ -71,6 +71,8 @@ describe("feishu_live_probe", () => {
     expect(indexPath).toBe("memory/feishu-live-probes/index.md");
     const receipt = await fs.readFile(path.join(workspaceDir, receiptPath as string), "utf8");
     expect(receipt).toContain("# Feishu Live Probe Receipt");
+    expect(receipt).not.toContain("oc_learning");
+    expect(receipt).toContain("- chat_id: redacted:11");
     expect(receipt).toContain("- status: no_reply_observed");
     expect(receipt).toContain(
       "- repair_hint: self_authored_probe_not_processed_or_live_ingress_not_migrated",
