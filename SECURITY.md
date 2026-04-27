@@ -1,3 +1,5 @@
+<!-- Owns the supported security model, reporting path, and vulnerability handling expectations. -->
+
 # Security Policy
 
 If you believe you've found a security issue in OpenClaw, please report it privately.
