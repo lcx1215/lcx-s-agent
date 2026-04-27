@@ -1,3 +1,5 @@
+<!-- Owns ACP-related notes and integration context for OpenClaw agents. -->
+
 # OpenClaw ACP Bridge
 
 This document describes how the OpenClaw ACP (Agent Client Protocol) bridge works,
