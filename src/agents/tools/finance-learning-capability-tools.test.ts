@@ -232,6 +232,36 @@ describe("finance learning capability tools", () => {
       }),
     );
 
+    const chineseOnlyRiskQuery = await inspectTool.execute("inspect-chinese-risk-query", {
+      queryText: "把学到的流动性和资金面方法用于 ETF 风控，重点看回撤、样本外和仓位约束",
+      maxCandidates: 2,
+    });
+    expect(chineseOnlyRiskQuery.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        retrievalMode: "query_ranked",
+        candidates: [
+          expect.objectContaining({
+            capabilityName: "Liquidity regime mapper",
+            matchedSignals: expect.arrayContaining(["credit_liquidity", "liquidity_evidence"]),
+          }),
+        ],
+      }),
+    );
+
+    const genericChineseQuery = await inspectTool.execute("inspect-generic-chinese-query", {
+      queryText: "帮我学习一篇文章，然后以后回答问题更聪明一点",
+      maxCandidates: 5,
+    });
+    expect(genericChineseQuery.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        retrievalMode: "query_ranked",
+        candidateCount: 0,
+        candidates: [],
+      }),
+    );
+
     const appliedAnswer = await applyTool.execute("apply-liquidity-regime", {
       queryText:
         "怎么把 liquidity regime funding stress 学到的东西用于 ETF 风控研究，注意 out of sample 和 drawdown 风险",

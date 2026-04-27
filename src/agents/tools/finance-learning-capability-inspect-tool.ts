@@ -31,6 +31,48 @@ const FinanceLearningCapabilityInspectSchema = Type.Object({
 
 const MIN_QUERY_RETRIEVAL_SCORE = 0.2;
 
+const FINANCE_QUERY_TOKEN_EXPANSIONS = [
+  {
+    triggers: ["流动性", "资金面", "融资压力", "信用利差", "funding", "liquidity", "credit"],
+    expansions: [
+      "credit_liquidity",
+      "liquidity_evidence",
+      "credit_evidence",
+      "funding stress",
+      "credit spreads",
+    ],
+  },
+  {
+    triggers: ["利率", "通胀", "美债", "国债", "rates", "inflation", "treasury"],
+    expansions: ["macro_rates_inflation", "macro_rates_evidence", "inflation_evidence"],
+  },
+  {
+    triggers: ["etf", "指数基金", "资产配置", "大类资产", "major asset"],
+    expansions: ["etf_regime", "etf_regime_evidence", "equity_market_evidence"],
+  },
+  {
+    triggers: ["因子", "择时", "回测", "样本外", "factor", "timing", "backtest", "out of sample"],
+    expansions: [
+      "factor_research",
+      "tactical_timing",
+      "backtest_or_empirical_evidence",
+      "implementation_evidence",
+    ],
+  },
+  {
+    triggers: ["风控", "回撤", "仓位", "止损", "risk", "drawdown", "sizing"],
+    expansions: ["portfolio_risk_gates", "risk_gate_design", "portfolio_risk_evidence"],
+  },
+  {
+    triggers: ["事件", "催化", "财报", "政策", "event", "catalyst", "earnings"],
+    expansions: ["event_driven", "event_catalyst_mapping", "event_catalyst_evidence"],
+  },
+  {
+    triggers: ["波动率", "期权", "iv", "volatility", "option"],
+    expansions: ["options_volatility", "volatility_research", "options_volatility_evidence"],
+  },
+] as const;
+
 type FinanceLearningCapabilityCandidate = NonNullable<
   ReturnType<typeof parseFinanceLearningCapabilityCandidateArtifact>
 >["candidates"][number];
@@ -58,6 +100,21 @@ function searchTokens(value: string): Set<string> {
   return tokens;
 }
 
+function expandedQueryTokens(value: string): Set<string> {
+  const tokens = searchTokens(value);
+  const normalized = normalizeSearchText(value);
+  for (const entry of FINANCE_QUERY_TOKEN_EXPANSIONS) {
+    if (entry.triggers.some((trigger) => normalized.includes(normalizeSearchText(trigger)))) {
+      for (const expansion of entry.expansions) {
+        for (const token of searchTokens(expansion)) {
+          tokens.add(token);
+        }
+      }
+    }
+  }
+  return tokens;
+}
+
 function buildCandidateSearchBlob(candidate: FinanceLearningCapabilityCandidate): string {
   return [
     candidate.capabilityName,
@@ -81,10 +138,10 @@ function buildCandidateSearchBlob(candidate: FinanceLearningCapabilityCandidate)
 function scoreCandidateForQuery(params: {
   candidate: FinanceLearningCapabilityCandidate;
   queryText: string;
-}): { score: number; matchedSignals: string[] } {
-  const queryTokens = searchTokens(params.queryText);
+}): { score: number; matchedSignals: string[]; hasPrimarySignalMatch: boolean } {
+  const queryTokens = expandedQueryTokens(params.queryText);
   if (queryTokens.size === 0) {
-    return { score: 0, matchedSignals: [] };
+    return { score: 0, matchedSignals: [], hasPrimarySignalMatch: false };
   }
   const candidateBlob = buildCandidateSearchBlob(params.candidate);
   const candidateTokens = searchTokens(candidateBlob);
@@ -96,18 +153,31 @@ function scoreCandidateForQuery(params: {
   }
 
   const normalizedQuery = normalizeSearchText(params.queryText);
-  const exactSignals = [
+  const primarySignals = [
     ...params.candidate.relatedFinanceDomains,
     ...params.candidate.capabilityTags,
     params.candidate.capabilityType,
-  ].filter((signal) => normalizeSearchText(signal).includes(normalizedQuery));
+  ];
+  const directSignals = [...primarySignals, ...params.candidate.evidenceCategories].filter(
+    (signal) => {
+      const normalizedSignal = normalizeSearchText(signal);
+      const signalTokens = searchTokens(signal);
+      return (
+        normalizedQuery.includes(normalizedSignal) ||
+        (signalTokens.size > 0 && [...signalTokens].every((token) => queryTokens.has(token)))
+      );
+    },
+  );
+  const hasPrimarySignalMatch = directSignals.some((signal) => primarySignals.includes(signal));
 
-  const directFieldBonus = exactSignals.length > 0 ? 0.25 : 0;
+  const directFieldBonus =
+    directSignals.length > 0 ? Math.min(0.35, directSignals.length * 0.08) : 0;
   const denominator = Math.min(queryTokens.size, 12);
   const score = Math.min(1, tokenHits / denominator + directFieldBonus);
   return {
     score,
-    matchedSignals: [...new Set(exactSignals)].slice(0, 8),
+    matchedSignals: [...new Set(directSignals)].slice(0, 8),
+    hasPrimarySignalMatch,
   };
 }
 
@@ -205,7 +275,11 @@ export function createFinanceLearningCapabilityInspectTool(options?: {
               candidate,
               retrieval: scoreCandidateForQuery({ candidate, queryText }),
             }))
-            .filter((entry) => entry.retrieval.score >= MIN_QUERY_RETRIEVAL_SCORE)
+            .filter(
+              (entry) =>
+                entry.retrieval.score >= MIN_QUERY_RETRIEVAL_SCORE &&
+                (entry.retrieval.hasPrimarySignalMatch || entry.retrieval.score >= 0.7),
+            )
             .toSorted((left, right) => right.retrieval.score - left.retrieval.score)
             .slice(0, maxCandidates)
         : filteredCandidates.map((candidate) => ({
