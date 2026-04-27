@@ -250,9 +250,14 @@ describe("finance learning pipeline orchestrator tool", () => {
           retrievalReviewCounts: expect.objectContaining({
             validReceipts: 1,
             retrievableAfterLearning: 1,
+            applicationReadyAfterLearning: 1,
             newlyRetrievable: 1,
             weakLearningReceipts: 0,
           }),
+          postAttachCandidateCount: 1,
+          applicationReadyCandidateCount: 1,
+          learningInternalizationStatus: "application_ready",
+          weakLearningIntents: [],
           classificationContract:
             "Use stable finance domains plus capability tags and query-ranked capability cards before creating narrower categories.",
           preflightCapabilityRetrieval: expect.objectContaining({
@@ -312,6 +317,7 @@ describe("finance learning pipeline orchestrator tool", () => {
       };
       counts: {
         validReceipts: number;
+        applicationReadyAfterLearning: number;
         weakLearningReceipts: number;
       };
     };
@@ -319,6 +325,7 @@ describe("finance learning pipeline orchestrator tool", () => {
       boundary: "finance_learning_retrieval_review",
       counts: {
         validReceipts: 1,
+        applicationReadyAfterLearning: 1,
         weakLearningReceipts: 0,
       },
       separationContract: {

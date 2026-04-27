@@ -102,8 +102,8 @@ function hasApplicationReadyGuidance(candidate: unknown): boolean {
   );
 }
 
-function countApplicationReadyCandidates(receipt: LearningRetrievalReceipt): number {
-  const postAttachRetrieval = asRecord(receipt.postAttachCapabilityRetrieval);
+export function countApplicationReadyRetrievedCandidates(capabilityRetrieval: unknown): number {
+  const postAttachRetrieval = asRecord(capabilityRetrieval);
   const candidates = Array.isArray(postAttachRetrieval.candidates)
     ? postAttachRetrieval.candidates
     : [];
@@ -171,7 +171,9 @@ export function buildFinanceLearningRetrievalReview(params: {
     const preflightCandidateCount = numberValue(receipt.preflightCandidateCount);
     const postAttachCandidateCount = numberValue(receipt.postAttachCandidateCount);
     const newlyRetrievableCandidateDelta = numberValue(receipt.newlyRetrievableCandidateDelta);
-    const applicationReadyCandidateCount = countApplicationReadyCandidates(receipt);
+    const applicationReadyCandidateCount = countApplicationReadyRetrievedCandidates(
+      receipt.postAttachCapabilityRetrieval,
+    );
     const weak =
       retainedCandidateCount <= 0 ||
       postAttachCandidateCount <= 0 ||

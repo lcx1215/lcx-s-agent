@@ -14,7 +14,10 @@ import { createFinanceArticleExtractCapabilityInputTool } from "./finance-articl
 import { createFinanceExternalSourceAdapterTool } from "./finance-external-source-adapter-tool.js";
 import { createFinanceLearningCapabilityAttachTool } from "./finance-learning-capability-attach-tool.js";
 import { createFinanceLearningCapabilityInspectTool } from "./finance-learning-capability-inspect-tool.js";
-import { writeFinanceLearningRetrievalReview } from "./finance-learning-retrieval-review-tool.js";
+import {
+  countApplicationReadyRetrievedCandidates,
+  writeFinanceLearningRetrievalReview,
+} from "./finance-learning-retrieval-review-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./finance-research-source-workbench-tool.js";
 
 const FINANCE_EXTERNAL_SOURCE_ADAPTER_TYPES = [
@@ -216,6 +219,20 @@ function clampMaxRetrievedCapabilities(value: string | undefined): number {
     return 5;
   }
   return Math.max(1, Math.min(20, Math.floor(parsed)));
+}
+
+function buildLearningInternalizationStatus(params: {
+  retainedCandidateCount: number;
+  postAttachCandidateCount: number;
+  applicationReadyCandidateCount: number;
+}): "application_ready" | "retrievable_but_not_application_ready" | "not_retrievable" {
+  if (params.retainedCandidateCount <= 0 || params.postAttachCandidateCount <= 0) {
+    return "not_retrievable";
+  }
+  if (params.applicationReadyCandidateCount <= 0) {
+    return "retrievable_but_not_application_ready";
+  }
+  return "application_ready";
 }
 
 function wrapStepFailure(params: {
@@ -583,6 +600,10 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
             })
           ).details
         : null;
+      const postAttachCandidateCount = countRetrievedCandidates(postAttachCapabilityRetrieval);
+      const applicationReadyCandidateCount = countApplicationReadyRetrievedCandidates(
+        postAttachCapabilityRetrieval,
+      );
       const retainedCandidateCount = inspectResults.reduce((sum, item) => {
         return sum + (typeof item.candidateCount === "number" ? item.candidateCount : 0);
       }, 0);
@@ -625,6 +646,14 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
               retrievalReceiptPath,
               retrievalReviewPath: retrievalReview?.reviewPath ?? null,
               retrievalReviewCounts: retrievalReview?.review.counts ?? null,
+              postAttachCandidateCount,
+              applicationReadyCandidateCount,
+              learningInternalizationStatus: buildLearningInternalizationStatus({
+                retainedCandidateCount,
+                postAttachCandidateCount,
+                applicationReadyCandidateCount,
+              }),
+              weakLearningIntents: retrievalReview?.review.weakLearningIntents ?? [],
               classificationContract:
                 "Use stable finance domains plus capability tags and query-ranked capability cards before creating narrower categories.",
               preflightCapabilityRetrieval,
