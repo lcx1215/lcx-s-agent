@@ -35,6 +35,7 @@ export type LearningRetrievalReceipt = {
   noDoctrineMutation?: boolean;
   normalizedArticleArtifactPaths?: string[];
   normalizedReferenceArtifactPaths?: string[];
+  postAttachCapabilityRetrieval?: unknown;
 };
 
 export type ReceiptReadResult =
@@ -72,6 +73,41 @@ function stringArrayValue(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
     : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function hasApplicationReadyGuidance(candidate: unknown): boolean {
+  const reuseGuidance = asRecord(asRecord(candidate).reuseGuidance);
+  return (
+    typeof reuseGuidance.applicationBoundary === "string" &&
+    reuseGuidance.applicationBoundary.trim().length > 0 &&
+    typeof reuseGuidance.attachmentPoint === "string" &&
+    reuseGuidance.attachmentPoint.trim().length > 0 &&
+    typeof reuseGuidance.useFor === "string" &&
+    reuseGuidance.useFor.trim().length > 0 &&
+    stringArrayValue(reuseGuidance.requiredInputs).length > 0 &&
+    stringArrayValue(reuseGuidance.requiredEvidenceCategories).length > 0 &&
+    typeof reuseGuidance.causalCheck === "string" &&
+    reuseGuidance.causalCheck.trim().length > 0 &&
+    stringArrayValue(reuseGuidance.riskChecks).length > 0 &&
+    typeof reuseGuidance.implementationCheck === "string" &&
+    reuseGuidance.implementationCheck.trim().length > 0 &&
+    typeof reuseGuidance.doNotUseFor === "string" &&
+    reuseGuidance.doNotUseFor.trim().length > 0
+  );
+}
+
+function countApplicationReadyCandidates(receipt: LearningRetrievalReceipt): number {
+  const postAttachRetrieval = asRecord(receipt.postAttachCapabilityRetrieval);
+  const candidates = Array.isArray(postAttachRetrieval.candidates)
+    ? postAttachRetrieval.candidates
+    : [];
+  return candidates.filter((candidate) => hasApplicationReadyGuidance(candidate)).length;
 }
 
 async function readReceiptFile(receiptPath: string): Promise<ReceiptReadResult> {
@@ -135,9 +171,11 @@ export function buildFinanceLearningRetrievalReview(params: {
     const preflightCandidateCount = numberValue(receipt.preflightCandidateCount);
     const postAttachCandidateCount = numberValue(receipt.postAttachCandidateCount);
     const newlyRetrievableCandidateDelta = numberValue(receipt.newlyRetrievableCandidateDelta);
+    const applicationReadyCandidateCount = countApplicationReadyCandidates(receipt);
     const weak =
       retainedCandidateCount <= 0 ||
       postAttachCandidateCount <= 0 ||
+      applicationReadyCandidateCount <= 0 ||
       receipt.retrievalFirstLearningApplied !== true ||
       receipt.noExecutionAuthority !== true ||
       receipt.noDoctrineMutation !== true;
@@ -150,8 +188,10 @@ export function buildFinanceLearningRetrievalReview(params: {
       preflightCandidateCount,
       postAttachCandidateCount,
       newlyRetrievableCandidateDelta,
+      applicationReadyCandidateCount,
       reusedExistingBeforeLearning: receipt.reusedExistingBeforeLearning === true,
       becameRetrievableAfterLearning: postAttachCandidateCount > 0,
+      applicationReadyAfterLearning: applicationReadyCandidateCount > 0,
       weak,
       normalizedArticleArtifactPaths: stringArrayValue(receipt.normalizedArticleArtifactPaths),
       normalizedReferenceArtifactPaths: stringArrayValue(receipt.normalizedReferenceArtifactPaths),
@@ -168,9 +208,13 @@ export function buildFinanceLearningRetrievalReview(params: {
           ? "no_retained_capability_candidates"
           : row.postAttachCandidateCount <= 0
             ? "not_retrievable_after_learning"
-            : "receipt_contract_incomplete",
+            : row.applicationReadyCandidateCount <= 0
+              ? "not_application_ready_after_learning"
+              : "receipt_contract_incomplete",
       action:
-        "Re-extract or retag the source into stable finance domains and capability tags before treating this learning as internalized.",
+        row.applicationReadyCandidateCount <= 0
+          ? "Re-run inspect/apply so retained capabilities expose reuse guidance, required inputs, evidence categories, causal checks, implementation checks, and risk checks before treating this learning as internalized."
+          : "Re-extract or retag the source into stable finance domains and capability tags before treating this learning as internalized.",
     }));
 
   return {
@@ -183,6 +227,7 @@ export function buildFinanceLearningRetrievalReview(params: {
       validReceipts: validReceipts.length,
       invalidReceipts: invalidReceipts.length,
       retrievableAfterLearning: rows.filter((row) => row.becameRetrievableAfterLearning).length,
+      applicationReadyAfterLearning: rows.filter((row) => row.applicationReadyAfterLearning).length,
       newlyRetrievable: rows.filter((row) => row.newlyRetrievableCandidateDelta > 0).length,
       reusedExistingBeforeLearning: rows.filter((row) => row.reusedExistingBeforeLearning).length,
       weakLearningReceipts: weakLearningIntents.length,

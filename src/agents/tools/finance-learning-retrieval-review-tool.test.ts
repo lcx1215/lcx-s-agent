@@ -45,6 +45,30 @@ describe("finance learning retrieval review tool", () => {
       noDoctrineMutation: true,
       normalizedArticleArtifactPaths: ["memory/finance-articles/2026-04-27/a.md"],
       normalizedReferenceArtifactPaths: [],
+      postAttachCapabilityRetrieval: {
+        ok: true,
+        candidateCount: 1,
+        candidates: [
+          {
+            capabilityName: "ETF timing method",
+            reuseGuidance: {
+              applicationBoundary: "research_only",
+              attachmentPoint: "finance_framework_domain:etf_regime",
+              useFor: "Use for ETF regime research with tactical timing checks.",
+              requiredInputs: ["ETF breadth data", "walk-forward timing sample"],
+              requiredEvidenceCategories: ["etf_regime_evidence", "backtest_or_empirical_evidence"],
+              causalCheck:
+                "ETF breadth deterioration can transmit into lower timing reliability and wider drawdown risk.",
+              riskChecks: [
+                "Whipsaw risk in short windows.",
+                "Overfitting risk in selected regimes.",
+              ],
+              implementationCheck: "Refresh inputs before applying the method.",
+              doNotUseFor: "Do not use as execution approval.",
+            },
+          },
+        ],
+      },
     });
     await seedJson(workspaceDir, "memory/finance-learning-retrieval-receipts/2026-04-27/b.json", {
       schemaVersion: 1,
@@ -62,8 +86,42 @@ describe("finance learning retrieval review tool", () => {
       noDoctrineMutation: true,
       normalizedArticleArtifactPaths: ["memory/finance-articles/2026-04-27/b.md"],
       normalizedReferenceArtifactPaths: [],
+      postAttachCapabilityRetrieval: {
+        ok: true,
+        candidateCount: 0,
+        candidates: [],
+      },
     });
     await seedJson(workspaceDir, "memory/finance-learning-retrieval-receipts/2026-04-27/c.json", {
+      schemaVersion: 1,
+      boundary: "finance_learning_retrieval_receipt",
+      generatedAt: "2026-04-27T03:00:00.000Z",
+      sourceName: "Unguided Note",
+      learningIntent: "学习一个能检索但不能应用的能力",
+      retainedCandidateCount: 1,
+      preflightCandidateCount: 0,
+      postAttachCandidateCount: 1,
+      newlyRetrievableCandidateDelta: 1,
+      reusedExistingBeforeLearning: false,
+      retrievalFirstLearningApplied: true,
+      noExecutionAuthority: true,
+      noDoctrineMutation: true,
+      normalizedArticleArtifactPaths: ["memory/finance-articles/2026-04-27/c.md"],
+      normalizedReferenceArtifactPaths: [],
+      postAttachCapabilityRetrieval: {
+        ok: true,
+        candidateCount: 1,
+        candidates: [
+          {
+            capabilityName: "Unguided capability",
+            reuseGuidance: {
+              applicationBoundary: "research_only",
+            },
+          },
+        ],
+      },
+    });
+    await seedJson(workspaceDir, "memory/finance-learning-retrieval-receipts/2026-04-27/d.json", {
       boundary: "language_routing_candidate",
     });
     const tool = createFinanceLearningRetrievalReviewTool({ workspaceDir });
@@ -79,20 +137,25 @@ describe("finance learning retrieval review tool", () => {
         updated: true,
         reviewPath: "memory/finance-learning-retrieval-reviews/2026-04-27.json",
         counts: {
-          receiptFiles: 3,
-          validReceipts: 2,
+          receiptFiles: 4,
+          validReceipts: 3,
           invalidReceipts: 1,
-          retrievableAfterLearning: 1,
-          newlyRetrievable: 1,
+          retrievableAfterLearning: 2,
+          applicationReadyAfterLearning: 1,
+          newlyRetrievable: 2,
           reusedExistingBeforeLearning: 0,
-          weakLearningReceipts: 1,
+          weakLearningReceipts: 2,
         },
-        weakLearningIntents: [
+        weakLearningIntents: expect.arrayContaining([
           expect.objectContaining({
             learningIntent: "学习一个还没有稳定标签的策略",
             reason: "not_retrievable_after_learning",
           }),
-        ],
+          expect.objectContaining({
+            learningIntent: "学习一个能检索但不能应用的能力",
+            reason: "not_application_ready_after_learning",
+          }),
+        ]),
         separationContract: expect.objectContaining({
           languageCorpusUntouched: true,
           protectedMemoryUntouched: true,
@@ -139,6 +202,7 @@ describe("finance learning retrieval review tool", () => {
           validReceipts: 0,
           invalidReceipts: 0,
           retrievableAfterLearning: 0,
+          applicationReadyAfterLearning: 0,
           newlyRetrievable: 0,
           reusedExistingBeforeLearning: 0,
           weakLearningReceipts: 0,
