@@ -25,6 +25,7 @@ from learning_goal_registry import (
     looks_like_meta_instruction,
     resolve_learning_goal,
 )
+from nlu_feedback_memory import safe_append_feedback_event
 
 
 def current_lane_key() -> str:
@@ -598,6 +599,25 @@ def main():
 
     result["feedback"] = build_feedback(result)
     result["reply_text"] = format_feedback_text(result["feedback"], brief=bool(result.get("brief")))
+    result["feedback_memory"] = safe_append_feedback_event(
+        raw_text=text,
+        source="learn_nlu",
+        reply_text=str(result.get("reply_text") or ""),
+        feedback=result["feedback"],
+        parser={
+            "intent": "learn_nlu",
+            "tasks": [
+                {
+                    "action": "learn_topic",
+                    "topic": topic,
+                    "family": (result.get("goals") or [{}])[0].get("family", "") if result.get("goals") else "",
+                }
+                for topic in result.get("topics", [])
+            ],
+        },
+        executed=[],
+        action="learn_nlu",
+    )
 
     # direct-path Feishu send for lobster_command_v2.sh -> learn_nlu.py
     try:

@@ -9,6 +9,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from nlu_feedback_memory import safe_append_feedback_event
 
 
 def current_lane_key() -> str:
@@ -247,11 +252,21 @@ def main() -> None:
             "feishu_send": {},
             "text": obj.get("reply_preview") or "我需要你再说清楚要学习、查看队列、查看状态，还是跑下一条。",
         }
+        feedback_memory = safe_append_feedback_event(
+            raw_text=raw,
+            source="run_nlu_action_router",
+            reply_text=feedback["text"],
+            feedback=feedback,
+            parser=obj,
+            executed=[],
+            action=str(obj.get("intent") or ""),
+        )
         print(json.dumps({
             "ok": True,
             "mode": "clarify",
             "reply": feedback["text"],
             "feedback": feedback,
+            "feedback_memory": feedback_memory,
             "parser": obj,
             "executed": [],
         }, ensure_ascii=False, indent=2))
@@ -305,6 +320,15 @@ def main() -> None:
 
     feedback = build_feedback(obj, executed)
     reply = format_feedback_text(feedback)
+    feedback_memory = safe_append_feedback_event(
+        raw_text=raw,
+        source="run_nlu_action_router",
+        reply_text=reply,
+        feedback=feedback,
+        parser=obj,
+        executed=executed,
+        action=str(obj.get("intent") or ""),
+    )
 
     print(json.dumps({
         "ok": True,
@@ -313,6 +337,7 @@ def main() -> None:
         "reply": reply,
         "parse_reply": obj.get("reply_preview"),
         "feedback": feedback,
+        "feedback_memory": feedback_memory,
         "parser": obj,
         "executed": executed,
     }, ensure_ascii=False, indent=2))
