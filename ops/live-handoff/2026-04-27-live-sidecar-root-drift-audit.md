@@ -443,8 +443,52 @@ fail-closed health patch only; the actual proxy migration remains separate
 because replacing the front-door event proxy is higher risk than scheduler or
 watchdog sidecars.
 
+## Feishu Proxy Runtime Migration
+
+Current live status:
+
+```text
+feishuProxyPreflight=ready
+feishuProxyInstall=applied
+targetRoot=/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw
+healthz.ok=true
+healthz.port=3011
+host_watchdog.ok=true
+host_watchdog.issues=none
+feishu_proxy.status=ok
+feishu_proxy.points_at_desktop=false
+feishu_proxy.points_at_runtime=true
+```
+
+Generated receipts:
+
+```text
+ops/live-handoff/launchagent-candidates/live-sidecar-feishu-proxy-preflight-receipt.json
+ops/live-handoff/launchagent-candidates/live-sidecar-feishu-proxy-install-receipt.json
+```
+
+The Feishu/Lark proxy LaunchAgent now points at the non-Desktop runtime bundle:
+
+```text
+ProgramArguments=/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/feishu_event_proxy.py
+WorkingDirectory=/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw
+OPENCLAW_ROOT=/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw
+OPENCLAW_BIN=/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/send_feishu_reply.sh
+```
+
+The migration preserved the existing origin URL:
+
+```text
+ORIGINAL_FEISHU_URL=http://127.0.0.1:3000/feishu/events
+```
+
+Important boundary: this is a runtime-root migration and health restoration for
+the front-door Feishu/Lark proxy. It does not change the proxy routing logic, does
+not change provider config, and does not send test messages to Lark during
+install; verification used `/healthz` plus watchdog receipt.
+
 ## Out Of Scope
 
 - No deletion of old `Desktop/openclaw`.
-- No migration of Feishu/Lark proxy yet.
-- No Feishu/Lark proxy restart in this audit step.
+- No deletion of old Feishu/Lark proxy backups.
+- No provider config change.

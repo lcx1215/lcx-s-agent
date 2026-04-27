@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-27T22:35:22.020Z",
+  "legacyRoot": "/Users/liuchengxu/Desktop/openclaw",
+  "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
+  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-feishu-proxy-preflight-receipt.json",
+  "writeRuntime": true,
+  "readyForLiveInstall": true,
+  "blockedReasons": [],
+  "files": [
+    {
+      "relativePath": "feishu_event_proxy.py",
+      "legacyExists": true,
+      "targetExists": true,
+      "legacySha256": "73cf46e961830e22990aad3f09204f926ccab56cc55c5d0deb75b35e123354f5",
+      "targetSha256": "73cf46e961830e22990aad3f09204f926ccab56cc55c5d0deb75b35e123354f5",
+      "copied": true
+    },
+    {
+      "relativePath": "run_feishu_proxy.sh",
+      "legacyExists": true,
+      "targetExists": true,
+      "legacySha256": "43e5de0819185f89f71cf4f32c0c6bc1e6af9c7f69a6adee090059974ad319d1",
+      "targetSha256": "43e5de0819185f89f71cf4f32c0c6bc1e6af9c7f69a6adee090059974ad319d1",
+      "copied": true
+    },
+    {
+      "relativePath": "send_feishu_reply.sh",
+      "legacyExists": true,
+      "targetExists": true,
+      "legacySha256": "0c734a6fb1f895f565049cc6f27a29bf0de9eb4711334ce8d68efb1469cdd834",
+      "targetSha256": "0c734a6fb1f895f565049cc6f27a29bf0de9eb4711334ce8d68efb1469cdd834",
+      "copied": true
+    },
+    {
+      "relativePath": "scripts/learning_goal_registry.py",
+      "legacyExists": true,
+      "targetExists": true,
+      "legacySha256": "eea68b4a221030c84ee472ee83c2ee1ba7e4ad5d753b2913e8d4831595bc43d6",
+      "targetSha256": "eea68b4a221030c84ee472ee83c2ee1ba7e4ad5d753b2913e8d4831595bc43d6",
+      "copied": true
+    }
+  ],
+  "currentLaunchAgent": {
+    "exists": true,
+    "pointsAtLegacyRoot": true,
+    "pointsAtTargetRoot": false
+  },
+  "smoke": {
+    "port": 38112,
+    "commandResults": [
+      {
+        "command": "python3 -m py_compile feishu_event_proxy.py scripts/learning_goal_registry.py",
+        "code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "command": "LOBSTER_PROXY_PORT=38112 python3 feishu_event_proxy.py + curl /healthz",
+        "code": 0,
+        "stdout": "{\"ok\": true, \"port\": 38112, \"origin_url\": \"http://127.0.0.1:3000/feishu/events\", \"command_bin\": \"/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/lobster_command_v2.sh\", \"reply_bin\": \"/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/send_feishu_reply.sh\", \"last_feishu_target_exists\": true}",
+        "stderr": "\n"
+      }
+    ],
+    "health": {
+      "ok": true,
+      "port": 38112,
+      "origin_url": "http://127.0.0.1:3000/feishu/events",
+      "command_bin": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/lobster_command_v2.sh",
+      "reply_bin": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/send_feishu_reply.sh",
+      "last_feishu_target_exists": true
+    }
+  },
+  "boundary": [
+    "Copies only existing live Feishu/Lark proxy dependencies into the non-Desktop runtime.",
+    "Uses an alternate smoke port and does not replace the live 3011 proxy.",
+    "Does not modify LaunchAgents.",
+    "Does not send Feishu/Lark messages."
+  ]
+}
