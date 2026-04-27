@@ -81,7 +81,7 @@ describe("live sidecar scheduler dry-run", () => {
     expect(report.stateFiles[0]?.summary).toEqual({ status: "success", last_exit_code: 0 });
   });
 
-  it("marks migration ready only when plist, legacy files, and target files line up", () => {
+  it("blocks migration when target files exist but are not tracked", () => {
     const legacyRoot = makeTmpRoot("legacy-ready");
     const targetRoot = makeTmpRoot("target-ready");
     const plistDir = makeTmpRoot("plist-ready");
@@ -104,7 +104,9 @@ describe("live sidecar scheduler dry-run", () => {
       checkedAt: "2026-04-27T00:00:00.000Z",
     });
 
-    expect(report.migrationReady).toBe(true);
-    expect(report.blockedReasons).toEqual([]);
+    expect(report.migrationReady).toBe(false);
+    expect(report.blockedReasons).toContain(
+      "target scheduler dependency exists but is not tracked by Git: daily_learning_runner.py, scripts/lobster_paths.py, lobster_orchestrator.py",
+    );
   });
 });

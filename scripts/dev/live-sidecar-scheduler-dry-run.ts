@@ -220,6 +220,9 @@ export function buildSchedulerDryRunReport(params: {
   const blockedReasons: string[] = [];
   const missingLegacy = legacyRequiredFiles.filter((entry) => !entry.exists);
   const missingTarget = targetRequiredFiles.filter((entry) => !entry.exists);
+  const untrackedTarget = targetRequiredFiles.filter(
+    (entry) => entry.exists && entry.trackedByGit !== true,
+  );
   if (!launchAgent.exists) {
     blockedReasons.push("scheduler LaunchAgent plist was not found");
   } else if (!launchAgent.pointsAtLegacyRoot) {
@@ -233,6 +236,11 @@ export function buildSchedulerDryRunReport(params: {
   if (missingTarget.length > 0) {
     blockedReasons.push(
       `target clean repo still lacks scheduler dependency: ${missingTarget.map((entry) => entry.relativePath).join(", ")}`,
+    );
+  }
+  if (untrackedTarget.length > 0) {
+    blockedReasons.push(
+      `target scheduler dependency exists but is not tracked by Git: ${untrackedTarget.map((entry) => entry.relativePath).join(", ")}`,
     );
   }
 
