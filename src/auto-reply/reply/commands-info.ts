@@ -7,6 +7,7 @@ import {
 } from "../status.js";
 import { buildContextReply } from "./commands-context-report.js";
 import { buildExportSessionReply } from "./commands-export-session.js";
+import { buildProtocolInfoReply } from "./commands-protocol-info.js";
 import { buildStatusReply } from "./commands-status.js";
 import type { CommandHandler } from "./commands-types.js";
 
@@ -14,7 +15,15 @@ export const handleHelpCommand: CommandHandler = async (params, allowTextCommand
   if (!allowTextCommands) {
     return null;
   }
-  if (params.command.commandBodyNormalized !== "/help") {
+  const protocolReply = buildProtocolInfoReply({
+    text: params.command.commandBodyNormalized,
+    cfg: params.cfg,
+    provider: params.provider,
+    model: params.model,
+    sessionEntry: params.sessionEntry,
+  });
+  const helpRequested = params.command.commandBodyNormalized === "/help" || Boolean(protocolReply);
+  if (!helpRequested) {
     return null;
   }
   if (!params.command.isAuthorizedSender) {
@@ -25,7 +34,7 @@ export const handleHelpCommand: CommandHandler = async (params, allowTextCommand
   }
   return {
     shouldContinue: false,
-    reply: { text: buildHelpMessage(params.cfg) },
+    reply: protocolReply ?? { text: buildHelpMessage(params.cfg) },
   };
 };
 

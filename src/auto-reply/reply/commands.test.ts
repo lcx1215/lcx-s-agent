@@ -1002,6 +1002,1238 @@ describe("handleCommands context", () => {
       }
     }
   });
+
+  it.each(["how do you work", "what is your default mode?", "你现在按什么协议工作"])(
+    "answers protocol overview question %s with the existing help surface",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("ℹ️ Help");
+      expect(result.reply?.text).toContain("🦞 Lobster: control_room_main_lane");
+    },
+  );
+
+  it.each(["现在修到哪了", "还剩多少", "is this live-fixed"])(
+    "answers status-readback question %s with deterministic evidence boundaries",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🧭 Status readback");
+      expect(result.reply?.text).toContain("Classification: this is a status-readback request");
+      expect(result.reply?.text).toContain(
+        "Live-fixed: unproven unless migration, build, restart, live probe, and visible Lark/Feishu reply evidence are all present.",
+      );
+      expect(result.reply?.text).toContain("Next check: name the first missing evidence layer");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["lobster开了吗？", "is lobster on"])(
+    "answers lobster state question %s with a short direct reply",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🦞 Lobster");
+      expect(result.reply?.text).toContain("Plugin: optional");
+      expect(result.reply?.text).toContain("Use /context detail for the full protocol block.");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["dm隔离吗", "are dm sessions isolated"])(
+    "answers dm isolation question %s with a short direct reply",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🧵 DM scope");
+      expect(result.reply?.text).toContain(
+        "DM sessions default to main and are not isolated unless routing overrides dmScope.",
+      );
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["默认模型是什么", "what is the default model"])(
+    "answers default model question %s with a short direct reply",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🧠 Default model");
+      expect(result.reply?.text).toContain("moonshot/kimi-k2.6");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["搜索现在正常吗", "is web search working now"])(
+    "answers search/provider health question %s from current runtime/config truth instead of stale failure memory",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+        models: {
+          providers: {
+            moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      params.provider = "moonshot";
+      params.model = "kimi-k2.6";
+      params.sessionEntry = {
+        sessionId: "search-health",
+        updatedAt: 0,
+        modelProvider: "moonshot",
+        model: "kimi-k2.6",
+      } as SessionEntry;
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🔎 Search and provider health");
+      expect(result.reply?.text).toContain("Provider-native search: not connected");
+      expect(result.reply?.text).toContain("OpenClaw web_search: connected");
+      expect(result.reply?.text).toContain("Recent degradation record: none found");
+      expect(result.reply?.text).toContain(
+        "Current truth here is runtime/config surface only, not a fresh live probe.",
+      );
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it("answers search/provider health with recent degradation evidence when a watchtower anomaly exists", async () => {
+    await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+    await fs.mkdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(testWorkspaceDir, "memory", "current-research-line.md"),
+      "# current\n",
+    );
+    await fs.writeFile(
+      path.join(
+        testWorkspaceDir,
+        "bank",
+        "watchtower",
+        "anomalies",
+        "provider_degradation-abc123.json",
+      ),
+      JSON.stringify({
+        version: 1,
+        generatedAt: "2026-04-23T12:20:00.000Z",
+        firstSeenAt: "2026-04-23T12:00:00.000Z",
+        lastSeenAt: "2026-04-23T12:20:00.000Z",
+        occurrenceCount: 2,
+        severity: "medium",
+        category: "provider_degradation",
+        source: "feishu.monitor.transport",
+        problem: "web search degraded under current provider path",
+        impact: "search-backed answers may narrow or fail",
+        suggestedScope: "smallest safe patch only",
+        evidence: ["provider=moonshot"],
+        fingerprint: "abc123def4567890",
+      }),
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+      models: {
+        providers: {
+          moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
+        },
+      },
+    } as OpenClawConfig;
+    const params = buildParams("搜索现在正常吗", cfg);
+    params.provider = "moonshot";
+    params.model = "kimi-k2.6";
+    params.sessionEntry = {
+      modelProvider: "moonshot",
+      model: "kimi-k2.6",
+    } as SessionEntry;
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("🔎 Search and provider health");
+    expect(result.reply?.text).toContain(
+      "Recent degradation record: feishu.monitor.transport @ 2026-04-23T12:20:00.000Z",
+    );
+    expect(result.reply?.text).toContain(
+      "Recent degradation problem: web search degraded under current provider path",
+    );
+    expect(result.reply?.text).toContain(
+      "Current truth here is runtime/config surface only, not a fresh live probe.",
+    );
+    expect(result.reply?.text).not.toContain("ℹ️ Help");
+  });
+
+  it.each(["当前运行模型是什么", "what model are you using now"])(
+    "answers runtime model question %s with selected vs active model state",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      params.provider = "moonshot";
+      params.model = "kimi-k2.6";
+      params.sessionEntry = {
+        sessionId: "runtime-model",
+        updatedAt: 0,
+        modelProvider: "minimax-portal",
+        model: "MiniMax-M2.7",
+      } as SessionEntry;
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🎛️ Runtime model");
+      expect(result.reply?.text).toContain("Selected: moonshot/kimi-k2.6");
+      expect(result.reply?.text).toContain("Active: minimax-portal/MiniMax-M2.7");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["哪些工具真的接上了", "what tools are actually connected"])(
+    "answers connected capability question %s with a bounded truthful surface",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      params.provider = "moonshot";
+      params.model = "kimi-k2.6";
+      params.sessionEntry = {
+        sessionId: "connected-capabilities",
+        updatedAt: 0,
+        modelProvider: "minimax-portal",
+        model: "MiniMax-M2.7",
+      } as SessionEntry;
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🧰 Connected capabilities");
+      expect(result.reply?.text).toContain("Active model: minimax-portal/MiniMax-M2.7");
+      expect(result.reply?.text).toContain("Provider-native tools: none connected");
+      expect(result.reply?.text).toContain("OpenClaw tools: web_search, web_fetch, memory_search");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["你能用 web-search 吗", "can you use web-search"])(
+    "answers specific capability question %s with provider-vs-openclaw truth",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+        models: {
+          providers: {
+            moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      params.provider = "moonshot";
+      params.model = "kimi-k2.6";
+      params.sessionEntry = {
+        sessionId: "specific-capability",
+        updatedAt: 0,
+        modelProvider: "moonshot",
+        model: "kimi-k2.6",
+      } as SessionEntry;
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🔎 Capability check: web-search");
+      expect(result.reply?.text).toContain("Provider-native web-search: not connected");
+      expect(result.reply?.text).toContain("OpenClaw web_search: connected");
+      expect(result.reply?.text).toContain("runtime truth, not provider marketing");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["你能用 quickjs 吗", "can you use file_search"])(
+    "answers provider-only capability question %s without inventing a generic tool",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+        models: {
+          providers: {
+            moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      params.provider = "moonshot";
+      params.model = "kimi-k2.6";
+      params.sessionEntry = {
+        sessionId: "provider-only-capability",
+        updatedAt: 0,
+        modelProvider: "moonshot",
+        model: "kimi-k2.6",
+      } as SessionEntry;
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🔎 Capability check:");
+      expect(result.reply?.text).toContain("Provider-native");
+      expect(result.reply?.text).toContain(
+        question.includes("file_search")
+          ? "Provider-native file_search: unknown"
+          : "Provider-native quickjs: not connected",
+      );
+      expect(result.reply?.text).toContain("OpenClaw generic tool: none");
+      expect(result.reply?.text).toContain("runtime truth, not provider marketing");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["你现在还不能做什么", "what capabilities are still missing"])(
+    "answers capability-limit question %s with explicit missing provider-native tools",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+        models: {
+          providers: {
+            moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      params.provider = "moonshot";
+      params.model = "kimi-k2.6";
+      params.sessionEntry = {
+        sessionId: "capability-limits",
+        updatedAt: 0,
+        modelProvider: "moonshot",
+        model: "kimi-k2.6",
+      } as SessionEntry;
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("⛔ Capability limits");
+      expect(result.reply?.text).toContain("Active model: moonshot/kimi-k2.6");
+      expect(result.reply?.text).toContain(
+        "web-search, fetch, memory, excel, date, quickjs, code_runner, rethink",
+      );
+      expect(result.reply?.text).toContain("runtime truth, not provider marketing");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["今天真的学进去了吗", "what did you learn today"])(
+    "answers learning-truth question %s from explicit learning evidence instead of freeform claims",
+    async (question) => {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+      await fs.writeFile(
+        path.join(testWorkspaceDir, "memory", "2026-04-23-lobster-workface.md"),
+        [
+          "# Lobster Workface: 2026-04-23",
+          "",
+          "- Learning Items: 1",
+          "",
+          "## Yesterday Learned",
+          "- keep: ranking is not sizing",
+          "- discard: fake precision from unconstrained optimization",
+          "- replay: ask what evidence would falsify the sizing rule",
+          "- next eval: check whether this changed today's evidence threshold",
+          "",
+        ].join("\n"),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("📚 Learning status");
+      expect(result.reply?.text).toContain("Evidence: lobster-workface 2026-04-23");
+      expect(result.reply?.text).toContain("Retained: ranking is not sizing");
+      expect(result.reply?.text).toContain(
+        "This is the latest explicit learning evidence, not a self-claim.",
+      );
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["学习 session 现在还活着吗", "你刚才真的开始学那篇论文了吗"])(
+    "answers learning-receipt question %s from recorded workflow and durable evidence instead of vibes",
+    async (question) => {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes"), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(testWorkspaceDir, "memory", "2026-04-23-lobster-workface.md"),
+        [
+          "# Lobster Workface: 2026-04-23",
+          "",
+          "- Learning Items: 1",
+          "",
+          "## Yesterday Learned",
+          "- keep: ranking is not sizing",
+          "- discard: fake precision from unconstrained optimization",
+          "- replay: ask what evidence would falsify the sizing rule",
+          "- next eval: check whether this changed today's evidence threshold",
+          "",
+        ].join("\n"),
+      );
+      await fs.writeFile(
+        path.join(
+          testWorkspaceDir,
+          "memory",
+          "feishu-learning-timeboxes",
+          "2026-04-23T10-00-00.000Z__oc-learning.json",
+        ),
+        JSON.stringify({
+          version: 1,
+          sessionId: "2026-04-23T10-00-00.000Z__oc-learning",
+          status: "running",
+          startedAt: "2026-04-23T10:00:00.000Z",
+          deadlineAt: "2099-04-23T11:00:00.000Z",
+          lastHeartbeatAt: "2026-04-23T10:20:00.000Z",
+          iterationsCompleted: 2,
+          iterationsFailed: 0,
+        }),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🧾 Learning task receipt");
+      expect(result.reply?.text).toContain(
+        "Latest session receipt: 2026-04-23T10-00-00.000Z__oc-learning",
+      );
+      expect(result.reply?.text).toContain("Workflow status: running");
+      expect(result.reply?.text).toContain("Recent workflow risk: none found");
+      expect(result.reply?.text).toContain("Durable artifact: lobster-workface 2026-04-23");
+      expect(result.reply?.text).toContain(
+        "Execution vs explanation: I can prove both a workflow receipt and a durable learning artifact.",
+      );
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it("answers learning-receipt questions with explicit workflow anomaly evidence when recent downgrade/failure evidence exists", async () => {
+    await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+    await fs.mkdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(testWorkspaceDir, "memory", "current-research-line.md"),
+      [
+        "# Current Research Line",
+        "current_focus: tighten control-room honesty",
+        "line_status: active",
+        "top_decision: keep bounded truthful surfaces",
+        "next_step: add more hard status answers",
+        "research_guardrail: do not overclaim capabilities",
+        "current_session_summary: capability truth before freeform generation",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(
+        testWorkspaceDir,
+        "bank",
+        "watchtower",
+        "anomalies",
+        "learning_quality_drift-abc123.json",
+      ),
+      JSON.stringify({
+        version: 1,
+        generatedAt: "2026-04-23T12:40:00.000Z",
+        firstSeenAt: "2026-04-23T12:00:00.000Z",
+        lastSeenAt: "2026-04-23T12:40:00.000Z",
+        occurrenceCount: 1,
+        severity: "medium",
+        category: "learning_quality_drift",
+        source: "feishu.learning_command",
+        problem: "background learning timebox iteration failed",
+        impact: "fewer study passes than requested may have completed",
+        suggestedScope: "smallest safe patch only",
+        evidence: ["session_id=oc-learning"],
+        fingerprint: "abc123def4567890",
+      }),
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+    } as OpenClawConfig;
+    const params = buildParams("你刚才真的开始学那篇论文了吗", cfg);
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("🧾 Learning task receipt");
+    expect(result.reply?.text).toContain(
+      "Recent workflow risk: learning_quality_drift @ 2026-04-23T12:40:00.000Z",
+    );
+    expect(result.reply?.text).toContain(
+      "Recent workflow problem: background learning timebox iteration failed",
+    );
+    expect(result.reply?.text).not.toContain("ℹ️ Help");
+  });
+
+  it.each([
+    "你是不是把单次 pass 说成后台持续学习了",
+    "did you pretend a background learning session started",
+  ])(
+    "answers promise/execution-risk question %s from workflow receipts instead of blending downgraded and started states",
+    async (question) => {
+      await fs.mkdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"), {
+        recursive: true,
+      });
+      const anomalyEntries = await fs
+        .readdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"))
+        .catch(() => []);
+      await Promise.all(
+        anomalyEntries.map((name) =>
+          fs.rm(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies", name), {
+            force: true,
+          }),
+        ),
+      );
+      await fs.mkdir(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes"), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(
+          testWorkspaceDir,
+          "memory",
+          "feishu-learning-timeboxes",
+          "2026-04-23T10-00-00.000Z__oc-learning.json",
+        ),
+        JSON.stringify({
+          version: 1,
+          sessionId: "2026-04-23T10-00-00.000Z__oc-learning",
+          status: "running",
+          startedAt: "2026-04-23T10:00:00.000Z",
+          deadlineAt: "2099-04-23T11:00:00.000Z",
+          lastHeartbeatAt: "2026-04-23T10:20:00.000Z",
+          iterationsCompleted: 2,
+          iterationsFailed: 0,
+        }),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("⚠️ Promise and execution risk");
+      expect(result.reply?.text).toContain(
+        "Latest workflow receipt: 2026-04-23T10-00-00.000Z__oc-learning (running)",
+      );
+      expect(result.reply?.text).toContain(
+        "Persistent background learning claim: supported by a live session receipt.",
+      );
+      expect(result.reply?.text).toContain("Recent workflow risk: none found");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it("answers promise-risk questions with explicit learning-workflow anomalies when recent downgrade evidence exists", async () => {
+    await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+    const workfaceEntries = await fs.readdir(path.join(testWorkspaceDir, "memory")).catch(() => []);
+    await Promise.all(
+      workfaceEntries
+        .filter((name) => /^\d{4}-\d{2}-\d{2}-lobster-workface\.md$/u.test(name))
+        .map((name) => fs.rm(path.join(testWorkspaceDir, "memory", name), { force: true })),
+    );
+    await fs.mkdir(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes"), {
+      recursive: true,
+    });
+    const timeboxEntries = await fs
+      .readdir(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes"))
+      .catch(() => []);
+    await Promise.all(
+      timeboxEntries.map((name) =>
+        fs.rm(path.join(testWorkspaceDir, "memory", "feishu-learning-timeboxes", name), {
+          force: true,
+        }),
+      ),
+    );
+    await fs.mkdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"), {
+      recursive: true,
+    });
+    const anomalyEntries = await fs
+      .readdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"))
+      .catch(() => []);
+    await Promise.all(
+      anomalyEntries.map((name) =>
+        fs.rm(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies", name), {
+          force: true,
+        }),
+      ),
+    );
+    await fs.writeFile(
+      path.join(testWorkspaceDir, "memory", "current-research-line.md"),
+      [
+        "# Current Research Line",
+        "current_focus: tighten control-room honesty",
+        "line_status: active",
+        "top_decision: keep bounded truthful surfaces",
+        "next_step: add more hard status answers",
+        "research_guardrail: do not overclaim capabilities",
+        "current_session_summary: capability truth before freeform generation",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(
+        testWorkspaceDir,
+        "bank",
+        "watchtower",
+        "anomalies",
+        "write_edit_failure-abc123.json",
+      ),
+      JSON.stringify({
+        version: 1,
+        generatedAt: "2026-04-23T12:30:00.000Z",
+        firstSeenAt: "2026-04-23T12:00:00.000Z",
+        lastSeenAt: "2026-04-23T12:30:00.000Z",
+        occurrenceCount: 1,
+        severity: "medium",
+        category: "write_edit_failure",
+        source: "feishu.learning_command",
+        problem: "failed to start learning timebox because workspace dir is unavailable",
+        impact: "the request was downgraded to a single learning pass",
+        suggestedScope: "smallest safe patch only",
+        evidence: ["chat_id=oc_test"],
+        fingerprint: "abc123def4567890",
+      }),
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+    } as OpenClawConfig;
+    const params = buildParams("did you pretend a background learning session started", cfg);
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("⚠️ Promise and execution risk");
+    expect(result.reply?.text).toContain(
+      "Recent workflow risk: write_edit_failure @ 2026-04-23T12:30:00.000Z",
+    );
+    expect(result.reply?.text).toContain(
+      "Recent workflow problem: failed to start learning timebox because workspace dir is unavailable",
+    );
+    expect(result.reply?.text).not.toContain("ℹ️ Help");
+  });
+
+  it.each(["你是不是还没写进长期记忆", "did that reach long-term storage"])(
+    "answers persistence-state question %s by separating session understanding from durable storage",
+    async (question) => {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+      await fs.mkdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"), {
+        recursive: true,
+      });
+      const anomalyEntries = await fs
+        .readdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"))
+        .catch(() => []);
+      await Promise.all(
+        anomalyEntries.map((name) =>
+          fs.rm(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies", name), {
+            force: true,
+          }),
+        ),
+      );
+      await fs.writeFile(
+        path.join(testWorkspaceDir, "memory", "2026-04-23-lobster-workface.md"),
+        [
+          "# Lobster Workface: 2026-04-23",
+          "",
+          "- Learning Items: 1",
+          "",
+          "## Yesterday Learned",
+          "- keep: ranking is not sizing",
+          "- discard: fake precision from unconstrained optimization",
+          "- replay: ask what evidence would falsify the sizing rule",
+          "- next eval: check whether this changed today's evidence threshold",
+          "",
+        ].join("\n"),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("💾 Persistence state");
+      expect(result.reply?.text).toContain("Durable artifact: lobster-workface 2026-04-23");
+      expect(result.reply?.text).toContain(
+        "Long-term storage claim: supported for the recorded learning artifact.",
+      );
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each([
+    "写入是不是失败了但当前session里已经懂了",
+    "did the write fail but stay understood in the current session",
+  ])(
+    "answers write-outcome question %s by separating durable write success from session-only understanding",
+    async (question) => {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+      await fs.mkdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"), {
+        recursive: true,
+      });
+      const anomalyEntries = await fs
+        .readdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"))
+        .catch(() => []);
+      await Promise.all(
+        anomalyEntries.map((name) =>
+          fs.rm(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies", name), {
+            force: true,
+          }),
+        ),
+      );
+      await fs.writeFile(
+        path.join(testWorkspaceDir, "memory", "2026-04-23-lobster-workface.md"),
+        [
+          "# Lobster Workface: 2026-04-23",
+          "",
+          "- Learning Items: 1",
+          "",
+          "## Yesterday Learned",
+          "- keep: ranking is not sizing",
+          "- discard: fake precision from unconstrained optimization",
+          "- replay: ask what evidence would falsify the sizing rule",
+          "- next eval: check whether this changed today's evidence threshold",
+          "",
+        ].join("\n"),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🧱 Write outcome");
+      expect(result.reply?.text).toContain("Durable write: present (2026-04-23)");
+      expect(result.reply?.text).toContain("Current-session understanding: yes");
+      expect(result.reply?.text).toContain(
+        "Outcome: durable artifact write succeeded for the recorded learning result.",
+      );
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it("answers write-outcome questions with explicit write-failure evidence when a watchtower anomaly exists", async () => {
+    await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+    const memoryEntries = await fs.readdir(path.join(testWorkspaceDir, "memory")).catch(() => []);
+    await Promise.all(
+      memoryEntries
+        .filter((name) => /^\d{4}-\d{2}-\d{2}-lobster-workface\.md$/u.test(name))
+        .map((name) => fs.rm(path.join(testWorkspaceDir, "memory", name), { force: true })),
+    );
+    await fs.mkdir(path.join(testWorkspaceDir, "bank", "watchtower", "anomalies"), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(testWorkspaceDir, "memory", "current-research-line.md"),
+      [
+        "# Current Research Line",
+        "current_focus: tighten control-room honesty",
+        "line_status: active",
+        "top_decision: keep bounded truthful surfaces",
+        "next_step: add more hard status answers",
+        "research_guardrail: do not overclaim capabilities",
+        "current_session_summary: bounded understanding is present",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(
+        testWorkspaceDir,
+        "bank",
+        "watchtower",
+        "anomalies",
+        "write_edit_failure-abc123.json",
+      ),
+      JSON.stringify({
+        version: 1,
+        generatedAt: "2026-04-23T12:10:00.000Z",
+        firstSeenAt: "2026-04-23T12:00:00.000Z",
+        lastSeenAt: "2026-04-23T12:10:00.000Z",
+        occurrenceCount: 1,
+        severity: "high",
+        category: "write_edit_failure",
+        source: "feishu.work_receipts",
+        problem: "failed to persist feishu work receipt artifacts",
+        impact: "structured work receipt missing",
+        suggestedScope: "smallest safe patch only",
+        evidence: ["surface=control_room"],
+        fingerprint: "abc123def4567890",
+      }),
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+    } as OpenClawConfig;
+    const params = buildParams(
+      "did the write fail but stay understood in the current session",
+      cfg,
+    );
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("🧱 Write outcome");
+    expect(result.reply?.text).toContain("Durable write: no fresh learning artifact");
+    expect(result.reply?.text).toContain(
+      "Latest explicit write failure: feishu.work_receipts @ 2026-04-23T12:10:00.000Z",
+    );
+    expect(result.reply?.text).toContain(
+      "Failure problem: failed to persist feishu work receipt artifacts",
+    );
+    expect(result.reply?.text).not.toContain("ℹ️ Help");
+  });
+
+  it("keeps partial carryover cues honest in control-room learning replies", async () => {
+    const partialWorkfacePath = path.join(
+      testWorkspaceDir,
+      "memory",
+      "2026-04-24-lobster-workface.md",
+    );
+    try {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+      await fs.writeFile(
+        partialWorkfacePath,
+        [
+          "# Lobster Workface: 2026-04-24",
+          "",
+          "- Learning Items: 1",
+          "",
+          "## Yesterday Learned",
+          "- keep: keep one concrete rule instead of vague learning prose.",
+          "- discard: discard learning outputs that never change the next batch.",
+          "",
+        ].join("\n"),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+
+      const learningParams = buildParams("今天学了什么", cfg);
+      const learningResult = await handleCommands(learningParams);
+      expect(learningResult.shouldContinue).toBe(false);
+      expect(learningResult.reply?.text).toContain(
+        "Carryover cue: partial (retain / discard). Do not treat this as full internalization proof yet.",
+      );
+      expect(learningResult.reply?.text).toContain(
+        "This is a bounded learning receipt, but not yet full proof of complete internalization.",
+      );
+
+      const receiptParams = buildParams("写进脑子还是躺在 report 里装样子", cfg);
+      const receiptResult = await handleCommands(receiptParams);
+      expect(receiptResult.shouldContinue).toBe(false);
+      expect(receiptResult.reply?.text).toContain(
+        "Internalization evidence: durable workface exists, but the carryover cue is still partial",
+      );
+      expect(receiptResult.reply?.text).not.toContain("ℹ️ Help");
+    } finally {
+      await fs.rm(partialWorkfacePath, { force: true });
+    }
+  });
+
+  it.each([
+    "你会怎么学习arxiv上的文章并学会应用",
+    "can you learn from new arxiv papers and apply it",
+  ])(
+    "answers learning-application question %s with explicit method and honest boundary",
+    async (question) => {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+      await fs.writeFile(
+        path.join(testWorkspaceDir, "memory", "2026-04-23-lobster-workface.md"),
+        [
+          "# Lobster Workface: 2026-04-23",
+          "",
+          "- Learning Items: 1",
+          "",
+          "## Yesterday Learned",
+          "- keep: ranking is not sizing",
+          "- discard: fake precision from unconstrained optimization",
+          "- replay: ask what evidence would falsify the sizing rule",
+          "- next eval: check whether this changed today's evidence threshold",
+          "",
+        ].join("\n"),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🧪 Learning and application");
+      expect(result.reply?.text).toContain("Acquisition: I can review new papers");
+      expect(result.reply?.text).toContain("Internalization: I only count it as learned");
+      expect(result.reply?.text).toContain(
+        "Application: I should apply it through explicit summaries",
+      );
+      expect(result.reply?.text).toContain("Latest retained lesson: ranking is not sizing");
+      expect(result.reply?.text).toContain("main agent path, not this info surface");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["你会越对话越聪明吗", "what was wrong with that answer"])(
+    "answers improvement question %s from explicit correction method instead of self-claim",
+    async (question) => {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+      await fs.writeFile(
+        path.join(testWorkspaceDir, "memory", "2026-04-23-lobster-workface.md"),
+        [
+          "# Lobster Workface: 2026-04-23",
+          "",
+          "- Learning Items: 1",
+          "",
+          "## Yesterday Learned",
+          "- keep: ranking is not sizing",
+          "- discard: fake precision from unconstrained optimization",
+          "- improve lobster: answer operator questions from explicit state first",
+          "- replay: ask what evidence would falsify the sizing rule",
+          "- next eval: check whether this changed today's evidence threshold",
+          "",
+        ].join("\n"),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🪞 Improvement loop");
+      expect(result.reply?.text).toContain(
+        "Training: no model-weight distillation is claimed here.",
+      );
+      expect(result.reply?.text).toContain(
+        "Latest wrong pattern: fake precision from unconstrained optimization",
+      );
+      expect(result.reply?.text).toContain(
+        "Improve target: answer operator questions from explicit state first",
+      );
+      expect(result.reply?.text).toContain(
+        "Replay trigger: ask what evidence would falsify the sizing rule",
+      );
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["这次错在什么类型", "was that overclaiming"])(
+    "answers error-type question %s from recorded correction evidence instead of vibes",
+    async (question) => {
+      await fs.mkdir(path.join(testWorkspaceDir, "memory"), { recursive: true });
+      await fs.writeFile(
+        path.join(testWorkspaceDir, "memory", "2026-04-23-lobster-workface.md"),
+        [
+          "# Lobster Workface: 2026-04-23",
+          "",
+          "- Learning Items: 1",
+          "",
+          "## Yesterday Learned",
+          "- keep: ranking is not sizing",
+          "- discard: fake precision from unconstrained optimization",
+          "- improve lobster: answer operator questions from explicit state first",
+          "- replay: ask what evidence would falsify the sizing rule",
+          "- next eval: check whether this changed today's evidence threshold",
+          "",
+        ].join("\n"),
+      );
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🧯 Error type");
+      expect(result.reply?.text).toContain("Class: overclaiming_or_false_precision");
+      expect(result.reply?.text).toContain(
+        "Evidence: fake precision from unconstrained optimization",
+      );
+      expect(result.reply?.text).toContain("recorded correction evidence");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it("does not hijack an imperative arxiv learning task into the info surface", async () => {
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+    } as OpenClawConfig;
+    const params = buildParams("去学习arxiv上新的文章里的有用的地方，并学会应用", cfg);
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(true);
+    expect(result.reply).toBeUndefined();
+  });
+
+  it.each(["为什么不是默认模型", "why is the active model different"])(
+    "answers fallback-reason question %s with selected/active model explanation",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      params.provider = "moonshot";
+      params.model = "kimi-k2.6";
+      params.sessionEntry = {
+        sessionId: "fallback-reason",
+        updatedAt: 0,
+        modelProvider: "minimax-portal",
+        model: "MiniMax-M2.7",
+        fallbackNoticeSelectedModel: "moonshot/kimi-k2.6",
+        fallbackNoticeActiveModel: "minimax-portal/MiniMax-M2.7",
+        fallbackNoticeReason: "rate limit",
+      } as SessionEntry;
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("↪️ Model fallback");
+      expect(result.reply?.text).toContain("Selected: moonshot/kimi-k2.6");
+      expect(result.reply?.text).toContain("Active: minimax-portal/MiniMax-M2.7");
+      expect(result.reply?.text).toContain("Reason: rate limit");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["现在系统是什么状态", "what's going on right now"])(
+    "answers operator snapshot question %s with a concise runtime snapshot",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      params.provider = "moonshot";
+      params.model = "kimi-k2.6";
+      params.sessionEntry = {
+        sessionId: "operator-snapshot",
+        updatedAt: 0,
+        modelProvider: "minimax-portal",
+        model: "MiniMax-M2.7",
+        fallbackNoticeSelectedModel: "moonshot/kimi-k2.6",
+        fallbackNoticeActiveModel: "minimax-portal/MiniMax-M2.7",
+        fallbackNoticeReason: "rate limit",
+      } as SessionEntry;
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("📍 Operator snapshot");
+      expect(result.reply?.text).toContain(
+        "Mode: control_room_main_lane · openclaw_embedded_agent",
+      );
+      expect(result.reply?.text).toContain("Model: minimax-portal/MiniMax-M2.7");
+      expect(result.reply?.text).toContain("Selected: moonshot/kimi-k2.6");
+      expect(result.reply?.text).toContain("Capability mode: unavailable");
+      expect(result.reply?.text).toContain("Provider tools: not connected");
+      expect(result.reply?.text).toContain("Fallback: rate limit");
+      expect(result.reply?.text).toContain("memory/unified-risk-view.md");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
+
+  it.each(["缺了哪些anchors", "what protected anchors are missing"])(
+    "answers missing anchors question %s with a short direct reply",
+    async (question) => {
+      const cfg = {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        agents: {
+          defaults: {
+            workspace: testWorkspaceDir,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as OpenClawConfig;
+      const params = buildParams(question, cfg);
+      const result = await handleCommands(params);
+      expect(result.shouldContinue).toBe(false);
+      expect(result.reply?.text).toContain("🪝 Protected anchors");
+      expect(result.reply?.text).toContain("memory/unified-risk-view.md");
+      expect(result.reply?.text).not.toContain("ℹ️ Help");
+    },
+  );
 });
 
 describe("handleCommands subagents", () => {
