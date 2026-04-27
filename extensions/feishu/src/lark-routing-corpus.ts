@@ -36,7 +36,8 @@ export type LarkRoutingFamily =
   | "trading_order_type_education"
   | "position_risk_adjustment"
   | "bracket_exit_plan"
-  | "trading_execution_boundary";
+  | "trading_execution_boundary"
+  | "api_reply_distillation";
 
 export type LarkRoutingGuardMatcher =
   | "batchQueue"
@@ -51,7 +52,8 @@ export type LarkRoutingGuardMatcher =
   | "progressStatus"
   | "resultShape"
   | "sourceCoverage"
-  | "tradingLanguage";
+  | "tradingLanguage"
+  | "apiReplyArtifact";
 
 export type LarkRoutingTruthBoundary =
   | "dev_only"
@@ -121,6 +123,12 @@ function looksLikeTradingLanguageScopeAsk(text: string): boolean {
   );
 }
 
+function looksLikeApiReplyArtifactScopeAsk(text: string): boolean {
+  return /(api|模型|大模型|llm|reply|response|回复|对话|每次|每一轮|一轮|产出|样本|sample|蒸馏|distill|语义家族|semantic family|中文|英语|英文|token|二进制|binary|代码|code)/iu.test(
+    text,
+  );
+}
+
 export const LARK_ROUTING_GUARD_MATCHERS: Record<
   LarkRoutingGuardMatcher,
   (utterance: string) => boolean
@@ -138,6 +146,7 @@ export const LARK_ROUTING_GUARD_MATCHERS: Record<
   resultShape: looksLikeResultShapeScopeAsk,
   sourceCoverage: looksLikeSourceCoverageScopeAsk,
   tradingLanguage: looksLikeTradingLanguageScopeAsk,
+  apiReplyArtifact: looksLikeApiReplyArtifactScopeAsk,
 };
 
 export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
@@ -363,6 +372,20 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     nearMisses: ["MSFT 这次财报我最该盯什么", "最近学的 openclaw 更新到底有没有内化"],
     fallback: "deterministic_first_then_unknown",
     liveAcceptancePhrase: "不是授权你下单；任何买卖都必须标 research-only",
+  },
+  api_reply_distillation: {
+    target: "learning_command",
+    canonicalUtterances: [
+      "现在先靠大模型 API 回复，每次对话都产出一个可蒸馏样本，日积月累喂给我们的智能体。",
+      "API 回复可能是中文、英文、token、二进制或代码，先归一化再决定能不能学习。",
+      "每轮模型 response 都要留下一个候选语义家族样本，但 secret 和 binary 不能直接进记忆。",
+    ],
+    nearMisses: [
+      "去 Google 上学最近 agent 记忆怎么做，只留下会改你以后做法的三条",
+      "你到底有没有搜索能力",
+    ],
+    fallback: "deterministic_first_then_unknown",
+    liveAcceptancePhrase: "每次对话都产出一个可蒸馏样本",
   },
 };
 
@@ -770,6 +793,28 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     family: "trading_execution_boundary",
     expectedGuardMatchers: ["tradingLanguage", "highStakesRisk", "executionAuthority"],
     truthBoundary: "research_only",
+  },
+  {
+    id: "api-reply-distillation-001",
+    utterance: "现在先靠大模型 API 回复，每次对话都产出一个可蒸馏样本，日积月累喂给我们的智能体。",
+    family: "api_reply_distillation",
+    expectedGuardMatchers: ["apiReplyArtifact"],
+    truthBoundary: "evidence_required",
+  },
+  {
+    id: "api-reply-distillation-002",
+    utterance: "API 回复可能是中文、英文、token、二进制或代码，先归一化再决定能不能学习。",
+    family: "api_reply_distillation",
+    expectedGuardMatchers: ["apiReplyArtifact"],
+    truthBoundary: "evidence_required",
+  },
+  {
+    id: "api-reply-distillation-003",
+    utterance:
+      "每轮模型 response 都要留下一个候选语义家族样本，但 secret 和 binary 不能直接进记忆。",
+    family: "api_reply_distillation",
+    expectedGuardMatchers: ["apiReplyArtifact"],
+    truthBoundary: "evidence_required",
   },
 ] as const;
 
