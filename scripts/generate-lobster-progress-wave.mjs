@@ -38,18 +38,17 @@ const days = Array.from({ length: 7 }, (_, index) => {
     iso: isoDay(date),
     label: formatter.format(date),
     commits: 0,
-    feishu: 0,
+    lark: 0,
     docs: 0,
-    memory: 0,
-    infra: 0,
-    tests: 0,
+    learning: 0,
+    live: 0,
+    evals: 0,
   };
 });
 
 const byIso = new Map(days.map((day) => [day.iso, day]));
 const since = days[0].iso;
 const rawLog = git(["log", `--since=${since}T00:00:00Z`, "--date=short", "--format=%ad%x09%s"]);
-const subjects = [];
 
 if (rawLog) {
   for (const line of rawLog.split("\n")) {
@@ -59,24 +58,24 @@ if (rawLog) {
     if (!day) {
       continue;
     }
+
     const lowered = subject.toLowerCase();
     day.commits += 1;
-    if (/(feishu|lark|control-room|reply|auto-reply)/i.test(subject)) {
-      day.feishu += 1;
+    if (/(feishu|lark|control-room|reply|auto-reply|language|interface)/i.test(subject)) {
+      day.lark += 1;
     }
-    if (/(docs|readme|diagram|graphic|runbook)/i.test(subject)) {
+    if (/(docs|readme|diagram|graphic|runbook|asset|wave)/i.test(subject)) {
       day.docs += 1;
     }
-    if (/(memory|learn|learning|artifact|anchor)/i.test(subject)) {
-      day.memory += 1;
+    if (/(memory|learn|learning|artifact|anchor|finance|capability|brain)/i.test(subject)) {
+      day.learning += 1;
     }
-    if (/(infra|runtime|gateway|probe|launchd|cloudflared|cron)/i.test(subject)) {
-      day.infra += 1;
+    if (/(infra|runtime|gateway|probe|launchd|cloudflared|cron|live|bridge)/i.test(subject)) {
+      day.live += 1;
     }
-    if (/(test|verify|regression|coverage)/i.test(lowered)) {
-      day.tests += 1;
+    if (/(test|verify|regression|coverage|eval|gate)/i.test(lowered)) {
+      day.evals += 1;
     }
-    subjects.push(subject);
   }
 }
 
@@ -86,27 +85,57 @@ const activeDays = days.filter((day) => day.commits > 0).length;
 const updated = isoDay(now);
 const topDay = days.reduce((best, day) => (day.commits > best.commits ? day : best), days[0]);
 
-const categories = {
-  "Lark truth": days.reduce((sum, day) => sum + day.feishu, 0),
-  Docs: days.reduce((sum, day) => sum + day.docs, 0),
-  Memory: days.reduce((sum, day) => sum + day.memory, 0),
-  Runtime: days.reduce((sum, day) => sum + day.infra, 0),
-  Tests: days.reduce((sum, day) => sum + day.tests, 0),
-};
+const categories = [
+  {
+    label: "Lark interface",
+    value: days.reduce((sum, day) => sum + day.lark, 0),
+    color: "#ef5d4e",
+    bg: "#fff0ec",
+    detail: "intent families, replies, control room",
+  },
+  {
+    label: "Learning brain",
+    value: days.reduce((sum, day) => sum + day.learning, 0),
+    color: "#2eb872",
+    bg: "#ecfbf2",
+    detail: "capabilities, memory, finance lessons",
+  },
+  {
+    label: "Runbooks",
+    value: days.reduce((sum, day) => sum + day.docs, 0),
+    color: "#2f91e8",
+    bg: "#eef7ff",
+    detail: "README, docs, handoff artifacts",
+  },
+  {
+    label: "Live bridge",
+    value: days.reduce((sum, day) => sum + day.live, 0),
+    color: "#d79a1f",
+    bg: "#fff7dd",
+    detail: "gateway, probes, runtime receipts",
+  },
+  {
+    label: "Eval gates",
+    value: days.reduce((sum, day) => sum + day.evals, 0),
+    color: "#8067d8",
+    bg: "#f2efff",
+    detail: "tests, regression, verification",
+  },
+];
 
-const x0 = 118;
-const yBase = 286;
-const chartWidth = 900;
+const x0 = 188;
+const yBase = 452;
+const chartWidth = 880;
 const step = chartWidth / 6;
-const chartHeight = 150;
+const chartHeight = 190;
 const points = days.map((day, index) => {
   const normalized = day.commits / maxCommits;
-  const y = yBase - 22 - normalized * chartHeight;
+  const y = yBase - 38 - normalized * chartHeight;
   return {
     ...day,
     x: x0 + step * index,
     y,
-    barHeight: 26 + normalized * 126,
+    barHeight: 42 + normalized * 174,
   };
 });
 
@@ -114,105 +143,132 @@ const pointPath = points
   .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
   .join(" ");
 
-function pill(x, y, label, value, color, bg, width) {
-  return `
-    <rect x="${x}" y="${y}" width="${width}" height="34" rx="17" fill="${bg}" stroke="${color}" stroke-opacity="0.28"/>
-    <circle cx="${x + 22}" cy="${y + 17}" r="6" fill="${color}"/>
-    <text x="${x + 38}" y="${y + 22}" fill="#31424c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">${xml(label)} ${value}</text>`;
-}
-
+const chartColors = ["#ffe4dc", "#e5f4ff", "#e8f9ed", "#fff3cf", "#eee9ff", "#dcf8ef", "#ffe3ee"];
 const barSvg = points
   .map((point, index) => {
-    const colors = ["#ffe1dc", "#dff1ff", "#e7f8eb", "#fff1c5", "#eee7ff", "#ddf8f0", "#ffe0ea"];
+    const barWidth = 72;
+    const barX = point.x - barWidth / 2;
+    const barY = yBase - point.barHeight;
     return `
-      <rect x="${(point.x - 28).toFixed(1)}" y="${(yBase - point.barHeight).toFixed(1)}" width="56" height="${point.barHeight.toFixed(1)}" rx="14" fill="${colors[index]}" stroke="#ffffff" stroke-width="2"/>
-      <text x="${point.x.toFixed(1)}" y="${(yBase - point.barHeight - 11).toFixed(1)}" text-anchor="middle" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="900">${point.commits}</text>
-      <text x="${point.x.toFixed(1)}" y="320" text-anchor="middle" fill="#63737c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14" font-weight="800">${point.label}</text>
-      <text x="${point.x.toFixed(1)}" y="340" text-anchor="middle" fill="#95a2a8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="700">${point.iso.slice(5)}</text>`;
+      <rect x="${barX.toFixed(1)}" y="${barY.toFixed(1)}" width="${barWidth}" height="${point.barHeight.toFixed(1)}" rx="22" fill="${chartColors[index]}" stroke="#ffffff" stroke-width="3"/>
+      <text x="${point.x.toFixed(1)}" y="${(barY - 16).toFixed(1)}" text-anchor="middle" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="900">${point.commits}</text>
+      <text x="${point.x.toFixed(1)}" y="496" text-anchor="middle" fill="#475b66" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="850">${point.label}</text>
+      <text x="${point.x.toFixed(1)}" y="522" text-anchor="middle" fill="#8b9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="750">${point.iso.slice(5)}</text>`;
   })
   .join("");
 
-const categoryValues = Object.entries(categories)
-  .map(([label, value], index) => {
-    const specs = [
-      ["#ff7564", "#fff1ed", 162],
-      ["#41a7ff", "#eaf6ff", 108],
-      ["#47c97b", "#edf9ee", 130],
-      ["#f5b83d", "#fff6d8", 128],
-      ["#9b83ff", "#f2eeff", 104],
-    ];
-    const x = 94 + [0, 184, 314, 466, 616][index];
-    const [color, bg, width] = specs[index];
-    return pill(x, 360, label, value, color, bg, width);
+function moduleCard(category, index) {
+  const x = 1148;
+  const y = 246 + index * 62;
+  return `
+    <g>
+      <rect x="${x}" y="${y}" width="314" height="58" rx="18" fill="${category.bg}" stroke="${category.color}" stroke-opacity="0.25"/>
+      <circle cx="${x + 28}" cy="${y + 29}" r="8" fill="${category.color}"/>
+      <text x="${x + 48}" y="${y + 25}" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="900">${xml(category.label)} · ${category.value}</text>
+      <text x="${x + 48}" y="${y + 45}" fill="#667780" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="700">${xml(category.detail)}</text>
+    </g>`;
+}
+
+const moduleCards = categories.map(moduleCard).join("");
+
+const bottomLabels = [
+  ["Lark understands", "route language into work families"],
+  ["Brain learns", "retain reusable capability cards"],
+  ["Finance applies", "answer research-only with risk gates"],
+  ["Live proves", "separate dev-fixed from live-fixed"],
+];
+
+const bottomPills = bottomLabels
+  .map(([label, detail], index) => {
+    const x = 88 + index * 368;
+    return `
+      <g>
+        <rect x="${x}" y="594" width="326" height="58" rx="22" fill="#ffffff" stroke="#e0e8ee"/>
+        <text x="${x + 24}" y="619" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="950">${xml(label)}</text>
+        <text x="${x + 24}" y="641" fill="#697b84" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="750">${xml(detail)}</text>
+      </g>`;
   })
   .join("");
 
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
-  <title id="title">Lobster OpenClaw auto-updating daily progress wave</title>
-  <desc id="desc">A cute auto-generated seven day progress chart based on recent git commits.</desc>
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
+  <title id="title">Lobster OpenClaw daily progress dashboard</title>
+  <desc id="desc">An auto-generated seven day progress dashboard for the Lark interface, learning brain, finance research, live proof, and evaluation gates.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#fff5ee"/>
-      <stop offset="0.42" stop-color="#f3fbff"/>
-      <stop offset="1" stop-color="#f7fff0"/>
+      <stop offset="0" stop-color="#fff4ef"/>
+      <stop offset="0.46" stop-color="#f5fbff"/>
+      <stop offset="1" stop-color="#f4fff3"/>
     </linearGradient>
-    <linearGradient id="wave" x1="100" y1="0" x2="1020" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ff6d5c"/>
-      <stop offset="0.5" stop-color="#399fff"/>
-      <stop offset="1" stop-color="#42c978"/>
+    <linearGradient id="wave" x1="160" y1="0" x2="1080" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ef5d4e"/>
+      <stop offset="0.52" stop-color="#2f91e8"/>
+      <stop offset="1" stop-color="#2eb872"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#263238" flood-opacity="0.14"/>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#263238" flood-opacity="0.13"/>
     </filter>
-    <pattern id="sparkles" width="34" height="34" patternUnits="userSpaceOnUse">
-      <circle cx="5" cy="6" r="2" fill="#263238" opacity="0.05"/>
-      <path d="M24 8 l2 4 l4 2 l-4 2 l-2 4 l-2 -4 l-4 -2 l4 -2 Z" fill="#ffb84d" opacity="0.14"/>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse">
+      <circle cx="7" cy="9" r="2" fill="#263238" opacity="0.045"/>
+      <path d="M30 10 l2.2 4.2 l4.2 2.2 l-4.2 2.2 l-2.2 4.2 l-2.2 -4.2 l-4.2 -2.2 l4.2 -2.2 Z" fill="#ffb84d" opacity="0.13"/>
     </pattern>
   </defs>
 
-  <rect width="1200" height="430" rx="34" fill="url(#bg)"/>
-  <rect width="1200" height="430" rx="34" fill="url(#sparkles)"/>
-  <rect x="52" y="42" width="1096" height="342" rx="28" fill="#ffffff" opacity="0.94" filter="url(#shadow)"/>
+  <rect width="1600" height="720" rx="44" fill="url(#bg)"/>
+  <rect width="1600" height="720" rx="44" fill="url(#grid)"/>
 
-  <g transform="translate(88 78)">
-    <text x="0" y="0" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="35" font-weight="900">Lobster OpenClaw</text>
-    <text x="0" y="34" fill="#61727b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="650">Auto-updating daily progress wave from git history. Build, learn, verify, clean.</text>
+  <rect x="52" y="46" width="1496" height="616" rx="34" fill="#ffffff" opacity="0.95" filter="url(#shadow)"/>
+
+  <g transform="translate(88 96)">
+    <text x="0" y="0" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="52" font-weight="950">Lobster OpenClaw</text>
+    <text x="2" y="38" fill="#5d707a" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="19" font-weight="700">Lark language interface + learning brain + finance research loop, updated from git history.</text>
   </g>
 
-  <g transform="translate(820 62)">
-    <rect x="0" y="0" width="290" height="76" rx="22" fill="#f7fbff" stroke="#d9e8f2"/>
-    <text x="24" y="30" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14" font-weight="900">last 7 days</text>
-    <text x="24" y="58" fill="#ff6d5c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="950">${totalCommits}</text>
-    <text x="92" y="58" fill="#63737c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">commits · ${activeDays}/7 active days · updated ${updated}</text>
+  <g transform="translate(1042 66)">
+    <rect x="0" y="0" width="420" height="94" rx="26" fill="#f7fbff" stroke="#d9e8f2"/>
+    <text x="28" y="34" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="950">last 7 days</text>
+    <text x="28" y="74" fill="#ef5d4e" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="42" font-weight="950">${totalCommits}</text>
+    <text x="112" y="61" fill="#4c606a" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="850">${activeDays}/7 active days</text>
+    <text x="112" y="82" fill="#84949b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="750">updated ${updated} · peak ${xml(topDay.label)} ${topDay.commits}</text>
   </g>
 
-  <g transform="translate(0 0)">
-    <line x1="88" y1="${yBase}" x2="1048" y2="${yBase}" stroke="#dfe8ed" stroke-width="2"/>
-    <line x1="88" y1="${yBase - 52}" x2="1048" y2="${yBase - 52}" stroke="#eef3f6" stroke-width="2"/>
-    <line x1="88" y1="${yBase - 104}" x2="1048" y2="${yBase - 104}" stroke="#eef3f6" stroke-width="2"/>
-    <line x1="88" y1="${yBase - 156}" x2="1048" y2="${yBase - 156}" stroke="#eef3f6" stroke-width="2"/>
+  <g>
+    <rect x="88" y="164" width="1028" height="410" rx="28" fill="#fbfdff" stroke="#e1ebf1"/>
+    <text x="124" y="206" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="950">Daily commit wave</text>
+    <text x="124" y="232" fill="#73848d" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="750">Progress should show real work: language, learning, live proof, docs, and eval gates.</text>
+    <line x1="132" y1="${yBase}" x2="1086" y2="${yBase}" stroke="#dce7ed" stroke-width="2"/>
+    <line x1="132" y1="${yBase - 72}" x2="1086" y2="${yBase - 72}" stroke="#edf3f6" stroke-width="2"/>
+    <line x1="132" y1="${yBase - 144}" x2="1086" y2="${yBase - 144}" stroke="#edf3f6" stroke-width="2"/>
+    <line x1="132" y1="${yBase - 216}" x2="1086" y2="${yBase - 216}" stroke="#edf3f6" stroke-width="2"/>
 ${barSvg}
-    <path d="${pointPath}" fill="none" stroke="url(#wave)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="${pointPath}" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.74"/>
+    <path d="${pointPath}" fill="none" stroke="url(#wave)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${pointPath}" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.76"/>
     ${points
       .map(
         (point) =>
-          `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="10" fill="#ffffff" stroke="#263238" stroke-width="3"/>`,
+          `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="12" fill="#ffffff" stroke="#263238" stroke-width="3"/>`,
       )
       .join("")}
   </g>
 
-  <g transform="translate(1010 190)">
+  <g>
+    <rect x="1132" y="164" width="350" height="410" rx="28" fill="#fbfdff" stroke="#e1ebf1"/>
+    <text x="1164" y="206" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="950">Module lanes</text>
+    <text x="1164" y="231" fill="#73848d" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="750">What the repo is actively improving.</text>
+${moduleCards}
+  </g>
+
+  <g transform="translate(1410 82) scale(0.46)">
     <path d="M48 2 C 72 2, 92 20, 92 44 C 92 68, 72 86, 48 86 C 24 86, 4 68, 4 44 C 4 20, 24 2, 48 2 Z" fill="#ff705f" stroke="#3a0a0d" stroke-width="4"/>
     <circle cx="38" cy="37" r="5" fill="#101820"/>
     <circle cx="59" cy="37" r="5" fill="#101820"/>
     <path d="M36 54 C 44 61, 54 61, 62 54" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
     <path d="M8 39 C -11 27, -8 9, 8 5 C 20 10, 21 27, 8 39 Z" fill="#ff9a83" stroke="#3a0a0d" stroke-width="4"/>
     <path d="M88 39 C 107 27, 104 9, 88 5 C 76 10, 75 27, 88 39 Z" fill="#ff9a83" stroke="#3a0a0d" stroke-width="4"/>
-    <text x="-6" y="116" fill="#63737c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="900">peak: ${xml(topDay.label)} · ${topDay.commits}</text>
   </g>
 
-  <g>${categoryValues}</g>
+  <g>
+${bottomPills}
+  </g>
 </svg>
 `;
 
