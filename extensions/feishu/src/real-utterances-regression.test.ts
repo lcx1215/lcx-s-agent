@@ -15,6 +15,13 @@ import {
   looksLikeSourceCoverageScopeAsk,
   looksLikeStrategicLearningAsk,
 } from "./intent-matchers.js";
+import {
+  LARK_ROUTING_CORPUS,
+  LARK_ROUTING_FAMILY_CONTRACTS,
+  resolveLarkSemanticRouteCandidate,
+  scoreLarkRoutingCorpus,
+  type LarkRoutingFamily,
+} from "./lark-routing-corpus.js";
 import { resolveFeishuControlRoomOrchestration, resolveFeishuSurfaceRouting } from "./surfaces.js";
 import type { FeishuConfig } from "./types.js";
 
@@ -724,6 +731,33 @@ describe("real daily utterance regression", () => {
   it("keeps real Lark persistence and write-outcome asks on shared truth surfaces", () => {
     for (const { phrase, kind } of LARK_TRUTH_SURFACE_UTTERANCES) {
       expect(resolveProtocolInfoQuestionKind(phrase), phrase).toBe(kind);
+    }
+  });
+
+  it("scores the structured Lark routing corpus by semantic family", () => {
+    const score = scoreLarkRoutingCorpus({ cfg });
+
+    expect(score.total).toBe(LARK_ROUTING_CORPUS.length);
+    expect(score.deterministicPassed).toBe(score.total);
+    expect(score.semanticCandidatePassed).toBe(score.total);
+
+    for (const [family, familyScore] of Object.entries(score.families) as Array<
+      [LarkRoutingFamily, (typeof score.families)[LarkRoutingFamily]]
+    >) {
+      expect(familyScore.total, family).toBeGreaterThan(0);
+      expect(familyScore.deterministicPassed, family).toBe(familyScore.total);
+      expect(familyScore.semanticCandidatePassed, family).toBe(familyScore.total);
+    }
+  });
+
+  it("keeps semantic-route near misses out of their tempting families", () => {
+    for (const [family, contract] of Object.entries(LARK_ROUTING_FAMILY_CONTRACTS) as Array<
+      [LarkRoutingFamily, (typeof LARK_ROUTING_FAMILY_CONTRACTS)[LarkRoutingFamily]]
+    >) {
+      for (const utterance of contract.nearMisses) {
+        const candidate = resolveLarkSemanticRouteCandidate(utterance);
+        expect(candidate.family, `${family}:${utterance}`).not.toBe(family);
+      }
     }
   });
 

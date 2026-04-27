@@ -1,0 +1,49 @@
+{
+  "description": "Externally inspired skills installed in this repo. These are local adaptations, not vendored third-party skill packages.",
+  "skills": [
+    {
+      "name": "lark-understanding",
+      "localPath": "skills/lark-understanding",
+      "sourceUrls": ["https://github.com/anthropics/skills"],
+      "installedAs": "local-adaptation",
+      "purpose": "Keep Lark language understanding improvements organized by semantic family, real utterances, regression tests, and dev-vs-live boundaries.",
+      "validation": [
+        "python3 skills/skill-creator/scripts/quick_validate.py skills/lark-understanding"
+      ],
+      "uninstall": ["rm -rf skills/lark-understanding"]
+    },
+    {
+      "name": "semantic-routing",
+      "localPath": "skills/semantic-routing",
+      "sourceUrls": ["https://github.com/aurelio-labs/semantic-router"],
+      "installedAs": "local-adaptation",
+      "purpose": "Guide semantic-family routing and candidate selection before expanding brittle phrase matchers.",
+      "validation": [
+        "python3 skills/skill-creator/scripts/quick_validate.py skills/semantic-routing"
+      ],
+      "uninstall": ["rm -rf skills/semantic-routing"]
+    },
+    {
+      "name": "lark-routing-evals",
+      "localPath": "skills/lark-routing-evals",
+      "sourceUrls": ["https://github.com/AI-App/PromptFoo", "https://github.com/anthropics/skills"],
+      "installedAs": "local-adaptation",
+      "purpose": "Make Feishu/Lark utterance routing measurable through corpus cases, near-misses, truth boundaries, and regression tests.",
+      "validation": [
+        "python3 skills/skill-creator/scripts/quick_validate.py skills/lark-routing-evals"
+      ],
+      "uninstall": ["rm -rf skills/lark-routing-evals"]
+    },
+    {
+      "name": "skill-quality-audit",
+      "localPath": "skills/skill-quality-audit",
+      "sourceUrls": ["https://github.com/anthropics/skills"],
+      "installedAs": "local-adaptation",
+      "purpose": "Audit future GitHub skills before installation so skills improve speed without prompt pollution or unsafe hidden behavior.",
+      "validation": [
+        "python3 skills/skill-creator/scripts/quick_validate.py skills/skill-quality-audit"
+      ],
+      "uninstall": ["rm -rf skills/skill-quality-audit"]
+    }
+  ]
+}
