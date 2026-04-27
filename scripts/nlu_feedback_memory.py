@@ -589,6 +589,68 @@ def write_override_receipt(
     }
 
 
+def build_daily_report(
+    *,
+    source_path: Path,
+    write_receipt: bool = False,
+    receipt_path: Path | None = None,
+) -> dict[str, Any]:
+    events = read_feedback_events(source_path)
+    summary = summarize_feedback_events(events)
+    absorption = build_absorption_plan(summary)
+    evalset = build_routing_evalset(absorption)
+    deterministic_eval = evaluate_routing_evalset(evalset)
+    comparison = compare_router_evalset(evalset)
+    overrides = build_router_override_candidates(comparison)
+    receipt_result = None
+    if write_receipt:
+        receipt_result = write_override_receipt(overrides, source_path=source_path, output_path=receipt_path)
+
+    weak_families = [
+        {
+            "family": family,
+            "score": row.get("score", 0),
+            "count": row.get("count", 0),
+            "reasons": family_absorption_reason(row),
+        }
+        for family, row in (summary.get("families") or {}).items()
+        if isinstance(row, dict) and (float(row.get("score") or 0) < 70 or int(row.get("count") or 0) < 3)
+    ]
+    weak_families.sort(key=lambda row: (float(row.get("score") or 0), str(row.get("family") or "")))
+
+    return {
+        "ok": True,
+        "schema": "lobster.nlu_daily_report.v1",
+        "created_at": now_iso(),
+        "source_event_path": str(source_path),
+        "event_count": summary.get("event_count", 0),
+        "sample_count": summary.get("sample_count", 0),
+        "family_count": summary.get("family_count", 0),
+        "eval_case_count": evalset.get("case_count", 0),
+        "deterministic_accuracy": deterministic_eval.get("accuracy", 0),
+        "semantic_accuracy": comparison.get("semantic_candidate", {}).get("accuracy", 0),
+        "accuracy_delta": comparison.get("accuracy_delta", 0),
+        "eligible_override_count": overrides.get("eligible_count", 0),
+        "weak_families": weak_families[:10],
+        "override_receipt": receipt_result,
+        "artifacts": {
+            "summary_schema": summary.get("schema"),
+            "absorption_schema": absorption.get("schema"),
+            "evalset_schema": evalset.get("schema"),
+            "eval_schema": deterministic_eval.get("schema"),
+            "comparison_schema": comparison.get("schema"),
+            "override_schema": overrides.get("schema"),
+        },
+        "details": {
+            "summary": summary,
+            "absorption": absorption,
+            "deterministic_eval": deterministic_eval,
+            "comparison": comparison,
+            "overrides": overrides,
+        },
+    }
+
+
 def print_json(obj: dict[str, Any]) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
@@ -673,6 +735,15 @@ def main() -> int:
         candidates = build_router_override_candidates(comparison)
         out_path = Path(sys.argv[3]) if len(sys.argv) > 3 else None
         print_json(write_override_receipt(candidates, source_path=path, output_path=out_path))
+        return 0
+    if cmd == "daily-report":
+        write_receipt = "--write-receipt" in sys.argv[3:]
+        receipt_path = None
+        if "--receipt-path" in sys.argv:
+            idx = sys.argv.index("--receipt-path")
+            if idx + 1 < len(sys.argv):
+                receipt_path = Path(sys.argv[idx + 1])
+        print_json(build_daily_report(source_path=path, write_receipt=write_receipt, receipt_path=receipt_path))
         return 0
     print_json({"ok": False, "error": f"unknown command: {cmd}"})
     return 2

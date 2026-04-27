@@ -306,6 +306,43 @@ def main() -> int:
         assert cli_receipt_result["receipt"]["schema"] == "lobster.routing_override_receipt.v1", cli_receipt_result
         assert cli_receipt_path.exists(), cli_receipt_result
 
+        daily_receipt_path = Path(td) / "daily_override_receipt.json"
+        daily = module.build_daily_report(
+            source_path=event_path,
+            write_receipt=True,
+            receipt_path=daily_receipt_path,
+        )
+        assert daily["schema"] == "lobster.nlu_daily_report.v1", daily
+        assert daily["event_count"] == 3, daily
+        assert daily["sample_count"] == 2, daily
+        assert daily["eval_case_count"] == 2, daily
+        assert daily["artifacts"]["comparison_schema"] == "lobster.routing_router_comparison.v1", daily
+        assert daily["override_receipt"]["ok"] is True, daily
+        assert daily_receipt_path.exists(), daily
+        assert any(row["family"] == "options" for row in daily["weak_families"]), daily
+
+        cli_daily_receipt_path = Path(td) / "cli_daily_override_receipt.json"
+        cli_daily = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "nlu_feedback_memory.py"),
+                "daily-report",
+                str(event_path),
+                "--write-receipt",
+                "--receipt-path",
+                str(cli_daily_receipt_path),
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli_daily.returncode == 0, cli_daily.stderr
+        cli_daily_report = json.loads((cli_daily.stdout or "").strip())
+        assert cli_daily_report["schema"] == "lobster.nlu_daily_report.v1", cli_daily_report
+        assert cli_daily_report["override_receipt"]["receipt"]["decision"] == "record_only", cli_daily_report
+        assert cli_daily_receipt_path.exists(), cli_daily_report
+
     print("OK nlu_feedback_memory")
     return 0
 
