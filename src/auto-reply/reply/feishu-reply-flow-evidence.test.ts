@@ -89,4 +89,60 @@ describe("summarizeRecentFeishuReplyFlowEvidence", () => {
     expect(summary).toContain("deliveryStatus=failed");
     expect(summary).toContain("feishuCode=19002");
   });
+
+  it("uses gateway dispatch evidence when the reply-flow log is missing", async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-reply-flow-"));
+    const logPath = path.join(tempDir, "missing-reply-flow.jsonl");
+    const gatewayLogPath = path.join(tempDir, "gateway.log");
+    await fs.writeFile(
+      gatewayLogPath,
+      [
+        "2026-04-27T16:41:08.052-04:00 [feishu] feishu[default]: Feishu[default] message in group oc_123: live-sync-check 84d8695",
+        "2026-04-27T16:41:18.790-04:00 [feishu] feishu[default]: dispatch complete (queuedFinal=true, replies=1)",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const summary = await summarizeRecentFeishuReplyFlowEvidence(logPath, gatewayLogPath);
+
+    expect(summary).toContain("Recent Feishu/Lark Gateway Dispatch Evidence");
+    expect(summary).toContain("Latest gateway message preview: live-sync-check 84d8695");
+    expect(summary).toContain("Latest gateway dispatch status: queuedFinal=true, replies=1");
+    expect(summary).toContain(
+      "Reply-path status evidence: gateway_dispatch_completed_without_delivery_result",
+    );
+    expect(summary).toContain("weaker than feishu-reply-flow outbound_result evidence");
+  });
+
+  it("keeps newer gateway evidence ahead of stale reply-flow evidence", async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-reply-flow-"));
+    const logPath = path.join(tempDir, "feishu-reply-flow.jsonl");
+    const gatewayLogPath = path.join(tempDir, "gateway.log");
+    await fs.writeFile(
+      logPath,
+      [
+        JSON.stringify({ correlationId: "stale-corr", stage: "inbound", recordedAtMs: 10 }),
+        JSON.stringify({
+          correlationId: "stale-corr",
+          stage: "dispatch_complete",
+          recordedAtMs: 20,
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.writeFile(
+      gatewayLogPath,
+      [
+        "2026-04-27T16:41:08.052-04:00 [feishu] feishu[default]: Feishu[default] message in group oc_123: newer live check",
+        "2026-04-27T16:41:18.790-04:00 [feishu] feishu[default]: dispatch complete (queuedFinal=true, replies=1)",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const summary = await summarizeRecentFeishuReplyFlowEvidence(logPath, gatewayLogPath);
+
+    expect(summary).toContain("Recent Feishu/Lark Gateway Dispatch Evidence");
+    expect(summary).toContain("newer live check");
+    expect(summary).not.toContain("Latest completed correlationId: stale-corr");
+  });
 });

@@ -16,12 +16,19 @@ type FeishuReplyFlowRecord = {
   deliveryMessageId?: string;
 };
 
+type FeishuReplyFlowSummary = {
+  completedAtMs: number;
+  text: string;
+};
+
 const DEFAULT_FEISHU_REPLY_FLOW_LOG = path.join(
   os.homedir(),
   ".openclaw",
   "logs",
   "feishu-reply-flow.jsonl",
 );
+
+const DEFAULT_FEISHU_GATEWAY_LOG = path.join(os.homedir(), ".openclaw", "logs", "gateway.log");
 
 const FEISHU_REPLY_FLOW_STAGE_ORDER = [
   "inbound",
@@ -32,6 +39,13 @@ const FEISHU_REPLY_FLOW_STAGE_ORDER = [
   "dispatch_error",
   "dispatch_complete",
 ] as const;
+
+function extractLogTimestampMs(line: string): number {
+  const jsonDate = /"date":"([^"]+)"/.exec(line)?.[1];
+  const plainDate = /^(\d{4}-\d{2}-\d{2}[T ][^ ]+)/.exec(line)?.[1];
+  const parsed = Date.parse(jsonDate ?? plainDate ?? "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 async function readTailText(filePath: string, maxBytes = 262_144): Promise<string | undefined> {
   try {
@@ -57,7 +71,24 @@ async function readTailText(filePath: string, maxBytes = 262_144): Promise<strin
 
 export async function summarizeRecentFeishuReplyFlowEvidence(
   logPath = DEFAULT_FEISHU_REPLY_FLOW_LOG,
+  gatewayLogPath = DEFAULT_FEISHU_GATEWAY_LOG,
 ): Promise<string | undefined> {
+  const replyFlowSummary = await summarizeJsonlReplyFlowEvidence(logPath);
+  const gatewaySummary = await summarizeGatewayDispatchEvidence(gatewayLogPath);
+
+  if (
+    gatewaySummary &&
+    (!replyFlowSummary || gatewaySummary.completedAtMs > replyFlowSummary.completedAtMs)
+  ) {
+    return gatewaySummary.text;
+  }
+
+  return replyFlowSummary?.text;
+}
+
+async function summarizeJsonlReplyFlowEvidence(
+  logPath: string,
+): Promise<FeishuReplyFlowSummary | undefined> {
   const tail = await readTailText(logPath);
   if (!tail?.trim()) {
     return undefined;
@@ -140,16 +171,69 @@ export async function summarizeRecentFeishuReplyFlowEvidence(
     outbound?.deliveryMessageId ? `deliveryMessageId=${outbound.deliveryMessageId}` : null,
   ].filter(Boolean);
 
-  return [
-    "## Recent Feishu/Lark Reply Flow Evidence",
-    "Use this local artifact summary as the primary truth for Feishu/Lark reply-path verification questions.",
-    "Do not treat generic watchdog send lines or unrelated daily-brief artifacts as stronger evidence than this reply-flow record.",
-    `Latest completed correlationId: ${correlationId}`,
-    `Observed stage chain: ${observedStages.join(" -> ") || "(none)"}`,
-    `Reply-path status evidence: ${replyPathStatus}`,
-    outboundFields.length > 0
-      ? `Latest outbound_result: ${outboundFields.join(", ")}`
-      : "Latest outbound_result: unavailable",
-    "Boundary: this proves only the recorded reply delivery layer. It is not proof of source migration, build, restart, live probe, or full live-fixed state.",
-  ].join("\n");
+  return {
+    completedAtMs: entry.completedAtMs ?? entry.latestRecordedAtMs,
+    text: [
+      "## Recent Feishu/Lark Reply Flow Evidence",
+      "Use this local artifact summary as the primary truth for Feishu/Lark reply-path verification questions.",
+      "Do not treat generic watchdog send lines or unrelated daily-brief artifacts as stronger evidence than this reply-flow record.",
+      `Latest completed correlationId: ${correlationId}`,
+      `Observed stage chain: ${observedStages.join(" -> ") || "(none)"}`,
+      `Reply-path status evidence: ${replyPathStatus}`,
+      outboundFields.length > 0
+        ? `Latest outbound_result: ${outboundFields.join(", ")}`
+        : "Latest outbound_result: unavailable",
+      "Boundary: this proves only the recorded reply delivery layer. It is not proof of source migration, build, restart, live probe, or full live-fixed state.",
+    ].join("\n"),
+  };
+}
+
+async function summarizeGatewayDispatchEvidence(
+  gatewayLogPath: string,
+): Promise<FeishuReplyFlowSummary | undefined> {
+  const tail = await readTailText(gatewayLogPath);
+  if (!tail?.trim()) {
+    return undefined;
+  }
+
+  let latestMessageAtMs = 0;
+  let latestMessagePreview: string | undefined;
+  let latestDispatchAtMs = 0;
+
+  for (const line of tail.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+    const timestampMs = extractLogTimestampMs(line);
+    const messageMatch = /Feishu\[[^\]]+\] message in (?:group|p2p) [^:]+: (.+)$/.exec(line);
+    if (messageMatch && timestampMs >= latestMessageAtMs) {
+      latestMessageAtMs = timestampMs;
+      latestMessagePreview = messageMatch[1]?.trim();
+      continue;
+    }
+    if (line.includes("dispatch complete (queuedFinal=true, replies=1)") && timestampMs > 0) {
+      latestDispatchAtMs = Math.max(latestDispatchAtMs, timestampMs);
+    }
+  }
+
+  if (latestDispatchAtMs <= 0 || latestDispatchAtMs < latestMessageAtMs) {
+    return undefined;
+  }
+
+  const preview = latestMessagePreview
+    ? `Latest gateway message preview: ${latestMessagePreview.slice(0, 240)}`
+    : "Latest gateway message preview: unavailable";
+
+  return {
+    completedAtMs: latestDispatchAtMs,
+    text: [
+      "## Recent Feishu/Lark Gateway Dispatch Evidence",
+      "Use this local artifact only as secondary Feishu/Lark live-path evidence when feishu-reply-flow.jsonl is missing or stale.",
+      "It proves the gateway observed a Feishu/Lark message and completed dispatch with one queued final reply; it does not prove Feishu delivery API success by itself.",
+      preview,
+      "Latest gateway dispatch status: queuedFinal=true, replies=1",
+      "Reply-path status evidence: gateway_dispatch_completed_without_delivery_result",
+      "Boundary: this is weaker than feishu-reply-flow outbound_result evidence. Pair it with the visible Lark/Feishu reply or a channel probe before calling live-fixed.",
+    ].join("\n"),
+  };
 }

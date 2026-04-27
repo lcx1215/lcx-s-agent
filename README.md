@@ -198,7 +198,13 @@ For Feishu/Lark reply-flow debugging, inspect:
 
 ```bash
 ~/.openclaw/logs/feishu-reply-flow.jsonl
+~/.openclaw/logs/gateway.log
 ```
+
+`feishu-reply-flow.jsonl` is the stronger delivery-level artifact when it is
+fresh. If it is missing or stale, use `gateway.log` only as weaker gateway
+dispatch evidence and pair it with the visible Lark/Feishu reply before calling
+the path live-fixed.
 
 Do not call a dev-only patch live-fixed until the real visible Lark/Feishu path
 has been checked.
