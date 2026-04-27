@@ -135,6 +135,36 @@ mode=dry_run_no_alert
 noFeishuLarkSend=True
 ```
 
+## LaunchAgent Candidate Plan
+
+Current dev/GitHub status:
+
+```text
+launchAgentPlan=generated_no_live_change
+scheduler.safetyMode=dry_run_write_receipt
+host_watchdog.safetyMode=dry_run_write_receipt
+```
+
+Generated candidate files:
+
+```text
+ops/live-handoff/launchagent-candidates/ai.openclaw.lobster.scheduler.smoke.plist
+ops/live-handoff/launchagent-candidates/ai.openclaw.lobster.host_watchdog.smoke.plist
+ops/live-handoff/launchagent-candidates/live-sidecar-launchagent-plan.json
+```
+
+These are smoke candidates, not production live replacements. Both candidates
+run with `--dry-run --write-receipt`, write to `.smoke.*.log` paths, and keep the
+same labels only so the exact migration target is auditable before any real
+operator-approved LaunchAgent change.
+
+Verified plist syntax:
+
+```text
+plutil -lint ops/live-handoff/launchagent-candidates/*.plist
+status: OK
+```
+
 ## Out Of Scope
 
 - No plist changes in this audit step.

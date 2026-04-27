@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.openclaw.lobster.host_watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/liuchengxu/Desktop/lcx-s-openclaw/scripts/lobster_host_watchdog.py</string>
+    <string>--dry-run</string>
+    <string>--write-receipt</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/liuchengxu/Desktop/lcx-s-openclaw</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/liuchengxu/.openclaw/logs/lobster_host_watchdog.smoke.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/liuchengxu/.openclaw/logs/lobster_host_watchdog.smoke.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/liuchengxu</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+    <key>LC_ALL</key>
+    <string>en_US.UTF-8</string>
+    <key>PYTHONIOENCODING</key>
+    <string>utf-8</string>
+    <key>PATH</key>
+    <string>/Users/liuchengxu/.local/bin:/Users/liuchengxu/.npm-global/bin:/Users/liuchengxu/Library/pnpm:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

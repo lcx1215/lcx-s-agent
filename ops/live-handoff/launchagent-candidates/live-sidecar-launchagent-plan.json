@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-27T21:43:29.319Z",
+  "targetRoot": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
+  "legacyRoot": "/Users/liuchengxu/Desktop/openclaw",
+  "outputDir": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates",
+  "noLiveLaunchAgentChange": true,
+  "candidates": [
+    {
+      "sidecar": "scheduler",
+      "label": "ai.openclaw.lobster.scheduler",
+      "candidatePath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/ai.openclaw.lobster.scheduler.smoke.plist",
+      "currentPlistPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+      "currentPlistExists": true,
+      "currentPlistSha256": "611fd100cce53a552000b89f31474b77830be68053da0fc2a613143eae4f2c5e",
+      "programArguments": [
+        "/usr/bin/python3",
+        "/Users/liuchengxu/Desktop/lcx-s-openclaw/daily_learning_runner.py",
+        "--dry-run",
+        "--write-receipt"
+      ],
+      "workingDirectory": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
+      "standardOutPath": "/Users/liuchengxu/.openclaw/logs/lobster_scheduler.smoke.out.log",
+      "standardErrorPath": "/Users/liuchengxu/.openclaw/logs/lobster_scheduler.smoke.err.log",
+      "runAtLoad": false,
+      "startCalendarInterval": {
+        "Hour": 2,
+        "Minute": 30
+      },
+      "safetyMode": "dry_run_write_receipt",
+      "rollbackCommands": [
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.bak\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
+        "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" || true",
+        "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
+        "cd \"/Users/liuchengxu/Desktop/openclaw\" && python3 -m py_compile daily_learning_runner.py scripts/lobster_host_watchdog.py scripts/lobster_paths.py"
+      ]
+    },
+    {
+      "sidecar": "host_watchdog",
+      "label": "ai.openclaw.lobster.host_watchdog",
+      "candidatePath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/ai.openclaw.lobster.host_watchdog.smoke.plist",
+      "currentPlistPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist",
+      "currentPlistExists": true,
+      "currentPlistSha256": "4e52d3b7c86fa7c5c5a2f651b1e43bf601e50ac17c655a84cf9cf19861ed1f48",
+      "programArguments": [
+        "/usr/bin/python3",
+        "/Users/liuchengxu/Desktop/lcx-s-openclaw/scripts/lobster_host_watchdog.py",
+        "--dry-run",
+        "--write-receipt"
+      ],
+      "workingDirectory": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
+      "standardOutPath": "/Users/liuchengxu/.openclaw/logs/lobster_host_watchdog.smoke.out.log",
+      "standardErrorPath": "/Users/liuchengxu/.openclaw/logs/lobster_host_watchdog.smoke.err.log",
+      "runAtLoad": true,
+      "startInterval": 1800,
+      "safetyMode": "dry_run_write_receipt",
+      "rollbackCommands": [
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.bak\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\"",
+        "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" || true",
+        "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\"",
+        "cd \"/Users/liuchengxu/Desktop/openclaw\" && python3 -m py_compile daily_learning_runner.py scripts/lobster_host_watchdog.py scripts/lobster_paths.py"
+      ]
+    }
+  ],
+  "installBoundary": [
+    "This script only generates candidate plists and a plan JSON.",
+    "Do not copy these candidates into ~/Library/LaunchAgents without an explicit live migration step.",
+    "Candidates use --dry-run --write-receipt and do not enable unattended live cycles.",
+    "Production scheduler cycle requires a separate approval and OPENCLAW_SCHEDULER_ENABLE_CYCLE=1."
+  ]
+}
