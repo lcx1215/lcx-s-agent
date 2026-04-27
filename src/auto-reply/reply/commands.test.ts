@@ -1024,7 +1024,7 @@ describe("handleCommands context", () => {
     },
   );
 
-  it.each(["现在修到哪了", "还剩多少", "is this live-fixed"])(
+  it.each(["现在修到哪了", "还剩多少", "继续，现在还剩什么", "现在能用了吗", "is this live-fixed"])(
     "answers status-readback question %s with deterministic evidence boundaries",
     async (question) => {
       const cfg = {

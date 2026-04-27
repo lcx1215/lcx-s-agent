@@ -20,8 +20,10 @@ describe("commands-protocol-info", () => {
   it.each([
     ["现在系统是什么状态", "snapshot"],
     ["现在在干什么", "status_readback"],
+    ["继续，现在在干什么", "status_readback"],
     ["现在修到哪了", "status_readback"],
     ["还剩多少", "status_readback"],
+    ["继续，现在还剩什么", "status_readback"],
     ["是不是 live 了", "status_readback"],
     ["how do you work", "help"],
     ["你现在按什么协议工作", "help"],
