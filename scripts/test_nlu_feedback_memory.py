@@ -213,6 +213,30 @@ def main() -> int:
         assert "frontier_paper" in comparison["family_deltas"], comparison
         assert comparison["recommendation"] in {"review_semantic_candidate", "keep_deterministic_primary"}, comparison
 
+        override_candidates = module.build_router_override_candidates(comparison)
+        assert override_candidates["schema"] == "lobster.routing_override_candidates.v1", override_candidates
+        assert override_candidates["auto_apply"] is False, override_candidates
+        assert override_candidates["candidate_count"] == 2, override_candidates
+        assert override_candidates["eligible_count"] == 0, override_candidates
+        assert all(row["review_required"] is True for row in override_candidates["overrides"]), override_candidates
+
+        synthetic_comparison = {
+            "deterministic": {"families": {"macro_regime": {"count": 4}}},
+            "family_deltas": {
+                "macro_regime": {
+                    "deterministic_accuracy": 0.5,
+                    "semantic_accuracy": 0.75,
+                    "delta": 0.25,
+                    "deterministic_failures": [{"id": "a"}, {"id": "b"}],
+                    "semantic_failures": [{"id": "b"}],
+                }
+            },
+        }
+        synthetic_overrides = module.build_router_override_candidates(synthetic_comparison)
+        assert synthetic_overrides["eligible_count"] == 1, synthetic_overrides
+        assert synthetic_overrides["overrides"][0]["eligible"] is True, synthetic_overrides
+        assert "semantic_candidate_passes_family_gate" in synthetic_overrides["overrides"][0]["reasons"], synthetic_overrides
+
         cli_run_eval = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "run-eval", str(event_path)],
             cwd=str(ROOT),
@@ -236,6 +260,18 @@ def main() -> int:
         cli_comparison = json.loads((cli_compare.stdout or "").strip())
         assert cli_comparison["schema"] == "lobster.routing_router_comparison.v1", cli_comparison
         assert cli_comparison["semantic_candidate"]["router"] == "semantic_candidate", cli_comparison
+
+        cli_select = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "select-overrides", str(event_path)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli_select.returncode == 0, cli_select.stderr
+        cli_overrides = json.loads((cli_select.stdout or "").strip())
+        assert cli_overrides["schema"] == "lobster.routing_override_candidates.v1", cli_overrides
+        assert cli_overrides["auto_apply"] is False, cli_overrides
 
     print("OK nlu_feedback_memory")
     return 0

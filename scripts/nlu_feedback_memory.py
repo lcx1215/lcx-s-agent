@@ -479,6 +479,72 @@ def compare_router_evalset(evalset: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_router_override_candidates(
+    comparison: dict[str, Any],
+    *,
+    min_cases: int = 3,
+    min_delta: float = 0.15,
+) -> dict[str, Any]:
+    overrides = []
+    for family, delta_row in (comparison.get("family_deltas") or {}).items():
+        if not isinstance(delta_row, dict):
+            continue
+        deterministic = float(delta_row.get("deterministic_accuracy") or 0)
+        semantic = float(delta_row.get("semantic_accuracy") or 0)
+        delta = float(delta_row.get("delta") or 0)
+        d_failures = delta_row.get("deterministic_failures", []) if isinstance(delta_row.get("deterministic_failures"), list) else []
+        s_failures = delta_row.get("semantic_failures", []) if isinstance(delta_row.get("semantic_failures"), list) else []
+        deterministic_family = (comparison.get("deterministic", {}).get("families", {}) or {}).get(family, {})
+        case_count = 0
+        if isinstance(deterministic_family, dict):
+            case_count = int(deterministic_family.get("count") or 0)
+
+        reasons = []
+        eligible = True
+        if case_count < min_cases:
+            eligible = False
+            reasons.append("insufficient_family_cases")
+        if delta < min_delta:
+            eligible = False
+            reasons.append("semantic_delta_below_gate")
+        if semantic < deterministic:
+            eligible = False
+            reasons.append("semantic_worse_than_deterministic")
+        if s_failures and not d_failures:
+            eligible = False
+            reasons.append("semantic_adds_failures")
+        if eligible:
+            reasons.append("semantic_candidate_passes_family_gate")
+
+        overrides.append(
+            {
+                "family": family,
+                "primary_router": "deterministic_parser",
+                "candidate_router": "semantic_candidate",
+                "case_count": case_count,
+                "deterministic_accuracy": deterministic,
+                "semantic_accuracy": semantic,
+                "delta": delta,
+                "eligible": eligible,
+                "reasons": reasons,
+                "review_required": True,
+            }
+        )
+
+    overrides.sort(key=lambda row: (not bool(row.get("eligible")), str(row.get("family") or "")))
+    return {
+        "ok": True,
+        "schema": "lobster.routing_override_candidates.v1",
+        "created_at": now_iso(),
+        "auto_apply": False,
+        "min_cases": min_cases,
+        "min_delta": min_delta,
+        "candidate_count": len(overrides),
+        "eligible_count": sum(1 for row in overrides if row.get("eligible")),
+        "overrides": overrides,
+    }
+
+
 def print_json(obj: dict[str, Any]) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
@@ -551,6 +617,11 @@ def main() -> int:
     if cmd == "compare-routers":
         evalset = build_routing_evalset(build_absorption_plan(summary))
         print_json(compare_router_evalset(evalset))
+        return 0
+    if cmd == "select-overrides":
+        evalset = build_routing_evalset(build_absorption_plan(summary))
+        comparison = compare_router_evalset(evalset)
+        print_json(build_router_override_candidates(comparison))
         return 0
     print_json({"ok": False, "error": f"unknown command: {cmd}"})
     return 2
