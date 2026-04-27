@@ -1,0 +1,41 @@
+name: Lobster progress wave
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate progress wave
+        run: node scripts/generate-lobster-progress-wave.mjs
+
+      - name: Commit refreshed image
+        run: |
+          if git diff --quiet -- docs/assets/lobster-daily-progress-wave.svg; then
+            echo "Progress wave is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/assets/lobster-daily-progress-wave.svg
+          git commit -m "Docs: refresh Lobster progress wave"
+          git push

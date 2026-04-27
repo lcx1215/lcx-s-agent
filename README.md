@@ -1,6 +1,6 @@
 # Lobster OpenClaw
 
-![Lobster OpenClaw daily progress wave](docs/assets/lobster-daily-progress-wave.svg)
+[![Lobster OpenClaw daily progress wave](docs/assets/lobster-daily-progress-wave.svg)](docs/assets/lobster-daily-progress-wave.svg)
 
 Lobster OpenClaw is a personal research operating system built on top of
 OpenClaw. It is designed for one real operator who wants a stable Lark/Feishu
