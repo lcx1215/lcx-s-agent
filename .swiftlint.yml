@@ -146,3 +146,4 @@ line_length:
   ignores_urls: true
 
 reporter: "xcode"
+# Lints Swift app surfaces and shared client runtime code.

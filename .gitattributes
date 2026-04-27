@@ -1,3 +1,4 @@
 * text=auto eol=lf
 CLAUDE.md -text
 src/gateway/server-methods/CLAUDE.md -text
+# Normalizes repository file handling for generated assets, docs, and source files.

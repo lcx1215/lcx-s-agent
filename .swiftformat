@@ -49,3 +49,4 @@
 
 # Exclusions
 --exclude .build,.swiftpm,DerivedData,node_modules,dist,coverage,xcuserdata,Peekaboo,Swabble,apps/android,apps/ios,apps/shared,apps/macos/Sources/MoltbotProtocol
+# Formats Swift client code for macOS, iOS, and shared OpenClawKit targets.

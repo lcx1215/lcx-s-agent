@@ -50,3 +50,4 @@
     "MD046": false,
   },
 }
+// Configures Markdown linting for docs, README, and runbook files.

@@ -129,3 +129,4 @@ repos:
         language: system
         pass_filenames: false
         types: [swift]
+# Defines local pre-commit checks before code enters the OpenClaw/Lobster tree.

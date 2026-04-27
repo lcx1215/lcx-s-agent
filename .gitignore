@@ -121,3 +121,4 @@ dist/protocol.schema.json
 
 # Synthing
 **/.stfolder/
+# Keeps generated output, local credentials, caches, and runtime state out of git.

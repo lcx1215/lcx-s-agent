@@ -23,3 +23,4 @@ disable=SC2016
 
 # SC2129: Consider using { cmd1; cmd2; } >> file (style preference)
 disable=SC2129
+# Configures ShellCheck for installer, maintenance, and runtime shell scripts.

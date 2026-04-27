@@ -24,3 +24,4 @@
     "vendor/",
   ],
 }
+// Configures oxfmt formatting rules for TypeScript and JavaScript surfaces.
