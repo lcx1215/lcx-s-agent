@@ -297,4 +297,6 @@ ${bottomPills}
 for (const outputPath of outputPaths) {
   writeFileSync(outputPath, svg, "utf8");
 }
-console.log(`wrote ${outputPaths.join(", ")} from ${totalCommits} commits across ${activeDays} active days`);
+console.log(
+  `wrote ${outputPaths.join(", ")} from ${totalCommits} commits across ${activeDays} active days`,
+);

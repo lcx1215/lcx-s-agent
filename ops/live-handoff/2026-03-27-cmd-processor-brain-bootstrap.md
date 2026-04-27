@@ -14,7 +14,7 @@
 - So direct fallback usage of:
   - `系统怎么改造自己`
   - `这个系统下一步该怎么改造`
-  would classify as `unknown`.
+    would classify as `unknown`.
 - This meant the system only partially used the brain:
   - newer command seams did
   - legacy fallback still did not
@@ -56,4 +56,4 @@
 - No new branch.
 - Only added one bounded fallback action:
   - `brain_bootstrap`
-so legacy command fallback no longer bypasses the installed brain.
+    so legacy command fallback no longer bypasses the installed brain.

@@ -6,10 +6,6 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 import {
-  buildFundamentalArtifactJsonPath,
-  buildFundamentalArtifactNoteFilename,
-} from "../lobster-brain-registry.js";
-import {
   summarizeFundamentalIntakeSession,
   type FundamentalManifestScaffold,
   type FundamentalReviewGateStatus,
@@ -18,6 +14,10 @@ import {
   bridgeManifest,
   type FundamentalManifestReadiness,
 } from "../fundamental-manifest-bridge/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 
 let handler: HookHandler;
 let suiteWorkspaceRoot = "";

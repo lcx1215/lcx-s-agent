@@ -15,7 +15,7 @@ The goal is not broad chatting. The goal is to verify the exact user-visible sea
 
 ### Phrase A
 
-```text
+````text
 把这段原样回给我：
 ## Daily Workface
 
@@ -25,8 +25,9 @@ The goal is not broad chatting. The goal is to verify the exact user-visible sea
 
 ```ts
 const ready = true;
-```
-```
+````
+
+````
 
 ### Expected result
 
@@ -40,7 +41,7 @@ const ready = true;
 把这个作为普通文本解释给我，不要保留 markdown 壳子：
 ## Watchtower
 - status: stable
-```
+````
 
 ### Expected result
 

@@ -7,15 +7,15 @@ import {
   loadJsonFilesIsolated,
   writeFundamentalArtifactErrors,
 } from "../fundamental-artifact-errors.js";
-import {
-  buildFundamentalArtifactJsonPath,
-  buildFundamentalArtifactNoteFilename,
-} from "../lobster-brain-registry.js";
 import type {
   FundamentalManifestScaffold,
   FundamentalRiskHandoffStatus,
 } from "../fundamental-intake/handler.js";
 import type { FundamentalScoringGateArtifact } from "../fundamental-scoring-gate/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-risk-handoff");
 

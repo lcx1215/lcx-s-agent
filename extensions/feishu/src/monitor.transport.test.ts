@@ -27,6 +27,7 @@ describe("Feishu transport anomaly reporting", () => {
         },
         account: {
           accountId: "alpha",
+          selectionSource: "explicit",
           enabled: true,
           configured: true,
           domain: "lark",

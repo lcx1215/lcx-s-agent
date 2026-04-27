@@ -7,11 +7,11 @@ import {
   loadJsonFilesIsolated,
   writeFundamentalArtifactErrors,
 } from "../fundamental-artifact-errors.js";
+import type { FundamentalSnapshotArtifact } from "../fundamental-snapshot/handler.js";
 import {
   buildFundamentalArtifactJsonPath,
   buildFundamentalArtifactNoteFilename,
 } from "../lobster-brain-registry.js";
-import type { FundamentalSnapshotArtifact } from "../fundamental-snapshot/handler.js";
 
 const log = createSubsystemLogger("hooks/fundamental-scoring-gate");
 

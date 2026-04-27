@@ -285,9 +285,9 @@ describe("buildCapabilitySurfaceReport", () => {
     expect(lines).toContain(
       "  executionSubstrate: openclaw_embedded_agent (configured, connected)",
     );
-    expect(lines.some((line) => line.includes("lobsterWorkflowRuntime: adapter_implemented, disabled"))).toBe(
-      true,
-    );
+    expect(
+      lines.some((line) => line.includes("lobsterWorkflowRuntime: adapter_implemented, disabled")),
+    ).toBe(true);
   });
 
   it("exports known capability descriptors from the shared capability surface", () => {

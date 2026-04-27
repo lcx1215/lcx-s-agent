@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ClawdbotConfig } from "openclaw/plugin-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SkillStatusEntry } from "../../../src/agents/skills-status.js";
+import { createEmptyRequirements } from "../../../src/cli/requirements-test-fixtures.js";
 import {
   parseMarketIntelligenceRuntimeArtifact,
   renderMarketIntelligenceRuntimeArtifact,
@@ -60,8 +61,8 @@ function summarizeSkillStatus(params?: Partial<SkillStatusEntry>): SkillStatusEn
     disabled: false,
     blockedByAllowlist: false,
     eligible: true,
-    requirements: {},
-    missing: {},
+    requirements: createEmptyRequirements(),
+    missing: createEmptyRequirements(),
     configChecks: [],
     install: [],
     ...params,

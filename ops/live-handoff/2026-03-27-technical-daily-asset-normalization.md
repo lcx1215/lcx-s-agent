@@ -10,6 +10,7 @@
 `technical_daily` was still returning raw title/news fragments even after the worst markdown pollution was removed.
 
 Most visible failures:
+
 - `SPY` used a generic comparison sentence with no technical-daily framing
 - `QQQ` fell back to `technical context unavailable`
 - `TLT` / `GLD` still read like copied news sentences instead of clean operator-facing snapshots

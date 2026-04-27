@@ -35,7 +35,7 @@
     - `bookkeeping.pending_count`
     - `bookkeeping.pending_topics`
     - `bookkeeping.last_anomaly`
-    inside `nightly_learning_status.py`
+      inside `nightly_learning_status.py`
 
 ## Proof tests
 

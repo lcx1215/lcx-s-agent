@@ -1,3 +1,4 @@
+import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ChannelMeta, ChannelPlugin, ClawdbotConfig } from "openclaw/plugin-sdk";
 import {
   buildBaseChannelStatusSummary,
@@ -117,7 +118,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
         accountId: accountId ?? undefined,
         limit,
       });
-      return {
+      const payload = {
         messages: messages.map((message) => ({
           id: message.messageId,
           messageId: message.messageId,
@@ -131,6 +132,10 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
           text: message.content,
         })),
       };
+      return {
+        content: [{ type: "text", text: JSON.stringify(payload) }],
+        details: payload,
+      } as unknown as AgentToolResult<unknown>;
     },
   },
   groups: {

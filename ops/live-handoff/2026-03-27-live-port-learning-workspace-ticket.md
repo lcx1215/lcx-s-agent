@@ -7,6 +7,7 @@ The development repo already propagates the current specialist lane workspace in
 The live repo does not currently expose the same `learning-council` seam, so learning artifacts cannot yet be guaranteed to land in the current lane workspace.
 
 One bounded live hardening has now landed:
+
 - live learning script paths now preserve `lane_key` metadata end-to-end
 - same-topic requests from different Feishu chats no longer collapse into one queue row by default
 

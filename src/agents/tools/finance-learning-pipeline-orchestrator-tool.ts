@@ -645,10 +645,12 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
         return sum + (typeof item.candidateCount === "number" ? item.candidateCount : 0);
       }, 0);
       const applicationValidation = applicationValidationQuery
-        ? ((await applyTool.execute(`${toolCallId}:application-validation`, {
-            queryText: applicationValidationQuery,
-            maxCandidates: maxAppliedCapabilities,
-          })).details as Record<string, unknown>)
+        ? ((
+            await applyTool.execute(`${toolCallId}:application-validation`, {
+              queryText: applicationValidationQuery,
+              maxCandidates: maxAppliedCapabilities,
+            })
+          ).details as Record<string, unknown>)
         : null;
       const applicationValidationCandidateCount =
         applicationValidation && typeof applicationValidation.candidateCount === "number"

@@ -188,11 +188,9 @@ export function buildFinanceLearningRetrievalReview(params: {
         : null;
     const applicationValidationRequested = applicationValidation?.requested === true;
     const applicationValidationStatus = applicationValidationRequested
-      ? applicationValidation?.status ?? "missing_application_validation_status"
+      ? (applicationValidation?.status ?? "missing_application_validation_status")
       : "not_requested";
-    const applicationValidationCandidateCount = numberValue(
-      applicationValidation?.candidateCount,
-    );
+    const applicationValidationCandidateCount = numberValue(applicationValidation?.candidateCount);
     const applicationValidatedAfterLearning =
       applicationValidationRequested &&
       applicationValidationStatus === "application_ready" &&
@@ -247,13 +245,13 @@ export function buildFinanceLearningRetrievalReview(params: {
               ? "not_application_ready_after_learning"
               : row.applicationValidationRequested && !row.applicationValidatedAfterLearning
                 ? "not_application_validated_after_learning"
-              : "receipt_contract_incomplete",
+                : "receipt_contract_incomplete",
       action:
         row.applicationValidationRequested && !row.applicationValidatedAfterLearning
           ? "Re-run finance learning capability apply on a bounded research question and repair reuse guidance before treating this learning as usable in future answers."
           : row.applicationReadyCandidateCount <= 0
-          ? "Re-run inspect/apply so retained capabilities expose reuse guidance, required inputs, evidence categories, causal checks, implementation checks, and risk checks before treating this learning as internalized."
-          : "Re-extract or retag the source into stable finance domains and capability tags before treating this learning as internalized.",
+            ? "Re-run inspect/apply so retained capabilities expose reuse guidance, required inputs, evidence categories, causal checks, implementation checks, and risk checks before treating this learning as internalized."
+            : "Re-extract or retag the source into stable finance domains and capability tags before treating this learning as internalized.",
     }));
 
   return {
@@ -267,9 +265,8 @@ export function buildFinanceLearningRetrievalReview(params: {
       invalidReceipts: invalidReceipts.length,
       retrievableAfterLearning: rows.filter((row) => row.becameRetrievableAfterLearning).length,
       applicationReadyAfterLearning: rows.filter((row) => row.applicationReadyAfterLearning).length,
-      applicationValidatedAfterLearning: rows.filter(
-        (row) => row.applicationValidatedAfterLearning,
-      ).length,
+      applicationValidatedAfterLearning: rows.filter((row) => row.applicationValidatedAfterLearning)
+        .length,
       applicationValidationRequested: rows.filter((row) => row.applicationValidationRequested)
         .length,
       newlyRetrievable: rows.filter((row) => row.newlyRetrievableCandidateDelta > 0).length,

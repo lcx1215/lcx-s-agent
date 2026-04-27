@@ -23,7 +23,9 @@ import {
 } from "../weekly-memory.js";
 
 const log = createSubsystemLogger("hooks/frontier-research-weekly");
-const RESEARCH_FILE_RE = new RegExp(`^(\\d{4}-\\d{2}-\\d{2})-${FRONTIER_RESEARCH_CARD_PREFIX}.+\\.md$`);
+const RESEARCH_FILE_RE = new RegExp(
+  `^(\\d{4}-\\d{2}-\\d{2})-${FRONTIER_RESEARCH_CARD_PREFIX}.+\\.md$`,
+);
 
 type ParsedResearchCard = NonNullable<ReturnType<typeof parseFrontierResearchCardArtifact>> & {
   leakage: string;

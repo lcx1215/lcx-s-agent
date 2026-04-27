@@ -6,10 +6,6 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 import {
-  buildFundamentalArtifactJsonPath,
-  buildFundamentalArtifactNoteFilename,
-} from "../lobster-brain-registry.js";
-import {
   summarizeFundamentalIntakeSession,
   type FundamentalDocumentMetadata,
   type FundamentalManifestScaffold,
@@ -19,6 +15,10 @@ import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
 import { buildFundamentalScoringGate } from "../fundamental-scoring-gate/handler.js";
 import { buildSnapshotInput } from "../fundamental-snapshot-bridge/handler.js";
 import { buildFundamentalSnapshot } from "../fundamental-snapshot/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 
 let handler: HookHandler;
 let suiteWorkspaceRoot = "";
@@ -78,7 +78,7 @@ function withManifestId(
       baseDir: `bank/fundamental/documents/${manifestId}`,
       targetDirs: manifest.documentWorkspace.targetDirs.map((targetDir) => ({
         ...targetDir,
-        dir: `bank/fundamental/documents/${manifestId}/${targetDir.targetSlug}`,
+        dir: `bank/fundamental/documents/${manifestId}/${targetDir.dir.split("/").at(-1)}`,
       })),
     },
   };

@@ -63,7 +63,9 @@ export function createPluginRuntimeMock(overrides: DeepPartial<PluginRuntime> = 
       transcribeAudioFile: vi.fn() as unknown as PluginRuntime["stt"]["transcribeAudioFile"],
     },
     tools: {
+      createAiderTool: vi.fn() as unknown as PluginRuntime["tools"]["createAiderTool"],
       createMemoryGetTool: vi.fn() as unknown as PluginRuntime["tools"]["createMemoryGetTool"],
+      createMcpContextTool: vi.fn() as unknown as PluginRuntime["tools"]["createMcpContextTool"],
       createMemorySearchTool:
         vi.fn() as unknown as PluginRuntime["tools"]["createMemorySearchTool"],
       registerMemoryCli: vi.fn() as unknown as PluginRuntime["tools"]["registerMemoryCli"],

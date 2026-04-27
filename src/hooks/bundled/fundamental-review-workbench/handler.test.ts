@@ -6,18 +6,14 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 import { writeFundamentalArtifactErrors } from "../fundamental-artifact-errors.js";
+import type { FundamentalArtifactErrorStatus } from "../fundamental-artifact-errors.js";
 import {
   summarizeFundamentalIntakeSession,
-  type FundamentalArtifactErrorStatus,
   type FundamentalDocumentMetadata,
   type FundamentalManifestScaffold,
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
-import {
-  buildFundamentalReviewChainJsonPath,
-  buildFundamentalReviewChainNoteFilename,
-} from "../lobster-brain-registry.js";
 import { buildFundamentalReviewBrief } from "../fundamental-review-brief/handler.js";
 import { buildFundamentalReviewPlan } from "../fundamental-review-plan/handler.js";
 import { buildFundamentalReviewQueue } from "../fundamental-review-queue/handler.js";
@@ -25,6 +21,10 @@ import { buildFundamentalRiskHandoff } from "../fundamental-risk-handoff/handler
 import { buildFundamentalScoringGate } from "../fundamental-scoring-gate/handler.js";
 import { buildSnapshotInput } from "../fundamental-snapshot-bridge/handler.js";
 import { buildFundamentalSnapshot } from "../fundamental-snapshot/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 
 let handler: HookHandler;
 let suiteWorkspaceRoot = "";

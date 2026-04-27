@@ -6,6 +6,7 @@ import {
   buildSyntheticMemoryContext,
   loadNewestMemoryNote,
   loadRecentMemoryNotes,
+  type MemoryNoteFile,
   resolveRecentCount,
 } from "../bootstrap-memory.js";
 import {
@@ -32,13 +33,15 @@ const frontierResearchBootstrapHook: HookHandler = async (event) => {
   try {
     const notesByName = new Map(
       await Promise.all(
-        FRONTIER_BOOTSTRAP_PRIORITY_SECTIONS.map(async ({ noteName }) => [
-          noteName,
-          await loadNewestMemoryNote({
-            workspaceDir: context.workspaceDir,
-            includes: noteName,
-          }),
-        ]),
+        FRONTIER_BOOTSTRAP_PRIORITY_SECTIONS.map(
+          async ({ noteName }): Promise<[string, MemoryNoteFile | undefined]> => [
+            noteName,
+            await loadNewestMemoryNote({
+              workspaceDir: context.workspaceDir,
+              includes: noteName,
+            }),
+          ],
+        ),
       ),
     );
     const cards = await loadRecentMemoryNotes({

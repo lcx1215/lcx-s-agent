@@ -135,14 +135,14 @@ describe("learning-review-weekly hook", () => {
     const durableSkillsFile = files.find((name) => name.endsWith("learning-durable-skills.md"));
     const triggerMapFile = files.find((name) => name.endsWith("learning-trigger-map.md"));
     const rehearsalQueueFile = files.find((name) => name.endsWith("learning-rehearsal-queue.md"));
-    const transferBridgesFile = files.find((name) =>
-      name.endsWith("learning-transfer-bridges.md"),
-    );
+    const transferBridgesFile = files.find((name) => name.endsWith("learning-transfer-bridges.md"));
     const relevanceGateFile = files.find((name) => name.endsWith("learning-relevance-gate.md"));
     expect(weeklyFile).toBe(buildLearningRecallFilename("2026-W11", "learning-weekly-review"));
     expect(upgradeFile).toBe(buildLearningRecallFilename("2026-W11", "learning-upgrade"));
     expect(catalogFile).toBe(buildLearningRecallFilename("2026-W11", "learning-long-term-catalog"));
-    expect(durableSkillsFile).toBe(buildLearningRecallFilename("2026-W11", "learning-durable-skills"));
+    expect(durableSkillsFile).toBe(
+      buildLearningRecallFilename("2026-W11", "learning-durable-skills"),
+    );
     expect(triggerMapFile).toBe(buildLearningRecallFilename("2026-W11", "learning-trigger-map"));
     expect(rehearsalQueueFile).toBe(
       buildLearningRecallFilename("2026-W11", "learning-rehearsal-queue"),
@@ -156,7 +156,10 @@ describe("learning-review-weekly hook", () => {
     const content = await fs.readFile(path.join(memoryDir, weeklyFile!), "utf-8");
     const upgradeContent = await fs.readFile(path.join(memoryDir, upgradeFile!), "utf-8");
     const catalogContent = await fs.readFile(path.join(memoryDir, catalogFile!), "utf-8");
-    const durableSkillsContent = await fs.readFile(path.join(memoryDir, durableSkillsFile!), "utf-8");
+    const durableSkillsContent = await fs.readFile(
+      path.join(memoryDir, durableSkillsFile!),
+      "utf-8",
+    );
     const triggerMapContent = await fs.readFile(path.join(memoryDir, triggerMapFile!), "utf-8");
     const rehearsalQueueContent = await fs.readFile(
       path.join(memoryDir, rehearsalQueueFile!),
@@ -232,7 +235,9 @@ describe("learning-review-weekly hook", () => {
     expect(durableSkillsContent).toContain("- common_failure: skipped dimension checks");
     expect(triggerMapContent).toContain("# Learning Trigger Map: 2026-W11");
     expect(triggerMapContent).toContain("### quant-modeling");
-    expect(triggerMapContent).toContain("- when_you_see: backtest, factor, alpha, ranking, Sharpe, OOS, leakage, or parameter-fragility questions");
+    expect(triggerMapContent).toContain(
+      "- when_you_see: backtest, factor, alpha, ranking, Sharpe, OOS, leakage, or parameter-fragility questions",
+    );
     expect(triggerMapContent).toContain("- apply: test OOS before trusting the edge");
     expect(rehearsalQueueContent).toContain("# Learning Rehearsal Queue: 2026-W11");
     expect(rehearsalQueueContent).toContain("## Do Now");
@@ -248,9 +253,7 @@ describe("learning-review-weekly hook", () => {
     expect(transferBridgesContent).toContain(
       "- transfer_to: helps with strategy audit and candidate ranking",
     );
-    expect(transferBridgesContent).toContain(
-      "- reuse_rule: test OOS before trusting the edge",
-    );
+    expect(transferBridgesContent).toContain("- reuse_rule: test OOS before trusting the edge");
     expect(relevanceGateContent).toContain("# Learning Relevance Gate: 2026-W11");
     expect(relevanceGateContent).toContain("## Primary Call");
     expect(relevanceGateContent).toContain(
@@ -280,11 +283,12 @@ describe("learning-review-weekly hook", () => {
           "帮我学习这个 GitHub repo 和 AI 智能体架构，重点看 system design、workflow、shared state 和失败路径。",
         mutableFactWarnings: 0,
         failedRolesSummary: "none",
-        finalReplySnapshot:
-          "先写输入、状态、失败、验收四栏，再决定这套架构值不值得迁移。",
+        finalReplySnapshot: "先写输入、状态、失败、验收四栏，再决定这套架构值不值得迁移。",
         keeperLines: ["先把输入、状态、失败、验收四栏写清，再决定架构值不值得迁移。"],
         discardLines: ["丢掉只会列组件、不会说明失败面和状态流的架构总结。"],
-        rehearsalTriggerLines: ["当一个新 agent 架构听起来很强，但没讲共享状态和回退路径时，重新想起这条规则。"],
+        rehearsalTriggerLines: [
+          "当一个新 agent 架构听起来很强，但没讲共享状态和回退路径时，重新想起这条规则。",
+        ],
         nextEvalCueLines: ["拿最近一个 Lobster 流程故障，检查这套架构有没有明确的人接管点。"],
       }),
     });
@@ -303,12 +307,8 @@ describe("learning-review-weekly hook", () => {
     const weeklyContent = await fs.readFile(weeklyPath, "utf-8");
     expect(weeklyContent).toContain("**Review Count**: 1");
     expect(weeklyContent).toContain("agent-architecture-and-workflows");
-    expect(weeklyContent).toContain(
-      "先把输入、状态、失败、验收四栏写清，再决定架构值不值得迁移。",
-    );
-    expect(weeklyContent).toContain(
-      "丢掉只会列组件、不会说明失败面和状态流的架构总结。",
-    );
+    expect(weeklyContent).toContain("先把输入、状态、失败、验收四栏写清，再决定架构值不值得迁移。");
+    expect(weeklyContent).toContain("丢掉只会列组件、不会说明失败面和状态流的架构总结。");
     expect(weeklyContent).toContain(
       buildLearningCouncilMemoryNoteFilename({
         dateStr: "2026-03-15",

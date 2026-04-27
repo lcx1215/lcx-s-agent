@@ -97,8 +97,6 @@ describe("createHostWorkspaceEditTool post-write recovery", () => {
     const tool = createHostWorkspaceEditTool(tmpDir);
     await expect(
       tool.execute("call-1", { path: filePath, oldText, newText }, undefined),
-    ).rejects.toThrow(
-      "Bookkeeping failed: could not record the memory update in",
-    );
+    ).rejects.toThrow("Bookkeeping failed: could not record the memory update in");
   });
 });

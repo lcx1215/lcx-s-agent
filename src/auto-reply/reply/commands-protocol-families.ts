@@ -249,9 +249,10 @@ function includesAny(text: string, phrases: readonly string[]): boolean {
 }
 
 function looksLikeLearningTimeboxStatusAsk(text: string): boolean {
-  const hasDirectStatusCue = /学习状态|学习进度|还在学|还在学习|学到哪|学完了吗|还没学完|timebox status|session status/u.test(
-    text,
-  );
+  const hasDirectStatusCue =
+    /学习状态|学习进度|还在学|还在学习|学到哪|学完了吗|还没学完|timebox status|session status/u.test(
+      text,
+    );
   const hasLearningSessionCue =
     /(学习 session|learning session|限时学习|timebox|当前 session|学习一小时|持续学习|刚才让你学的那条)/u.test(
       text,

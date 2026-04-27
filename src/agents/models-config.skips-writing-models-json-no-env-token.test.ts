@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveOpenClawAgentDir } from "./agent-paths.js";
+import { resolveMinimaxDefaultTextModelId } from "./minimax-model-catalog.js";
 import {
   CUSTOM_PROXY_MODELS_CONFIG,
   installModelsConfigTestHooks,
@@ -10,7 +11,6 @@ import {
   withTempEnv,
   withModelsTempHome as withTempHome,
 } from "./models-config.e2e-harness.js";
-import { resolveMinimaxDefaultTextModelId } from "./minimax-model-catalog.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
 
 installModelsConfigTestHooks();

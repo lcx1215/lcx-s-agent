@@ -54,6 +54,7 @@ export function resolveAnyEnabledFeishuToolsConfig(
     chat: false,
     wiki: false,
     drive: false,
+    workRoles: false,
     perm: false,
     scopes: false,
   };

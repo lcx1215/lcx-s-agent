@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildWatchtowerArtifactDir } from "./lobster-brain-registry.js";
 import { writeFundamentalArtifactErrors } from "./fundamental-artifact-errors.js";
+import { buildWatchtowerArtifactDir } from "./lobster-brain-registry.js";
 
 let suiteWorkspaceRoot = "";
 let workspaceCaseCounter = 0;
@@ -91,7 +91,9 @@ describe("fundamental artifact errors", () => {
     expect(note).toContain("occurrence_count: 2");
     expect(note).toContain("last_seen_at: 2026-03-15T13:00:00.000Z");
 
-    const anomalyFiles = await fs.readdir(path.join(workspaceDir, buildWatchtowerArtifactDir("anomalies")));
+    const anomalyFiles = await fs.readdir(
+      path.join(workspaceDir, buildWatchtowerArtifactDir("anomalies")),
+    );
     expect(anomalyFiles).toHaveLength(1);
     const anomaly = JSON.parse(
       await fs.readFile(

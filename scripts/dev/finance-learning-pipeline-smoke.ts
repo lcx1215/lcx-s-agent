@@ -292,7 +292,10 @@ async function runCase(
         "retrievalReceiptPath",
       );
       const retrievalReviewPath = getString(retrieval.retrievalReviewPath, "retrievalReviewPath");
-      const usageReceiptPath = getString(applicationValidation.usageReceiptPath, "usageReceiptPath");
+      const usageReceiptPath = getString(
+        applicationValidation.usageReceiptPath,
+        "usageReceiptPath",
+      );
       const usageReviewPath = getString(applicationValidation.usageReviewPath, "usageReviewPath");
       const agentVisibleLearningLine = buildAgentVisibleLearningLine(retrieval);
       assert(

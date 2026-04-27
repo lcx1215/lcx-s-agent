@@ -492,7 +492,7 @@ async function loadYesterdayLearningReviews(params: {
     const parsed = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && isLearningReviewNoteFilename(entry.name))
-        .map(async (entry) => {
+        .map(async (entry): Promise<LearningReview | undefined> => {
           const content = await fs.readFile(path.join(params.memoryDir, entry.name), "utf-8");
           const parsedNote = parseLearningReviewMemoryNote({ filename: entry.name, content });
           if (!parsedNote || parsedNote.date !== params.targetDateKey) {
@@ -530,7 +530,7 @@ async function loadYesterdayLearningCouncilArtifacts(params: {
     const parsed = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-        .map(async (entry) => {
+        .map(async (entry): Promise<LearningCouncilArtifact | undefined> => {
           const content = parseLearningCouncilRuntimeArtifact(
             await fs.readFile(path.join(artifactDir, entry.name), "utf-8"),
           );
@@ -588,7 +588,7 @@ async function loadYesterdayLearningCouncilAdoptionLedgers(params: {
     const parsed = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && isLearningCouncilAdoptionLedgerFilename(entry.name))
-        .map(async (entry) => {
+        .map(async (entry): Promise<LearningCouncilArtifact | undefined> => {
           const content = await fs.readFile(path.join(params.memoryDir, entry.name), "utf-8");
           const parsedLedger = parseLearningCouncilAdoptionLedger({
             filename: entry.name,
@@ -734,7 +734,7 @@ async function loadYesterdayLearningCouncilMemoryNotes(params: {
     const parsed = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && isLearningCouncilMemoryNoteFilename(entry.name))
-        .map(async (entry) => {
+        .map(async (entry): Promise<LearningCouncilArtifact | undefined> => {
           const content = await fs.readFile(path.join(params.memoryDir, entry.name), "utf-8");
           const parsedNote = parseLearningCouncilMemoryNote({ filename: entry.name, content });
           if (!parsedNote || parsedNote.date !== params.targetDateKey) {
@@ -770,7 +770,7 @@ async function loadYesterdayCorrectionNotes(params: {
     const parsed = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && isCorrectionNoteFilename(entry.name))
-        .map(async (entry) => {
+        .map(async (entry): Promise<CorrectionNote | undefined> => {
           const parsedName = parseCorrectionNoteFilename(entry.name);
           if (!parsedName || parsedName.dateStr !== params.targetDateKey) {
             return undefined;
@@ -801,7 +801,7 @@ async function loadYesterdayFeishuWorkReceipts(params: {
     const parsed = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && isFeishuWorkReceiptFilename(entry.name))
-        .map(async (entry) => {
+        .map(async (entry): Promise<FeishuWorkReceipt | undefined> => {
           const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
           const parsedReceipt = parseFeishuWorkReceiptArtifact(content);
           if (

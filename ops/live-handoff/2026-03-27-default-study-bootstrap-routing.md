@@ -17,7 +17,7 @@
   - `系统架构怎么学`
   - `论文怎么学`
   - `AI智能体架构怎么学`
-  still had no dedicated default-study seam
+    still had no dedicated default-study seam
 - this meant the brain only became active when the operator used a more explicit recall frame
 
 ## Why this was dangerous

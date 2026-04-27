@@ -7,10 +7,6 @@ import {
   loadJsonFilesIsolated,
   writeFundamentalArtifactErrors,
 } from "../fundamental-artifact-errors.js";
-import {
-  buildFundamentalArtifactJsonPath,
-  buildFundamentalArtifactNoteFilename,
-} from "../lobster-brain-registry.js";
 import type {
   DocumentType,
   FundamentalManifestScaffold,
@@ -25,6 +21,10 @@ import type {
   FundamentalSnapshotInput,
   SnapshotInputTarget,
 } from "../fundamental-snapshot-bridge/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-snapshot");
 

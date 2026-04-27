@@ -12,10 +12,6 @@ import {
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
-import {
-  buildFundamentalArtifactJsonPath,
-  buildFundamentalArtifactNoteFilename,
-} from "../lobster-brain-registry.js";
 import { buildFundamentalReviewBrief } from "../fundamental-review-brief/handler.js";
 import { buildFundamentalReviewPlan } from "../fundamental-review-plan/handler.js";
 import { buildFundamentalReviewQueue } from "../fundamental-review-queue/handler.js";
@@ -25,6 +21,10 @@ import { buildFundamentalScoringGate } from "../fundamental-scoring-gate/handler
 import { buildSnapshotInput } from "../fundamental-snapshot-bridge/handler.js";
 import { buildFundamentalSnapshot } from "../fundamental-snapshot/handler.js";
 import { buildFundamentalTargetPackets } from "../fundamental-target-packets/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 
 let handler: HookHandler;
 let suiteWorkspaceRoot = "";
@@ -293,10 +293,9 @@ async function runCollectionPackets(params: {
   );
 
   try {
-    artifact = JSON.parse(await fs.readFile(path.join(tempDir, collectionPacketsPath), "utf-8")) as Record<
-      string,
-      unknown
-    >;
+    artifact = JSON.parse(
+      await fs.readFile(path.join(tempDir, collectionPacketsPath), "utf-8"),
+    ) as Record<string, unknown>;
   } catch {}
 
   try {

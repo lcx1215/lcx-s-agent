@@ -3,14 +3,14 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import {
-  buildFundamentalReviewChainJsonPath,
-  buildFundamentalReviewChainNoteFilename,
-} from "../lobster-brain-registry.js";
-import {
   loadReviewQueuesWithFallback,
   type FundamentalReviewQueueArtifact,
 } from "../fundamental-review-queue/handler.js";
 import type { FundamentalRiskHandoffArtifact } from "../fundamental-risk-handoff/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-review-brief");
 

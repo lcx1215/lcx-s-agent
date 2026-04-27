@@ -16,6 +16,14 @@ async function seedArticle(workspaceDir: string, relativePath: string, content: 
   await fs.writeFile(absolutePath, content, "utf8");
 }
 
+function detailsOf(result: { details: unknown }) {
+  return result.details as Record<string, unknown> & {
+    ok: boolean;
+    usageReceiptPath: string;
+    usageReviewPath: string;
+  };
+}
+
 function buildValidArgs() {
   return {
     articlePath: "memory/articles/wechat-liquidity-regime.md",
@@ -110,7 +118,7 @@ describe("finance learning capability tools", () => {
     const applyTool = createFinanceLearningCapabilityApplyTool({ workspaceDir });
 
     const result = await attachTool.execute("finance-learning-attach", buildValidArgs());
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         updated: true,
@@ -139,7 +147,7 @@ describe("finance learning capability tools", () => {
     const inspectByDomain = await inspectTool.execute("inspect-domain", {
       domain: "credit_liquidity",
     });
-    expect(inspectByDomain.details).toEqual(
+    expect(detailsOf(inspectByDomain)).toEqual(
       expect.objectContaining({
         ok: true,
         candidateCount: 1,
@@ -150,7 +158,7 @@ describe("finance learning capability tools", () => {
     const inspectByType = await inspectTool.execute("inspect-type", {
       capabilityType: "analysis_method",
     });
-    expect(inspectByType.details).toEqual(
+    expect(detailsOf(inspectByType)).toEqual(
       expect.objectContaining({
         ok: true,
         candidateCount: 1,
@@ -161,7 +169,7 @@ describe("finance learning capability tools", () => {
     const inspectBySource = await inspectTool.execute("inspect-source", {
       sourceArticlePath: "memory/articles/wechat-liquidity-regime.md",
     });
-    expect(inspectBySource.details).toEqual(
+    expect(detailsOf(inspectBySource)).toEqual(
       expect.objectContaining({
         ok: true,
         candidateCount: 2,
@@ -172,7 +180,7 @@ describe("finance learning capability tools", () => {
       queryText: "因子择时 liquidity regime funding stress out of sample risk",
       maxCandidates: 1,
     });
-    expect(inspectByQuery.details).toEqual(
+    expect(detailsOf(inspectByQuery)).toEqual(
       expect.objectContaining({
         ok: true,
         retrievalMode: "query_ranked",
@@ -206,7 +214,7 @@ describe("finance learning capability tools", () => {
       queryText: "open source github repository benchmark compliance dataset governance",
       maxCandidates: 5,
     });
-    expect(unrelatedEnglishQuery.details).toEqual(
+    expect(detailsOf(unrelatedEnglishQuery)).toEqual(
       expect.objectContaining({
         ok: true,
         retrievalMode: "query_ranked",
@@ -220,7 +228,7 @@ describe("finance learning capability tools", () => {
         "我要让系统学习一个很长的任务，里面同时提到 ETF liquidity regime funding stress portfolio risk out of sample 和其他上下文，不要因为 query 太长就漏掉相关能力",
       maxCandidates: 5,
     });
-    expect(longMixedQuery.details).toEqual(
+    expect(detailsOf(longMixedQuery)).toEqual(
       expect.objectContaining({
         ok: true,
         retrievalMode: "query_ranked",
@@ -236,7 +244,7 @@ describe("finance learning capability tools", () => {
       queryText: "把学到的流动性和资金面方法用于 ETF 风控，重点看回撤、样本外和仓位约束",
       maxCandidates: 2,
     });
-    expect(chineseOnlyRiskQuery.details).toEqual(
+    expect(detailsOf(chineseOnlyRiskQuery)).toEqual(
       expect.objectContaining({
         ok: true,
         retrievalMode: "query_ranked",
@@ -253,7 +261,7 @@ describe("finance learning capability tools", () => {
       queryText: "帮我学习一篇文章，然后以后回答问题更聪明一点",
       maxCandidates: 5,
     });
-    expect(genericChineseQuery.details).toEqual(
+    expect(detailsOf(genericChineseQuery)).toEqual(
       expect.objectContaining({
         ok: true,
         retrievalMode: "query_ranked",
@@ -267,7 +275,7 @@ describe("finance learning capability tools", () => {
         "怎么把 liquidity regime funding stress 学到的东西用于 ETF 风控研究，注意 out of sample 和 drawdown 风险",
       maxCandidates: 1,
     });
-    expect(appliedAnswer.details).toEqual(
+    expect(detailsOf(appliedAnswer)).toEqual(
       expect.objectContaining({
         ok: true,
         boundary: "finance_learning_capability_apply_read_only",
@@ -361,7 +369,7 @@ describe("finance learning capability tools", () => {
       }),
     );
     const applyReceipt = JSON.parse(
-      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReceiptPath), "utf8"),
+      await fs.readFile(path.join(workspaceDir, detailsOf(appliedAnswer).usageReceiptPath), "utf8"),
     ) as {
       boundary: string;
       ok: boolean;
@@ -381,7 +389,7 @@ describe("finance learning capability tools", () => {
       noDoctrineMutation: true,
     });
     const firstUsageReview = JSON.parse(
-      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReviewPath), "utf8"),
+      await fs.readFile(path.join(workspaceDir, detailsOf(appliedAnswer).usageReviewPath), "utf8"),
     ) as {
       boundary: string;
       counts: { usageReceipts: number; successfulApplications: number };
@@ -401,7 +409,7 @@ describe("finance learning capability tools", () => {
         "把 liquidity regime funding stress 和 headline event catalyst triage 一起用于 ETF 风控研究，检查 portfolio risk、drawdown 和样本外失效",
       maxCandidates: 2,
     });
-    expect(synthesizedAnswer.details).toEqual(
+    expect(detailsOf(synthesizedAnswer)).toEqual(
       expect.objectContaining({
         ok: true,
         boundary: "finance_learning_capability_apply_read_only",
@@ -411,7 +419,7 @@ describe("finance learning capability tools", () => {
         usageReceiptPath: expect.stringMatching(
           /^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/.+\.json$/u,
         ),
-        usageReviewPath: appliedAnswer.details.usageReviewPath,
+        usageReviewPath: detailsOf(appliedAnswer).usageReviewPath,
         answerSkeleton: expect.objectContaining({
           capabilitySynthesis: expect.objectContaining({
             mode: "multi_capability_synthesis",
@@ -461,7 +469,7 @@ describe("finance learning capability tools", () => {
     );
     const synthesizedReceipt = JSON.parse(
       await fs.readFile(
-        path.join(workspaceDir, synthesizedAnswer.details.usageReceiptPath),
+        path.join(workspaceDir, detailsOf(synthesizedAnswer).usageReceiptPath),
         "utf8",
       ),
     ) as {
@@ -479,7 +487,7 @@ describe("finance learning capability tools", () => {
     });
     const synthesizedUsageReview = JSON.parse(
       await fs.readFile(
-        path.join(workspaceDir, synthesizedAnswer.details.usageReviewPath),
+        path.join(workspaceDir, detailsOf(synthesizedAnswer).usageReviewPath),
         "utf8",
       ),
     ) as {
@@ -520,7 +528,7 @@ describe("finance learning capability tools", () => {
       queryText: "open source github repository benchmark compliance dataset governance",
       maxCandidates: 3,
     });
-    expect(appliedAnswer.details).toEqual(
+    expect(detailsOf(appliedAnswer)).toEqual(
       expect.objectContaining({
         ok: false,
         boundary: "finance_learning_capability_apply_read_only",
@@ -536,7 +544,7 @@ describe("finance learning capability tools", () => {
       }),
     );
     const refusalReceipt = JSON.parse(
-      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReceiptPath), "utf8"),
+      await fs.readFile(path.join(workspaceDir, detailsOf(appliedAnswer).usageReceiptPath), "utf8"),
     ) as {
       boundary: string;
       ok: boolean;
@@ -550,7 +558,7 @@ describe("finance learning capability tools", () => {
       candidateCount: 0,
     });
     const refusalUsageReview = JSON.parse(
-      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReviewPath), "utf8"),
+      await fs.readFile(path.join(workspaceDir, detailsOf(appliedAnswer).usageReviewPath), "utf8"),
     ) as {
       counts: { usageReceipts: number; refusedApplications: number };
       refusedQueries: Array<{ reason: string }>;
@@ -610,7 +618,7 @@ describe("finance learning capability tools", () => {
       maxCandidates: 1,
     });
 
-    expect(appliedAnswer.details).toEqual(
+    expect(detailsOf(appliedAnswer)).toEqual(
       expect.objectContaining({
         ok: false,
         boundary: "finance_learning_capability_apply_read_only",
@@ -633,7 +641,7 @@ describe("finance learning capability tools", () => {
       }),
     );
     const refusalReceipt = JSON.parse(
-      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReceiptPath), "utf8"),
+      await fs.readFile(path.join(workspaceDir, detailsOf(appliedAnswer).usageReceiptPath), "utf8"),
     ) as {
       boundary: string;
       ok: boolean;
@@ -651,7 +659,7 @@ describe("finance learning capability tools", () => {
       ],
     });
     const refusalUsageReview = JSON.parse(
-      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReviewPath), "utf8"),
+      await fs.readFile(path.join(workspaceDir, detailsOf(appliedAnswer).usageReviewPath), "utf8"),
     ) as {
       counts: { usageReceipts: number; refusedApplications: number };
       refusedQueries: Array<{ reason: string }>;
@@ -684,7 +692,7 @@ describe("finance learning capability tools", () => {
       maxCandidates: 1,
       writeUsageReceipt: false,
     });
-    expect(appliedAnswer.details).toEqual(
+    expect(detailsOf(appliedAnswer)).toEqual(
       expect.objectContaining({
         ok: true,
         usageReceiptPath: null,
@@ -876,7 +884,7 @@ describe("finance learning capability tools", () => {
 This note stays research-only, without pretending to be execution approval, and does not auto-promote anything.`,
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         updated: true,

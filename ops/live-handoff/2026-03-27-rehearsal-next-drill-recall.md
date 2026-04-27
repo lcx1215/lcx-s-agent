@@ -13,7 +13,7 @@
   - `接下来怎么练`
   - `下次该怎么练`
   - `下一步该练什么`
-  as ordinary:
+    as ordinary:
   - semantic recall
   - or runtime market queries
 - this meant the system could store reinforcement cues without having a dedicated way to recall them

@@ -5,16 +5,16 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import type { FundamentalArtifactErrorRecord } from "../fundamental-artifact-errors.js";
-import {
-  buildFundamentalReviewChainJsonPath,
-  buildFundamentalReviewChainNoteFilename,
-} from "../lobster-brain-registry.js";
 import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
 import {
   buildFundamentalRiskHandoff,
   type FundamentalRiskHandoffArtifact,
 } from "../fundamental-risk-handoff/handler.js";
 import type { FundamentalScoringGateArtifact } from "../fundamental-scoring-gate/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-review-queue");
 

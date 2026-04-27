@@ -4,11 +4,6 @@ import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
-import {
-  buildFundamentalArtifactJsonPath,
-  buildFundamentalArtifactNoteFilename,
-  buildFundamentalReviewChainJsonPath,
-} from "../lobster-brain-registry.js";
 import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
 import {
   buildFundamentalReviewBrief,
@@ -31,6 +26,11 @@ import {
   type FundamentalRiskHandoffArtifact,
 } from "../fundamental-risk-handoff/handler.js";
 import type { FundamentalScoringGateArtifact } from "../fundamental-scoring-gate/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+  buildFundamentalReviewChainJsonPath,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-target-packets");
 

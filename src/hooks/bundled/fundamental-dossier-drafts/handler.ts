@@ -3,13 +3,13 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import {
-  buildFundamentalArtifactJsonPath,
-  buildFundamentalArtifactNoteFilename,
-} from "../lobster-brain-registry.js";
-import {
   loadTargetPacketsWithFallback,
   type FundamentalTargetPacketsArtifact,
 } from "../fundamental-target-workfiles/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-dossier-drafts");
 
@@ -69,26 +69,26 @@ function renderDossierDraft(params: {
     "",
     "## Executive Summary Draft",
     "_TODO: turn the seed bullets below into a concise 5-8 sentence summary grounded in local source material only._",
-    ...dossier.thesisTemplate.map((line) => `- seed: ${line}`),
+    ...dossier.thesisTemplate.map((line: string) => `- seed: ${line}`),
     "",
     "## Evidence Notes",
     ...(dossier.evidenceMatrix.length > 0
-      ? dossier.evidenceMatrix.map((line) => `- ${line}`)
+      ? dossier.evidenceMatrix.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
     "## Source Inventory",
     ...(dossier.documentPaths.length > 0
-      ? dossier.documentPaths.map((line) => `- ${line}`)
+      ? dossier.documentPaths.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
     "## Open Questions",
     ...(dossier.openQuestions.length > 0
-      ? dossier.openQuestions.map((line) => `- ${line}`)
+      ? dossier.openQuestions.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
     "## Citation Plan",
     ...(dossier.citationTasks.length > 0
-      ? dossier.citationTasks.map((line) => `- ${line}`)
+      ? dossier.citationTasks.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
     "## Draft Outline",
@@ -100,12 +100,12 @@ function renderDossierDraft(params: {
     "",
     "## Drafting Checklist",
     ...(dossier.writingChecklist.length > 0
-      ? dossier.writingChecklist.map((line) => `- ${line}`)
+      ? dossier.writingChecklist.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
     "## Next Drafting Steps",
     ...(dossier.immediateTasks.length > 0
-      ? dossier.immediateTasks.map((line) => `- ${line}`)
+      ? dossier.immediateTasks.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
   ].join("\n");

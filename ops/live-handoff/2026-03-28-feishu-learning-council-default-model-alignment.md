@@ -13,7 +13,7 @@ The bug was subtle:
 - `resolveMinimaxDefaultTextModelId()` was evaluated at module load time
 - so later runtime changes to:
   - `OPENCLAW_MINIMAX_DEFAULT_MODEL`
-  did not actually reach the Feishu learning-council MiniMax lane
+    did not actually reach the Feishu learning-council MiniMax lane
 
 That left Feishu on an older frozen default while the rest of the dev repo had already moved to the shared MiniMax model registry.
 

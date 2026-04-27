@@ -16,7 +16,7 @@
   - `这个架构值不值得学`
   - `这个财报重点看什么`
   - `这个方法值不值得继续练`
-  were still falling back to older intent surfaces
+    were still falling back to older intent surfaces
 - this meant the brain still felt smart only when the operator used cleaner prompt forms like:
   - `怎么学`
   - `怎么看`
@@ -27,7 +27,7 @@
 - default study/research recall should not depend on operator prompt hygiene this much
 - without this hardening, Lobster still felt more like:
   - a retrieval tool with narrow incantations
-  rather than:
+    rather than:
   - a research brain that can catch natural study/evaluation prompts
 
 ## Smallest safe patch
@@ -44,7 +44,7 @@
   - `值不值得继续练`
 - add one abstract-study anchor so:
   - `论文 / research / 架构 / agent`
-  default back to the generic method card instead of drifting into whichever procedural card happens to be highest-weight
+    default back to the generic method card instead of drifting into whichever procedural card happens to be highest-weight
 
 ## Live files changed
 

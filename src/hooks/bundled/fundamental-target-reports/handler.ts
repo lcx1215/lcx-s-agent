@@ -3,13 +3,13 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import {
-  buildFundamentalArtifactJsonPath,
-  buildFundamentalArtifactNoteFilename,
-} from "../lobster-brain-registry.js";
-import {
   loadTargetPacketsWithFallback,
   type FundamentalTargetPacketsArtifact,
 } from "../fundamental-target-workfiles/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-target-reports");
 
@@ -69,35 +69,35 @@ function renderTargetReport(params: {
     "",
     "## Executive Summary",
     "_TODO: consolidate the thesis seeds and document-backed evidence into a crisp summary._",
-    ...dossier.thesisTemplate.map((line) => `- seed: ${line}`),
+    ...dossier.thesisTemplate.map((line: string) => `- seed: ${line}`),
     "",
     "## Key Findings",
     ...(dossier.evidenceMatrix.length > 0
-      ? dossier.evidenceMatrix.map((line) => `- ${line}`)
+      ? dossier.evidenceMatrix.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
     "## Source Confidence",
     "- Only local, document-backed evidence should be treated as valid input.",
     "- Track any source-quality caveats before promoting this report further.",
     ...(dossier.documentPaths.length > 0
-      ? dossier.documentPaths.map((line) => `- local_source: ${line}`)
+      ? dossier.documentPaths.map((line: string) => `- local_source: ${line}`)
       : ["- local_source: none"]),
     "",
     "## Open Questions",
     ...(dossier.openQuestions.length > 0
-      ? dossier.openQuestions.map((line) => `- ${line}`)
+      ? dossier.openQuestions.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
     "## Citation Plan",
     ...(dossier.citationTasks.length > 0
-      ? dossier.citationTasks.map((line) => `- ${line}`)
+      ? dossier.citationTasks.map((line: string) => `- ${line}`)
       : ["- none"]),
     "",
     "## Recommendation",
     "- Continue research-only review until all material claims are traceable to local sources.",
     "- Do not treat this report as a scoring, approval, or execution artifact.",
     ...(dossier.immediateTasks.length > 0
-      ? dossier.immediateTasks.map((line) => `- next_step: ${line}`)
+      ? dossier.immediateTasks.map((line: string) => `- next_step: ${line}`)
       : []),
     "",
   ].join("\n");

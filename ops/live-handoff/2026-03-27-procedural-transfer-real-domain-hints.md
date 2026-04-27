@@ -41,7 +41,7 @@
 - also allow semantic cards to compete in `procedural_transfer` when they expose:
   - `transfer_surface`
   - `default_method`
-  and the query is clearly about system-style reuse
+    and the query is clearly about system-style reuse
 
 ## Live files changed
 

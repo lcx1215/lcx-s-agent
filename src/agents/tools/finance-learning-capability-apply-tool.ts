@@ -145,9 +145,6 @@ function buildResearchAnswerScaffold(params: {
   const causalChecks = uniqueStrings(
     params.appliedCapabilities.map((candidate) => candidate.causalCheck),
   );
-  const implementationChecks = uniqueStrings(
-    params.appliedCapabilities.map((candidate) => candidate.implementationCheck),
-  );
   const riskChecks = uniqueStrings(
     params.appliedCapabilities.flatMap((candidate) => candidate.riskChecks),
   );
@@ -343,7 +340,9 @@ async function writeApplyUsageReview(params: {
           }
         }),
     )
-  ).filter((entry) => entry.receipt?.boundary === "finance_learning_capability_apply_usage_receipt");
+  ).filter(
+    (entry) => entry.receipt?.boundary === "finance_learning_capability_apply_usage_receipt",
+  );
   const capabilityUseCounts = new Map<string, number>();
   for (const entry of receipts) {
     const appliedCapabilities = Array.isArray(entry.receipt?.appliedCapabilities)
@@ -385,7 +384,9 @@ async function writeApplyUsageReview(params: {
         },
         topCapabilities: [...capabilityUseCounts.entries()]
           .map(([capabilityName, count]) => ({ capabilityName, count }))
-          .toSorted((a, b) => b.count - a.count || a.capabilityName.localeCompare(b.capabilityName)),
+          .toSorted(
+            (a, b) => b.count - a.count || a.capabilityName.localeCompare(b.capabilityName),
+          ),
         refusedQueries: receipts
           .filter((entry) => entry.receipt?.ok === false)
           .map((entry) => ({
@@ -413,7 +414,9 @@ async function writeApplyUsageReview(params: {
   return normalizeRelativePath(reviewRelPath);
 }
 
-async function writeApplyUsageReceiptAndReview(params: Parameters<typeof writeApplyUsageReceipt>[0]) {
+async function writeApplyUsageReceiptAndReview(
+  params: Parameters<typeof writeApplyUsageReceipt>[0],
+) {
   const usageReceiptPath = await writeApplyUsageReceipt(params);
   const match = usageReceiptPath.match(
     /^memory\/finance-learning-apply-usage-receipts\/(\d{4}-\d{2}-\d{2})\//u,
@@ -430,7 +433,8 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
   inspectTool?: AnyAgentTool;
 }): AnyAgentTool {
   const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
-  const inspectTool = options?.inspectTool ?? createFinanceLearningCapabilityInspectTool({ workspaceDir });
+  const inspectTool =
+    options?.inspectTool ?? createFinanceLearningCapabilityInspectTool({ workspaceDir });
   return {
     label: "Finance Learning Capability Apply",
     name: "finance_learning_capability_apply",

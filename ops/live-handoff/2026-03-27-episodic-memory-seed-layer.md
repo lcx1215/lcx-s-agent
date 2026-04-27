@@ -19,7 +19,7 @@
   - `上次 market regime 错在哪`
   - `之前的 market regime 教训`
   - `last time market regime lesson`
-  still collapsed back into semantic topic-memory.
+    still collapsed back into semantic topic-memory.
 
 ## Why this was dangerous
 

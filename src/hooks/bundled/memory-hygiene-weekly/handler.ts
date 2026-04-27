@@ -182,9 +182,11 @@ async function loadProvisionalRecords(memoryDir: string, now: Date): Promise<Sto
           entry.isFile() &&
           (isCorrectionNoteFilename(entry.name) || isLearningCouncilMemoryNoteFilename(entry.name)),
       )
-      .map(async (entry) => {
+      .map(async (entry): Promise<StorageRecord | undefined> => {
         const correctionMatch = parseCorrectionNoteFilename(entry.name);
-        const content = await fs.readFile(path.join(memoryDir, entry.name), "utf-8").catch(() => "");
+        const content = await fs
+          .readFile(path.join(memoryDir, entry.name), "utf-8")
+          .catch(() => "");
         const learningNote = correctionMatch
           ? undefined
           : parseLearningCouncilMemoryNote({ filename: entry.name, content });
@@ -194,7 +196,8 @@ async function loadProvisionalRecords(memoryDir: string, now: Date): Promise<Sto
         }
         if (correctionMatch) {
           const summary =
-            parseCorrectionNoteArtifact(content)?.whatWasWrong ?? "correction note stayed provisional";
+            parseCorrectionNoteArtifact(content)?.whatWasWrong ??
+            "correction note stayed provisional";
           return {
             relativePath: `memory/${entry.name}`,
             source: "correction",
@@ -225,8 +228,10 @@ async function loadRejectedRecords(memoryDir: string, now: Date): Promise<Storag
   const records = await Promise.all(
     entries
       .filter((entry) => entry.isFile() && isKnowledgeValidationNoteFilename(entry.name))
-      .map(async (entry) => {
-        const content = await fs.readFile(path.join(memoryDir, entry.name), "utf-8").catch(() => "");
+      .map(async (entry): Promise<StorageRecord | undefined> => {
+        const content = await fs
+          .readFile(path.join(memoryDir, entry.name), "utf-8")
+          .catch(() => "");
         const parsed = parseKnowledgeValidationNote({ filename: entry.name, content });
         if (!parsed || !isWithinTrailingUtcDays(parsed.date, now, 7)) {
           return undefined;
@@ -238,7 +243,8 @@ async function loadRejectedRecords(memoryDir: string, now: Date): Promise<Storag
         }
         const reason: StorageReason =
           verdict === "fail" ? "failed_validation" : "hallucination_prone";
-        const summary = parsed.domain || "validation note failed or remained too hallucination-prone";
+        const summary =
+          parsed.domain || "validation note failed or remained too hallucination-prone";
         return {
           relativePath: `memory/${entry.name}`,
           source: "validation",
@@ -255,7 +261,11 @@ async function loadRejectedRecords(memoryDir: string, now: Date): Promise<Storag
 
 function inferAntiPatternLabel(value: string): string | undefined {
   const normalized = value.toLowerCase();
-  if (normalized.includes("freshness") || normalized.includes("实时") || normalized.includes("stale")) {
+  if (
+    normalized.includes("freshness") ||
+    normalized.includes("实时") ||
+    normalized.includes("stale")
+  ) {
     return "stale-anchor overreach";
   }
   if (normalized.includes("hallucination") || normalized.includes("编造")) {
@@ -381,8 +391,7 @@ async function loadCodexEscalations(
       .filter((record): record is CodexEscalationRecord => Boolean(record))
       .toSorted(
         (a, b) =>
-          b.generatedAt.localeCompare(a.generatedAt) ||
-          a.category.localeCompare(b.category),
+          b.generatedAt.localeCompare(a.generatedAt) || a.category.localeCompare(b.category),
       );
   } catch {
     return [];
@@ -411,10 +420,16 @@ async function buildTrashCandidates(memoryDir: string, now: Date): Promise<Stora
     });
 }
 
-async function pruneTrashCandidates(workspaceDir: string, records: StorageRecord[]): Promise<string[]> {
+async function pruneTrashCandidates(
+  workspaceDir: string,
+  records: StorageRecord[],
+): Promise<string[]> {
   const pruned: string[] = [];
   for (const record of records) {
-    if (!record.relativePath.startsWith("memory/") || !record.relativePath.endsWith("-lobster-workface.md")) {
+    if (
+      !record.relativePath.startsWith("memory/") ||
+      !record.relativePath.endsWith("-lobster-workface.md")
+    ) {
       continue;
     }
     const absolutePath = path.join(workspaceDir, record.relativePath);

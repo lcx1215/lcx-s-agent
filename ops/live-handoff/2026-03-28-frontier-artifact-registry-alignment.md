@@ -34,7 +34,7 @@ This was the same contract-drift bug already removed from learning and fundament
   - `frontier-research-weekly`
   - `frontier-research-bootstrap`
   - matching tests
-  to use the registry instead of repeating names
+    to use the registry instead of repeating names
 
 ## Files changed
 

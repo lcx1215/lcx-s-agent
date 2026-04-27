@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-27T22:55:50.367Z",
+  "generatedAt": "2026-04-27T23:33:44.543Z",
   "sourceRoot": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
   "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
   "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
@@ -976,15 +976,15 @@
     },
     {
       "relativePath": "docs/assets/lcx-agent-daily-progress-wave.svg",
-      "sourceSha256": "70f88f4fe71297dd1a474c2ab5dbddb72c238e94524be785ae69a2684074c757",
-      "targetSha256": "70f88f4fe71297dd1a474c2ab5dbddb72c238e94524be785ae69a2684074c757",
+      "sourceSha256": "006782c3f2bfcbdefbcb9bb0053210068ef9d33dfcba5a0abef7090ee301d7c0",
+      "targetSha256": "006782c3f2bfcbdefbcb9bb0053210068ef9d33dfcba5a0abef7090ee301d7c0",
       "copied": true,
       "executable": false
     },
     {
       "relativePath": "docs/assets/lobster-daily-progress-wave.svg",
-      "sourceSha256": "70f88f4fe71297dd1a474c2ab5dbddb72c238e94524be785ae69a2684074c757",
-      "targetSha256": "70f88f4fe71297dd1a474c2ab5dbddb72c238e94524be785ae69a2684074c757",
+      "sourceSha256": "006782c3f2bfcbdefbcb9bb0053210068ef9d33dfcba5a0abef7090ee301d7c0",
+      "targetSha256": "006782c3f2bfcbdefbcb9bb0053210068ef9d33dfcba5a0abef7090ee301d7c0",
       "copied": true,
       "executable": false
     },

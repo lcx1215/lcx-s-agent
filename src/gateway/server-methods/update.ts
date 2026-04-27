@@ -1,11 +1,10 @@
-import { loadConfig } from "../../config/config.js";
 import {
   formatUpdateAvailableHint,
   formatUpdateOneLiner,
   resolveUpdateAvailability,
 } from "../../commands/status.update.js";
+import { loadConfig } from "../../config/config.js";
 import { extractDeliveryInfo } from "../../config/sessions.js";
-import { checkUpdateStatus } from "../../infra/update-check.js";
 import { resolveOpenClawPackageRoot } from "../../infra/openclaw-root.js";
 import {
   formatDoctorNonInteractiveHint,
@@ -14,6 +13,7 @@ import {
 } from "../../infra/restart-sentinel.js";
 import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
 import { normalizeUpdateChannel } from "../../infra/update-channels.js";
+import { checkUpdateStatus } from "../../infra/update-check.js";
 import { runGatewayUpdate } from "../../infra/update-runner.js";
 import { formatControlPlaneActor, resolveControlPlaneActor } from "../control-plane-audit.js";
 import { validateUpdateCheckParams, validateUpdateRunParams } from "../protocol/index.js";

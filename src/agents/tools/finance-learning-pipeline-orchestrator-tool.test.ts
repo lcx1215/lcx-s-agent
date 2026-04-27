@@ -337,7 +337,10 @@ describe("finance learning pipeline orchestrator tool", () => {
         }),
       }),
     );
-    expect(asPipelineDetails(result.details).retrievalFirstLearning.postAttachCapabilityRetrieval.candidates).toEqual([
+    expect(
+      asPipelineDetails(result.details).retrievalFirstLearning.postAttachCapabilityRetrieval
+        .candidates,
+    ).toEqual([
       expect.objectContaining({
         capabilityName: "ETF event triage workflow",
         retrievalScore: expect.any(Number),
@@ -428,8 +431,10 @@ describe("finance learning pipeline orchestrator tool", () => {
     });
     expect(review.rows).toEqual([
       expect.objectContaining({
-        applicationValidationUsageReceiptPath: asPipelineDetails(result.details).applicationValidation.usageReceiptPath,
-        applicationValidationUsageReviewPath: asPipelineDetails(result.details).applicationValidation.usageReviewPath,
+        applicationValidationUsageReceiptPath: asPipelineDetails(result.details)
+          .applicationValidation.usageReceiptPath,
+        applicationValidationUsageReviewPath: asPipelineDetails(result.details)
+          .applicationValidation.usageReviewPath,
       }),
     ]);
     expect(asPipelineDetails(result.details).attachResults).toEqual([

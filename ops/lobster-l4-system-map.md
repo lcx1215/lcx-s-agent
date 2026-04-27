@@ -9,12 +9,14 @@ make it obvious where new work belongs.
 Lobster is a low-frequency research operating system.
 
 Mainline:
+
 - one main control room
 - internal specialist orchestration
 - summary first
 - branch detail only when needed
 
 Not mainline:
+
 - autonomous trading
 - execution approval theater
 - HFT
@@ -43,6 +45,7 @@ These decide how the system thinks before it acts:
 - `src/agents/pi-embedded-helpers/*`
 
 Responsibilities:
+
 - doctrine
 - memory recall order
 - study / math / quant default recall
@@ -53,6 +56,7 @@ Responsibilities:
 These materialize structured artifacts.
 
 #### Learning / Correction
+
 - `src/hooks/bundled/learning-review/*`
 - `src/hooks/bundled/learning-review-weekly/*`
 - `src/hooks/bundled/learning-review-bootstrap/*`
@@ -61,11 +65,13 @@ These materialize structured artifacts.
 - `src/hooks/bundled/memory-hygiene-weekly/*`
 
 #### Frontier / Method
+
 - `src/hooks/bundled/frontier-research/*`
 - `src/hooks/bundled/frontier-research-weekly/*`
 - `src/hooks/bundled/frontier-research-bootstrap/*`
 
 #### Fundamental Artifact Chain
+
 - `src/hooks/bundled/fundamental-intake/*`
 - `src/hooks/bundled/fundamental-manifest-bridge/*`
 - `src/hooks/bundled/fundamental-snapshot-bridge/*`
@@ -85,6 +91,7 @@ These materialize structured artifacts.
 - `src/hooks/bundled/fundamental-collection-follow-up-tracker/*`
 
 #### Operating / Control
+
 - `src/hooks/bundled/operating-loop/*`
 - `src/hooks/bundled/operating-daily-workface/*`
 - `src/hooks/bundled/operating-weekly-review/*`
@@ -104,6 +111,7 @@ Current surface registry lives in:
 - `extensions/feishu/src/surfaces.ts`
 
 Active surfaces:
+
 - `control_room`
 - `technical_daily`
 - `fundamental_research`
@@ -113,6 +121,7 @@ Active surfaces:
 - `watchtower`
 
 Rule:
+
 - control-room first
 - specialist surfaces only when the question genuinely belongs there
 - do not let new surfaces become hidden specialist silos
@@ -128,6 +137,7 @@ The dev-brain is not one file. It is the combination of:
 - surface routing contracts
 
 This means:
+
 - do not bolt “brain behavior” into random extension files
 - prefer changing prompt/memory/hook contracts before inventing another side path
 

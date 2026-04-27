@@ -15,7 +15,7 @@
   - `这个方法怎么复用到量化`
   - `这个方法怎么复用到风险控制`
   - `这个方法怎么复用到代码系统`
-  were still too coarse
+    were still too coarse
 - before this patch, the live result surface could flatten into near-ties across multiple procedural cards
 - this made method transfer feel more like a generic skill search than a targeted reuse path
 

@@ -10,11 +10,11 @@
 - `skepticism_eval` already existed in live retrieval
 - but:
   - `回测 / 过拟合 / 策略审计`
-  still depended too much on whichever procedural card happened to carry the strongest generic:
+    still depended too much on whichever procedural card happened to carry the strongest generic:
     - `common_failure`
     - `invalidation`
     - `fragile`
-  wording
+      wording
 - and once an audit-flavored family won, retrieval could still return several near-duplicate `IWM` cards in the same result set
 
 ## Why this was dangerous

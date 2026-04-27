@@ -31,7 +31,7 @@
   - current live fix specifically restores nested:
     - `risk_handoff_path`
     - `risk_audit_path`
-    for `fundamental_research_branch`
+      for `fundamental_research_branch`
   - current live evidence:
     - `python3 scripts/lobster_runtime_state_sanity.py`
       is green again after rerunning `scripts/sync_branch_status.py`
@@ -42,7 +42,7 @@
     - `量化`
     - `风险控制`
     - `代码系统`
-    inside `procedural_transfer`
+      inside `procedural_transfer`
   - current live top results are now stable:
     - `这个方法怎么复用到量化` -> `tlt_inflation_surprise_and_term_premium.md`
     - `这个方法怎么复用到风险控制` -> `spy_death_cross_risk.md`
@@ -54,7 +54,7 @@
     - `策略审计`
     - `系统架构`
     - `回测 / 过拟合`
-    inside the same bounded `procedural_transfer` seam
+      inside the same bounded `procedural_transfer` seam
   - current live top results are now stable:
     - `这个方法怎么复用到财报阅读` -> `iwm_rotation_exhaustion_risk.md`
     - `这个方法怎么复用到策略审计` -> `iwm_rotation_exhaustion_risk.md`
@@ -67,7 +67,7 @@
     - `这个方法怎么复用到财报阅读`
     - `这个方法怎么复用到策略审计`
     - `回测是不是过拟合`
-    now keep one `IWM` method-family winner instead of three near-duplicate `IWM` cards
+      now keep one `IWM` method-family winner instead of three near-duplicate `IWM` cards
 
 - system-learning query decontamination
   - system-style queries containing `AI智能体 / 架构 / architecture / agent`
@@ -157,7 +157,7 @@
     - per-item `brain_type`
     - per-query `brain_trace`
     - top-level `brain_trace_summary`
-    into:
+      into:
     - `knowledge/learn/*.sources.json`
     - `branches/learn/learn_state.json`
     - `branches/learn/lanes/*/learn_state.json`
@@ -299,7 +299,7 @@
     - wrapper titles
     - source-path/file-name lines
     - serialized JSON/news blobs
-    are rejected from lesson recall
+      are rejected from lesson recall
   - if no clean lesson survives, episodic recall now falls back to a clean anchor instead of storing garbage
   - legacy `knowledge/topic_memory/*.json` artifacts are now excluded from live search results
   - clean Markdown cards are now the intended searchable memory surface for:

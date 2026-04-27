@@ -445,7 +445,9 @@ const saveLearningReview = createSessionArtifactHandler({
       transferHint: hints.transfer,
       foundationTemplate,
       whyItMatters: `compress this lesson into ${foundationTemplate} rather than leaving it as a loose study note.`,
-      sessionTraceLines: turns.slice(-8).map((turn) => `${turn.role}: ${compactText(turn.text, 160)}`),
+      sessionTraceLines: turns
+        .slice(-8)
+        .map((turn) => `${turn.role}: ${compactText(turn.text, 160)}`),
     });
   },
 });

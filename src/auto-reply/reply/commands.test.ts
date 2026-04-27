@@ -209,7 +209,7 @@ describe("handleCommands gating", () => {
           return {
             commands: inheritedCommands as never,
             channels: { whatsapp: { allowFrom: ["*"] } },
-          } as OpenClawConfig;
+          } as unknown as OpenClawConfig;
         },
         expectedText: "bash is disabled",
       },
@@ -225,7 +225,7 @@ describe("handleCommands gating", () => {
           return {
             commands: inheritedCommands as never,
             channels: { whatsapp: { allowFrom: ["*"] } },
-          } as OpenClawConfig;
+          } as unknown as OpenClawConfig;
         },
         expectedText: "/config is disabled",
       },
@@ -241,7 +241,7 @@ describe("handleCommands gating", () => {
           return {
             commands: inheritedCommands as never,
             channels: { whatsapp: { allowFrom: ["*"] } },
-          } as OpenClawConfig;
+          } as unknown as OpenClawConfig;
         },
         expectedText: "/debug is disabled",
       },
@@ -267,7 +267,7 @@ describe("/approve command", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/approve", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -278,7 +278,7 @@ describe("/approve command", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/approve abc allow-once", cfg, { SenderId: "123" });
 
     callGatewayMock.mockResolvedValue({ ok: true });
@@ -297,7 +297,7 @@ describe("/approve command", () => {
   it("rejects gateway clients without approvals scope", async () => {
     const cfg = {
       commands: { text: true },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/approve abc allow-once", cfg, {
       Provider: "webchat",
       Surface: "webchat",
@@ -315,7 +315,7 @@ describe("/approve command", () => {
   it("allows gateway clients with approvals or admin scopes", async () => {
     const cfg = {
       commands: { text: true },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const scopeCases = [["operator.approvals"], ["operator.admin"]];
     for (const scopes of scopeCases) {
       callGatewayMock.mockResolvedValue({ ok: true });
@@ -347,7 +347,7 @@ describe("/compact command", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/status", cfg);
 
     const result = await handleCompactCommand(
@@ -365,7 +365,7 @@ describe("/compact command", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/compact", cfg);
 
     const result = await handleCompactCommand(
@@ -389,7 +389,7 @@ describe("/compact command", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
       session: { store: "/tmp/openclaw-session-store.json" },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/compact: focus on decisions", cfg, {
       From: "+15550001",
       To: "+15550002",
@@ -445,7 +445,7 @@ describe("abort trigger command", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("stop", cfg);
     const sessionEntry: SessionEntry = {
       sessionId: "session-1",
@@ -563,7 +563,7 @@ describe("handleCommands /config configWrites gating", () => {
     const cfg = {
       commands: { config: true, text: true },
       channels: { whatsapp: { allowFrom: ["*"], configWrites: false } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams('/config set messages.ackReaction=":)"', cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -576,7 +576,7 @@ describe("handleCommands bash alias", () => {
     const cfg = {
       commands: { bash: true, text: true },
       whatsapp: { allowFrom: ["*"] },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     for (const aliasCommand of ["!poll", "!stop"]) {
       resetBashChatCommandForTests();
       const params = buildParams(aliasCommand, cfg);
@@ -641,7 +641,7 @@ describe("handleCommands /allowlist", () => {
     const cfg = {
       commands: { text: true },
       channels: { telegram: { allowFrom: ["123", "@Alice"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildPolicyParams("/allowlist list dm", cfg);
     const result = await handleCommands(params);
 
@@ -670,7 +670,7 @@ describe("handleCommands /allowlist", () => {
     const cfg = {
       commands: { text: true, config: true },
       channels: { telegram: { allowFrom: ["123"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildPolicyParams("/allowlist add dm 789", cfg);
     const result = await handleCommands(params);
 
@@ -693,7 +693,7 @@ describe("handleCommands /allowlist", () => {
     const cfg = {
       commands: { text: true, config: true },
       channels: { telegram: { allowFrom: ["123"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildPolicyParams("/allowlist add dm --account __proto__ 789", cfg);
     const result = await handleCommands(params);
 
@@ -747,7 +747,7 @@ describe("handleCommands /allowlist", () => {
             configWrites: true,
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
 
       const params = buildPolicyParams(`/allowlist remove dm ${testCase.removeId}`, cfg, {
         Provider: testCase.provider,
@@ -901,7 +901,7 @@ describe("handleCommands plugin commands", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/card", cfg);
     const commandResult = await handleCommands(params);
 
@@ -916,7 +916,7 @@ describe("handleCommands identity", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/whoami", cfg, {
       SenderId: "12345",
       SenderUsername: "TestUser",
@@ -936,7 +936,7 @@ describe("handleCommands hooks", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/new take notes", cfg);
     const spy = vi.spyOn(internalHooks, "triggerInternalHook").mockResolvedValue();
 
@@ -950,7 +950,7 @@ describe("handleCommands hooks", () => {
     const cfg = {
       commands: { text: true },
       channels: { telegram: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/new", cfg, {
       Provider: "telegram",
       Surface: "telegram",
@@ -988,7 +988,7 @@ describe("handleCommands context", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const cases = [
       {
         commandBody: "/context",
@@ -1025,7 +1025,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1046,7 +1046,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1081,7 +1081,7 @@ describe("handleCommands context", () => {
           model: { primary: "moonshot/kimi-k2.6" },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("现在修到哪了", cfg, {
       OriginatingChannel: "feishu",
       OriginatingTo: "oc-control",
@@ -1115,7 +1115,7 @@ describe("handleCommands context", () => {
           model: { primary: "moonshot/kimi-k2.6" },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("现在能用了吗", cfg, {
       OriginatingChannel: "feishu",
       OriginatingTo: "oc-control",
@@ -1147,7 +1147,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1170,7 +1170,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1194,7 +1194,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1221,7 +1221,7 @@ describe("handleCommands context", () => {
             moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       params.provider = "moonshot";
       params.model = "kimi-k2.6";
@@ -1291,7 +1291,7 @@ describe("handleCommands context", () => {
           moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("搜索现在正常吗", cfg);
     params.provider = "moonshot";
     params.model = "kimi-k2.6";
@@ -1326,7 +1326,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       params.provider = "moonshot";
       params.model = "kimi-k2.6";
@@ -1357,7 +1357,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       params.provider = "moonshot";
       params.model = "kimi-k2.6";
@@ -1394,7 +1394,7 @@ describe("handleCommands context", () => {
             moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       params.provider = "moonshot";
       params.model = "kimi-k2.6";
@@ -1431,7 +1431,7 @@ describe("handleCommands context", () => {
             moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       params.provider = "moonshot";
       params.model = "kimi-k2.6";
@@ -1473,7 +1473,7 @@ describe("handleCommands context", () => {
             moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       params.provider = "moonshot";
       params.model = "kimi-k2.6";
@@ -1523,7 +1523,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1585,7 +1585,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1653,7 +1653,7 @@ describe("handleCommands context", () => {
           model: { primary: "moonshot/kimi-k2.6" },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("你刚才真的开始学那篇论文了吗", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -1716,7 +1716,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1811,7 +1811,7 @@ describe("handleCommands context", () => {
           model: { primary: "moonshot/kimi-k2.6" },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("did you pretend a background learning session started", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -1866,7 +1866,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1923,7 +1923,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -1993,7 +1993,7 @@ describe("handleCommands context", () => {
           model: { primary: "moonshot/kimi-k2.6" },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams(
       "did the write fail but stay understood in the current session",
       cfg,
@@ -2041,7 +2041,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
 
       const learningParams = buildParams("今天学了什么", cfg);
       const learningResult = await handleCommands(learningParams);
@@ -2096,7 +2096,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -2141,7 +2141,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -2191,7 +2191,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -2215,7 +2215,7 @@ describe("handleCommands context", () => {
           model: { primary: "moonshot/kimi-k2.6" },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("去学习arxiv上新的文章里的有用的地方，并学会应用", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(true);
@@ -2234,7 +2234,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       params.provider = "moonshot";
       params.model = "kimi-k2.6";
@@ -2269,7 +2269,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       params.provider = "moonshot";
       params.model = "kimi-k2.6";
@@ -2310,7 +2310,7 @@ describe("handleCommands context", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
@@ -2331,7 +2331,7 @@ describe("handleCommands subagents", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/subagents list", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2356,7 +2356,7 @@ describe("handleCommands subagents", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/subagents list", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2391,7 +2391,7 @@ describe("handleCommands subagents", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/subagents list", cfg, {
       CommandSource: "native",
       CommandTargetSessionKey: "agent:main:main",
@@ -2430,7 +2430,7 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
       session: { store: storePath },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/subagents list", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2501,7 +2501,7 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
       session: { mainKey: "main", scope: "per-sender" },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/status", cfg);
     if (verboseLevel === "on") {
       params.resolvedVerboseLevel = "on";
@@ -2520,7 +2520,7 @@ describe("handleCommands subagents", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const cases = [
       { commandBody: "/subagents foo", expectedText: "/subagents" },
       { commandBody: "/subagents info", expectedText: "/subagents info" },
@@ -2551,7 +2551,7 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
       session: { mainKey: "main", scope: "per-sender" },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/subagents info 1", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2574,7 +2574,7 @@ describe("handleCommands subagents", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/kill 1", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2608,7 +2608,7 @@ describe("handleCommands subagents", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/kill 1", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2645,7 +2645,7 @@ describe("handleCommands subagents", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/subagents send 1 continue with follow-up details", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2701,7 +2701,7 @@ describe("handleCommands subagents", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
       session: { store: storePath },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/steer 1 check timer.ts instead", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2760,7 +2760,7 @@ describe("handleCommands subagents", () => {
     const cfg = {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/steer 1 check timer.ts instead", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
@@ -2779,7 +2779,7 @@ describe("handleCommands /tts", () => {
       commands: { text: true },
       channels: { whatsapp: { allowFrom: ["*"] } },
       messages: { tts: { prefsPath: path.join(testWorkspaceDir, "tts.json") } },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const params = buildParams("/tts", cfg);
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);

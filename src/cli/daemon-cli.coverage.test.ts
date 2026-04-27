@@ -63,6 +63,7 @@ vi.mock("../daemon/legacy.js", () => ({
 
 vi.mock("../daemon/inspect.js", () => ({
   findExtraGatewayServices: (env: unknown, opts?: unknown) => findExtraGatewayServices(env, opts),
+  inferOpenClawRootFromGatewayCommand: () => undefined,
   renderGatewayServiceCleanupHints: () => [],
 }));
 

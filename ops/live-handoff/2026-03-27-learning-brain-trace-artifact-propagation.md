@@ -18,9 +18,10 @@ The learner and night batch now preserve bounded `brain_trace_summary` metadata 
   - `branches/learn/lanes/*/learn_state.json`
 - and `scripts/run_nightly_learning_batch.py` still only recorded:
   - `provider_used.retrieval = cheap_retrieval_router`
-  without durable brain-trace rollup.
+    without durable brain-trace rollup.
 
 This meant:
+
 - the system was using the brain,
 - but durable learning artifacts still looked like ordinary local retrieval.
 
@@ -95,6 +96,7 @@ This is the first durable artifact propagation step where:
 - but also leaves a persistent trace inside learning artifacts and learning state.
 
 That makes it possible for later branches and audits to consume:
+
 - what kind of memory route was used,
 - what kind of memory surface won,
 - and whether a learning run was semantic, procedural, episodic, or runtime-heavy in practice.

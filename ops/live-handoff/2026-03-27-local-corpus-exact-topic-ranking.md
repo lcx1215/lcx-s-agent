@@ -12,7 +12,7 @@
 - But `scripts/local_corpus_search.py` could still rank:
   - `knowledge/technical_daily/*.md`
   - `knowledge/fundamental_research/*.md`
-  above the exact `knowledge/topic_memory/market_regime.md` card.
+    above the exact `knowledge/topic_memory/market_regime.md` card.
 - The reason was that alias expansion and broad-market keyword overlap still outweighed direct topic-card identity.
 
 ## Why this was dangerous

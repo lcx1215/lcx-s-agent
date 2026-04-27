@@ -14,6 +14,14 @@ async function readArtifact(workspaceDir: string, artifactPath: string) {
   return fs.readFile(path.join(workspaceDir, artifactPath), "utf8");
 }
 
+function detailsOf(result: { details: unknown }) {
+  return result.details as Record<string, unknown> & {
+    normalizedArticleArtifactPaths: string[];
+    normalizedReferenceArtifactPaths: string[];
+    noRemoteUnauthorizedFetchOccurred: boolean;
+  };
+}
+
 const SAFE_RETRIEVAL_NOTES =
   "Operator imported a safe external finance research export with explicit provenance, bounded collection posture, and no remote fetch request in this adapter step.";
 const SAFE_COMPLIANCE_NOTES =
@@ -63,7 +71,7 @@ describe("finance external source adapter tool", () => {
       isPubliclyAccessible: true,
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         importedCount: 1,
@@ -71,11 +79,11 @@ describe("finance external source adapter tool", () => {
         noRemoteUnauthorizedFetchOccurred: true,
       }),
     );
-    expect(result.details.normalizedArticleArtifactPaths).toHaveLength(1);
+    expect(detailsOf(result).normalizedArticleArtifactPaths).toHaveLength(1);
 
     const artifact = await readArtifact(
       workspaceDir,
-      result.details.normalizedArticleArtifactPaths[0],
+      detailsOf(result).normalizedArticleArtifactPaths[0],
     );
     expect(artifact).toContain("**Adapter Name**: public-feed-adapter");
     expect(artifact).toContain("**Adapter Type**: rss_atom_json_feed");
@@ -108,10 +116,10 @@ This markdown export explains a bounded ETF regime method that compares equity b
       complianceNotes: SAFE_COMPLIANCE_NOTES,
     });
 
-    expect(result.details.normalizedArticleArtifactPaths).toHaveLength(1);
+    expect(detailsOf(result).normalizedArticleArtifactPaths).toHaveLength(1);
     const artifact = await readArtifact(
       workspaceDir,
-      result.details.normalizedArticleArtifactPaths[0],
+      detailsOf(result).normalizedArticleArtifactPaths[0],
     );
     expect(artifact).toContain("**Adapter Collection Method**: external_tool_export");
     expect(artifact).toContain("**Title**: Regime rotation method");
@@ -144,11 +152,11 @@ This markdown export explains a bounded ETF regime method that compares equity b
       isPubliclyAccessible: true,
     });
 
-    expect(result.details.normalizedReferenceArtifactPaths).toHaveLength(2);
-    expect(result.details.noRemoteUnauthorizedFetchOccurred).toBe(true);
+    expect(detailsOf(result).normalizedReferenceArtifactPaths).toHaveLength(2);
+    expect(detailsOf(result).noRemoteUnauthorizedFetchOccurred).toBe(true);
     const artifact = await readArtifact(
       workspaceDir,
-      result.details.normalizedReferenceArtifactPaths[0],
+      detailsOf(result).normalizedReferenceArtifactPaths[0],
     );
     expect(artifact).toContain("Metadata-only reference. No remote content was fetched.");
   });
@@ -175,10 +183,10 @@ This export captures a bounded macro note from a public-account style source usi
       complianceNotes: SAFE_COMPLIANCE_NOTES,
     });
 
-    expect(result.details.normalizedArticleArtifactPaths).toHaveLength(1);
+    expect(detailsOf(result).normalizedArticleArtifactPaths).toHaveLength(1);
     const artifact = await readArtifact(
       workspaceDir,
-      result.details.normalizedArticleArtifactPaths[0],
+      detailsOf(result).normalizedArticleArtifactPaths[0],
     );
     expect(artifact).toContain("**Adapter Name**: wewe-rss");
     expect(artifact).toContain("**Source Family**: wechat_public_account");
@@ -211,10 +219,10 @@ This export captures a bounded macro note from a public-account style source usi
       complianceNotes: SAFE_COMPLIANCE_NOTES,
     });
 
-    expect(result.details.normalizedReferenceArtifactPaths).toHaveLength(1);
+    expect(detailsOf(result).normalizedReferenceArtifactPaths).toHaveLength(1);
     const artifact = await readArtifact(
       workspaceDir,
-      result.details.normalizedReferenceArtifactPaths[0],
+      detailsOf(result).normalizedReferenceArtifactPaths[0],
     );
     expect(artifact).toContain("Treasury liquidity filing reference");
     expect(artifact).toContain("Search snippet:");
@@ -234,7 +242,7 @@ This export captures a bounded macro note from a public-account style source usi
       retrievalNotes: SAFE_RETRIEVAL_NOTES,
       complianceNotes: SAFE_COMPLIANCE_NOTES,
     });
-    expect(secResult.details.normalizedReferenceArtifactPaths).toHaveLength(1);
+    expect(detailsOf(secResult).normalizedReferenceArtifactPaths).toHaveLength(1);
 
     const irResult = await tool.execute("company-ir-reference", {
       adapterName: "official-ref",
@@ -246,7 +254,7 @@ This export captures a bounded macro note from a public-account style source usi
       retrievalNotes: SAFE_RETRIEVAL_NOTES,
       complianceNotes: SAFE_COMPLIANCE_NOTES,
     });
-    expect(irResult.details.normalizedReferenceArtifactPaths).toHaveLength(1);
+    expect(detailsOf(irResult).normalizedReferenceArtifactPaths).toHaveLength(1);
   });
 
   it("rejects empty exports and unsupported adapter types", async () => {

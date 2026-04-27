@@ -12,7 +12,6 @@ import {
   inferTopic,
   reviewHintsForTopic,
 } from "../learning-review/handler.js";
-import { renderUpgradePrompt } from "../upgrade-memory.js";
 import {
   buildLearningRecallFilename,
   isLearningReviewNoteFilename,
@@ -22,6 +21,7 @@ import {
   parseLearningCouncilMemoryNote,
   type LearningRecallMemoryNote,
 } from "../lobster-brain-registry.js";
+import { renderUpgradePrompt } from "../upgrade-memory.js";
 import {
   countTop,
   formatIsoWeek,
@@ -310,9 +310,15 @@ function renderLongTermCatalog(params: {
 }): string {
   const rollups = buildTopicRollups(params.reviews);
   const newestReviewDate = rollups[0]?.lastSeen ?? "";
-  const stableTopics = rollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "stable");
-  const fragileTopics = rollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "fragile");
-  const newTopics = rollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "new");
+  const stableTopics = rollups.filter(
+    (rollup) => classifyTopicState(rollup, newestReviewDate) === "stable",
+  );
+  const fragileTopics = rollups.filter(
+    (rollup) => classifyTopicState(rollup, newestReviewDate) === "fragile",
+  );
+  const newTopics = rollups.filter(
+    (rollup) => classifyTopicState(rollup, newestReviewDate) === "new",
+  );
 
   return [
     `# Learning Long-Term Catalog: ${params.weekKey}`,
@@ -334,7 +340,8 @@ function renderLongTermCatalog(params: {
       ? rollups.map((rollup) => {
           const state = classifyTopicState(rollup, newestReviewDate);
           const priority = toPriority(state);
-          const anchor = countTop(rollup.corePrinciples, 1)[0]?.value ?? "no repeated principle yet";
+          const anchor =
+            countTop(rollup.corePrinciples, 1)[0]?.value ?? "no repeated principle yet";
           const drill = countTop(rollup.microDrills, 1)[0]?.value ?? "repeat one short drill";
           return `- ${rollup.topic} (${rollup.count}, last seen ${rollup.lastSeen}) - state: ${state} - priority: ${priority} - anchor: ${anchor} - next drill: ${drill}`;
         })
@@ -497,8 +504,7 @@ function renderDurableSkillMemory(params: {
             countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
           const commonFailure =
             countTop(rollup.mistakePatterns, 1)[0]?.value ?? "no common failure captured yet";
-          const nextDrill =
-            countTop(rollup.microDrills, 1)[0]?.value ?? "repeat one short drill";
+          const nextDrill = countTop(rollup.microDrills, 1)[0]?.value ?? "repeat one short drill";
           const transferSurface =
             countTop(rollup.transferHints, 1)[0]?.value ?? "no transfer surface captured yet";
           return [
@@ -599,8 +605,7 @@ function renderLearningRehearsalQueue(params: {
   const formatQueueLine = (rollup: TopicRollup) => {
     const state = classifyTopicState(rollup, newestReviewDate);
     const drill = countTop(rollup.microDrills, 1)[0]?.value ?? "repeat one short drill";
-    const method =
-      countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
+    const method = countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
     return `- ${rollup.topic} (${state}) - drill: ${drill} - apply: ${method}`;
   };
 
@@ -624,9 +629,7 @@ function renderLearningRehearsalQueue(params: {
       : ["- no queued next rehearsal topic right now."]),
     "",
     "## Park",
-    ...(parkTopics.length > 0
-      ? parkTopics.map(formatQueueLine)
-      : ["- nothing to park right now."]),
+    ...(parkTopics.length > 0 ? parkTopics.map(formatQueueLine) : ["- nothing to park right now."]),
     "",
   ].join("\n");
 }
@@ -689,7 +692,9 @@ function renderLearningRelevanceGate(params: {
 }): string {
   const rollups = buildTopicRollups(params.reviews);
   const newestReviewDate = rollups[0]?.lastSeen ?? "";
-  const primary = rollups.filter((rollup) => toRelevanceTier(rollup, newestReviewDate) === "primary-call");
+  const primary = rollups.filter(
+    (rollup) => toRelevanceTier(rollup, newestReviewDate) === "primary-call",
+  );
   const secondary = rollups.filter(
     (rollup) => toRelevanceTier(rollup, newestReviewDate) === "secondary-call",
   );
@@ -697,8 +702,7 @@ function renderLearningRelevanceGate(params: {
     (rollup) => toRelevanceTier(rollup, newestReviewDate) === "reference-only",
   );
   const formatLine = (rollup: TopicRollup) => {
-    const method =
-      countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
+    const method = countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
     return `- ${rollup.topic} (${rollup.count}, last seen ${rollup.lastSeen}) - default method: ${method}`;
   };
 

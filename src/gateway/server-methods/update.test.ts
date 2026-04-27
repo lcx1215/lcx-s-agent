@@ -187,7 +187,11 @@ describe("update.check", () => {
       | {
           ok?: boolean;
           worthwhile?: boolean;
-          availability?: { available?: boolean; hasGitUpdate?: boolean; hasRegistryUpdate?: boolean };
+          availability?: {
+            available?: boolean;
+            hasGitUpdate?: boolean;
+            hasRegistryUpdate?: boolean;
+          };
           summary?: string;
           hint?: string | null;
         }

@@ -9,7 +9,7 @@
 
 - even after semantic / procedural / episodic memory layers were hardened, old legacy files under:
   - `knowledge/topic_memory/*.json`
-  could still appear in live search results
+    could still appear in live search results
 - this was especially visible in:
   - episodic recall queries
   - procedural transfer queries

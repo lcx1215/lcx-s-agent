@@ -3,13 +3,13 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import {
-  buildFundamentalReviewChainJsonPath,
-  buildFundamentalReviewChainNoteFilename,
-} from "../lobster-brain-registry.js";
-import {
   loadReviewPlansWithFallback,
   type FundamentalReviewPlanArtifact,
 } from "../fundamental-review-plan/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-review-workbench");
 
@@ -338,49 +338,47 @@ const materializeFundamentalReviewWorkbench: HookHandler = async (event) => {
     const timeStr = nowIso.split("T")[1].split(".")[0];
 
     await Promise.all(
-      entries.map(
-        async ({ reviewPlan, reviewBriefPath, reviewQueuePath, riskHandoffPath }) => {
-          const reviewWorkbench = buildFundamentalReviewWorkbench({
-            nowIso,
-            reviewPlanPath: buildFundamentalReviewChainJsonPath(
-              "fundamental-review-plan",
-              reviewPlan.manifestId,
-            ),
-            reviewBriefPath,
-            reviewQueuePath,
-            riskHandoffPath,
-            reviewPlan,
-          });
-          const reviewWorkbenchPath = buildFundamentalReviewChainJsonPath(
-            "fundamental-review-workbench",
+      entries.map(async ({ reviewPlan, reviewBriefPath, reviewQueuePath, riskHandoffPath }) => {
+        const reviewWorkbench = buildFundamentalReviewWorkbench({
+          nowIso,
+          reviewPlanPath: buildFundamentalReviewChainJsonPath(
+            "fundamental-review-plan",
             reviewPlan.manifestId,
-          );
-          const noteRelativePath = buildFundamentalReviewChainNoteFilename({
-            dateStr,
-            stageName: "fundamental-review-workbench",
-            manifestId: reviewPlan.manifestId,
-          });
-          await Promise.all([
-            writeFileWithinRoot({
-              rootDir: workspaceDir,
-              relativePath: reviewWorkbenchPath,
-              data: `${JSON.stringify(reviewWorkbench, null, 2)}\n`,
-              encoding: "utf-8",
+          ),
+          reviewBriefPath,
+          reviewQueuePath,
+          riskHandoffPath,
+          reviewPlan,
+        });
+        const reviewWorkbenchPath = buildFundamentalReviewChainJsonPath(
+          "fundamental-review-workbench",
+          reviewPlan.manifestId,
+        );
+        const noteRelativePath = buildFundamentalReviewChainNoteFilename({
+          dateStr,
+          stageName: "fundamental-review-workbench",
+          manifestId: reviewPlan.manifestId,
+        });
+        await Promise.all([
+          writeFileWithinRoot({
+            rootDir: workspaceDir,
+            relativePath: reviewWorkbenchPath,
+            data: `${JSON.stringify(reviewWorkbench, null, 2)}\n`,
+            encoding: "utf-8",
+          }),
+          writeFileWithinRoot({
+            rootDir: memoryDir,
+            relativePath: noteRelativePath,
+            data: renderReviewWorkbenchNote({
+              dateStr,
+              timeStr,
+              reviewWorkbenchPath,
+              reviewWorkbench,
             }),
-            writeFileWithinRoot({
-              rootDir: memoryDir,
-              relativePath: noteRelativePath,
-              data: renderReviewWorkbenchNote({
-                dateStr,
-                timeStr,
-                reviewWorkbenchPath,
-                reviewWorkbench,
-              }),
-              encoding: "utf-8",
-            }),
-          ]);
-        },
-      ),
+            encoding: "utf-8",
+          }),
+        ]);
+      }),
     );
 
     log.info(`Fundamental review workbench materialized ${entries.length} review plan(s)`);

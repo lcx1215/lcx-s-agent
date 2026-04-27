@@ -5,13 +5,13 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import {
-  buildFundamentalReviewChainJsonPath,
-  buildFundamentalReviewChainNoteFilename,
-} from "../lobster-brain-registry.js";
-import {
   loadReviewBriefsWithFallback,
   type FundamentalReviewBriefArtifact,
 } from "../fundamental-review-brief/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-review-plan");
 
@@ -435,7 +435,7 @@ export async function loadReviewPlansWithFallback(workspaceDir: string): Promise
           nowIso: reviewBrief.generatedAt,
           reviewBriefPath: relativePath,
           reviewQueuePath,
-          riskHandoffPath,
+          riskHandoffPath: riskHandoffPath ?? "",
           reviewBrief,
         }),
         reviewBriefPath: relativePath,

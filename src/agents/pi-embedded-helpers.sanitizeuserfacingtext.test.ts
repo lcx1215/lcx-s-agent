@@ -115,15 +115,17 @@ describe("sanitizeUserFacingText", () => {
       "真正需要继续做源码阅读和运行验证。",
       "",
       "## Tool Failures",
-      '- write: Validation failed for tool "write": - content: must have required property \'content\'',
-      '- web_fetch: Validation failed for tool "web_fetch": - url: must have required property \'url\'',
+      "- write: Validation failed for tool \"write\": - content: must have required property 'content'",
+      "- web_fetch: Validation failed for tool \"web_fetch\": - url: must have required property 'url'",
       "",
       "<read-files>",
       "/Users/liuchengxu/.openclaw/workspace/math-finance-learning.md",
       "</read-files>",
     ].join("\n");
 
-    expect(sanitizeUserFacingText(input)).toBe("诚实地回答：\n\n真正需要继续做源码阅读和运行验证。");
+    expect(sanitizeUserFacingText(input)).toBe(
+      "诚实地回答：\n\n真正需要继续做源码阅读和运行验证。",
+    );
   });
 
   it("strips standalone non-text placeholders from user-facing text", () => {

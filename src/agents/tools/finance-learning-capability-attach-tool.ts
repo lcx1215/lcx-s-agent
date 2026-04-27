@@ -448,16 +448,14 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
     ]);
     for (const relatedDomain of relatedFinanceDomains) {
       validateFinanceDomainEvidenceGate({
-        domain:
-          relatedDomain as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["relatedFinanceDomains"][number],
+        domain: relatedDomain,
         evidenceCategories,
         evidenceSummary,
         causalSupportText: causalOrMechanisticClaim,
       });
     }
     validateFinanceCapabilityTagEvidenceGate({
-      capabilityTags:
-        capabilityTags as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["capabilityTags"],
+      capabilityTags,
       evidenceCategories,
       sourceArtifactCount: 1,
       riskAndFailureModes,
@@ -612,18 +610,6 @@ export function createFinanceLearningCapabilityAttachTool(options?: {
           extractionSummary,
           rawNotes,
           ...candidate,
-          capabilityType:
-            candidate.capabilityType as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["capabilityType"],
-          relatedFinanceDomains:
-            candidate.relatedFinanceDomains as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["relatedFinanceDomains"],
-          capabilityTags:
-            candidate.capabilityTags as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["capabilityTags"],
-          evidenceCategories:
-            candidate.evidenceCategories as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["evidenceCategories"],
-          evidenceLevel:
-            candidate.evidenceLevel as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["evidenceLevel"],
-          allowedActionAuthority:
-            candidate.allowedActionAuthority as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["allowedActionAuthority"],
         });
       }
 

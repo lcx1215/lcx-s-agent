@@ -176,10 +176,7 @@ async function main() {
     eventReviewDraft.status === "research_review_ready",
     "fresh ETF event review should pass required input and evidence coverage",
   );
-  assert(
-    eventReviewDraft.noActionBoundary === true,
-    "event review should preserve no-action boundary",
-  );
+  assert(eventReviewDraft.noActionBoundary, "event review should preserve no-action boundary");
 
   process.stdout.write(
     `${JSON.stringify(

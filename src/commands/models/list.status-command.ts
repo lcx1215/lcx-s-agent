@@ -15,6 +15,7 @@ import {
   resolveAuthStorePathForDisplay,
   resolveProfileUnusableUntilForDisplay,
 } from "../../agents/auth-profiles.js";
+import { resolveBuiltInDefaultModelRef } from "../../agents/defaults.js";
 import { resolveEnvApiKey } from "../../agents/model-auth.js";
 import {
   buildModelAliasIndex,
@@ -23,7 +24,6 @@ import {
   resolveDefaultModelForAgent,
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
-import { resolveBuiltInDefaultModelRef } from "../../agents/defaults.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { withProgressTotals } from "../../cli/progress.js";
 import { CONFIG_PATH } from "../../config/config.js";
@@ -52,10 +52,7 @@ import {
   type AuthProbeSummary,
 } from "./list.probe.js";
 import { loadModelsConfig } from "./load-config.js";
-import {
-  ensureFlagCompatibility,
-  resolveKnownAgentId,
-} from "./shared.js";
+import { ensureFlagCompatibility, resolveKnownAgentId } from "./shared.js";
 
 export async function modelsStatusCommand(
   opts: {

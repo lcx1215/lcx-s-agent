@@ -11,11 +11,13 @@ existing family before adding a new sibling seam.
 ### 1. Learning And Correction Family
 
 Purpose:
+
 - turn study-heavy sessions into reusable lessons
 - compress lessons into durable skill memory
 - keep correction loops, hygiene, and validation visible
 
 Primary chain:
+
 - `learning-review`
 - `learning-review-weekly`
 - `learning-review-bootstrap`
@@ -26,10 +28,12 @@ Primary chain:
 ### 2. Frontier / Method Family
 
 Purpose:
+
 - digest papers, methods, replication risks, leakage, and overfitting
 - keep reusable research-method judgments available for later work
 
 Primary chain:
+
 - `frontier-research`
 - `frontier-research-weekly`
 - `frontier-research-bootstrap`
@@ -37,10 +41,12 @@ Primary chain:
 ### 3. Fundamental Research Family
 
 Purpose:
+
 - move from intake -> manifest/readiness -> snapshot -> scoring/risk handoff -> review workbench -> target deliverables
 - keep the whole chain research-only and artifact-audited
 
 Primary chain:
+
 - `fundamental-intake`
 - `fundamental-manifest-bridge`
 - `fundamental-snapshot-bridge`
@@ -60,16 +66,19 @@ Primary chain:
 - `fundamental-collection-follow-up-tracker`
 
 Rule:
+
 - prefer fixing upstream seams over reinterpreting lower-layer artifacts downstream
 
 ### 4. Operating / Control Family
 
 Purpose:
+
 - write daily operating artifacts
 - keep branch summaries and unified research risk views current
 - support the control room with stable daily and weekly overlays
 
 Primary chain:
+
 - `operating-loop`
 - `operating-daily-workface`
 - `operating-weekly-review`

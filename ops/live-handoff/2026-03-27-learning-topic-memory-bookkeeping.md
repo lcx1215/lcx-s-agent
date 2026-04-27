@@ -20,7 +20,7 @@
 - Result:
   - `学习记忆`
   - `topic卡片`
-  could remain stale until a manual rebuild happened later.
+    could remain stale until a manual rebuild happened later.
 
 ## Why Dangerous
 

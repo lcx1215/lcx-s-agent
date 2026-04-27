@@ -161,7 +161,9 @@ describe("fundamental-intake hook", () => {
         "Risk handoff remains blocked until approved documents are collected and reviewed.",
       ],
     });
-    expect(manifest.documentWorkspace).toEqual({
+    expect(
+      (manifest as typeof manifest & { documentWorkspace: unknown }).documentWorkspace,
+    ).toEqual({
       baseDir: "bank/fundamental/documents/important-giants",
       targetDirs: [
         {
@@ -239,7 +241,9 @@ describe("fundamental-intake hook", () => {
         (documentPlan) => documentPlan.status === "missing" && documentPlan.required === true,
       ),
     ).toBe(true);
-    expect(manifest.documentWorkspace).toEqual({
+    expect(
+      (manifest as typeof manifest & { documentWorkspace: unknown }).documentWorkspace,
+    ).toEqual({
       baseDir: "bank/fundamental/documents/large-cap-semis",
       targetDirs: [
         {

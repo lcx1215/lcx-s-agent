@@ -68,9 +68,9 @@ describe("finance_framework_core_record tool", () => {
         evidenceCategories: ["macro_rates_evidence", "inflation_evidence"],
       }),
     ]);
-    expect(parsed?.entries.some((entry) => entry.allowedActionAuthority === "trade_now")).toBe(
-      false,
-    );
+    expect(
+      parsed?.entries.some((entry) => String(entry.allowedActionAuthority) === "trade_now"),
+    ).toBe(false);
   });
 
   it("fails closed when the existing contract is malformed", async () => {

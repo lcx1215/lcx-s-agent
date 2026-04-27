@@ -26,7 +26,7 @@ Harden two live learning-memory seams:
 - so later commands like:
   - `学习记忆`
   - `topic卡片 market regime`
-  could be misread as evidence that `learn_topic market regime` executed successfully.
+    could be misread as evidence that `learn_topic market regime` executed successfully.
 
 ## Why Dangerous
 

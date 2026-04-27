@@ -31,7 +31,7 @@
   - `learning-transfer-bridges`
   - `learning-durable-skills`
   - `learning-long-term-catalog`
-  before weekly summary and raw review artifacts.
+    before weekly summary and raw review artifacts.
 
 ## Files changed
 

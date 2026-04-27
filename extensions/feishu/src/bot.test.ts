@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ClawdbotConfig, PluginRuntime, RuntimeEnv } from "openclaw/plugin-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { finalizeInboundContext } from "../../../src/auto-reply/reply/inbound-context.js";
 import {
   buildLearningCouncilArtifactJsonRelativePath,
   buildLobsterWorkfaceControlRoomSummary,
@@ -33,6 +34,7 @@ import {
 import { LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH } from "./lark-routing-corpus.js";
 import { setFeishuRuntime } from "./runtime.js";
 import { resolveFeishuControlRoomOrchestration, resolveFeishuSurfaceRouting } from "./surfaces.js";
+import type { FeishuConfig } from "./types.js";
 
 const {
   mockCreateFeishuReplyDispatcher,
@@ -87,17 +89,24 @@ const {
     mainSessionKey: "agent:main:main",
     matchedBy: "default",
   })),
-  mockCreateGatewayLarkApiRouteProvider: vi.fn(() => async () => ({
-    family: "unknown" as const,
-    confidence: 0,
-    rationale: "test default skips live API routing",
-  })),
+  mockCreateGatewayLarkApiRouteProvider: vi.fn(
+    () => async () =>
+      ({
+        family: "unknown" as const,
+        confidence: 0,
+        rationale: "test default skips live API routing",
+      }) as unknown,
+  ),
   mockRunFeishuLearningCouncil: vi.fn(),
   mockRunFeishuMarketIntelligencePacket: vi.fn(),
-  mockFindRunningFeishuLearningTimeboxSession: vi.fn(() => undefined),
-  mockFindLatestFeishuLearningTimeboxSession: vi.fn(async () => undefined),
-  mockPeekFeishuLearningTimeboxSession: vi.fn(() => ({ status: "not_requested" as const })),
-  mockStartFeishuLearningTimeboxSession: vi.fn(async () => ({ status: "not_requested" as const })),
+  mockFindRunningFeishuLearningTimeboxSession: vi.fn(() => undefined as unknown),
+  mockFindLatestFeishuLearningTimeboxSession: vi.fn(async () => undefined as unknown),
+  mockPeekFeishuLearningTimeboxSession: vi.fn(
+    () => ({ status: "not_requested" as const }) as unknown,
+  ),
+  mockStartFeishuLearningTimeboxSession: vi.fn(
+    async () => ({ status: "not_requested" as const }) as unknown,
+  ),
 }));
 
 vi.mock("./reply-dispatcher.js", () => ({
@@ -563,7 +572,7 @@ describe("buildFeishuAgentBody", () => {
         learning_command: { chatId: "oc-learning" },
         technical_daily: { chatId: "oc-tech" },
       },
-    } as ClawdbotConfig["channels"]["feishu"];
+    } as FeishuConfig;
     const content =
       "我是学ds和统计的中国散户，你别给我讲市场大词，直接告诉我：如果我做ETF轮动，用样本外、walk-forward、bootstrap，什么结果才算没有自欺欺人？";
     const surfaceRouting = resolveFeishuSurfaceRouting({
@@ -616,7 +625,7 @@ describe("buildFeishuAgentBody", () => {
         knowledge_maintenance: { chatId: "oc-knowledge" },
         ops_audit: { chatId: "oc-ops" },
       },
-    } as ClawdbotConfig["channels"]["feishu"];
+    } as FeishuConfig;
     const content = "最近学的 openclaw 更新到底有没有内化成可复用规则，别给我做总结秀";
     const surfaceRouting = resolveFeishuSurfaceRouting({
       cfg,
@@ -691,7 +700,7 @@ describe("buildFeishuAgentBody", () => {
         knowledge_maintenance: { chatId: "oc-knowledge" },
         ops_audit: { chatId: "oc-ops" },
       },
-    } as ClawdbotConfig["channels"]["feishu"];
+    } as FeishuConfig;
     const content = "别给我一份总结，你就告诉我最近后台自动学习有没有卡住，卡在哪";
     const surfaceRouting = resolveFeishuSurfaceRouting({
       cfg,
@@ -884,7 +893,7 @@ describe("buildFeishuAgentBody", () => {
         knowledge_maintenance: { chatId: "oc-knowledge" },
         ops_audit: { chatId: "oc-ops" },
       },
-    } as ClawdbotConfig["channels"]["feishu"];
+    } as FeishuConfig;
     const surfaceRouting = resolveFeishuSurfaceRouting({
       cfg,
       chatId: "oc-control",
@@ -915,7 +924,7 @@ describe("buildFeishuAgentBody", () => {
         knowledge_maintenance: { chatId: "oc-knowledge" },
         ops_audit: { chatId: "oc-ops" },
       },
-    } as ClawdbotConfig["channels"]["feishu"];
+    } as FeishuConfig;
     const surfaceRouting = resolveFeishuSurfaceRouting({
       cfg,
       chatId: "oc-control",
@@ -942,7 +951,7 @@ describe("buildFeishuAgentBody", () => {
       surfaces: {
         technical_daily: { chatId: "oc-tech" },
       },
-    } as ClawdbotConfig["channels"]["feishu"];
+    } as FeishuConfig;
     const surfaceRouting = resolveFeishuSurfaceRouting({
       cfg,
       chatId: "oc-tech",
@@ -2242,7 +2251,7 @@ confidence: low
 科技财报还缺新鲜交叉验证，先保留草稿。
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -2276,7 +2285,7 @@ confidence: low
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -2375,7 +2384,7 @@ confidence: high
 这条要发布到技术面 lane：先看长端利率、美元、信用利差和 QQQ 相对 SPY 的风险偏好确认，再判断是否只是短线反弹。
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -2409,7 +2418,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -2491,7 +2500,7 @@ confidence: high
 
     const mockDispatchReplyFromConfig = vi.fn(async () => ({
       queuedFinal: false,
-      counts: { final: 0 },
+      counts: { tool: 0, block: 0, final: 0 },
     }));
     const mockWithReplyDispatcher = vi.fn(
       async ({
@@ -2524,7 +2533,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -2622,7 +2631,7 @@ confidence: high
         dispatcher.sendFinalReply({
           text: "去学习世界顶级大学前沿金融论文",
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -2656,7 +2665,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -2807,7 +2816,7 @@ confidence: high
         dispatcher.sendFinalReply({
           text: "先承认刚才答偏了；现在先给动作和范围，再给修正版。",
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -2841,7 +2850,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -2951,7 +2960,7 @@ confidence: high
         dispatcher.sendFinalReply({
           text: "主回复已经发出，surface ledger 应该保留，work receipt 失败要单独报。",
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -2985,7 +2994,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -3092,7 +3101,7 @@ confidence: high
             "Next-step judgment: 先跟踪下一组验证数据，再决定是继续持有还是降权。",
           ].join("\n"),
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -3126,7 +3135,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -3255,7 +3264,7 @@ confidence: high
       }) => {
         dispatcher.sendFinalReply({ text: replies[replyIndex] });
         replyIndex += 1;
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -3289,7 +3298,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -3478,7 +3487,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -3683,7 +3692,7 @@ confidence: high
 先看利率与风险偏好的共振。
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -3717,7 +3726,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -3955,7 +3964,7 @@ confidence: high
         };
       }) => {
         dispatcher.sendFinalReply({ text: "## Control Summary\n今天先看 publish 降级路径。" });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -3989,7 +3998,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -4119,7 +4128,7 @@ confidence: high
 今天先看还有哪些地方没有形成新学习闭环。
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -4153,7 +4162,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -4256,7 +4265,7 @@ confidence: high
 今天先看有没有明显故障和该补的空白。
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -4290,7 +4299,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -4400,7 +4409,7 @@ confidence: high
 今天先看哪些链条当前不可读。
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -4434,7 +4443,7 @@ confidence: high
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -4547,7 +4556,7 @@ ${longSummaryLine}
 ${longSummaryLine}
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -4581,7 +4590,7 @@ ${longSummaryLine}
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -4753,7 +4762,7 @@ ${longSummaryLine}
         };
       }) => {
         dispatcher.sendFinalReply({ text: "今天看系统健康。" });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -4787,7 +4796,7 @@ ${longSummaryLine}
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -4883,7 +4892,7 @@ Monitor only.
         };
       }) => {
         dispatcher.sendFinalReply({ text: replyText });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -4917,7 +4926,7 @@ Monitor only.
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -5006,7 +5015,7 @@ QQQ 对长端利率更敏感，先看 10Y 与风险偏好是否继续共振走�
         };
       }) => {
         dispatcher.sendFinalReply({ text: replyText });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -5040,7 +5049,7 @@ QQQ 对长端利率更敏感，先看 10Y 与风险偏好是否继续共振走�
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -5154,7 +5163,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -5268,7 +5277,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -5380,7 +5389,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -5492,7 +5501,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -5604,7 +5613,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -5772,7 +5781,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -5899,7 +5908,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -6026,7 +6035,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -6179,7 +6188,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -6296,7 +6305,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -6409,7 +6418,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -6500,7 +6509,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher: vi.fn(
               async ({
@@ -6573,7 +6582,9 @@ describe("learning council routing", () => {
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: expect.stringContaining("金融能力学习流水线已完成 dev 验收"),
     });
-    const replyText = (baseDispatcher.sendFinalReply.mock.calls[0]?.[0] as { text: string }).text;
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
     expect(replyText).toContain("receipt: memory/finance-learning-retrieval-receipts/");
     expect(replyText).toContain("review: memory/finance-learning-retrieval-reviews/");
     expect(replyText).toContain("weak learning receipts: 0");
@@ -6693,7 +6704,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: vi.fn(),
             withReplyDispatcher: vi.fn(
               async ({
@@ -6760,7 +6771,9 @@ describe("learning council routing", () => {
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: expect.stringContaining("还缺安全 source"),
     });
-    const replyText = (baseDispatcher.sendFinalReply.mock.calls[0]?.[0] as { text: string }).text;
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
     expect(replyText).toContain("未产生: retrievalReceiptPath / retrievalReviewPath");
     await expect(
       fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
@@ -6800,7 +6813,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: vi.fn(),
             withReplyDispatcher: vi.fn(
               async ({
@@ -6874,7 +6887,9 @@ describe("learning council routing", () => {
     });
 
     expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
-    const replyText = (baseDispatcher.sendFinalReply.mock.calls[0]?.[0] as { text: string }).text;
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
     expect(replyText).toContain("金融能力学习流水线没有完成");
     expect(replyText).toContain("failed step: extract");
     expect(replyText).toContain("reason: finance_article_extraction_gap");
@@ -6941,7 +6956,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -7061,7 +7076,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: vi.fn(),
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -7187,7 +7202,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: vi.fn(),
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -7309,7 +7324,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: vi.fn(),
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -7425,7 +7440,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: vi.fn(),
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -7487,7 +7502,7 @@ describe("learning council routing", () => {
     const finalizeInboundContext = vi.fn((ctx: unknown) => ctx);
     const mockDispatchReplyFromConfig = vi.fn(async ({ ctx }: { ctx: { SessionKey: string } }) => ({
       queuedFinal: true,
-      counts: { final: ctx.SessionKey.includes("fundamental_research") ? 1 : 0 },
+      counts: { tool: 0, block: 0, final: ctx.SessionKey.includes("fundamental_research") ? 1 : 0 },
     }));
     const mockWithReplyDispatcher = vi.fn(
       async ({
@@ -7632,7 +7647,7 @@ describe("learning council routing", () => {
             ? "先看苹果和微软财报的商业质量。"
             : "先看最近值得学的开源量化工具和方法坑点。",
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -7669,7 +7684,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig:
               mockDispatchReplyFromConfig as unknown as PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"],
             withReplyDispatcher:
@@ -7805,7 +7820,7 @@ describe("learning council routing", () => {
         dispatcher.sendFinalReply({
           text: "先给你一个控制室总览：调度正常，学习在跑，最该警惕的是代理证据还不够硬。",
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -7944,7 +7959,7 @@ describe("learning council routing", () => {
             ? "先看科技龙头的商业质量与资本配置。"
             : "先看长端利率、QQQ 与风险偏好的传导。",
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -7981,7 +7996,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig:
               mockDispatchReplyFromConfig as unknown as PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"],
             withReplyDispatcher:
@@ -8097,7 +8112,7 @@ describe("learning council routing", () => {
 
     const mockDispatchReplyFromConfig = vi.fn(async () => ({
       queuedFinal: true,
-      counts: { final: 1 },
+      counts: { tool: 0, block: 0, final: 1 },
     }));
     const mockWithReplyDispatcher = vi.fn(
       async ({
@@ -8130,7 +8145,7 @@ describe("learning council routing", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -8213,7 +8228,7 @@ describe("watchtower anomaly reporting", () => {
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -8267,7 +8282,7 @@ describe("handleFeishuMessage command authorization", () => {
   const mockFinalizeInboundContext = vi.fn((ctx: unknown) => ctx);
   const mockDispatchReplyFromConfig = vi
     .fn()
-    .mockResolvedValue({ queuedFinal: false, counts: { final: 1 } });
+    .mockResolvedValue({ queuedFinal: false, counts: { tool: 0, block: 0, final: 1 } });
   const mockWithReplyDispatcher = vi.fn(
     async ({
       dispatcher,
@@ -10554,7 +10569,7 @@ describe("resolveFeishuEffectiveStateSurface", () => {
         surfaces: {
           control_room: { chatId: "oc-control" },
         },
-      },
+      } as unknown as FeishuConfig,
       chatId: "oc-control",
       content: "把今天的系统健康、学习状态、研究状态一起讲给我",
     });
@@ -10579,7 +10594,7 @@ describe("resolveFeishuEffectiveStateSurface", () => {
         surfaces: {
           control_room: { chatId: "oc-control" },
         },
-      },
+      } as unknown as FeishuConfig,
       chatId: "oc-control",
       content: "去看看几个指数最新的风险和潜在收益",
     });
@@ -10603,7 +10618,7 @@ describe("broadcast dispatch", () => {
   const mockFinalizeInboundContext = vi.fn((ctx: unknown) => ctx);
   const mockDispatchReplyFromConfig = vi
     .fn()
-    .mockResolvedValue({ queuedFinal: false, counts: { final: 1 } });
+    .mockResolvedValue({ queuedFinal: false, counts: { tool: 0, block: 0, final: 1 } });
   const mockWithReplyDispatcher = vi.fn(
     async ({
       dispatcher,
@@ -10753,7 +10768,7 @@ confidence: high
 QQQ / SPY / TLT 先看谁对长端利率更敏感。
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
 
@@ -10836,7 +10851,7 @@ QQQ / SPY / TLT 先看谁对长端利率更敏感。
 今天先看哪些链条有空白。
 `,
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
 
@@ -10927,7 +10942,7 @@ QQQ / SPY / TLT 先看谁对长端利率更敏感。
         dispatcher.sendFinalReply({
           text: "this should not run for local learning status intercept",
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -10961,7 +10976,7 @@ QQQ / SPY / TLT 先看谁对长端利率更敏感。
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
@@ -11091,7 +11106,7 @@ QQQ / SPY / TLT 先看谁对长端利率更敏感。
         dispatcher.sendFinalReply({
           text: "this should not run for broadcast learning status intercept dedupe",
         });
-        return { queuedFinal: true, counts: { final: 1 } };
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
       },
     );
     const mockWithReplyDispatcher = vi.fn(
@@ -11125,7 +11140,7 @@ QQQ / SPY / TLT 先看谁对长端利率更敏感。
               () => ({}),
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
-            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            finalizeInboundContext,
             dispatchReplyFromConfig: mockDispatchReplyFromConfig,
             withReplyDispatcher:
               mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],

@@ -259,7 +259,7 @@ async function main() {
     eventReviewDraft.status === "research_review_ready",
     "analysis should become review-ready",
   );
-  assert(eventReviewDraft.noActionBoundary === true, "analysis should preserve no-action boundary");
+  assert(eventReviewDraft.noActionBoundary, "analysis should preserve no-action boundary");
   const receipt = await writeLoopReceipt({
     workspaceDir,
     handoff,

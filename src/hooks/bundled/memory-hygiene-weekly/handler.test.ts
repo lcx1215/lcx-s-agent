@@ -200,7 +200,10 @@ describe("memory-hygiene-weekly hook", () => {
     await runReset(tempDir);
 
     const weekly = await fs.readFile(
-      path.join(tempDir, buildMemoryHygieneArtifactRelativePath("2026-W13", "memory-hygiene-weekly")),
+      path.join(
+        tempDir,
+        buildMemoryHygieneArtifactRelativePath("2026-W13", "memory-hygiene-weekly"),
+      ),
       "utf-8",
     );
     const provisional = await fs.readFile(
@@ -249,7 +252,9 @@ describe("memory-hygiene-weekly hook", () => {
     expect(provisional).toContain("reason: bounded_learning_note");
 
     expect(rejected).toContain("reason: failed_validation");
-    expect(rejected).toContain("revive_condition: only after a fresh validation pass changes the verdict");
+    expect(rejected).toContain(
+      "revive_condition: only after a fresh validation pass changes the verdict",
+    );
 
     expect(antiPatterns).toContain("# Anti-Patterns: 2026-W13");
     expect(antiPatterns).toContain("## stale-anchor overreach");
@@ -264,7 +269,9 @@ describe("memory-hygiene-weekly hook", () => {
     );
     expect(trashManifest.prunedPaths).toContain("memory/2026-03-01-lobster-workface.md");
 
-    await expect(fs.access(path.join(memoryDir, "2026-03-01-lobster-workface.md"))).rejects.toThrow();
+    await expect(
+      fs.access(path.join(memoryDir, "2026-03-01-lobster-workface.md")),
+    ).rejects.toThrow();
   });
 
   it("does nothing when no hygiene signals exist", async () => {
@@ -273,7 +280,10 @@ describe("memory-hygiene-weekly hook", () => {
 
     await expect(
       fs.access(
-        path.join(tempDir, buildMemoryHygieneArtifactRelativePath("2026-W13", "memory-hygiene-weekly")),
+        path.join(
+          tempDir,
+          buildMemoryHygieneArtifactRelativePath("2026-W13", "memory-hygiene-weekly"),
+        ),
       ),
     ).rejects.toThrow();
   });

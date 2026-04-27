@@ -84,7 +84,9 @@ function runCommand(check: CommandCheck): Promise<CommandResult> {
         );
         return;
       }
-      const payload = check.parseJson ? parseJsonOutput(stdout) : { stdoutTail: stdout.slice(-500) };
+      const payload = check.parseJson
+        ? parseJsonOutput(stdout)
+        : { stdoutTail: stdout.slice(-500) };
       check.assert?.(payload);
       resolve({
         name: check.name,

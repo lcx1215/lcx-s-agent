@@ -11,7 +11,7 @@
 - this meant semantic / episodic recall queries like:
   - `上次 market regime 教训`
   - `last time market regime lesson`
-  could still expand into broad asset aliases such as:
+    could still expand into broad asset aliases such as:
   - `spy`
   - `death cross`
   - `broad market`

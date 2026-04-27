@@ -176,8 +176,7 @@ describe("learning-review hook", () => {
     const sessionContent = createMockSessionContent([
       {
         role: "user",
-        content:
-          "帮我学习这个财报和当前 market regime，重点抓业务驱动、风险、宏观传导和证伪条件。",
+        content: "帮我学习这个财报和当前 market regime，重点抓业务驱动、风险、宏观传导和证伪条件。",
       },
       {
         role: "assistant",

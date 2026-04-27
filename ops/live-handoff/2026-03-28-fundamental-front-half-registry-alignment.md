@@ -5,6 +5,7 @@
 The fundamental chain was only partially registry-backed.
 
 Already aligned:
+
 - `fundamental-review-queue`
 - `fundamental-review-brief`
 - `fundamental-review-plan`
@@ -12,6 +13,7 @@ Already aligned:
 - target-family back-half artifacts
 
 Still hand-rolling paths:
+
 - `fundamental-readiness`
 - `fundamental-snapshot-bridge`
 - `fundamental-snapshot`

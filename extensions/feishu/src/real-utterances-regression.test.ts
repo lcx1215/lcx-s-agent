@@ -27,6 +27,7 @@ import {
   resolveLarkSemanticRouteCandidate,
   scoreLarkRoutingCorpus,
   scoreLarkRoutingCorpusAsync,
+  type LarkApiRouteProvider,
   type LarkRoutingFamily,
 } from "./lark-routing-corpus.js";
 import {
@@ -720,12 +721,9 @@ describe("real daily utterance regression", () => {
   });
 
   it("keeps explicit slice asks pinned to the intended specialist lane", () => {
-    for (const {
-      phrase,
-      targetSurface,
-      specialistSurfaces,
-      publishMode,
-    } of CRITICAL_SINGLE_SPECIALIST_CASES) {
+    for (const testCase of CRITICAL_SINGLE_SPECIALIST_CASES) {
+      const { phrase, targetSurface, specialistSurfaces } = testCase;
+      const publishMode = "publishMode" in testCase ? testCase.publishMode : undefined;
       const routing = resolveFeishuSurfaceRouting({
         cfg,
         chatId: "oc-control",
@@ -769,7 +767,7 @@ describe("real daily utterance regression", () => {
   });
 
   it("can score an API semantic-router candidate layer without replacing deterministic gates", async () => {
-    const apiProvider = async ({ utterance }: { utterance: string }) => {
+    const apiProvider: LarkApiRouteProvider = async ({ utterance }) => {
       const entry = LARK_ROUTING_CORPUS.find((candidate) => candidate.utterance === utterance);
       return {
         family: entry?.family ?? "unknown",

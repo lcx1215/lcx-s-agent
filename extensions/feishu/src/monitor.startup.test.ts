@@ -247,6 +247,7 @@ describe("Feishu monitor startup preflight", () => {
     const botOpenId = await fetchBotOpenIdForMonitor(
       {
         accountId: "alpha",
+        selectionSource: "explicit",
         enabled: true,
         configured: true,
         domain: "lark",

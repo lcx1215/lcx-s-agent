@@ -1,10 +1,10 @@
+import { resolveBuiltInDefaultModelRef } from "../../agents/defaults.js";
 import {
   buildModelAliasIndex,
   parseModelRef,
   resolveConfiguredModelRef,
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
-import { resolveBuiltInDefaultModelRef } from "../../agents/defaults.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   resolveAgentModelFallbackValues,

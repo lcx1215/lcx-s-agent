@@ -107,56 +107,62 @@ describe("frontier-research-bootstrap hook", () => {
     );
     expect(injected).toBeTruthy();
     expect(injected?.name).toBe("memory.md");
-    expect(injected?.content).toContain("Recent Frontier Research");
-    expect(injected?.content).toContain("Latest Learning Carryover Cue");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain("Recent Frontier Research");
+    expect(injected?.content ?? "").toContain("Latest Learning Carryover Cue");
+    expect(injected?.content ?? "").toContain(
       "- retain: force leakage and OOS checks before admiring results.",
     );
-    expect(injected?.content).toContain("- discard: do not let novelty outrun replication cost.");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
+      "- discard: do not let novelty outrun replication cost.",
+    );
+    expect(injected?.content ?? "").toContain(
       "- replay: when a paper looks surprisingly strong, re-check leakage before admiring it.",
     );
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
       "- next eval: next batch verify the replication gate actually changed",
     );
-    expect(injected?.content).toContain("Priority Frontier Upgrade");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain("Priority Frontier Upgrade");
+    expect(injected?.content ?? "").toContain(
       buildFrontierRecallFilename("2026-W11", "frontier-upgrade"),
     );
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
       buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
     );
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
       buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
     );
-    expect(injected?.content).toContain("2026-03-15-frontier-research-wave.md");
-    expect(injected?.content).toContain("2026-03-14-frontier-research-factor.md");
-    expect(injected?.content.indexOf("Latest Learning Carryover Cue")).toBeLessThan(
-      injected?.content.indexOf(buildFrontierRecallFilename("2026-W11", "frontier-upgrade")) ??
+    expect(injected?.content ?? "").toContain("2026-03-15-frontier-research-wave.md");
+    expect(injected?.content ?? "").toContain("2026-03-14-frontier-research-factor.md");
+    expect((injected?.content ?? "").indexOf("Latest Learning Carryover Cue")).toBeLessThan(
+      (injected?.content ?? "").indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-upgrade"),
+      ) ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(
+      (injected?.content ?? "").indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-upgrade"),
+      ),
+    ).toBeLessThan(
+      (injected?.content ?? "").indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
+      ) ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(
+      (injected?.content ?? "").indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
+      ),
+    ).toBeLessThan(
+      (injected?.content ?? "").indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
+      ) ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(
+      (injected?.content ?? "").indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
+      ),
+    ).toBeLessThan(
+      (injected?.content ?? "").indexOf("2026-03-15-frontier-research-wave.md") ??
         Number.MAX_SAFE_INTEGER,
-    );
-    expect(
-      injected?.content.indexOf(buildFrontierRecallFilename("2026-W11", "frontier-upgrade")),
-    ).toBeLessThan(
-      injected?.content.indexOf(
-        buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
-      ) ?? Number.MAX_SAFE_INTEGER,
-    );
-    expect(
-      injected?.content.indexOf(
-        buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
-      ),
-    ).toBeLessThan(
-      injected?.content.indexOf(
-        buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
-      ) ?? Number.MAX_SAFE_INTEGER,
-    );
-    expect(
-      injected?.content.indexOf(
-        buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
-      ),
-    ).toBeLessThan(
-      injected?.content.indexOf("2026-03-15-frontier-research-wave.md") ?? Number.MAX_SAFE_INTEGER,
     );
   });
 

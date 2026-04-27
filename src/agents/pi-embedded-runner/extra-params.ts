@@ -894,12 +894,29 @@ function readAbortReason(signal: AbortSignal): unknown {
   return "reason" in signal ? (signal as { reason?: unknown }).reason : undefined;
 }
 
+function formatAbortReason(reason: unknown): string {
+  if (typeof reason === "string") {
+    return reason;
+  }
+  if (typeof reason === "number" || typeof reason === "boolean" || typeof reason === "bigint") {
+    return reason.toString();
+  }
+  if (reason && typeof reason === "object") {
+    try {
+      return JSON.stringify(reason);
+    } catch {
+      return "Request aborted";
+    }
+  }
+  return "Request aborted";
+}
+
 function normalizeAbortError(signal: AbortSignal): Error {
   const reason = readAbortReason(signal);
   if (reason instanceof Error) {
     return reason;
   }
-  const err = new Error(reason ? String(reason) : "Request aborted");
+  const err = new Error(formatAbortReason(reason));
   err.name = "AbortError";
   return err;
 }

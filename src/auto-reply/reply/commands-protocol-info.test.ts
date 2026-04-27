@@ -153,7 +153,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
 
       const snapshotReply = buildProtocolInfoReply({
         text: "现在系统是什么状态",
@@ -242,7 +242,7 @@ describe("commands-protocol-info", () => {
               moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
             },
           },
-        } as OpenClawConfig,
+        } as unknown as OpenClawConfig,
         provider: "moonshot",
         model: "kimi-k2.6",
         sessionEntry: {
@@ -288,7 +288,7 @@ describe("commands-protocol-info", () => {
               moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
             },
           },
-        } as OpenClawConfig,
+        } as unknown as OpenClawConfig,
         provider: "moonshot",
         model: "kimi-k2.6",
         sessionEntry: {
@@ -310,7 +310,7 @@ describe("commands-protocol-info", () => {
               moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
             },
           },
-        } as OpenClawConfig,
+        } as unknown as OpenClawConfig,
         provider: "moonshot",
         model: "kimi-k2.6",
         sessionEntry: {
@@ -365,7 +365,7 @@ describe("commands-protocol-info", () => {
               moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
             },
           },
-        } as OpenClawConfig,
+        } as unknown as OpenClawConfig,
         provider: "moonshot",
         model: "kimi-k2.6",
         sessionEntry: {
@@ -574,7 +574,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const learningReply = buildProtocolInfoReply({ text: "今天学了什么", cfg });
       expect(learningReply?.text).toContain("Evidence: lobster-workface 2026-04-24");
       expect(learningReply?.text).toContain(
@@ -628,7 +628,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({ text: "今天学了什么", cfg });
       expect(reply?.text).toContain("Evidence: current-research-line only");
       expect(reply?.text).toContain("I cannot prove a fresh durable lesson was learned today");
@@ -658,7 +658,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({
         text: "can you learn from new arxiv papers and apply it",
         cfg,
@@ -693,7 +693,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({ text: "你刚才真的开始学那篇论文了吗", cfg });
       expect(reply?.text).toContain("🧾 Learning task receipt");
       expect(reply?.text).toContain("Latest session receipt: none found");
@@ -753,7 +753,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({ text: "你刚才真的开始学那篇论文了吗", cfg });
       expect(reply?.text).toContain("🧾 Learning task receipt");
       expect(reply?.text).toContain("Latest session receipt: none found");
@@ -790,7 +790,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({
         text: "did you pretend a background learning session started",
         cfg,
@@ -849,7 +849,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({
         text: "did you pretend a background learning session started",
         cfg,
@@ -891,7 +891,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({ text: "did that reach long-term storage", cfg });
       expect(reply?.text).toContain("💾 Persistence state");
       expect(reply?.text).toContain("Durable artifact: current-research-line only");
@@ -943,7 +943,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({ text: "did that reach long-term storage", cfg });
       expect(reply?.text).toContain("💾 Persistence state");
       expect(reply?.text).toContain("Durable artifact: current-research-line only");
@@ -989,7 +989,7 @@ describe("commands-protocol-info", () => {
             moonshot: { api: "openai-completions", models: [{ id: "kimi-k2.6" }] },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({
         text: "搜索现在正常吗",
         cfg,
@@ -1038,7 +1038,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({
         text: "did the write fail but stay understood in the current session",
         cfg,
@@ -1094,7 +1094,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({
         text: "did the write fail but stay understood in the current session",
         cfg,
@@ -1159,7 +1159,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
 
       const persistenceReply = buildProtocolInfoReply({
         text: "did that reach long-term storage",
@@ -1240,7 +1240,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
 
       const persistenceReply = buildProtocolInfoReply({
         text: "did that reach long-term storage",
@@ -1283,7 +1283,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({ text: "你会从错误对话里学吗", cfg });
       expect(reply?.text).toContain("🪞 Improvement loop");
       expect(reply?.text).toContain("Training: no model-weight distillation is claimed here.");
@@ -1312,7 +1312,7 @@ describe("commands-protocol-info", () => {
             model: { primary: "moonshot/kimi-k2.6" },
           },
         },
-      } as OpenClawConfig;
+      } as unknown as OpenClawConfig;
       const reply = buildProtocolInfoReply({ text: "was that overclaiming", cfg });
       expect(reply?.text).toContain("🧯 Error type");
       expect(reply?.text).toContain(

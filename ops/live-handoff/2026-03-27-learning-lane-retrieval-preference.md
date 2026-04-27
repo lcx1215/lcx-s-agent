@@ -13,7 +13,7 @@
   - lane report
   - lane state
   - lane topic-memory
-  could all be separated, while retrieval still behaved as if every lane shared one workspace.
+    could all be separated, while retrieval still behaved as if every lane shared one workspace.
 
 ## Why Dangerous
 

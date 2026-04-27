@@ -179,98 +179,107 @@ describe("learning-review-bootstrap hook", () => {
     );
     expect(injected).toBeTruthy();
     expect(injected?.name).toBe("memory.md");
-    expect(injected?.content).toContain("Recent Learning Reviews");
-    expect(injected?.content).toContain("Immediate Study Cue");
-    expect(injected?.content).toContain("- avoid: skipped dimension checks");
-    expect(injected?.content).toContain("- apply: check dimensions first");
-    expect(injected?.content).toContain("Latest Learning Carryover Cue");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain("Recent Learning Reviews");
+    expect(injected?.content ?? "").toContain("Immediate Study Cue");
+    expect(injected?.content ?? "").toContain("- avoid: skipped dimension checks");
+    expect(injected?.content ?? "").toContain("- apply: check dimensions first");
+    expect(injected?.content ?? "").toContain("Latest Learning Carryover Cue");
+    expect(injected?.content ?? "").toContain(
       "- retain: trust walk-forward before trusting in-sample Sharpe.",
     );
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
       "- discard: do not let pretty factor tearsheets override OOS weakness.",
     );
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
       "- replay: when a backtest looks too clean, rerun the leakage and OOS checks first.",
     );
-    expect(injected?.content).toContain("- next eval: next batch verify the rule changes");
-    expect(injected?.content).toContain("Durable Skill Cue");
-    expect(injected?.content).toContain("- default topic: quant-modeling");
-    expect(injected?.content).toContain("- default method: test OOS before trusting the edge");
-    expect(injected?.content).toContain("Learning Trigger Cue");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain("- next eval: next batch verify the rule changes");
+    expect(injected?.content ?? "").toContain("Durable Skill Cue");
+    expect(injected?.content ?? "").toContain("- default topic: quant-modeling");
+    expect(injected?.content ?? "").toContain(
+      "- default method: test OOS before trusting the edge",
+    );
+    expect(injected?.content ?? "").toContain("Learning Trigger Cue");
+    expect(injected?.content ?? "").toContain(
       "- when you see: backtest, factor, alpha, ranking, Sharpe, OOS, leakage, or parameter-fragility questions",
     );
-    expect(injected?.content).toContain("Learning Rehearsal Cue");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain("Learning Rehearsal Cue");
+    expect(injected?.content ?? "").toContain(
       "- quant-modeling (fragile) - drill: add one walk-forward check before ranking the signal - apply: test OOS before trusting the edge",
     );
-    expect(injected?.content).toContain("Learning Transfer Cue");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain("Learning Transfer Cue");
+    expect(injected?.content ?? "").toContain(
       "- transfer to: helps with strategy audit and candidate ranking",
     );
-    expect(injected?.content).toContain("- reuse rule: test OOS before trusting the edge");
-    expect(injected?.content).toContain("Learning Relevance Cue");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain("- reuse rule: test OOS before trusting the edge");
+    expect(injected?.content ?? "").toContain("Learning Relevance Cue");
+    expect(injected?.content ?? "").toContain(
       "- quant-modeling (2, last seen 2026-03-15) - default method: test OOS before trusting the edge",
     );
-    expect(injected?.content).toContain("Priority Learning Trigger Map");
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-trigger-map"));
-    expect(injected?.content).toContain("Priority Learning Rehearsal Queue");
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-rehearsal-queue"));
-    expect(injected?.content).toContain("Priority Learning Transfer Bridges");
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-transfer-bridges"));
-    expect(injected?.content).toContain("Priority Learning Relevance Gate");
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-relevance-gate"));
-    expect(injected?.content).toContain("Priority Durable Skills");
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-durable-skills"));
-    expect(injected?.content).toContain("Priority Learning Upgrade");
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-upgrade"));
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-weekly-review"));
-    expect(injected?.content).toContain("Long-Term Learning Catalog");
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-long-term-catalog"));
-    expect(injected?.content).toContain("2026-03-15-review-linear-algebra.md");
-    expect(injected?.content).toContain("2026-03-14-review-probability.md");
+    expect(injected?.content ?? "").toContain("Priority Learning Trigger Map");
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-trigger-map"));
+    expect(injected?.content ?? "").toContain("Priority Learning Rehearsal Queue");
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-rehearsal-queue"));
+    expect(injected?.content ?? "").toContain("Priority Learning Transfer Bridges");
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-transfer-bridges"));
+    expect(injected?.content ?? "").toContain("Priority Learning Relevance Gate");
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-relevance-gate"));
+    expect(injected?.content ?? "").toContain("Priority Durable Skills");
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-durable-skills"));
+    expect(injected?.content ?? "").toContain("Priority Learning Upgrade");
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-upgrade"));
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-weekly-review"));
+    expect(injected?.content ?? "").toContain("Long-Term Learning Catalog");
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-long-term-catalog"));
+    expect(injected?.content ?? "").toContain("2026-03-15-review-linear-algebra.md");
+    expect(injected?.content ?? "").toContain("2026-03-14-review-probability.md");
     expect(
-      injected?.content.indexOf(learningFile(weekKey, "learning-durable-skills")),
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-durable-skills")),
     ).toBeLessThan(
-      injected?.content.indexOf(learningFile(weekKey, "learning-upgrade")) ??
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-upgrade")) ??
         Number.MAX_SAFE_INTEGER,
-    );
-    expect(injected?.content.indexOf(learningFile(weekKey, "learning-trigger-map"))).toBeLessThan(
-      injected?.content.indexOf(learningFile(weekKey, "learning-durable-skills")) ??
-        Number.MAX_SAFE_INTEGER,
-    );
-    expect(injected?.content.indexOf("Latest Learning Carryover Cue")).toBeLessThan(
-      injected?.content.indexOf("Durable Skill Cue") ?? Number.MAX_SAFE_INTEGER,
     );
     expect(
-      injected?.content.indexOf(learningFile(weekKey, "learning-rehearsal-queue")),
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-trigger-map")),
     ).toBeLessThan(
-      injected?.content.indexOf(learningFile(weekKey, "learning-upgrade")) ??
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-durable-skills")) ??
         Number.MAX_SAFE_INTEGER,
     );
+    expect((injected?.content ?? "").indexOf("Latest Learning Carryover Cue")).toBeLessThan(
+      (injected?.content ?? "").indexOf("Durable Skill Cue") ?? Number.MAX_SAFE_INTEGER,
+    );
     expect(
-      injected?.content.indexOf(learningFile(weekKey, "learning-transfer-bridges")),
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-rehearsal-queue")),
     ).toBeLessThan(
-      injected?.content.indexOf(learningFile(weekKey, "learning-upgrade")) ??
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-upgrade")) ??
         Number.MAX_SAFE_INTEGER,
     );
     expect(
-      injected?.content.indexOf(learningFile(weekKey, "learning-relevance-gate")),
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-transfer-bridges")),
     ).toBeLessThan(
-      injected?.content.indexOf(learningFile(weekKey, "learning-upgrade")) ??
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-upgrade")) ??
         Number.MAX_SAFE_INTEGER,
-    );
-    expect(injected?.content.indexOf(learningFile(weekKey, "learning-upgrade"))).toBeLessThan(
-      injected?.content.indexOf(learningFile(weekKey, "learning-weekly-review")) ??
-        Number.MAX_SAFE_INTEGER,
-    );
-    expect(injected?.content.indexOf(learningFile(weekKey, "learning-weekly-review"))).toBeLessThan(
-      injected?.content.indexOf("2026-03-15-review-linear-algebra.md") ?? Number.MAX_SAFE_INTEGER,
     );
     expect(
-      injected?.content.match(
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-relevance-gate")),
+    ).toBeLessThan(
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-upgrade")) ??
+        Number.MAX_SAFE_INTEGER,
+    );
+    expect(
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-upgrade")),
+    ).toBeLessThan(
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-weekly-review")) ??
+        Number.MAX_SAFE_INTEGER,
+    );
+    expect(
+      (injected?.content ?? "").indexOf(learningFile(weekKey, "learning-weekly-review")),
+    ).toBeLessThan(
+      (injected?.content ?? "").indexOf("2026-03-15-review-linear-algebra.md") ??
+        Number.MAX_SAFE_INTEGER,
+    );
+    expect(
+      (injected?.content ?? "").match(
         new RegExp(learningFile(weekKey, "learning-weekly-review").replace(".", "\\."), "g"),
       ),
     ).toHaveLength(1);
@@ -353,13 +362,13 @@ describe("learning-review-bootstrap hook", () => {
     const injected = context.bootstrapFiles.find((file) =>
       file.path.endsWith("_learning-review-bootstrap.md"),
     );
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-relevance-gate"));
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-transfer-bridges"));
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-rehearsal-queue"));
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-trigger-map"));
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-durable-skills"));
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-upgrade"));
-    expect(injected?.content).toContain(learningFile(weekKey, "learning-weekly-review"));
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-relevance-gate"));
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-transfer-bridges"));
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-rehearsal-queue"));
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-trigger-map"));
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-durable-skills"));
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-upgrade"));
+    expect(injected?.content ?? "").toContain(learningFile(weekKey, "learning-weekly-review"));
   });
 
   it("still injects the latest learning carryover when only workface memory exists", async () => {
@@ -396,17 +405,17 @@ describe("learning-review-bootstrap hook", () => {
       file.path.endsWith("_learning-review-bootstrap.md"),
     );
     expect(injected).toBeTruthy();
-    expect(injected?.content).toContain("Latest Learning Carryover Cue");
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain("Latest Learning Carryover Cue");
+    expect(injected?.content ?? "").toContain(
       "- retain: keep one concrete rule instead of a vague study summary.",
     );
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
       "- discard: discard learning notes that never change the next batch.",
     );
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
       "- replay: when the same failure shape returns, replay the concrete fix first.",
     );
-    expect(injected?.content).toContain(
+    expect(injected?.content ?? "").toContain(
       "- next eval: next batch verify the carryover cue still appears without weekly notes.",
     );
   });

@@ -16,6 +16,10 @@ import { resolveSandboxRuntimeStatus } from "../agents/sandbox.js";
 import type { SkillCommandSpec } from "../agents/skills.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../agents/usage.js";
 import { resolveChannelModelOverride } from "../channels/model-overrides.js";
+import {
+  buildLobsterProtocolSurface,
+  formatLobsterProtocolSummary,
+} from "../commands/capabilities.js";
 import { isCommandFlagEnabled } from "../config/commands.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
@@ -30,10 +34,6 @@ import { resolveCommitHash } from "../infra/git-commit.js";
 import type { MediaUnderstandingDecision } from "../media-understanding/types.js";
 import { listPluginCommands } from "../plugins/commands.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
-import {
-  buildLobsterProtocolSurface,
-  formatLobsterProtocolSummary,
-} from "../commands/capabilities.js";
 import {
   getTtsMaxLength,
   getTtsProvider,

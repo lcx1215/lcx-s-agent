@@ -15,6 +15,12 @@ async function readArtifact(workspaceDir: string, artifactPath: string) {
   return fs.readFile(path.join(workspaceDir, artifactPath), "utf8");
 }
 
+function detailsOf(result: { details: unknown }) {
+  return result.details as Record<string, unknown> & {
+    artifactPath: string;
+  };
+}
+
 function validPastedArticle() {
   return `Macro regime framework note
 
@@ -46,7 +52,7 @@ describe("finance research source workbench tool", () => {
       allowedActionAuthority: "research_only",
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "manual_paste",
@@ -60,7 +66,7 @@ describe("finance research source workbench tool", () => {
       }),
     );
 
-    const artifact = await readArtifact(workspaceDir, result.details.artifactPath);
+    const artifact = await readArtifact(workspaceDir, detailsOf(result).artifactPath);
     expect(artifact).toContain("**Source Family**: manual_paste");
     expect(artifact).toContain("**Retrieval Method**: manual_paste");
     expect(artifact).toContain("**Title**: Macro regime framework note");
@@ -87,7 +93,7 @@ This article lays out a bounded research method using funding spreads, liquidity
         "Operator saved a local markdown article artifact with concrete evidence-bearing finance research content and bounded collection posture.",
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "local_artifact",
@@ -100,7 +106,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       }),
     );
 
-    const artifact = await readArtifact(workspaceDir, result.details.artifactPath);
+    const artifact = await readArtifact(workspaceDir, detailsOf(result).artifactPath);
     expect(artifact).toContain("**Source Url Or Identifier**: memory/articles/credit-liquidity.md");
     expect(artifact).toContain("**Collection Posture**: allowed");
     expect(artifact).toContain("**Content Kind**: normalized_local_content");
@@ -120,7 +126,7 @@ This article lays out a bounded research method using funding spreads, liquidity
         "Operator recorded a Google search result reference only as discovery metadata for later manual source capture. No page content was collected or scraped.",
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "public_web_reference",
@@ -134,7 +140,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       }),
     );
 
-    const artifact = await readArtifact(workspaceDir, result.details.artifactPath);
+    const artifact = await readArtifact(workspaceDir, detailsOf(result).artifactPath);
     expect(artifact).toContain("**Source Family**: public_web_reference");
     expect(artifact).toContain("**Extraction Target**: ");
     expect(artifact).toContain("Metadata-only reference. No remote content was fetched.");
@@ -154,7 +160,7 @@ This article lays out a bounded research method using funding spreads, liquidity
         "Operator used Google/web search to find a public ETF webpage, then manually pasted a bounded excerpt. No remote content was fetched by the workbench.",
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "public_web_reference",
@@ -178,7 +184,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       retrievalNotes:
         "Operator recorded an official SEC filing reference for later manual capture and extraction. No remote content was fetched here.",
     });
-    expect(secResult.details).toEqual(
+    expect(detailsOf(secResult)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "official_filing",
@@ -195,7 +201,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       retrievalNotes:
         "Operator recorded an official SEC investor education reference for later manual capture and extraction. No remote content was fetched here.",
     });
-    expect(officialReferenceResult.details).toEqual(
+    expect(detailsOf(officialReferenceResult)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "official_reference",
@@ -211,7 +217,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       retrievalNotes:
         "Operator recorded an arXiv academic preprint reference for later manual capture and extraction. No remote content was fetched here.",
     });
-    expect(academicPreprintResult.details).toEqual(
+    expect(detailsOf(academicPreprintResult)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "academic_preprint",
@@ -230,7 +236,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       retrievalNotes:
         "Operator recorded a GitHub repository reference for later manual README capture and extraction. No remote content was fetched here.",
     });
-    expect(githubRepoResult.details).toEqual(
+    expect(detailsOf(githubRepoResult)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "github_repository",
@@ -249,7 +255,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       retrievalNotes:
         "Operator recorded an official macro data reference from FRED for later manual review and local capture only.",
     });
-    expect(macroResult.details).toEqual(
+    expect(detailsOf(macroResult)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "official_macro_data",
@@ -265,7 +271,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       retrievalNotes:
         "Operator recorded a company IR reference for manual follow-up and local artifact creation without remote fetching in the workbench.",
     });
-    expect(irResult.details).toEqual(
+    expect(detailsOf(irResult)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "company_ir",
@@ -287,7 +293,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       retrievalNotes:
         "Operator recorded a WeChat/public-account article reference for manual capture only. No remote content was fetched.",
     });
-    expect(defaultWechat.details).toEqual(
+    expect(detailsOf(defaultWechat)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "wechat_public_account",
@@ -317,7 +323,7 @@ This article lays out a bounded research method using funding spreads, liquidity
       retrievalNotes:
         "Operator recorded a safe public feed reference already approved in the source registry for later manual/local extraction steps.",
     });
-    expect(safeWechat.details).toEqual(
+    expect(detailsOf(safeWechat)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "wechat_public_account",
@@ -339,7 +345,7 @@ This article lays out a bounded research method using funding spreads, liquidity
         "Operator recorded a public RSS feed reference for manual/local downstream extraction only.",
       isPubliclyAccessible: true,
     });
-    expect(allowedResult.details).toEqual(
+    expect(detailsOf(allowedResult)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceFamily: "public_feed",
@@ -356,7 +362,7 @@ This article lays out a bounded research method using funding spreads, liquidity
         "Operator recorded a non-public feed reference that should not proceed without public-access confirmation.",
       isPubliclyAccessible: false,
     });
-    expect(blockedResult.details).toEqual(
+    expect(detailsOf(blockedResult)).toEqual(
       expect.objectContaining({
         ok: false,
         reason: "finance_research_source_blocked_by_preflight",

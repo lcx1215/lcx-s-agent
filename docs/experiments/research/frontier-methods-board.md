@@ -60,12 +60,12 @@ This board does not:
 
 ## Research domain x source layer matrix
 
-| Research domain | Public/Open | Local Manifest | Market API | Premium DB | Internal Knowledge | Papers |
-| --- | --- | --- | --- | --- | --- | --- |
-| Fundamental | yes | yes | no | yes | yes | no |
-| Market/Technical | limited | limited | yes | yes | yes | no |
-| Macro/Event | yes | yes | limited | yes | yes | no |
-| Frontier Methods | yes | limited | no | no | yes | yes |
+| Research domain  | Public/Open | Local Manifest | Market API | Premium DB | Internal Knowledge | Papers |
+| ---------------- | ----------- | -------------- | ---------- | ---------- | ------------------ | ------ |
+| Fundamental      | yes         | yes            | no         | yes        | yes                | no     |
+| Market/Technical | limited     | limited        | yes        | yes        | yes                | no     |
+| Macro/Event      | yes         | yes            | limited    | yes        | yes                | no     |
+| Frontier Methods | yes         | limited        | no         | no         | yes                | yes    |
 
 Interpretation:
 

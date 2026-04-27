@@ -14,9 +14,6 @@ import {
   KILOCODE_MODEL_CATALOG,
 } from "../providers/kilocode-shared.js";
 import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js";
-import {
-  resolveMinimaxTextModelCatalog,
-} from "./minimax-model-catalog.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "./auth-profiles.js";
 import { discoverBedrockModels } from "./bedrock-discovery.js";
 import {
@@ -43,6 +40,7 @@ import {
   HUGGINGFACE_MODEL_CATALOG,
   buildHuggingfaceModelDefinition,
 } from "./huggingface-models.js";
+import { resolveMinimaxTextModelCatalog } from "./minimax-model-catalog.js";
 import { resolveAwsSdkEnvVarName, resolveEnvApiKey } from "./model-auth.js";
 import { OLLAMA_NATIVE_BASE_URL } from "./ollama-stream.js";
 import {

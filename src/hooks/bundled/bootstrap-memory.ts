@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_MEMORY_ALT_FILENAME, type WorkspaceBootstrapFile } from "../../agents/workspace.js";
+import {
+  DEFAULT_MEMORY_ALT_FILENAME,
+  type WorkspaceBootstrapFile,
+} from "../../agents/workspace.js";
 
 export type MemoryNoteFile = {
   name: string;
@@ -25,7 +28,8 @@ export async function loadNewestMemoryNote(params: {
     const entries = await fs.readdir(memoryDir, { withFileTypes: true });
     const noteName = entries
       .filter(
-        (entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name.includes(params.includes),
+        (entry) =>
+          entry.isFile() && entry.name.endsWith(".md") && entry.name.includes(params.includes),
       )
       .map((entry) => entry.name)
       .toSorted()

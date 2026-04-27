@@ -13,7 +13,7 @@
   - `市场状态`
   - `大盘怎么看`
   - `纳指和久期风险`
-  produced either:
+    produced either:
   - no expanded tokens
   - or weak broad-market matches
 - That caused retrieval to fall back to whichever topic card already had the highest file/metadata weight.
@@ -52,7 +52,7 @@
 - `纳指和久期风险` now returns:
   - `knowledge/topic_memory/qqq_ai_capex_and_duration_sensitivity.md`
   - `knowledge/topic_memory/tlt_inflation_surprise_and_term_premium.md`
-  ahead of older broad-market reports
+    ahead of older broad-market reports
 
 ## Status
 

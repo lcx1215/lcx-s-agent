@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { withTempHome } from "../../../test/helpers/temp-home.js";
 import { buildContextReply } from "./commands-context-report.js";
 import type { HandleCommandsParams } from "./commands-types.js";
-import { withTempHome } from "../../../test/helpers/temp-home.js";
 
 function makeParams(
   commandBodyNormalized: string,
@@ -168,9 +168,7 @@ describe("buildContextReply", () => {
       expect(result.text).toContain("Lobster operating protocol:");
       expect(result.text).toContain("- defaultMode: control_room_main_lane");
       expect(result.text).toContain("enabledByPolicy: true");
-      expect(result.text).toContain(
-        "  - memory/unified-risk-view.md: present (configured)",
-      );
+      expect(result.text).toContain("  - memory/unified-risk-view.md: present (configured)");
     });
   });
 });

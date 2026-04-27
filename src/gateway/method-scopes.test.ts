@@ -12,9 +12,7 @@ describe("method scope resolution", () => {
     expect(resolveLeastPrivilegeOperatorScopesForMethod("sessions.resolve")).toEqual([
       "operator.read",
     ]);
-    expect(resolveLeastPrivilegeOperatorScopesForMethod("update.check")).toEqual([
-      "operator.read",
-    ]);
+    expect(resolveLeastPrivilegeOperatorScopesForMethod("update.check")).toEqual(["operator.read"]);
     expect(resolveLeastPrivilegeOperatorScopesForMethod("poll")).toEqual(["operator.write"]);
   });
 

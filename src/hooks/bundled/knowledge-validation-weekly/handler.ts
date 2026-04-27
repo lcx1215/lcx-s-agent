@@ -10,11 +10,19 @@ import {
   renderKnowledgeValidationWeeklyArtifact,
   type ParsedKnowledgeValidationNote,
 } from "../lobster-brain-registry.js";
-import { countTop, formatIsoWeek, isWithinTrailingUtcDays, writeMemoryNotes } from "../weekly-memory.js";
+import {
+  countTop,
+  formatIsoWeek,
+  isWithinTrailingUtcDays,
+  writeMemoryNotes,
+} from "../weekly-memory.js";
 
 const log = createSubsystemLogger("hooks/knowledge-validation-weekly");
 
-async function loadValidationNotes(memoryDir: string, now: Date): Promise<ParsedKnowledgeValidationNote[]> {
+async function loadValidationNotes(
+  memoryDir: string,
+  now: Date,
+): Promise<ParsedKnowledgeValidationNote[]> {
   try {
     const entries = await fs.readdir(memoryDir, { withFileTypes: true });
     const parsed = await Promise.all(
@@ -122,7 +130,10 @@ function buildWeeklyValidationArtifact(params: {
     dailyTaskNotes.map((note) => note.taskFamily).filter((value) => value !== "none"),
     5,
   );
-  const capabilityFamilies = countTop(params.notes.map((note) => note.capabilityFamily), 5);
+  const capabilityFamilies = countTop(
+    params.notes.map((note) => note.capabilityFamily),
+    5,
+  );
   const nextValidationFocusLines = [
     benchmarkNotes.length === 0
       ? "- Add at least one benchmark-style note next week before claiming domain improvement."

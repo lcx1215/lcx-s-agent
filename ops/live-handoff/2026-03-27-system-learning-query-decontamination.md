@@ -34,7 +34,7 @@
   - add a stronger positive anchor for:
     - `system tasks`
     - `method pattern`
-    inside reusable method cards
+      inside reusable method cards
 
 ## Live files changed
 

@@ -602,7 +602,9 @@ const saveFrontierResearchCard = createSessionArtifactHandler({
         title: summary.title,
         materialType: summary.materialType,
         methodFamily: summary.hints.methodFamily,
-        problemStatement: compactText(latestUser || turns[0]?.text || "Method-heavy research session"),
+        problemStatement: compactText(
+          latestUser || turns[0]?.text || "Method-heavy research session",
+        ),
         methodSummary: compactText(latestAssistant || summary.hints.methodSummary),
         claimedContribution: summary.claimedContribution,
         dataSetup: summary.dataSetup,
@@ -616,9 +618,9 @@ const saveFrontierResearchCard = createSessionArtifactHandler({
         doNotCopyBlindly: summary.hints.doNotCopyBlindly,
         foundationTemplate,
         verdict: summary.verdict,
-        sessionTraceLines: turns.slice(-8).map(
-          (turn) => `${turn.role}: ${compactText(turn.text, 160)}`,
-        ),
+        sessionTraceLines: turns
+          .slice(-8)
+          .map((turn) => `${turn.role}: ${compactText(turn.text, 160)}`),
       },
       { dateStr, timeStr },
     );

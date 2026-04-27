@@ -16,14 +16,14 @@ import {
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
-import {
-  buildFundamentalReviewChainJsonPath,
-  buildFundamentalReviewChainNoteFilename,
-} from "../lobster-brain-registry.js";
 import { buildFundamentalRiskHandoff } from "../fundamental-risk-handoff/handler.js";
 import { buildFundamentalScoringGate } from "../fundamental-scoring-gate/handler.js";
 import { buildSnapshotInput } from "../fundamental-snapshot-bridge/handler.js";
 import { buildFundamentalSnapshot } from "../fundamental-snapshot/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 
 let handler: HookHandler;
 let suiteWorkspaceRoot = "";
@@ -199,9 +199,10 @@ async function runReviewQueue(params: {
   });
 
   return {
-    reviewQueue: JSON.parse(
-      await fs.readFile(path.join(tempDir, queuePath), "utf-8"),
-    ) as Record<string, unknown>,
+    reviewQueue: JSON.parse(await fs.readFile(path.join(tempDir, queuePath), "utf-8")) as Record<
+      string,
+      unknown
+    >,
     noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
   };
 }
@@ -258,9 +259,10 @@ async function runReviewQueueFromArtifactError(params: {
   });
 
   return {
-    reviewQueue: JSON.parse(
-      await fs.readFile(path.join(tempDir, queuePath), "utf-8"),
-    ) as Record<string, unknown>,
+    reviewQueue: JSON.parse(await fs.readFile(path.join(tempDir, queuePath), "utf-8")) as Record<
+      string,
+      unknown
+    >,
     noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
   };
 }

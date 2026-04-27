@@ -1575,7 +1575,8 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
       fallbackToLatestNonReset: true,
     });
     const now = new Date(event.timestamp);
-    const dateStr = formatDateFromTimestamp(event.timestamp);
+    const eventTimestampMs = now.getTime();
+    const dateStr = formatDateFromTimestamp(eventTimestampMs);
     const dayStart = toUtcDateOnly(now);
     const { weekKey, rangeLabel } = formatIsoWeek(now);
     const weekStart = new Date(dayStart);
@@ -1681,7 +1682,7 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
     });
     const sourceRunId = `${event.sessionKey}:${sessionId ?? "unknown"}:${event.action}:${producedAt}`;
     const protectedMetadata = buildProtectedSummaryMetadata({
-      generation: event.timestamp,
+      generation: eventTimestampMs,
       producedAt,
       sourceRunId,
     });

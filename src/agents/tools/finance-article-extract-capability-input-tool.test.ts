@@ -11,6 +11,18 @@ async function seedArticle(workspaceDir: string, relativePath: string, content: 
   await fs.writeFile(absolutePath, content, "utf8");
 }
 
+function detailsOf(result: { details: unknown }) {
+  return result.details as Record<string, unknown> & {
+    attachPayload: Record<string, unknown>;
+    extractionBasis: {
+      fieldSources: Record<string, { basis: string }>;
+    };
+    extractionGap: {
+      missingFields: string[];
+    };
+  };
+}
+
 function buildValidWechatArticle() {
   return `# News-sentiment workflow for U.S. equities
 
@@ -161,7 +173,7 @@ describe("finance article extract capability input tool", () => {
       articlePath: "memory/articles/wechat-sentiment-note.md",
     });
 
-    expect(extraction.details).toEqual(
+    expect(detailsOf(extraction)).toEqual(
       expect.objectContaining({
         ok: true,
         articlePath: "memory/articles/wechat-sentiment-note.md",
@@ -191,9 +203,9 @@ describe("finance article extract capability input tool", () => {
 
     const attachResult = await attachTool.execute(
       "attach-from-extraction",
-      extraction.details.attachPayload,
+      detailsOf(extraction).attachPayload,
     );
-    expect(attachResult.details).toEqual(
+    expect(detailsOf(attachResult)).toEqual(
       expect.objectContaining({
         ok: true,
         updated: true,
@@ -223,7 +235,7 @@ describe("finance article extract capability input tool", () => {
     const wechatResult = await extractTool.execute("extract-wechat-text", {
       articlePath: "memory/articles/wechat-public-account.txt",
     });
-    expect(wechatResult.details).toEqual(
+    expect(detailsOf(wechatResult)).toEqual(
       expect.objectContaining({
         ok: true,
         sourceType: "wechat_public_account_article",
@@ -234,7 +246,7 @@ describe("finance article extract capability input tool", () => {
     const htmlResult = await extractTool.execute("extract-html", {
       articlePath: "memory/articles/liquidity-framework.html",
     });
-    expect(htmlResult.details).toEqual(
+    expect(detailsOf(htmlResult)).toEqual(
       expect.objectContaining({
         ok: true,
         extractedTitle: "Liquidity mapping article",
@@ -424,7 +436,7 @@ This workflow stays research-only, without pretending to be execution approval, 
       articlePath: "memory/articles/negated-guardrails.md",
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         extractedCandidateCount: 1,
@@ -445,7 +457,7 @@ This workflow stays research-only, without pretending to be execution approval, 
       articlePath: "memory/articles/prose-risk-note.md",
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: true,
         extractionMode: "semantic_fallback",
@@ -462,7 +474,7 @@ This workflow stays research-only, without pretending to be execution approval, 
         }),
       }),
     );
-    expect(result.details.extractionBasis.fieldSources.methodSummary.basis).toBe("inferred");
+    expect(detailsOf(result).extractionBasis.fieldSources.methodSummary.basis).toBe("inferred");
   });
 
   it("tests the unchanged PyPortfolioOpt night lesson article through semantic fallback", async () => {
@@ -482,8 +494,8 @@ This workflow stays research-only, without pretending to be execution approval, 
       articlePath: "memory/2026-03-25-night-lesson-pyportfolioopt.md",
     });
 
-    expect(result.details.ok).toBe(true);
-    expect(result.details).toEqual(
+    expect(detailsOf(result).ok).toBe(true);
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         extractionMode: "semantic_fallback",
         extractedCandidateCount: 1,
@@ -519,13 +531,13 @@ It is an interesting article about staying aware of conditions.`,
       articlePath: "memory/articles/generic-prose.md",
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: false,
         reason: "finance_article_extraction_gap",
       }),
     );
-    expect(result.details.extractionGap.missingFields).toContain("methodSummary");
+    expect(detailsOf(result).extractionGap.missingFields).toContain("methodSummary");
   });
 
   it("returns extraction gaps for prose missing evidence or risk-bearing content", async () => {
@@ -545,24 +557,24 @@ It is an interesting article about staying aware of conditions.`,
     const methodNoEvidence = await extractTool.execute("method-no-evidence", {
       articlePath: "memory/articles/method-no-evidence.md",
     });
-    expect(methodNoEvidence.details).toEqual(
+    expect(detailsOf(methodNoEvidence)).toEqual(
       expect.objectContaining({
         ok: false,
         reason: "finance_article_extraction_gap",
       }),
     );
-    expect(methodNoEvidence.details.extractionGap.missingFields).toContain("evidenceCategories");
+    expect(detailsOf(methodNoEvidence).extractionGap.missingFields).toContain("evidenceCategories");
 
     const evidenceNoRisk = await extractTool.execute("evidence-no-risk", {
       articlePath: "memory/articles/evidence-no-risk.md",
     });
-    expect(evidenceNoRisk.details).toEqual(
+    expect(detailsOf(evidenceNoRisk)).toEqual(
       expect.objectContaining({
         ok: false,
         reason: "finance_article_extraction_gap",
       }),
     );
-    expect(evidenceNoRisk.details.extractionGap.missingFields).toContain("riskAndFailureModes");
+    expect(detailsOf(evidenceNoRisk).extractionGap.missingFields).toContain("riskAndFailureModes");
   });
 
   it("fails closed when prose suggests unsupported evidence themes that do not map to the finance contract", async () => {
@@ -578,12 +590,12 @@ It is an interesting article about staying aware of conditions.`,
       articlePath: "memory/articles/unsupported-inference.md",
     });
 
-    expect(result.details).toEqual(
+    expect(detailsOf(result)).toEqual(
       expect.objectContaining({
         ok: false,
         reason: "finance_article_extraction_gap",
       }),
     );
-    expect(result.details.extractionGap.missingFields).toContain("evidenceCategories");
+    expect(detailsOf(result).extractionGap.missingFields).toContain("evidenceCategories");
   });
 });

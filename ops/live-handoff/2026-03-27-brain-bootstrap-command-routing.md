@@ -7,7 +7,7 @@
   - `系统怎么改造自己`
   - `这个系统下一步该怎么改造`
   - `这个架构怎么继续学`
-  but the real command / Feishu front path still treated those prompts as non-brain or old generic routing.
+    but the real command / Feishu front path still treated those prompts as non-brain or old generic routing.
 
 ## Exact failure mode
 
@@ -19,7 +19,7 @@
   - system architecture learning
   - strategy skepticism
   - study bootstrap
-  were not guaranteed to enter the command path as memory-first retrieval.
+    were not guaranteed to enter the command path as memory-first retrieval.
 - `lobster_command_v2.sh` could still route them away from the brain, and Feishu display would still show raw search JSON even if the query reached `local_corpus_search.py`.
 
 ## Files changed
@@ -48,7 +48,7 @@
 - `feishu_event_proxy.py`
   now formats these results as:
   - `脑内起点摘要`
-  instead of leaking raw retrieval JSON to Feishu.
+    instead of leaking raw retrieval JSON to Feishu.
 
 ## Validation
 

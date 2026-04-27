@@ -18,7 +18,7 @@
   - `lobster_command_v2.sh`
   - `feishu_nlu_router.py`
   - `cmd_processor.py`
-  were already aligned.
+    were already aligned.
 
 ## Files changed
 

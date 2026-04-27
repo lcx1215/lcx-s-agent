@@ -16,7 +16,7 @@
   - `这个策略靠谱吗`
   - `这个回测靠谱吗`
   - `回测是不是过拟合`
-  were still being treated like generic transfer or generic search
+    were still being treated like generic transfer or generic search
 - this meant Lobster still recalled methods, but did not have a dedicated skepticism-first seam for "should I trust/adopt this?"
 
 ## Why this was dangerous
@@ -44,7 +44,7 @@
   - `study_bootstrap`
   - `counterfactual_recall`
   - `rehearsal_recall`
-  intact
+    intact
 
 ## Live files changed
 

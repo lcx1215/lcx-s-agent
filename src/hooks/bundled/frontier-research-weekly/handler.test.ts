@@ -103,9 +103,9 @@ describe("frontier-research-weekly hook", () => {
     expect(files).toContain(weeklyFile);
     expect(files).toContain(upgradeFile);
     expect(files).toContain(backlogFile);
-    const content = await fs.readFile(path.join(memoryDir, weeklyFile!), "utf-8");
-    const upgradeContent = await fs.readFile(path.join(memoryDir, upgradeFile!), "utf-8");
-    const backlogContent = await fs.readFile(path.join(memoryDir, backlogFile!), "utf-8");
+    const content = await fs.readFile(path.join(memoryDir, weeklyFile), "utf-8");
+    const upgradeContent = await fs.readFile(path.join(memoryDir, upgradeFile), "utf-8");
+    const backlogContent = await fs.readFile(path.join(memoryDir, backlogFile), "utf-8");
     expect(content).toContain("# Weekly Methods Review: 2026-W11");
     expect(content).toContain("**Cards Reviewed**: 2");
     expect(content).toContain("worth_reproducing (1)");
