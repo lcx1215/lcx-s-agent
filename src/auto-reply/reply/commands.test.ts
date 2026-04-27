@@ -99,6 +99,10 @@ vi.mock("./session-updates.js", () => ({
   incrementCompactionCount: vi.fn(),
 }));
 
+vi.mock("./feishu-reply-flow-evidence.js", () => ({
+  summarizeRecentFeishuReplyFlowEvidence: vi.fn().mockResolvedValue(undefined),
+}));
+
 const callGatewayMock = vi.fn();
 vi.mock("../../gateway/call.js", () => ({
   callGateway: (opts: unknown) => callGatewayMock(opts),
@@ -106,6 +110,7 @@ vi.mock("../../gateway/call.js", () => ({
 
 import type { HandleCommandsParams } from "./commands-types.js";
 import { buildCommandContext, handleCommands } from "./commands.js";
+import { summarizeRecentFeishuReplyFlowEvidence } from "./feishu-reply-flow-evidence.js";
 
 // Avoid expensive workspace scans during /context tests.
 vi.mock("./commands-context-report.js", () => ({
@@ -974,6 +979,11 @@ describe("handleCommands hooks", () => {
 });
 
 describe("handleCommands context", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockResolvedValue(undefined);
+  });
+
   it("returns expected details for /context commands", async () => {
     const cfg = {
       commands: { text: true },
@@ -1048,10 +1058,82 @@ describe("handleCommands context", () => {
       expect(result.reply?.text).toContain(
         "Visible Lark/Feishu reply-flow evidence: missing from this status reply.",
       );
+      expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).not.toHaveBeenCalled();
       expect(result.reply?.text).toContain("Next check: name the first missing evidence layer");
       expect(result.reply?.text).not.toContain("ℹ️ Help");
     },
   );
+
+  it("includes Feishu reply-flow evidence in Feishu status-readback replies", async () => {
+    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockResolvedValueOnce(
+      [
+        "## Recent Feishu/Lark Reply Flow Evidence",
+        "Reply-path status evidence: visible_reply_delivered",
+        "Boundary: this proves only the recorded reply delivery layer.",
+      ].join("\n"),
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+    } as OpenClawConfig;
+    const params = buildParams("现在修到哪了", cfg, {
+      OriginatingChannel: "feishu",
+      OriginatingTo: "oc-control",
+      Provider: "feishu",
+      Surface: "feishu",
+    });
+    params.provider = "feishu";
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
+    expect(result.reply?.text).toContain("🧭 Status readback");
+    expect(result.reply?.text).toContain("Visible Lark/Feishu reply-flow evidence: present");
+    expect(result.reply?.text).toContain("Reply-path status evidence: visible_reply_delivered");
+    expect(result.reply?.text).toContain(
+      "Boundary: this proves only the recorded reply delivery layer.",
+    );
+  });
+
+  it("keeps Feishu status-readback deterministic when reply-flow evidence read fails", async () => {
+    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockRejectedValueOnce(
+      new Error("log unavailable"),
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+    } as OpenClawConfig;
+    const params = buildParams("现在能用了吗", cfg, {
+      OriginatingChannel: "feishu",
+      OriginatingTo: "oc-control",
+      Provider: "feishu",
+      Surface: "feishu",
+    });
+    params.provider = "feishu";
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
+    expect(result.reply?.text).toContain("🧭 Status readback");
+    expect(result.reply?.text).toContain(
+      "Visible Lark/Feishu reply-flow evidence: missing from this status reply.",
+    );
+    expect(result.reply?.text).toContain("Next check: name the first missing evidence layer");
+  });
 
   it.each(["lobster开了吗？", "is lobster on"])(
     "answers lobster state question %s with a short direct reply",
