@@ -102,6 +102,39 @@ python3 daily_learning_runner.py --dry-run
 status: cycle_blocked_fail_closed
 ```
 
+## Host Watchdog Migration Progress
+
+Current dev/GitHub status:
+
+```text
+hostWatchdogDryRun=migration_ready
+mode=dry_run_no_launchagent_change_no_lark_send
+launchAgent.pointsAtLegacyRoot=true
+```
+
+The clean repo now has tracked host-watchdog compatibility entrypoints:
+
+```text
+scripts/lobster_host_watchdog.py
+scripts/branch_freshness.py
+scripts/lobster_paths.py
+```
+
+Important boundary: this does not mean the live host watchdog has been
+migrated. The live LaunchAgent still points at
+`/Users/liuchengxu/Desktop/openclaw`. The clean-root watchdog defaults to
+`dry_run_no_alert`, so it can inspect scheduler heartbeat / branch freshness
+without sending Feishu/Lark alerts or triggering Codex escalation.
+
+Verified smoke:
+
+```text
+python3 scripts/lobster_host_watchdog.py --dry-run
+hostWatchdog=ok
+mode=dry_run_no_alert
+noFeishuLarkSend=True
+```
+
 ## Out Of Scope
 
 - No plist changes in this audit step.
