@@ -1052,6 +1052,21 @@ export function buildProtocolInfoReply(params: {
         .join("\n"),
     };
   }
+  if (kind === "agent_architecture") {
+    return {
+      text: [
+        "🧠 Agent architecture",
+        "Short answer: not pure API chat. This is a main control-room agent with routed working surfaces, learning-council lanes, tools, memory/artifact receipts, and optional subagent/session-spawn capability.",
+        "Current structure: control_room routes ordinary Lark/Feishu language into specialist surfaces such as learning_command, technical_daily, fundamental_research, knowledge_maintenance, ops_audit, and watchtower.",
+        "Learning path: learning_command can run a three-lane council with stable Kimi / MiniMax / DeepSeek role labels; those labels are structural receipts, not a claim that every reply always used three live providers.",
+        "Subagents: OpenClaw also exposes sessions_spawn / subagents capability for real spawned work, but ordinary answers do not automatically become a persistent multi-agent swarm.",
+        "Boundary: this answer is runtime/protocol truth, not marketing. Live Lark proof still requires build, restart, probe, and visible reply evidence.",
+        lobsterLine,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  }
   if (kind === "capabilities") {
     const activeProvider = modelRefs?.active.provider?.trim();
     const activeProviderTools = activeProvider

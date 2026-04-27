@@ -13,6 +13,7 @@ export type ProtocolInfoQuestionKind =
   | "dm"
   | "model"
   | "search_health"
+  | "agent_architecture"
   | "capabilities"
   | "specific_capability"
   | "limitations"
@@ -115,6 +116,27 @@ const PROTOCOL_INFO_QUESTIONS = [
   "你能用 code_runner 吗",
   "你能用 code runner 吗",
   "what provider tools are not connected",
+  "are you multiple agents",
+  "are you multi-agent",
+  "are you a multi-agent system",
+  "are you just one api",
+  "are you just an api answering questions",
+  "is this just api chat",
+  "你是不是多个agent",
+  "你是不是多agent",
+  "你是不是多智能体",
+  "你是多个agent吗",
+  "你是多agent吗",
+  "你是多智能体吗",
+  "是不是纯靠api回答",
+  "是不是纯 api 回答",
+  "是不是一个api在回答",
+  "是不是一个 api 在回答",
+  "是不是只是api聊天",
+  "是不是只是 api 聊天",
+  "是不是多个工作面",
+  "是不是多个surface",
+  "是不是多个 surface",
   "what capabilities are still missing",
   "what can you not do yet",
   "which provider-native tools are still missing",
@@ -514,6 +536,50 @@ function isMissingCapabilitiesQuestion(text: string): boolean {
   return (mentionsCapability && asksMissing) || text.includes("还不能做什么");
 }
 
+function isAgentArchitectureQuestion(text: string): boolean {
+  const mentionsAgentArchitecture = [
+    "multi-agent",
+    "multiple agents",
+    "agent system",
+    "agents",
+    "subagents",
+    "just one api",
+    "just api",
+    "api chat",
+    "多个agent",
+    "多agent",
+    "多智能体",
+    "多个智能体",
+    "子agent",
+    "子智能体",
+    "纯靠api",
+    "纯 api",
+    "一个api",
+    "一个 api",
+    "只是api",
+    "只是 api",
+    "多个工作面",
+    "多个surface",
+    "多个 surface",
+    "多角色",
+  ].some((phrase) => text.includes(phrase));
+  const asksTruthOrComparison = [
+    "are you",
+    "is this",
+    "or",
+    "versus",
+    "vs",
+    "just",
+    "是不是",
+    "还是",
+    "到底",
+    "吗",
+    "区别",
+    "一样",
+  ].some((phrase) => text.includes(phrase));
+  return mentionsAgentArchitecture && asksTruthOrComparison;
+}
+
 function isRuntimeModelQuestion(text: string): boolean {
   const mentionsModel = ["model", "模型"].some((phrase) => text.includes(phrase));
   const asksRuntime = [
@@ -612,6 +678,7 @@ function matchesProtocolInfoQuestion(text: string): boolean {
     isErrorTypeQuestion(text) ||
     isConnectedCapabilitiesQuestion(text) ||
     isMissingCapabilitiesQuestion(text) ||
+    isAgentArchitectureQuestion(text) ||
     isRuntimeModelQuestion(text) ||
     isFallbackReasonQuestion(text)
   );
@@ -686,6 +753,9 @@ export function resolveProtocolInfoQuestionKind(text: string): ProtocolInfoQuest
   }
   if (isSpecificCapabilityQuestion(normalized)) {
     return "specific_capability";
+  }
+  if (isAgentArchitectureQuestion(normalized)) {
+    return "agent_architecture";
   }
   if (isMissingCapabilitiesQuestion(normalized)) {
     return "limitations";

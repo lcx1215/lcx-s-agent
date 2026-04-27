@@ -38,6 +38,9 @@ describe("commands-protocol-info", () => {
     ["你能用 web-search 吗", "specific_capability"],
     ["你能用 quickjs 吗", "specific_capability"],
     ["你现在到底有没有 web-search 能力", "specific_capability"],
+    ["你是不是多个agent", "agent_architecture"],
+    ["我们现在这个智能体是不是多个agent，还是纯靠api回答", "agent_architecture"],
+    ["are you a multi-agent system or just api chat", "agent_architecture"],
     ["你现在还不能做什么", "limitations"],
     ["今天真的学进去了吗", "learning"],
     ["学习 session 现在还活着吗", "learning_receipt"],
@@ -315,6 +318,22 @@ describe("commands-protocol-info", () => {
       expect(providerOnlyCapabilityReply?.text).toContain("🔎 Capability check: quickjs");
       expect(providerOnlyCapabilityReply?.text).toContain("Provider-native quickjs: not connected");
       expect(providerOnlyCapabilityReply?.text).toContain("OpenClaw generic tool: none");
+
+      const agentArchitectureReply = buildProtocolInfoReply({
+        text: "我们现在这个智能体是不是多个agent，还是纯靠api回答",
+        cfg,
+      });
+      expect(agentArchitectureReply?.text).toContain("🧠 Agent architecture");
+      expect(agentArchitectureReply?.text).toContain("not pure API chat");
+      expect(agentArchitectureReply?.text).toContain("main control-room agent");
+      expect(agentArchitectureReply?.text).toContain("learning_command");
+      expect(agentArchitectureReply?.text).toContain("Kimi / MiniMax / DeepSeek");
+      expect(agentArchitectureReply?.text).toContain("sessions_spawn / subagents");
+      expect(agentArchitectureReply?.text).toContain("not marketing");
+      expect(agentArchitectureReply?.text).toContain("Live Lark proof still requires");
+      expect(agentArchitectureReply?.text).toContain(
+        "🦞 Lobster: control_room_main_lane · openclaw_embedded_agent",
+      );
 
       const limitationsReply = buildProtocolInfoReply({
         text: "你现在还不能做什么",
