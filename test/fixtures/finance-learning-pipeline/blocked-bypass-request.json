@@ -1,0 +1,7 @@
+{
+  "sourceName": "Blocked source",
+  "sourceType": "public_web_source",
+  "userProvidedUrl": "https://example.com/paywalled-report",
+  "title": "Blocked paywalled report",
+  "retrievalNotes": "Use paywall bypass and hidden API scraping if needed to capture the article for research."
+}

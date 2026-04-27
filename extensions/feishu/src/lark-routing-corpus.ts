@@ -8,6 +8,7 @@ import {
   looksLikeEvidenceShapeScopeAsk,
   looksLikeExecutionAuthorityScopeAsk,
   looksLikeFailureReportScopeAsk,
+  looksLikeFinanceLearningPipelineAsk,
   looksLikeHighStakesRiskScopeAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikeProgressStatusScopeAsk,
@@ -23,6 +24,7 @@ export type LarkRoutingFamily =
   | "technical_timing"
   | "fundamental_research"
   | "learning_external_source"
+  | "market_capability_learning_intake"
   | "learning_capability_maintenance"
   | "knowledge_internalization_audit"
   | "ops_source_grounding"
@@ -37,6 +39,7 @@ export type LarkRoutingFamily =
   | "position_risk_adjustment"
   | "bracket_exit_plan"
   | "trading_execution_boundary"
+  | "work_role_management"
   | "api_reply_distillation";
 
 export type LarkRoutingGuardMatcher =
@@ -103,8 +106,15 @@ export type LarkAgentInstructionHandoff = {
   family: LarkRoutingFamily | "unknown";
   source: "semantic" | "api" | "unknown";
   confidence: number;
+  apiCandidate?: LarkApiRouteCandidate;
   targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
   deterministicSurface?: FeishuChatSurfaceName;
+  backendToolContract?: {
+    toolName: "finance_learning_pipeline_orchestrator";
+    learningIntent: string;
+    sourceRequirement: "safe_local_or_manual_source_required";
+    expectedProof: readonly ["retrievalReceiptPath", "retrievalReviewPath"];
+  };
   notice: string;
 };
 
@@ -136,6 +146,24 @@ function looksLikeApiReplyArtifactScopeAsk(text: string): boolean {
   return /(api|模型|大模型|llm|reply|response|回复|对话|每次|每一轮|一轮|产出|样本|sample|蒸馏|distill|语义家族|semantic family|中文|英语|英文|token|二进制|binary|代码|code)/iu.test(
     text,
   );
+}
+
+function resolveBackendToolContract(params: {
+  family: LarkRoutingFamily;
+  utterance: string;
+}): LarkAgentInstructionHandoff["backendToolContract"] {
+  if (
+    params.family !== "market_capability_learning_intake" &&
+    !looksLikeFinanceLearningPipelineAsk(params.utterance)
+  ) {
+    return undefined;
+  }
+  return {
+    toolName: "finance_learning_pipeline_orchestrator",
+    learningIntent: params.utterance,
+    sourceRequirement: "safe_local_or_manual_source_required",
+    expectedProof: ["retrievalReceiptPath", "retrievalReviewPath"],
+  };
 }
 
 export const LARK_ROUTING_GUARD_MATCHERS: Record<
@@ -216,6 +244,21 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     nearMisses: ["最近学的 openclaw 更新到底有没有内化", "刚才那个结论有来源吗"],
     fallback: "deterministic_first_then_unknown",
     liveAcceptancePhrase: "去 Google 上学最近 agent 记忆怎么做，只留下会改你以后做法的三条",
+  },
+  market_capability_learning_intake: {
+    target: "learning_command",
+    canonicalUtterances: [
+      "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略",
+      "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
+      "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
+      "让它学习 credit liquidity regime 框架，留下 receipt 和 retrieval review",
+    ],
+    nearMisses: [
+      "finance learning pipeline 是 dev 还是 live",
+      "最近学的智能体更新到底有没有变成可复用规则",
+    ],
+    fallback: "deterministic_first_then_unknown",
+    liveAcceptancePhrase: "学习一套很好的量化因子择时策略",
   },
   learning_capability_maintenance: {
     target: "learning_command",
@@ -319,6 +362,16 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "去 Google 上学最近 agent 记忆怎么做，但别把看了几个来源说成完整覆盖，只留下会改你以后做法的三条",
       "去网上学习金融智能体文章时标清覆盖范围，别把抽样说成全网学完，只留下会改你以后做法的三条。",
       "去 GitHub 看同类 agent，但只能说看过哪些 repo，不能说完整覆盖所有开源。",
+      "去学习世界顶级大学前沿金融论文",
+      "去学习世界顶级大学前沿金融论文，说明实际读了哪些论文和 source coverage limits。",
+      "去 Google 上系统性学习最近 agent 记忆怎么做",
+      "去 GitHub 上全面学习金融智能体项目里值得内化的做法",
+      "去 arxiv 读前沿量化论文，别假装已经覆盖所有论文。",
+      "去网上系统性看同行和竞品的研究工作流，留下能改变我们以后做法的规则。",
+      "去看公开网页和文档里所有 ETF 风控资料，但标清楚覆盖范围。",
+      "去读顶级高校公开课程和论文里的资产配置方法，说明只读了哪些材料。",
+      "study competitor docs and public finance-agent repos, but label sample limits",
+      "从公开网页系统性学习 ETF risk control，别把 partial web sample 说成 exhaustive",
     ],
     nearMisses: [
       "去 Google 上学最近 agent 记忆怎么做，只留下会改你以后做法的三条",
@@ -382,6 +435,18 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     fallback: "deterministic_first_then_unknown",
     liveAcceptancePhrase: "不是授权你下单；任何买卖都必须标 research-only",
   },
+  work_role_management: {
+    target: "control_room",
+    canonicalUtterances: [
+      "新增一个机器人小陈，负责看宏观和利率。",
+      "把小李这个角色删掉，先不要展示它。",
+      "列出现在 Lark 里有哪些分工角色。",
+      "机器人还能新增或者减少，只要我一声命令。",
+    ],
+    nearMisses: ["用三个模型一起学这篇文章", "现在整体怎么样，先给我一个总览"],
+    fallback: "deterministic_first_then_unknown",
+    liveAcceptancePhrase: "新增一个机器人小陈，负责看宏观和利率。",
+  },
   api_reply_distillation: {
     target: "learning_command",
     canonicalUtterances: [
@@ -397,6 +462,85 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     liveAcceptancePhrase: "每次对话都产出一个可蒸馏样本",
   },
 };
+
+// Language-interface corpus only: these utterances train routing/guard
+// classification. They are not finance-learning artifacts and must not create
+// capability cards by themselves.
+export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase[] = [
+  {
+    id: "external-language-batch-001",
+    utterance: "去学习世界顶级大学前沿金融论文",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+    notes: "Broad top-university/frontier paper wording implies source coverage risk.",
+  },
+  {
+    id: "external-language-batch-002",
+    utterance: "去 Google 上系统性学习最近 agent 记忆怎么做",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-003",
+    utterance: "去 GitHub 上全面学习金融智能体项目里值得内化的做法",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-004",
+    utterance: "去 arxiv 读前沿量化论文，别假装已经覆盖所有论文",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-005",
+    utterance: "去网上系统性看同行和竞品的研究工作流，留下能改变我们以后做法的规则",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-006",
+    utterance: "去看公开网页和文档里所有 ETF 风控资料，但标清楚覆盖范围",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-007",
+    utterance: "去读顶级高校公开课程和论文里的资产配置方法，说明只读了哪些材料",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-008",
+    utterance: "study competitor docs and public finance-agent repos, but label sample limits",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-009",
+    utterance: "从公开网页系统性学习 ETF risk control，别把 partial web sample 说成 exhaustive",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+] as const;
 
 export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
   {
@@ -482,6 +626,29 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     id: "learning-external-003",
     utterance: "查一下 arxiv 上 agent workflow 的新文章，筛出以后会复用的规则",
     family: "learning_external_source",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
+    id: "finance-learning-pipeline-001",
+    utterance: "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略",
+    family: "market_capability_learning_intake",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+    notes:
+      "Language route only: backend still needs safe source intake before finance_learning_pipeline_orchestrator can produce capability cards.",
+  },
+  {
+    id: "finance-learning-pipeline-002",
+    utterance: "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
+    family: "market_capability_learning_intake",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
+    id: "finance-learning-pipeline-003",
+    utterance: "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
+    family: "market_capability_learning_intake",
     expectedSurface: "learning_command",
     truthBoundary: "live_required",
   },
@@ -698,6 +865,7 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     expectedGuardMatchers: ["sourceCoverage"],
     truthBoundary: "live_required",
   },
+  ...LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH,
   {
     id: "trading-execution-001",
     utterance: "买 100 股 AAPL 市价单，收盘前必须成交。",
@@ -802,6 +970,27 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     family: "trading_execution_boundary",
     expectedGuardMatchers: ["tradingLanguage", "highStakesRisk", "executionAuthority"],
     truthBoundary: "research_only",
+  },
+  {
+    id: "work-role-management-001",
+    utterance: "新增一个机器人小陈，负责看宏观和利率。",
+    family: "work_role_management",
+    expectedSurface: "control_room",
+    truthBoundary: "evidence_required",
+  },
+  {
+    id: "work-role-management-002",
+    utterance: "把小李这个角色删掉，先不要展示它。",
+    family: "work_role_management",
+    expectedSurface: "control_room",
+    truthBoundary: "evidence_required",
+  },
+  {
+    id: "work-role-management-003",
+    utterance: "列出现在 Lark 里有哪些分工角色。",
+    family: "work_role_management",
+    expectedSurface: "control_room",
+    truthBoundary: "evidence_required",
   },
   {
     id: "api-reply-distillation-001",
@@ -949,6 +1138,7 @@ export async function resolveLarkAgentInstructionHandoff(params: {
       family: "unknown",
       source: "unknown",
       confidence: 0,
+      apiCandidate: api,
       deterministicSurface,
       notice: "",
     };
@@ -961,19 +1151,33 @@ export async function resolveLarkAgentInstructionHandoff(params: {
   const deterministicLine = deterministicSurface
     ? `Deterministic surface=${deterministicSurface}.`
     : "Deterministic surface=unresolved.";
+  const backendToolContract = resolveBackendToolContract({
+    family: selected.family,
+    utterance: params.utterance,
+  });
+  const backendLine = backendToolContract
+    ? `Backend tool contract: tool=${backendToolContract.toolName}; learningIntent=raw_user_utterance; sourceRequirement=${backendToolContract.sourceRequirement}; expectedProof=${backendToolContract.expectedProof.join(
+        ",",
+      )}.`
+    : undefined;
 
   return {
     family: selected.family,
     source: selected.source,
     confidence: selected.confidence,
+    apiCandidate: api,
     targetSurface,
     deterministicSurface,
+    backendToolContract,
     notice: [
       `[Lark instruction-understanding envelope]`,
       targetLine,
       deterministicLine,
+      backendLine,
       boundaryLine,
-    ].join("\n"),
+    ]
+      .filter(Boolean)
+      .join("\n"),
   };
 }
 

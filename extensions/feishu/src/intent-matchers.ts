@@ -32,6 +32,38 @@ export function looksLikeVerticalFinanceLearningAsk(text: string): boolean {
   return hasLearningIntent && hasVerticalCue && hasFinanceDomain;
 }
 
+export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasLearningIntent =
+    /(开始学|开始学习|去学|学一下|学学|学习|学会|学成|训练|练出|练好|补一下|补齐|补强|提升|强化|加强|研究一下|研究明白|搞懂|内化|做成能力|能力做好|能力补齐|接下来学|让它学|让你学|你去学|learn|study|internalize)/u.test(
+      normalized,
+    );
+  const hasFinanceDomain =
+    /(股市|股票|美股|a股|港股|市场|金融|finance|etf|指数|index|大类资产|major asset|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|daily[-\s]?frequency|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation|量化|quant|因子|factor|策略|strategy|regime|宏观|利率|信用|credit|流动性|liquidity)/u.test(
+      normalized,
+    );
+  const hasPipelineCue =
+    /(能力|能力卡|capability|capability card|pipeline|管线|receipt|review|日结|检索|retrieval|内化|可检索|学成|做成|沉淀|attach|extract|source intake|学习流程|完整学习流程|一套|方法|框架|策略|workflow|checklist|规则|rule)/u.test(
+      normalized,
+    );
+  const asksAuditOnly =
+    /(有没有|到底|是不是|还是|卡住|卡在哪|只是|装样子|完成了|失败了|真的|了吗|了吗\?|吗\?|where|whether|did it|status|running|completed|blocked)/u.test(
+      normalized,
+    );
+  const isAgentOrPlatformLearning =
+    /(金融智能体|finance agent|agentic finance|智能体|agent platform|agent框架|agent 框架|开源项目|repo|github|同类|同行|竞品|peer|competitor)/u.test(
+      normalized,
+    );
+  const hasConcreteFinanceMethod =
+    /(etf|指数|index|大类资产|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation|量化|quant|因子|factor|策略|strategy|regime|宏观|利率|信用|credit|流动性|liquidity|金融文章|finance article)/u.test(
+      normalized,
+    );
+  if (isAgentOrPlatformLearning && !hasConcreteFinanceMethod) {
+    return false;
+  }
+  return hasLearningIntent && hasFinanceDomain && hasPipelineCue && !asksAuditOnly;
+}
+
 export function looksLikeFinanceLearningMaintenanceAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasMaintenanceDirective =
@@ -109,9 +141,10 @@ export function looksLikeStrategicLearningAsk(text: string): boolean {
       normalized,
     );
   return (
-    (hasLearningIntent || hasSourceDirectedLearning) &&
-    (hasExternalLearningSource || hasStrategicLearningTopic) &&
-    (hasInternalizationCue || (hasTimeboxCue && hasStrategicLearningTopic))
+    looksLikeSourceCoverageScopeAsk(normalized) ||
+    ((hasLearningIntent || hasSourceDirectedLearning) &&
+      (hasExternalLearningSource || hasStrategicLearningTopic) &&
+      (hasInternalizationCue || (hasTimeboxCue && hasStrategicLearningTopic)))
   );
 }
 
@@ -316,7 +349,7 @@ export function looksLikeExecutionAuthorityScopeAsk(text: string): boolean {
 export function looksLikeSourceCoverageScopeAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasExternalSourceCue =
-    /(google|web|网上|互联网|搜索|检索|search|github|repo|开源|open source|paper|论文|arxiv|博客|blog|文档|docs|资料|材料|source|sources|外部来源|外部材料|同类|同行|竞品|peer|peers|competitor|benchmark)/u.test(
+    /(google|web|网上|互联网|搜索|检索|search|github|repo|开源|open source|paper|论文|arxiv|前沿|顶级大学|世界顶级大学|大学|高校|academic|university|college|博客|blog|文档|docs|资料|材料|source|sources|外部来源|外部材料|同类|同行|竞品|peer|peers|competitor|benchmark)/u.test(
       normalized,
     );
   const hasLearningOrResearchCue =
@@ -324,11 +357,11 @@ export function looksLikeSourceCoverageScopeAsk(text: string): boolean {
       normalized,
     );
   const hasCompletenessCue =
-    /(查全|搜全|看全|读完|学完|覆盖全|全覆盖|完整覆盖|完整学习|完整检索|所有|全部|尽可能全|足够全|系统性|全面|coverage|complete|full coverage|exhaustive|comprehensive|all sources|everything)/u.test(
+    /(查全|搜全|看全|读完|学完|覆盖全|全覆盖|完整覆盖|完整学习|完整检索|所有|全部|尽可能全|足够全|系统性|全面|世界顶级|顶级大学|前沿|frontier|top university|top universities|leading university|leading universities|coverage|complete|full coverage|exhaustive|comprehensive|all sources|everything)/u.test(
       normalized,
     );
   const hasCoverageHonestyCue =
-    /(别把|不要把|别说成|不要说成|别假装|不要假装|只能说|说清楚|标出来|标明|覆盖范围|覆盖面|抽样|样本|只看了|没搜到|搜不到|搜索不可用|检索不可用|能力|capability|limited|sample|sampled|partial|unknown|not exhaustive|not complete|source coverage)/u.test(
+    /(别把|不要把|别说成|不要说成|别假装|不要假装|只能说|说清楚|标出来|标明|说明只读了|只读了|覆盖范围|覆盖面|抽样|样本|只看了|没搜到|搜不到|搜索不可用|检索不可用|能力|capability|limited|sample|sampled|partial|unknown|not exhaustive|not complete|source coverage)/u.test(
       normalized,
     );
   return (

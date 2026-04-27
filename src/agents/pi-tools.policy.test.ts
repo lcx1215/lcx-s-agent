@@ -6,6 +6,7 @@ import {
   resolveSubagentToolPolicy,
 } from "./pi-tools.policy.js";
 import { createStubTool } from "./test-helpers/pi-tool-stubs.js";
+import { FINANCE_FRAMEWORK_DOMAIN_PRODUCER_TOOL_NAMES } from "./tools/finance-framework-domain-producer-tools.js";
 
 describe("pi-tools.policy", () => {
   it("treats * in allow as allow-all", () => {
@@ -126,6 +127,54 @@ describe("resolveSubagentToolPolicy depth awareness", () => {
     expect(isToolAllowedByPolicyName("cron", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("memory_search", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("memory_get", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("local_memory_record", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_framework_core_record", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_article_source_registry_record", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_external_source_adapter", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_learning_pipeline_orchestrator", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_research_source_workbench", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_learning_capability_attach", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_learning_capability_apply", policy)).toBe(false);
+    for (const toolName of FINANCE_FRAMEWORK_DOMAIN_PRODUCER_TOOL_NAMES) {
+      expect(isToolAllowedByPolicyName(toolName, policy)).toBe(false);
+    }
+    expect(
+      isToolAllowedByPolicyName("finance_doctrine_teacher_feedback_elevation_handoff", policy),
+    ).toBe(false);
+    expect(
+      isToolAllowedByPolicyName(
+        "finance_doctrine_teacher_feedback_elevation_handoff_status",
+        policy,
+      ),
+    ).toBe(false);
+    expect(
+      isToolAllowedByPolicyName("finance_doctrine_teacher_feedback_candidate_input", policy),
+    ).toBe(false);
+    expect(
+      isToolAllowedByPolicyName("finance_doctrine_teacher_feedback_candidate_input_review", policy),
+    ).toBe(false);
+    expect(
+      isToolAllowedByPolicyName(
+        "finance_doctrine_teacher_feedback_candidate_input_reconciliation",
+        policy,
+      ),
+    ).toBe(false);
+    expect(
+      isToolAllowedByPolicyName(
+        "finance_doctrine_teacher_feedback_candidate_input_reconciliation_status",
+        policy,
+      ),
+    ).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_doctrine_teacher_feedback", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_doctrine_teacher_feedback_review", policy)).toBe(
+      false,
+    );
+    expect(isToolAllowedByPolicyName("finance_promotion_decision", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_promotion_doctrine_edit_handoff", policy)).toBe(
+      false,
+    );
+    expect(isToolAllowedByPolicyName("finance_promotion_proposal_draft", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("finance_promotion_proposal_status", policy)).toBe(false);
   });
 
   it("depth-2 leaf denies sessions_spawn", () => {

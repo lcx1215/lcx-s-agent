@@ -1,6 +1,7 @@
 import {
   looksLikeCorrectionCarryoverAsk,
   looksLikeExplicitResearchLineContinuationAsk,
+  looksLikeFinanceLearningPipelineAsk,
   looksLikeHoldingsRevalidationAsk,
   looksLikeLearningInternalizationAuditAsk,
   looksLikeLearningWorkflowAuditAsk,
@@ -201,6 +202,7 @@ function inferIntentSurfaces(params: {
     "control_room",
     looksLikeExplicitResearchLineContinuationAsk(normalized),
   );
+  addIntentSurfaceIf(surfaces, "control_room", looksLikeLarkWorkRoleManagementAsk(normalized));
   addIntentSurfaceIf(
     surfaces,
     "learning_command",
@@ -211,6 +213,7 @@ function inferIntentSurfaces(params: {
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeStrategicLearningAsk(normalized));
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeMethodLearningTopic(normalized));
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeVerticalFinanceLearningAsk(normalized));
+  addIntentSurfaceIf(surfaces, "learning_command", looksLikeFinanceLearningPipelineAsk(normalized));
   addIntentSurfaceIf(
     surfaces,
     "learning_command",
@@ -327,6 +330,19 @@ function looksLikeMetaControlRoomAggregateAsk(content: string): boolean {
       normalized,
     );
   return hasMetaCue && hasAggregateCue;
+}
+
+export function looksLikeLarkWorkRoleManagementAsk(content: string): boolean {
+  const normalized = normalizeSurfaceText(content);
+  const roleCue =
+    /(机器人|角色|工位|分工|work\s*role|workrole|role lane|小明|小李|小王|小美|小赵)/u.test(
+      normalized,
+    );
+  const managementCue =
+    /(新增|增加|添加|加一个|加个|创建|设一个|删掉|删除|减少|移除|停用|禁用|恢复|重置|列出|展示|看看|改成|更新|负责)/u.test(
+      normalized,
+    );
+  return roleCue && managementCue;
 }
 
 export function looksLikeDailyOperatingBrief(content: string): boolean {
@@ -462,6 +478,15 @@ export function resolveFeishuControlRoomOrchestration(params: {
   }
 
   const requestedPublishMode = resolveRequestedPublishMode(params.content);
+  if (looksLikeLarkWorkRoleManagementAsk(params.content)) {
+    return {
+      mode: "aggregate",
+      specialistSurfaces: ["ops_audit"],
+      publishMode: "summary_only",
+      replyContract: "default",
+    };
+  }
+
   if (looksLikeStrategicLearningAsk(params.content)) {
     return {
       mode: "aggregate",
@@ -481,6 +506,15 @@ export function resolveFeishuControlRoomOrchestration(params: {
   }
 
   if (looksLikeVerticalFinanceLearningAsk(params.content)) {
+    return {
+      mode: "aggregate",
+      specialistSurfaces: ["learning_command"],
+      publishMode: requestedPublishMode ?? "classified_publish",
+      replyContract: "default",
+    };
+  }
+
+  if (looksLikeFinanceLearningPipelineAsk(params.content)) {
     return {
       mode: "aggregate",
       specialistSurfaces: ["learning_command"],
@@ -875,6 +909,13 @@ export function buildFeishuSurfaceNotice(
   ]);
   appendNoticeLines(lines, FEISHU_SHARED_STATUS_BOUNDARY_LINES);
 
+  if (targetSurface === "control_room") {
+    appendNoticeLines(lines, [
+      "[System: Lark visible-role boundary: if the operator asks to add, remove, list, reset, or rename visible robots/roles such as 小明/小李/小王, treat them as display/work-role lanes under one primary brain, not separate brains or separate learning systems.]",
+      "[System: Use feishu_work_roles for explicit visible-role registry changes when available. Never claim this created a real separate Lark bot/app or a separate learning system.]",
+    ]);
+  }
+
   if (
     targetSurface === "control_room" ||
     targetSurface === "knowledge_maintenance" ||
@@ -906,6 +947,7 @@ export function buildFeishuSurfaceNotice(
       "[System: Do not optimize for becoming a generic super-agent. Stable finance-domain usefulness comes first: fewer errors, cleaner iteration, and better cumulative judgment beat broad capability theater.]",
       "[System: If a learning request is mostly about agent tooling, platform design, or open-source patterns, keep it bounded and only retain what clearly improves Lobster's finance research workflow, filtering, timing discipline, or risk control.]",
       "[System: If the user asks to maintain, consolidate, or strengthen prior finance-learning work, start by preserving and inspecting existing finance learning artifacts, capability candidates, pipeline receipts, and promotion handoff state. Do not restart from a blank learning plan unless the existing artifacts are missing or malformed.]",
+      "[System: If the user asks to learn a concrete finance capability, quant factor/timing strategy, ETF risk-control method, portfolio discipline, regime framework, or local/manual finance source into the Lobster brain, route it through finance_learning_pipeline_orchestrator when a safe local/manual source is available. Preserve the raw user wording as learningIntent, require safe source intake, and expect retrievalReceiptPath plus retrievalReviewPath before calling the learning internalized.]",
       "[System: If the user asks to connect or harden learning capability through Lark / Feishu language commands, treat the Lark wording as the user-facing entrypoint and the finance learning pipeline as the backend capability. Name the intended command family, the routed surface, the reusable tool path such as finance_learning_capability_inspect or finance_learning_pipeline_orchestrator, and the proof still needed before calling it live-fixed.]",
       "[System: For external-source learning requests such as Google/web search, arXiv/papers, blogs/docs, GitHub/repos, peer agents, competitor systems, or benchmark examples, do not produce a source tour. Convert source material into bounded adoption knowledge: retain, discard, replay trigger, next eval, compatibility risk, and one verifiable next step for Lobster.]",
       "[System: For another-agent, GitHub CLI, install/setup/migration, context-file, skills/plugin, or memory-provider topic, distill it as bounded adoption knowledge: what Lobster should adopt now, what to skip, what compatibility risk to watch, and one next patch or install step it can verify locally.]",
@@ -1012,6 +1054,7 @@ export function buildFeishuControlRoomOrchestrationNotice(
     "[System: Treat this as decision support, not prediction theater. Prefer clearer filtering, timing discipline, and hard risk framing over hype.]",
     "[System: Sound like an orchestrator: calm, clear, and decisive. Do not sound like a support escalation bot or a confused tool wrapper.]",
     "[System: Specialist detail is optional. Do not tell the user to manually message other groups. If a deeper dive would help, mention the follow-up pattern: expand technical / expand fundamental / expand ops / expand knowledge.]",
+    "[System: If the operator asks to add, remove, list, reset, or change visible Lark robots/roles such as 小明/小李/小王, use the feishu_work_roles tool when available. Keep the reply boundary explicit: one primary brain, one unified learning system, dynamic visible role lanes only.]",
     "[System: When publish mode is classified_publish or draft_only, format the response with exact top-level sections using markdown headings: ## Control Summary, ## Technical Slice, ## Fundamental Slice, ## Knowledge Slice, ## Ops Slice.]",
     "[System: Control Summary is mandatory and must stay human-first. Specialist slices are optional and should appear only when they materially add value.]",
     "[System: Every specialist slice must begin with metadata lines before the body: publish: yes|no, confidence: high|medium|low, and when relevant foundations: <one-or-two dominant foundation templates>.]",

@@ -1,0 +1,7 @@
+{
+  "sourceName": "Google search reference",
+  "sourceType": "public_web_source",
+  "userProvidedUrl": "https://www.google.com/search?q=site%3Asec.gov+liquidity+funding+stress+10-k",
+  "title": "Google reference for SEC liquidity work",
+  "retrievalNotes": "Operator recorded a web discovery reference only as metadata for later manual source capture, with no remote fetch in this step."
+}

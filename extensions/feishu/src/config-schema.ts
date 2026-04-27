@@ -86,6 +86,7 @@ const FeishuToolsConfigSchema = z
   .object({
     doc: z.boolean().optional(), // Document operations (default: true)
     chat: z.boolean().optional(), // Chat info + member query operations (default: true)
+    workRoles: z.boolean().optional(), // Visible Lark work-role registry (default: true)
     wiki: z.boolean().optional(), // Knowledge base operations (default: true, requires doc)
     drive: z.boolean().optional(), // Cloud storage operations (default: true)
     perm: z.boolean().optional(), // Permission management (default: false, sensitive)

@@ -15,6 +15,8 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
 } from "openclaw/plugin-sdk";
 import { resolveAgentWorkspaceDir } from "../../../src/agents/agent-scope.js";
+import { createFinanceLearningCapabilityApplyTool } from "../../../src/agents/tools/finance-learning-capability-apply-tool.js";
+import { createFinanceLearningPipelineOrchestratorTool } from "../../../src/agents/tools/finance-learning-pipeline-orchestrator-tool.js";
 import type { OpenClawConfig } from "../../../src/config/config.js";
 import { isCorrectionLoopInput } from "../../../src/hooks/bundled/correction-loop/detection.js";
 import {
@@ -62,6 +64,7 @@ import {
   looksLikeExecutionAuthorityScopeAsk,
   looksLikeExplicitResearchLineContinuationAsk,
   looksLikeFailureReportScopeAsk,
+  looksLikeFinanceLearningPipelineAsk,
   looksLikeHoldingsRevalidationAsk,
   looksLikeHighStakesRiskScopeAsk,
   looksLikeInstructionConflictScopeAsk,
@@ -78,7 +81,14 @@ import {
   looksLikeTemporalScopeControlAsk,
 } from "./intent-matchers.js";
 import { createGatewayLarkApiRouteProvider } from "./lark-api-route-provider.js";
-import { resolveLarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
+import {
+  buildLarkPendingRoutingCandidateCorpus,
+  evaluateLarkRoutingCandidateCorpus,
+  writeLarkRoutingCandidatePromotionReview,
+  type LarkPendingRoutingCandidate,
+  type LarkRoutingCandidateEvaluation,
+} from "./lark-routing-candidate-corpus.js";
+import { LARK_ROUTING_CORPUS, resolveLarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
 import { runFeishuLearningCouncil } from "./learning-council.js";
 import {
   findLatestFeishuLearningTimeboxSession,
@@ -110,7 +120,12 @@ import {
   type FeishuChatSurfaceName,
   type ResolvedFeishuSurfaceRouting,
 } from "./surfaces.js";
-import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
+import type {
+  FeishuConfig,
+  FeishuMessageContext,
+  FeishuMediaInfo,
+  ResolvedFeishuAccount,
+} from "./types.js";
 import type { DynamicAgentCreationConfig } from "./types.js";
 
 // --- Permission error extraction ---
@@ -1140,6 +1155,106 @@ async function createAndSendFeishuFinalTextReply(params: {
     markDispatchIdle,
     text: params.text,
   });
+}
+
+type FeishuFinanceLearningPipelineSource =
+  | { kind: "local_file"; localFilePath: string }
+  | { kind: "manual_paste"; pastedText: string };
+
+function extractFeishuFinanceLearningLocalFilePath(content: string): string | undefined {
+  const match = content.match(
+    /(?:^|[\s"'“”‘’（(：:])((?:memory|docs|test|tests|src|extensions|ops|scripts)\/[^\s"'“”‘’）),，。；;]+?\.(?:md|markdown|txt|html?))(?:$|[\s"'“”‘’）),，。；;])/iu,
+  );
+  return match?.[1];
+}
+
+function isSubstantiveManualFinanceSource(text: string): boolean {
+  const normalized = text.trim();
+  return (
+    normalized.length >= 600 &&
+    /(capability|method|strategy|risk|regime|portfolio|factor|timing|etf|finance|financial|market|evidence|causal|能力|方法|策略|风险|组合|因子|择时|金融|市场|证据|机制)/iu.test(
+      normalized,
+    )
+  );
+}
+
+function resolveFeishuFinanceLearningPipelineSource(params: {
+  content: string;
+  quotedContent?: string;
+}): FeishuFinanceLearningPipelineSource | undefined {
+  const localFilePath = extractFeishuFinanceLearningLocalFilePath(params.content);
+  if (localFilePath) {
+    return { kind: "local_file", localFilePath };
+  }
+  const inlineSourceMatch = params.content.match(
+    /(?:文章|source|材料|原文|正文|content)\s*[:：]\s*([\s\S]{600,})$/iu,
+  );
+  const inlineSource = inlineSourceMatch?.[1]?.trim();
+  if (inlineSource && isSubstantiveManualFinanceSource(inlineSource)) {
+    return { kind: "manual_paste", pastedText: inlineSource };
+  }
+  if (params.quotedContent && isSubstantiveManualFinanceSource(params.quotedContent)) {
+    return { kind: "manual_paste", pastedText: params.quotedContent };
+  }
+  return undefined;
+}
+
+function renderFeishuFinanceLearningPipelineMissingSourceReply(): string {
+  return [
+    "我识别到这是金融能力学习入口，但还缺安全 source，所以没有假装已经学完。",
+    "",
+    "- 已识别: market_capability_learning_intake",
+    "- 后端: finance_learning_pipeline_orchestrator",
+    "- 还缺: workspace-relative `.md` / `.txt` / `.html` 文件路径，或直接粘贴/引用一段完整金融研究材料",
+    "- 未产生: retrievalReceiptPath / retrievalReviewPath",
+    "",
+    "下一步把本地材料路径发来，例如 `memory/articles/example.md`，或回复/引用一段完整文章，我再走 source intake、extract、attach、inspect 和 retrieval review。",
+  ].join("\n");
+}
+
+function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknown>): string {
+  if (details.ok !== true) {
+    return [
+      "金融能力学习流水线没有完成。",
+      "",
+      `- failed step: ${String(details.failedStep ?? "unknown")}`,
+      `- reason: ${String(details.reason ?? "unknown")}`,
+      `- error: ${String(details.errorMessage ?? "none")}`,
+      "",
+      "这次没有把失败说成学会；需要先修正 source 或 extraction gap，再重跑。",
+    ].join("\n");
+  }
+  const retrievalFirstLearning =
+    details.retrievalFirstLearning && typeof details.retrievalFirstLearning === "object"
+      ? (details.retrievalFirstLearning as Record<string, unknown>)
+      : {};
+  const reviewCounts =
+    retrievalFirstLearning.retrievalReviewCounts &&
+    typeof retrievalFirstLearning.retrievalReviewCounts === "object"
+      ? (retrievalFirstLearning.retrievalReviewCounts as Record<string, unknown>)
+      : {};
+  const applicationResult =
+    details.applicationResult && typeof details.applicationResult === "object"
+      ? (details.applicationResult as Record<string, unknown>)
+      : {};
+  const answerSkeleton =
+    applicationResult.answerSkeleton && typeof applicationResult.answerSkeleton === "object"
+      ? (applicationResult.answerSkeleton as Record<string, unknown>)
+      : {};
+  return [
+    "金融能力学习流水线已完成 dev 验收。",
+    "",
+    `- retained candidates: ${String(details.retainedCandidateCount ?? 0)}`,
+    `- receipt: ${String(retrievalFirstLearning.retrievalReceiptPath ?? "missing")}`,
+    `- review: ${String(retrievalFirstLearning.retrievalReviewPath ?? "missing")}`,
+    `- retrievable after learning: ${String(reviewCounts.retrievableAfterLearning ?? "unknown")}`,
+    `- weak learning receipts: ${String(reviewCounts.weakLearningReceipts ?? "unknown")}`,
+    `- apply mode: ${String(applicationResult.applicationMode ?? "missing")}`,
+    `- applied candidates: ${String(applicationResult.candidateCount ?? "unknown")}`,
+    `- apply boundary: ${String(answerSkeleton.noActionBoundary ?? "missing")}`,
+    "",
+    "边界: 这是 research-only 学习，不是交易执行；语言 corpus 没有混入金融学习 artifact。",
+  ].join("\n");
 }
 
 const CLASSIFIED_PUBLISH_DEDUP_TTL_MS = 6 * 60 * 60 * 1000;
@@ -2763,6 +2878,207 @@ async function recordFeishuSurfacePersistFailure(params: {
   });
 }
 
+type LarkLanguageRoutingCandidateCaptureArtifact = {
+  schemaVersion: 1;
+  boundary: "language_routing_only";
+  source: "feishu_final_reply_capture";
+  generatedAt: string;
+  agentId: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+  chatId: string;
+  sessionKey: string;
+  messageId: string;
+  noFinanceLearningArtifact: true;
+  candidates: LarkPendingRoutingCandidate[];
+  evaluation: {
+    schemaVersion: 1;
+    boundary: "language_routing_only";
+    evaluatedAt: string;
+    counts: {
+      total: number;
+      accepted: number;
+      rejected: number;
+      discarded: number;
+    };
+    acceptedCases: LarkRoutingCandidateEvaluation["acceptedCase"][];
+    evaluations: LarkRoutingCandidateEvaluation[];
+  };
+};
+
+type LarkLanguageRoutingCandidateCaptureResult = {
+  relativePath: string;
+  dateKey: string;
+  workspaceDir: string;
+};
+
+function buildLarkLanguageCandidateCaptureFileName(messageId: string): string {
+  const stem = sanitizeSurfaceLedgerSegment(messageId) || "message";
+  return `${stem}.json`;
+}
+
+async function persistLarkLanguageRoutingCandidateCapture(params: {
+  cfg: ClawdbotConfig;
+  agentId: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+  chatId: string;
+  sessionKey: string;
+  messageId: string;
+  userMessage: string;
+  finalReplyText: string;
+  apiReplyPayloads?: readonly unknown[];
+}): Promise<LarkLanguageRoutingCandidateCaptureResult | undefined> {
+  const userMessage = params.userMessage.trim();
+  const finalReplyText = params.finalReplyText.trim();
+  if (!userMessage && !finalReplyText) {
+    return undefined;
+  }
+
+  const generatedAt = new Date().toISOString();
+  const userCorpus = userMessage
+    ? buildLarkPendingRoutingCandidateCorpus({
+        source: "lark_user_utterance",
+        payloads: [userMessage],
+        generatedAt,
+      })
+    : undefined;
+  const replyCorpus = finalReplyText
+    ? buildLarkPendingRoutingCandidateCorpus({
+        source: "lark_visible_reply",
+        payloads: [finalReplyText],
+        generatedAt,
+      })
+    : undefined;
+  const apiCorpus =
+    params.apiReplyPayloads && params.apiReplyPayloads.length > 0
+      ? buildLarkPendingRoutingCandidateCorpus({
+          source: "api_reply",
+          payloads: params.apiReplyPayloads,
+          generatedAt,
+        })
+      : undefined;
+  const candidates = [
+    ...(apiCorpus?.candidates ?? []),
+    ...(userCorpus?.candidates ?? []),
+    ...(replyCorpus?.candidates ?? []),
+  ];
+  const evaluation = evaluateLarkRoutingCandidateCorpus({
+    cfg: (params.cfg.channels?.feishu ?? {}) as FeishuConfig,
+    corpus: {
+      schemaVersion: 1,
+      boundary: "language_routing_only",
+      generatedAt,
+      candidates,
+    },
+    evaluatedAt: generatedAt,
+  });
+  const artifact: LarkLanguageRoutingCandidateCaptureArtifact = {
+    schemaVersion: 1,
+    boundary: "language_routing_only",
+    source: "feishu_final_reply_capture",
+    generatedAt,
+    agentId: params.agentId,
+    targetSurface: params.targetSurface,
+    effectiveSurface: params.effectiveSurface,
+    chatId: params.chatId,
+    sessionKey: params.sessionKey,
+    messageId: params.messageId,
+    noFinanceLearningArtifact: true,
+    candidates,
+    evaluation,
+  };
+
+  const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
+  const dateStem = generatedAt.slice(0, 10);
+  const memoryDir = path.join(workspaceDir, "memory", "lark-language-routing-candidates", dateStem);
+  const fileName = buildLarkLanguageCandidateCaptureFileName(params.messageId);
+  const filePath = path.join(memoryDir, fileName);
+  await fs.mkdir(memoryDir, { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(artifact, null, 2)}\n`, "utf-8");
+  return {
+    relativePath: path
+      .join("memory", "lark-language-routing-candidates", dateStem, fileName)
+      .split(path.sep)
+      .join("/"),
+    dateKey: dateStem,
+    workspaceDir,
+  };
+}
+
+async function persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt(params: {
+  cfg: ClawdbotConfig;
+  agentId: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+  chatId: string;
+  sessionKey: string;
+  messageId: string;
+  userMessage: string;
+  finalReplyText: string;
+  apiReplyPayloads?: readonly unknown[];
+}) {
+  let capture: LarkLanguageRoutingCandidateCaptureResult | undefined;
+  try {
+    capture = await persistLarkLanguageRoutingCandidateCapture(params);
+  } catch (error) {
+    await recordOperationalAnomaly({
+      cfg: params.cfg,
+      category: "write_edit_failure",
+      severity: "medium",
+      source: "feishu.lark_language_routing_candidates",
+      problem: "failed to persist lark language-routing candidate capture",
+      evidence: [
+        "failure_stage=language_routing_candidate_capture",
+        "boundary=language_routing_only",
+        "finance_learning_artifact=false",
+        `surface=${params.targetSurface ?? "none"}`,
+        `effective_surface=${params.effectiveSurface ?? params.targetSurface ?? "none"}`,
+        `chat_id=${params.chatId}`,
+        `message_id=${params.messageId}`,
+        `error=${String(error)}`,
+      ],
+      impact:
+        "the Feishu reply was still delivered, but this turn did not enter the pending language-routing review queue",
+      suggestedScope:
+        "repair the independent lark-language-routing-candidates artifact path before promoting new routing corpus cases",
+    });
+    return;
+  }
+  if (!capture) {
+    return;
+  }
+  try {
+    await writeLarkRoutingCandidatePromotionReview({
+      workspaceDir: capture.workspaceDir,
+      dateKey: capture.dateKey,
+      existingCorpus: LARK_ROUTING_CORPUS,
+    });
+  } catch (error) {
+    await recordOperationalAnomaly({
+      cfg: params.cfg,
+      category: "write_edit_failure",
+      severity: "medium",
+      source: "feishu.lark_language_routing_review",
+      problem: "failed to refresh lark language-routing daily review",
+      evidence: [
+        "failure_stage=language_routing_daily_review",
+        "boundary=language_routing_only",
+        "finance_learning_artifact=false",
+        `candidate_path=${capture.relativePath}`,
+        `date_key=${capture.dateKey}`,
+        `chat_id=${params.chatId}`,
+        `message_id=${params.messageId}`,
+        `error=${String(error)}`,
+      ],
+      impact:
+        "the pending language-routing candidate was captured, but the same-day review and patch artifacts were not refreshed",
+      suggestedScope:
+        "rerun lark_language_corpus_review for the date before promoting new routing corpus cases",
+    });
+  }
+}
+
 async function persistFeishuSurfaceLineWithFailureReceipt(params: {
   cfg: ClawdbotConfig;
   agentId: string;
@@ -2809,6 +3125,7 @@ type FeishuSurfaceLinePersistContext = {
   sessionKey: string;
   messageId: string;
   userMessage: string;
+  apiReplyPayloads?: readonly unknown[];
 };
 
 function buildFeishuSurfaceLinePersistContext(params: {
@@ -2820,6 +3137,7 @@ function buildFeishuSurfaceLinePersistContext(params: {
   sessionKey: string;
   messageId: string;
   userMessage: string;
+  apiReplyPayloads?: readonly unknown[];
 }): FeishuSurfaceLinePersistContext {
   return {
     cfg: params.cfg,
@@ -2831,6 +3149,7 @@ function buildFeishuSurfaceLinePersistContext(params: {
     sessionKey: params.sessionKey,
     messageId: params.messageId,
     userMessage: params.userMessage,
+    apiReplyPayloads: params.apiReplyPayloads,
   };
 }
 
@@ -2879,6 +3198,7 @@ async function createSendAndPersistFeishuDirectSurfaceReply(
     finalReplyText: sendResult.queuedFinal ? params.text : undefined,
     dispatchQueuedFinal: sendResult.queuedFinal,
     dispatchFinalCount: sendResult.counts.final,
+    apiReplyPayloads: params.apiReplyPayloads,
   });
 }
 
@@ -2895,6 +3215,7 @@ async function persistCapturedFeishuSurfaceLine(params: {
   finalReplyText?: string;
   dispatchQueuedFinal?: boolean;
   dispatchFinalCount?: number;
+  apiReplyPayloads?: readonly unknown[];
 }) {
   const finalReplyText = params.finalReplyText?.trim();
   if (!finalReplyText) {
@@ -2939,6 +3260,18 @@ async function persistCapturedFeishuSurfaceLine(params: {
     messageId: params.messageId,
     userMessage: params.userMessage,
     finalReplyText,
+  });
+  await persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    targetSurface: params.targetSurface,
+    effectiveSurface: params.effectiveSurface,
+    chatId: params.chatId,
+    sessionKey: params.sessionKey,
+    messageId: params.messageId,
+    userMessage: params.userMessage,
+    finalReplyText,
+    apiReplyPayloads: params.apiReplyPayloads,
   });
 }
 
@@ -3770,6 +4103,7 @@ function inferFeishuResearchIntentNotice(content: string): string | undefined {
     /(网络搜索可以用吗|网络搜索能用吗|搜索可以用吗|搜索能用吗|搜索能力|检索能力|web search available|is web search available|search health|search status|search ability)/u.test(
       normalized,
     );
+  const hasExternalSourceLearningCue = looksLikeSourceCoverageScopeAsk(content);
   if (
     looksLikeExplicitCurrentResearchLineContinuation(trimmed) ||
     looksLikeWeakResearchContinuation(trimmed)
@@ -3834,7 +4168,7 @@ function inferFeishuResearchIntentNotice(content: string): string | undefined {
       "[System: Treat this as a portfolio or position-management question, not as prediction theater and not as direct execution authority. Use a fixed reply structure with these sections in order when possible: 1. current stance, 2. key reasons, 3. main counter-case / risk, 4. action triggers, 5. confidence, 6. one-line summary. Use exact markdown headings when possible: ## Current Stance, ## Key Reasons, ## Main Counter-Case / Risk, ## Action Triggers, ## Confidence, ## One-Line Summary. In current stance, use one plain label only: hold, watch, reduce, do not add yet, or add only if conditions trigger. Apply sizing discipline explicitly: name any concentration risk, distinguish conviction from actual size, and default low confidence toward smaller size or wait. If macro or cross-asset context matters, explain the live driver and transmission path instead of hand-wavy market color. In action triggers, separate what would justify adding, what would justify reducing, and what means wait. Use execution hygiene too: if event risk, liquidity, or volatility makes the setup noisy, say wait explicitly. Also check for behavior-error drift: urgency theater, confirmation bias, narrative overreach, or emotional discomfort with waiting. If known events matter, map the real catalysts too: what would confirm, what would break, and what is mostly noise. Keep key reasons to the top 2-3 points. Keep confidence to low, medium, or high plus one short justification. Make the one-line summary exactly one sentence. Keep it concise, disciplined, and risk-controlled. No hype, no fake certainty, and no long rambling essay.]",
     );
   }
-  if (hasMacroCue && !hasFundamentalCue && !hasFrontierCue) {
+  if (hasMacroCue && !hasFundamentalCue && !hasFrontierCue && !hasExternalSourceLearningCue) {
     return withScopeNotices(
       "[System: Treat this as macro and major-asset research. Skip textbook 101 summaries and generic index quote recaps unless the user explicitly asks for basics. Prefer a concise watchlist-style risk review over raw price tables: name the major index or asset exposures that matter, the current structural narrative, what is already priced by consensus, where the marginal surprise or pricing gap still is, and which cross-asset signals (rates, dollar, duration, credit, or related risk assets) confirm or contradict the story. For current market, index, rate, or macro-event questions, use web search first if available so the answer is anchored in fresh facts instead of stale priors. Anchor any risk/reward ranking to fresh hard datapoints when available, such as current rates or rate expectations, relevant ETF or index moves, and supporting cross-asset signals; do not pad with stale quote tables. Do not let technical signal tables, buy/sell badges, or quote recaps become the main conclusion. Do not default to vague liquidity-stress explanations unless fresh cross-asset evidence supports them. If the user asks in plain language about a few indices, interpret that as a request for current risk/reward framing, not a request for a market data dump. If the live-data layer looks stale or cached, say so explicitly, name the missing anchors, and refuse to fake a confident ranking. When freshness is weak, stale, cached, or provider-limited, do not present high-specificity market figures, exact levels, exact percentages, or exact point estimates as if they were freshly verified in this turn; use directional wording or explicitly label any inherited number as stale, prior, or illustrative instead. End with one short red-team note explaining what new data or regime shift would invalidate the view. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks. If the answer is still generic, say so instead of pretending it is decision-useful.]",
     );
@@ -3846,12 +4180,17 @@ function inferFeishuResearchIntentNotice(content: string): string | undefined {
   }
   if (hasFrontierCue && !hasFundamentalCue) {
     return withScopeNotices(
-      "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Speak human-first: what this method is actually useful for, what is dangerous, and whether it changes daily Lobster usage now. Do not rewrite it into a fundamental intake.]",
+      "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. For broad paper-learning requests, keep a fixed source receipt: papers actually searched or read, source coverage limits, retained methods that can change future work, discarded hype or stale ideas, replay trigger for when to reuse the lesson, next eval for how to verify the lesson later, and the next reusable behavior change. Speak human-first: what this method is actually useful for, what is dangerous, and whether it changes daily Lobster usage now. Do not rewrite it into a fundamental intake.]",
     );
   }
-  if (hasLearningCue && !hasFundamentalCue && !hasFrontierCue) {
+  if (looksLikeFinanceLearningPipelineAsk(content)) {
     return withScopeNotices(
-      "[System: Treat this as learning or open-source study work. Start from the active Lobster brain, not from a blank slate: when present, anchor first on memory/current-research-line.md and MEMORY.md, then the latest learning carryover cue and any relevant local durable memory cards before deciding what is worth learning now. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. If the topic is Chinese/English understanding, prioritize terminology mapping, ambiguity reduction, workflow-trigger understanding, and plain-language reporting rather than generic language tutoring. If the user says 日频技术 or 日频策略 without extra qualifiers, interpret it as finance or quant methods for daily-frequency research by default, not Japanese-language technology or generic HFT hype. For external-source learning requests such as Google, web, GitHub, papers, blogs, docs, competitors, or peer projects, keep a fixed learning receipt: sources actually searched or read, source coverage limits, retained rules that can change future work, discarded noise or stale ideas, replay trigger for when to reuse the lesson, next eval for how to verify the lesson later, and the next reusable behavior change. Explain the result in plain language first: what was learned, what is still weak, and what changes for Lobster now. Keep the distillation useful for both Lobster's general meta-capability and the full finance research pipeline. If source coverage or search breadth is weak in this turn, say so explicitly instead of pretending the learning set was broad. Do not rewrite it into a fundamental intake or reset alias.]",
+      "[System: Treat this as a finance learning pipeline request, not as generic learning-council prose and not as language-corpus training. Preserve the raw user wording as learningIntent. Use finance_learning_pipeline_orchestrator only when there is safe local/manual source content or a clearly provided source artifact; otherwise ask for or record the missing source intake instead of pretending learning completed. A completed backend learning loop should produce inspect-ready candidates plus retrievalReceiptPath and retrievalReviewPath. Keep Lark routing corpus samples separate from finance learning artifacts, and do not grant trading execution authority.]",
+    );
+  }
+  if ((hasLearningCue || hasExternalSourceLearningCue) && !hasFundamentalCue && !hasFrontierCue) {
+    return withScopeNotices(
+      "[System: Treat this as learning or open-source study work. Start from the active Lobster brain, not from a blank slate: when present, anchor first on memory/current-research-line.md and MEMORY.md, then the latest learning carryover cue and any relevant local durable memory cards before deciding what is worth learning now. Preserve the user's raw learning objective as the learningIntent for downstream finance learning pipeline calls so existing capability cards are retrieved before new retention and again after attachment. Keep language-interface routing samples separate from brain-learning artifacts: routing corpus candidates can improve intent classification, but only source intake, extraction, attachment, and inspect-ready finance pipeline outputs can become capability cards. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. If the topic is Chinese/English understanding, prioritize terminology mapping, ambiguity reduction, workflow-trigger understanding, and plain-language reporting rather than generic language tutoring. If the user says 日频技术 or 日频策略 without extra qualifiers, interpret it as finance or quant methods for daily-frequency research by default, not Japanese-language technology or generic HFT hype. For external-source learning requests such as Google, web, GitHub, papers, blogs, docs, competitors, or peer projects, keep a fixed learning receipt: sources actually searched or read, source coverage limits, retained rules that can change future work, discarded noise or stale ideas, replay trigger for when to reuse the lesson, next eval for how to verify the lesson later, and the next reusable behavior change. Explain the result in plain language first: what was learned, what is still weak, and what changes for Lobster now. Keep the distillation useful for both Lobster's general meta-capability and the full finance research pipeline. If source coverage or search breadth is weak in this turn, say so explicitly instead of pretending the learning set was broad. Do not rewrite it into a fundamental intake or reset alias.]",
     );
   }
 
@@ -4583,6 +4922,9 @@ export async function handleFeishuMessage(params: {
         messageId: ctx.messageId,
       }),
     });
+    const larkApiReplyPayloads = larkInstructionHandoff.apiCandidate
+      ? [larkInstructionHandoff.apiCandidate]
+      : undefined;
     const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
     const surfaceNotice = [
       buildFeishuPromptSurfaceNotice({
@@ -4831,6 +5173,7 @@ export async function handleFeishuMessage(params: {
               sessionKey: agentSessionKey,
               messageId: ctx.messageId,
               userMessage: ctx.content,
+              apiReplyPayloads: larkApiReplyPayloads,
             }),
             finalReplyText: surfaceLineCapture.getLastFinalReplyText(),
             dispatchQueuedFinal: queuedFinal,
@@ -5011,10 +5354,125 @@ export async function handleFeishuMessage(params: {
               sessionKey: effectiveSessionKey,
               messageId: ctx.messageId,
               userMessage: ctx.content,
+              apiReplyPayloads: larkApiReplyPayloads,
             }),
             finalReplyText: packetSendResult.queuedFinal ? packetText : undefined,
             dispatchQueuedFinal: packetSendResult.queuedFinal,
             dispatchFinalCount: packetSendResult.counts.final,
+          });
+          return;
+        }
+        if (
+          larkInstructionHandoff.backendToolContract?.toolName ===
+          "finance_learning_pipeline_orchestrator"
+        ) {
+          const learningWorkspaceDir = resolveAgentWorkspaceDir(
+            cfg as OpenClawConfig,
+            route.agentId,
+          );
+          const pipelineSource = resolveFeishuFinanceLearningPipelineSource({
+            content: ctx.content,
+            quotedContent,
+          });
+          if (!pipelineSource) {
+            const missingSourceText = renderFeishuFinanceLearningPipelineMissingSourceReply();
+            const missingSourceSendResult = await sendFeishuFinalTextReply({
+              replyRuntime: core.channel.reply,
+              dispatcher: effectiveDispatcher,
+              markDispatchIdle,
+              text: missingSourceText,
+            });
+
+            clearFeishuGroupHistoryAfterDispatch({
+              isGroup,
+              chatHistories,
+              historyKey,
+              historyLimit,
+            });
+
+            await persistCapturedFeishuSurfaceLine({
+              ...buildFeishuSurfaceLinePersistContext({
+                cfg,
+                agentId: route.agentId,
+                effectiveStateSurface,
+                replyContract: controlRoomOrchestration?.replyContract,
+                chatId: ctx.chatId,
+                sessionKey: effectiveSessionKey,
+                messageId: ctx.messageId,
+                userMessage: ctx.content,
+                apiReplyPayloads: larkApiReplyPayloads,
+              }),
+              finalReplyText: missingSourceSendResult.queuedFinal ? missingSourceText : undefined,
+              dispatchQueuedFinal: missingSourceSendResult.queuedFinal,
+              dispatchFinalCount: missingSourceSendResult.counts.final,
+            });
+            return;
+          }
+
+          const pipelineTool = createFinanceLearningPipelineOrchestratorTool({
+            workspaceDir: learningWorkspaceDir,
+          });
+          const pipelineResult = await pipelineTool.execute(
+            `${ctx.messageId}:finance-learning-pipeline`,
+            {
+              sourceName: "Lark manual finance learning source",
+              sourceType: "manual_article_source",
+              ...(pipelineSource.kind === "local_file"
+                ? { localFilePath: pipelineSource.localFilePath }
+                : { pastedText: pipelineSource.pastedText }),
+              title: "Lark finance capability learning request",
+              retrievalNotes:
+                "Operator provided a Lark-triggered finance learning source for bounded research-only source intake, extraction, attachment, retrieval receipt, and retrieval review.",
+              allowedActionAuthority: "research_only",
+              learningIntent: larkInstructionHandoff.backendToolContract.learningIntent,
+              maxRetrievedCapabilities: 5,
+            },
+          );
+          let applicationResult: unknown = undefined;
+          if ((pipelineResult.details as Record<string, unknown>).ok === true) {
+            const applyTool = createFinanceLearningCapabilityApplyTool({
+              workspaceDir: learningWorkspaceDir,
+            });
+            applicationResult = (
+              await applyTool.execute(`${ctx.messageId}:finance-learning-apply`, {
+                queryText: ctx.content,
+                maxCandidates: 3,
+              })
+            ).details;
+          }
+          const pipelineReplyText = renderFeishuFinanceLearningPipelineReply({
+            ...(pipelineResult.details as Record<string, unknown>),
+            applicationResult,
+          });
+          const pipelineSendResult = await sendFeishuFinalTextReply({
+            replyRuntime: core.channel.reply,
+            dispatcher: effectiveDispatcher,
+            markDispatchIdle,
+            text: pipelineReplyText,
+          });
+
+          clearFeishuGroupHistoryAfterDispatch({
+            isGroup,
+            chatHistories,
+            historyKey,
+            historyLimit,
+          });
+
+          await persistCapturedFeishuSurfaceLine({
+            ...buildFeishuSurfaceLinePersistContext({
+              cfg,
+              agentId: route.agentId,
+              effectiveStateSurface,
+              replyContract: controlRoomOrchestration?.replyContract,
+              chatId: ctx.chatId,
+              sessionKey: effectiveSessionKey,
+              messageId: ctx.messageId,
+              userMessage: ctx.content,
+              apiReplyPayloads: larkApiReplyPayloads,
+            }),
+            finalReplyText: pipelineSendResult.queuedFinal ? pipelineReplyText : undefined,
+            dispatchQueuedFinal: pipelineSendResult.queuedFinal,
+            dispatchFinalCount: pipelineSendResult.counts.final,
           });
           return;
         }
@@ -5054,6 +5512,7 @@ export async function handleFeishuMessage(params: {
               sessionKey: effectiveSessionKey,
               messageId: ctx.messageId,
               userMessage: ctx.content,
+              apiReplyPayloads: larkApiReplyPayloads,
             }),
             sessionId: activeTimebox.sessionId,
             deadlineAt: activeTimebox.deadlineAt,
@@ -5090,6 +5549,7 @@ export async function handleFeishuMessage(params: {
               sessionKey: effectiveSessionKey,
               messageId: ctx.messageId,
               userMessage: ctx.content,
+              apiReplyPayloads: larkApiReplyPayloads,
             }),
             sessionId: persistedRunningTimebox.sessionId,
             deadlineAt: persistedRunningTimebox.deadlineAt,
@@ -5117,6 +5577,7 @@ export async function handleFeishuMessage(params: {
               sessionKey: effectiveSessionKey,
               messageId: ctx.messageId,
               userMessage: ctx.content,
+              apiReplyPayloads: larkApiReplyPayloads,
             }),
             sessionId: timeboxPreflight.sessionId,
             deadlineAt: timeboxPreflight.deadlineAt,
@@ -5176,6 +5637,7 @@ export async function handleFeishuMessage(params: {
             sessionKey: effectiveSessionKey,
             messageId: ctx.messageId,
             userMessage: ctx.content,
+            apiReplyPayloads: larkApiReplyPayloads,
           }),
           finalReplyText: surfaceLineCapture.getLastFinalReplyText(),
           dispatchQueuedFinal: councilSendResult.queuedFinal,
@@ -5211,6 +5673,7 @@ export async function handleFeishuMessage(params: {
           sessionKey: effectiveSessionKey,
           messageId: ctx.messageId,
           userMessage: ctx.content,
+          apiReplyPayloads: larkApiReplyPayloads,
         }),
         finalReplyText: surfaceLineCapture.getLastFinalReplyText(),
         dispatchQueuedFinal: queuedFinal,

@@ -6,6 +6,16 @@
       "title": "Exec",
       "detailKeys": ["command"]
     },
+    "aider": {
+      "emoji": "🪛",
+      "title": "Aider",
+      "detailKeys": ["model", "files", "readOnlyFiles", "dryRun"]
+    },
+    "mcp_context": {
+      "emoji": "🧩",
+      "title": "MCP Context",
+      "detailKeys": []
+    },
     "tool_call": {
       "emoji": "🧰",
       "title": "Tool Call",
@@ -81,6 +91,156 @@
       "emoji": "📓",
       "title": "Memory Get",
       "detailKeys": ["path", "from", "lines"]
+    },
+    "local_memory_record": {
+      "emoji": "📚",
+      "title": "Local Memory",
+      "detailKeys": ["subject", "memoryType", "status"]
+    },
+    "finance_framework_core_record": {
+      "emoji": "🧭",
+      "title": "Finance Framework Record",
+      "detailKeys": ["domain", "allowedActionAuthority"]
+    },
+    "finance_framework_core_inspect": {
+      "emoji": "🗂️",
+      "title": "Finance Framework Inspect",
+      "detailKeys": ["domain"]
+    },
+    "finance_article_source_registry_record": {
+      "emoji": "🗃️",
+      "title": "Article Source Record",
+      "detailKeys": ["sourceName", "sourceType"]
+    },
+    "finance_article_source_collection_preflight": {
+      "emoji": "🛡️",
+      "title": "Article Source Preflight",
+      "detailKeys": ["sourceName", "requestedCollectionMethod"]
+    },
+    "finance_article_source_registry_inspect": {
+      "emoji": "🔎",
+      "title": "Article Source Inspect",
+      "detailKeys": ["sourceType", "collectionMethod", "preflightStatus"]
+    },
+    "finance_external_source_adapter": {
+      "emoji": "🧷",
+      "title": "External Source Adapter",
+      "detailKeys": ["adapterName", "adapterType", "sourceFamily"]
+    },
+    "finance_learning_pipeline_orchestrator": {
+      "emoji": "🧠",
+      "title": "Learning Pipeline",
+      "detailKeys": ["sourceName", "adapterType", "sourceType"]
+    },
+    "finance_research_source_workbench": {
+      "emoji": "🗂️",
+      "title": "Research Source Workbench",
+      "detailKeys": ["sourceName", "sourceType", "title"]
+    },
+    "finance_learning_capability_attach": {
+      "emoji": "🧠",
+      "title": "Learning Capability Attach",
+      "detailKeys": ["articlePath", "sourceType"]
+    },
+    "finance_article_extract_capability_input": {
+      "emoji": "📰",
+      "title": "Article Capability Extract",
+      "detailKeys": ["articlePath", "sourceType", "collectionMethod"]
+    },
+    "finance_learning_capability_inspect": {
+      "emoji": "🔎",
+      "title": "Learning Capability Inspect",
+      "detailKeys": ["domain", "capabilityType", "sourceArticlePath"]
+    },
+    "finance_learning_capability_apply": {
+      "emoji": "🧭",
+      "title": "Learning Capability Apply",
+      "detailKeys": ["queryText", "maxCandidates"]
+    },
+    "finance_promotion_review": {
+      "emoji": "🗂️",
+      "title": "Finance Review",
+      "detailKeys": ["dateKey", "candidateKey", "action"]
+    },
+    "finance_promotion_candidates": {
+      "emoji": "📋",
+      "title": "Finance Candidates",
+      "detailKeys": ["dateKey"]
+    },
+    "finance_doctrine_teacher_feedback": {
+      "emoji": "🧑‍🏫",
+      "title": "Teacher Feedback",
+      "detailKeys": ["dateKey", "sourceArtifact"]
+    },
+    "finance_doctrine_teacher_feedback_review": {
+      "emoji": "🧭",
+      "title": "Teacher Review",
+      "detailKeys": ["dateKey", "feedbackId", "outcome"]
+    },
+    "finance_doctrine_teacher_feedback_elevation_handoff": {
+      "emoji": "🪜",
+      "title": "Teacher Handoff",
+      "detailKeys": ["dateKey", "feedbackId"]
+    },
+    "finance_doctrine_teacher_feedback_elevation_handoff_status": {
+      "emoji": "🏷️",
+      "title": "Teacher Handoff Status",
+      "detailKeys": ["dateKey", "handoffId", "status"]
+    },
+    "finance_doctrine_teacher_feedback_candidate_input": {
+      "emoji": "🧩",
+      "title": "Teacher Candidate Input",
+      "detailKeys": ["dateKey", "handoffId"]
+    },
+    "finance_doctrine_teacher_feedback_candidate_input_review": {
+      "emoji": "📥",
+      "title": "Teacher Input Review",
+      "detailKeys": ["dateKey", "candidateInputId", "outcome"]
+    },
+    "finance_doctrine_teacher_feedback_candidate_input_reconciliation": {
+      "emoji": "🪢",
+      "title": "Teacher Input Reconciliation",
+      "detailKeys": ["dateKey", "candidateInputId", "reconciliationMode"]
+    },
+    "finance_doctrine_teacher_feedback_candidate_input_reconciliation_status": {
+      "emoji": "🔗",
+      "title": "Teacher Reconciliation Status",
+      "detailKeys": ["dateKey", "reconciliationId", "status"]
+    },
+    "finance_promotion_bulk_review": {
+      "emoji": "🧾",
+      "title": "Finance Bulk Review",
+      "detailKeys": ["dateKey"]
+    },
+    "finance_promotion_decision": {
+      "emoji": "📌",
+      "title": "Promotion Decision",
+      "detailKeys": ["dateKey", "candidateKey", "decision"]
+    },
+    "finance_promotion_proposal_draft": {
+      "emoji": "📝",
+      "title": "Proposal Draft",
+      "detailKeys": ["dateKey", "candidateKey"]
+    },
+    "finance_promotion_proposal_status": {
+      "emoji": "📍",
+      "title": "Proposal Status",
+      "detailKeys": ["dateKey", "proposalId", "status"]
+    },
+    "finance_promotion_doctrine_edit_handoff": {
+      "emoji": "📨",
+      "title": "Doctrine Edit Handoff",
+      "detailKeys": ["dateKey", "proposalId"]
+    },
+    "feishu_live_probe": {
+      "emoji": "🧪",
+      "title": "Feishu Probe",
+      "detailKeys": ["surface", "chatId", "waitMs", "limit"]
+    },
+    "lobster_workface_app": {
+      "emoji": "🦞",
+      "title": "Workface App",
+      "detailKeys": ["dateKey", "destination", "present"]
     },
     "web_search": {
       "emoji": "🔎",

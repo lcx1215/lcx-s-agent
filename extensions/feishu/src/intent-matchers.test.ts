@@ -13,6 +13,7 @@ import {
   looksLikeExplicitResearchLineContinuationAsk,
   looksLikeFailureReportScopeAsk,
   looksLikeFinanceLearningMaintenanceAsk,
+  looksLikeFinanceLearningPipelineAsk,
   looksLikeHoldingsRevalidationAsk,
   looksLikeHighStakesRiskScopeAsk,
   looksLikeInstructionConflictScopeAsk,
@@ -78,6 +79,24 @@ describe("feishu intent matchers", () => {
       false,
     );
     expect(looksLikeFinanceLearningMaintenanceAsk("现在 ETF 还能拿吗")).toBe(false);
+  });
+
+  it("detects finance learning pipeline asks without catching status audits", () => {
+    const positiveCases = [
+      "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略",
+      "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
+      "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
+      "让它学习 credit liquidity regime 框架，留下 receipt 和 retrieval review",
+    ];
+
+    for (const phrase of positiveCases) {
+      expect(looksLikeFinanceLearningPipelineAsk(phrase), phrase).toBe(true);
+    }
+
+    expect(looksLikeFinanceLearningPipelineAsk("finance learning pipeline 是 dev 还是 live")).toBe(
+      false,
+    );
+    expect(looksLikeFinanceLearningPipelineAsk("QQQ 现在还能拿吗")).toBe(false);
   });
 
   it("detects learning-capability Lark command hardening asks", () => {
@@ -255,6 +274,9 @@ describe("feishu intent matchers", () => {
       "网上查全这个 agent memory 做法，覆盖范围和没搜到的都说清楚",
       "看 GitHub 和论文时标明 source coverage，不要假装 exhaustive",
       "如果搜索不可用，就别说已经学完所有外部材料",
+      "去学习世界顶级大学前沿金融论文",
+      "去读顶级高校公开课程和论文里的资产配置方法，说明只读了哪些材料",
+      "去看公开网页和文档里所有 ETF 风控资料，但标清楚覆盖范围",
       "study competitor docs, but label sample limits and unknowns",
       "do a web search survey and say whether it is full coverage or partial",
     ];

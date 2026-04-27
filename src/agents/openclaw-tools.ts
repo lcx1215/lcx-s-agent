@@ -5,16 +5,51 @@ import { resolveSessionAgentId } from "./agent-scope.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
+import { createAiderTool } from "./tools/aider-tool.js";
 import { createBrowserTool } from "./tools/browser-tool.js";
 import { createCanvasTool } from "./tools/canvas-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool } from "./tools/cron-tool.js";
 import { createFeishuLiveProbeTool } from "./tools/feishu-live-probe-tool.js";
+import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-article-extract-capability-input-tool.js";
+import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
+import { createFinanceArticleSourceRegistryInspectTool } from "./tools/finance-article-source-registry-inspect-tool.js";
+import { createFinanceArticleSourceRegistryRecordTool } from "./tools/finance-article-source-registry-record-tool.js";
+import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationStatusTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-status-tool.js";
+import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-tool.js";
+import { createFinanceDoctrineTeacherFeedbackCandidateInputReviewTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-review-tool.js";
+import { createFinanceDoctrineTeacherFeedbackCandidateInputTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-tool.js";
+import { createFinanceDoctrineTeacherFeedbackElevationHandoffStatusTool } from "./tools/finance-doctrine-teacher-feedback-elevation-handoff-status-tool.js";
+import { createFinanceDoctrineTeacherFeedbackElevationHandoffTool } from "./tools/finance-doctrine-teacher-feedback-elevation-handoff-tool.js";
+import { createFinanceDoctrineTeacherFeedbackReviewTool } from "./tools/finance-doctrine-teacher-feedback-review-tool.js";
+import { createFinanceDoctrineTeacherFeedbackTool } from "./tools/finance-doctrine-teacher-feedback-tool.js";
+import { createFinanceExternalSourceAdapterTool } from "./tools/finance-external-source-adapter-tool.js";
+import { createFinanceFrameworkCoreInspectTool } from "./tools/finance-framework-core-inspect-tool.js";
+import { createFinanceFrameworkCoreRecordTool } from "./tools/finance-framework-core-record-tool.js";
+import { createFinanceFrameworkDomainProducerTools } from "./tools/finance-framework-domain-producer-tools.js";
+import { createFinanceLearningCapabilityApplyTool } from "./tools/finance-learning-capability-apply-tool.js";
+import { createFinanceLearningCapabilityAttachTool } from "./tools/finance-learning-capability-attach-tool.js";
+import { createFinanceLearningCapabilityInspectTool } from "./tools/finance-learning-capability-inspect-tool.js";
+import { createFinanceLearningPipelineOrchestratorTool } from "./tools/finance-learning-pipeline-orchestrator-tool.js";
+import { createFinanceLearningRetrievalReviewTool } from "./tools/finance-learning-retrieval-review-tool.js";
+import { createFinancePromotionBulkReviewTool } from "./tools/finance-promotion-bulk-review-tool.js";
+import { createFinancePromotionCandidatesTool } from "./tools/finance-promotion-candidates-tool.js";
+import { createFinancePromotionDecisionTool } from "./tools/finance-promotion-decision-tool.js";
+import { createFinancePromotionDoctrineEditHandoffTool } from "./tools/finance-promotion-doctrine-edit-handoff-tool.js";
+import { createFinancePromotionProposalDraftTool } from "./tools/finance-promotion-proposal-draft-tool.js";
+import { createFinancePromotionProposalStatusTool } from "./tools/finance-promotion-proposal-status-tool.js";
+import { createFinancePromotionReviewTool } from "./tools/finance-promotion-review-tool.js";
+import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
+import { createLarkLanguageCorpusReviewTool } from "./tools/lark-language-corpus-review-tool.js";
+import { createLobsterWorkfaceAppTool } from "./tools/lobster-workface-app-tool.js";
+import { createLocalMemoryRecordTool } from "./tools/local-memory-record-tool.js";
+import { createMcpContextTool } from "./tools/mcp-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
+import { createQuantMathTool } from "./tools/quant-math-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
 import { createSessionsHistoryTool } from "./tools/sessions-history-tool.js";
 import { createSessionsListTool } from "./tools/sessions-list-tool.js";
@@ -150,9 +185,116 @@ export function createOpenClawTools(options?: {
       agentSessionKey: options?.agentSessionKey,
       config: options?.config,
     }),
+    createQuantMathTool(),
+    createLocalMemoryRecordTool({
+      workspaceDir,
+    }),
+    createFinanceFrameworkCoreRecordTool({
+      workspaceDir,
+    }),
+    createFinanceFrameworkCoreInspectTool({
+      workspaceDir,
+    }),
+    createFinanceArticleSourceRegistryRecordTool({
+      workspaceDir,
+    }),
+    createFinanceArticleSourceCollectionPreflightTool({
+      workspaceDir,
+    }),
+    createFinanceArticleSourceRegistryInspectTool({
+      workspaceDir,
+    }),
+    createFinanceExternalSourceAdapterTool({
+      workspaceDir,
+    }),
+    createFinanceLearningPipelineOrchestratorTool({
+      workspaceDir,
+    }),
+    createFinanceLearningRetrievalReviewTool({
+      workspaceDir,
+    }),
+    createFinanceResearchSourceWorkbenchTool({
+      workspaceDir,
+    }),
+    createFinanceArticleExtractCapabilityInputTool({
+      workspaceDir,
+    }),
+    createFinanceLearningCapabilityAttachTool({
+      workspaceDir,
+    }),
+    createFinanceLearningCapabilityInspectTool({
+      workspaceDir,
+    }),
+    createFinanceLearningCapabilityApplyTool({
+      workspaceDir,
+    }),
+    ...createFinanceFrameworkDomainProducerTools({
+      workspaceDir,
+    }),
+    createFinancePromotionCandidatesTool({
+      workspaceDir,
+    }),
+    createFinanceDoctrineTeacherFeedbackTool({
+      workspaceDir,
+      config: options?.config,
+      agentSessionKey: options?.agentSessionKey,
+      requesterAgentIdOverride: options?.requesterAgentIdOverride,
+    }),
+    createFinanceDoctrineTeacherFeedbackReviewTool({
+      workspaceDir,
+    }),
+    createFinanceDoctrineTeacherFeedbackElevationHandoffTool({
+      workspaceDir,
+    }),
+    createFinanceDoctrineTeacherFeedbackElevationHandoffStatusTool({
+      workspaceDir,
+    }),
+    createFinanceDoctrineTeacherFeedbackCandidateInputTool({
+      workspaceDir,
+    }),
+    createFinanceDoctrineTeacherFeedbackCandidateInputReviewTool({
+      workspaceDir,
+    }),
+    createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationTool({
+      workspaceDir,
+    }),
+    createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationStatusTool({
+      workspaceDir,
+    }),
+    createFinancePromotionBulkReviewTool({
+      workspaceDir,
+    }),
+    createFinancePromotionDecisionTool({
+      workspaceDir,
+    }),
+    createFinancePromotionProposalDraftTool({
+      workspaceDir,
+    }),
+    createFinancePromotionProposalStatusTool({
+      workspaceDir,
+    }),
+    createFinancePromotionDoctrineEditHandoffTool({
+      workspaceDir,
+    }),
+    createFinancePromotionReviewTool({
+      workspaceDir,
+    }),
     createFeishuLiveProbeTool({
       workspaceDir,
       config: options?.config,
+    }),
+    createLarkLanguageCorpusReviewTool({
+      workspaceDir,
+    }),
+    createLobsterWorkfaceAppTool({
+      workspaceDir,
+    }),
+    createMcpContextTool({
+      config: options?.config,
+      workspaceDir,
+    }),
+    createAiderTool({
+      workspaceDir,
     }),
     createAgentsListTool({
       agentSessionKey: options?.agentSessionKey,

@@ -1200,6 +1200,32 @@ describe("resolveFeishuControlRoomOrchestration", () => {
     });
   });
 
+  it("keeps concrete finance learning pipeline asks on the learning-only aggregate path", () => {
+    const routing = resolveFeishuSurfaceRouting({
+      cfg: {
+        surfaces: {
+          control_room: { chatId: "oc-control" },
+          learning_command: { chatId: "oc-learning" },
+        },
+      } as FeishuConfig,
+      chatId: "oc-control",
+      content: "学习一套很好的量化因子择时策略，最后要有 retrieval receipt 和 review",
+    });
+    const plan = resolveFeishuControlRoomOrchestration({
+      currentSurface: routing.currentSurface,
+      targetSurface: routing.targetSurface,
+      content: "学习一套很好的量化因子择时策略，最后要有 retrieval receipt 和 review",
+    });
+
+    expect(routing.targetSurface).toBe("learning_command");
+    expect(plan).toEqual({
+      mode: "aggregate",
+      specialistSurfaces: ["learning_command"],
+      publishMode: "classified_publish",
+      replyContract: "default",
+    });
+  });
+
   it("keeps prior finance-learning maintenance asks on the learning-only aggregate path", () => {
     const plan = resolveFeishuControlRoomOrchestration({
       currentSurface: "control_room",

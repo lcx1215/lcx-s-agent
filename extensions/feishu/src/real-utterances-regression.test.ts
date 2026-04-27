@@ -9,6 +9,7 @@ import {
   looksLikeExecutionAuthorityScopeAsk,
   looksLikeFailureReportScopeAsk,
   looksLikeFinanceLearningMaintenanceAsk,
+  looksLikeFinanceLearningPipelineAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikeProgressStatusScopeAsk,
   looksLikeResultShapeScopeAsk,
@@ -16,8 +17,11 @@ import {
   looksLikeStrategicLearningAsk,
 } from "./intent-matchers.js";
 import {
+  LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH,
   LARK_ROUTING_CORPUS,
   LARK_ROUTING_FAMILY_CONTRACTS,
+  LARK_ROUTING_GUARD_MATCHERS,
+  resolveLarkDeterministicCorpusCase,
   resolveLarkAgentInstructionHandoff,
   resolveLarkHybridRouteCandidate,
   resolveLarkSemanticRouteCandidate,
@@ -25,7 +29,11 @@ import {
   scoreLarkRoutingCorpusAsync,
   type LarkRoutingFamily,
 } from "./lark-routing-corpus.js";
-import { resolveFeishuControlRoomOrchestration, resolveFeishuSurfaceRouting } from "./surfaces.js";
+import {
+  looksLikeLarkWorkRoleManagementAsk,
+  resolveFeishuControlRoomOrchestration,
+  resolveFeishuSurfaceRouting,
+} from "./surfaces.js";
 import type { FeishuConfig } from "./types.js";
 
 const cfg = {
@@ -509,6 +517,13 @@ const CRITICAL_SINGLE_SPECIALIST_CASES = [
   },
 ] as const;
 
+const LARK_WORK_ROLE_MANAGEMENT_CASES = [
+  "新增一个机器人小陈，负责看宏观和利率",
+  "把小李这个角色删掉，先不要展示它",
+  "列出现在 Lark 里有哪些分工角色",
+  "机器人还能新增或者减少，只要我一声命令",
+] as const;
+
 const LARK_TRUTH_SURFACE_UTTERANCES = [
   { phrase: "你别跟我讲感觉，就说这次到底落盘没有", kind: "write_outcome" },
   { phrase: "刚才那次写入是真持久化了，还是只在当前会话里懂了", kind: "write_outcome" },
@@ -792,6 +807,35 @@ describe("real daily utterance regression", () => {
     expect(handoff.notice).toContain("not execution approval");
   });
 
+  it("hands concrete finance learning asks to the finance pipeline backend contract", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance: "学习一套很好的量化因子择时策略，最后要有 retrieval receipt 和 review",
+      apiProvider: async () => ({
+        family: "market_capability_learning_intake",
+        confidence: 0.91,
+        rationale: "API router understood this as finance learning pipeline intake",
+      }),
+    });
+
+    expect(
+      looksLikeFinanceLearningPipelineAsk(handoff.backendToolContract?.learningIntent ?? ""),
+    ).toBe(true);
+    expect(handoff).toMatchObject({
+      family: "market_capability_learning_intake",
+      source: "api",
+      targetSurface: "learning_command",
+      backendToolContract: {
+        toolName: "finance_learning_pipeline_orchestrator",
+        sourceRequirement: "safe_local_or_manual_source_required",
+      },
+    });
+    expect(handoff.notice).toContain("Backend tool contract");
+    expect(handoff.notice).toContain("finance_learning_pipeline_orchestrator");
+    expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
+  });
+
   it("sanitizes low-confidence API candidates and keeps deterministic routing authoritative", async () => {
     const entry = LARK_ROUTING_CORPUS.find((candidate) => candidate.id === "technical-001");
     expect(entry).toBeDefined();
@@ -847,6 +891,51 @@ describe("real daily utterance regression", () => {
         label,
       ).toBe(true);
       expect(looksLikeSourceCoverageScopeAsk(phrase), label).toBe(expectsSourceCoverageGuard);
+    }
+  });
+
+  it("language-classifies broad external-source utterances without becoming brain learning artifacts", () => {
+    for (const entry of LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH) {
+      const deterministic = resolveLarkDeterministicCorpusCase({ cfg, entry });
+      const semantic = resolveLarkSemanticRouteCandidate(entry.utterance);
+
+      expect(deterministic.passed, entry.id).toBe(true);
+      expect(deterministic.targetSurface, entry.id).toBe("learning_command");
+      expect(semantic.family, entry.id).toBe(entry.family);
+      expect(LARK_ROUTING_GUARD_MATCHERS.sourceCoverage(entry.utterance), entry.id).toBe(true);
+      expect(LARK_ROUTING_GUARD_MATCHERS.tradingLanguage(entry.utterance), entry.id).toBe(false);
+    }
+  });
+
+  it("keeps external-source language corpus separate from finance learning memory artifacts", () => {
+    for (const entry of LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH) {
+      expect(entry.id, entry.utterance).toMatch(/^external-language-batch-/u);
+      expect(entry.notes ?? "", entry.id).not.toMatch(
+        /capability card|finance_learning|finance-learning|artifact write|memory\/local-memory/u,
+      );
+    }
+  });
+
+  it("keeps visible Lark robot add/remove commands on the control-room role registry path", () => {
+    for (const phrase of LARK_WORK_ROLE_MANAGEMENT_CASES) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg,
+        chatId: "oc-control",
+        content: phrase,
+      });
+      const plan = resolveFeishuControlRoomOrchestration({
+        currentSurface: routing.currentSurface,
+        targetSurface: routing.targetSurface,
+        content: phrase,
+      });
+
+      expect(looksLikeLarkWorkRoleManagementAsk(phrase), phrase).toBe(true);
+      expect(routing.targetSurface, phrase).toBe("control_room");
+      expect(plan, phrase).toMatchObject({
+        mode: "aggregate",
+        specialistSurfaces: ["ops_audit"],
+        publishMode: "summary_only",
+      });
     }
   });
 

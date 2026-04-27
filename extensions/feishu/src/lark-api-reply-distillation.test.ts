@@ -34,7 +34,24 @@ describe("normalizeLarkApiReplyForDistillation", () => {
     });
   });
 
-  it("redacts token-like replies from semantic memory", () => {
+  it("keeps routing samples separate from finance learning artifacts", () => {
+    const sample = normalizeLarkApiReplyForDistillation(
+      "把这句话路由到 external_source_coverage_honesty，先进入待审语义家族样本。",
+    );
+
+    expect(sample).toMatchObject({
+      outputKind: "mixed_text",
+      disposition: "candidate_semantic_family",
+    });
+    expect(sample).not.toHaveProperty("capabilityName");
+    expect(sample).not.toHaveProperty("articlePath");
+    expect(sample).not.toHaveProperty("sourceArticlePath");
+    expect(JSON.stringify(sample)).not.toMatch(
+      /finance_learning|finance-learning|memory\/local-memory|capability card/u,
+    );
+  });
+
+  it("redacts token-like replies from routing corpus candidates", () => {
     const sample = normalizeLarkApiReplyForDistillation(
       "Authorization: Bearer sk-ant-api03-thisshouldnotbelearned",
     );
@@ -44,7 +61,7 @@ describe("normalizeLarkApiReplyForDistillation", () => {
       disposition: "discard_secret",
     });
     expect(sample.distillableText).toBeUndefined();
-    expect(sample.discardReason).toContain("must not enter semantic memory");
+    expect(sample.discardReason).toContain("must not enter routing corpus candidates");
   });
 
   it("records binary payloads only by length and hash", () => {

@@ -11,7 +11,7 @@ export type LarkApiReplyOutputKind =
   | "empty"
   | "unknown";
 
-export type LarkApiReplyLearningDisposition =
+export type LarkApiReplyRoutingDisposition =
   | "candidate_semantic_family"
   | "review_required"
   | "discard_secret"
@@ -20,7 +20,7 @@ export type LarkApiReplyLearningDisposition =
 
 export type LarkApiReplyDistillationSample = {
   outputKind: LarkApiReplyOutputKind;
-  disposition: LarkApiReplyLearningDisposition;
+  disposition: LarkApiReplyRoutingDisposition;
   byteLength: number;
   contentHash: string;
   distillableText?: string;
@@ -99,7 +99,7 @@ function classifyText(value: string): LarkApiReplyOutputKind {
   return "unknown";
 }
 
-function dispositionForKind(kind: LarkApiReplyOutputKind): LarkApiReplyLearningDisposition {
+function dispositionForKind(kind: LarkApiReplyOutputKind): LarkApiReplyRoutingDisposition {
   if (kind === "empty") {
     return "discard_empty";
   }
@@ -120,7 +120,7 @@ function discardReasonForKind(kind: LarkApiReplyOutputKind): string | undefined 
     return "empty API reply cannot teach routing semantics";
   }
   if (kind === "token_like") {
-    return "token-like or secret-like output must not enter semantic memory";
+    return "token-like or secret-like output must not enter routing corpus candidates";
   }
   if (kind === "binary") {
     return "binary payload is recorded only by hash and length";

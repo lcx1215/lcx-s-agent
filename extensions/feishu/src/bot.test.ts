@@ -30,6 +30,7 @@ import {
   resolveBroadcastAgents,
   toMessageResourceType,
 } from "./bot.js";
+import { LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH } from "./lark-routing-corpus.js";
 import { setFeishuRuntime } from "./runtime.js";
 import { resolveFeishuControlRoomOrchestration, resolveFeishuSurfaceRouting } from "./surfaces.js";
 
@@ -155,6 +156,34 @@ async function dispatchMessage(params: { cfg: ClawdbotConfig; event: FeishuMessa
     event: params.event,
     runtime: createRuntimeEnv(),
   });
+}
+
+function buildFeishuFinanceLearningSourceArticle() {
+  return [
+    "# ETF factor timing workflow",
+    "",
+    "Source: Lark Manual Source",
+    "Publish Date: 2026-04-27",
+    "Extraction Summary: This article describes a bounded ETF factor timing workflow with explicit evidence categories, mechanism claims, and failure-mode discipline for later manual review.",
+    "Capability Name: ETF factor timing workflow",
+    "Capability Type: analysis_method",
+    "Related Finance Domains: etf_regime, portfolio_risk_gates",
+    "Capability Tags: factor_research, tactical_timing, risk_gate_design",
+    "Method Summary: Combine ETF regime context, factor breadth, and risk-control gates into a low-frequency timing checklist instead of a direct trading signal.",
+    "Required Data Sources: ETF issuer data, factor breadth data, macro rate context",
+    "Causal Claim: Factor breadth and macro regime context can improve which ETF timing questions deserve follow-up, without proving a standalone forecasting edge.",
+    "Evidence Categories: equity_market_evidence, etf_regime_evidence, backtest_or_empirical_evidence, macro_rates_evidence, portfolio_risk_evidence, implementation_evidence",
+    "Evidence Summary: ETF regime observations, factor breadth context, macro rate evidence, and portfolio risk gates support bounded timing research while requiring manual confirmation.",
+    "Evidence Level: case_study",
+    "Implementation Requirements: Maintain a low-frequency checklist, source notes, and explicit invalidation gates before any portfolio discussion.",
+    "Risk and Failure Modes: Factor timing can overfit, macro context can reverse, noisy breadth signals can encourage premature action, and whipsaw or drawdown risk can make a timing rule harmful even when the research narrative sounds plausible.",
+    "Overfitting or Spurious Risk: A small backtest sample can make timing rules look more stable than they are out of sample, and confounders such as rates, sector concentration, liquidity, and volatility regimes can explain the apparent factor edge.",
+    "Compliance or Collection Notes: Use public or operator-provided local research material only.",
+    "Suggested Attachment Point: research_capability:tactical_timing",
+    "Allowed Action Authority: research_only",
+    "",
+    "This is a research-only method note for capability extraction and does not authorize trading.",
+  ].join("\n");
 }
 
 async function createFeishuLearningStatusWorkspace(params?: {
@@ -323,9 +352,12 @@ describe("buildFeishuAgentBody", () => {
       },
     });
 
-    expect(body).toContain(
-      "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Speak human-first: what this method is actually useful for, what is dangerous, and whether it changes daily Lobster usage now. Do not rewrite it into a fundamental intake.]",
-    );
+    expect(body).toContain("[System: Treat this as method or paper research.");
+    expect(body).toContain("Focus on leakage, overfitting, replication risk, and method quality");
+    expect(body).toContain("papers actually searched or read");
+    expect(body).toContain("source coverage limits");
+    expect(body).toContain("whether it changes daily Lobster usage now");
+    expect(body).toContain("Do not rewrite it into a fundamental intake.");
     expect(body).toContain(
       "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
     );
@@ -341,10 +373,35 @@ describe("buildFeishuAgentBody", () => {
       },
     });
 
+    expect(body).toContain("[System: Treat this as learning or open-source study work.");
+    expect(body).toContain("Start from the active Lobster brain, not from a blank slate");
+    expect(body).toContain("raw learning objective as the learningIntent");
+    expect(body).toContain("retrieved before new retention and again after attachment");
+    expect(body).toContain("Keep language-interface routing samples separate");
     expect(body).toContain(
-      "[System: Treat this as learning or open-source study work. Start from the active Lobster brain, not from a blank slate: when present, anchor first on memory/current-research-line.md and MEMORY.md, then the latest learning carryover cue and any relevant local durable memory cards before deciding what is worth learning now. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. If the topic is Chinese/English understanding, prioritize terminology mapping, ambiguity reduction, workflow-trigger understanding, and plain-language reporting rather than generic language tutoring. If the user says 日频技术 or 日频策略 without extra qualifiers, interpret it as finance or quant methods for daily-frequency research by default, not Japanese-language technology or generic HFT hype. For external-source learning requests such as Google, web, GitHub, papers, blogs, docs, competitors, or peer projects, keep a fixed learning receipt: sources actually searched or read, source coverage limits, retained rules that can change future work, discarded noise or stale ideas, replay trigger for when to reuse the lesson, next eval for how to verify the lesson later, and the next reusable behavior change. Explain the result in plain language first: what was learned, what is still weak, and what changes for Lobster now. Keep the distillation useful for both Lobster's general meta-capability and the full finance research pipeline. If source coverage or search breadth is weak in this turn, say so explicitly instead of pretending the learning set was broad. Do not rewrite it into a fundamental intake or reset alias.]",
+      "only source intake, extraction, attachment, and inspect-ready finance pipeline outputs can become capability cards",
+    );
+    expect(body).toContain(
+      "Keep the distillation useful for both Lobster's general meta-capability",
     );
     expect(body).toContain("今天你去学学开源的新技术，顺手总结一下关键原理和坑");
+  });
+
+  it("adds a finance learning pipeline notice for concrete finance capability learning prompts", () => {
+    const body = buildFeishuAgentBody({
+      ctx: {
+        content: "学习一套很好的量化因子择时策略，最后要有 retrieval receipt 和 review",
+        senderName: "Sender Name",
+        senderOpenId: "ou-sender",
+        messageId: "msg-finance-learning-pipeline",
+      },
+    });
+
+    expect(body).toContain("Treat this as a finance learning pipeline request");
+    expect(body).toContain("Preserve the raw user wording as learningIntent");
+    expect(body).toContain("finance_learning_pipeline_orchestrator");
+    expect(body).toContain("retrievalReceiptPath and retrievalReviewPath");
+    expect(body).toContain("Keep Lark routing corpus samples separate");
   });
 
   it("adds a learning intent notice for GitHub/open-source internalization prompts", () => {
@@ -1251,6 +1308,42 @@ describe("buildFeishuAgentBody", () => {
     expect(body).toContain("unavailable search/tool limits");
     expect(body).toContain("partial-source inferences");
   });
+
+  it.each(
+    LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH.map((entry) => {
+      const isPaperResearch = /论文|paper|arxiv|前沿|frontier/u.test(entry.utterance);
+      return {
+        content: entry.utterance,
+        expectedResearchNotice: isPaperResearch
+          ? "[System: Treat this as method or paper research."
+          : "[System: Treat this as learning or open-source study work.",
+        expectedReceiptField: isPaperResearch
+          ? "papers actually searched or read"
+          : "sources actually searched or read",
+      };
+    }),
+  )(
+    "adds source-coverage guard for broad external source learning family: $content",
+    ({ content, expectedResearchNotice, expectedReceiptField }) => {
+      const body = buildFeishuAgentBody({
+        ctx: {
+          content,
+          senderName: "Sender Name",
+          senderOpenId: "ou-sender",
+          messageId: "msg-source-coverage-external-learning-family-42",
+        },
+      });
+
+      expect(body).toContain("[System: Source-coverage guard detected.");
+      expect(body).toContain("source count/type when known");
+      expect(body).toContain("partial-source inferences");
+      expect(body).toContain(expectedResearchNotice);
+      expect(body).toContain(expectedReceiptField);
+      expect(body).toContain("source coverage limits");
+      expect(body).toContain("next reusable behavior change");
+      expect(body).toContain(content);
+    },
+  );
 
   it("adds durable-memory guard for recall persistence boundaries", () => {
     const body = buildFeishuAgentBody({
@@ -2498,6 +2591,191 @@ confidence: high
           "dispatch_final_count=0",
         ]),
       }),
+    );
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("captures real Lark turns into a pending language-routing corpus artifact", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+
+    const mockDispatchReplyFromConfig = vi.fn(
+      async ({
+        dispatcher,
+      }: {
+        dispatcher: {
+          sendFinalReply: (payload: { text?: string }) => boolean;
+        };
+      }) => {
+        dispatcher.sendFinalReply({
+          text: "去学习世界顶级大学前沿金融论文",
+        });
+        return { queuedFinal: true, counts: { final: 1 } };
+      },
+    );
+    const mockWithReplyDispatcher = vi.fn(
+      async ({
+        dispatcher,
+        run,
+        onSettled,
+      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+        try {
+          return await run();
+        } finally {
+          dispatcher.markComplete();
+          try {
+            await dispatcher.waitForIdle();
+          } finally {
+            await onSettled?.();
+          }
+        }
+      },
+    );
+
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher:
+              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-language-capture-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            control_room: { chatId: "oc-control-room" },
+            technical_daily: { chatId: "oc-tech" },
+            fundamental_research: { chatId: "oc-fund" },
+            knowledge_maintenance: { chatId: "oc-knowledge" },
+            ops_audit: { chatId: "oc-ops" },
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-language-capture",
+          chat_id: "oc-control-room",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "把这个真实回复沉淀成待审语言样本" }),
+        },
+      },
+    });
+
+    const candidateRoot = path.join(tempDir, "memory", "lark-language-routing-candidates");
+    const [dateDir] = await fs.readdir(candidateRoot);
+    const artifactText = await fs.readFile(
+      path.join(candidateRoot, dateDir, "msg-language-capture.json"),
+      "utf-8",
+    );
+    const artifact = JSON.parse(artifactText) as {
+      boundary: string;
+      noFinanceLearningArtifact: boolean;
+      candidates: Array<{ source: string; boundary: string }>;
+      evaluation: {
+        counts: { total: number; accepted: number };
+        acceptedCases: Array<{ family: string; expectedSurface: string }>;
+      };
+    };
+
+    expect(artifact).toMatchObject({
+      boundary: "language_routing_only",
+      noFinanceLearningArtifact: true,
+      candidates: expect.arrayContaining([
+        expect.objectContaining({
+          source: "api_reply",
+          boundary: "language_routing_only",
+        }),
+        expect.objectContaining({
+          source: "lark_user_utterance",
+          boundary: "language_routing_only",
+        }),
+        expect.objectContaining({
+          source: "lark_visible_reply",
+          boundary: "language_routing_only",
+        }),
+      ]),
+      evaluation: expect.objectContaining({
+        counts: expect.objectContaining({ total: 3, accepted: 1 }),
+        acceptedCases: [
+          expect.objectContaining({
+            family: "external_source_coverage_honesty",
+            expectedSurface: "learning_command",
+          }),
+        ],
+      }),
+    });
+    expect(artifactText).not.toMatch(
+      /finance_learning|finance-learning|memory\/local-memory|capability card/u,
+    );
+
+    await expect(
+      fs.access(path.join(tempDir, "memory", "local-memory", "msg-language-capture.json")),
+    ).rejects.toThrow();
+
+    const reviewText = await fs.readFile(
+      path.join(tempDir, "memory", "lark-language-routing-reviews", `${dateDir}.json`),
+      "utf-8",
+    );
+    const review = JSON.parse(reviewText) as {
+      boundary: string;
+      counts: { sourceArtifacts: number; acceptedCases: number; promotedCases: number };
+      corpusPatch: string;
+    };
+    expect(review).toMatchObject({
+      boundary: "language_routing_only",
+      counts: expect.objectContaining({
+        sourceArtifacts: 1,
+        acceptedCases: 1,
+      }),
+    });
+    expect(review.corpusPatch).toContain("language-routing");
+    expect(reviewText).not.toMatch(
+      /finance_learning|finance-learning|memory\/local-memory|capability card/u,
     );
 
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -6187,6 +6465,243 @@ describe("learning council routing", () => {
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: "Learning council run: full three-model execution completed.\n\n## Kimi synthesis\n- one point",
     });
+  });
+
+  it("runs the finance learning pipeline directly for concrete market capability learning with a local source", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "market_capability_learning_intake",
+      confidence: 0.92,
+      rationale: "market capability learning intake",
+    }));
+
+    const mockDispatchReplyFromConfig = vi.fn();
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-finance-pipeline-"));
+    await fs.mkdir(path.join(tempDir, "memory", "articles"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, "memory", "articles", "factor-timing.md"),
+      buildFeishuFinanceLearningSourceArticle(),
+      "utf-8",
+    );
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-user" } },
+      message: {
+        message_id: "msg-finance-pipeline-live",
+        chat_id: "oc-learning",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({
+          text: "学习一套很好的量化因子择时策略，source memory/articles/factor-timing.md，最后要有 retrieval receipt 和 review",
+        }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("金融能力学习流水线已完成 dev 验收"),
+    });
+    const replyText = (baseDispatcher.sendFinalReply.mock.calls[0]?.[0] as { text: string }).text;
+    expect(replyText).toContain("receipt: memory/finance-learning-retrieval-receipts/");
+    expect(replyText).toContain("review: memory/finance-learning-retrieval-reviews/");
+    expect(replyText).toContain("weak learning receipts: 0");
+    expect(replyText).toContain("apply mode: reuse_guidance_bounded_research_answer");
+    expect(replyText).toContain("applied candidates: 1");
+    expect(replyText).toContain(
+      "apply boundary: This application is research-only and does not approve trades",
+    );
+    await expect(
+      fs.readdir(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
+    ).resolves.toHaveLength(1);
+    const reviewFiles = await fs.readdir(
+      path.join(tempDir, "memory", "finance-learning-retrieval-reviews"),
+    );
+    expect(reviewFiles).toHaveLength(1);
+    const reviewText = await fs.readFile(
+      path.join(tempDir, "memory", "finance-learning-retrieval-reviews", reviewFiles[0]),
+      "utf-8",
+    );
+    expect(reviewText).toContain('"boundary": "finance_learning_retrieval_review"');
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("does not run the finance learning pipeline when concrete market capability learning lacks a safe source", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "market_capability_learning_intake",
+      confidence: 0.9,
+      rationale: "market capability learning intake",
+    }));
+
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            dispatchReplyFromConfig: vi.fn(),
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-finance-no-source-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-finance-pipeline-missing-source",
+          chat_id: "oc-learning",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "学习一套很好的量化因子择时策略，最后要有 retrieval receipt 和 review",
+          }),
+        },
+      },
+    });
+
+    expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("还缺安全 source"),
+    });
+    const replyText = (baseDispatcher.sendFinalReply.mock.calls[0]?.[0] as { text: string }).text;
+    expect(replyText).toContain("未产生: retrievalReceiptPath / retrievalReviewPath");
+    await expect(
+      fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
+    ).rejects.toThrow();
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
   it("routes bounded same-day market-intelligence packet asks through the market packet runner instead of the learning council/timebox path", async () => {
