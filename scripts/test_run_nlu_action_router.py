@@ -110,6 +110,26 @@ def main() -> int:
     assert learn_routed["executed"][0]["action"] == "queue_topic", learn_routed
     assert learn_routed["executed"][1]["action"] == "learn_topic", learn_routed
     assert learn_routed["executed"][1]["result"]["code"] == 0, learn_routed
+    assert learn_routed["feedback"]["status"] == "success", learn_routed
+    assert learn_routed["feedback"]["understood"][0]["topic"] == "前沿金融论文", learn_routed
+    assert learn_routed["feedback"]["queued"][0]["topic"] == "前沿金融论文", learn_routed
+    assert learn_routed["feedback"]["artifacts"][0]["report_path"], learn_routed
+    assert learn_routed["feedback"]["artifacts"][0]["sources_path"], learn_routed
+    assert learn_routed["feedback"]["learning_quality"]["status"] == "usable", learn_routed
+    assert "已识别：前沿金融论文。" in learn_routed["reply"], learn_routed["reply"]
+    assert "已入队：" in learn_routed["reply"], learn_routed["reply"]
+    assert "已执行：" in learn_routed["reply"], learn_routed["reply"]
+    assert "产物：" in learn_routed["reply"], learn_routed["reply"]
+    assert "质量：usable" in learn_routed["reply"], learn_routed["reply"]
+    assert "Lark回传：" in learn_routed["reply"], learn_routed["reply"]
+
+    queued_text = "顺便学习宏观利率框架"
+    queued_routed = run_py("run_nlu_action_router.py", queued_text)
+    assert queued_routed["mode"] == "executed", queued_routed
+    assert queued_routed["feedback"]["status"] == "success", queued_routed
+    assert queued_routed["feedback"]["queued"][0]["topic"] == "宏观与市场结构", queued_routed
+    assert queued_routed["feedback"]["completed"][0]["status"] == "queued_only", queued_routed
+    assert "未立即执行" in queued_routed["reply"], queued_routed["reply"]
 
     print("OK run_nlu_action_router brain bootstrap + control room summary + learning task")
     return 0
