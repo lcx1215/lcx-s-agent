@@ -70,6 +70,16 @@ const GENERIC_FILLER_PATTERNS = [
   /^interesting article\b/iu,
 ] as const;
 
+const GENERIC_CAPABILITY_PATTERNS = [
+  /^use (a )?(simple )?checklist\b/iu,
+  /^basic (method|framework|approach)\b/iu,
+  /^general (method|framework|approach|risk)\b/iu,
+  /^market data$/iu,
+  /^can fail$/iu,
+  /^needs review$/iu,
+  /^do research$/iu,
+] as const;
+
 const ILLEGAL_COLLECTION_PATTERNS = [
   /paywall bypass/iu,
   /credential bypass/iu,
@@ -177,6 +187,29 @@ function ensureNonGenericSummary(summary: string) {
     throw new ToolInputError(
       "extractionSummary must contain non-generic finance learning content, not filler",
     );
+  }
+}
+
+function ensureSpecificCapabilityText(params: { value: string; label: string; minLength: number }) {
+  const normalized = params.value.trim();
+  if (
+    normalized.length < params.minLength ||
+    GENERIC_CAPABILITY_PATTERNS.some((pattern) => pattern.test(normalized))
+  ) {
+    throw new ToolInputError(`${params.label} must be specific enough for later reuse`);
+  }
+}
+
+function ensureSpecificRequiredDataSources(values: string[], label: string) {
+  if (values.length < 2) {
+    throw new ToolInputError(`${label} must include at least two concrete data sources`);
+  }
+  for (const value of values) {
+    ensureSpecificCapabilityText({
+      value,
+      label,
+      minLength: 8,
+    });
   }
 }
 
@@ -296,6 +329,11 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       "methodSummary",
       `capabilityCandidates[${index}].methodSummary`,
     );
+    ensureSpecificCapabilityText({
+      value: methodSummary,
+      label: `capabilityCandidates[${index}].methodSummary`,
+      minLength: 40,
+    });
     const evidenceCategories = normalizeRequiredStringList(
       params,
       "evidenceCategories",
@@ -315,11 +353,20 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       "requiredDataSources",
       `capabilityCandidates[${index}].requiredDataSources`,
     );
+    ensureSpecificRequiredDataSources(
+      requiredDataSources,
+      `capabilityCandidates[${index}].requiredDataSources`,
+    );
     const causalOrMechanisticClaim = normalizeRequiredText(
       params,
       "causalOrMechanisticClaim",
       `capabilityCandidates[${index}].causalOrMechanisticClaim`,
     );
+    ensureSpecificCapabilityText({
+      value: causalOrMechanisticClaim,
+      label: `capabilityCandidates[${index}].causalOrMechanisticClaim`,
+      minLength: 55,
+    });
     const evidenceLevel = normalizeRequiredText(
       params,
       "evidenceLevel",
@@ -335,16 +382,31 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       "implementationRequirements",
       `capabilityCandidates[${index}].implementationRequirements`,
     );
+    ensureSpecificCapabilityText({
+      value: implementationRequirements,
+      label: `capabilityCandidates[${index}].implementationRequirements`,
+      minLength: 30,
+    });
     const riskAndFailureModes = normalizeRequiredText(
       params,
       "riskAndFailureModes",
       `capabilityCandidates[${index}].riskAndFailureModes`,
     );
+    ensureSpecificCapabilityText({
+      value: riskAndFailureModes,
+      label: `capabilityCandidates[${index}].riskAndFailureModes`,
+      minLength: 45,
+    });
     const overfittingOrSpuriousRisk = normalizeRequiredText(
       params,
       "overfittingOrSpuriousRisk",
       `capabilityCandidates[${index}].overfittingOrSpuriousRisk`,
     );
+    ensureSpecificCapabilityText({
+      value: overfittingOrSpuriousRisk,
+      label: `capabilityCandidates[${index}].overfittingOrSpuriousRisk`,
+      minLength: 45,
+    });
     const complianceOrCollectionNotes = normalizeRequiredText(
       params,
       "complianceOrCollectionNotes",

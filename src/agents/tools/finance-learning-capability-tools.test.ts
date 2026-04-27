@@ -391,6 +391,52 @@ describe("finance learning capability tools", () => {
     ).rejects.toThrow("riskAndFailureModes must be non-empty");
   });
 
+  it("rejects underspecified capability cards before they become retained learning", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-capabilities-");
+    await seedArticle(
+      workspaceDir,
+      "memory/articles/wechat-liquidity-regime.md",
+      "Valid article body content with enough concrete finance context for attach-level validation.",
+    );
+    const attachTool = createFinanceLearningCapabilityAttachTool({ workspaceDir });
+
+    await expect(
+      attachTool.execute("generic-method", {
+        ...buildValidArgs(),
+        capabilityCandidates: [
+          {
+            ...buildValidArgs().capabilityCandidates[0],
+            methodSummary: "Use a simple checklist.",
+          },
+        ],
+      }),
+    ).rejects.toThrow("methodSummary must be specific enough for later reuse");
+
+    await expect(
+      attachTool.execute("generic-data-source", {
+        ...buildValidArgs(),
+        capabilityCandidates: [
+          {
+            ...buildValidArgs().capabilityCandidates[0],
+            requiredDataSources: ["market data"],
+          },
+        ],
+      }),
+    ).rejects.toThrow("requiredDataSources must include at least two concrete data sources");
+
+    await expect(
+      attachTool.execute("generic-risk", {
+        ...buildValidArgs(),
+        capabilityCandidates: [
+          {
+            ...buildValidArgs().capabilityCandidates[0],
+            riskAndFailureModes: "Can fail.",
+          },
+        ],
+      }),
+    ).rejects.toThrow("riskAndFailureModes must be specific enough for later reuse");
+  });
+
   it("rejects illegal collection and forbidden authority signals", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-learning-capabilities-");
     await seedArticle(
