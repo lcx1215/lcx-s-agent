@@ -62,7 +62,7 @@ describe("feishu_live_probe", () => {
       status: "no_reply_observed",
       surface: "learning_command",
       chatId: "redacted:11",
-      sentMessageId: "msg-probe",
+      sentMessageId: "redacted:9",
       repairHint: "self_authored_probe_not_processed_or_live_ingress_not_migrated",
     });
     const receiptPath = (result.details as { receiptPath?: string }).receiptPath;
@@ -72,7 +72,10 @@ describe("feishu_live_probe", () => {
     const receipt = await fs.readFile(path.join(workspaceDir, receiptPath as string), "utf8");
     expect(receipt).toContain("# Feishu Live Probe Receipt");
     expect(receipt).not.toContain("oc_learning");
+    expect(receipt).not.toContain("msg-probe");
+    expect(receipt).not.toContain("app:bot");
     expect(receipt).toContain("- chat_id: redacted:11");
+    expect(receipt).toContain("- sent_message_id: redacted:9");
     expect(receipt).toContain("- status: no_reply_observed");
     expect(receipt).toContain(
       "- repair_hint: self_authored_probe_not_processed_or_live_ingress_not_migrated",
@@ -118,7 +121,7 @@ describe("feishu_live_probe", () => {
     expect(result.details).toMatchObject({
       ok: false,
       status: "failed",
-      replyMessageId: "msg-reply",
+      replyMessageId: "redacted:9",
     });
     expect((result.details as { reasons?: string[] }).reasons).toContain(
       "Reply contains forbidden phrase: 已识别主题",
@@ -159,7 +162,7 @@ describe("feishu_live_probe", () => {
     expect(result.details).toMatchObject({
       ok: true,
       status: "passed",
-      replyMessageId: "msg-reply",
+      replyMessageId: "redacted:9",
     });
   });
 });

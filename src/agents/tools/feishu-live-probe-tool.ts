@@ -106,6 +106,19 @@ function redactLiveId(value: string): string {
   return normalized ? `redacted:${normalized.length}` : "redacted:0";
 }
 
+function redactAuthorTag(value?: string): string {
+  const normalized = normalizeOneLine(value);
+  if (!normalized) {
+    return "unknown-author";
+  }
+  const [kind] = normalized.split(":", 1);
+  return kind ? `${kind}:redacted` : "redacted-author";
+}
+
+function redactOptionalLiveId(value?: string): string {
+  return value ? redactLiveId(value) : "";
+}
+
 function resolveFeishuSurfaceChatId(cfg: OpenClawConfig, surface?: string): string | null {
   const candidate = normalizeBlock(surface);
   if (!candidate) {
@@ -310,8 +323,8 @@ function renderProbeReceipt(params: {
     `- surface: ${params.surfaceLabel}`,
     `- chat_id: ${redactLiveId(params.chatId)}`,
     `- status: ${params.status}`,
-    `- sent_message_id: ${params.sentMessageId ?? ""}`,
-    `- reply_message_id: ${params.replyMessage?.messageId ?? ""}`,
+    `- sent_message_id: ${redactOptionalLiveId(params.sentMessageId)}`,
+    `- reply_message_id: ${redactOptionalLiveId(params.replyMessage?.messageId)}`,
     `- repair_hint: ${params.repairHint ?? ""}`,
     `- wait_ms: ${params.waitMs}`,
     `- read_limit: ${params.limit}`,
@@ -331,8 +344,8 @@ function renderProbeReceipt(params: {
     ...params.recentMessages.map((message) => {
       const prefix = [
         `- ${message.timestamp ?? "unknown-time"}`,
-        message.authorTag ?? "unknown-author",
-        message.messageId,
+        redactAuthorTag(message.authorTag),
+        redactLiveId(message.messageId),
       ].join(" | ");
       return `${prefix}\n  ${truncate(normalizeBlock(message.content) ?? "", 500)}`;
     }),
@@ -543,8 +556,10 @@ export function createFeishuLiveProbeTool(options?: {
         status: evaluation.status,
         surface: target.surfaceLabel,
         chatId: redactLiveId(target.chatId),
-        sentMessageId: sendResult.messageId ?? null,
-        replyMessageId: evaluation.replyMessage?.messageId ?? null,
+        sentMessageId: sendResult.messageId ? redactLiveId(sendResult.messageId) : null,
+        replyMessageId: evaluation.replyMessage?.messageId
+          ? redactLiveId(evaluation.replyMessage.messageId)
+          : null,
         replyPreview: evaluation.replyMessage
           ? truncate(normalizeBlock(evaluation.replyMessage.content) ?? "", 280)
           : null,
@@ -553,9 +568,9 @@ export function createFeishuLiveProbeTool(options?: {
         receiptPath,
         indexPath,
         recentMessages: recentMessages.map((message) => ({
-          messageId: message.messageId,
+          messageId: redactLiveId(message.messageId),
           timestamp: message.timestamp ?? null,
-          authorTag: message.authorTag ?? null,
+          authorTag: redactAuthorTag(message.authorTag),
           content: truncate(normalizeBlock(message.content) ?? "", 280),
         })),
       });
