@@ -508,6 +508,8 @@ const LARK_TRUTH_SURFACE_UTTERANCES = [
   { phrase: "你现在到底有没有 web-search 能力", kind: "specific_capability" },
   { phrase: "哪些工具是真的能用", kind: "capabilities" },
   { phrase: "provider 工具现在还缺什么", kind: "limitations" },
+  { phrase: "哪些内部学习能力真的接上了", kind: "learning_capability_state" },
+  { phrase: "finance learning pipeline 是 dev 还是 live", kind: "learning_capability_state" },
   { phrase: "现在是哪个模型在回我", kind: "runtime_model" },
   { phrase: "是不是偷偷 fallback 了", kind: "fallback_reason" },
 ] as const;

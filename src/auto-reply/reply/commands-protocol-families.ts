@@ -14,6 +14,7 @@ export type ProtocolInfoQuestionKind =
   | "model"
   | "search_health"
   | "agent_architecture"
+  | "learning_capability_state"
   | "capabilities"
   | "specific_capability"
   | "limitations"
@@ -137,6 +138,16 @@ const PROTOCOL_INFO_QUESTIONS = [
   "是不是多个工作面",
   "是不是多个surface",
   "是不是多个 surface",
+  "哪些内部学习能力真的接上了",
+  "哪些学习能力真的接上了",
+  "内部学习能力哪些是真的",
+  "finance learning pipeline 真的接上了吗",
+  "finance learning pipeline 是 dev 还是 live",
+  "learning_command 真的接上了吗",
+  "学习管线真的接上了吗",
+  "学习管线是 dev 还是 live",
+  "金融学习管线真的接上了吗",
+  "金融学习能力哪些是真的",
   "what capabilities are still missing",
   "what can you not do yet",
   "which provider-native tools are still missing",
@@ -580,6 +591,46 @@ function isAgentArchitectureQuestion(text: string): boolean {
   return mentionsAgentArchitecture && asksTruthOrComparison;
 }
 
+function isLearningCapabilityStateQuestion(text: string): boolean {
+  const mentionsLearningCapability = [
+    "learning capability",
+    "learning capabilities",
+    "learning pipeline",
+    "learning_command",
+    "finance learning",
+    "finance-learning",
+    "内部学习能力",
+    "学习能力",
+    "学习管线",
+    "金融学习",
+    "金融学习管线",
+    "以前的学习能力",
+    "已有学习能力",
+  ].some((phrase) => text.includes(phrase));
+  const asksTruthOrState = [
+    "connected",
+    "really connected",
+    "dev",
+    "live",
+    "dev-fixed",
+    "live-fixed",
+    "state",
+    "status",
+    "真的接上",
+    "是真的",
+    "哪些是真的",
+    "接上了吗",
+    "能用",
+    "可用",
+    "状态",
+    "dev 还是 live",
+    "开发",
+    "线上",
+    "live 还是 dev",
+  ].some((phrase) => text.includes(phrase));
+  return mentionsLearningCapability && asksTruthOrState;
+}
+
 function isRuntimeModelQuestion(text: string): boolean {
   const mentionsModel = ["model", "模型"].some((phrase) => text.includes(phrase));
   const asksRuntime = [
@@ -679,6 +730,7 @@ function matchesProtocolInfoQuestion(text: string): boolean {
     isConnectedCapabilitiesQuestion(text) ||
     isMissingCapabilitiesQuestion(text) ||
     isAgentArchitectureQuestion(text) ||
+    isLearningCapabilityStateQuestion(text) ||
     isRuntimeModelQuestion(text) ||
     isFallbackReasonQuestion(text)
   );
@@ -756,6 +808,9 @@ export function resolveProtocolInfoQuestionKind(text: string): ProtocolInfoQuest
   }
   if (isAgentArchitectureQuestion(normalized)) {
     return "agent_architecture";
+  }
+  if (isLearningCapabilityStateQuestion(normalized)) {
+    return "learning_capability_state";
   }
   if (isMissingCapabilitiesQuestion(normalized)) {
     return "limitations";

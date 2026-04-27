@@ -1067,6 +1067,21 @@ export function buildProtocolInfoReply(params: {
         .join("\n"),
     };
   }
+  if (kind === "learning_capability_state") {
+    return {
+      text: [
+        "🧪 Learning capability state",
+        "Dev truth: learning_command routing, the finance learning pipeline concept, capability candidate attachment / inspect paths, and finance-learning maintenance language families are wired in the repo surface.",
+        "Backend paths to look for: finance_learning_pipeline_orchestrator, finance_learning_capability_inspect, finance_learning_capability_attach, finance_article_extract_capability_input, and learning_command council routing.",
+        "What this means: the system can classify Lark language into the learning surface and has internal tool paths for bounded finance-learning artifacts; it should preserve existing candidates and receipts instead of restarting from blank learning.",
+        "What it does not prove: this is not live-fixed by itself. It does not prove the current deployed Lark bot rebuilt, restarted, routed a real message, or visibly invoked the pipeline in production.",
+        "Required live proof: build, restart, probe, one real Lark phrase for this family, visible reply naming target surface=learning_command plus the intended finance-learning tool path, and no fake claim that a background learning swarm started.",
+        lobsterLine,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  }
   if (kind === "capabilities") {
     const activeProvider = modelRefs?.active.provider?.trim();
     const activeProviderTools = activeProvider

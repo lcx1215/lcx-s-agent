@@ -41,6 +41,9 @@ describe("commands-protocol-info", () => {
     ["你是不是多个agent", "agent_architecture"],
     ["我们现在这个智能体是不是多个agent，还是纯靠api回答", "agent_architecture"],
     ["are you a multi-agent system or just api chat", "agent_architecture"],
+    ["哪些内部学习能力真的接上了", "learning_capability_state"],
+    ["finance learning pipeline 是 dev 还是 live", "learning_capability_state"],
+    ["学习管线真的接上了吗", "learning_capability_state"],
     ["你现在还不能做什么", "limitations"],
     ["今天真的学进去了吗", "learning"],
     ["学习 session 现在还活着吗", "learning_receipt"],
@@ -334,6 +337,20 @@ describe("commands-protocol-info", () => {
       expect(agentArchitectureReply?.text).toContain(
         "🦞 Lobster: control_room_main_lane · openclaw_embedded_agent",
       );
+
+      const learningCapabilityStateReply = buildProtocolInfoReply({
+        text: "哪些内部学习能力真的接上了",
+        cfg,
+      });
+      expect(learningCapabilityStateReply?.text).toContain("🧪 Learning capability state");
+      expect(learningCapabilityStateReply?.text).toContain("Dev truth");
+      expect(learningCapabilityStateReply?.text).toContain("learning_command routing");
+      expect(learningCapabilityStateReply?.text).toContain(
+        "finance_learning_pipeline_orchestrator",
+      );
+      expect(learningCapabilityStateReply?.text).toContain("finance_learning_capability_inspect");
+      expect(learningCapabilityStateReply?.text).toContain("not live-fixed by itself");
+      expect(learningCapabilityStateReply?.text).toContain("Required live proof");
 
       const limitationsReply = buildProtocolInfoReply({
         text: "你现在还不能做什么",
