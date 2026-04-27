@@ -80,7 +80,8 @@ describe("feishu_live_probe", () => {
     expect(receipt).toContain(
       "- repair_hint: self_authored_probe_not_processed_or_live_ingress_not_migrated",
     );
-    expect(receipt).toContain("No later Feishu message was observed after the probe");
+    expect(receipt).toContain("- integration_alias: Feishu = Lark");
+    expect(receipt).toContain("No later Feishu/Lark message was observed after the probe");
     expect(receipt).toContain("The probe message was app-authored");
     const index = await fs.readFile(path.join(workspaceDir, indexPath as string), "utf8");
     expect(index).toContain("# Feishu Live Probe Index");

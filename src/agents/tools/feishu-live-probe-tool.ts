@@ -240,7 +240,7 @@ function evaluateProbeResult(params: {
   if (params.probeIndex < 0) {
     return {
       status: "probe_message_not_found",
-      reasons: ["The sent probe message was not found in the recent Feishu read window."],
+      reasons: ["The sent probe message was not found in the recent Feishu/Lark read window."],
     };
   }
 
@@ -253,7 +253,7 @@ function evaluateProbeResult(params: {
     return {
       status: "no_reply_observed",
       reasons: [
-        "No later Feishu message was observed after the probe within the read window.",
+        "No later Feishu/Lark message was observed after the probe within the read window.",
         ...(selfAuthoredProbe
           ? [
               "The probe message was app-authored, so this path does not prove the active live inbound handler is processing user-authored Feishu/Lark messages.",
@@ -319,6 +319,7 @@ function renderProbeReceipt(params: {
     "",
     `- created_at: ${params.createdAt}`,
     `- surface: ${params.surfaceLabel}`,
+    "- integration_alias: Feishu = Lark",
     `- chat_id: ${redactLiveId(params.chatId)}`,
     `- status: ${params.status}`,
     `- sent_message_id: ${redactOptionalLiveId(params.sentMessageId)}`,
@@ -476,7 +477,7 @@ export function createFeishuLiveProbeTool(options?: {
     label: "Feishu Live Probe",
     name: "feishu_live_probe",
     description:
-      "Send a bounded Feishu live acceptance probe to a configured Lobster surface, wait briefly, read recent chat messages back through the same repo/runtime, evaluate simple must-contain / must-not-contain checks, and write a receipt under memory/feishu-live-probes. Use this to verify live reply behavior after repairs without pretending dev tests are live proof.",
+      "Send a bounded Feishu/Lark live acceptance probe to a configured Lobster surface, wait briefly, read recent chat messages back through the same repo/runtime, evaluate simple must-contain / must-not-contain checks, and write a receipt under memory/feishu-live-probes. Feishu is the API namespace and Lark is the visible app surface for the same integration. Use this to verify live reply behavior after repairs without pretending dev tests are live proof.",
     parameters: FeishuLiveProbeSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
