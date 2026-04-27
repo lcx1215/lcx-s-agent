@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-27T22:11:37.742Z",
+  "sourceRoot": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
+  "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
+  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
+  "writeMode": true,
+  "readyForLaunchAgent": true,
+  "blockedReasons": [],
+  "files": [
+    {
+      "relativePath": "daily_learning_runner.py",
+      "sourceSha256": "db5d0d8fd8e5805fc85eea70d6658f9481572c051fc8e3a22a42d2c205a010ec",
+      "targetSha256": "db5d0d8fd8e5805fc85eea70d6658f9481572c051fc8e3a22a42d2c205a010ec",
+      "copied": true,
+      "executable": true
+    },
+    {
+      "relativePath": "lobster_orchestrator.py",
+      "sourceSha256": "cc838c9d00679b75b90ce7a4158c3b020320d4990fdfeddf3692e7718020cf5c",
+      "targetSha256": "cc838c9d00679b75b90ce7a4158c3b020320d4990fdfeddf3692e7718020cf5c",
+      "copied": true,
+      "executable": true
+    },
+    {
+      "relativePath": "scripts/lobster_paths.py",
+      "sourceSha256": "7c6565da41caf66bbe785d5fa2ec31e4ac5efd78f03594542dbde08cde25b9cb",
+      "targetSha256": "7c6565da41caf66bbe785d5fa2ec31e4ac5efd78f03594542dbde08cde25b9cb",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "scripts/branch_freshness.py",
+      "sourceSha256": "a85cf4dd884f80f02bf6e653b044b3b7565eaba8146e0af0cb380f6d9323342e",
+      "targetSha256": "a85cf4dd884f80f02bf6e653b044b3b7565eaba8146e0af0cb380f6d9323342e",
+      "copied": true,
+      "executable": false
+    },
+    {
+      "relativePath": "scripts/lobster_host_watchdog.py",
+      "sourceSha256": "0c67845f88a5da0180e5bdd22edd2b399b283477d0345ab558008868fd9db167",
+      "targetSha256": "0c67845f88a5da0180e5bdd22edd2b399b283477d0345ab558008868fd9db167",
+      "copied": true,
+      "executable": true
+    }
+  ],
+  "compileCheck": {
+    "command": "python3 -m py_compile daily_learning_runner.py lobster_orchestrator.py scripts/lobster_paths.py scripts/branch_freshness.py scripts/lobster_host_watchdog.py",
+    "code": 0,
+    "stderr": ""
+  },
+  "boundary": [
+    "Copies only the scheduler and host-watchdog compatibility sidecar files.",
+    "Does not copy Feishu/Lark proxy code.",
+    "Does not copy secrets or .env.lobster.",
+    "Does not modify LaunchAgents.",
+    "Does not enable production scheduler cycles."
+  ]
+}

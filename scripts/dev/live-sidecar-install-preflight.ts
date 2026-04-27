@@ -6,12 +6,13 @@ import {
   type HostWatchdogDryRunReport,
 } from "./live-sidecar-host-watchdog-dry-run.ts";
 import { buildLaunchAgentPlan, type LaunchAgentPlan } from "./live-sidecar-launchagent-plan.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./live-sidecar-runtime-bundle.ts";
 import {
   buildSchedulerDryRunReport,
   type SchedulerDryRunReport,
 } from "./live-sidecar-scheduler-dry-run.ts";
 
-const DEFAULT_TARGET_ROOT = "/Users/liuchengxu/Desktop/lcx-s-openclaw";
+const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/live-handoff/launchagent-candidates";
 const SCHEDULER_PLIST =

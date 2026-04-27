@@ -223,7 +223,7 @@ export function buildHostWatchdogDryRunReport(params: {
   const missingLegacy = legacyRequiredFiles.filter((entry) => !entry.exists);
   const missingTarget = targetRequiredFiles.filter((entry) => !entry.exists);
   const untrackedTarget = targetRequiredFiles.filter(
-    (entry) => entry.exists && entry.trackedByGit !== true,
+    (entry) => entry.exists && entry.trackedByGit === false,
   );
   if (!launchAgent.exists) {
     blockedReasons.push("host watchdog LaunchAgent plist was not found");
@@ -261,11 +261,11 @@ export function buildHostWatchdogDryRunReport(params: {
     blockedReasons,
     nextSafePatch: migrationReady
       ? [
-          "Install a new host watchdog LaunchAgent only after scheduler live migration is approved.",
+          "Install a new host watchdog LaunchAgent only after the runtime bundle and smoke receipt pass.",
           "Keep Feishu/Lark proxy unchanged until scheduler and watchdog root drift are resolved.",
         ]
       : [
-          "Port only the missing host watchdog read-only dependency chain into the clean repo.",
+          "Port only the missing host watchdog read-only dependency chain into the clean repo or runtime bundle.",
           "Add a no-alert watchdog smoke before changing the macOS LaunchAgent.",
           "Leave Feishu/Lark proxy and live plist untouched until the smoke is ready.",
         ],

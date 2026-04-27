@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -88,6 +89,7 @@ describe("live sidecar host watchdog dry-run", () => {
       writeFile(legacyRoot, relativePath);
       writeFile(targetRoot, relativePath);
     }
+    spawnSync("git", ["init"], { cwd: targetRoot, stdio: "ignore" });
     writeHostWatchdogPlist({ root: legacyRoot, plistPath });
 
     const report = buildHostWatchdogDryRunReport({
@@ -101,5 +103,32 @@ describe("live sidecar host watchdog dry-run", () => {
     expect(report.blockedReasons).toContain(
       "target host watchdog dependency exists but is not tracked by Git: scripts/lobster_host_watchdog.py, scripts/branch_freshness.py, scripts/lobster_paths.py",
     );
+  });
+
+  it("accepts a non-git runtime bundle target when files exist", () => {
+    const legacyRoot = makeTmpRoot("watchdog-legacy-runtime");
+    const targetRoot = makeTmpRoot("watchdog-target-runtime");
+    const plistDir = makeTmpRoot("watchdog-plist-runtime");
+    const plistPath = path.join(plistDir, "ai.openclaw.lobster.host_watchdog.plist");
+
+    for (const relativePath of [
+      "scripts/lobster_host_watchdog.py",
+      "scripts/branch_freshness.py",
+      "scripts/lobster_paths.py",
+    ]) {
+      writeFile(legacyRoot, relativePath);
+      writeFile(targetRoot, relativePath);
+    }
+    writeHostWatchdogPlist({ root: legacyRoot, plistPath });
+
+    const report = buildHostWatchdogDryRunReport({
+      legacyRoot,
+      targetRoot,
+      plistPath,
+      checkedAt: "2026-04-27T00:00:00.000Z",
+    });
+
+    expect(report.migrationReady).toBe(true);
+    expect(report.targetRequiredFiles.every((file) => file.trackedByGit === null)).toBe(true);
   });
 });

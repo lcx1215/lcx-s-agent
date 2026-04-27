@@ -221,7 +221,7 @@ export function buildSchedulerDryRunReport(params: {
   const missingLegacy = legacyRequiredFiles.filter((entry) => !entry.exists);
   const missingTarget = targetRequiredFiles.filter((entry) => !entry.exists);
   const untrackedTarget = targetRequiredFiles.filter(
-    (entry) => entry.exists && entry.trackedByGit !== true,
+    (entry) => entry.exists && entry.trackedByGit === false,
   );
   if (!launchAgent.exists) {
     blockedReasons.push("scheduler LaunchAgent plist was not found");
@@ -259,11 +259,11 @@ export function buildSchedulerDryRunReport(params: {
     blockedReasons,
     nextSafePatch: migrationReady
       ? [
-          "Install a new scheduler LaunchAgent only after an operator-approved live migration step.",
+          "Install a new scheduler LaunchAgent only after the runtime bundle and smoke receipt pass.",
           "Keep Feishu/Lark proxy unchanged until scheduler and watchdog root drift are resolved.",
         ]
       : [
-          "Port only the missing scheduler dependency chain into the clean repo.",
+          "Port only the missing scheduler dependency chain into the clean repo or runtime bundle.",
           "Add a no-network scheduler smoke before changing the macOS LaunchAgent.",
           "Leave Feishu/Lark proxy and live plist untouched until the smoke is ready.",
         ],

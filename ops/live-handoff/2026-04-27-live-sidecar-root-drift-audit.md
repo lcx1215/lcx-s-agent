@@ -251,9 +251,76 @@ Desktop checkouts. The next safe patch is to generate a non-Desktop runtime
 bundle under `~/.openclaw/live-sidecars` and point smoke LaunchAgents at that
 bundle.
 
+## Non-Desktop Runtime Bundle And Smoke Install
+
+Current live status:
+
+```text
+runtimeBundle=ready
+targetRoot=/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw
+installSmoke=applied
+smokeModeOnly=true
+host_watchdog.last_exit_code=0
+scheduler.last_exit_code=0
+live-smoke-fixed=yes
+production-live-fixed=no
+production-cycle-enabled=false
+```
+
+The migration now has a bounded non-Desktop runtime bundle:
+
+```text
+/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/daily_learning_runner.py
+/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/lobster_orchestrator.py
+/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/scripts/lobster_paths.py
+/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/scripts/branch_freshness.py
+/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/scripts/lobster_host_watchdog.py
+```
+
+Generated receipt:
+
+```text
+ops/live-handoff/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json
+```
+
+The live LaunchAgents now point at the non-Desktop runtime bundle, but only in
+smoke mode:
+
+```text
+ProgramArguments include --dry-run --write-receipt
+WorkingDirectory=/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw
+```
+
+Post-install kickstart proof:
+
+```text
+ai.openclaw.lobster.host_watchdog: runs=2, last exit code=0
+ai.openclaw.lobster.scheduler: runs=1, last exit code=0
+```
+
+Runtime smoke receipts confirm the boundary:
+
+```text
+hostWatchdog=ok
+mode=dry_run_no_alert
+noFeishuLarkSend=True
+
+scheduler status=cycle_blocked_fail_closed
+cycleEnabled=false
+noFeishuLarkSend=true
+noRemoteFetch=true
+noTradingExecution=true
+```
+
+Important boundary: this is a successful live smoke migration for the scheduler
+and watchdog sidecar labels. It is not a production live fix or production
+learning-cycle enablement. The scheduler remains fail-closed unless
+`OPENCLAW_SCHEDULER_ENABLE_CYCLE=1` is explicitly set during a separate approved
+live migration.
+
 ## Out Of Scope
 
-- No plist changes in this audit step.
+- No production scheduler cycle enablement.
 - No deletion of old `Desktop/openclaw`.
 - No migration of Feishu proxy yet.
-- No live scheduler restart in this audit step.
+- No Feishu/Lark proxy restart in this audit step.

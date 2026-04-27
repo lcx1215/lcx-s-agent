@@ -1,20 +1,90 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-27T22:05:24.184Z",
+  "generatedAt": "2026-04-27T22:13:04.156Z",
   "sourceDryRunReceiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-install-dry-run-receipt.json",
   "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-install-smoke-receipt.json",
-  "liveLaunchAgentChanged": false,
+  "liveLaunchAgentChanged": true,
   "smokeModeOnly": true,
-  "preflightReady": false,
-  "blockedReasons": [
-    "target root is under Desktop; LaunchAgent Python execution may fail with macOS Operation not permitted. Build a non-Desktop runtime bundle or pass --allow-desktop-target explicitly."
+  "preflightReady": true,
+  "blockedReasons": [],
+  "actions": [
+    {
+      "sidecar": "scheduler",
+      "label": "ai.openclaw.lobster.scheduler",
+      "targetPlistPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+      "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T22-13-04-156Z",
+      "expectedTargetSha256": "2d0052ff5233922e35de1fe7ef9cf5bcf1a803a7e536544d5de3478ca05cab6f",
+      "actualTargetSha256": "2d0052ff5233922e35de1fe7ef9cf5bcf1a803a7e536544d5de3478ca05cab6f",
+      "backupCreated": true,
+      "copiedCandidate": true,
+      "targetShaMatches": true,
+      "commandResults": [
+        {
+          "command": "plutil -lint /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+          "code": 0,
+          "stdout": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist: OK\n",
+          "stderr": ""
+        },
+        {
+          "command": "launchctl bootout gui/501 /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+          "code": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "command": "launchctl bootstrap gui/501 /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
+          "code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      ],
+      "ok": true
+    },
+    {
+      "sidecar": "host_watchdog",
+      "label": "ai.openclaw.lobster.host_watchdog",
+      "targetPlistPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist",
+      "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T22-13-04-156Z",
+      "expectedTargetSha256": "9869435cc41f5ce004252640deca0cf053d6b4229de829ea996aaf705a68cb23",
+      "actualTargetSha256": "9869435cc41f5ce004252640deca0cf053d6b4229de829ea996aaf705a68cb23",
+      "backupCreated": true,
+      "copiedCandidate": true,
+      "targetShaMatches": true,
+      "commandResults": [
+        {
+          "command": "plutil -lint /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist",
+          "code": 0,
+          "stdout": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist: OK\n",
+          "stderr": ""
+        },
+        {
+          "command": "launchctl bootout gui/501 /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist",
+          "code": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "command": "launchctl bootstrap gui/501 /Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist",
+          "code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      ],
+      "ok": true
+    }
   ],
-  "actions": [],
-  "rollbackCommands": [],
+  "rollbackCommands": [
+    "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T22-13-04-156Z\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
+    "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" || true",
+    "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
+    "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T22-13-04-156Z\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\"",
+    "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" || true",
+    "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\""
+  ],
   "executionBoundary": [
-    "Execution was blocked before any live LaunchAgent change.",
-    "No plist was copied.",
-    "No backup was written.",
-    "No launchctl command was executed."
+    "Live LaunchAgent plist files were replaced with smoke-mode candidates.",
+    "Smoke-mode candidates include --dry-run --write-receipt.",
+    "Unattended live cycle remains disabled.",
+    "Rollback commands are recorded in this receipt."
   ]
 }

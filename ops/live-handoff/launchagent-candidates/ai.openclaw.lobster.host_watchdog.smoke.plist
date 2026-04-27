@@ -7,12 +7,12 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/liuchengxu/Desktop/lcx-s-openclaw/scripts/lobster_host_watchdog.py</string>
+    <string>/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/scripts/lobster_host_watchdog.py</string>
     <string>--dry-run</string>
     <string>--write-receipt</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/liuchengxu/Desktop/lcx-s-openclaw</string>
+  <string>/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw</string>
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>

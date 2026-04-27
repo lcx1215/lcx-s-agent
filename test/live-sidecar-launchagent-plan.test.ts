@@ -1,8 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { buildLaunchAgentPlan } from "../scripts/dev/live-sidecar-launchagent-plan.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  buildLaunchAgentPlan,
+  main as launchAgentPlanMain,
+} from "../scripts/dev/live-sidecar-launchagent-plan.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "../scripts/dev/live-sidecar-runtime-bundle.ts";
 
 const tmpRoots: string[] = [];
 
@@ -44,5 +48,15 @@ describe("live sidecar launchagent plan", () => {
       );
     }
     expect(plan.installBoundary.join("\n")).toContain("Do not copy these candidates");
+  });
+
+  it("defaults candidate plists to the non-Desktop runtime bundle", () => {
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const exitCode = launchAgentPlanMain(["--json"]);
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(write.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.targetRoot).toBe(DEFAULT_RUNTIME_BUNDLE_ROOT);
+    expect(payload.targetRoot).not.toContain("/Desktop/");
+    write.mockRestore();
   });
 });

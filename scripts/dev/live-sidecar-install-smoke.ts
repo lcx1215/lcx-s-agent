@@ -7,8 +7,9 @@ import {
   type InstallDryRunReceipt,
   type SidecarInstallDryRunAction,
 } from "./live-sidecar-install-dry-run.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./live-sidecar-runtime-bundle.ts";
 
-const DEFAULT_TARGET_ROOT = "/Users/liuchengxu/Desktop/lcx-s-openclaw";
+const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/live-handoff/launchagent-candidates";
 const SMOKE_RECEIPT_NAME = "live-sidecar-install-smoke-receipt.json";

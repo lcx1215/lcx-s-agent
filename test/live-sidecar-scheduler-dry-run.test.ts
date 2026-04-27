@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -95,6 +96,7 @@ describe("live sidecar scheduler dry-run", () => {
       writeFile(legacyRoot, relativePath);
       writeFile(targetRoot, relativePath);
     }
+    spawnSync("git", ["init"], { cwd: targetRoot, stdio: "ignore" });
     writeSchedulerPlist({ root: legacyRoot, plistPath });
 
     const report = buildSchedulerDryRunReport({
@@ -108,5 +110,32 @@ describe("live sidecar scheduler dry-run", () => {
     expect(report.blockedReasons).toContain(
       "target scheduler dependency exists but is not tracked by Git: daily_learning_runner.py, scripts/lobster_paths.py, lobster_orchestrator.py",
     );
+  });
+
+  it("accepts a non-git runtime bundle target when files exist", () => {
+    const legacyRoot = makeTmpRoot("legacy-runtime");
+    const targetRoot = makeTmpRoot("target-runtime");
+    const plistDir = makeTmpRoot("plist-runtime");
+    const plistPath = path.join(plistDir, "ai.openclaw.lobster.scheduler.plist");
+
+    for (const relativePath of [
+      "daily_learning_runner.py",
+      "scripts/lobster_paths.py",
+      "lobster_orchestrator.py",
+    ]) {
+      writeFile(legacyRoot, relativePath);
+      writeFile(targetRoot, relativePath);
+    }
+    writeSchedulerPlist({ root: legacyRoot, plistPath });
+
+    const report = buildSchedulerDryRunReport({
+      legacyRoot,
+      targetRoot,
+      plistPath,
+      checkedAt: "2026-04-27T00:00:00.000Z",
+    });
+
+    expect(report.migrationReady).toBe(true);
+    expect(report.targetRequiredFiles.every((file) => file.trackedByGit === null)).toBe(true);
   });
 });
