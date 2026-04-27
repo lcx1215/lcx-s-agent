@@ -3,13 +3,24 @@
 [![Lobster OpenClaw daily progress wave](docs/assets/lobster-daily-progress-wave.svg)](docs/assets/lobster-daily-progress-wave.svg)
 
 Lobster OpenClaw is a personal research operating system built on top of
-OpenClaw. It is designed for one real operator who wants a stable Lark/Feishu
-control room for daily market research, learning carryover, correction notes,
-and operational truth checks.
+OpenClaw. Its job is to turn one Lark/Feishu control room into a practical
+daily loop: understand the operator's language, route the work, learn useful
+material, preserve evidence, and answer with honest status.
 
 This is not the upstream OpenClaw product README. This repository is the
 `lcx1215/lcx-s-openclaw` development fork where Lobster-specific behavior is
 designed, tested, and hardened before any live rollout.
+
+## At A Glance
+
+| Layer                   | Responsibility                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Lark language interface | Classify natural-language requests into work families instead of matching one sentence at a time.             |
+| Control room            | Return one readable summary first, with specialist detail available only when needed.                         |
+| Learning brain          | Convert approved material into retrievable lessons, capability cards, correction notes, and review artifacts. |
+| Finance research lane   | Support low-frequency ETF, major-asset, and leading-company research with risk gates.                         |
+| Truth surface           | Separate searched, learned, written, inferred, dev-fixed, and live-fixed states.                              |
+| Live bridge             | Keep Lark/Feishu runtime proof separate from local development proof.                                         |
 
 ## What This Project Is
 
@@ -93,20 +104,28 @@ through the real Lark/Feishu entry path.
 Local tests and synthetic probes can make a change dev-fixed. They do not make
 it live-fixed by themselves.
 
-## Repository Shape
+## Module Responsibilities
 
-Important areas:
+These short labels are the intended meaning of the main project files and
+directories. They replace generic import-history labels with the actual Lobster
+responsibilities.
 
-- `extensions/feishu/src/` - Lark/Feishu channel behavior, control-room routing,
-  truth-surface replies, learning commands, and market-intelligence entrypoints
-- `src/hooks/bundled/` - memory, learning, correction, operating-loop, and
-  workface artifacts
-- `src/infra/` - shared operational receipts and anomaly recording
-- `src/agents/` - model selection, tool wiring, system prompt, and agent runtime
-  integration
-- `docs/concepts/lobster-operating-protocol.md` - the project-level operating
-  protocol
-- `AGENTS.md` - local doctrine and engineering rules for this fork
+| Path                         | Owns                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `README.md`                  | Project identity, operating model, and contributor orientation.                                   |
+| `AGENTS.md`                  | Local doctrine, safety rules, and day-to-day engineering contract.                                |
+| `extensions/feishu/src/`     | Lark/Feishu control-room routing, language families, visible replies, and live channel behavior.  |
+| `src/agents/`                | Tool catalog, model/provider routing, system prompt assembly, and agent runtime integration.      |
+| `src/agents/tools/finance-*` | Finance learning, source intake, capability cards, retrieval review, and governance tools.        |
+| `src/hooks/bundled/`         | Scheduled learning, correction, memory hygiene, operating-loop, and workface artifact production. |
+| `src/auto-reply/`            | Command replies, status/context surfaces, and user-visible control-room protocol answers.         |
+| `src/gateway/`               | Gateway protocol, server methods, channel transport, and runtime health boundaries.               |
+| `src/infra/`                 | Shared receipts, anomaly records, filesystem/runtime utilities, and operational plumbing.         |
+| `apps/`                      | macOS, iOS, Android, and shared app surfaces around the OpenClaw runtime.                         |
+| `docs/`                      | Operator docs, runbooks, concepts, and public-facing explanations.                                |
+| `docs/assets/`               | README visuals and generated project-progress artifacts.                                          |
+| `scripts/`                   | Development, release, smoke-test, and maintenance automation.                                     |
+| `test/fixtures/`             | Stable sample inputs for routing, learning, finance, and regression tests.                        |
 
 Protected memory files such as `memory/current-research-line.md` should not be
 casually edited. They are treated as working state, not scratch notes.
