@@ -275,7 +275,10 @@ describe("buildAgentSystemPrompt", () => {
       "When diagnosing operator-phrasing drift, routing mistakes, or repeated repair issues, inspect memory/feishu-work-receipts/repair-queue.md and index.md first, then only the specific recent receipt files you need before replaying whole chats.",
     );
     expect(prompt).toContain(
-      "When validating a Feishu live repair or checking whether the active chat path still drifts, prefer feishu_live_probe over manual send/read loops.",
+      "When validating a Feishu/Lark live repair or checking whether the active chat path still drifts, prefer feishu_live_probe over manual send/read loops.",
+    );
+    expect(prompt).toContain(
+      "Feishu is the API namespace and Lark is the visible app surface for the same integration.",
     );
     expect(prompt).toContain(
       "refreshes memory/feishu-live-probes/index.md instead of forcing chat replay from memory.",
@@ -574,7 +577,7 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain(
-      "- feishu_live_probe: Send a bounded Feishu live acceptance probe, wait, read recent chat messages back, evaluate simple checks, and leave a receipt under memory/feishu-live-probes",
+      "- feishu_live_probe: Send a bounded Feishu/Lark live acceptance probe, wait, read recent chat messages back, evaluate simple checks, and leave a receipt under memory/feishu-live-probes",
     );
   });
 

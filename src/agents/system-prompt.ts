@@ -203,7 +203,7 @@ function buildMemorySection(params: {
     "When diagnosing operator-phrasing drift, routing mistakes, or repeated repair issues, inspect memory/feishu-work-receipts/repair-queue.md and index.md first, then only the specific recent receipt files you need before replaying whole chats. Treat those receipts as bounded workflow evidence, not as protected truth.",
     ...(params.availableTools.has("feishu_live_probe")
       ? [
-          "When validating a Feishu live repair or checking whether the active chat path still drifts, prefer feishu_live_probe over manual send/read loops. It leaves a bounded receipt under memory/feishu-live-probes and refreshes memory/feishu-live-probes/index.md instead of forcing chat replay from memory.",
+          "When validating a Feishu/Lark live repair or checking whether the active chat path still drifts, prefer feishu_live_probe over manual send/read loops. Feishu is the API namespace and Lark is the visible app surface for the same integration. The tool leaves a bounded receipt under memory/feishu-live-probes and refreshes memory/feishu-live-probes/index.md instead of forcing chat replay from memory.",
         ]
       : []),
     "Do not use local_memory_record to overwrite memory/current-research-line.md, memory/unified-risk-view.md, or MEMORY.md. Protected summaries remain the canonical current-state anchors.",
@@ -705,7 +705,7 @@ export function buildAgentSystemPrompt(params: {
     finance_promotion_review:
       "Record deferred, rejected, or ready_for_manual_promotion governance actions for one finance promotion candidate by dateKey and candidateKey; updates the durable review state without auto-promoting anything",
     feishu_live_probe:
-      "Send a bounded Feishu live acceptance probe, wait, read recent chat messages back, evaluate simple checks, and leave a receipt under memory/feishu-live-probes",
+      "Send a bounded Feishu/Lark live acceptance probe, wait, read recent chat messages back, evaluate simple checks, and leave a receipt under memory/feishu-live-probes",
     lark_language_corpus_review:
       "Review pending Lark language-routing candidate artifacts, write review JSON and patch text under memory/lark-language-routing-reviews, and never mutate the formal corpus automatically",
     lobster_workface_app:

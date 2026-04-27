@@ -478,7 +478,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
   {
     id: "feishu_live_probe",
     label: "feishu_live_probe",
-    description: "Send/read bounded Feishu live acceptance probes",
+    description: "Send/read bounded Feishu/Lark live acceptance probes",
     sectionId: "messaging",
     profiles: ["coding", "messaging"],
     includeInOpenClawGroup: true,

@@ -165,16 +165,16 @@ function appendNoticeLines(lines: string[], notices: string[]): void {
 
 const CONTROL_ROOM_GROUNDING_CONTRACT_LINES = [
   "[System: Control-room grounding contract: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven, first check the freshest available state evidence instead of answering from chat memory alone.]",
-  "[System: Evidence order for control-room status claims: current-research-line and protected summaries first; then Feishu surface lines, work receipts, learning timebox/session state, watchtower anomalies, and recent reply-flow evidence when available.]",
+  "[System: Evidence order for control-room status claims: current-research-line and protected summaries first; then Feishu/Lark surface lines, work receipts, learning timebox/session state, watchtower anomalies, and recent reply-flow evidence when available.]",
   "[System: State labels must stay literal: dev-fixed means local implementation or tests only; live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started/running/completed/blocked/unproven must not be blended into one success label.]",
   "[System: If the required evidence is missing, stale, or only inferred, say unproven or unknown in plain language and give the single next check that would resolve it.]",
 ];
 
 const FEISHU_SHARED_STATUS_BOUNDARY_LINES = [
-  "[System: Feishu status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven, use current evidence instead of chat memory alone.]",
+  "[System: Feishu/Lark status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven, use current evidence instead of chat memory alone.]",
   "[System: Treat questions like 现在在干什么, 修到哪了, 还剩多少, 是不是 live 了, 现在能用了吗, and what remains as status-readback requests. Answer them from evidence order first, not from narrative memory or optimistic progress prose.]",
   "[System: Status-readback evidence order: current repo state, scoped diff or commit receipt, targeted test or lint receipt, migration/build/restart receipt, live probe receipt, and visible Lark/Feishu reply-flow evidence. Say which layer is present and which layer is still missing.]",
-  "[System: Keep status labels literal across every Feishu surface: dev-fixed means local implementation or tests; live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path.]",
+  "[System: Keep status labels literal across every Feishu/Lark surface: dev-fixed means local implementation or tests; live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path.]",
   "[System: If status evidence is missing, stale, or inferred, say unproven or unknown and name the next check.]",
 ];
 

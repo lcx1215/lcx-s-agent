@@ -629,7 +629,7 @@ describe("buildFeishuSurfaceNotice", () => {
       "If the work intent is ambiguous, default to the smallest useful mode that keeps progress visible",
     );
     expect(notice).toContain(
-      "Feishu status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
+      "Feishu/Lark status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
     );
     expect(notice).toContain(
       "Treat questions like 现在在干什么, 修到哪了, 还剩多少, 是不是 live 了, 现在能用了吗, and what remains as status-readback requests.",
@@ -676,7 +676,7 @@ describe("buildFeishuSurfaceNotice", () => {
 
     expect(notice).toContain("Feishu operating surface target = control_room");
     expect(notice).toContain(
-      "Feishu status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
+      "Feishu/Lark status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
     );
     expect(notice).toContain(
       "you may directly create or update low-risk artifacts such as HOOK notes, correction notes, weekly reviews, learning summaries",
