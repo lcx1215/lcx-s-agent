@@ -165,6 +165,25 @@ plutil -lint ops/live-handoff/launchagent-candidates/*.plist
 status: OK
 ```
 
+## Install Preflight
+
+Current dev/GitHub status:
+
+```text
+installPreflight=ready_for_manual_install
+noLiveLaunchAgentChange=true
+scheduler_root_drift_gate=pass
+host_watchdog_root_drift_gate=pass
+plist_lint:scheduler=pass
+plist_lint:host_watchdog=pass
+```
+
+This preflight is a gate, not an installer. It proves the tracked clean-root
+entrypoints, candidate plist syntax, dry-run sidecar commands, current plist
+backup source hashes, and root-drift gates line up. It does not copy files into
+`~/Library/LaunchAgents`, does not call `launchctl bootstrap`, and does not
+change live sidecar state.
+
 ## Out Of Scope
 
 - No plist changes in this audit step.
