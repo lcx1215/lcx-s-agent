@@ -50,6 +50,12 @@ Run a single case with:
 pnpm exec tsx scripts/dev/finance-learning-pipeline-smoke.ts --case local-file
 ```
 
+Run the multi-candidate regression when the apply layer must prove it is not relying on one learned card:
+
+```bash
+pnpm exec tsx scripts/dev/finance-learning-multi-candidate-smoke.ts
+```
+
 Supported smoke cases:
 
 - `manual-paste`
@@ -244,3 +250,4 @@ Smoke coverage:
 
 - `capability-apply` seeds one valid local finance capability, applies it to a bounded research question, and checks that the no-action boundary is preserved.
 - `capability-apply-unmatched` seeds the same capability, asks an unrelated repository-governance question, and verifies the apply layer fails closed instead of inventing a learned finance answer.
+- `finance-learning-multi-candidate-smoke.ts` seeds four ETF event and risk-gate fixtures, then verifies `candidateCount >= 3`, `synthesisMode=multi_capability_synthesis`, and the research-only no-action boundary.
