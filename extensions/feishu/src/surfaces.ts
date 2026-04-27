@@ -5,6 +5,7 @@ import {
   looksLikeLearningInternalizationAuditAsk,
   looksLikeLearningWorkflowAuditAsk,
   looksLikeMethodLearningTopic,
+  looksLikeFinanceLearningMaintenanceAsk,
   looksLikeSourceGroundingAsk,
   looksLikeStrategicLearningAsk,
   looksLikeVerticalFinanceLearningAsk,
@@ -209,6 +210,11 @@ function inferIntentSurfaces(params: {
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeStrategicLearningAsk(normalized));
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeMethodLearningTopic(normalized));
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeVerticalFinanceLearningAsk(normalized));
+  addIntentSurfaceIf(
+    surfaces,
+    "learning_command",
+    looksLikeFinanceLearningMaintenanceAsk(normalized),
+  );
   addIntentSurfaceIf(
     surfaces,
     "knowledge_maintenance",
@@ -469,6 +475,15 @@ export function resolveFeishuControlRoomOrchestration(params: {
   }
 
   if (looksLikeVerticalFinanceLearningAsk(params.content)) {
+    return {
+      mode: "aggregate",
+      specialistSurfaces: ["learning_command"],
+      publishMode: requestedPublishMode ?? "classified_publish",
+      replyContract: "default",
+    };
+  }
+
+  if (looksLikeFinanceLearningMaintenanceAsk(params.content)) {
     return {
       mode: "aggregate",
       specialistSurfaces: ["learning_command"],
@@ -875,6 +890,7 @@ export function buildFeishuSurfaceNotice(
       "[System: Restrict learning scope to high-value domains only: ETF / major asset / regime, macro / rates / risk appetite, high-quality fundamentals, timing discipline, risk-control lessons, portfolio decision quality, post-hoc review of prior recommendations, and bounded data-science / statistics method learning that improves low-frequency research discipline such as regression sanity checks, out-of-sample logic, cross-validation mindset, and robustness testing.]",
       "[System: Do not optimize for becoming a generic super-agent. Stable finance-domain usefulness comes first: fewer errors, cleaner iteration, and better cumulative judgment beat broad capability theater.]",
       "[System: If a learning request is mostly about agent tooling, platform design, or open-source patterns, keep it bounded and only retain what clearly improves Lobster's finance research workflow, filtering, timing discipline, or risk control.]",
+      "[System: If the user asks to maintain, consolidate, or strengthen prior finance-learning work, start by preserving and inspecting existing finance learning artifacts, capability candidates, pipeline receipts, and promotion handoff state. Do not restart from a blank learning plan unless the existing artifacts are missing or malformed.]",
       "[System: For external-source learning requests such as Google/web search, arXiv/papers, blogs/docs, GitHub/repos, peer agents, competitor systems, or benchmark examples, do not produce a source tour. Convert source material into bounded adoption knowledge: retain, discard, replay trigger, next eval, compatibility risk, and one verifiable next step for Lobster.]",
       "[System: For another-agent, GitHub CLI, install/setup/migration, context-file, skills/plugin, or memory-provider topic, distill it as bounded adoption knowledge: what Lobster should adopt now, what to skip, what compatibility risk to watch, and one next patch or install step it can verify locally.]",
       "[System: A valid extra learning lane is bilingual Chinese/English comprehension for Lobster itself: finance and system terminology mapping, ambiguity reduction, workflow-trigger understanding, and plain-language reporting. Do not turn this into generic language tutoring or fake mastery claims.]",

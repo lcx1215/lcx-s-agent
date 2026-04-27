@@ -379,6 +379,33 @@ describe("resolveFeishuSurfaceRouting", () => {
     }
   });
 
+  it("routes prior finance-learning maintenance asks to learning_command", () => {
+    const examples = [
+      "之前内部做了很多的金融学习，你应该把它们维护好并加强",
+      "把已有的 ETF 学习能力和 pipeline 梳理加固一下",
+      "过去那些股市学习资产别散着，归拢好并补强",
+      "把前面落下的 finance learning capability candidates 维护干净",
+    ];
+
+    for (const content of examples) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg: {
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+            knowledge_maintenance: { chatId: "oc-knowledge" },
+            technical_daily: { chatId: "oc-tech" },
+            fundamental_research: { chatId: "oc-fundamental" },
+          },
+        } as FeishuConfig,
+        chatId: "oc-random",
+        content,
+      });
+
+      expect(routing.targetSurface, content).toBe("learning_command");
+      expect(routing.targetChatId, content).toBe("oc-learning");
+    }
+  });
+
   it("routes explicit technical-slice summary asks to technical_daily", () => {
     const routing = resolveFeishuSurfaceRouting({
       cfg: {
@@ -699,6 +726,9 @@ describe("buildFeishuSurfaceNotice", () => {
     );
     expect(notice).toContain(
       "If a learning request is mostly about agent tooling, platform design, or open-source patterns, keep it bounded",
+    );
+    expect(notice).toContain(
+      "If the user asks to maintain, consolidate, or strengthen prior finance-learning work",
     );
     expect(notice).toContain(
       "For external-source learning requests such as Google/web search, arXiv/papers, blogs/docs, GitHub/repos, peer agents, competitor systems, or benchmark examples, do not produce a source tour.",
@@ -1130,6 +1160,21 @@ describe("resolveFeishuControlRoomOrchestration", () => {
       currentSurface: "control_room",
       targetSurface: "learning_command",
       content: "把语言接口和大脑做好，接下来让它学垂直的股市能力、ETF能力和持仓风控能力",
+    });
+
+    expect(plan).toEqual({
+      mode: "aggregate",
+      specialistSurfaces: ["learning_command"],
+      publishMode: "classified_publish",
+      replyContract: "default",
+    });
+  });
+
+  it("keeps prior finance-learning maintenance asks on the learning-only aggregate path", () => {
+    const plan = resolveFeishuControlRoomOrchestration({
+      currentSurface: "control_room",
+      targetSurface: "learning_command",
+      content: "之前内部做了很多的金融学习，你应该把它们维护好并加强",
     });
 
     expect(plan).toEqual({

@@ -32,6 +32,27 @@ export function looksLikeVerticalFinanceLearningAsk(text: string): boolean {
   return hasLearningIntent && hasVerticalCue && hasFinanceDomain;
 }
 
+export function looksLikeFinanceLearningMaintenanceAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasMaintenanceDirective =
+    /(维护|维护好|管好|整理|梳理|收敛|加固|加强|强化|补强|修补|修好|接上|接起来|保养|盘点|清理|归拢|沉淀|maintain|harden|strengthen|consolidate|keep.*clean|clean.*up)/u.test(
+      normalized,
+    );
+  const hasPriorLearningCue =
+    /(之前|过去|已经|已有|现有|内部|前面|前几天|最近|上次|那批|那些|做了很多|落下|落盘|沉淀|artifact|artifacts|资产|管线|pipeline|候选|candidate|capability|能力)/u.test(
+      normalized,
+    );
+  const hasFinanceLearningCue =
+    /((金融|finance|股市|股票|美股|a股|港股|etf|指数|index|大类资产|major asset|持仓|portfolio|基本面|fundamental|技术面|technical|日频|风控|risk control|风险控制|策略|strategy).{0,18}(学习|learn|能力|capability|管线|pipeline|资产|artifact|artifacts|候选|candidate|lesson|规则|rule)|(学习|learn|能力|capability|管线|pipeline|资产|artifact|artifacts|候选|candidate|lesson|规则|rule).{0,18}(金融|finance|股市|股票|美股|a股|港股|etf|指数|index|大类资产|major asset|持仓|portfolio|基本面|fundamental|技术面|technical|日频|风控|risk control|风险控制|策略|strategy))/u.test(
+      normalized,
+    );
+  const asksAuditOnly =
+    /(有没有|到底|是不是|还是|卡住|卡在哪|只是|装样子|完成了|失败了|真的|了吗|了吗\?|吗\?|where|whether|did it|status)/u.test(
+      normalized,
+    );
+  return hasMaintenanceDirective && hasPriorLearningCue && hasFinanceLearningCue && !asksAuditOnly;
+}
+
 export function looksLikeStrategicLearningAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   if (

@@ -8,6 +8,7 @@ import {
   looksLikeEvidenceShapeScopeAsk,
   looksLikeExecutionAuthorityScopeAsk,
   looksLikeFailureReportScopeAsk,
+  looksLikeFinanceLearningMaintenanceAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikeProgressStatusScopeAsk,
   looksLikeResultShapeScopeAsk,
@@ -208,6 +209,16 @@ const CRITICAL_SINGLE_SPECIALIST_CASES = [
   },
   {
     phrase: "去读关于llm应用在金融智能体上的文章，对你自我提升的启发",
+    targetSurface: "learning_command",
+    specialistSurfaces: ["learning_command"],
+  },
+  {
+    phrase: "之前内部做了很多的金融学习，你应该把它们维护好并加强",
+    targetSurface: "learning_command",
+    specialistSurfaces: ["learning_command"],
+  },
+  {
+    phrase: "把已有的 ETF 学习能力和 pipeline 梳理加固一下",
     targetSurface: "learning_command",
     specialistSurfaces: ["learning_command"],
   },
@@ -722,7 +733,10 @@ describe("real daily utterance regression", () => {
         mode: "aggregate",
         specialistSurfaces: ["learning_command"],
       });
-      expect(looksLikeStrategicLearningAsk(phrase), label).toBe(true);
+      expect(
+        looksLikeStrategicLearningAsk(phrase) || looksLikeFinanceLearningMaintenanceAsk(phrase),
+        label,
+      ).toBe(true);
       expect(looksLikeSourceCoverageScopeAsk(phrase), label).toBe(expectsSourceCoverageGuard);
     }
   });

@@ -12,6 +12,7 @@ import {
   looksLikeExecutionAuthorityScopeAsk,
   looksLikeExplicitResearchLineContinuationAsk,
   looksLikeFailureReportScopeAsk,
+  looksLikeFinanceLearningMaintenanceAsk,
   looksLikeHoldingsRevalidationAsk,
   looksLikeHighStakesRiskScopeAsk,
   looksLikeInstructionConflictScopeAsk,
@@ -58,6 +59,24 @@ describe("feishu intent matchers", () => {
 
     expect(looksLikeVerticalFinanceLearningAsk("继续分析一下 QQQ 今天的技术面")).toBe(false);
     expect(looksLikeVerticalFinanceLearningAsk("帮我总结一下这篇普通文章")).toBe(false);
+  });
+
+  it("detects prior finance-learning maintenance asks without catching audits", () => {
+    const positiveCases = [
+      "之前内部做了很多的金融学习，你应该把它们维护好并加强",
+      "把已有的 ETF 学习能力和 pipeline 梳理加固一下",
+      "过去那些股市学习资产别散着，归拢好并补强",
+      "把前面落下的 finance learning capability candidates 维护干净",
+    ];
+
+    for (const phrase of positiveCases) {
+      expect(looksLikeFinanceLearningMaintenanceAsk(phrase), phrase).toBe(true);
+    }
+
+    expect(looksLikeFinanceLearningMaintenanceAsk("之前那些金融学习到底有没有真的进记忆")).toBe(
+      false,
+    );
+    expect(looksLikeFinanceLearningMaintenanceAsk("现在 ETF 还能拿吗")).toBe(false);
   });
 
   it("detects correction carryover asks by family cues", () => {
