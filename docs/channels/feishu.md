@@ -1,14 +1,14 @@
 ---
-summary: "Feishu bot overview, features, and configuration"
+summary: "Feishu/Lark bot overview, features, and configuration"
 read_when:
   - You want to connect a Feishu/Lark bot
-  - You are configuring the Feishu channel
-title: Feishu
+  - You are configuring the Feishu/Lark channel
+title: Feishu/Lark
 ---
 
-# Feishu bot
+# Feishu/Lark bot
 
-Feishu (Lark) is a team chat platform used by companies for messaging and collaboration. This plugin connects OpenClaw to a Feishu/Lark bot using the platform’s WebSocket event subscription so messages can be received without exposing a public webhook URL.
+Feishu and Lark are the same product family for this integration: Feishu is the China-facing product/API namespace, and Lark is the international visible app surface. This plugin connects OpenClaw to a Feishu/Lark bot using the platform’s WebSocket event subscription so messages can be received without exposing a public webhook URL.
 
 ---
 
@@ -30,7 +30,7 @@ openclaw plugins install ./extensions/feishu
 
 ## Quickstart
 
-There are two ways to add the Feishu channel:
+There are two ways to add the Feishu/Lark channel:
 
 ### Method 1: onboarding wizard (recommended)
 
@@ -59,7 +59,7 @@ If you already completed initial install, add the channel via CLI:
 openclaw channels add
 ```
 
-Choose **Feishu**, then enter the App ID and App Secret.
+Choose **Feishu/Lark** (or **Feishu** in older CLI builds), then enter the App ID and App Secret.
 
 ✅ **After configuration**, manage the gateway:
 
@@ -171,7 +171,7 @@ In **Event Subscription**:
 openclaw channels add
 ```
 
-Choose **Feishu** and paste your App ID + App Secret.
+Choose **Feishu/Lark** (or **Feishu** in older CLI builds) and paste your App ID + App Secret.
 
 ### Configure via config file
 
@@ -291,8 +291,8 @@ After approval, you can chat normally.
 
 ## Overview
 
-- **Feishu bot channel**: Feishu bot managed by the gateway
-- **Deterministic routing**: replies always return to Feishu
+- **Feishu/Lark bot channel**: one Feishu/Lark bot managed by the gateway
+- **Deterministic routing**: replies always return to the same Feishu/Lark chat
 - **Session isolation**: DMs share a main session; groups are isolated
 - **WebSocket connection**: long connection via Feishu SDK, no public URL needed
 
