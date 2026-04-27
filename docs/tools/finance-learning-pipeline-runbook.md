@@ -62,6 +62,12 @@ Run the fresh event application smoke when the apply layer must prove it can mov
 pnpm exec tsx scripts/dev/finance-learning-event-review-smoke.ts
 ```
 
+Run the full language-to-brain loop smoke when the whole Lark language, finance brain, analysis, and memory receipt path must be checked together:
+
+```bash
+pnpm exec tsx scripts/dev/lark-brain-language-loop-smoke.ts
+```
+
 Supported smoke cases:
 
 - `manual-paste`
@@ -258,3 +264,4 @@ Smoke coverage:
 - `capability-apply-unmatched` seeds the same capability, asks an unrelated repository-governance question, and verifies the apply layer fails closed instead of inventing a learned finance answer.
 - `finance-learning-multi-candidate-smoke.ts` seeds four ETF event and risk-gate fixtures, then verifies `candidateCount >= 3`, `synthesisMode=multi_capability_synthesis`, and the research-only no-action boundary.
 - `finance-learning-event-review-smoke.ts` adds a local fresh ETF event fixture, checks required inputs and evidence coverage, and verifies `eventReviewDraft.status=research_review_ready` without approving trades.
+- `lark-brain-language-loop-smoke.ts` starts from a Lark utterance handoff, runs the finance learning brain, applies retained capabilities to fresh event analysis, and writes a loop receipt proving the language corpus and protected memory were untouched.
