@@ -2,6 +2,23 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./probe.js", () => ({
   probeFeishu: vi.fn(async () => ({ ok: false, error: "mocked" })),
+  isFeishuProbeDegraded: (result: { health?: string } | null | undefined) =>
+    result?.health === "degraded",
+  formatFeishuProbeStatusLabel: (result: {
+    ok?: boolean;
+    health?: string;
+    reason?: string;
+    botName?: string;
+    botOpenId?: string;
+  }) => {
+    if (result?.ok && result.health !== "degraded") {
+      return `connected as ${result.botName ?? result.botOpenId ?? "bot"}`;
+    }
+    if (result?.health === "degraded") {
+      return `degraded${result.reason ? `:${result.reason}` : ""}`;
+    }
+    return "configured (connection not verified)";
+  },
 }));
 
 import { feishuOnboardingAdapter } from "./onboarding.js";
@@ -143,5 +160,31 @@ describe("feishuOnboardingAdapter.getStatus", () => {
         process.env[appSecretKey] = prevAppSecret;
       }
     }
+  });
+
+  it("surfaces degraded probe status instead of pretending the connection is healthy", async () => {
+    const { probeFeishu } = await import("./probe.js");
+    vi.mocked(probeFeishu).mockResolvedValueOnce({
+      ok: true,
+      botName: "TestBot",
+      health: "degraded",
+      reason: "bot_open_id_unavailable",
+    } as never);
+
+    const status = await feishuOnboardingAdapter.getStatus({
+      cfg: {
+        channels: {
+          feishu: {
+            appId: "cli_test",
+            appSecret: "secret_test",
+          },
+        },
+      } as never,
+      ...baseStatusContext,
+    });
+
+    expect(status.configured).toBe(true);
+    expect(status.statusLines).toContain("Feishu: degraded:bot_open_id_unavailable");
+    expect(status.statusLines.join("\n")).not.toContain("connected as");
   });
 });

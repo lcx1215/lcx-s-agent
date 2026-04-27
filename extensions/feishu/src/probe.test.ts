@@ -6,7 +6,13 @@ vi.mock("./client.js", () => ({
   createFeishuClient: createFeishuClientMock,
 }));
 
-import { FEISHU_PROBE_REQUEST_TIMEOUT_MS, probeFeishu, clearProbeCache } from "./probe.js";
+import {
+  FEISHU_PROBE_REQUEST_TIMEOUT_MS,
+  clearProbeCache,
+  formatFeishuProbeStatusLabel,
+  isFeishuProbeDegraded,
+  probeFeishu,
+} from "./probe.js";
 
 function makeRequestFn(response: Record<string, unknown>) {
   return vi.fn().mockResolvedValue(response);
@@ -55,8 +61,30 @@ describe("probeFeishu", () => {
       appId: "cli_123",
       botName: "TestBot",
       botOpenId: "ou_abc123",
+      health: "healthy",
     });
+    expect(isFeishuProbeDegraded(result)).toBe(false);
+    expect(formatFeishuProbeStatusLabel(result)).toBe("connected as TestBot");
     expect(requestFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the probe degraded when bot info succeeds but open_id is missing", async () => {
+    setupClient({
+      code: 0,
+      bot: { bot_name: "TestBot" },
+    });
+
+    const result = await probeFeishu({ appId: "cli_123", appSecret: "secret" });
+    expect(result).toEqual({
+      ok: true,
+      appId: "cli_123",
+      botName: "TestBot",
+      health: "degraded",
+      reason: "bot_open_id_unavailable",
+      error: "bot open_id unavailable",
+    });
+    expect(isFeishuProbeDegraded(result)).toBe(true);
+    expect(formatFeishuProbeStatusLabel(result)).toBe("degraded:bot_open_id_unavailable");
   });
 
   it("passes the probe timeout to the Feishu request", async () => {
@@ -186,6 +214,21 @@ describe("probeFeishu", () => {
     }
   });
 
+  it("classifies DNS failures as degraded", async () => {
+    const requestFn = vi
+      .fn()
+      .mockRejectedValue(new Error("getaddrinfo ENOTFOUND open.larksuite.com"));
+    createFeishuClientMock.mockReturnValue({ request: requestFn });
+
+    const result = await probeFeishu({ appId: "cli_123", appSecret: "secret" });
+    expect(result).toMatchObject({
+      ok: false,
+      health: "degraded",
+      reason: "dns",
+      error: "getaddrinfo ENOTFOUND open.larksuite.com",
+    });
+  });
+
   it("caches per account independently", async () => {
     const requestFn = setupClient({
       code: 0,
@@ -266,6 +309,7 @@ describe("probeFeishu", () => {
       appId: "cli_123",
       botName: "DataBot",
       botOpenId: "ou_data",
+      health: "healthy",
     });
   });
 });

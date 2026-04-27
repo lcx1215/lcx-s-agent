@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import type { ClawdbotConfig, RuntimeEnv, HistoryEntry } from "openclaw/plugin-sdk";
+import { recordOperationalAnomaly } from "../../../src/infra/operational-anomalies.js";
 import { resolveFeishuAccount } from "./accounts.js";
 import { raceWithTimeoutAndAbort } from "./async.js";
 import {
@@ -372,6 +373,15 @@ function registerEventHandlers(
     },
     onError: (err) => {
       error(`feishu[${accountId}]: inbound debounce flush failed: ${String(err)}`);
+      void recordOperationalAnomaly({
+        cfg,
+        category: "write_edit_failure",
+        severity: "medium",
+        source: "feishu.monitor.account",
+        problem: "inbound debounce flush failed",
+        evidence: [`account=${accountId}`, `error=${String(err)}`],
+        impact: "Feishu messages may fail to merge or dispatch cleanly during active operation",
+      });
     },
   });
 
@@ -384,6 +394,15 @@ function registerEventHandlers(
       if (fireAndForget) {
         void processMessage().catch((err) => {
           error(`feishu[${accountId}]: error handling message: ${String(err)}`);
+          void recordOperationalAnomaly({
+            cfg,
+            category: "write_edit_failure",
+            severity: "high",
+            source: "feishu.monitor.account",
+            problem: "message event handling failed",
+            evidence: [`account=${accountId}`, `error=${String(err)}`],
+            impact: "user-facing message handling may fail before reply dispatch completes",
+          });
         });
         return;
       }
@@ -391,6 +410,15 @@ function registerEventHandlers(
         await processMessage();
       } catch (err) {
         error(`feishu[${accountId}]: error handling message: ${String(err)}`);
+        await recordOperationalAnomaly({
+          cfg,
+          category: "write_edit_failure",
+          severity: "high",
+          source: "feishu.monitor.account",
+          problem: "message event handling failed",
+          evidence: [`account=${accountId}`, `error=${String(err)}`],
+          impact: "user-facing message handling may fail before reply dispatch completes",
+        });
       }
     },
     "im.message.message_read_v1": async () => {
@@ -437,6 +465,15 @@ function registerEventHandlers(
         if (fireAndForget) {
           promise.catch((err) => {
             error(`feishu[${accountId}]: error handling reaction: ${String(err)}`);
+            void recordOperationalAnomaly({
+              cfg,
+              category: "write_edit_failure",
+              severity: "medium",
+              source: "feishu.monitor.account",
+              problem: "reaction handling failed",
+              evidence: [`account=${accountId}`, `error=${String(err)}`],
+              impact: "reaction-driven follow-up handling may fail during active operation",
+            });
           });
           return;
         }
@@ -446,6 +483,15 @@ function registerEventHandlers(
       if (fireAndForget) {
         void processReaction().catch((err) => {
           error(`feishu[${accountId}]: error handling reaction event: ${String(err)}`);
+          void recordOperationalAnomaly({
+            cfg,
+            category: "write_edit_failure",
+            severity: "medium",
+            source: "feishu.monitor.account",
+            problem: "reaction event handling failed",
+            evidence: [`account=${accountId}`, `error=${String(err)}`],
+            impact: "reaction-driven follow-up handling may fail during active operation",
+          });
         });
         return;
       }
@@ -454,6 +500,15 @@ function registerEventHandlers(
         await processReaction();
       } catch (err) {
         error(`feishu[${accountId}]: error handling reaction event: ${String(err)}`);
+        await recordOperationalAnomaly({
+          cfg,
+          category: "write_edit_failure",
+          severity: "medium",
+          source: "feishu.monitor.account",
+          problem: "reaction event handling failed",
+          evidence: [`account=${accountId}`, `error=${String(err)}`],
+          impact: "reaction-driven follow-up handling may fail during active operation",
+        });
       }
     },
     "im.message.reaction.deleted_v1": async () => {
@@ -472,12 +527,30 @@ function registerEventHandlers(
         if (fireAndForget) {
           promise.catch((err) => {
             error(`feishu[${accountId}]: error handling card action: ${String(err)}`);
+            void recordOperationalAnomaly({
+              cfg,
+              category: "write_edit_failure",
+              severity: "medium",
+              source: "feishu.monitor.account",
+              problem: "card action handling failed",
+              evidence: [`account=${accountId}`, `error=${String(err)}`],
+              impact: "card-driven control actions may fail during active operation",
+            });
           });
         } else {
           await promise;
         }
       } catch (err) {
         error(`feishu[${accountId}]: error handling card action: ${String(err)}`);
+        await recordOperationalAnomaly({
+          cfg,
+          category: "write_edit_failure",
+          severity: "medium",
+          source: "feishu.monitor.account",
+          problem: "card action handling failed",
+          evidence: [`account=${accountId}`, `error=${String(err)}`],
+          impact: "card-driven control actions may fail during active operation",
+        });
       }
     },
   });
@@ -502,9 +575,13 @@ export async function monitorSingleAccount(params: MonitorSingleAccountParams): 
   const botOpenId =
     botOpenIdSource.kind === "prefetched"
       ? botOpenIdSource.botOpenId
-      : await fetchBotOpenIdForMonitor(account, { runtime, abortSignal });
+      : await fetchBotOpenIdForMonitor(account, { config: cfg, runtime, abortSignal });
   botOpenIds.set(accountId, botOpenId ?? "");
-  log(`feishu[${accountId}]: bot open_id resolved: ${botOpenId ?? "unknown"}`);
+  if (botOpenId) {
+    log(`feishu[${accountId}]: bot open_id resolved: ${botOpenId}`);
+  } else {
+    log(`feishu[${accountId}]: bot open_id unavailable`);
+  }
 
   const connectionMode = account.config.connectionMode ?? "websocket";
   if (connectionMode === "webhook" && !account.verificationToken?.trim()) {
@@ -528,7 +605,7 @@ export async function monitorSingleAccount(params: MonitorSingleAccountParams): 
   });
 
   if (connectionMode === "webhook") {
-    return monitorWebhook({ account, accountId, runtime, abortSignal, eventDispatcher });
+    return monitorWebhook({ cfg, account, accountId, runtime, abortSignal, eventDispatcher });
   }
-  return monitorWebSocket({ account, accountId, runtime, abortSignal, eventDispatcher });
+  return monitorWebSocket({ cfg, account, accountId, runtime, abortSignal, eventDispatcher });
 }

@@ -1,11 +1,31 @@
 import type { ClawdbotConfig } from "openclaw/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { monitorFeishuProvider, stopFeishuMonitor } from "./monitor.js";
+import { fetchBotOpenIdForMonitor } from "./monitor.startup.js";
 
 const probeFeishuMock = vi.hoisted(() => vi.fn());
+const recordOperationalAnomalyMock = vi.hoisted(() => vi.fn());
+const reconcileLearningTimeboxesMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    scanned: 0,
+    resumed: 0,
+    interrupted: 0,
+    notified: 0,
+  })),
+);
 
 vi.mock("./probe.js", () => ({
   probeFeishu: probeFeishuMock,
+  isFeishuProbeDegraded: (result: { health?: string } | null | undefined) =>
+    result?.health === "degraded",
+}));
+
+vi.mock("../../../src/infra/operational-anomalies.js", () => ({
+  recordOperationalAnomaly: recordOperationalAnomalyMock,
+}));
+
+vi.mock("./learning-timebox.js", () => ({
+  reconcileFeishuLearningTimeboxesOnStartup: reconcileLearningTimeboxesMock,
 }));
 
 vi.mock("./client.js", () => ({
@@ -53,6 +73,8 @@ function buildMultiAccountWebsocketConfig(accountIds: string[]): ClawdbotConfig 
 
 afterEach(() => {
   stopFeishuMonitor();
+  recordOperationalAnomalyMock.mockReset();
+  reconcileLearningTimeboxesMock.mockClear();
 });
 
 describe("Feishu monitor startup preflight", () => {
@@ -85,6 +107,12 @@ describe("Feishu monitor startup preflight", () => {
 
       expect(started).toEqual(["alpha"]);
       expect(maxInFlight).toBe(1);
+      expect(reconcileLearningTimeboxesMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cfg: expect.any(Object),
+          runtime: undefined,
+        }),
+      );
     } finally {
       releaseProbes();
       abortController.abort();
@@ -160,6 +188,13 @@ describe("Feishu monitor startup preflight", () => {
       expect(runtime.error).toHaveBeenCalledWith(
         expect.stringContaining("bot info probe timed out"),
       );
+      expect(recordOperationalAnomalyMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "provider_degradation",
+          source: "feishu.monitor.startup",
+          problem: "startup bot-info probe timed out",
+        }),
+      );
     } finally {
       releaseBetaProbe();
       abortController.abort();
@@ -199,5 +234,39 @@ describe("Feishu monitor startup preflight", () => {
     } finally {
       abortController.abort();
     }
+  });
+
+  it("logs degraded startup when bot info succeeds without open_id", async () => {
+    probeFeishuMock.mockResolvedValueOnce({
+      ok: true,
+      health: "degraded",
+      reason: "bot_open_id_unavailable",
+    });
+    const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+
+    const botOpenId = await fetchBotOpenIdForMonitor(
+      {
+        accountId: "alpha",
+        enabled: true,
+        configured: true,
+        domain: "lark",
+        config: {} as never,
+        appId: "cli_alpha",
+        appSecret: "secret_alpha",
+      },
+      { runtime },
+    );
+
+    expect(botOpenId).toBeUndefined();
+    expect(runtime.error).toHaveBeenCalledWith(
+      "feishu[alpha]: bot info degraded (bot_open_id_unavailable); continuing startup",
+    );
+    expect(recordOperationalAnomalyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "provider_degradation",
+        source: "feishu.monitor.startup",
+        problem: "startup bot-info probe degraded",
+      }),
+    );
   });
 });

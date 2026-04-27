@@ -43,7 +43,7 @@ vi.mock("./streaming-card.js", () => ({
   },
 }));
 
-import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
+import { createFeishuReplyDispatcher, normalizeFeishuDisplayText } from "./reply-dispatcher.js";
 
 describe("createFeishuReplyDispatcher streaming behavior", () => {
   beforeEach(() => {
@@ -185,6 +185,57 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
   });
 
+  it("normalizes markdown tables and code fences before sending to Feishu", async () => {
+    resolveFeishuAccountMock.mockReturnValue({
+      accountId: "main",
+      appId: "app_id",
+      appSecret: "app_secret",
+      domain: "feishu",
+      config: {
+        renderMode: "raw",
+        streaming: false,
+      },
+    });
+
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await options.deliver(
+      {
+        text: [
+          "## 今日关注",
+          "",
+          "| 指标 | 数值 | 结论 |",
+          "|------|------|------|",
+          "| VIX | 27.44 | 偏高 |",
+          "",
+          "```json",
+          '{ "repair_candidate": "continuation-routing" }',
+          "```",
+        ].join("\n"),
+      },
+      { kind: "final" },
+    );
+
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: [
+          "今日关注",
+          "",
+          "- 指标: VIX; 数值: 27.44; 结论: 偏高",
+          "",
+          '{ "repair_candidate": "continuation-routing" }',
+        ].join("\n"),
+      }),
+    );
+    expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
+  });
+
   it("suppresses internal block payload delivery", async () => {
     createFeishuReplyDispatcher({
       cfg: {} as never,
@@ -200,6 +251,26 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
     expect(sendMediaFeishuMock).not.toHaveBeenCalled();
+  });
+
+  it("never sends tool-result payloads to external Feishu chats", async () => {
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await options.deliver(
+      { text: "⚠️ 📝 Edit: in ~/.openclaw/workspace/MEMORY.md failed" },
+      { kind: "tool" },
+    );
+
+    expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
+    expect(sendMediaFeishuMock).not.toHaveBeenCalled();
+    expect(streamingInstances).toHaveLength(0);
   });
 
   it("uses streaming session for auto mode markdown payloads", async () => {
@@ -241,7 +312,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(streamingInstances).toHaveLength(1);
     expect(streamingInstances[0].start).toHaveBeenCalledTimes(1);
     expect(streamingInstances[0].close).toHaveBeenCalledTimes(1);
-    expect(streamingInstances[0].close).toHaveBeenCalledWith("```md\npartial answer\n```");
+    expect(streamingInstances[0].close).toHaveBeenCalledWith("partial answer");
   });
 
   it("sends media-only payloads as attachments", async () => {
@@ -455,5 +526,25 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         replyInThread: true,
       }),
     );
+  });
+});
+
+describe("normalizeFeishuDisplayText", () => {
+  it("turns heavy markdown into operator-readable plain text", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        [
+          "# 标题",
+          "",
+          "| 项目 | 状态 |",
+          "|------|------|",
+          "| 学习 | 正常 |",
+          "",
+          "```ts",
+          "const x = 1;",
+          "```",
+        ].join("\n"),
+      ),
+    ).toBe(["标题", "", "- 项目: 学习; 状态: 正常", "", "const x = 1;"].join("\n"));
   });
 });

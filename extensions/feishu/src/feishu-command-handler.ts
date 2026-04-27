@@ -1,22 +1,4 @@
 const DEFAULT_RESET_TRIGGERS = ["/new", "/reset"] as const;
-const FEISHU_RESET_INTENT_ALIASES = new Set([
-  "继续",
-  "继续一下",
-  "继续这个研究线",
-  "继续这个研究",
-  "继续当前研究",
-  "继续当前基本面研究",
-  "继续当前方法研究",
-  "继续当前学习线",
-  "把我这五天学的这些吸收进去",
-  "把我这几天学的这些吸收进去",
-  "把这些内容吸收进去",
-  "把这些内容整理进当前基本面研究",
-  "整理进当前基本面研究",
-  "把这些内容整理进当前方法研究",
-  "整理进当前方法研究",
-  "把这些内容整理进当前学习复盘",
-] as const);
 
 type FeishuBeforeResetContext = {
   cfg: Record<string, unknown>;
@@ -39,41 +21,13 @@ type FeishuBeforeResetRunner = {
   ) => Promise<void>;
 };
 
-function normalizeFeishuAliasCandidate(messageText: string): string {
-  return messageText
-    .replace(/[\u200b-\u200d\ufeff]/gu, "")
-    .trim()
-    .replace(/^[>\-*\u2022\u00b7]+\s*/u, "")
-    .replace(/^(?:\d+[.)]\s*)+/u, "")
-    .replace(/[。！？!?]+$/u, "")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
 /**
- * Normalize a small set of explicit Feishu "continue / absorb" phrases into
- * the existing /new flow so we reuse the current reset + memory hooks.
+ * Keep Feishu natural language untouched. Only explicit slash commands should
+ * enter reset handling; otherwise "继续" style turns can jump across lanes and
+ * contaminate the wrong workflow.
  */
 export function normalizeFeishuCommandText(messageText: string): string {
-  const trimmed = messageText.trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-
-  const normalizedAlias = normalizeFeishuAliasCandidate(trimmed);
-  const lowered = normalizedAlias.toLowerCase();
-  const isResetCommand = DEFAULT_RESET_TRIGGERS.some(
-    (trigger) => lowered === trigger || lowered.startsWith(`${trigger} `),
-  );
-  if (isResetCommand) {
-    return trimmed;
-  }
-
-  if (FEISHU_RESET_INTENT_ALIASES.has(normalizedAlias)) {
-    return `/new ${normalizedAlias}`;
-  }
-
-  return trimmed;
+  return messageText.trim();
 }
 
 /**

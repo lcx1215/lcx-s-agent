@@ -2,9 +2,11 @@ import * as http from "http";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import {
   applyBasicWebhookRequestGuards,
+  type ClawdbotConfig,
   type RuntimeEnv,
   installRequestBodyLimitGuard,
 } from "openclaw/plugin-sdk";
+import { recordOperationalAnomaly } from "../../../src/infra/operational-anomalies.js";
 import { createFeishuWSClient } from "./client.js";
 import {
   botOpenIds,
@@ -18,6 +20,7 @@ import {
 import type { ResolvedFeishuAccount } from "./types.js";
 
 export type MonitorTransportParams = {
+  cfg?: ClawdbotConfig;
   account: ResolvedFeishuAccount;
   accountId: string;
   runtime?: RuntimeEnv;
@@ -26,6 +29,7 @@ export type MonitorTransportParams = {
 };
 
 export async function monitorWebSocket({
+  cfg,
   account,
   accountId,
   runtime,
@@ -62,6 +66,15 @@ export async function monitorWebSocket({
       wsClient.start({ eventDispatcher });
       log(`feishu[${accountId}]: WebSocket client started`);
     } catch (err) {
+      void recordOperationalAnomaly({
+        cfg,
+        category: "provider_degradation",
+        severity: "high",
+        source: "feishu.monitor.transport",
+        problem: "websocket transport startup failed",
+        evidence: [`account=${accountId}`, `transport=websocket`, `error=${String(err)}`],
+        impact: "Feishu account cannot receive live events until transport recovers",
+      });
       cleanup();
       abortSignal?.removeEventListener("abort", handleAbort);
       reject(err);
@@ -70,6 +83,7 @@ export async function monitorWebSocket({
 }
 
 export async function monitorWebhook({
+  cfg,
   account,
   accountId,
   runtime,
@@ -120,6 +134,20 @@ export async function monitorWebhook({
       .catch((err) => {
         if (!guard.isTripped()) {
           error(`feishu[${accountId}]: webhook handler error: ${String(err)}`);
+          void recordOperationalAnomaly({
+            cfg,
+            category: "write_edit_failure",
+            severity: "high",
+            source: "feishu.monitor.transport",
+            problem: "webhook handler failed",
+            evidence: [
+              `account=${accountId}`,
+              `transport=webhook`,
+              `path=${path}`,
+              `error=${String(err)}`,
+            ],
+            impact: "Feishu webhook events may be dropped before they reach the reply pipeline",
+          });
         }
       })
       .finally(() => {
@@ -156,6 +184,20 @@ export async function monitorWebhook({
 
     server.on("error", (err) => {
       error(`feishu[${accountId}]: Webhook server error: ${err}`);
+      void recordOperationalAnomaly({
+        cfg,
+        category: "provider_degradation",
+        severity: "high",
+        source: "feishu.monitor.transport",
+        problem: "webhook transport server error",
+        evidence: [
+          `account=${accountId}`,
+          `transport=webhook`,
+          `path=${path}`,
+          `error=${String(err)}`,
+        ],
+        impact: "Feishu webhook transport cannot accept events until the server error is resolved",
+      });
       abortSignal?.removeEventListener("abort", handleAbort);
       reject(err);
     });

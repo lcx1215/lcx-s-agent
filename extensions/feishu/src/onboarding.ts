@@ -14,7 +14,7 @@ import {
   promptSingleChannelSecretInput,
 } from "openclaw/plugin-sdk";
 import { resolveFeishuCredentials } from "./accounts.js";
-import { probeFeishu } from "./probe.js";
+import { formatFeishuProbeStatusLabel, isFeishuProbeDegraded, probeFeishu } from "./probe.js";
 import type { FeishuConfig } from "./types.js";
 
 const channel = "feishu" as const;
@@ -232,10 +232,13 @@ export const feishuOnboardingAdapter: ChannelOnboardingAdapter = {
     const statusLines: string[] = [];
     if (!configured) {
       statusLines.push("Feishu: needs app credentials");
-    } else if (probeResult?.ok) {
-      statusLines.push(
-        `Feishu: connected as ${probeResult.botName ?? probeResult.botOpenId ?? "bot"}`,
-      );
+    } else if (probeResult) {
+      const statusLabel = formatFeishuProbeStatusLabel(probeResult);
+      if (statusLabel) {
+        statusLines.push(`Feishu: ${statusLabel}`);
+      } else {
+        statusLines.push("Feishu: configured (connection not verified)");
+      }
     } else {
       statusLines.push("Feishu: configured (connection not verified)");
     }
@@ -324,9 +327,14 @@ export const feishuOnboardingAdapter: ChannelOnboardingAdapter = {
           appSecret: appSecretProbeValue ?? undefined,
           domain: (next.channels?.feishu as FeishuConfig | undefined)?.domain,
         });
-        if (probe.ok) {
+        if (probe.ok && !isFeishuProbeDegraded(probe)) {
           await prompter.note(
             `Connected as ${probe.botName ?? probe.botOpenId ?? "bot"}`,
+            "Feishu connection test",
+          );
+        } else if (isFeishuProbeDegraded(probe)) {
+          await prompter.note(
+            `Connection degraded: ${probe.reason ?? "unknown degradation"}`,
             "Feishu connection test",
           );
         } else {

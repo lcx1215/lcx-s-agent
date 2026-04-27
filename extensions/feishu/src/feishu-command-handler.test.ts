@@ -7,19 +7,16 @@ describe("normalizeFeishuCommandText", () => {
     expect(normalizeFeishuCommandText("/reset")).toBe("/reset");
   });
 
-  it("maps high-confidence continue aliases into /new", () => {
-    expect(normalizeFeishuCommandText("继续")).toBe("/new 继续");
-    expect(normalizeFeishuCommandText("继续这个研究线。")).toBe("/new 继续这个研究线");
-    expect(normalizeFeishuCommandText("- 继续这个研究线")).toBe("/new 继续这个研究线");
-    expect(normalizeFeishuCommandText("1. 继续这个研究线")).toBe("/new 继续这个研究线");
-    expect(normalizeFeishuCommandText("\u200b继续这个研究线")).toBe("/new 继续这个研究线");
-    expect(normalizeFeishuCommandText("\u200b- 继续这个研究线")).toBe("/new 继续这个研究线");
+  it("keeps natural-language continuation and absorb prompts untouched", () => {
+    expect(normalizeFeishuCommandText("继续")).toBe("继续");
+    expect(normalizeFeishuCommandText("继续这个研究线。")).toBe("继续这个研究线。");
+    expect(normalizeFeishuCommandText("- 继续这个研究线")).toBe("- 继续这个研究线");
+    expect(normalizeFeishuCommandText("1. 继续这个研究线")).toBe("1. 继续这个研究线");
+    expect(normalizeFeishuCommandText("\u200b继续这个研究线")).toBe("\u200b继续这个研究线");
+    expect(normalizeFeishuCommandText("\u200b- 继续这个研究线")).toBe("\u200b- 继续这个研究线");
     expect(normalizeFeishuCommandText("把这些内容整理进当前基本面研究")).toBe(
-      "/new 把这些内容整理进当前基本面研究",
+      "把这些内容整理进当前基本面研究",
     );
-  });
-
-  it("leaves regular natural language untouched", () => {
     expect(normalizeFeishuCommandText("继续分析一下这家公司的财报差异")).toBe(
       "继续分析一下这家公司的财报差异",
     );
@@ -46,11 +43,11 @@ describe("normalizeFeishuCommandText", () => {
 });
 
 describe("handleFeishuCommand", () => {
-  it("runs reset hooks for normalized natural-language aliases", async () => {
+  it("runs reset hooks only for explicit slash commands", async () => {
     const runBeforeReset = vi.fn(async () => {});
 
     const handled = await handleFeishuCommand(
-      "继续这个研究线",
+      "/new 继续这个研究线",
       "agent:main:feishu:dm:ou-1",
       {
         runBeforeReset,
@@ -82,6 +79,7 @@ describe("handleFeishuCommand", () => {
     const runBeforeReset = vi.fn(async () => {});
 
     const messages = [
+      "继续这个研究线",
       "把这些内容整理进当前基本面研究，并补一个 AAPL 和微软的 follow-up 清单",
       "查一下最近美国非农、通胀预期和 QQQ / TLT 的关系",
       "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",

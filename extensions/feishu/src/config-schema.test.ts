@@ -186,3 +186,21 @@ describe("FeishuConfigSchema defaultAccount", () => {
     }
   });
 });
+
+describe("FeishuConfigSchema surfaces", () => {
+  it("accepts explicit named Feishu chat surfaces", () => {
+    const result = FeishuConfigSchema.parse({
+      surfaces: {
+        control_room: { chatId: "oc-control" },
+        technical_daily: { chatId: "oc-tech", enabled: true },
+        learning_command: { chatId: "oc-learning" },
+        watchtower: { chatId: "oc-watchtower" },
+      },
+    });
+
+    expect(result.surfaces?.control_room?.chatId).toBe("oc-control");
+    expect(result.surfaces?.technical_daily?.chatId).toBe("oc-tech");
+    expect(result.surfaces?.learning_command?.chatId).toBe("oc-learning");
+    expect(result.surfaces?.watchtower?.chatId).toBe("oc-watchtower");
+  });
+});

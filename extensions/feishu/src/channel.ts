@@ -23,7 +23,7 @@ import { feishuOnboardingAdapter } from "./onboarding.js";
 import { feishuOutbound } from "./outbound.js";
 import { resolveFeishuGroupToolPolicy } from "./policy.js";
 import { probeFeishu } from "./probe.js";
-import { sendMessageFeishu } from "./send.js";
+import { listMessagesFeishu, sendMessageFeishu } from "./send.js";
 import { normalizeFeishuTarget, looksLikeFeishuId, formatFeishuTarget } from "./targets.js";
 import type { ResolvedFeishuAccount, FeishuConfig } from "./types.js";
 
@@ -84,6 +84,54 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
       "- Feishu targeting: omit `target` to reply to the current conversation (auto-inferred). Explicit targets: `user:open_id` or `chat:chat_id`.",
       "- Feishu supports interactive cards for rich messages.",
     ],
+  },
+  actions: {
+    listActions: ({ cfg }) => {
+      const configuredAccounts = listFeishuAccountIds(cfg).filter(
+        (accountId) => resolveFeishuAccount({ cfg, accountId }).configured,
+      );
+      return configuredAccounts.length > 0 ? ["read"] : [];
+    },
+    supportsAction: ({ action }) => action === "read",
+    handleAction: async ({ action, params, cfg, accountId }) => {
+      if (action !== "read") {
+        throw new Error(`Unsupported Feishu action: ${action}`);
+      }
+
+      const rawTarget =
+        (typeof params.to === "string" && params.to.trim()) ||
+        (typeof params.channelId === "string" && params.channelId.trim()) ||
+        "";
+      const normalizedTarget = rawTarget ? normalizeFeishuTarget(rawTarget) : null;
+      if (!normalizedTarget || !normalizedTarget.startsWith("oc_")) {
+        throw new Error(
+          "Feishu message read requires a chat target such as chat:oc_xxx or a raw chat_id.",
+        );
+      }
+
+      const rawLimit = typeof params.limit === "number" ? params.limit : Number(params.limit);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.trunc(rawLimit) : undefined;
+      const messages = await listMessagesFeishu({
+        cfg,
+        chatId: normalizedTarget,
+        accountId: accountId ?? undefined,
+        limit,
+      });
+      return {
+        messages: messages.map((message) => ({
+          id: message.messageId,
+          messageId: message.messageId,
+          chatId: message.chatId,
+          rootId: message.rootId,
+          parentId: message.parentId,
+          threadId: message.threadId,
+          authorTag: message.authorTag ?? "",
+          timestamp: message.timestamp ?? "",
+          content: message.content,
+          text: message.content,
+        })),
+      };
+    },
   },
   groups: {
     resolveToolPolicy: resolveFeishuGroupToolPolicy,

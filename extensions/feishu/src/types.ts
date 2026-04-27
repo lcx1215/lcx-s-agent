@@ -64,6 +64,8 @@ export type FeishuProbeResult = BaseProbeResult<string> & {
   appId?: string;
   botName?: string;
   botOpenId?: string;
+  health?: "healthy" | "degraded";
+  reason?: "dns" | "timeout" | "network" | "api_error" | "bot_open_id_unavailable" | "aborted";
 };
 
 export type FeishuMediaInfo = {

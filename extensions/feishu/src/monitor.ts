@@ -1,5 +1,6 @@
 import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
 import { listEnabledFeishuAccounts, resolveFeishuAccount } from "./accounts.js";
+import { reconcileFeishuLearningTimeboxesOnStartup } from "./learning-timebox.js";
 import {
   monitorSingleAccount,
   resolveReactionSyntheticEvent,
@@ -36,6 +37,11 @@ export async function monitorFeishuProvider(opts: MonitorFeishuOpts = {}): Promi
 
   const log = opts.runtime?.log ?? console.log;
 
+  await reconcileFeishuLearningTimeboxesOnStartup({
+    cfg,
+    runtime: opts.runtime,
+  });
+
   if (opts.accountId) {
     const account = resolveFeishuAccount({ cfg, accountId: opts.accountId });
     if (!account.enabled || !account.configured) {
@@ -67,6 +73,7 @@ export async function monitorFeishuProvider(opts: MonitorFeishuOpts = {}): Promi
 
     // Probe sequentially so large multi-account startups do not burst Feishu's bot-info endpoint.
     const botOpenId = await fetchBotOpenIdForMonitor(account, {
+      config: cfg,
       runtime: opts.runtime,
       abortSignal: opts.abortSignal,
     });

@@ -2,6 +2,7 @@ import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { z } from "zod";
 export { z };
 import { buildSecretInputSchema, hasConfiguredSecretInput } from "./secret-input.js";
+import { FEISHU_CHAT_SURFACE_NAMES } from "./surfaces.js";
 
 const DmPolicySchema = z.enum(["open", "pairing", "allowlist"]);
 const GroupPolicySchema = z.enum(["open", "allowlist", "disabled"]);
@@ -117,6 +118,16 @@ const GroupSessionScopeSchema = z
  */
 const TopicSessionModeSchema = z.enum(["disabled", "enabled"]).optional();
 const ReactionNotificationModeSchema = z.enum(["off", "own", "all"]).optional();
+const FeishuSurfaceNameSchema = z.enum(FEISHU_CHAT_SURFACE_NAMES);
+const FeishuChatSurfaceConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    chatId: z.string().min(1),
+  })
+  .strict();
+const FeishuSurfaceRegistrySchema = z
+  .record(FeishuSurfaceNameSchema, FeishuChatSurfaceConfigSchema.optional())
+  .optional();
 
 /**
  * Reply-in-thread mode for group chats.
@@ -170,6 +181,7 @@ const FeishuSharedConfigShape = {
   reactionNotifications: ReactionNotificationModeSchema,
   typingIndicator: z.boolean().optional(),
   resolveSenderNames: z.boolean().optional(),
+  surfaces: FeishuSurfaceRegistrySchema,
 };
 
 /**

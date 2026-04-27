@@ -17,12 +17,63 @@ export type ProbeFeishuOptions = {
   abortSignal?: AbortSignal;
 };
 
+export function isFeishuProbeDegraded(result: FeishuProbeResult | null | undefined): boolean {
+  return result?.health === "degraded";
+}
+
+export function formatFeishuProbeStatusLabel(
+  result: FeishuProbeResult | null | undefined,
+): string | undefined {
+  if (!result) {
+    return undefined;
+  }
+  if (result.ok && !isFeishuProbeDegraded(result)) {
+    return `connected as ${result.botName ?? result.botOpenId ?? "bot"}`;
+  }
+  if (isFeishuProbeDegraded(result)) {
+    return `degraded${result.reason ? `:${result.reason}` : ""}`;
+  }
+  return result.ok ? "connected (degraded status unknown)" : "configured (connection not verified)";
+}
+
 type FeishuBotInfoResponse = {
   code: number;
   msg?: string;
   bot?: { bot_name?: string; open_id?: string };
   data?: { bot?: { bot_name?: string; open_id?: string } };
 };
+
+function classifyProbeFailure(
+  error: string | undefined,
+): Pick<FeishuProbeResult, "health" | "reason"> | undefined {
+  const normalized = error?.toLowerCase() ?? "";
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.includes("aborted")) {
+    return { health: "degraded", reason: "aborted" };
+  }
+  if (normalized.includes("timed out") || normalized.includes("timeout")) {
+    return { health: "degraded", reason: "timeout" };
+  }
+  if (
+    normalized.includes("enotfound") ||
+    normalized.includes("eai_again") ||
+    normalized.includes("dns")
+  ) {
+    return { health: "degraded", reason: "dns" };
+  }
+  if (
+    normalized.includes("econnrefused") ||
+    normalized.includes("network error") ||
+    normalized.includes("socket hang up") ||
+    normalized.includes("certificate") ||
+    normalized.includes("unable to verify")
+  ) {
+    return { health: "degraded", reason: "network" };
+  }
+  return undefined;
+}
 
 function setCachedProbeResult(
   cacheKey: string,
@@ -91,6 +142,8 @@ export async function probeFeishu(
         ok: false,
         appId: creds.appId,
         error: "probe aborted",
+        health: "degraded",
+        reason: "aborted",
       };
     }
     if (responseResult.status === "timeout") {
@@ -100,6 +153,8 @@ export async function probeFeishu(
           ok: false,
           appId: creds.appId,
           error: `probe timed out after ${timeoutMs}ms`,
+          health: "degraded",
+          reason: "timeout",
         },
         PROBE_ERROR_TTL_MS,
       );
@@ -111,6 +166,8 @@ export async function probeFeishu(
         ok: false,
         appId: creds.appId,
         error: "probe aborted",
+        health: "degraded",
+        reason: "aborted",
       };
     }
 
@@ -121,29 +178,50 @@ export async function probeFeishu(
           ok: false,
           appId: creds.appId,
           error: `API error: ${response.msg || `code ${response.code}`}`,
+          reason: "api_error",
         },
         PROBE_ERROR_TTL_MS,
       );
     }
 
     const bot = response.bot || response.data?.bot;
+    const botOpenId = bot?.open_id?.trim();
+    const botName = bot?.bot_name?.trim();
+    if (!botOpenId) {
+      return setCachedProbeResult(
+        cacheKey,
+        {
+          ok: true,
+          appId: creds.appId,
+          botName,
+          health: "degraded",
+          reason: "bot_open_id_unavailable",
+          error: "bot open_id unavailable",
+        },
+        PROBE_ERROR_TTL_MS,
+      );
+    }
     return setCachedProbeResult(
       cacheKey,
       {
         ok: true,
         appId: creds.appId,
-        botName: bot?.bot_name,
-        botOpenId: bot?.open_id,
+        botName,
+        botOpenId,
+        health: "healthy",
       },
       PROBE_SUCCESS_TTL_MS,
     );
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    const classified = classifyProbeFailure(error);
     return setCachedProbeResult(
       cacheKey,
       {
         ok: false,
         appId: creds.appId,
-        error: err instanceof Error ? err.message : String(err),
+        error,
+        ...classified,
       },
       PROBE_ERROR_TTL_MS,
     );

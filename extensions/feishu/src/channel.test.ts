@@ -2,9 +2,16 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 
 const probeFeishuMock = vi.hoisted(() => vi.fn());
+const sendMessageFeishuMock = vi.hoisted(() => vi.fn());
+const listMessagesFeishuMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./probe.js", () => ({
   probeFeishu: probeFeishuMock,
+}));
+
+vi.mock("./send.js", () => ({
+  sendMessageFeishu: sendMessageFeishuMock,
+  listMessagesFeishu: listMessagesFeishuMock,
 }));
 
 import { feishuPlugin } from "./channel.js";
@@ -44,5 +51,98 @@ describe("feishuPlugin.status.probeAccount", () => {
       }),
     );
     expect(result).toMatchObject({ ok: true, appId: "cli_main" });
+  });
+});
+
+describe("feishuPlugin.actions", () => {
+  it("advertises read when a configured account exists", () => {
+    const cfg = {
+      channels: {
+        feishu: {
+          enabled: true,
+          appId: "cli_default",
+          appSecret: "secret_default",
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(feishuPlugin.actions?.listActions?.({ cfg })).toContain("read");
+  });
+
+  it("reads recent messages for chat targets only", async () => {
+    listMessagesFeishuMock.mockResolvedValueOnce([
+      {
+        messageId: "om_reply",
+        chatId: "oc_live",
+        authorTag: "user:ou_operator",
+        timestamp: "2026-04-12T08:00:00.000Z",
+        content: "latest acceptance reply",
+      },
+    ]);
+
+    const result = await feishuPlugin.actions?.handleAction?.({
+      channel: "feishu",
+      action: "read",
+      cfg: {
+        channels: {
+          feishu: {
+            enabled: true,
+            appId: "cli_default",
+            appSecret: "secret_default",
+          },
+        },
+      } as OpenClawConfig,
+      params: {
+        to: "chat:oc_live",
+        limit: 3,
+      },
+      accountId: "default",
+    });
+
+    expect(listMessagesFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: "oc_live",
+        accountId: "default",
+        limit: 3,
+      }),
+    );
+    expect(result).toEqual({
+      messages: [
+        {
+          id: "om_reply",
+          messageId: "om_reply",
+          chatId: "oc_live",
+          rootId: undefined,
+          parentId: undefined,
+          threadId: undefined,
+          authorTag: "user:ou_operator",
+          timestamp: "2026-04-12T08:00:00.000Z",
+          content: "latest acceptance reply",
+          text: "latest acceptance reply",
+        },
+      ],
+    });
+  });
+
+  it("rejects non-chat Feishu targets for message read", async () => {
+    await expect(
+      feishuPlugin.actions?.handleAction?.({
+        channel: "feishu",
+        action: "read",
+        cfg: {
+          channels: {
+            feishu: {
+              enabled: true,
+              appId: "cli_default",
+              appSecret: "secret_default",
+            },
+          },
+        } as OpenClawConfig,
+        params: {
+          to: "user:ou_operator",
+        },
+        accountId: "default",
+      }),
+    ).rejects.toThrow(/requires a chat target/);
   });
 });

@@ -1,6 +1,7 @@
 import type { ClawdbotConfig } from "openclaw/plugin-sdk";
 import { resolveFeishuAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
+import { normalizeFeishuDisplayText } from "./display-text.js";
 import type { MentionTarget } from "./mention.js";
 import { buildMentionedMessage, buildMentionedCardContent } from "./mention.js";
 import { parsePostContent } from "./post.js";
@@ -22,12 +23,33 @@ function shouldFallbackFromReplyTarget(response: { code?: number; msg?: string }
 export type FeishuMessageInfo = {
   messageId: string;
   chatId: string;
+  rootId?: string;
+  parentId?: string;
+  threadId?: string;
   senderId?: string;
   senderOpenId?: string;
   senderType?: string;
+  authorTag?: string;
   content: string;
   contentType: string;
   createTime?: number;
+  timestamp?: string;
+};
+
+type FeishuRawMessageItem = {
+  message_id?: string;
+  root_id?: string;
+  parent_id?: string;
+  thread_id?: string;
+  chat_id?: string;
+  msg_type?: string;
+  body?: { content?: string };
+  sender?: {
+    id?: string;
+    id_type?: string;
+    sender_type?: string;
+  };
+  create_time?: string;
 };
 
 function parseInteractiveCardContent(parsed: unknown): string {
@@ -102,6 +124,54 @@ function parseQuotedMessageContent(rawContent: string, msgType: string): string 
   return `[${msgType || "unknown"} message]`;
 }
 
+function parseFeishuCreateTime(rawCreateTime?: string): {
+  createTime?: number;
+  timestamp?: string;
+} {
+  if (!rawCreateTime) {
+    return {};
+  }
+  const parsed = Number.parseInt(String(rawCreateTime), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return { timestamp: rawCreateTime };
+  }
+  const epochMs = parsed < 1_000_000_000_000 ? parsed * 1000 : parsed;
+  return {
+    createTime: epochMs,
+    timestamp: new Date(epochMs).toISOString(),
+  };
+}
+
+function parseFeishuMessageItem(
+  item: FeishuRawMessageItem | null | undefined,
+  fallbackMessageId?: string,
+): FeishuMessageInfo | null {
+  if (!item || (item.body === undefined && item.message_id === undefined)) {
+    return null;
+  }
+  const msgType = item.msg_type ?? "text";
+  const rawContent = item.body?.content ?? "";
+  const content = parseQuotedMessageContent(rawContent, msgType);
+  const { createTime, timestamp } = parseFeishuCreateTime(item.create_time);
+  const senderId = item.sender?.id?.trim() || undefined;
+  const senderType = item.sender?.sender_type?.trim() || undefined;
+  return {
+    messageId: item.message_id ?? fallbackMessageId ?? "unknown",
+    chatId: item.chat_id ?? "",
+    rootId: item.root_id,
+    parentId: item.parent_id,
+    threadId: item.thread_id,
+    senderId,
+    senderOpenId: item.sender?.id_type === "open_id" ? item.sender?.id : undefined,
+    senderType,
+    authorTag: senderType && senderId ? `${senderType}:${senderId}` : senderId,
+    content,
+    contentType: msgType,
+    createTime,
+    timestamp,
+  };
+}
+
 /**
  * Get a message by its ID.
  * Useful for fetching quoted/replied message content.
@@ -126,28 +196,7 @@ export async function getMessageFeishu(params: {
       code?: number;
       msg?: string;
       data?: {
-        items?: Array<{
-          message_id?: string;
-          chat_id?: string;
-          msg_type?: string;
-          body?: { content?: string };
-          sender?: {
-            id?: string;
-            id_type?: string;
-            sender_type?: string;
-          };
-          create_time?: string;
-        }>;
-        message_id?: string;
-        chat_id?: string;
-        msg_type?: string;
-        body?: { content?: string };
-        sender?: {
-          id?: string;
-          id_type?: string;
-          sender_type?: string;
-        };
-        create_time?: string;
+        items?: FeishuRawMessageItem[];
       };
     };
 
@@ -157,31 +206,59 @@ export async function getMessageFeishu(params: {
 
     // Support both list shape (data.items[0]) and single-object shape (data as message)
     const rawItem = response.data?.items?.[0] ?? response.data;
-    const item =
+    const item: FeishuRawMessageItem | null =
       rawItem &&
       (rawItem.body !== undefined || (rawItem as { message_id?: string }).message_id !== undefined)
         ? rawItem
         : null;
-    if (!item) {
-      return null;
-    }
-
-    const msgType = item.msg_type ?? "text";
-    const rawContent = item.body?.content ?? "";
-    const content = parseQuotedMessageContent(rawContent, msgType);
-
-    return {
-      messageId: item.message_id ?? messageId,
-      chatId: item.chat_id ?? "",
-      senderId: item.sender?.id,
-      senderOpenId: item.sender?.id_type === "open_id" ? item.sender?.id : undefined,
-      senderType: item.sender?.sender_type,
-      content,
-      contentType: msgType,
-      createTime: item.create_time ? parseInt(String(item.create_time), 10) : undefined,
-    };
+    return parseFeishuMessageItem(item, messageId);
   } catch {
     return null;
+  }
+}
+
+export async function listMessagesFeishu(params: {
+  cfg: ClawdbotConfig;
+  chatId: string;
+  accountId?: string;
+  limit?: number;
+  sortType?: "ByCreateTimeAsc" | "ByCreateTimeDesc";
+  startTime?: string;
+  endTime?: string;
+}): Promise<FeishuMessageInfo[]> {
+  const account = resolveFeishuAccount({ cfg: params.cfg, accountId: params.accountId });
+  if (!account.configured) {
+    throw new Error(`Feishu account "${account.accountId}" not configured`);
+  }
+
+  const client = createFeishuClient(account);
+  try {
+    const response = (await client.im.message.list({
+      params: {
+        container_id_type: "chat",
+        container_id: params.chatId,
+        sort_type: params.sortType ?? "ByCreateTimeDesc",
+        page_size: Math.max(1, Math.min(params.limit ?? 10, 50)),
+        ...(params.startTime ? { start_time: params.startTime } : {}),
+        ...(params.endTime ? { end_time: params.endTime } : {}),
+      },
+    })) as {
+      code?: number;
+      msg?: string;
+      data?: {
+        items?: FeishuRawMessageItem[];
+      };
+    };
+
+    if (response.code !== 0) {
+      return [];
+    }
+
+    return (response.data?.items ?? [])
+      .map((item) => parseFeishuMessageItem(item))
+      .filter((item): item is FeishuMessageInfo => Boolean(item));
+  } catch {
+    return [];
   }
 }
 
@@ -232,7 +309,7 @@ export async function sendMessageFeishu(
   });
 
   // Build message content (with @mention support)
-  let rawText = text ?? "";
+  let rawText = normalizeFeishuDisplayText(text ?? "");
   if (mentions && mentions.length > 0) {
     rawText = buildMentionedMessage(mentions, rawText);
   }

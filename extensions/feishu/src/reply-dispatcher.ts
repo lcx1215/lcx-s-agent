@@ -8,6 +8,7 @@ import {
 } from "openclaw/plugin-sdk";
 import { resolveFeishuAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
+import { normalizeFeishuDisplayText } from "./display-text.js";
 import { sendMediaFeishu } from "./media.js";
 import type { MentionTarget } from "./mention.js";
 import { buildMentionedCardContent } from "./mention.js";
@@ -21,6 +22,8 @@ import { addTypingIndicator, removeTypingIndicator, type TypingIndicatorState } 
 function shouldUseCard(text: string): boolean {
   return /```[\s\S]*?```/.test(text) || /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text);
 }
+
+export { normalizeFeishuDisplayText } from "./display-text.js";
 
 /** Maximum age (ms) for a message to receive a typing indicator reaction.
  * Messages older than this are likely replays after context compaction (#30418). */
@@ -254,7 +257,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         void typingCallbacks.onReplyStart?.();
       },
       deliver: async (payload: ReplyPayload, info) => {
-        const text = payload.text ?? "";
+        if (info?.kind === "tool") {
+          return;
+        }
+
+        const rawText = payload.text ?? "";
+        const text = normalizeFeishuDisplayText(rawText);
         const mediaList =
           payload.mediaUrls && payload.mediaUrls.length > 0
             ? payload.mediaUrls
@@ -269,7 +277,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         }
 
         if (hasText) {
-          const useCard = renderMode === "card" || (renderMode === "auto" && shouldUseCard(text));
+          const useCard =
+            renderMode === "card" || (renderMode === "auto" && shouldUseCard(rawText));
 
           if (info?.kind === "block") {
             // Drop internal block chunks unless we can safely consume them as

@@ -1,10 +1,12 @@
-import type { RuntimeEnv } from "openclaw/plugin-sdk";
-import { probeFeishu } from "./probe.js";
+import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
+import { recordOperationalAnomaly } from "../../../src/infra/operational-anomalies.js";
+import { isFeishuProbeDegraded, probeFeishu } from "./probe.js";
 import type { ResolvedFeishuAccount } from "./types.js";
 
 export const FEISHU_STARTUP_BOT_INFO_TIMEOUT_MS = 10_000;
 
 type FetchBotOpenIdOptions = {
+  config?: ClawdbotConfig;
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
@@ -34,6 +36,25 @@ export async function fetchBotOpenIdForMonitor(
     abortSignal: options.abortSignal,
   });
   if (result.ok) {
+    if (!result.botOpenId && isFeishuProbeDegraded(result) && result.reason) {
+      const error = options.runtime?.error ?? console.error;
+      error(
+        `feishu[${account.accountId}]: bot info degraded (${result.reason}); continuing startup`,
+      );
+      await recordOperationalAnomaly({
+        cfg: options.config,
+        category: "provider_degradation",
+        severity: "medium",
+        source: "feishu.monitor.startup",
+        problem: "startup bot-info probe degraded",
+        evidence: [
+          `account=${account.accountId}`,
+          `reason=${result.reason}`,
+          "stage=startup_preflight",
+        ],
+        impact: "startup continues without a fully healthy bot-info anchor",
+      });
+    }
     return result.botOpenId;
   }
 
@@ -46,6 +67,35 @@ export async function fetchBotOpenIdForMonitor(
     error(
       `feishu[${account.accountId}]: bot info probe timed out after ${timeoutMs}ms; continuing startup`,
     );
+    await recordOperationalAnomaly({
+      cfg: options.config,
+      category: "provider_degradation",
+      severity: "medium",
+      source: "feishu.monitor.startup",
+      problem: "startup bot-info probe timed out",
+      evidence: [
+        `account=${account.accountId}`,
+        `timeout_ms=${timeoutMs}`,
+        "stage=startup_preflight",
+      ],
+      impact: "startup continues without a stable bot-info health check",
+    });
+  } else if (isFeishuProbeDegraded(result) && result.reason) {
+    const error = options.runtime?.error ?? console.error;
+    error(`feishu[${account.accountId}]: bot info degraded (${result.reason}); continuing startup`);
+    await recordOperationalAnomaly({
+      cfg: options.config,
+      category: "provider_degradation",
+      severity: "medium",
+      source: "feishu.monitor.startup",
+      problem: "startup bot-info probe degraded",
+      evidence: [
+        `account=${account.accountId}`,
+        `reason=${result.reason}`,
+        "stage=startup_preflight",
+      ],
+      impact: "startup continues without a fully healthy bot-info anchor",
+    });
   }
   return undefined;
 }

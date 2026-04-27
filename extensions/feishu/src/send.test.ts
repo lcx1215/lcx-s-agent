@@ -1,12 +1,14 @@
 import type { ClawdbotConfig } from "openclaw/plugin-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getMessageFeishu } from "./send.js";
+import { getMessageFeishu, listMessagesFeishu } from "./send.js";
 
-const { mockClientGet, mockCreateFeishuClient, mockResolveFeishuAccount } = vi.hoisted(() => ({
-  mockClientGet: vi.fn(),
-  mockCreateFeishuClient: vi.fn(),
-  mockResolveFeishuAccount: vi.fn(),
-}));
+const { mockClientGet, mockClientList, mockCreateFeishuClient, mockResolveFeishuAccount } =
+  vi.hoisted(() => ({
+    mockClientGet: vi.fn(),
+    mockClientList: vi.fn(),
+    mockCreateFeishuClient: vi.fn(),
+    mockResolveFeishuAccount: vi.fn(),
+  }));
 
 vi.mock("./client.js", () => ({
   createFeishuClient: mockCreateFeishuClient,
@@ -27,6 +29,7 @@ describe("getMessageFeishu", () => {
       im: {
         message: {
           get: mockClientGet,
+          list: mockClientList,
         },
       },
     });
@@ -164,5 +167,109 @@ describe("getMessageFeishu", () => {
         content: "single payload",
       }),
     );
+  });
+});
+
+describe("listMessagesFeishu", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveFeishuAccount.mockReturnValue({
+      accountId: "default",
+      configured: true,
+    });
+    mockCreateFeishuClient.mockReturnValue({
+      im: {
+        message: {
+          get: mockClientGet,
+          list: mockClientList,
+        },
+      },
+    });
+  });
+
+  it("lists recent chat messages in descending create-time order", async () => {
+    mockClientList.mockResolvedValueOnce({
+      code: 0,
+      data: {
+        items: [
+          {
+            message_id: "om_latest",
+            root_id: "om_root",
+            thread_id: "omt_1",
+            chat_id: "oc_chat",
+            msg_type: "text",
+            create_time: "1712900000000",
+            sender: {
+              id: "ou_operator",
+              id_type: "open_id",
+              sender_type: "user",
+            },
+            body: {
+              content: JSON.stringify({ text: "latest reply" }),
+            },
+          },
+          {
+            message_id: "om_older",
+            chat_id: "oc_chat",
+            msg_type: "interactive",
+            create_time: "1712890000000",
+            sender: {
+              id: "cli_bot",
+              id_type: "app_id",
+              sender_type: "app",
+            },
+            body: {
+              content: JSON.stringify({
+                elements: [{ tag: "markdown", content: "older card" }],
+              }),
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await listMessagesFeishu({
+      cfg: {} as ClawdbotConfig,
+      chatId: "oc_chat",
+      limit: 2,
+    });
+
+    expect(mockClientList).toHaveBeenCalledWith({
+      params: {
+        container_id_type: "chat",
+        container_id: "oc_chat",
+        sort_type: "ByCreateTimeDesc",
+        page_size: 2,
+      },
+    });
+    expect(result).toEqual([
+      expect.objectContaining({
+        messageId: "om_latest",
+        chatId: "oc_chat",
+        rootId: "om_root",
+        threadId: "omt_1",
+        senderOpenId: "ou_operator",
+        authorTag: "user:ou_operator",
+        content: "latest reply",
+        timestamp: "2024-04-12T05:33:20.000Z",
+      }),
+      expect.objectContaining({
+        messageId: "om_older",
+        chatId: "oc_chat",
+        authorTag: "app:cli_bot",
+        content: "older card",
+      }),
+    ]);
+  });
+
+  it("returns an empty list when Feishu list API fails", async () => {
+    mockClientList.mockResolvedValueOnce({ code: 999, msg: "permission denied" });
+
+    const result = await listMessagesFeishu({
+      cfg: {} as ClawdbotConfig,
+      chatId: "oc_chat",
+    });
+
+    expect(result).toEqual([]);
   });
 });
