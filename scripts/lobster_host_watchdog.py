@@ -27,6 +27,7 @@ REQUIRED_CYCLE_CHECK_COUNT = 5
 FEISHU_PROXY_LABEL = "ai.openclaw.feishu.proxy"
 FEISHU_PROXY_ERR_LOG = Path.home() / ".openclaw" / "logs" / "feishu_proxy.err.log"
 ENABLE_ALERTS_ENV = "OPENCLAW_HOST_WATCHDOG_ENABLE_ALERTS"
+RUNTIME_FRESHNESS_STALE_AFTER_HOURS = 36.0
 
 
 def now_iso() -> str:
@@ -289,6 +290,55 @@ def build_scheduler_cycle_snapshot(
     }
 
 
+def build_runtime_freshness_snapshot(
+    runtime_state: dict[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current = now or datetime.now(timezone.utc)
+    if not runtime_state:
+        return {
+            "status": "missing",
+            "generated_at": "",
+            "lag_hours": None,
+            "stale_after_hours": RUNTIME_FRESHNESS_STALE_AFTER_HOURS,
+            "source_root": "",
+            "target_root": "",
+            "checked_file_count": 0,
+            "missing_count": 0,
+            "mismatch_count": 0,
+            "sample_missing": [],
+            "sample_mismatched": [],
+        }
+
+    generated_at = str(runtime_state.get("generatedAt") or "").strip()
+    generated_dt = parse_iso(generated_at)
+    raw_status = str(runtime_state.get("status") or "").strip() or "unknown"
+    lag_hours: float | None = None
+    if generated_dt is None:
+        status = "invalid"
+    else:
+        lag_hours = max((current - generated_dt).total_seconds() / 3600.0, 0.0)
+        if lag_hours > RUNTIME_FRESHNESS_STALE_AFTER_HOURS:
+            status = "stale_receipt"
+        else:
+            status = raw_status
+
+    return {
+        "status": status,
+        "raw_status": raw_status,
+        "generated_at": generated_at,
+        "lag_hours": lag_hours,
+        "stale_after_hours": RUNTIME_FRESHNESS_STALE_AFTER_HOURS,
+        "source_root": runtime_state.get("sourceRoot") or "",
+        "target_root": runtime_state.get("targetRoot") or "",
+        "checked_file_count": runtime_state.get("checkedFileCount") or 0,
+        "missing_count": runtime_state.get("missingCount") or 0,
+        "mismatch_count": runtime_state.get("mismatchCount") or 0,
+        "sample_missing": runtime_state.get("sampleMissing") or [],
+        "sample_mismatched": runtime_state.get("sampleMismatched") or [],
+    }
+
+
 def build_watchdog_snapshot(
     *,
     branch_state: dict[str, Any],
@@ -296,6 +346,7 @@ def build_watchdog_snapshot(
     heartbeat_state: dict[str, Any],
     cycle_report_state: dict[str, Any],
     cycle_failure_state: dict[str, Any],
+    runtime_freshness_state: dict[str, Any],
     launchd_state: dict[str, Any],
     feishu_proxy_state: dict[str, Any],
     mode: str,
@@ -303,6 +354,7 @@ def build_watchdog_snapshot(
     freshness = build_branch_freshness_snapshot(branch_state, scheduler_state)
     heartbeat = build_scheduler_heartbeat_snapshot(heartbeat_state)
     cycle = build_scheduler_cycle_snapshot(cycle_report_state, cycle_failure_state)
+    runtime_freshness = build_runtime_freshness_snapshot(runtime_freshness_state)
     nonfresh = [
         {"branch": branch_name, "status": str(row.get("status") or "")}
         for branch_name, row in freshness.items()
@@ -333,6 +385,8 @@ def build_watchdog_snapshot(
         issues.append("feishu_proxy")
     if nonfresh:
         issues.append("branch_freshness")
+    if str(runtime_freshness.get("status") or "") != "fresh":
+        issues.append("runtime_freshness")
 
     return {
         "schemaVersion": 1,
@@ -346,6 +400,7 @@ def build_watchdog_snapshot(
         "scheduler_heartbeat": heartbeat,
         "scheduler_cycle": cycle,
         "feishu_proxy": feishu_proxy_state,
+        "runtime_freshness": runtime_freshness,
         "branch_freshness": freshness,
         "nonfresh_branches": nonfresh,
         "boundary": {
@@ -357,13 +412,21 @@ def build_watchdog_snapshot(
     }
 
 
-def load_snapshot_inputs() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+def load_snapshot_inputs() -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+]:
     return (
         load_state_json("branch_state.json", {}),
         load_state_json("branch_scheduler.json", {}),
         load_state_json("scheduler_heartbeat.json", {}),
         load_state_json("scheduler_cycle_report.json", {}),
         load_state_json("scheduler_cycle_failure.json", {}),
+        load_state_json("runtime_freshness.json", {}),
     )
 
 
@@ -385,9 +448,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    branch_state, scheduler_state, heartbeat_state, cycle_report_state, cycle_failure_state = (
-        load_snapshot_inputs()
-    )
+    (
+        branch_state,
+        scheduler_state,
+        heartbeat_state,
+        cycle_report_state,
+        cycle_failure_state,
+        runtime_freshness_state,
+    ) = load_snapshot_inputs()
     alerts_enabled = truthy(os.environ.get(ENABLE_ALERTS_ENV)) and not args.dry_run
     mode = "live_guarded" if alerts_enabled else "dry_run_no_alert"
     launchd_state = detect_scheduler_disabled(skip_launchd=args.skip_launchd)
@@ -400,6 +468,7 @@ def main(argv: list[str] | None = None) -> int:
         heartbeat_state=heartbeat_state,
         cycle_report_state=cycle_report_state,
         cycle_failure_state=cycle_failure_state,
+        runtime_freshness_state=runtime_freshness_state,
         launchd_state=launchd_state,
         feishu_proxy_state=feishu_proxy_state,
         mode=mode,

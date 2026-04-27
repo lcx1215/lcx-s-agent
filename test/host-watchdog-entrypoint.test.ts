@@ -21,6 +21,20 @@ function writeState(name: string, payload: unknown) {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function writeFreshRuntimeState() {
+  writeState("runtime_freshness.json", {
+    status: "fresh",
+    generatedAt: new Date().toISOString(),
+    sourceRoot: repoRoot,
+    targetRoot: path.join(os.homedir(), ".openclaw/live-sidecars/lcx-s-openclaw"),
+    checkedFileCount: 10,
+    missingCount: 0,
+    mismatchCount: 0,
+    sampleMissing: [],
+    sampleMismatched: [],
+  });
+}
+
 function cleanupState(...names: string[]) {
   for (const name of names) {
     fs.rmSync(path.join(repoRoot, "branches/_system", name), { force: true });
@@ -48,6 +62,7 @@ describe("host watchdog clean-root entrypoint", () => {
         executionAuthorityGranted: false,
       },
     });
+    writeFreshRuntimeState();
     cleanupState("scheduler_cycle_failure.json");
     const result = runPython([
       "scripts/lobster_host_watchdog.py",
@@ -64,7 +79,8 @@ describe("host watchdog clean-root entrypoint", () => {
     expect(payload.boundary.noRemoteFetch).toBe(true);
     expect(payload.boundary.noTradingExecution).toBe(true);
     expect(payload.scheduler_cycle.status).toBe("fresh");
-    cleanupState("scheduler_cycle_report.json");
+    expect(payload.runtime_freshness.status).toBe("fresh");
+    cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
   });
 
   it("writes host watchdog receipt only when explicitly requested", () => {
@@ -90,6 +106,7 @@ describe("host watchdog clean-root entrypoint", () => {
         executionAuthorityGranted: false,
       },
     });
+    writeFreshRuntimeState();
     const result = spawnSync(
       "python3",
       [
@@ -111,8 +128,9 @@ describe("host watchdog clean-root entrypoint", () => {
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
     expect(receipt.boundary.noFeishuLarkSend).toBe(true);
     expect(receipt.scheduler_cycle.status).toBe("fresh");
+    expect(receipt.runtime_freshness.status).toBe("fresh");
     fs.rmSync(receiptPath, { force: true });
-    cleanupState("scheduler_cycle_report.json");
+    cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
     try {
       fs.rmdirSync(path.dirname(receiptPath));
       fs.rmdirSync(path.dirname(path.dirname(receiptPath)));
@@ -136,6 +154,7 @@ describe("host watchdog clean-root entrypoint", () => {
         executionAuthorityGranted: false,
       },
     });
+    writeFreshRuntimeState();
     cleanupState("scheduler_cycle_failure.json");
 
     const result = runPython([
@@ -149,7 +168,7 @@ describe("host watchdog clean-root entrypoint", () => {
     const payload = JSON.parse(result.stdout);
     expect(payload.scheduler_cycle.status).toBe("boundary_violation");
     expect(payload.issues).toContain("scheduler_cycle");
-    cleanupState("scheduler_cycle_report.json");
+    cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
   });
 
   it("includes Feishu proxy health when launchd inspection is enabled", () => {
@@ -172,11 +191,58 @@ describe("host watchdog clean-root entrypoint", () => {
         executionAuthorityGranted: false,
       },
     });
+    writeFreshRuntimeState();
     const result = runPython(["scripts/lobster_host_watchdog.py", "--dry-run", "--json"]);
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout);
     expect(payload.feishu_proxy.label).toBe("ai.openclaw.feishu.proxy");
     expect(typeof payload.feishu_proxy.status).toBe("string");
-    cleanupState("scheduler_cycle_report.json");
+    cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
+  });
+
+  it("flags stale live runtime freshness receipts", () => {
+    writeState("scheduler_cycle_report.json", {
+      status: "cycle_completed",
+      generatedAt: new Date().toISOString(),
+      cycleResult: {
+        checkCount: 5,
+        checks: [
+          { name: "finance-pipeline-all", ok: true },
+          { name: "finance-multi-candidate", ok: true },
+          { name: "finance-event-review", ok: true },
+          { name: "lark-brain-language-loop", ok: true },
+          { name: "lark-routing-and-distillation-tests", ok: true },
+        ],
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+        remoteFetchOccurred: false,
+        executionAuthorityGranted: false,
+      },
+    });
+    writeState("runtime_freshness.json", {
+      status: "stale",
+      generatedAt: new Date().toISOString(),
+      sourceRoot: repoRoot,
+      targetRoot: path.join(os.homedir(), ".openclaw/live-sidecars/lcx-s-openclaw"),
+      checkedFileCount: 10,
+      missingCount: 1,
+      mismatchCount: 1,
+      sampleMissing: ["src/missing.ts"],
+      sampleMismatched: ["package.json"],
+    });
+
+    const result = runPython([
+      "scripts/lobster_host_watchdog.py",
+      "--dry-run",
+      "--skip-launchd",
+      "--skip-feishu-proxy",
+      "--json",
+    ]);
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.runtime_freshness.status).toBe("stale");
+    expect(payload.issues).toContain("runtime_freshness");
+    cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
   });
 });

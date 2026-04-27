@@ -487,6 +487,38 @@ the front-door Feishu/Lark proxy. It does not change the proxy routing logic, do
 not change provider config, and does not send test messages to Lark during
 install; verification used `/healthz` plus watchdog receipt.
 
+## Runtime Freshness Gate
+
+Failure mode: after LaunchAgents moved to the non-Desktop runtime bundle, the
+Desktop dev/GitHub checkout and the live runtime copy can drift apart. That is
+dangerous because live Feishu/Lark, scheduler, and watchdog sidecars can keep
+running successfully while using stale source.
+
+Smallest safe patch: add a read-only freshness receipt that compares git-tracked
+dev files with the live runtime copy, excluding protected/generated areas
+(`memory/`, `dist/`, `apps/`, `node_modules/`). The host watchdog now reads
+`branches/_system/runtime_freshness.json` and reports `runtime_freshness` as an
+issue unless the latest receipt is `fresh`.
+
+Boundary:
+
+```text
+does_not_copy_files=true
+does_not_modify_launchagents=true
+does_not_send_feishu_lark_messages=true
+does_not_change_provider_config=true
+does_not_touch_protected_memory=true
+```
+
+Expected live proof:
+
+```text
+runtimeFreshness=fresh
+host_watchdog.ok=true
+host_watchdog.issues=none
+runtime_freshness.status=fresh
+```
+
 ## Out Of Scope
 
 - No deletion of old `Desktop/openclaw`.
