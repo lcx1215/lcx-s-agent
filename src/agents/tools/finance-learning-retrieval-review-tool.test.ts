@@ -69,6 +69,14 @@ describe("finance learning retrieval review tool", () => {
           },
         ],
       },
+      applicationValidation: {
+        requested: true,
+        status: "application_ready",
+        candidateCount: 1,
+        failedReason: null,
+        usageReceiptPath: "memory/finance-learning-apply-usage-receipts/2026-04-27/a.json",
+        usageReviewPath: "memory/finance-learning-apply-usage-reviews/2026-04-27.json",
+      },
     });
     await seedJson(workspaceDir, "memory/finance-learning-retrieval-receipts/2026-04-27/b.json", {
       schemaVersion: 1,
@@ -90,6 +98,12 @@ describe("finance learning retrieval review tool", () => {
         ok: true,
         candidateCount: 0,
         candidates: [],
+      },
+      applicationValidation: {
+        requested: true,
+        status: "application_validation_failed",
+        candidateCount: 0,
+        failedReason: "no_retrievable_finance_capability",
       },
     });
     await seedJson(workspaceDir, "memory/finance-learning-retrieval-receipts/2026-04-27/c.json", {
@@ -120,6 +134,12 @@ describe("finance learning retrieval review tool", () => {
           },
         ],
       },
+      applicationValidation: {
+        requested: true,
+        status: "application_validation_failed",
+        candidateCount: 0,
+        failedReason: "missing_reuse_guidance",
+      },
     });
     await seedJson(workspaceDir, "memory/finance-learning-retrieval-receipts/2026-04-27/d.json", {
       boundary: "language_routing_candidate",
@@ -142,6 +162,8 @@ describe("finance learning retrieval review tool", () => {
           invalidReceipts: 1,
           retrievableAfterLearning: 2,
           applicationReadyAfterLearning: 1,
+          applicationValidatedAfterLearning: 1,
+          applicationValidationRequested: 3,
           newlyRetrievable: 2,
           reusedExistingBeforeLearning: 0,
           weakLearningReceipts: 2,
@@ -173,6 +195,17 @@ describe("finance learning retrieval review tool", () => {
         boundary: "finance_learning_retrieval_review",
       }),
     );
+    expect(review.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          learningIntent: "学习 ETF 因子择时和 regime risk",
+          applicationValidationUsageReceiptPath:
+            "memory/finance-learning-apply-usage-receipts/2026-04-27/a.json",
+          applicationValidationUsageReviewPath:
+            "memory/finance-learning-apply-usage-reviews/2026-04-27.json",
+        }),
+      ]),
+    );
     expect(review.separationContract).toEqual(
       expect.objectContaining({
         readsOnly: "memory/finance-learning-retrieval-receipts",
@@ -203,6 +236,8 @@ describe("finance learning retrieval review tool", () => {
           invalidReceipts: 0,
           retrievableAfterLearning: 0,
           applicationReadyAfterLearning: 0,
+          applicationValidatedAfterLearning: 0,
+          applicationValidationRequested: 0,
           newlyRetrievable: 0,
           reusedExistingBeforeLearning: 0,
           weakLearningReceipts: 0,

@@ -37,6 +37,7 @@ const GATEWAY_ACTIONS = [
   "config.schema",
   "config.apply",
   "config.patch",
+  "update.check",
   "update.run",
 ] as const;
 
@@ -48,10 +49,13 @@ const GatewayToolSchema = Type.Object({
   // restart
   delayMs: Type.Optional(Type.Number()),
   reason: Type.Optional(Type.String()),
-  // config.get, config.schema, config.apply, update.run
+  // config.get, config.schema, config.apply, update.check, update.run
   gatewayUrl: Type.Optional(Type.String()),
   gatewayToken: Type.Optional(Type.String()),
   timeoutMs: Type.Optional(Type.Number()),
+  // update.check
+  fetchGit: Type.Optional(Type.Boolean()),
+  includeRegistry: Type.Optional(Type.Boolean()),
   // config.apply, config.patch
   raw: Type.Optional(Type.String()),
   baseHash: Type.Optional(Type.String()),
@@ -197,6 +201,18 @@ export function createGatewayTool(opts?: {
           sessionKey,
           note,
           restartDelayMs,
+        });
+        return jsonResult({ ok: true, result });
+      }
+      if (action === "update.check") {
+        const result = await callGatewayTool("update.check", gatewayOpts, {
+          timeoutMs:
+            typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
+              ? Math.floor(params.timeoutMs)
+              : undefined,
+          fetchGit: typeof params.fetchGit === "boolean" ? params.fetchGit : undefined,
+          includeRegistry:
+            typeof params.includeRegistry === "boolean" ? params.includeRegistry : undefined,
         });
         return jsonResult({ ok: true, result });
       }

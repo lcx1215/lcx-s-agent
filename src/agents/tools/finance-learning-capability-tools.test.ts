@@ -272,7 +272,14 @@ describe("finance learning capability tools", () => {
         ok: true,
         boundary: "finance_learning_capability_apply_read_only",
         applicationMode: "reuse_guidance_bounded_research_answer",
+        synthesisMode: "single_capability_application",
         candidateCount: 1,
+        usageReceiptPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/.+\.json$/u,
+        ),
+        usageReviewPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-reviews\/\d{4}-\d{2}-\d{2}\.json$/u,
+        ),
         answerSkeleton: expect.objectContaining({
           requiredSections: [
             "Retrieved capability used",
@@ -296,6 +303,38 @@ describe("finance learning capability tools", () => {
           riskChecks: expect.arrayContaining([
             "Narrative overreach and regime misclassification during transient headline shocks.",
           ]),
+          answerScaffold: expect.objectContaining({
+            status: "scaffold_only_until_fresh_inputs_are_checked",
+            capabilitySynthesis: expect.objectContaining({
+              mode: "single_capability_application",
+              primaryCapability: "Liquidity regime mapper",
+              supportingCapabilities: [],
+            }),
+            oneLineUse: expect.stringContaining("refresh inputs"),
+            sections: expect.arrayContaining([
+              expect.objectContaining({
+                heading: "Capability synthesis plan",
+                writeThis: expect.stringContaining("single research frame"),
+              }),
+              expect.objectContaining({
+                heading: "Fresh inputs checked",
+                writeThis: expect.stringContaining("credit spreads"),
+                mustInclude: expect.arrayContaining(["credit spreads", "funding stress proxies"]),
+              }),
+              expect.objectContaining({
+                heading: "Research-only conclusion",
+                writeThis: expect.stringContaining("not ready to apply"),
+                mustInclude: expect.arrayContaining(["no trade approval", "no auto-promotion"]),
+              }),
+            ]),
+            refusalTriggers: expect.arrayContaining([
+              "required inputs are missing or stale",
+              expect.stringContaining("Do not use this capability as trading execution approval"),
+            ]),
+            outputDiscipline: expect.objectContaining({
+              forbidden: expect.stringContaining("trade execution approval"),
+            }),
+          }),
           applyOrRefuseRule:
             "If any required input, evidence family, causal check, or risk check is missing for the current question, say the retained capability is not ready to apply instead of filling the gap with generic commentary.",
           noActionBoundary:
@@ -321,6 +360,149 @@ describe("finance learning capability tools", () => {
         ],
       }),
     );
+    const applyReceipt = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReceiptPath), "utf8"),
+    ) as {
+      boundary: string;
+      ok: boolean;
+      synthesisMode: string;
+      candidateCount: number;
+      appliedCapabilities: Array<{ capabilityName: string }>;
+      noExecutionAuthority: boolean;
+      noDoctrineMutation: boolean;
+    };
+    expect(applyReceipt).toMatchObject({
+      boundary: "finance_learning_capability_apply_usage_receipt",
+      ok: true,
+      synthesisMode: "single_capability_application",
+      candidateCount: 1,
+      appliedCapabilities: [expect.objectContaining({ capabilityName: "Liquidity regime mapper" })],
+      noExecutionAuthority: true,
+      noDoctrineMutation: true,
+    });
+    const firstUsageReview = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReviewPath), "utf8"),
+    ) as {
+      boundary: string;
+      counts: { usageReceipts: number; successfulApplications: number };
+      topCapabilities: Array<{ capabilityName: string; count: number }>;
+    };
+    expect(firstUsageReview).toMatchObject({
+      boundary: "finance_learning_capability_apply_usage_review",
+      counts: {
+        usageReceipts: 1,
+        successfulApplications: 1,
+      },
+      topCapabilities: [{ capabilityName: "Liquidity regime mapper", count: 1 }],
+    });
+
+    const synthesizedAnswer = await applyTool.execute("apply-multi-capability", {
+      queryText:
+        "把 liquidity regime funding stress 和 headline event catalyst triage 一起用于 ETF 风控研究，检查 portfolio risk、drawdown 和样本外失效",
+      maxCandidates: 2,
+    });
+    expect(synthesizedAnswer.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        boundary: "finance_learning_capability_apply_read_only",
+        applicationMode: "reuse_guidance_bounded_research_answer",
+        synthesisMode: "multi_capability_synthesis",
+        candidateCount: 2,
+        usageReceiptPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/.+\.json$/u,
+        ),
+        usageReviewPath: appliedAnswer.details.usageReviewPath,
+        answerSkeleton: expect.objectContaining({
+          capabilitySynthesis: expect.objectContaining({
+            mode: "multi_capability_synthesis",
+            primaryCapability: expect.any(String),
+            supportingCapabilities: expect.arrayContaining(["Liquidity regime mapper"]),
+            combinedRequiredInputs: expect.arrayContaining([
+              "credit spreads",
+              "funding stress proxies",
+              "headline feed",
+              "manual event notes",
+            ]),
+            combinedEvidenceCategories: expect.arrayContaining([
+              "liquidity_evidence",
+              "event_catalyst_evidence",
+              "portfolio_risk_evidence",
+            ]),
+            synthesisOrder: expect.arrayContaining([
+              "Use the primary capability to define the research frame.",
+              "Merge overlapping checks, but keep stricter risk and implementation constraints.",
+            ]),
+            conflictChecks: expect.arrayContaining([
+              "Does the combined frame create unsupported timing, sizing, or execution language?",
+            ]),
+          }),
+          answerScaffold: expect.objectContaining({
+            capabilitySynthesis: expect.objectContaining({
+              mode: "multi_capability_synthesis",
+            }),
+            sections: expect.arrayContaining([
+              expect.objectContaining({
+                heading: "Capability synthesis plan",
+                writeThis: expect.stringContaining("Headline sentiment triage"),
+                mustInclude: expect.arrayContaining([
+                  "primary capability",
+                  "supporting capability",
+                  "conflict checks",
+                ]),
+              }),
+            ]),
+          }),
+        }),
+        appliedCapabilities: expect.arrayContaining([
+          expect.objectContaining({ capabilityName: "Liquidity regime mapper" }),
+          expect.objectContaining({ capabilityName: "Headline sentiment triage" }),
+        ]),
+      }),
+    );
+    const synthesizedReceipt = JSON.parse(
+      await fs.readFile(
+        path.join(workspaceDir, synthesizedAnswer.details.usageReceiptPath),
+        "utf8",
+      ),
+    ) as {
+      synthesisMode: string;
+      capabilitySynthesis: { mode: string };
+      appliedCapabilities: Array<{ capabilityName: string }>;
+    };
+    expect(synthesizedReceipt).toMatchObject({
+      synthesisMode: "multi_capability_synthesis",
+      capabilitySynthesis: { mode: "multi_capability_synthesis" },
+      appliedCapabilities: expect.arrayContaining([
+        expect.objectContaining({ capabilityName: "Liquidity regime mapper" }),
+        expect.objectContaining({ capabilityName: "Headline sentiment triage" }),
+      ]),
+    });
+    const synthesizedUsageReview = JSON.parse(
+      await fs.readFile(
+        path.join(workspaceDir, synthesizedAnswer.details.usageReviewPath),
+        "utf8",
+      ),
+    ) as {
+      counts: {
+        usageReceipts: number;
+        successfulApplications: number;
+        multiCapabilitySyntheses: number;
+      };
+      topCapabilities: Array<{ capabilityName: string; count: number }>;
+    };
+    expect(synthesizedUsageReview).toEqual(
+      expect.objectContaining({
+        counts: expect.objectContaining({
+          usageReceipts: 2,
+          successfulApplications: 2,
+          multiCapabilitySyntheses: 1,
+        }),
+        topCapabilities: expect.arrayContaining([
+          { capabilityName: "Liquidity regime mapper", count: 2 },
+          { capabilityName: "Headline sentiment triage", count: 1 },
+        ]),
+      }),
+    );
   });
 
   it("fails closed when no retained capability can answer the research question", async () => {
@@ -342,11 +524,180 @@ describe("finance learning capability tools", () => {
       expect.objectContaining({
         ok: false,
         boundary: "finance_learning_capability_apply_read_only",
+        usageReceiptPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/.+\.json$/u,
+        ),
+        usageReviewPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-reviews\/\d{4}-\d{2}-\d{2}\.json$/u,
+        ),
         reason: "no_retrievable_finance_capability",
         action:
           "Do not improvise a learned answer. First run finance_learning_pipeline_orchestrator on a safe source or refine the query against existing capability tags.",
       }),
     );
+    const refusalReceipt = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReceiptPath), "utf8"),
+    ) as {
+      boundary: string;
+      ok: boolean;
+      reason: string;
+      candidateCount: number;
+    };
+    expect(refusalReceipt).toMatchObject({
+      boundary: "finance_learning_capability_apply_usage_receipt",
+      ok: false,
+      reason: "no_retrievable_finance_capability",
+      candidateCount: 0,
+    });
+    const refusalUsageReview = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReviewPath), "utf8"),
+    ) as {
+      counts: { usageReceipts: number; refusedApplications: number };
+      refusedQueries: Array<{ reason: string }>;
+    };
+    expect(refusalUsageReview).toEqual(
+      expect.objectContaining({
+        counts: expect.objectContaining({
+          usageReceipts: 1,
+          refusedApplications: 1,
+        }),
+        refusedQueries: [expect.objectContaining({ reason: "no_retrievable_finance_capability" })],
+      }),
+    );
+  });
+
+  it("writes a refusal receipt when a retrieved capability is missing reuse guidance", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-capabilities-");
+    const applyTool = createFinanceLearningCapabilityApplyTool({
+      workspaceDir,
+      inspectTool: {
+        label: "Stub Inspect",
+        name: "finance_learning_capability_inspect",
+        description: "Stub inspect tool",
+        parameters: {},
+        execute: async () => ({
+          content: [],
+          details: {
+            ok: true,
+            retrievalMode: "query_ranked",
+            candidateCount: 1,
+            candidates: [
+              {
+                capabilityName: "Incomplete ETF timing capability",
+                sourceArticlePath: "memory/articles/incomplete-etf-timing.md",
+                retrievalScore: 0.9,
+                matchedSignals: ["etf_regime"],
+                reuseGuidance: {
+                  applicationBoundary: "research_only",
+                  attachmentPoint: "finance_framework_domain:etf_regime",
+                  useFor: "Use for ETF timing research only.",
+                  requiredInputs: [],
+                  requiredEvidenceCategories: ["etf_regime_evidence"],
+                  causalCheck: "ETF regime evidence can shape timing research.",
+                  riskChecks: ["Overfitting risk."],
+                  implementationCheck: "Refresh inputs before use.",
+                  doNotUseFor: "Do not use as execution approval.",
+                },
+              },
+            ],
+          },
+        }),
+      },
+    });
+
+    const appliedAnswer = await applyTool.execute("apply-missing-reuse-guidance", {
+      queryText: "Use the retained ETF timing capability for research",
+      maxCandidates: 1,
+    });
+
+    expect(appliedAnswer.details).toEqual(
+      expect.objectContaining({
+        ok: false,
+        boundary: "finance_learning_capability_apply_read_only",
+        reason: "missing_reuse_guidance",
+        candidateCount: 1,
+        usageReceiptPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/.+\.json$/u,
+        ),
+        usageReviewPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-reviews\/\d{4}-\d{2}-\d{2}\.json$/u,
+        ),
+        missingReuseGuidanceCapabilities: [
+          {
+            capabilityName: "Incomplete ETF timing capability",
+            sourceArticlePath: "memory/articles/incomplete-etf-timing.md",
+          },
+        ],
+        action:
+          "Repair retained finance capability reuse guidance before applying this learning to a research answer.",
+      }),
+    );
+    const refusalReceipt = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReceiptPath), "utf8"),
+    ) as {
+      boundary: string;
+      ok: boolean;
+      reason: string;
+      candidateCount: number;
+      appliedCapabilities: Array<{ capabilityName: string }>;
+    };
+    expect(refusalReceipt).toMatchObject({
+      boundary: "finance_learning_capability_apply_usage_receipt",
+      ok: false,
+      reason: "missing_reuse_guidance",
+      candidateCount: 1,
+      appliedCapabilities: [
+        expect.objectContaining({ capabilityName: "Incomplete ETF timing capability" }),
+      ],
+    });
+    const refusalUsageReview = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, appliedAnswer.details.usageReviewPath), "utf8"),
+    ) as {
+      counts: { usageReceipts: number; refusedApplications: number };
+      refusedQueries: Array<{ reason: string }>;
+    };
+    expect(refusalUsageReview).toEqual(
+      expect.objectContaining({
+        counts: expect.objectContaining({
+          usageReceipts: 1,
+          refusedApplications: 1,
+        }),
+        refusedQueries: [expect.objectContaining({ reason: "missing_reuse_guidance" })],
+      }),
+    );
+  });
+
+  it("can disable apply usage receipts for dry validation", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-capabilities-");
+    await seedArticle(
+      workspaceDir,
+      "memory/articles/wechat-liquidity-regime.md",
+      "Article body with concrete discussion of liquidity transmission and event triage methods.",
+    );
+    const attachTool = createFinanceLearningCapabilityAttachTool({ workspaceDir });
+    const applyTool = createFinanceLearningCapabilityApplyTool({ workspaceDir });
+
+    await attachTool.execute("finance-learning-attach", buildValidArgs());
+    const appliedAnswer = await applyTool.execute("apply-dry", {
+      queryText:
+        "怎么把 liquidity regime funding stress 学到的东西用于 ETF 风控研究，注意 out of sample 和 drawdown 风险",
+      maxCandidates: 1,
+      writeUsageReceipt: false,
+    });
+    expect(appliedAnswer.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        usageReceiptPath: null,
+        usageReviewPath: null,
+        synthesisMode: "single_capability_application",
+      }),
+    );
+    await expect(
+      fs.stat(path.join(workspaceDir, "memory", "finance-learning-apply-usage-receipts")),
+    ).rejects.toThrow();
+    await expect(
+      fs.stat(path.join(workspaceDir, "memory", "finance-learning-apply-usage-reviews")),
+    ).rejects.toThrow();
   });
 
   it("rejects empty or generic article learning inputs", async () => {

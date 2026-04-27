@@ -23,9 +23,27 @@ Consumes existing local `fundamental-review-plan` artifacts and emits target-lev
 When you run `/new` or `/reset`, this hook:
 
 1. reads local `bank/fundamental/review-plans/*.json`
-2. falls back to `review-brief`, `review-queue`, and `risk-handoff` artifacts when a plan has not been persisted yet
+2. reuses upstream `review-plan` fallback semantics when a persisted plan is missing or stale
 3. writes actionable target-level deeper-review scaffolds, follow-up collection plans, and blocked monitoring checklists
 4. keeps the output non-execution and non-approval
+
+## Semantic Contract
+
+`fundamental-review-workbench` is the last currently locked seam in the
+manifest-level artifact-error chain. It must consume upstream review-plan
+artifacts without inventing a separate fallback doctrine.
+
+In particular, future contributors must preserve these rules:
+
+- workbench blocking and recovery remain manifest-scoped
+- workbench relies on upstream persisted `review-plan` semantics instead of
+  locally reinterpreting `artifact_error` timestamps
+- equal recovery/error timestamps remain blocked
+- cross-manifest recovery must never clear blocking
+
+If this hook starts re-reading lower layers and recomputing its own blocked vs
+recovered state, it can drift away from the queue -> brief -> plan contract even
+when the upstream helpers are correct.
 
 ## Output
 

@@ -1,5 +1,5 @@
 import { resolveAgentDir, resolveSessionAgentId } from "../../agents/agent-scope.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../agents/defaults.js";
+import { resolveBuiltInDefaultModelRef } from "../../agents/defaults.js";
 import { resolveModelAuthLabel } from "../../agents/model-auth-label.js";
 import { loadModelCatalog } from "../../agents/model-catalog.js";
 import {
@@ -36,10 +36,11 @@ export type ModelsProviderData = {
  * Exported for reuse by callback handlers.
  */
 export async function buildModelsProviderData(cfg: OpenClawConfig): Promise<ModelsProviderData> {
+  const builtInDefault = resolveBuiltInDefaultModelRef();
   const resolvedDefault = resolveConfiguredModelRef({
     cfg,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
+    defaultProvider: builtInDefault.provider,
+    defaultModel: builtInDefault.model,
   });
 
   const catalog = await loadModelCatalog({ config: cfg });

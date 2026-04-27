@@ -1,5 +1,8 @@
+import fs from "node:fs";
 import { isKnownCoreToolId } from "../agents/tool-catalog.js";
+import { resolveWorkspaceRoot } from "../agents/workspace-dir.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { resolveConfiguredEntries } from "./models/list.configured.js";
 import { loadModelsConfig } from "./models/load-config.js";
@@ -45,12 +48,57 @@ export type OpenClawToolCapabilitySurface = {
   note?: string;
 };
 
+export type KnownCapabilityDescriptor = {
+  label: string;
+  providerCapability: string;
+  aliases: string[];
+  genericTool: string | null;
+};
+
+export type LobsterProtocolAnchorSurface = {
+  path: string;
+  present: boolean;
+  states: CapabilityState[];
+};
+
+export type LobsterProtocolSurface = {
+  defaultMode: "control_room_main_lane";
+  executionSubstrate: {
+    kind: "openclaw_embedded_agent";
+    defaultModel: string | null;
+    states: CapabilityState[];
+  };
+  lobsterOperatingLayer: {
+    kind: "bundled_operating_layer";
+    states: CapabilityState[];
+    note: string;
+  };
+  lobsterWorkflowRuntime: {
+    kind: "optional_plugin";
+    enabledByPolicy: boolean;
+    states: CapabilityState[];
+    note: string;
+  };
+  sessionBoundaries: {
+    dmScopeDefault: "main";
+    states: CapabilityState[];
+    note: string;
+  };
+  protectedAnchors: LobsterProtocolAnchorSurface[];
+};
+
 export type CapabilitySurfaceReport = {
   generatedAt: string;
   models: ConfiguredModelCapabilitySurface[];
   providerCapabilities: ProviderNativeCapabilitySurface[];
   openclawCapabilities: OpenClawToolCapabilitySurface[];
+  lobsterProtocol: LobsterProtocolSurface;
   notes: string[];
+};
+
+export type LobsterProtocolSummaryLabels = {
+  pluginEnabled?: string;
+  pluginDisabled?: string;
 };
 
 type ProviderCapabilityDeclaration = {
@@ -157,8 +205,25 @@ const OPENCLAW_GENERIC_TOOLS: Array<{ tool: string; note: string }> = [
   { tool: "memory_search", note: "generic OpenClaw memory recall tool; not provider-native" },
 ];
 
+const PROVIDER_CAPABILITY_TO_GENERIC_TOOL: Record<string, string> = {
+  "web-search": "web_search",
+  web_search: "web_search",
+  fetch: "web_fetch",
+  memory: "memory_search",
+};
+
+const LOBSTER_PROTECTED_ANCHORS = [
+  "memory/current-research-line.md",
+  "memory/unified-risk-view.md",
+  "MEMORY.md",
+] as const;
+
 function uniqueStates(states: CapabilityState[]): CapabilityState[] {
   return Array.from(new Set(states));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function isDeepseekLikeProvider(params: { providerId: string; cfg: OpenClawConfig }): boolean {
@@ -186,6 +251,59 @@ function resolveProviderCapabilityDeclarations(params: {
     return DEEPSEEK_DECLARATIONS;
   }
   return [];
+}
+
+function buildKnownCapabilityDescriptors(): KnownCapabilityDescriptor[] {
+  const declarations = [
+    ...MOONSHOT_DECLARATIONS,
+    ...OPENAI_DECLARATIONS,
+    ...MINIMAX_DECLARATIONS,
+    ...DEEPSEEK_DECLARATIONS,
+  ];
+  const seen = new Set<string>();
+  const descriptors: KnownCapabilityDescriptor[] = [];
+  for (const declaration of declarations) {
+    if (seen.has(declaration.capability)) {
+      continue;
+    }
+    seen.add(declaration.capability);
+    descriptors.push({
+      label: declaration.capability,
+      providerCapability: declaration.capability,
+      aliases: uniqueStrings([
+        declaration.capability,
+        declaration.capability.replaceAll("_", " "),
+        declaration.capability.replaceAll("-", " "),
+      ]),
+      genericTool: PROVIDER_CAPABILITY_TO_GENERIC_TOOL[declaration.capability] ?? null,
+    });
+  }
+  return descriptors;
+}
+
+const KNOWN_CAPABILITY_DESCRIPTORS = buildKnownCapabilityDescriptors();
+
+export function listKnownCapabilityDescriptors(): KnownCapabilityDescriptor[] {
+  return KNOWN_CAPABILITY_DESCRIPTORS.map((entry) => ({
+    ...entry,
+    aliases: [...entry.aliases],
+  }));
+}
+
+export function resolveKnownCapabilityDescriptor(text: string): KnownCapabilityDescriptor | null {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  for (const descriptor of KNOWN_CAPABILITY_DESCRIPTORS) {
+    if (descriptor.aliases.some((alias) => normalized.includes(alias))) {
+      return {
+        ...descriptor,
+        aliases: [...descriptor.aliases],
+      };
+    }
+  }
+  return null;
 }
 
 function buildProviderCapabilitySurfaces(cfg: OpenClawConfig): ProviderNativeCapabilitySurface[] {
@@ -216,6 +334,110 @@ function buildOpenClawToolCapabilitySurfaces(): OpenClawToolCapabilitySurface[] 
     states: ["adapter_implemented", "connected"],
     note: entry.note,
   }));
+}
+
+function collectConfiguredToolNames(cfg: OpenClawConfig): string[] {
+  const collected = new Set<string>();
+  const addNames = (values?: string[]) => {
+    for (const value of values ?? []) {
+      const normalized = value.trim();
+      if (normalized) {
+        collected.add(normalized);
+      }
+    }
+  };
+  addNames(cfg.tools?.allow);
+  addNames(cfg.tools?.alsoAllow);
+  for (const agent of cfg.agents?.list ?? []) {
+    addNames(agent?.tools?.allow);
+    addNames(agent?.tools?.alsoAllow);
+  }
+  return [...collected];
+}
+
+function resolveDefaultModelRef(cfg: OpenClawConfig): string | null {
+  const primary = resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model);
+  if (primary) {
+    return primary;
+  }
+  const entries = resolveConfiguredEntries(cfg).entries;
+  const defaultEntry = entries.find((entry) => entry.tags.has("default"));
+  return defaultEntry ? `${defaultEntry.ref.provider}/${defaultEntry.ref.model}` : null;
+}
+
+export function buildLobsterProtocolSurface(cfg: OpenClawConfig): LobsterProtocolSurface {
+  const workspaceDir = resolveWorkspaceRoot(cfg.agents?.defaults?.workspace);
+  const configuredTools = collectConfiguredToolNames(cfg).map((value) => value.toLowerCase());
+  const lobsterPluginEnabled = configuredTools.includes("lobster");
+  return {
+    defaultMode: "control_room_main_lane",
+    executionSubstrate: {
+      kind: "openclaw_embedded_agent",
+      defaultModel: resolveDefaultModelRef(cfg),
+      states: ["configured", "connected"],
+    },
+    lobsterOperatingLayer: {
+      kind: "bundled_operating_layer",
+      states: ["adapter_implemented", "connected"],
+      note: "protected summaries, learning carryover, and workface surfaces are part of the default repo workflow",
+    },
+    lobsterWorkflowRuntime: {
+      kind: "optional_plugin",
+      enabledByPolicy: lobsterPluginEnabled,
+      states: lobsterPluginEnabled
+        ? ["adapter_implemented", "configured"]
+        : ["adapter_implemented", "disabled"],
+      note: "lobster plugin tool remains optional and requires explicit allowlisting",
+    },
+    sessionBoundaries: {
+      dmScopeDefault: "main",
+      states: ["configured"],
+      note: "DMs reuse the main session unless routing overrides dmScope",
+    },
+    protectedAnchors: LOBSTER_PROTECTED_ANCHORS.map((anchorPath) => {
+      const present = fs.existsSync(`${workspaceDir}/${anchorPath}`);
+      return {
+        path: anchorPath,
+        present,
+        states: present ? ["configured"] : ["unavailable"],
+      };
+    }),
+  };
+}
+
+export function formatLobsterProtocolSummary(
+  protocol: LobsterProtocolSurface,
+  labels?: LobsterProtocolSummaryLabels,
+): string {
+  const anchorsPresent = protocol.protectedAnchors.filter((anchor) => anchor.present).length;
+  const anchorsTotal = protocol.protectedAnchors.length;
+  const pluginState = protocol.lobsterWorkflowRuntime.enabledByPolicy
+    ? (labels?.pluginEnabled ?? "plugin on")
+    : (labels?.pluginDisabled ?? "plugin optional");
+  return [
+    protocol.defaultMode,
+    protocol.executionSubstrate.kind,
+    pluginState,
+    `dm=${protocol.sessionBoundaries.dmScopeDefault}`,
+    `anchors ${anchorsPresent}/${anchorsTotal}`,
+  ].join(" · ");
+}
+
+export function formatLobsterProtocolDetailLines(protocol: LobsterProtocolSurface): string[] {
+  return [
+    `- defaultMode: ${protocol.defaultMode}`,
+    `  executionSubstrate: ${protocol.executionSubstrate.kind} (${protocol.executionSubstrate.states.join(", ")})`,
+    `  defaultModel: ${protocol.executionSubstrate.defaultModel ?? "unknown"}`,
+    `  lobsterOperatingLayer: ${protocol.lobsterOperatingLayer.states.join(", ")} (${protocol.lobsterOperatingLayer.note})`,
+    `  lobsterWorkflowRuntime: ${protocol.lobsterWorkflowRuntime.states.join(", ")} (${protocol.lobsterWorkflowRuntime.note})`,
+    `  enabledByPolicy: ${protocol.lobsterWorkflowRuntime.enabledByPolicy ? "true" : "false"}`,
+    `  dmScopeDefault: ${protocol.sessionBoundaries.dmScopeDefault} (${protocol.sessionBoundaries.note})`,
+    "  protectedAnchors:",
+    ...protocol.protectedAnchors.map(
+      (anchor) =>
+        `  - ${anchor.path}: ${anchor.present ? "present" : "missing"} (${anchor.states.join(", ")})`,
+    ),
+  ];
 }
 
 function buildConfiguredModelSurfaces(params: {
@@ -257,16 +479,19 @@ export function buildCapabilitySurfaceReport(cfg: OpenClawConfig): CapabilitySur
   const providerCapabilities = buildProviderCapabilitySurfaces(cfg);
   const models = buildConfiguredModelSurfaces({ cfg, providerCapabilities });
   const openclawCapabilities = buildOpenClawToolCapabilitySurfaces();
+  const lobsterProtocol = buildLobsterProtocolSurface(cfg);
   return {
     generatedAt: new Date().toISOString(),
     models,
     providerCapabilities,
     openclawCapabilities,
+    lobsterProtocol,
     notes: [
       "configured model does not imply provider-native tools are connected",
       "provider-advertised capabilities remain adapter_missing until OpenClaw implements and wires them",
       "live_verified is never claimed here without explicit runtime evidence",
       "generic OpenClaw tools are listed separately from provider-native capabilities",
+      "the Lobster operating layer is distinct from the optional lobster workflow plugin runtime",
     ],
   };
 }
@@ -334,6 +559,9 @@ function formatCapabilitySurfaceText(report: CapabilitySurfaceReport): string {
     const note = capability.note ? ` (${capability.note})` : "";
     lines.push(`- ${capability.tool}: ${capability.states.join(", ")}${note}`);
   }
+  lines.push("");
+  lines.push("Lobster operating protocol:");
+  lines.push(...formatLobsterProtocolDetailLines(report.lobsterProtocol));
   lines.push("");
   lines.push("Notes:");
   for (const note of report.notes) {

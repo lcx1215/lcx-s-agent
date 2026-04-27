@@ -60,6 +60,18 @@ describe("MiniMax implicit provider (#15275)", () => {
     });
   });
 
+  it("adds an override default model to the implicit minimax provider catalog", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    await withEnvAsync(
+      { MINIMAX_API_KEY: "test-key", OPENCLAW_MINIMAX_DEFAULT_MODEL: "MiniMax-M2.7" },
+      async () => {
+        const providers = await resolveImplicitProviders({ agentDir });
+        const modelIds = providers?.minimax?.models?.map((model) => model.id) ?? [];
+        expect(modelIds).toContain("MiniMax-M2.7");
+      },
+    );
+  });
+
   it("should set authHeader for minimax portal provider", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "openclaw-test-"));
     await writeFile(

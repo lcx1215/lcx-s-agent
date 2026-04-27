@@ -4,6 +4,10 @@ import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import type {
   DocumentType,
   FundamentalDocumentMetadata,
@@ -520,8 +524,15 @@ const bridgeFundamentalManifest: HookHandler = async (event) => {
           manifestPath: relativePath,
           manifest,
         });
-        const readinessRelativePath = `bank/fundamental/readiness/${bridged.manifest.manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-readiness-${bridged.manifest.manifestId}.md`;
+        const readinessRelativePath = buildFundamentalArtifactJsonPath(
+          "fundamental-readiness",
+          bridged.manifest.manifestId,
+        );
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-readiness",
+          manifestId: bridged.manifest.manifestId,
+        });
 
         await Promise.all([
           writeFileWithinRoot({

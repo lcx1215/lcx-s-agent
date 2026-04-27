@@ -1,5 +1,11 @@
 import { resolveContextTokensForModel } from "../agents/context.js";
-import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+import {
+  DEFAULT_CONTEXT_TOKENS,
+  DEFAULT_MODEL,
+  DEFAULT_PROVIDER,
+  resolveBuiltInDefaultModelReason,
+  resolveBuiltInDefaultModelRef,
+} from "../agents/defaults.js";
 import { resolveConfiguredModelRef } from "../agents/model-selection.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { loadConfig } from "../config/config.js";
@@ -21,6 +27,7 @@ import { peekSystemEvents } from "../infra/system-events.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveLinkChannelContext } from "./status.link-channel.js";
 import type { HeartbeatStatus, SessionStatus, StatusSummary } from "./status.types.js";
+import { buildLobsterProtocolSurface } from "./capabilities.js";
 
 const buildFlags = (entry?: SessionEntry): string[] => {
   if (!entry) {
@@ -65,6 +72,8 @@ export function redactSensitiveStatusSummary(summary: StatusSummary): StatusSumm
       defaults: {
         model: null,
         contextTokens: null,
+        builtInDefaultModel: summary.sessions.defaults.builtInDefaultModel ?? null,
+        builtInDefaultReason: summary.sessions.defaults.builtInDefaultReason ?? null,
       },
       recent: [],
       byAgent: summary.sessions.byAgent.map((entry) => ({
@@ -98,11 +107,13 @@ export async function getStatusSummary(
   });
   const mainSessionKey = resolveMainSessionKey(cfg);
   const queuedSystemEvents = peekSystemEvents(mainSessionKey);
+  const builtInDefault = resolveBuiltInDefaultModelRef();
+  const builtInDefaultReason = resolveBuiltInDefaultModelReason();
 
   const resolved = resolveConfiguredModelRef({
     cfg,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
+    defaultProvider: builtInDefault.provider,
+    defaultModel: builtInDefault.model,
   });
   const configModel = resolved.model ?? DEFAULT_MODEL;
   const configContextTokens =
@@ -219,12 +230,15 @@ export async function getStatusSummary(
     },
     channelSummary,
     queuedSystemEvents,
+    lobsterProtocol: buildLobsterProtocolSurface(cfg),
     sessions: {
       paths: Array.from(paths),
       count: totalSessions,
       defaults: {
         model: configModel ?? null,
         contextTokens: configContextTokens ?? null,
+        builtInDefaultModel: `${builtInDefault.provider}/${builtInDefault.model}`,
+        builtInDefaultReason,
       },
       recent,
       byAgent,

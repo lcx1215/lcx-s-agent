@@ -2,6 +2,90 @@
 
 This directory contains hooks that ship with OpenClaw. These hooks are automatically discovered and can be enabled/disabled via CLI or configuration.
 
+## LCX Agent L4 Active Hook Map
+
+If you are working on LCX Agent overlays, do not treat this directory as a flat hook catalog.
+The active L4 system has four major hook families, and future work should extend an
+existing family before adding a new sibling seam.
+
+### 1. Learning And Correction Family
+
+Purpose:
+- turn study-heavy sessions into reusable lessons
+- compress lessons into durable skill memory
+- keep correction loops, hygiene, and validation visible
+
+Primary chain:
+- `learning-review`
+- `learning-review-weekly`
+- `learning-review-bootstrap`
+- `correction-loop`
+- `knowledge-validation-weekly`
+- `memory-hygiene-weekly`
+
+### 2. Frontier / Method Family
+
+Purpose:
+- digest papers, methods, replication risks, leakage, and overfitting
+- keep reusable research-method judgments available for later work
+
+Primary chain:
+- `frontier-research`
+- `frontier-research-weekly`
+- `frontier-research-bootstrap`
+
+### 3. Fundamental Research Family
+
+Purpose:
+- move from intake -> manifest/readiness -> snapshot -> scoring/risk handoff -> review workbench -> target deliverables
+- keep the whole chain research-only and artifact-audited
+
+Primary chain:
+- `fundamental-intake`
+- `fundamental-manifest-bridge`
+- `fundamental-snapshot-bridge`
+- `fundamental-snapshot`
+- `fundamental-scoring-gate`
+- `fundamental-risk-handoff`
+- `fundamental-review-queue`
+- `fundamental-review-brief`
+- `fundamental-review-plan`
+- `fundamental-review-workbench`
+- `fundamental-target-packets`
+- `fundamental-target-workfiles`
+- `fundamental-target-deliverables`
+- `fundamental-dossier-drafts`
+- `fundamental-target-reports`
+- `fundamental-review-memo`
+- `fundamental-collection-follow-up-tracker`
+
+Rule:
+- prefer fixing upstream seams over reinterpreting lower-layer artifacts downstream
+
+### 4. Operating / Control Family
+
+Purpose:
+- write daily operating artifacts
+- keep branch summaries and unified research risk views current
+- support the control room with stable daily and weekly overlays
+
+Primary chain:
+- `operating-loop`
+- `operating-daily-workface`
+- `operating-weekly-review`
+
+## Design Rules For Future Work
+
+- Do not add a new hook when an existing family already owns that seam.
+- Do not create parallel versions of the same artifact contract.
+- Prefer one artifact chain with explicit handoff over multiple loosely overlapping notes.
+- If a hook reads an upstream artifact, preserve upstream blocking/recovery semantics instead of recomputing them locally.
+- If you are unsure where a feature belongs:
+  - learning and durable skill memory -> Learning And Correction
+  - papers, methods, replication, skepticism -> Frontier / Method
+  - issuer/company artifact chain -> Fundamental Research
+  - daily summaries, unified risk, control-room overlays -> Operating / Control
+
 ## Available Hooks
 
 ### OpenClaw Core Hooks
@@ -20,9 +104,9 @@ Automatically saves session context to memory when you issue `/new` or `/reset`.
 openclaw hooks enable session-memory
 ```
 
-### Lobster Overlay Hooks
+### LCX Agent Overlay Hooks
 
-These hooks are local Lobster overlays on top of the upstream bundled-hook surface. They extend the built-in memory/research pipeline but are not currently part of upstream OpenClaw.
+These hooks are local LCX Agent overlays on top of the upstream bundled-hook surface. They extend the built-in memory/research pipeline but are not currently part of upstream OpenClaw.
 
 ### 🧠 learning-review
 

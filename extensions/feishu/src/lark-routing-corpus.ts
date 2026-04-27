@@ -1123,12 +1123,22 @@ export async function resolveLarkAgentInstructionHandoff(params: {
       };
     }
   }
+  const forcedFinancePipelineFamily =
+    looksLikeFinanceLearningPipelineAsk(params.utterance) &&
+    api?.family !== "market_capability_learning_intake"
+      ? {
+          family: "market_capability_learning_intake" as const,
+          source: "semantic" as const,
+          confidence: Math.max(semantic.score, LARK_ROUTING_SEMANTIC_THRESHOLD),
+        }
+      : undefined;
   const selected =
-    api && api.family !== "unknown"
+    forcedFinancePipelineFamily ??
+    (api && api.family !== "unknown"
       ? { family: api.family, source: "api" as const, confidence: api.confidence }
       : semantic.family !== "unknown"
         ? { family: semantic.family, source: "semantic" as const, confidence: semantic.score }
-        : { family: "unknown" as const, source: "unknown" as const, confidence: 0 };
+        : { family: "unknown" as const, source: "unknown" as const, confidence: 0 });
   const contract =
     selected.family === "unknown" ? undefined : LARK_ROUTING_FAMILY_CONTRACTS[selected.family];
   const targetSurface = contract?.target;

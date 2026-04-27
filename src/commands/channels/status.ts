@@ -135,9 +135,15 @@ export function formatGatewayChannelsStatusLines(payload: Record<string, unknown
         bits.push("groups:unmentioned");
       }
       appendBaseUrlBit(bits, account);
-      const probe = account.probe as { ok?: boolean } | undefined;
+      const probe = account.probe as
+        | { ok?: boolean; health?: string; reason?: string; error?: string }
+        | undefined;
       if (probe && typeof probe.ok === "boolean") {
-        bits.push(probe.ok ? "works" : "probe failed");
+        if (probe.health === "degraded") {
+          bits.push(`degraded${probe.reason ? `:${probe.reason}` : ""}`);
+        } else {
+          bits.push(probe.ok ? "works" : "probe failed");
+        }
       }
       const audit = account.audit as { ok?: boolean } | undefined;
       if (audit && typeof audit.ok === "boolean") {

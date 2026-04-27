@@ -1,8 +1,3 @@
-import {
-  looksLikeLearningInternalizationAuditAsk,
-  looksLikeLearningTimeboxStatusAsk,
-  looksLikeLearningWorkflowAuditAsk,
-} from "../../../extensions/feishu/src/intent-matchers.js";
 import { resolveKnownCapabilityDescriptor } from "../../commands/capabilities.js";
 
 export type ProtocolInfoQuestionKind =
@@ -251,6 +246,45 @@ const PROTOCOL_INFO_QUESTIONS = [
 
 function includesAny(text: string, phrases: readonly string[]): boolean {
   return phrases.some((phrase) => text === phrase || text.includes(phrase));
+}
+
+function looksLikeLearningTimeboxStatusAsk(text: string): boolean {
+  const hasDirectStatusCue = /学习状态|学习进度|还在学|还在学习|学到哪|学完了吗|还没学完|timebox status|session status/u.test(
+    text,
+  );
+  const hasLearningSessionCue =
+    /(学习 session|learning session|限时学习|timebox|当前 session|学习一小时|持续学习|刚才让你学的那条)/u.test(
+      text,
+    );
+  const hasSessionLivenessCue =
+    /(还活着吗|还在跑吗|还在运行吗|在跑吗|会不会冲掉|冲掉当前 session|冲掉当前的 session)/u.test(
+      text,
+    );
+  return hasDirectStatusCue || (hasLearningSessionCue && hasSessionLivenessCue);
+}
+
+function looksLikeLearningInternalizationAuditAsk(text: string): boolean {
+  const hasLearningHistoryCue =
+    /(最近学的|最近吸收的|最近看的|最近读的|之前学的|学过的|上次学的|前几天读的|前阵子学的|最近开源里学的|最近论文里学的)/u.test(
+      text,
+    );
+  const hasInternalizationAuditCue =
+    /(有没有内化|内化成|可复用规则|真的有用|到底有没有用|值不值得留下|沉淀成|会改你以后|进规矩|长期记忆|留下啥了|过眼云烟|改掉你)/u.test(
+      text,
+    );
+  return hasLearningHistoryCue && hasInternalizationAuditCue;
+}
+
+function looksLikeLearningWorkflowAuditAsk(text: string): boolean {
+  const hasLearningWorkflowCue =
+    /(后台自动学习|自动学习后台|后台那条学习链|那条后台学习|昨天让你学|前天让你学|最近学的|学的东西)/u.test(
+      text,
+    );
+  const hasAuditCue =
+    /(卡住|卡在哪|写进记忆|写进长期记忆|写进脑子|进长期记忆|只是生成了报告|只是出了报告|装样子|改变你自己的行为|完成了|失败了|假装在跑|半路断过|断过|真落账|留痕)/u.test(
+      text,
+    );
+  return hasLearningWorkflowCue && hasAuditCue;
 }
 
 function isSpecificCapabilityQuestion(text: string): boolean {

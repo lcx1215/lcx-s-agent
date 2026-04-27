@@ -2,7 +2,10 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
-const outputPath = "docs/assets/lobster-daily-progress-wave.svg";
+const outputPaths = [
+  "docs/assets/lcx-agent-daily-progress-wave.svg",
+  "docs/assets/lobster-daily-progress-wave.svg",
+];
 const now = new Date();
 const dayMs = 24 * 60 * 60 * 1000;
 const formatter = new Intl.DateTimeFormat("en-US", {
@@ -211,7 +214,7 @@ const bottomPills = bottomLabels
   .join("");
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
-  <title id="title">Lobster OpenClaw daily progress dashboard</title>
+  <title id="title">LCX Agent daily progress dashboard</title>
   <desc id="desc">An auto-generated seven day progress dashboard for the Lark interface, learning brain, finance research, live proof, and evaluation gates.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -239,7 +242,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" v
   <rect x="52" y="46" width="1496" height="616" rx="34" fill="#ffffff" opacity="0.95" filter="url(#shadow)"/>
 
   <g transform="translate(88 96)">
-    <text x="0" y="0" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="52" font-weight="950">Lobster OpenClaw</text>
+    <text x="0" y="0" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="52" font-weight="950">LCX Agent</text>
     <text x="2" y="38" fill="#5d707a" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="19" font-weight="700">Lark language interface + learning brain + finance research loop, updated from git history.</text>
   </g>
 
@@ -278,13 +281,11 @@ ${valueLabelSvg}
 ${moduleCards}
   </g>
 
-  <g transform="translate(1410 82) scale(0.46)">
-    <path d="M48 2 C 72 2, 92 20, 92 44 C 92 68, 72 86, 48 86 C 24 86, 4 68, 4 44 C 4 20, 24 2, 48 2 Z" fill="#ff705f" stroke="#3a0a0d" stroke-width="4"/>
-    <circle cx="38" cy="37" r="5" fill="#101820"/>
-    <circle cx="59" cy="37" r="5" fill="#101820"/>
-    <path d="M36 54 C 44 61, 54 61, 62 54" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
-    <path d="M8 39 C -11 27, -8 9, 8 5 C 20 10, 21 27, 8 39 Z" fill="#ff9a83" stroke="#3a0a0d" stroke-width="4"/>
-    <path d="M88 39 C 107 27, 104 9, 88 5 C 76 10, 75 27, 88 39 Z" fill="#ff9a83" stroke="#3a0a0d" stroke-width="4"/>
+  <g transform="translate(1410 74)">
+    <rect x="0" y="0" width="82" height="82" rx="24" fill="#263238"/>
+    <text x="41" y="51" text-anchor="middle" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28" font-weight="950">LCX</text>
+    <circle cx="69" cy="15" r="6" fill="#ffcf5a"/>
+    <path d="M13 20 l5 9 l9 5 l-9 5 l-5 9 l-5 -9 l-9 -5 l9 -5 Z" fill="#7de0b2" opacity="0.9"/>
   </g>
 
   <g>
@@ -293,5 +294,7 @@ ${bottomPills}
 </svg>
 `;
 
-writeFileSync(outputPath, svg, "utf8");
-console.log(`wrote ${outputPath} from ${totalCommits} commits across ${activeDays} active days`);
+for (const outputPath of outputPaths) {
+  writeFileSync(outputPath, svg, "utf8");
+}
+console.log(`wrote ${outputPaths.join(", ")} from ${totalCommits} commits across ${activeDays} active days`);

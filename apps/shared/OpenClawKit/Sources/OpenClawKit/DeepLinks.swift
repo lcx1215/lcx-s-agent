@@ -3,6 +3,7 @@ import Foundation
 public enum DeepLinkRoute: Sendable, Equatable {
     case agent(AgentDeepLink)
     case gateway(GatewayConnectDeepLink)
+    case lobsterPanel
 }
 
 public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
@@ -142,6 +143,9 @@ public enum DeepLinkParser {
                     tls: tls,
                     token: query["token"],
                     password: query["password"]))
+
+        case "lobster-panel":
+            return .lobsterPanel
 
         default:
             return nil

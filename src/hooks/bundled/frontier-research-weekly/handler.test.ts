@@ -6,6 +6,7 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import { writeWorkspaceFile } from "../../../test-helpers/workspace.js";
 import { createHookEvent } from "../../hooks.js";
 import type { HookHandler } from "../../hooks.js";
+import { buildFrontierRecallFilename } from "../lobster-brain-registry.js";
 
 let handler: HookHandler;
 let suiteWorkspaceRoot = "";
@@ -61,6 +62,7 @@ describe("frontier-research-weekly hook", () => {
         "- overfitting_risks: sequence model may overfit one regime",
         "- replication_cost: medium",
         "- adoptable_ideas: keep multi-scale denoising but evaluate with trading-aligned objectives",
+        "- foundation_template: risk-transmission",
         "- verdict: worth_reproducing",
       ].join("\n"),
     });
@@ -82,6 +84,7 @@ describe("frontier-research-weekly hook", () => {
         "- overfitting_risks: over-tuned factors decay out of sample",
         "- replication_cost: medium",
         "- adoptable_ideas: separate factor intuition from implementation timing",
+        "- foundation_template: portfolio-sizing-discipline",
         "- verdict: watch_for_followup",
       ].join("\n"),
     });
@@ -94,12 +97,12 @@ describe("frontier-research-weekly hook", () => {
     await handler(event);
 
     const files = await fs.readdir(memoryDir);
-    const weeklyFile = files.find((name) => name.endsWith("frontier-methods-weekly-review.md"));
-    const upgradeFile = files.find((name) => name.endsWith("frontier-upgrade.md"));
-    const backlogFile = files.find((name) => name.endsWith("frontier-replication-backlog.md"));
-    expect(weeklyFile).toBe("2026-W11-frontier-methods-weekly-review.md");
-    expect(upgradeFile).toBe("2026-W11-frontier-upgrade.md");
-    expect(backlogFile).toBe("2026-W11-frontier-replication-backlog.md");
+    const weeklyFile = buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review");
+    const upgradeFile = buildFrontierRecallFilename("2026-W11", "frontier-upgrade");
+    const backlogFile = buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog");
+    expect(files).toContain(weeklyFile);
+    expect(files).toContain(upgradeFile);
+    expect(files).toContain(backlogFile);
     const content = await fs.readFile(path.join(memoryDir, weeklyFile!), "utf-8");
     const upgradeContent = await fs.readFile(path.join(memoryDir, upgradeFile!), "utf-8");
     const backlogContent = await fs.readFile(path.join(memoryDir, backlogFile!), "utf-8");
@@ -111,13 +114,22 @@ describe("frontier-research-weekly hook", () => {
     expect(content).toContain("- WaveLSFormer");
     expect(content).toContain("## Watch For Followup");
     expect(content).toContain("- Adaptive Factor Stack");
+    expect(content).toContain("## Foundation Template Focus");
+    expect(content).toContain("risk-transmission (1)");
+    expect(content).toContain("portfolio-sizing-discipline (1)");
     expect(upgradeContent).toContain("# Frontier Upgrade Prompt: 2026-W11");
     expect(upgradeContent).toContain("**Primary Research Candidate**: WaveLSFormer");
     expect(upgradeContent).toContain("**Primary Verdict**: worth_reproducing");
-    expect(upgradeContent).toContain("**Main Leakage Check**: temporal windowing can leak future information");
+    expect(upgradeContent).toContain(
+      "**Main Leakage Check**: temporal windowing can leak future information",
+    );
+    expect(upgradeContent).toContain("**Primary Foundation Transfer**: risk-transmission");
+    expect(upgradeContent).toContain("really strengthens risk-transmission");
     expect(backlogContent).toContain("# Frontier Replication Backlog: 2026-W11");
     expect(backlogContent).toContain("## WaveLSFormer");
-    expect(backlogContent).toContain("evaluation_protocol: use walk-forward splits and benchmark simpler baselines");
+    expect(backlogContent).toContain(
+      "evaluation_protocol: use walk-forward splits and benchmark simpler baselines",
+    );
     expect(backlogContent).not.toContain("Adaptive Factor Stack");
   });
 

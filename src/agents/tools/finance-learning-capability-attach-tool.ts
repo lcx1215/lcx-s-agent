@@ -290,7 +290,7 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       params,
       "capabilityType",
       `capabilityCandidates[${index}].capabilityType`,
-    );
+    ) as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["capabilityType"];
     if (!(FINANCE_LEARNING_CAPABILITY_TYPES as readonly string[]).includes(capabilityType)) {
       throw new ToolInputError(
         `capabilityCandidates[${index}].capabilityType must be one of: ${FINANCE_LEARNING_CAPABILITY_TYPES.join(", ")}`,
@@ -300,7 +300,7 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       params,
       "relatedFinanceDomains",
       `capabilityCandidates[${index}].relatedFinanceDomains`,
-    );
+    ) as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["relatedFinanceDomains"];
     if (
       !relatedFinanceDomains.every((domain) =>
         (FINANCE_FRAMEWORK_CORE_DOMAINS as readonly string[]).includes(domain),
@@ -314,7 +314,7 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       params,
       "capabilityTags",
       `capabilityCandidates[${index}].capabilityTags`,
-    );
+    ) as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["capabilityTags"];
     if (
       !capabilityTags.every((tag) =>
         (FINANCE_LEARNING_CAPABILITY_TAGS as readonly string[]).includes(tag),
@@ -338,7 +338,7 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       params,
       "evidenceCategories",
       `capabilityCandidates[${index}].evidenceCategories`,
-    );
+    ) as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["evidenceCategories"];
     const evidenceSummary = normalizeRequiredText(
       params,
       "evidenceSummary",
@@ -371,7 +371,7 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       params,
       "evidenceLevel",
       `capabilityCandidates[${index}].evidenceLevel`,
-    );
+    ) as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["evidenceLevel"];
     if (!(FINANCE_LEARNING_EVIDENCE_LEVELS as readonly string[]).includes(evidenceLevel)) {
       throw new ToolInputError(
         `capabilityCandidates[${index}].evidenceLevel must be one of: ${FINANCE_LEARNING_EVIDENCE_LEVELS.join(", ")}`,
@@ -416,7 +416,7 @@ function normalizeCapabilityCandidates(rawCandidates: unknown, sharedText: strin
       params,
       "allowedActionAuthority",
       `capabilityCandidates[${index}].allowedActionAuthority`,
-    );
+    ) as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["allowedActionAuthority"];
     if (
       !(FINANCE_FRAMEWORK_ALLOWED_ACTION_AUTHORITIES as readonly string[]).includes(
         allowedActionAuthority,
@@ -618,6 +618,8 @@ export function createFinanceLearningCapabilityAttachTool(options?: {
             candidate.relatedFinanceDomains as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["relatedFinanceDomains"],
           capabilityTags:
             candidate.capabilityTags as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["capabilityTags"],
+          evidenceCategories:
+            candidate.evidenceCategories as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["evidenceCategories"],
           evidenceLevel:
             candidate.evidenceLevel as FinanceLearningCapabilityCandidateArtifact["candidates"][number]["evidenceLevel"],
           allowedActionAuthority:

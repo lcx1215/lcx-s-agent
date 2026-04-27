@@ -108,6 +108,66 @@ describe("sanitizeUserFacingText", () => {
     expect(sanitizeUserFacingText("Line 1\nLine 2")).toBe("Line 1\nLine 2");
   });
 
+  it("strips internal tool failure and file-list sections from user-facing text", () => {
+    const input = [
+      "诚实地回答：",
+      "",
+      "真正需要继续做源码阅读和运行验证。",
+      "",
+      "## Tool Failures",
+      '- write: Validation failed for tool "write": - content: must have required property \'content\'',
+      '- web_fetch: Validation failed for tool "web_fetch": - url: must have required property \'url\'',
+      "",
+      "<read-files>",
+      "/Users/liuchengxu/.openclaw/workspace/math-finance-learning.md",
+      "</read-files>",
+    ].join("\n");
+
+    expect(sanitizeUserFacingText(input)).toBe("诚实地回答：\n\n真正需要继续做源码阅读和运行验证。");
+  });
+
+  it("strips standalone non-text placeholders from user-facing text", () => {
+    const input = "回答如下：\n[non-text content: thinking]\n\n继续看源码和实验。";
+    expect(sanitizeUserFacingText(input)).toBe("回答如下：\n\n继续看源码和实验。");
+  });
+
+  it("normalizes explicit bookkeeping failure lines without hiding the result", () => {
+    const input = [
+      "代码已保存: `realized_garch.py`",
+      "Bookkeeping failed: could not record the memory update in /Users/liuchengxu/.openclaw/workspace/MEMORY.md. This confirms the memory write did not complete; verify the main artifact separately.",
+    ].join("\n");
+
+    expect(sanitizeUserFacingText(input)).toBe(
+      "代码已保存: `realized_garch.py`\nBookkeeping: the result may be complete, but the memory update was not recorded. Verify the main artifact separately.",
+    );
+  });
+
+  it("normalizes raw MEMORY.md edit failure lines", () => {
+    const input = "开始\n⚠️ 📝 Edit: in ~/.openclaw/workspace/MEMORY.md failed";
+    expect(sanitizeUserFacingText(input)).toBe(
+      "开始\nBookkeeping: failed to update MEMORY.md. Verify the main artifact separately.",
+    );
+  });
+
+  it("strips Feishu wrapper metadata artifacts", () => {
+    const input = [
+      "Conversation info (untrusted metadata):",
+      "```json",
+      '{ "message_id": "om_x1", "sender": "user" }',
+      "```",
+      "",
+      "Sender (untrusted metadata):",
+      "```json",
+      '{ "label": "user (ou_x1)" }',
+      "```",
+      "",
+      "[message_id: om_x1]",
+      "真正的回复内容。",
+    ].join("\n");
+
+    expect(sanitizeUserFacingText(input)).toBe("真正的回复内容。");
+  });
+
   it.each(["\n\n", "  \n  "])("returns empty for whitespace-only input: %j", (input) => {
     expect(sanitizeUserFacingText(input)).toBe("");
   });

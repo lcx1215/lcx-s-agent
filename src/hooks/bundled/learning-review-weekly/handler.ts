@@ -7,7 +7,21 @@ import { resolveStateDir } from "../../../config/paths.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import { resolveAgentIdFromSessionKey } from "../../../routing/session-key.js";
 import type { HookHandler } from "../../hooks.js";
+import {
+  foundationTemplateForTopic,
+  inferTopic,
+  reviewHintsForTopic,
+} from "../learning-review/handler.js";
 import { renderUpgradePrompt } from "../upgrade-memory.js";
+import {
+  buildLearningRecallFilename,
+  isLearningReviewNoteFilename,
+  isLearningCouncilMemoryNoteFilename,
+  LEARNING_WEEKLY_MEMORY_NOTES,
+  parseLearningReviewMemoryNote,
+  parseLearningCouncilMemoryNote,
+  type LearningRecallMemoryNote,
+} from "../lobster-brain-registry.js";
 import {
   countTop,
   formatIsoWeek,
@@ -17,12 +31,12 @@ import {
 } from "../weekly-memory.js";
 
 const log = createSubsystemLogger("hooks/learning-review-weekly");
-const REVIEW_FILE_RE = /^(\d{4}-\d{2}-\d{2})-review-.*\.md$/;
 
 type ParsedReview = {
   name: string;
   date: string;
   topic: string;
+  foundationTemplate: string;
   mistakePattern: string;
   corePrinciple: string;
   microDrill: string;
@@ -43,20 +57,41 @@ type TopicState = "stable" | "fragile" | "new";
 type LearningPriority = "do-now" | "do-next" | "park";
 
 function parseReviewContent(name: string, content: string): ParsedReview | undefined {
-  const fileMatch = name.match(REVIEW_FILE_RE);
-  if (!fileMatch) {
+  const parsedNote = parseLearningReviewMemoryNote({ filename: name, content });
+  if (!parsedNote) {
     return undefined;
   }
-  const extract = (pattern: RegExp, fallback: string) =>
-    content.match(pattern)?.[1]?.trim() || fallback;
+  return {
+    name: parsedNote.name,
+    date: parsedNote.date,
+    topic: parsedNote.topic,
+    foundationTemplate: parsedNote.foundationTemplate,
+    mistakePattern: parsedNote.mistakePattern,
+    corePrinciple: parsedNote.corePrinciple,
+    microDrill: parsedNote.microDrill,
+    transferHint: parsedNote.transferHint,
+  };
+}
+
+function parseLearningCouncilContent(name: string, content: string): ParsedReview | undefined {
+  const parsedNote = parseLearningCouncilMemoryNote({ filename: name, content });
+  if (!parsedNote) {
+    return undefined;
+  }
+  const topic = inferTopic([
+    { role: "user", text: parsedNote.userMessage },
+    { role: "assistant", text: parsedNote.finalReplySnapshot },
+  ]);
+  const hints = reviewHintsForTopic(topic);
   return {
     name,
-    date: fileMatch[1],
-    topic: extract(/\*\*Topic\*\*:\s*([^\n]+)/, "unknown"),
-    mistakePattern: extract(/^- mistake_pattern:\s*(.+)$/m, "No recurring mistake captured."),
-    corePrinciple: extract(/^- core_principle:\s*(.+)$/m, "No core principle captured."),
-    microDrill: extract(/^- micro_drill:\s*(.+)$/m, "No micro-drill captured."),
-    transferHint: extract(/^- transfer_hint:\s*(.+)$/m, "No transfer hint captured."),
+    date: parsedNote.date,
+    topic,
+    foundationTemplate: foundationTemplateForTopic(topic),
+    mistakePattern: parsedNote.discardLines[0] ?? hints.mistake,
+    corePrinciple: parsedNote.keeperLines[0] ?? hints.principle,
+    microDrill: parsedNote.nextEvalCueLines[0] ?? hints.drill,
+    transferHint: parsedNote.rehearsalTriggerLines[0] ?? hints.transfer,
   };
 }
 
@@ -168,6 +203,10 @@ function buildUpgradePrompt(params: {
     params.reviews.map((review) => review.transferHint),
     1,
   )[0]?.value;
+  const topFoundation = countTop(
+    params.reviews.map((review) => review.foundationTemplate),
+    1,
+  )[0]?.value;
   const nextDrill = weakTopic
     ? countTop(weakTopic.microDrills, 1)[0]?.value
     : countTop(
@@ -216,34 +255,92 @@ function buildUpgradePrompt(params: {
         label: "Transfer Reminder",
         value: topTransfer ?? "No transfer reminder captured yet.",
       },
+      {
+        label: "Dominant Foundation Template",
+        value: topFoundation ?? "No foundation template captured yet.",
+      },
     ],
-    cueBody: `Before solving, explicitly apply ${topPrinciple ?? "the strongest known principle"} and avoid ${topMistake ?? "the last observed failure mode"}.`,
+    cueBody: `Before solving, explicitly apply ${topPrinciple ?? "the strongest known principle"}, route the work through ${topFoundation ?? "the dominant foundation template"}, and avoid ${topMistake ?? "the last observed failure mode"}.`,
   });
 }
 
 async function loadRecentReviews(memoryDir: string, now: Date): Promise<ParsedReview[]> {
+  const parsed = await loadAllReviews(memoryDir);
   const weekStart = toUtcDateOnly(now);
   weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+  return parsed
+    .filter((review) => {
+      const date = new Date(`${review.date}T00:00:00.000Z`);
+      return date >= weekStart && date <= toUtcDateOnly(now);
+    })
+    .toSorted((a, b) => b.date.localeCompare(a.date));
+}
+
+async function loadAllReviews(memoryDir: string): Promise<ParsedReview[]> {
   try {
     const entries = await fs.readdir(memoryDir, { withFileTypes: true });
     const parsed = await Promise.all(
       entries
-        .filter((entry) => entry.isFile() && REVIEW_FILE_RE.test(entry.name))
+        .filter(
+          (entry) =>
+            entry.isFile() &&
+            (isLearningReviewNoteFilename(entry.name) ||
+              isLearningCouncilMemoryNoteFilename(entry.name)),
+        )
         .map(async (entry) => {
           const content = await fs.readFile(path.join(memoryDir, entry.name), "utf-8");
-          return parseReviewContent(entry.name, content);
+          return isLearningReviewNoteFilename(entry.name)
+            ? parseReviewContent(entry.name, content)
+            : parseLearningCouncilContent(entry.name, content);
         }),
     );
     return parsed
       .filter((review): review is ParsedReview => Boolean(review))
-      .filter((review) => {
-        const date = new Date(`${review.date}T00:00:00.000Z`);
-        return date >= weekStart && date <= toUtcDateOnly(now);
-      })
       .toSorted((a, b) => b.date.localeCompare(a.date));
   } catch {
     return [];
   }
+}
+
+function renderLongTermCatalog(params: {
+  reviews: ParsedReview[];
+  weekKey: string;
+  rangeLabel: string;
+  sessionKey: string;
+}): string {
+  const rollups = buildTopicRollups(params.reviews);
+  const newestReviewDate = rollups[0]?.lastSeen ?? "";
+  const stableTopics = rollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "stable");
+  const fragileTopics = rollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "fragile");
+  const newTopics = rollups.filter((rollup) => classifyTopicState(rollup, newestReviewDate) === "new");
+
+  return [
+    `# Learning Long-Term Catalog: ${params.weekKey}`,
+    "",
+    `- **As Of**: ${params.rangeLabel}`,
+    `- **Session Key**: ${params.sessionKey}`,
+    `- **Total Review Count**: ${params.reviews.length}`,
+    `- **Tracked Topic Count**: ${rollups.length}`,
+    `- **Stable Topic Count**: ${stableTopics.length}`,
+    `- **Fragile Topic Count**: ${fragileTopics.length}`,
+    `- **New Topic Count**: ${newTopics.length}`,
+    "",
+    "## Catalog Rule",
+    "- this file is broad coverage memory: it keeps all learned topics visible for later retrieval, even when they are not yet strong enough to become primary working-memory anchors.",
+    "- stable topics are reusable by default; fragile and new topics are searchable but should stay provisional until reinforced.",
+    "",
+    "## All Tracked Topics",
+    ...(rollups.length > 0
+      ? rollups.map((rollup) => {
+          const state = classifyTopicState(rollup, newestReviewDate);
+          const priority = toPriority(state);
+          const anchor = countTop(rollup.corePrinciples, 1)[0]?.value ?? "no repeated principle yet";
+          const drill = countTop(rollup.microDrills, 1)[0]?.value ?? "repeat one short drill";
+          return `- ${rollup.topic} (${rollup.count}, last seen ${rollup.lastSeen}) - state: ${state} - priority: ${priority} - anchor: ${anchor} - next drill: ${drill}`;
+        })
+      : ["- No learning topics have been captured yet."]),
+    "",
+  ].join("\n");
 }
 
 function renderWeeklySummary(params: {
@@ -281,6 +378,7 @@ function renderWeeklySummary(params: {
     2,
   );
   const nextFocus = nextWeekFocus(topicRollups);
+  const foundationTemplates = countTop(params.reviews.map((review) => review.foundationTemplate));
   const upgradePrompt = buildUpgradePrompt(params)
     .split("\n")
     .filter((line) => line.startsWith("- **"));
@@ -359,6 +457,9 @@ function renderWeeklySummary(params: {
     "## Transfer Priorities",
     ...transfers.map((entry) => `- ${entry.value} (${entry.count})`),
     "",
+    "## Foundation Template Focus",
+    ...foundationTemplates.map((entry) => `- ${entry.value} (${entry.count})`),
+    "",
     "## Next Week Focus",
     ...nextFocus,
     "",
@@ -371,22 +472,320 @@ function renderWeeklySummary(params: {
   ].join("\n");
 }
 
+function renderDurableSkillMemory(params: {
+  reviews: ParsedReview[];
+  weekKey: string;
+  rangeLabel: string;
+  sessionKey: string;
+}): string {
+  const rollups = buildTopicRollups(params.reviews);
+  return [
+    `# Learning Durable Skills: ${params.weekKey}`,
+    "",
+    `- **As Of**: ${params.rangeLabel}`,
+    `- **Session Key**: ${params.sessionKey}`,
+    `- **Tracked Skill Topics**: ${rollups.length}`,
+    "",
+    "## Contract",
+    "- math, quant, and coding lessons should stay durable once learned; update them with correction notes and stronger methods instead of letting them disappear from long-term reuse.",
+    "- this file is for reusable application memory: each entry keeps the default method, common failure, next drill, and transfer surface together.",
+    "",
+    "## Reusable Skill Entries",
+    ...(rollups.length > 0
+      ? rollups.flatMap((rollup) => {
+          const defaultMethod =
+            countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
+          const commonFailure =
+            countTop(rollup.mistakePatterns, 1)[0]?.value ?? "no common failure captured yet";
+          const nextDrill =
+            countTop(rollup.microDrills, 1)[0]?.value ?? "repeat one short drill";
+          const transferSurface =
+            countTop(rollup.transferHints, 1)[0]?.value ?? "no transfer surface captured yet";
+          return [
+            `### ${rollup.topic}`,
+            `- learned_count: ${rollup.count}`,
+            `- last_seen: ${rollup.lastSeen}`,
+            `- default_method: ${defaultMethod}`,
+            `- common_failure: ${commonFailure}`,
+            `- next_drill: ${nextDrill}`,
+            `- transfer_surface: ${transferSurface}`,
+            "",
+          ];
+        })
+      : ["- No durable skill topic has been captured yet.", ""]),
+  ].join("\n");
+}
+
+function inferTriggerSurface(topic: string): string {
+  switch (topic) {
+    case "quant-modeling":
+      return "backtest, factor, alpha, ranking, Sharpe, OOS, leakage, or parameter-fragility questions";
+    case "time-series-and-volatility":
+      return "GARCH, LSTM, ARIMA, volatility, realized vol, regime, or time-series forecast questions";
+    case "coding-and-systems":
+      return "code, debugging, patch, routing, shared-state, memory, or system architecture work";
+    case "probability-and-statistics":
+      return "probability, Bayes, expectation, variance, uncertainty, or evidence-weighting tasks";
+    case "linear-algebra":
+      return "matrix, eigenvalue, PCA, regression geometry, or state-transition work";
+    case "calculus":
+      return "derivative, integral, sensitivity, rate-of-change, or continuous-time tasks";
+    case "optimization":
+      return "objective, constraint, feasible-set, sizing, ranking, or search problems";
+    case "proof-technique":
+      return "proof, derivation, logical validation, or method-audit tasks";
+    default:
+      return "study-heavy work that needs a default method before improvisation";
+  }
+}
+
+function renderLearningTriggerMap(params: {
+  reviews: ParsedReview[];
+  weekKey: string;
+  rangeLabel: string;
+  sessionKey: string;
+}): string {
+  const rollups = buildTopicRollups(params.reviews);
+  return [
+    `# Learning Trigger Map: ${params.weekKey}`,
+    "",
+    `- **As Of**: ${params.rangeLabel}`,
+    `- **Session Key**: ${params.sessionKey}`,
+    `- **Trigger Topic Count**: ${rollups.length}`,
+    "",
+    "## Contract",
+    "- this file turns learned skills into default trigger cues so later tasks can pull the right method before improvising from scratch.",
+    "",
+    "## Trigger Entries",
+    ...(rollups.length > 0
+      ? rollups.flatMap((rollup) => {
+          const defaultMethod =
+            countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
+          const commonFailure =
+            countTop(rollup.mistakePatterns, 1)[0]?.value ?? "no common failure captured yet";
+          const transferSurface =
+            countTop(rollup.transferHints, 1)[0]?.value ?? "no transfer surface captured yet";
+          return [
+            `### ${rollup.topic}`,
+            `- when_you_see: ${inferTriggerSurface(rollup.topic)}`,
+            `- apply: ${defaultMethod}`,
+            `- avoid: ${commonFailure}`,
+            `- transfer_to: ${transferSurface}`,
+            "",
+          ];
+        })
+      : ["- No trigger entry has been captured yet.", ""]),
+  ].join("\n");
+}
+
+function renderLearningRehearsalQueue(params: {
+  reviews: ParsedReview[];
+  weekKey: string;
+  rangeLabel: string;
+  sessionKey: string;
+}): string {
+  const rollups = buildTopicRollups(params.reviews);
+  const newestReviewDate = rollups[0]?.lastSeen ?? "";
+  const doNowTopics = rollups.filter(
+    (rollup) => toPriority(classifyTopicState(rollup, newestReviewDate)) === "do-now",
+  );
+  const doNextTopics = rollups.filter(
+    (rollup) => toPriority(classifyTopicState(rollup, newestReviewDate)) === "do-next",
+  );
+  const parkTopics = rollups.filter(
+    (rollup) => toPriority(classifyTopicState(rollup, newestReviewDate)) === "park",
+  );
+
+  const formatQueueLine = (rollup: TopicRollup) => {
+    const state = classifyTopicState(rollup, newestReviewDate);
+    const drill = countTop(rollup.microDrills, 1)[0]?.value ?? "repeat one short drill";
+    const method =
+      countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
+    return `- ${rollup.topic} (${state}) - drill: ${drill} - apply: ${method}`;
+  };
+
+  return [
+    `# Learning Rehearsal Queue: ${params.weekKey}`,
+    "",
+    `- **As Of**: ${params.rangeLabel}`,
+    `- **Session Key**: ${params.sessionKey}`,
+    "",
+    "## Contract",
+    "- learning only becomes durable skill if the method gets reused again; this queue is the weekly repetition plan.",
+    "",
+    "## Do Now",
+    ...(doNowTopics.length > 0
+      ? doNowTopics.map(formatQueueLine)
+      : ["- no urgent rehearsal topic right now."]),
+    "",
+    "## Do Next",
+    ...(doNextTopics.length > 0
+      ? doNextTopics.map(formatQueueLine)
+      : ["- no queued next rehearsal topic right now."]),
+    "",
+    "## Park",
+    ...(parkTopics.length > 0
+      ? parkTopics.map(formatQueueLine)
+      : ["- nothing to park right now."]),
+    "",
+  ].join("\n");
+}
+
+function renderLearningTransferBridges(params: {
+  reviews: ParsedReview[];
+  weekKey: string;
+  rangeLabel: string;
+  sessionKey: string;
+}): string {
+  const rollups = buildTopicRollups(params.reviews);
+  return [
+    `# Learning Transfer Bridges: ${params.weekKey}`,
+    "",
+    `- **As Of**: ${params.rangeLabel}`,
+    `- **Session Key**: ${params.sessionKey}`,
+    "",
+    "## Contract",
+    "- use this file to carry learned methods across domains instead of leaving them trapped inside the original study topic.",
+    "",
+    "## Bridge Entries",
+    ...(rollups.length > 0
+      ? rollups.flatMap((rollup) => {
+          const defaultMethod =
+            countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
+          const transferSurface =
+            countTop(rollup.transferHints, 1)[0]?.value ?? "no transfer surface captured yet";
+          const commonFailure =
+            countTop(rollup.mistakePatterns, 1)[0]?.value ?? "no common failure captured yet";
+          return [
+            `### ${rollup.topic}`,
+            `- transfer_to: ${transferSurface}`,
+            `- reuse_rule: ${defaultMethod}`,
+            `- invalid_if: ${commonFailure}`,
+            "",
+          ];
+        })
+      : ["- No transfer bridge has been captured yet.", ""]),
+  ].join("\n");
+}
+
+type RelevanceTier = "primary-call" | "secondary-call" | "reference-only";
+
+function toRelevanceTier(rollup: TopicRollup, newestReviewDate: string): RelevanceTier {
+  const state = classifyTopicState(rollup, newestReviewDate);
+  if (state === "stable") {
+    return "primary-call";
+  }
+  if (state === "new" && rollup.lastSeen === newestReviewDate) {
+    return "secondary-call";
+  }
+  return "reference-only";
+}
+
+function renderLearningRelevanceGate(params: {
+  reviews: ParsedReview[];
+  weekKey: string;
+  rangeLabel: string;
+  sessionKey: string;
+}): string {
+  const rollups = buildTopicRollups(params.reviews);
+  const newestReviewDate = rollups[0]?.lastSeen ?? "";
+  const primary = rollups.filter((rollup) => toRelevanceTier(rollup, newestReviewDate) === "primary-call");
+  const secondary = rollups.filter(
+    (rollup) => toRelevanceTier(rollup, newestReviewDate) === "secondary-call",
+  );
+  const referenceOnly = rollups.filter(
+    (rollup) => toRelevanceTier(rollup, newestReviewDate) === "reference-only",
+  );
+  const formatLine = (rollup: TopicRollup) => {
+    const method =
+      countTop(rollup.corePrinciples, 1)[0]?.value ?? "no default method captured yet";
+    return `- ${rollup.topic} (${rollup.count}, last seen ${rollup.lastSeen}) - default method: ${method}`;
+  };
+
+  return [
+    `# Learning Relevance Gate: ${params.weekKey}`,
+    "",
+    `- **As Of**: ${params.rangeLabel}`,
+    `- **Session Key**: ${params.sessionKey}`,
+    "",
+    "## Contract",
+    "- use this file to decide how strongly a learned skill should be pulled into new tasks.",
+    "- primary-call topics should be used by default when the task matches.",
+    "- secondary-call topics should be checked next when the task is adjacent but not identical.",
+    "- reference-only topics stay searchable but should not dominate the answer unless explicitly needed.",
+    "",
+    "## Primary Call",
+    ...(primary.length > 0 ? primary.map(formatLine) : ["- no primary-call topic yet."]),
+    "",
+    "## Secondary Call",
+    ...(secondary.length > 0 ? secondary.map(formatLine) : ["- no secondary-call topic yet."]),
+    "",
+    "## Reference Only",
+    ...(referenceOnly.length > 0
+      ? referenceOnly.map(formatLine)
+      : ["- no reference-only topic yet."]),
+    "",
+  ].join("\n");
+}
+
 function buildMemoryNotes(params: {
   reviews: ParsedReview[];
+  allReviews: ParsedReview[];
   sessionKey: string;
   weekKey: string;
   rangeLabel: string;
 }): MemoryNote[] {
-  return [
-    {
-      filename: `${params.weekKey}-learning-weekly-review.md`,
-      content: renderWeeklySummary(params),
-    },
-    {
-      filename: `${params.weekKey}-learning-upgrade.md`,
-      content: buildUpgradePrompt(params),
-    },
-  ];
+  const renderers: Record<LearningRecallMemoryNote, () => string> = {
+    "learning-weekly-review": () => renderWeeklySummary(params),
+    "learning-upgrade": () => buildUpgradePrompt(params),
+    "learning-long-term-catalog": () =>
+      renderLongTermCatalog({
+        reviews: params.allReviews,
+        sessionKey: params.sessionKey,
+        weekKey: params.weekKey,
+        rangeLabel: params.rangeLabel,
+      }),
+    "learning-durable-skills": () =>
+      renderDurableSkillMemory({
+        reviews: params.allReviews,
+        sessionKey: params.sessionKey,
+        weekKey: params.weekKey,
+        rangeLabel: params.rangeLabel,
+      }),
+    "learning-trigger-map": () =>
+      renderLearningTriggerMap({
+        reviews: params.allReviews,
+        sessionKey: params.sessionKey,
+        weekKey: params.weekKey,
+        rangeLabel: params.rangeLabel,
+      }),
+    "learning-rehearsal-queue": () =>
+      renderLearningRehearsalQueue({
+        reviews: params.allReviews,
+        sessionKey: params.sessionKey,
+        weekKey: params.weekKey,
+        rangeLabel: params.rangeLabel,
+      }),
+    "learning-transfer-bridges": () =>
+      renderLearningTransferBridges({
+        reviews: params.allReviews,
+        sessionKey: params.sessionKey,
+        weekKey: params.weekKey,
+        rangeLabel: params.rangeLabel,
+      }),
+    "learning-relevance-gate": () =>
+      renderLearningRelevanceGate({
+        reviews: params.allReviews,
+        sessionKey: params.sessionKey,
+        weekKey: params.weekKey,
+        rangeLabel: params.rangeLabel,
+      }),
+  };
+
+  return LEARNING_WEEKLY_MEMORY_NOTES.map((noteName) => ({
+    filename: buildLearningRecallFilename(params.weekKey, noteName),
+    content: renderers[noteName](),
+  }));
 }
 
 const saveWeeklyLearningReview: HookHandler = async (event) => {
@@ -405,6 +804,7 @@ const saveWeeklyLearningReview: HookHandler = async (event) => {
 
     const now = new Date(event.timestamp);
     const reviews = await loadRecentReviews(memoryDir, now);
+    const allReviews = await loadAllReviews(memoryDir);
     if (reviews.length === 0) {
       return;
     }
@@ -412,6 +812,7 @@ const saveWeeklyLearningReview: HookHandler = async (event) => {
     const { weekKey, rangeLabel } = formatIsoWeek(now);
     const notes = buildMemoryNotes({
       reviews,
+      allReviews,
       sessionKey: event.sessionKey,
       weekKey,
       rangeLabel,

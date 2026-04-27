@@ -15,7 +15,6 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
 } from "openclaw/plugin-sdk";
 import { resolveAgentWorkspaceDir } from "../../../src/agents/agent-scope.js";
-import { createFinanceLearningCapabilityApplyTool } from "../../../src/agents/tools/finance-learning-capability-apply-tool.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../../src/agents/tools/finance-learning-pipeline-orchestrator-tool.js";
 import type { OpenClawConfig } from "../../../src/config/config.js";
 import { isCorrectionLoopInput } from "../../../src/hooks/bundled/correction-loop/detection.js";
@@ -1214,12 +1213,22 @@ function renderFeishuFinanceLearningPipelineMissingSourceReply(): string {
 
 function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknown>): string {
   if (details.ok !== true) {
+    const extractionGap =
+      details.extractionGap && typeof details.extractionGap === "object"
+        ? (details.extractionGap as Record<string, unknown>)
+        : {};
+    const missingFields = Array.isArray(extractionGap.missingFields)
+      ? extractionGap.missingFields.filter((item): item is string => typeof item === "string")
+      : [];
     return [
       "金融能力学习流水线没有完成。",
       "",
       `- failed step: ${String(details.failedStep ?? "unknown")}`,
       `- reason: ${String(details.reason ?? "unknown")}`,
       `- error: ${String(details.errorMessage ?? "none")}`,
+      ...(missingFields.length > 0 ? [`- extraction gap: ${missingFields.join(", ")}`] : []),
+      `- receipt: ${String(details.retrievalReceiptPath ?? "not_created")}`,
+      `- review: ${String(details.retrievalReviewPath ?? "not_created")}`,
       "",
       "这次没有把失败说成学会；需要先修正 source 或 extraction gap，再重跑。",
     ].join("\n");
@@ -1233,13 +1242,17 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     typeof retrievalFirstLearning.retrievalReviewCounts === "object"
       ? (retrievalFirstLearning.retrievalReviewCounts as Record<string, unknown>)
       : {};
-  const applicationResult =
-    details.applicationResult && typeof details.applicationResult === "object"
-      ? (details.applicationResult as Record<string, unknown>)
+  const applicationValidation =
+    details.applicationValidation && typeof details.applicationValidation === "object"
+      ? (details.applicationValidation as Record<string, unknown>)
       : {};
   const answerSkeleton =
-    applicationResult.answerSkeleton && typeof applicationResult.answerSkeleton === "object"
-      ? (applicationResult.answerSkeleton as Record<string, unknown>)
+    applicationValidation.answerSkeleton && typeof applicationValidation.answerSkeleton === "object"
+      ? (applicationValidation.answerSkeleton as Record<string, unknown>)
+      : {};
+  const answerScaffold =
+    answerSkeleton.answerScaffold && typeof answerSkeleton.answerScaffold === "object"
+      ? (answerSkeleton.answerScaffold as Record<string, unknown>)
       : {};
   return [
     "金融能力学习流水线已完成 dev 验收。",
@@ -1249,8 +1262,16 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     `- review: ${String(retrievalFirstLearning.retrievalReviewPath ?? "missing")}`,
     `- retrievable after learning: ${String(reviewCounts.retrievableAfterLearning ?? "unknown")}`,
     `- weak learning receipts: ${String(reviewCounts.weakLearningReceipts ?? "unknown")}`,
-    `- apply mode: ${String(applicationResult.applicationMode ?? "missing")}`,
-    `- applied candidates: ${String(applicationResult.candidateCount ?? "unknown")}`,
+    `- application validation: ${String(
+      applicationValidation.applicationValidationStatus ?? "missing",
+    )}`,
+    `- answer scaffold: ${String(answerScaffold.status ?? "missing")}`,
+    `- synthesis mode: ${String(applicationValidation.synthesisMode ?? "missing")}`,
+    `- usage receipt: ${String(applicationValidation.usageReceiptPath ?? "missing")}`,
+    `- usage review: ${String(applicationValidation.usageReviewPath ?? "missing")}`,
+    "- automation: this message refreshed retrieval review and apply usage review; no daily manual command was required",
+    `- apply mode: ${String(applicationValidation.applicationMode ?? "missing")}`,
+    `- applied candidates: ${String(applicationValidation.candidateCount ?? "unknown")}`,
     `- apply boundary: ${String(answerSkeleton.noActionBoundary ?? "missing")}`,
     "",
     "边界: 这是 research-only 学习，不是交易执行；语言 corpus 没有混入金融学习 artifact。",
@@ -4738,10 +4759,12 @@ export async function handleFeishuMessage(params: {
       : undefined;
     const replyTargetMessageId = ctx.rootId ?? ctx.messageId;
     const threadReply = isGroup ? (groupSession?.threadReply ?? false) : false;
+    const currentSurfaceForStatus = surfaceRouting.currentSurface as string | undefined;
+    const targetSurfaceForStatus = surfaceRouting.targetSurface as string | undefined;
     const shouldAnswerLearningStatusInControlRoom =
-      (surfaceRouting.currentSurface === "control_room" ||
-        surfaceRouting.targetSurface === "control_room" ||
-        (!surfaceRouting.targetSurface && surfaceRouting.currentSurface === "control_room")) &&
+      (currentSurfaceForStatus === "control_room" ||
+        targetSurfaceForStatus === "control_room" ||
+        (!targetSurfaceForStatus && currentSurfaceForStatus === "control_room")) &&
       controlRoomOrchestration?.includeDailyWorkface !== true &&
       looksLikeLearningTimeboxStatusAsk(ctx.content);
 
@@ -5426,23 +5449,12 @@ export async function handleFeishuMessage(params: {
               allowedActionAuthority: "research_only",
               learningIntent: larkInstructionHandoff.backendToolContract.learningIntent,
               maxRetrievedCapabilities: 5,
+              applicationValidationQuery: ctx.content,
+              maxAppliedCapabilities: 3,
             },
           );
-          let applicationResult: unknown = undefined;
-          if ((pipelineResult.details as Record<string, unknown>).ok === true) {
-            const applyTool = createFinanceLearningCapabilityApplyTool({
-              workspaceDir: learningWorkspaceDir,
-            });
-            applicationResult = (
-              await applyTool.execute(`${ctx.messageId}:finance-learning-apply`, {
-                queryText: ctx.content,
-                maxCandidates: 3,
-              })
-            ).details;
-          }
           const pipelineReplyText = renderFeishuFinanceLearningPipelineReply({
             ...(pipelineResult.details as Record<string, unknown>),
-            applicationResult,
           });
           const pipelineSendResult = await sendFeishuFinalTextReply({
             replyRuntime: core.channel.reply,

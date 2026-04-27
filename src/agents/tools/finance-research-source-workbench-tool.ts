@@ -245,7 +245,7 @@ function inferInlineSourceEntry(params: {
     );
   }
 
-  const allowedCollectionMethods =
+  const allowedCollectionMethods: FinanceArticleSourceRegistryArtifact["sources"][number]["allowedCollectionMethods"] =
     params.localFilePath != null
       ? ["local_file"]
       : params.pastedText != null

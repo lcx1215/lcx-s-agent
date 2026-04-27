@@ -53,4 +53,10 @@ describe("plugin runtime command execution", () => {
     const runtime = createPluginRuntime();
     expect(runtime.system.requestHeartbeatNow).toBe(requestHeartbeatNow);
   });
+
+  it("exposes MCP context and aider tool factories", () => {
+    const runtime = createPluginRuntime();
+    expect(typeof runtime.tools.createMcpContextTool).toBe("function");
+    expect(typeof runtime.tools.createAiderTool).toBe("function");
+  });
 });

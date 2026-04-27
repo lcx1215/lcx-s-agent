@@ -3,6 +3,10 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
+import {
   buildManifestPatchReviewEntry,
   loadCollectionManifestPatchesWithFallback,
   type FundamentalManifestPatchReviewEntry,
@@ -159,8 +163,15 @@ const materializeFundamentalCollectionPackets: HookHandler = async (event) => {
           collectionPackets,
           notes: buildArtifactNotes(collectionPackets.length),
         };
-        const collectionPacketsPath = `bank/fundamental/collection-packets/${manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-collection-packets-${manifestId}.md`;
+        const collectionPacketsPath = buildFundamentalArtifactJsonPath(
+          "fundamental-collection-packets",
+          manifestId,
+        );
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-collection-packets",
+          manifestId,
+        });
         const writes: Array<Promise<void>> = [
           writeFileWithinRoot({
             rootDir: workspaceDir,

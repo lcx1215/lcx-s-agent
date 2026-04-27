@@ -6,6 +6,10 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
+import {
   summarizeFundamentalIntakeSession,
   type FundamentalDocumentMetadata,
   type FundamentalManifestScaffold,
@@ -58,6 +62,24 @@ function createManifestFixture(params?: {
     reviewGate: {
       ...manifestScaffold.reviewGate,
       status: params?.reviewGateStatus ?? manifestScaffold.reviewGate.status,
+    },
+  };
+}
+
+function withManifestId(
+  manifest: FundamentalManifestScaffold,
+  manifestId: string,
+): FundamentalManifestScaffold {
+  return {
+    ...manifest,
+    manifestId,
+    documentWorkspace: {
+      ...manifest.documentWorkspace,
+      baseDir: `bank/fundamental/documents/${manifestId}`,
+      targetDirs: manifest.documentWorkspace.targetDirs.map((targetDir) => ({
+        ...targetDir,
+        dir: `bank/fundamental/documents/${manifestId}/${targetDir.targetSlug}`,
+      })),
     },
   };
 }
@@ -165,22 +187,23 @@ async function runRiskHandoff(params: {
 
   await handler(event);
 
-  const handoffDir = path.join(tempDir, "bank", "fundamental", "risk-handoffs");
-  const handoffFiles = await fs.readdir(handoffDir);
   const memoryDir = path.join(tempDir, "memory");
-  const memoryFiles = await fs.readdir(memoryDir);
+  const handoffPath = buildFundamentalArtifactJsonPath(
+    "fundamental-risk-handoff",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalArtifactNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-risk-handoff",
+    manifestId: params.manifest.manifestId,
+  });
 
   return {
-    riskHandoff: JSON.parse(
-      await fs.readFile(path.join(handoffDir, handoffFiles[0]), "utf-8"),
-    ) as Record<string, unknown>,
-    noteContent: await fs.readFile(
-      path.join(
-        memoryDir,
-        memoryFiles.find((name) => name.includes("fundamental-risk-handoff-")) ?? memoryFiles[0],
-      ),
-      "utf-8",
-    ),
+    riskHandoff: JSON.parse(await fs.readFile(path.join(tempDir, handoffPath), "utf-8")) as Record<
+      string,
+      unknown
+    >,
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
   };
 }
 
@@ -348,5 +371,87 @@ describe("fundamental-risk-handoff hook", () => {
     ]);
     expect(result.noteContent).toContain("handoff_decision: ready");
     expect(result.noteContent).toContain("AAPL: handoff=ready, scoring=allowed");
+  });
+
+  it("quarantines malformed scoring-gate artifacts while keeping healthy handoffs", async () => {
+    const tempDir = await createCaseWorkspace("malformed-scoring-gate");
+    const healthyManifest = withManifestId(
+      createManifestFixture({
+        reviewGateStatus: "approved_for_collection",
+        requestText:
+          "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+      }),
+      "aapl-healthy",
+    );
+    const brokenManifest = withManifestId(
+      createManifestFixture({
+        reviewGateStatus: "approved_for_collection",
+        requestText:
+          "Build a fundamental research scaffold for MSFT in the US. Use annual reports and investor presentations.",
+      }),
+      "msft-artifact-error",
+    );
+
+    await prepareScoringGateArtifact({
+      workspaceDir: tempDir,
+      manifest: healthyManifest,
+      documents: [
+        {
+          fileName: "doc-annual-primary.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "annual_report",
+            sourceType: "issuer_primary",
+          },
+        },
+        {
+          fileName: "doc-presentation-primary.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "investor_presentation",
+            sourceType: "company_presentation",
+          },
+        },
+      ],
+    });
+    await prepareScoringGateArtifact({
+      workspaceDir: tempDir,
+      manifest: brokenManifest,
+    });
+
+    await fs.writeFile(
+      path.join(
+        tempDir,
+        "bank",
+        "fundamental",
+        "scoring-gates",
+        `${brokenManifest.manifestId}.json`,
+      ),
+      '{"broken": true',
+      "utf-8",
+    );
+
+    const event = createHookEvent("command", "reset", "agent:main:main", {
+      cfg: makeConfig(tempDir),
+    });
+    event.timestamp = new Date("2026-03-15T12:00:00.000Z");
+
+    await handler(event);
+
+    const handoffDir = path.join(tempDir, "bank", "fundamental", "risk-handoffs");
+    const handoffFiles = await fs.readdir(handoffDir);
+    expect(handoffFiles).toEqual([`${healthyManifest.manifestId}.json`]);
+
+    const artifactErrorsDir = path.join(tempDir, "bank", "fundamental", "artifact-errors");
+    const artifactError = JSON.parse(
+      await fs.readFile(
+        path.join(artifactErrorsDir, `risk-handoff-${brokenManifest.manifestId}.json`),
+        "utf-8",
+      ),
+    ) as Record<string, unknown>;
+    expect(artifactError.errorStatus).toBe("blocked_due_to_artifact_error");
+    expect(artifactError.manifestId).toBe(brokenManifest.manifestId);
   });
 });

@@ -153,7 +153,7 @@ function scoreCandidateForQuery(params: {
   }
 
   const normalizedQuery = normalizeSearchText(params.queryText);
-  const primarySignals = [
+  const primarySignals: string[] = [
     ...params.candidate.relatedFinanceDomains,
     ...params.candidate.capabilityTags,
     params.candidate.capabilityType,

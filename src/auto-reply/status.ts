@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import { resolveContextTokensForModel } from "../agents/context.js";
-import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+import {
+  DEFAULT_CONTEXT_TOKENS,
+  DEFAULT_MODEL,
+  DEFAULT_PROVIDER,
+  resolveBuiltInDefaultModelRef,
+} from "../agents/defaults.js";
 import { resolveModelAuthMode } from "../agents/model-auth.js";
 import {
   buildModelAliasIndex,
@@ -25,6 +30,10 @@ import { resolveCommitHash } from "../infra/git-commit.js";
 import type { MediaUnderstandingDecision } from "../media-understanding/types.js";
 import { listPluginCommands } from "../plugins/commands.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
+import {
+  buildLobsterProtocolSurface,
+  formatLobsterProtocolSummary,
+} from "../commands/capabilities.js";
 import {
   getTtsMaxLength,
   getTtsProvider,
@@ -408,6 +417,14 @@ const formatVoiceModeLine = (
   return `🔊 Voice: ${autoMode} · provider=${provider} · limit=${maxLength} · summary=${summarize}`;
 };
 
+export function formatLobsterProtocolLine(config?: OpenClawConfig): string | null {
+  if (!config) {
+    return null;
+  }
+  const protocol = buildLobsterProtocolSurface(config);
+  return `🦞 Lobster: ${formatLobsterProtocolSummary(protocol)}`;
+}
+
 export function buildStatusMessage(args: StatusArgs): string {
   const now = args.now ?? Date.now();
   const entry = args.sessionEntry;
@@ -432,10 +449,11 @@ export function buildStatusMessage(args: StatusArgs): string {
           defaults: args.agent ?? {},
         },
       } as OpenClawConfig);
+  const builtInDefault = resolveBuiltInDefaultModelRef();
   const resolved = resolveConfiguredModelRef({
     cfg: selectionConfig,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
+    defaultProvider: builtInDefault.provider,
+    defaultModel: builtInDefault.model,
   });
   const selectedProvider = entry?.providerOverride ?? resolved.provider ?? DEFAULT_PROVIDER;
   const selectedModel = entry?.modelOverride ?? resolved.model ?? DEFAULT_MODEL;
@@ -664,6 +682,7 @@ export function buildStatusMessage(args: StatusArgs): string {
     usagePair && costLine ? `${usagePair} · ${costLine}` : (usagePair ?? costLine);
   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
+  const lobsterLine = formatLobsterProtocolLine(args.config);
 
   return [
     versionLine,
@@ -676,6 +695,7 @@ export function buildStatusMessage(args: StatusArgs): string {
     mediaLine,
     args.usageLine,
     `🧵 ${sessionLine}`,
+    lobsterLine,
     args.subagentsLine,
     `⚙️ ${optionsLine}`,
     voiceLine,
@@ -742,6 +762,13 @@ export function buildHelpMessage(cfg?: OpenClawConfig): string {
   lines.push("Status");
   lines.push("  /status  |  /whoami  |  /context");
   lines.push("");
+
+  const lobsterLine = formatLobsterProtocolLine(cfg);
+  if (lobsterLine) {
+    lines.push("Lobster");
+    lines.push(`  ${lobsterLine}`);
+    lines.push("");
+  }
 
   lines.push("Skills");
   lines.push("  /skill <name> [input]");

@@ -10,6 +10,7 @@ import { normalizeSecretInputModeInput } from "../../auth-choice.apply-helpers.j
 import { buildTokenProfileId, validateAnthropicSetupToken } from "../../auth-token.js";
 import { applyGoogleGeminiModelDefault } from "../../google-gemini-model-default.js";
 import { applyPrimaryModel } from "../../model-picker.js";
+import { resolveMinimaxHostedModelId } from "../../onboard-auth.models.js";
 import {
   applyAuthProfileConfig,
   applyCloudflareAiGatewayConfig,
@@ -831,7 +832,9 @@ export async function applyNonInteractiveAuthChoice(params: {
       mode: "api_key",
     });
     const modelId =
-      authChoice === "minimax-api-lightning" ? "MiniMax-M2.5-highspeed" : "MiniMax-M2.5";
+      authChoice === "minimax-api-lightning"
+        ? "MiniMax-M2.5-highspeed"
+        : resolveMinimaxHostedModelId();
     return isCn
       ? applyMinimaxApiConfigCn(nextConfig, modelId)
       : applyMinimaxApiConfig(nextConfig, modelId);

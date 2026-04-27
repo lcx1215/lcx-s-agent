@@ -5,8 +5,33 @@ export type MemoryNote = {
   content: string;
 };
 
+export function toUtcDateKey(input: Date): string {
+  return input.toISOString().slice(0, 10);
+}
+
+export function parseUtcDateKey(input: string): Date {
+  return new Date(`${input}T00:00:00.000Z`);
+}
+
 export function toUtcDateOnly(input: Date): Date {
-  return new Date(`${input.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  return parseUtcDateKey(toUtcDateKey(input));
+}
+
+export function shiftUtcDays(input: Date, delta: number): Date {
+  const next = new Date(input);
+  next.setUTCDate(next.getUTCDate() + delta);
+  return next;
+}
+
+export function addUtcDateKeyDays(dateKey: string, days: number): string {
+  return toUtcDateKey(shiftUtcDays(parseUtcDateKey(dateKey), days));
+}
+
+export function isWithinTrailingUtcDays(dateKey: string, now: Date, trailingDays: number): boolean {
+  const date = parseUtcDateKey(dateKey);
+  const end = toUtcDateOnly(now);
+  const start = shiftUtcDays(end, -(Math.max(1, trailingDays) - 1));
+  return date >= start && date <= end;
 }
 
 export function formatIsoWeek(date: Date): { weekKey: string; rangeLabel: string } {
@@ -21,7 +46,7 @@ export function formatIsoWeek(date: Date): { weekKey: string; rangeLabel: string
   sunday.setUTCDate(monday.getUTCDate() + 6);
   return {
     weekKey: `${utc.getUTCFullYear()}-W${String(week).padStart(2, "0")}`,
-    rangeLabel: `${monday.toISOString().slice(0, 10)} to ${sunday.toISOString().slice(0, 10)}`,
+    rangeLabel: `${toUtcDateKey(monday)} to ${toUtcDateKey(sunday)}`,
   };
 }
 
@@ -31,7 +56,7 @@ export function countTop(values: string[], limit = 3): Array<{ value: string; co
     counts.set(value, (counts.get(value) || 0) + 1);
   }
   return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, limit)
     .map(([value, count]) => ({ value, count }));
 }

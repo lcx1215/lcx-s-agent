@@ -793,6 +793,9 @@ export const FINANCE_LEARNING_EVIDENCE_LEVELS = [
 export const FINANCE_ARTICLE_SOURCE_TYPES = [
   "wechat_public_account_source",
   "public_web_source",
+  "official_reference_source",
+  "academic_preprint_source",
+  "github_repository_source",
   "rss_public_feed_source",
   "licensed_research_source",
   "internal_research_source",
@@ -849,8 +852,8 @@ export type FinanceLearningCapabilityCandidateArtifact = {
     title: string;
     sourceType: FinanceLearningSourceType;
     collectionMethod: FinanceLearningCollectionMethod;
-    authorSourceName?: string;
-    publishDate?: string;
+    authorSourceName?: string | undefined;
+    publishDate?: string | undefined;
     extractionSummary: string;
     rawNotes: string;
     capabilityName: string;
@@ -889,7 +892,7 @@ export type FinanceArticleSourceRegistryArtifact = {
     reliabilityNotes: string;
     extractionTarget: string;
     allowedActionAuthority: FinanceFrameworkAllowedActionAuthority;
-    isPubliclyAccessible?: boolean;
+    isPubliclyAccessible?: boolean | undefined;
   }>;
 };
 
@@ -935,7 +938,7 @@ export type FeishuFinanceDoctrinePromotionCandidateArtifact = {
     observedValue: string;
     occurrences: number;
     reviewState: "unreviewed" | "deferred" | "rejected" | "ready_for_manual_promotion";
-    reviewNotes?: string;
+    reviewNotes?: string | undefined;
     candidateText: string;
     notEnoughForPromotion: string;
   }>;
@@ -951,7 +954,7 @@ export type FeishuFinanceDoctrinePromotionReviewArtifact = {
   reviews: Array<{
     candidateKey: string;
     reviewState: "unreviewed" | "deferred" | "rejected" | "ready_for_manual_promotion";
-    reviewNotes?: string;
+    reviewNotes?: string | undefined;
   }>;
 };
 
@@ -970,7 +973,7 @@ export type FeishuFinanceDoctrinePromotionDecisionArtifact = {
       | "deferred_after_promotion_review"
       | "rejected_after_promotion_review";
     reviewStateAtDecision: "ready_for_manual_promotion";
-    decisionNotes?: string;
+    decisionNotes?: string | undefined;
   }>;
 };
 
@@ -4393,10 +4396,7 @@ export function parseFinanceLearningCapabilityCandidateArtifact(
         allowedActionAuthority,
       };
     })
-    .filter(
-      (candidate): candidate is FinanceLearningCapabilityCandidateArtifact["candidates"][number] =>
-        Boolean(candidate),
-    );
+    .flatMap((candidate) => (candidate ? [candidate] : []));
   if (candidateBlocks.length > 0 && candidates.length !== candidateBlocks.length) {
     return undefined;
   }
@@ -4485,9 +4485,7 @@ export function parseFinanceArticleSourceRegistryArtifact(
         isPubliclyAccessible: isPubliclyAccessibleRaw === "yes",
       };
     })
-    .filter((source): source is FinanceArticleSourceRegistryArtifact["sources"][number] =>
-      Boolean(source),
-    );
+    .flatMap((source) => (source ? [source] : []));
   if (sourceBlocks.length > 0 && sources.length !== sourceBlocks.length) {
     return undefined;
   }
@@ -4926,12 +4924,7 @@ export function parseFeishuFinanceDoctrinePromotionCandidateArtifact(
         notEnoughForPromotion,
       };
     })
-    .filter(
-      (
-        candidate,
-      ): candidate is FeishuFinanceDoctrinePromotionCandidateArtifact["candidates"][number] =>
-        Boolean(candidate),
-    );
+    .flatMap((candidate) => (candidate ? [candidate] : []));
   return {
     generatedAt,
     consumer,
@@ -4995,9 +4988,7 @@ export function parseFeishuFinanceDoctrinePromotionReviewArtifact(
         reviewNotes,
       };
     })
-    .filter((review): review is FeishuFinanceDoctrinePromotionReviewArtifact["reviews"][number] =>
-      Boolean(review),
-    );
+    .flatMap((review) => (review ? [review] : []));
   return {
     reviewedAt,
     consumer,
@@ -5073,10 +5064,7 @@ export function parseFeishuFinanceDoctrinePromotionDecisionArtifact(
         decisionNotes,
       };
     })
-    .filter(
-      (decision): decision is FeishuFinanceDoctrinePromotionDecisionArtifact["decisions"][number] =>
-        Boolean(decision),
-    );
+    .flatMap((decision) => (decision ? [decision] : []));
   return {
     decidedAt,
     consumer,
@@ -5935,7 +5923,7 @@ export function parseLearningCouncilAdoptionLedger(params: {
         notes: extractLedgerLineValue(block, "notes") || "none",
       } satisfies LearningCouncilAdoptionLedgerEntry;
     })
-    .filter((entry): entry is LearningCouncilAdoptionLedgerEntry => Boolean(entry));
+    .flatMap((entry) => (entry ? [entry] : []));
   return {
     name: params.filename,
     date: parsedName.dateStr,

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { intro as clackIntro, outro as clackOutro } from "@clack/prompts";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { resolveBuiltInDefaultModelRef } from "../agents/defaults.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import {
   getModelRefStatus,
@@ -208,17 +208,18 @@ export async function doctorCommand(
   });
 
   if (cfg.hooks?.gmail?.model?.trim()) {
+    const builtInDefault = resolveBuiltInDefaultModelRef();
     const hooksModelRef = resolveHooksGmailModel({
       cfg,
-      defaultProvider: DEFAULT_PROVIDER,
+      defaultProvider: builtInDefault.provider,
     });
     if (!hooksModelRef) {
       note(`- hooks.gmail.model "${cfg.hooks.gmail.model}" could not be resolved`, "Hooks");
     } else {
       const { provider: defaultProvider, model: defaultModel } = resolveConfiguredModelRef({
         cfg,
-        defaultProvider: DEFAULT_PROVIDER,
-        defaultModel: DEFAULT_MODEL,
+        defaultProvider: builtInDefault.provider,
+        defaultModel: builtInDefault.model,
       });
       const catalog = await loadModelCatalog({ config: cfg });
       const status = getModelRefStatus({

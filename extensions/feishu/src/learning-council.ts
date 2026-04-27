@@ -533,20 +533,7 @@ async function resolveLearningCouncilAnchorContext(params: {
         }),
     );
     const selectedCards = cards
-      .filter(
-        (
-          card,
-        ): card is {
-          subject: string;
-          relativePath: string;
-          status: string;
-          updatedAt: string;
-          summary: string;
-          activationRule?: string;
-          firstStep?: string;
-          stopRule?: string;
-        } => Boolean(card),
-      )
+      .flatMap((card) => (card ? [card] : []))
       .map((card) => ({
         ...card,
         relevanceScore: scoreLocalMemoryCardRelevance({

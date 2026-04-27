@@ -11,6 +11,9 @@ An agentic loop is the full “real” run of an agent: intake → context assem
 tool execution → streaming replies → persistence. It’s the authoritative path that turns a message
 into actions and a final reply, while keeping session state consistent.
 
+If you need the Lobster fork's **default working protocol** rather than the
+generic runtime lifecycle, read [Lobster Operating Protocol](/concepts/lobster-operating-protocol).
+
 In OpenClaw, a loop is a single, serialized run per session that emits lifecycle and stream events
 as the model thinks, calls tools, and streams output. This doc explains how that authentic loop is
 wired end-to-end.

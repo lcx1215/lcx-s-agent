@@ -280,7 +280,9 @@ export function createFinanceDoctrineTeacherFeedbackElevationHandoffTool(options
       );
       if (
         existingHandoff &&
-        !OPENABLE_TEACHER_ELEVATION_HANDOFF_STATUSES.includes(existingHandoff.status)
+        !(OPENABLE_TEACHER_ELEVATION_HANDOFF_STATUSES as readonly string[]).includes(
+          existingHandoff.status,
+        )
       ) {
         return jsonResult({
           ok: false,

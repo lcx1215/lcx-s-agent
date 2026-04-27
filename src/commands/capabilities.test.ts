@@ -1,11 +1,22 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { buildCapabilitySurfaceReport, formatCapabilityRunFooter } from "./capabilities.js";
+import {
+  buildCapabilitySurfaceReport,
+  formatCapabilityRunFooter,
+  formatLobsterProtocolDetailLines,
+  formatLobsterProtocolSummary,
+  listKnownCapabilityDescriptors,
+  resolveKnownCapabilityDescriptor,
+} from "./capabilities.js";
 
 function createConfig(): OpenClawConfig {
   return {
     agents: {
       defaults: {
+        workspace: "/tmp/openclaw-capabilities-workspace",
         model: {
           primary: "moonshot/kimi-k2.6",
           fallbacks: ["minimax-portal/MiniMax-M2.7", "deepseek/deepseek-chat"],
@@ -196,5 +207,130 @@ describe("buildCapabilitySurfaceReport", () => {
       report.providerCapabilities.some((entry) => entry.states.includes("live_verified")),
     ).toBe(false);
     expect(report.models.some((entry) => entry.states.includes("live_verified"))).toBe(false);
+  });
+
+  it("shows the lobster workflow runtime as optional and disabled by default", () => {
+    const report = buildCapabilitySurfaceReport(createConfig());
+    expect(report.lobsterProtocol.lobsterWorkflowRuntime).toEqual(
+      expect.objectContaining({
+        kind: "optional_plugin",
+        enabledByPolicy: false,
+        states: ["adapter_implemented", "disabled"],
+      }),
+    );
+  });
+
+  it("shows the lobster workflow runtime as configured when allowlisted", () => {
+    const cfg = createConfig();
+    cfg.tools = { alsoAllow: ["lobster"] };
+    const report = buildCapabilitySurfaceReport(cfg);
+    expect(report.lobsterProtocol.lobsterWorkflowRuntime).toEqual(
+      expect.objectContaining({
+        enabledByPolicy: true,
+        states: ["adapter_implemented", "configured"],
+      }),
+    );
+  });
+
+  it("reports protected anchor presence from the configured workspace", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-capabilities-"));
+    await fs.mkdir(path.join(workspaceDir, "memory"), { recursive: true });
+    await fs.writeFile(path.join(workspaceDir, "memory", "current-research-line.md"), "# ok\n");
+    await fs.writeFile(path.join(workspaceDir, "MEMORY.md"), "# durable\n");
+
+    const cfg = createConfig();
+    cfg.agents ??= {};
+    cfg.agents.defaults ??= {};
+    cfg.agents.defaults.workspace = workspaceDir;
+
+    const report = buildCapabilitySurfaceReport(cfg);
+    expect(report.lobsterProtocol.protectedAnchors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "memory/current-research-line.md",
+          present: true,
+          states: ["configured"],
+        }),
+        expect.objectContaining({
+          path: "memory/unified-risk-view.md",
+          present: false,
+          states: ["unavailable"],
+        }),
+        expect.objectContaining({
+          path: "MEMORY.md",
+          present: true,
+          states: ["configured"],
+        }),
+      ]),
+    );
+  });
+
+  it("formats a shared lobster protocol summary line", () => {
+    const report = buildCapabilitySurfaceReport(createConfig());
+    expect(formatLobsterProtocolSummary(report.lobsterProtocol)).toBe(
+      "control_room_main_lane · openclaw_embedded_agent · plugin optional · dm=main · anchors 0/3",
+    );
+    expect(
+      formatLobsterProtocolSummary(report.lobsterProtocol, {
+        pluginEnabled: "enabled",
+        pluginDisabled: "disabled",
+      }),
+    ).toContain("disabled");
+  });
+
+  it("formats lobster protocol detail lines from the shared surface", () => {
+    const report = buildCapabilitySurfaceReport(createConfig());
+    const lines = formatLobsterProtocolDetailLines(report.lobsterProtocol);
+    expect(lines).toContain("- defaultMode: control_room_main_lane");
+    expect(lines).toContain(
+      "  executionSubstrate: openclaw_embedded_agent (configured, connected)",
+    );
+    expect(lines.some((line) => line.includes("lobsterWorkflowRuntime: adapter_implemented, disabled"))).toBe(
+      true,
+    );
+  });
+
+  it("exports known capability descriptors from the shared capability surface", () => {
+    const descriptors = listKnownCapabilityDescriptors();
+    expect(descriptors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerCapability: "web-search",
+          genericTool: "web_search",
+          aliases: expect.arrayContaining(["web-search", "web search"]),
+        }),
+        expect.objectContaining({
+          providerCapability: "quickjs",
+          genericTool: null,
+          aliases: expect.arrayContaining(["quickjs"]),
+        }),
+        expect.objectContaining({
+          providerCapability: "file_search",
+          genericTool: null,
+          aliases: expect.arrayContaining(["file_search", "file search"]),
+        }),
+      ]),
+    );
+  });
+
+  it("resolves known capability aliases without duplicating matcher-local taxonomy", () => {
+    expect(resolveKnownCapabilityDescriptor("can you use web search")).toEqual(
+      expect.objectContaining({
+        providerCapability: "web-search",
+        genericTool: "web_search",
+      }),
+    );
+    expect(resolveKnownCapabilityDescriptor("你能用 quickjs 吗")).toEqual(
+      expect.objectContaining({
+        providerCapability: "quickjs",
+        genericTool: null,
+      }),
+    );
+    expect(resolveKnownCapabilityDescriptor("can you use file search")).toEqual(
+      expect.objectContaining({
+        providerCapability: "file_search",
+        genericTool: null,
+      }),
+    );
   });
 });

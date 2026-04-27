@@ -8,8 +8,11 @@ import { listGatewayMethods } from "./server-methods-list.js";
 import { coreGatewayHandlers } from "./server-methods.js";
 
 describe("method scope resolution", () => {
-  it("classifies sessions.resolve as read and poll as write", () => {
+  it("classifies sessions.resolve and update.check as read, and poll as write", () => {
     expect(resolveLeastPrivilegeOperatorScopesForMethod("sessions.resolve")).toEqual([
+      "operator.read",
+    ]);
+    expect(resolveLeastPrivilegeOperatorScopesForMethod("update.check")).toEqual([
       "operator.read",
     ]);
     expect(resolveLeastPrivilegeOperatorScopesForMethod("poll")).toEqual(["operator.write"]);

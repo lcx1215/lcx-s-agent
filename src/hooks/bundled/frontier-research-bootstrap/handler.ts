@@ -1,6 +1,4 @@
-import {
-  filterBootstrapFilesForSession,
-} from "../../../agents/workspace.js";
+import { filterBootstrapFilesForSession } from "../../../agents/workspace.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import { resolveHookConfig } from "../../config.js";
 import { isAgentBootstrapEvent, type HookHandler } from "../../hooks.js";
@@ -10,6 +8,11 @@ import {
   loadRecentMemoryNotes,
   resolveRecentCount,
 } from "../bootstrap-memory.js";
+import {
+  buildLobsterWorkfaceLearningCarryoverCue,
+  FRONTIER_BOOTSTRAP_PRIORITY_SECTIONS,
+  FRONTIER_RESEARCH_CARD_PREFIX,
+} from "../lobster-brain-registry.js";
 
 const HOOK_KEY = "frontier-research-bootstrap";
 const log = createSubsystemLogger("frontier-research-bootstrap");
@@ -27,25 +30,33 @@ const frontierResearchBootstrapHook: HookHandler = async (event) => {
 
   const recentCount = resolveRecentCount(hookConfig as Record<string, unknown>);
   try {
-    const frontierUpgrade = await loadNewestMemoryNote({
-      workspaceDir: context.workspaceDir,
-      includes: "frontier-upgrade",
-    });
-    const weeklyReview = await loadNewestMemoryNote({
-      workspaceDir: context.workspaceDir,
-      includes: "frontier-methods-weekly-review",
-    });
-    const replicationBacklog = await loadNewestMemoryNote({
-      workspaceDir: context.workspaceDir,
-      includes: "frontier-replication-backlog",
-    });
+    const notesByName = new Map(
+      await Promise.all(
+        FRONTIER_BOOTSTRAP_PRIORITY_SECTIONS.map(async ({ noteName }) => [
+          noteName,
+          await loadNewestMemoryNote({
+            workspaceDir: context.workspaceDir,
+            includes: noteName,
+          }),
+        ]),
+      ),
+    );
     const cards = await loadRecentMemoryNotes({
       workspaceDir: context.workspaceDir,
       recentCount,
-      includes: "frontier-research-",
-      excludes: ["frontier-methods-weekly-review"],
+      includes: FRONTIER_RESEARCH_CARD_PREFIX,
+      excludes: FRONTIER_BOOTSTRAP_PRIORITY_SECTIONS.map((section) => section.noteName),
     });
-    if (!frontierUpgrade && !weeklyReview && !replicationBacklog && cards.length === 0) {
+    const latestWorkface = await loadNewestMemoryNote({
+      workspaceDir: context.workspaceDir,
+      includes: "lobster-workface",
+    });
+    const latestWorkfaceCue = buildLobsterWorkfaceLearningCarryoverCue(latestWorkface?.content);
+    if (
+      [...notesByName.values()].every((note) => !note) &&
+      cards.length === 0 &&
+      !latestWorkfaceCue
+    ) {
       return;
     }
 
@@ -60,20 +71,21 @@ const frontierResearchBootstrapHook: HookHandler = async (event) => {
           ],
           sections: [
             {
-              heading: "Priority Frontier Upgrade",
-              note: frontierUpgrade,
-              maxChars: 500,
+              heading: "Latest Learning Carryover Cue",
+              note: latestWorkfaceCue
+                ? {
+                    name: "derived-latest-learning-carryover-cue.md",
+                    path: "_derived-latest-learning-carryover-cue.md",
+                    content: latestWorkfaceCue,
+                  }
+                : undefined,
+              maxChars: 360,
             },
-            {
-              heading: "Latest Weekly Methods Review",
-              note: weeklyReview,
-              maxChars: 600,
-            },
-            {
-              heading: "Latest Replication Backlog",
-              note: replicationBacklog,
-              maxChars: 600,
-            },
+            ...FRONTIER_BOOTSTRAP_PRIORITY_SECTIONS.map(({ noteName, heading, maxChars }) => ({
+              heading,
+              note: notesByName.get(noteName),
+              maxChars,
+            })),
           ],
           recentNotes: cards,
           recentHeading: (note) => `## ${note.name}`,

@@ -6,6 +6,10 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
+import {
   summarizeFundamentalIntakeSession,
   type FundamentalDocumentMetadata,
   type FundamentalManifestScaffold,
@@ -127,20 +131,26 @@ async function runBridge(params: {
 
   await handler(event);
 
-  const readinessDir = path.join(tempDir, "bank", "fundamental", "readiness");
-  const readinessFiles = await fs.readdir(readinessDir);
   const memoryDir = path.join(tempDir, "memory");
-  const memoryFiles = await fs.readdir(memoryDir);
   const manifestsDir = path.join(tempDir, "bank", "fundamental", "manifests");
   const manifestFiles = await fs.readdir(manifestsDir);
+  const readinessPath = buildFundamentalArtifactJsonPath(
+    "fundamental-readiness",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalArtifactNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-readiness",
+    manifestId: params.manifest.manifestId,
+  });
 
   const readiness = JSON.parse(
-    await fs.readFile(path.join(readinessDir, readinessFiles[0]), "utf-8"),
+    await fs.readFile(path.join(tempDir, readinessPath), "utf-8"),
   ) as Record<string, unknown>;
   const manifest = JSON.parse(
     await fs.readFile(path.join(manifestsDir, manifestFiles[0]), "utf-8"),
   ) as FundamentalManifestScaffold;
-  const noteContent = await fs.readFile(path.join(memoryDir, memoryFiles[0]), "utf-8");
+  const noteContent = await fs.readFile(path.join(memoryDir, notePath), "utf-8");
 
   return {
     manifest,

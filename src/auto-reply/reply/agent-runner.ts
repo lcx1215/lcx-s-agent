@@ -116,6 +116,17 @@ export async function runReplyAgent(params: {
     shouldInjectGroupIntro,
     typingMode,
   } = params;
+  const trackedToolStarts = new Set<string>();
+  const trackedOpts = {
+    ...opts,
+    onToolStart: async (payload: { name?: string; phase?: string }) => {
+      const normalizedName = payload.name?.trim().toLowerCase();
+      if (payload.phase === "start" && normalizedName) {
+        trackedToolStarts.add(normalizedName);
+      }
+      await opts?.onToolStart?.(payload);
+    },
+  };
 
   let activeSessionEntry = sessionEntry;
   const activeSessionStore = sessionStore;
@@ -338,7 +349,7 @@ export async function runReplyAgent(params: {
       commandBody,
       followupRun,
       sessionCtx,
-      opts,
+      opts: trackedOpts,
       typingSignals,
       blockReplyPipeline,
       blockStreamingEnabled,
@@ -467,6 +478,24 @@ export async function runReplyAgent(params: {
       systemPromptReport: runResult.meta?.systemPromptReport,
       cliSessionId,
     });
+    if (!isHeartbeat) {
+      const configuredSearchProvider =
+        typeof cfg.tools?.web?.search?.provider === "string" && cfg.tools.web.search.provider.trim()
+          ? cfg.tools.web.search.provider.trim()
+          : "default";
+      const webSearchInvoked = trackedToolStarts.has("web_search");
+      defaultRuntime.log(
+        [
+          "[reply-trace]",
+          `run=${runId}`,
+          `session=${sessionKey ?? "-"}`,
+          `selected=${selectedProvider}/${selectedModel}`,
+          `active=${providerUsed}/${modelUsed}`,
+          `web_search=${webSearchInvoked ? configuredSearchProvider : "none"}`,
+          `fallback=${fallbackTransition.fallbackTransitioned ? "yes" : "no"}`,
+        ].join(" "),
+      );
+    }
 
     // Drain any late tool/block deliveries before deciding there's "nothing to send".
     // Otherwise, a late typing trigger (e.g. from a tool callback) can outlive the run and

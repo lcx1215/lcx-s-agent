@@ -6577,6 +6577,14 @@ describe("learning council routing", () => {
     expect(replyText).toContain("receipt: memory/finance-learning-retrieval-receipts/");
     expect(replyText).toContain("review: memory/finance-learning-retrieval-reviews/");
     expect(replyText).toContain("weak learning receipts: 0");
+    expect(replyText).toContain("application validation: application_ready");
+    expect(replyText).toContain("answer scaffold: scaffold_only_until_fresh_inputs_are_checked");
+    expect(replyText).toContain("synthesis mode: single_capability_application");
+    expect(replyText).toContain("usage receipt: memory/finance-learning-apply-usage-receipts/");
+    expect(replyText).toContain("usage review: memory/finance-learning-apply-usage-reviews/");
+    expect(replyText).toContain(
+      "automation: this message refreshed retrieval review and apply usage review",
+    );
     expect(replyText).toContain("apply mode: reuse_guidance_bounded_research_answer");
     expect(replyText).toContain("applied candidates: 1");
     expect(replyText).toContain(
@@ -6594,6 +6602,62 @@ describe("learning council routing", () => {
       "utf-8",
     );
     expect(reviewText).toContain('"boundary": "finance_learning_retrieval_review"');
+    expect(reviewText).toContain('"applicationValidationUsageReceiptPath"');
+    expect(reviewText).toContain('"applicationValidationUsageReviewPath"');
+    expect(reviewText).toContain("memory/finance-learning-apply-usage-receipts/");
+    expect(reviewText).toContain("memory/finance-learning-apply-usage-reviews/");
+
+    const applyUsageReviewFiles = await fs.readdir(
+      path.join(tempDir, "memory", "finance-learning-apply-usage-reviews"),
+    );
+    expect(applyUsageReviewFiles).toHaveLength(1);
+    const applyUsageReviewText = await fs.readFile(
+      path.join(
+        tempDir,
+        "memory",
+        "finance-learning-apply-usage-reviews",
+        applyUsageReviewFiles[0],
+      ),
+      "utf-8",
+    );
+    expect(applyUsageReviewText).toContain(
+      '"boundary": "finance_learning_capability_apply_usage_review"',
+    );
+    expect(applyUsageReviewText).toContain('"usageReceipts": 1');
+    expect(applyUsageReviewText).toContain('"successfulApplications": 1');
+
+    const languageCandidateDirs = await fs.readdir(
+      path.join(tempDir, "memory", "lark-language-routing-candidates"),
+    );
+    expect(languageCandidateDirs).toHaveLength(1);
+    await expect(
+      fs.access(
+        path.join(
+          tempDir,
+          "memory",
+          "lark-language-routing-candidates",
+          languageCandidateDirs[0],
+          "msg-finance-pipeline-live.json",
+        ),
+      ),
+    ).resolves.toBeUndefined();
+    const languageReviewText = await fs.readFile(
+      path.join(
+        tempDir,
+        "memory",
+        "lark-language-routing-reviews",
+        `${languageCandidateDirs[0]}.json`,
+      ),
+      "utf-8",
+    );
+    expect(languageReviewText).toContain('"boundary": "language_routing_only"');
+
+    const surfaceLineText = await fs.readFile(
+      path.join(tempDir, "memory", "feishu-surface-lines", "learning_command-oc-learning.md"),
+      "utf-8",
+    );
+    expect(surfaceLineText).toContain("msg-finance-pipeline-live");
+    expect(surfaceLineText).toContain("金融能力学习流水线已完成 dev 验收");
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -6700,6 +6764,129 @@ describe("learning council routing", () => {
     expect(replyText).toContain("未产生: retrievalReceiptPath / retrievalReviewPath");
     await expect(
       fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
+    ).rejects.toThrow();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("fails closed in the finance learning pipeline without receipts when market capability source cannot be extracted", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "market_capability_learning_intake",
+      confidence: 0.91,
+      rationale: "market capability learning intake",
+    }));
+
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+            dispatchReplyFromConfig: vi.fn(),
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-finance-gap-"));
+    await fs.mkdir(path.join(tempDir, "memory", "articles"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, "memory", "articles", "weak-factor-note.md"),
+      [
+        "# Weak timing note",
+        "",
+        "This note mentions ETF timing and factor ideas, but it does not include the structured method, evidence categories, risk and failure modes, causal claim, or action authority fields needed for retention.",
+      ].join("\n"),
+      "utf-8",
+    );
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-finance-pipeline-extraction-gap",
+          chat_id: "oc-learning",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "学习一套 ETF 因子择时策略，source memory/articles/weak-factor-note.md，最后要有 retrieval receipt 和 review",
+          }),
+        },
+      },
+    });
+
+    expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
+    const replyText = (baseDispatcher.sendFinalReply.mock.calls[0]?.[0] as { text: string }).text;
+    expect(replyText).toContain("金融能力学习流水线没有完成");
+    expect(replyText).toContain("failed step: extract");
+    expect(replyText).toContain("reason: finance_article_extraction_gap");
+    expect(replyText).toContain("extraction gap:");
+    expect(replyText).toContain("receipt: not_created");
+    expect(replyText).toContain("review: not_created");
+    expect(replyText).not.toContain("金融能力学习流水线已完成 dev 验收");
+    await expect(
+      fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
+    ).rejects.toThrow();
+    await expect(
+      fs.stat(path.join(tempDir, "memory", "finance-learning-apply-usage-reviews")),
     ).rejects.toThrow();
     await fs.rm(tempDir, { recursive: true, force: true });
   });

@@ -4,6 +4,10 @@ import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
 import {
   buildFundamentalReviewBrief,
@@ -713,8 +717,15 @@ const materializeFundamentalTargetWorkfiles: HookHandler = async (event) => {
             holdFiles: holdFiles.length,
           }),
         };
-        const targetWorkfilesPath = `bank/fundamental/target-workfiles/${targetPackets.manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-target-workfiles-${targetPackets.manifestId}.md`;
+        const targetWorkfilesPath = buildFundamentalArtifactJsonPath(
+          "fundamental-target-workfiles",
+          targetPackets.manifestId,
+        );
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-target-workfiles",
+          manifestId: targetPackets.manifestId,
+        });
         writes.push(
           writeFileWithinRoot({
             rootDir: workspaceDir,

@@ -15,6 +15,10 @@ import {
   loadTargetPacketsWithFallback,
   type FundamentalTargetPacketsArtifact,
 } from "../fundamental-target-workfiles/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/fundamental-review-memo");
 
@@ -455,9 +459,16 @@ const materializeFundamentalReviewMemo: HookHandler = async (event) => {
             blockedTargets: input.blockedTargets.length,
           }),
         };
-        const reviewMemoPath = `bank/fundamental/review-memos/${input.manifestId}.json`;
+        const reviewMemoPath = buildFundamentalArtifactJsonPath(
+          "fundamental-review-memo",
+          input.manifestId,
+        );
         const memoFilePath = `bank/fundamental/memos/${input.manifestId}.md`;
-        const noteRelativePath = `${dateStr}-fundamental-review-memo-${input.manifestId}.md`;
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-review-memo",
+          manifestId: input.manifestId,
+        });
         await Promise.all([
           writeFileWithinRoot({
             rootDir: workspaceDir,

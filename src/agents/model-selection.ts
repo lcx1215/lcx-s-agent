@@ -2,7 +2,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolveAgentModelPrimaryValue, toAgentModelListLike } from "../config/model-input.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAgentConfig, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
+import { DEFAULT_PROVIDER, resolveBuiltInDefaultModelRef } from "./defaults.js";
 import type { ModelCatalogEntry } from "./model-catalog.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import { normalizeGoogleModelId } from "./models-config.providers.js";
@@ -324,6 +324,7 @@ export function resolveDefaultModelForAgent(params: {
   cfg: OpenClawConfig;
   agentId?: string;
 }): ModelRef {
+  const builtInDefault = resolveBuiltInDefaultModelRef();
   const agentModelOverride = params.agentId
     ? resolveAgentEffectiveModelPrimary(params.cfg, params.agentId)
     : undefined;
@@ -345,8 +346,8 @@ export function resolveDefaultModelForAgent(params: {
       : params.cfg;
   return resolveConfiguredModelRef({
     cfg,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
+    defaultProvider: builtInDefault.provider,
+    defaultModel: builtInDefault.model,
   });
 }
 

@@ -4,6 +4,11 @@ import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+  buildFundamentalReviewChainJsonPath,
+} from "../lobster-brain-registry.js";
 import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
 import {
   buildFundamentalReviewBrief,
@@ -752,24 +757,34 @@ const materializeFundamentalTargetPackets: HookHandler = async (event) => {
     await Promise.all(
       entries.map(
         async ({
-          relativePath,
           workbench,
           reviewPlanPath,
           reviewBriefPath,
           reviewQueuePath,
           riskHandoffPath,
         }) => {
+          const reviewWorkbenchPath = buildFundamentalReviewChainJsonPath(
+            "fundamental-review-workbench",
+            workbench.manifestId,
+          );
           const targetPackets = buildFundamentalTargetPackets({
             nowIso,
-            reviewWorkbenchPath: relativePath,
+            reviewWorkbenchPath,
             reviewPlanPath,
             reviewBriefPath,
             reviewQueuePath,
             riskHandoffPath,
             workbench,
           });
-          const targetPacketsPath = `bank/fundamental/target-packets/${workbench.manifestId}.json`;
-          const noteRelativePath = `${dateStr}-fundamental-target-packets-${workbench.manifestId}.md`;
+          const targetPacketsPath = buildFundamentalArtifactJsonPath(
+            "fundamental-target-packets",
+            workbench.manifestId,
+          );
+          const noteRelativePath = buildFundamentalArtifactNoteFilename({
+            dateStr,
+            stageName: "fundamental-target-packets",
+            manifestId: workbench.manifestId,
+          });
           await Promise.all([
             writeFileWithinRoot({
               rootDir: workspaceDir,

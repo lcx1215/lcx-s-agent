@@ -443,6 +443,8 @@ describe("statusCommand", () => {
       "Dashboard",
       "macos 14.0 (arm64)",
       "Memory",
+      "Lobster",
+      "control_room_main_lane",
       "Channels",
       "WhatsApp",
       "bootstrap files",

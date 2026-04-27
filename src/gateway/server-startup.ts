@@ -1,6 +1,6 @@
 import { getAcpSessionManager } from "../acp/control-plane/manager.js";
 import { ACP_SESSION_IDENTITY_RENDERER_VERSION } from "../acp/runtime/session-identifiers.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { resolveBuiltInDefaultModelRef } from "../agents/defaults.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import {
   getModelRefStatus,
@@ -77,15 +77,16 @@ export async function startGatewaySidecars(params: {
 
   // Validate hooks.gmail.model if configured.
   if (params.cfg.hooks?.gmail?.model) {
+    const builtInDefault = resolveBuiltInDefaultModelRef();
     const hooksModelRef = resolveHooksGmailModel({
       cfg: params.cfg,
-      defaultProvider: DEFAULT_PROVIDER,
+      defaultProvider: builtInDefault.provider,
     });
     if (hooksModelRef) {
       const { provider: defaultProvider, model: defaultModel } = resolveConfiguredModelRef({
         cfg: params.cfg,
-        defaultProvider: DEFAULT_PROVIDER,
-        defaultModel: DEFAULT_MODEL,
+        defaultProvider: builtInDefault.provider,
+        defaultModel: builtInDefault.model,
       });
       const catalog = await loadModelCatalog({ config: params.cfg });
       const status = getModelRefStatus({

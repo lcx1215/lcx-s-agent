@@ -6,6 +6,11 @@ import {
 import { buildSystemPromptReport } from "../../agents/system-prompt-report.js";
 import type { SessionSystemPromptReport } from "../../config/sessions/types.js";
 import type { ReplyPayload } from "../types.js";
+import { formatLobsterProtocolLine } from "../status.js";
+import {
+  buildLobsterProtocolSurface,
+  formatLobsterProtocolDetailLines,
+} from "../../commands/capabilities.js";
 import { resolveCommandsSystemPromptBundle } from "./commands-system-prompt.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 
@@ -79,6 +84,7 @@ export async function buildContextReply(params: HandleCommandsParams): Promise<R
   const sub = args.split(/\s+/).filter(Boolean)[0]?.toLowerCase() ?? "";
 
   if (!sub || sub === "help") {
+    const lobsterLine = formatLobsterProtocolLine(params.cfg);
     return {
       text: [
         "🧠 /context",
@@ -89,6 +95,7 @@ export async function buildContextReply(params: HandleCommandsParams): Promise<R
         "- /context list   (short breakdown)",
         "- /context detail (per-file + per-tool + per-skill + system prompt size)",
         "- /context json   (same, machine-readable)",
+        ...(lobsterLine ? ["", lobsterLine] : []),
         "",
         "Inline shortcut = a command token inside a normal message (e.g. “hey /status”). It runs immediately (allowlisted senders only) and is stripped before the model sees the remaining text.",
       ].join("\n"),
@@ -198,6 +205,7 @@ export async function buildContextReply(params: HandleCommandsParams): Promise<R
     `Workspace: ${workspaceLabel}`,
     `Bootstrap max/file: ${bootstrapMaxLabel}`,
     `Bootstrap max/total: ${bootstrapTotalLabel}`,
+    formatLobsterProtocolLine(params.cfg),
     sandboxLine,
     systemPromptLine,
     ...(bootstrapWarningLines.length ? ["", ...bootstrapWarningLines] : []),
@@ -210,6 +218,9 @@ export async function buildContextReply(params: HandleCommandsParams): Promise<R
   ];
 
   if (sub === "detail" || sub === "deep") {
+    const lobsterDetailLines = params.cfg
+      ? formatLobsterProtocolDetailLines(buildLobsterProtocolSurface(params.cfg))
+      : [];
     const perSkill = formatListTop(
       report.skills.entries.map((s) => ({ name: s.name, value: s.blockChars })),
       30,
@@ -232,6 +243,9 @@ export async function buildContextReply(params: HandleCommandsParams): Promise<R
       text: [
         "🧠 Context breakdown (detailed)",
         ...sharedContextLines,
+        ...(lobsterDetailLines.length > 0
+          ? ["", "Lobster operating protocol:", ...lobsterDetailLines]
+          : []),
         ...(perSkill.lines.length ? ["Top skills (prompt entry size):", ...perSkill.lines] : []),
         ...(perSkill.omitted ? [`… (+${perSkill.omitted} more skills)`] : []),
         "",

@@ -1,9 +1,16 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import {
+  loadJsonFilesIsolated,
+  writeFundamentalArtifactErrors,
+} from "../fundamental-artifact-errors.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import type { FundamentalSnapshotArtifact } from "../fundamental-snapshot/handler.js";
 
 const log = createSubsystemLogger("hooks/fundamental-scoring-gate");
@@ -45,29 +52,6 @@ export type FundamentalScoringGateArtifact = {
   targetDecisions: TargetScoringDecision[];
   notes: string[];
 };
-
-async function loadJsonFiles<T>(params: {
-  dirPath: string;
-  relativePrefix: string;
-}): Promise<Array<{ relativePath: string; data: T }>> {
-  try {
-    const files = (await fs.readdir(params.dirPath))
-      .filter((name) => name.endsWith(".json"))
-      .toSorted();
-    return await Promise.all(
-      files.map(async (fileName) => {
-        const relativePath = `${params.relativePrefix}/${fileName}`;
-        const raw = await fs.readFile(path.join(params.dirPath, fileName), "utf-8");
-        return {
-          relativePath,
-          data: JSON.parse(raw) as T,
-        };
-      }),
-    );
-  } catch {
-    return [];
-  }
-}
 
 function buildScoringGateNotes(params: {
   scoringDecision: FundamentalScoringDecision;
@@ -204,28 +188,43 @@ const materializeFundamentalScoringGate: HookHandler = async (event) => {
 
   try {
     const { workspaceDir, memoryDir } = await resolveMemorySessionContext({ event });
-    const snapshots = await loadJsonFiles<FundamentalSnapshotArtifact>({
+    const snapshots = await loadJsonFilesIsolated<FundamentalSnapshotArtifact>({
       dirPath: path.join(workspaceDir, "bank", "fundamental", "snapshots"),
       relativePrefix: "bank/fundamental/snapshots",
+      stage: "scoring-gate",
+      manifestIdFromFileName: (fileName) => path.basename(fileName, ".json"),
     });
-    if (snapshots.length === 0) {
+    const now = new Date(event.timestamp);
+    const nowIso = now.toISOString();
+    await writeFundamentalArtifactErrors({
+      workspaceDir,
+      memoryDir,
+      nowIso,
+      errors: snapshots.errors,
+    });
+    if (snapshots.entries.length === 0) {
       return;
     }
 
-    const now = new Date(event.timestamp);
-    const nowIso = now.toISOString();
     const dateStr = nowIso.split("T")[0];
     const timeStr = nowIso.split("T")[1].split(".")[0];
 
     await Promise.all(
-      snapshots.map(async ({ relativePath, data: snapshot }) => {
+      snapshots.entries.map(async ({ relativePath, data: snapshot }) => {
         const scoringGate = buildFundamentalScoringGate({
           nowIso,
           snapshotPath: relativePath,
           snapshot,
         });
-        const scoringGatePath = `bank/fundamental/scoring-gates/${snapshot.manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-scoring-gate-${snapshot.manifestId}.md`;
+        const scoringGatePath = buildFundamentalArtifactJsonPath(
+          "fundamental-scoring-gate",
+          snapshot.manifestId,
+        );
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-scoring-gate",
+          manifestId: snapshot.manifestId,
+        });
 
         await Promise.all([
           writeFileWithinRoot({
@@ -249,7 +248,7 @@ const materializeFundamentalScoringGate: HookHandler = async (event) => {
       }),
     );
 
-    log.info(`Fundamental scoring gate materialized ${snapshots.length} snapshot(s)`);
+    log.info(`Fundamental scoring gate materialized ${snapshots.entries.length} snapshot(s)`);
   } catch (err) {
     log.error("Failed to materialize fundamental scoring gate", {
       error: err instanceof Error ? err.message : String(err),

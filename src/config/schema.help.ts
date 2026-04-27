@@ -718,7 +718,7 @@ export const FIELD_HELP: Record<string, string> = {
   "agents.defaults.memorySearch":
     "Vector search over MEMORY.md and memory/*.md (per-agent overrides supported).",
   "agents.defaults.memorySearch.enabled":
-    "Master toggle for memory search indexing and retrieval behavior on this agent profile. Keep enabled for semantic recall, and disable when you want fully stateless responses.",
+    "Master toggle for memory search indexing and retrieval behavior on this agent profile. Keep enabled for broad recall over MEMORY.md + memory/*.md while protected summaries stay the first current-state anchors; disable when you want fully stateless responses.",
   "agents.defaults.memorySearch.sources":
     'Chooses which sources are indexed: "memory" reads MEMORY.md + memory files, and "sessions" includes transcript history. Keep ["memory"] unless you need recall from prior chat transcripts.',
   "agents.defaults.memorySearch.extraPaths":
@@ -752,7 +752,7 @@ export const FIELD_HELP: Record<string, string> = {
   "agents.defaults.memorySearch.store.path":
     "Sets where the SQLite memory index is stored on disk for each agent. Keep the default `~/.openclaw/memory/{agentId}.sqlite` unless you need custom storage placement or backup policy alignment.",
   "agents.defaults.memorySearch.store.vector.enabled":
-    "Enables the sqlite-vec extension used for vector similarity queries in memory search (default: true). Keep this enabled for normal semantic recall; disable only for debugging or fallback-only operation.",
+    "Enables the sqlite-vec extension used for vector similarity queries in memory search (default: true). Keep this enabled for normal broad-recall search; disable only for debugging or forced direct-read fallback operation.",
   "agents.defaults.memorySearch.store.vector.extensionPath":
     "Overrides the auto-discovered sqlite-vec extension library path (`.dylib`, `.so`, or `.dll`). Use this when your runtime cannot find sqlite-vec automatically or you pin a known-good build.",
   "agents.defaults.memorySearch.chunking.tokens":

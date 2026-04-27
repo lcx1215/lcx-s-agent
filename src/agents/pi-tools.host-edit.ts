@@ -13,6 +13,11 @@ function resolveHostEditPath(root: string, pathParam: string): string {
   return path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(root, expanded);
 }
 
+function isMemoryBookkeepingPath(filePath: string): boolean {
+  const base = path.basename(filePath).toLowerCase();
+  return base === "memory.md";
+}
+
 /**
  * When the upstream edit tool throws after having already written (e.g. generateDiffString fails),
  * the file may be correctly updated but the tool reports failure. This wrapper catches errors and
@@ -74,6 +79,12 @@ export function wrapHostEditToolWithPostWriteRecovery(
           }
         } catch {
           // File read failed or path invalid; rethrow original error.
+        }
+        if (isMemoryBookkeepingPath(pathParam)) {
+          throw new Error(
+            `Bookkeeping failed: could not record the memory update in ${pathParam}. This confirms the memory write did not complete; verify the main artifact separately.`,
+            { cause: err },
+          );
         }
         throw err;
       }

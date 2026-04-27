@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { makeTempWorkspace } from "../test-helpers/workspace.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { MINIMAX_API_BASE_URL, MINIMAX_CN_API_BASE_URL } from "./onboard-auth.js";
+import { resolveMinimaxHostedModelRef } from "./onboard-auth.models.js";
 import {
   createThrowingRuntime,
   readJsonFile,
@@ -190,7 +191,7 @@ describe("onboard (non-interactive): provider auth", () => {
       expect(cfg.auth?.profiles?.["minimax:default"]?.provider).toBe("minimax");
       expect(cfg.auth?.profiles?.["minimax:default"]?.mode).toBe("api_key");
       expect(cfg.models?.providers?.minimax?.baseUrl).toBe(MINIMAX_API_BASE_URL);
-      expect(cfg.agents?.defaults?.model?.primary).toBe("minimax/MiniMax-M2.5");
+      expect(cfg.agents?.defaults?.model?.primary).toBe(resolveMinimaxHostedModelRef());
       await expectApiKeyProfile({
         profileId: "minimax:default",
         provider: "minimax",
@@ -209,7 +210,9 @@ describe("onboard (non-interactive): provider auth", () => {
       expect(cfg.auth?.profiles?.["minimax-cn:default"]?.provider).toBe("minimax-cn");
       expect(cfg.auth?.profiles?.["minimax-cn:default"]?.mode).toBe("api_key");
       expect(cfg.models?.providers?.["minimax-cn"]?.baseUrl).toBe(MINIMAX_CN_API_BASE_URL);
-      expect(cfg.agents?.defaults?.model?.primary).toBe("minimax-cn/MiniMax-M2.5");
+      expect(cfg.agents?.defaults?.model?.primary).toBe(
+        `minimax-cn/${resolveMinimaxHostedModelRef().slice("minimax/".length)}`,
+      );
       await expectApiKeyProfile({
         profileId: "minimax-cn:default",
         provider: "minimax-cn",

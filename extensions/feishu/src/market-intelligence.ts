@@ -1291,14 +1291,14 @@ export async function runFeishuMarketIntelligencePacket(params: {
     } catch (error) {
       await recordOperationalAnomaly({
         cfg: params.cfg,
-        kind: "lobster-self-improvement",
-        issueKey: "market-intelligence-persist-failure",
+        category: "market_intelligence_persist_failure",
         severity: "medium",
+        source: "feishu.market_intelligence",
         problem: "failed to persist market-intelligence artifact",
-        dangerousBecause:
-          "the bounded market-intelligence packet completed, but its structured audit artifact was not retained for later comparison",
-        smallestSafePatch:
-          "inspect market-intelligence artifact persistence without widening learning-command routing or finance governance surfaces",
+        impact:
+          "The bounded market-intelligence packet completed, but its structured audit artifact was not retained for later comparison.",
+        suggestedScope:
+          "Inspect market-intelligence artifact persistence without widening learning-command routing or finance governance surfaces.",
         evidence: [`error: ${String(error)}`],
       });
       return [
@@ -1515,14 +1515,14 @@ export async function runFeishuMarketIntelligencePacket(params: {
   } catch (error) {
     await recordOperationalAnomaly({
       cfg: params.cfg,
-      kind: "lobster-self-improvement",
-      issueKey: "market-intelligence-persist-failure",
+      category: "market_intelligence_persist_failure",
       severity: "medium",
+      source: "feishu.market_intelligence",
       problem: "failed to persist market-intelligence artifact",
-      dangerousBecause:
-        "the bounded market-intelligence packet completed, but its structured artifact was not retained for later challenge and comparison",
-      smallestSafePatch:
-        "inspect market-intelligence artifact persistence without changing the scope of the market-intelligence runner or learning_command routing",
+      impact:
+        "The bounded market-intelligence packet completed, but its structured artifact was not retained for later challenge and comparison.",
+      suggestedScope:
+        "Inspect market-intelligence artifact persistence without changing the scope of the market-intelligence runner or learning_command routing.",
       evidence: [`error: ${String(error)}`],
     });
     return [

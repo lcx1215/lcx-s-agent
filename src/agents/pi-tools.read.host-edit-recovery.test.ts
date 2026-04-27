@@ -86,4 +86,19 @@ describe("createHostWorkspaceEditTool post-write recovery", () => {
       tool.execute("call-1", { path: filePath, oldText, newText }, undefined),
     ).rejects.toThrow("Simulated post-write failure");
   });
+
+  it("turns unrecovered MEMORY.md edit failures into explicit bookkeeping failures", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-edit-recovery-"));
+    const filePath = path.join(tmpDir, "MEMORY.md");
+    const oldText = "replace me";
+    const newText = "new content";
+    await fs.writeFile(filePath, `before ${oldText} after`, "utf-8");
+
+    const tool = createHostWorkspaceEditTool(tmpDir);
+    await expect(
+      tool.execute("call-1", { path: filePath, oldText, newText }, undefined),
+    ).rejects.toThrow(
+      "Bookkeeping failed: could not record the memory update in",
+    );
+  });
 });

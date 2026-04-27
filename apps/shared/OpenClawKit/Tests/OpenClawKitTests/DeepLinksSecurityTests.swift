@@ -23,6 +23,11 @@ import Testing
                 .init(host: "127.0.0.1", port: 18789, tls: false, token: "abc", password: nil)))
     }
 
+    @Test func lobsterPanelDeepLinkParsesAsLocalRefreshRoute() {
+        let url = URL(string: "openclaw://lobster-panel")!
+        #expect(DeepLinkParser.parse(url) == .lobsterPanel)
+    }
+
     @Test func setupCodeRejectsInsecureNonLoopbackWs() {
         let payload = #"{"url":"ws://attacker.example:18789","token":"tok"}"#
         let encoded = Data(payload.utf8)

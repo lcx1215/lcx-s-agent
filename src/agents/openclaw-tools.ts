@@ -10,7 +10,6 @@ import { createBrowserTool } from "./tools/browser-tool.js";
 import { createCanvasTool } from "./tools/canvas-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool } from "./tools/cron-tool.js";
-import { createFeishuLiveProbeTool } from "./tools/feishu-live-probe-tool.js";
 import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-article-extract-capability-input-tool.js";
 import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
 import { createFinanceArticleSourceRegistryInspectTool } from "./tools/finance-article-source-registry-inspect-tool.js";
@@ -42,7 +41,6 @@ import { createFinancePromotionReviewTool } from "./tools/finance-promotion-revi
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
-import { createLarkLanguageCorpusReviewTool } from "./tools/lark-language-corpus-review-tool.js";
 import { createLobsterWorkfaceAppTool } from "./tools/lobster-workface-app-tool.js";
 import { createLocalMemoryRecordTool } from "./tools/local-memory-record-tool.js";
 import { createMcpContextTool } from "./tools/mcp-context-tool.js";
@@ -59,6 +57,62 @@ import { createSubagentsTool } from "./tools/subagents-tool.js";
 import { createTtsTool } from "./tools/tts-tool.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
+
+function createLazyTool(params: {
+  name: string;
+  label: string;
+  description: string;
+  load: () => Promise<AnyAgentTool>;
+}): AnyAgentTool {
+  return {
+    name: params.name,
+    label: params.label,
+    description: params.description,
+    parameters: {},
+    execute: async (toolCallId, args) => {
+      const tool = await params.load();
+      return tool.execute(toolCallId, args);
+    },
+  } as AnyAgentTool;
+}
+
+function createLazyFeishuLiveProbeTool(options?: {
+  workspaceDir?: string;
+  config?: OpenClawConfig;
+}): AnyAgentTool {
+  return createLazyTool({
+    name: "feishu_live_probe",
+    label: "Feishu Live Probe",
+    description:
+      "Send a bounded Feishu/Lark live acceptance probe and write a receipt under memory/feishu-live-probes.",
+    load: async () => {
+      const modulePath = "./tools/feishu-live-probe-tool.js";
+      const mod = (await import(modulePath)) as {
+        createFeishuLiveProbeTool: (options?: {
+          workspaceDir?: string;
+          config?: OpenClawConfig;
+        }) => AnyAgentTool;
+      };
+      return mod.createFeishuLiveProbeTool(options);
+    },
+  });
+}
+
+function createLazyLarkLanguageCorpusReviewTool(options?: { workspaceDir?: string }): AnyAgentTool {
+  return createLazyTool({
+    name: "lark_language_corpus_review",
+    label: "Lark Language Corpus Review",
+    description:
+      "Review pending Lark language-routing candidate artifacts without mutating the formal routing corpus.",
+    load: async () => {
+      const modulePath = "./tools/lark-language-corpus-review-tool.js";
+      const mod = (await import(modulePath)) as {
+        createLarkLanguageCorpusReviewTool: (options?: { workspaceDir?: string }) => AnyAgentTool;
+      };
+      return mod.createLarkLanguageCorpusReviewTool(options);
+    },
+  });
+}
 
 export function createOpenClawTools(options?: {
   sandboxBrowserBridgeUrl?: string;
@@ -279,11 +333,11 @@ export function createOpenClawTools(options?: {
     createFinancePromotionReviewTool({
       workspaceDir,
     }),
-    createFeishuLiveProbeTool({
+    createLazyFeishuLiveProbeTool({
       workspaceDir,
       config: options?.config,
     }),
-    createLarkLanguageCorpusReviewTool({
+    createLazyLarkLanguageCorpusReviewTool({
       workspaceDir,
     }),
     createLobsterWorkfaceAppTool({

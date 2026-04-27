@@ -87,6 +87,7 @@ describe("feishu intent matchers", () => {
       "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
       "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
       "让它学习 credit liquidity regime 框架，留下 receipt 和 retrieval review",
+      "真实学习任务端到端验收：请用本地安全 source test/fixtures/finance-learning-pipeline/valid-finance-article.md 跑 finance_learning_pipeline_orchestrator，learningIntent=学习 ETF event triage workflow，必须在回复里明确显示 learningInternalizationStatus=application_ready 或 failedReason；不要说后台已完成，除非 receipt/review 真的证明。",
     ];
 
     for (const phrase of positiveCases) {

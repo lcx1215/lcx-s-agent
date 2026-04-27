@@ -20,6 +20,7 @@ import { renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
 import { formatHealthChannelLines, type HealthSummary } from "./health.js";
 import { resolveControlUiLinks } from "./onboard-helpers.js";
+import { formatLobsterProtocolSummary } from "./capabilities.js";
 import { statusAllCommand } from "./status-all.js";
 import { groupChannelIssuesByChannel } from "./status-all/channel-issues.js";
 import { formatGatewayAuthUsed } from "./status-all/format.js";
@@ -387,6 +388,13 @@ export async function statusCommand(
     return parts.join(" · ");
   })();
 
+  const lobsterValue = (() => {
+    return formatLobsterProtocolSummary(summary.lobsterProtocol, {
+      pluginEnabled: ok("plugin on"),
+      pluginDisabled: muted("plugin optional"),
+    });
+  })();
+
   const updateAvailability = resolveUpdateAvailability(update);
   const updateLine = formatUpdateOneLiner(update).replace(/^Update:\s*/i, "");
   const channelLabel = channelInfo.label;
@@ -415,6 +423,7 @@ export async function statusCommand(
     { Item: "Node service", Value: nodeDaemonValue },
     { Item: "Agents", Value: agentsValue },
     { Item: "Memory", Value: memoryValue },
+    { Item: "Lobster", Value: lobsterValue },
     { Item: "Probes", Value: probesValue },
     { Item: "Events", Value: eventsValue },
     { Item: "Heartbeat", Value: heartbeatValue },

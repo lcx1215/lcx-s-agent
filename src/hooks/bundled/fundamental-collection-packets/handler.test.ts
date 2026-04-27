@@ -12,6 +12,10 @@ import {
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import { buildFundamentalReviewBrief } from "../fundamental-review-brief/handler.js";
 import { buildFundamentalReviewPlan } from "../fundamental-review-plan/handler.js";
 import { buildFundamentalReviewQueue } from "../fundamental-review-queue/handler.js";
@@ -262,7 +266,6 @@ async function runCollectionPackets(params: {
 
   await handler(event);
 
-  const packetsDir = path.join(tempDir, "bank", "fundamental", "collection-packets");
   const memoryDir = path.join(tempDir, "memory");
   const packetWorkfilePath = path.join(
     tempDir,
@@ -276,25 +279,28 @@ async function runCollectionPackets(params: {
   let artifact: Record<string, unknown> | null = null;
   let noteContent: string | null = null;
   let packetContent: string | null = null;
+  const collectionPacketsPath = buildFundamentalArtifactJsonPath(
+    "fundamental-collection-packets",
+    params.manifest.manifestId,
+  );
+  const notePath = path.join(
+    memoryDir,
+    buildFundamentalArtifactNoteFilename({
+      dateStr: "2026-03-15",
+      stageName: "fundamental-collection-packets",
+      manifestId: params.manifest.manifestId,
+    }),
+  );
 
   try {
-    const files = await fs.readdir(packetsDir);
-    artifact = JSON.parse(await fs.readFile(path.join(packetsDir, files[0]), "utf-8")) as Record<
+    artifact = JSON.parse(await fs.readFile(path.join(tempDir, collectionPacketsPath), "utf-8")) as Record<
       string,
       unknown
     >;
   } catch {}
 
   try {
-    const memoryFiles = await fs.readdir(memoryDir);
-    noteContent = await fs.readFile(
-      path.join(
-        memoryDir,
-        memoryFiles.find((name) => name.includes("fundamental-collection-packets-")) ??
-          memoryFiles[0],
-      ),
-      "utf-8",
-    );
+    noteContent = await fs.readFile(notePath, "utf-8");
   } catch {}
 
   try {

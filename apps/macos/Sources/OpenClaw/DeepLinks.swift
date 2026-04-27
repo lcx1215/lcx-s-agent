@@ -69,6 +69,8 @@ final class DeepLinkHandler {
             await self.handleAgent(link: link, originalURL: url)
         case .gateway:
             break
+        case .lobsterPanel:
+            await self.handleLobsterPanel()
         }
     }
 
@@ -135,6 +137,14 @@ final class DeepLinkHandler {
             }
         } catch {
             self.presentAlert(title: "Agent request failed", message: error.localizedDescription)
+        }
+    }
+
+    private func handleLobsterPanel() async {
+        do {
+            _ = try LobsterWorkfacePanel.openInCanvas()
+        } catch {
+            self.presentAlert(title: "Lobster panel unavailable", message: error.localizedDescription)
         }
     }
 

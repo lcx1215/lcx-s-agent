@@ -1,7 +1,17 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  type AssistantMessage,
+  type Context,
+  type Model,
+  type SimpleStreamOptions,
+} from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
-import { applyExtraParamsToAgent, resolveExtraParams } from "./pi-embedded-runner.js";
+import {
+  applyExtraParamsToAgent,
+  createEmbeddedProviderRequestTimeoutWrapper,
+  resolveExtraParams,
+} from "./pi-embedded-runner.js";
 
 describe("resolveExtraParams", () => {
   it("returns undefined with no model config", () => {
@@ -1242,4 +1252,116 @@ describe("applyExtraParamsToAgent", () => {
       expect(run().store).toBe(false);
     },
   );
+});
+
+describe("createEmbeddedProviderRequestTimeoutWrapper", () => {
+  function createModel(): Model<"openai-completions"> {
+    return {
+      api: "openai-completions",
+      provider: "openai",
+      id: "gpt-timeout-test",
+    } as Model<"openai-completions">;
+  }
+
+  function createPendingStream() {
+    return {
+      result: () => new Promise<AssistantMessage>(() => {}),
+      [Symbol.asyncIterator]: () =>
+        ({
+          next: () => new Promise<IteratorResult<unknown>>(() => {}),
+        }) as AsyncIterator<unknown>,
+    };
+  }
+
+  async function consumeLikeAgentLoop(streamPromise: ReturnType<StreamFn>) {
+    const response = await streamPromise;
+    for await (const event of response) {
+      if (event.type === "done") {
+        return await response.result();
+      }
+      if (event.type === "error") {
+        return await response.result();
+      }
+    }
+    return await response.result();
+  }
+
+  it("converts a hung streamed next() into a terminal error event instead of iterator rejection", async () => {
+    const baseStreamFn: StreamFn = () => createPendingStream() as ReturnType<StreamFn>;
+    const wrapped = createEmbeddedProviderRequestTimeoutWrapper(baseStreamFn, {
+      timeoutMs: 20,
+      runId: "run-timeout-stream",
+      sessionId: "session-timeout-stream",
+    });
+
+    const response = await wrapped(createModel(), { messages: [] }, {});
+    const seenTypes: string[] = [];
+    for await (const event of response) {
+      seenTypes.push(event.type);
+    }
+    const result = await response.result();
+
+    expect(seenTypes).toEqual(["error"]);
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toContain("timed out");
+  });
+
+  it("returns a timeout assistant message from result() when the provider ignores abort", async () => {
+    const baseStreamFn: StreamFn = () => createPendingStream() as ReturnType<StreamFn>;
+    const wrapped = createEmbeddedProviderRequestTimeoutWrapper(baseStreamFn, {
+      timeoutMs: 20,
+      runId: "run-timeout-result",
+      sessionId: "session-timeout-result",
+    });
+
+    const result = await consumeLikeAgentLoop(wrapped(createModel(), { messages: [] }, {}));
+
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toContain("timed out");
+  });
+
+  it("preserves healthy streamed success unchanged", async () => {
+    const baseStreamFn: StreamFn = () => {
+      const stream = createAssistantMessageEventStream();
+      const message: AssistantMessage = {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "openai-completions",
+        provider: "openai",
+        model: "gpt-timeout-test",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      };
+      queueMicrotask(() => {
+        stream.push({ type: "start", partial: { ...message, content: [] } });
+        stream.push({ type: "done", reason: "stop", message });
+        stream.end();
+      });
+      return stream as ReturnType<StreamFn>;
+    };
+    const wrapped = createEmbeddedProviderRequestTimeoutWrapper(baseStreamFn, {
+      timeoutMs: 200,
+      runId: "run-healthy",
+      sessionId: "session-healthy",
+    });
+
+    const response = await wrapped(createModel(), { messages: [] }, {});
+    const seenTypes: string[] = [];
+    for await (const event of response) {
+      seenTypes.push(event.type);
+    }
+    const result = await response.result();
+
+    expect(seenTypes).toEqual(["start", "done"]);
+    expect(result.stopReason).toBe("stop");
+    expect(result.content).toEqual([{ type: "text", text: "ok" }]);
+  });
 });

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import {
@@ -8,10 +9,12 @@ import {
   resolveMemorySessionContext,
   type SessionTurn,
 } from "../artifact-memory.js";
+import { loadNewestMemoryNote } from "../bootstrap-memory.js";
 import {
   looksLikeFrontierResearchSession,
   summarizeFrontierResearchSession,
 } from "../frontier-research/handler.js";
+import type { FundamentalArtifactErrorRecord } from "../fundamental-artifact-errors.js";
 import type { FundamentalCollectionFollowUpTrackerArtifact } from "../fundamental-collection-follow-up-tracker/handler.js";
 import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
 import type { FundamentalReviewMemoArtifact } from "../fundamental-review-memo/handler.js";
@@ -21,6 +24,11 @@ import {
 } from "../fundamental-risk-handoff/handler.js";
 import type { FundamentalScoringGateArtifact } from "../fundamental-scoring-gate/handler.js";
 import { looksLikeLearningSession, summarizeLearningSession } from "../learning-review/handler.js";
+import {
+  extractIsoDateKey,
+  parseCurrentResearchLineArtifact,
+  parseLobsterWorkfaceArtifact,
+} from "../lobster-brain-registry.js";
 import {
   countTop,
   formatIsoWeek,
@@ -95,12 +103,46 @@ type FundamentalFollowUpTrackerSnapshot = {
   tracker: FundamentalCollectionFollowUpTrackerArtifact;
 };
 
+type FundamentalArtifactErrorSnapshot = {
+  date: string;
+  name: string;
+  artifactPath: string;
+  error: FundamentalArtifactErrorRecord;
+};
+
 type WorkingMemoryDiscipline = {
   freshness: "fresh" | "warm" | "stale";
   anchor: string;
   anchorDate: string;
   drillDownOnlyBefore: string;
 };
+
+type LatestLearningCarryover = {
+  keep?: string;
+  discard?: string;
+  replay?: string;
+  nextEval?: string;
+};
+
+type ProtectedSummaryMetadata = {
+  generation: number;
+  producedAt: string;
+  sourceRunId: string;
+};
+
+type StaleWriteAuditRecord = {
+  version: 1;
+  generatedAt: string;
+  event: "skipped_stale_write";
+  artifact: string;
+  reason: "older_generation" | "older_produced_at" | "same_generation_conflict";
+  existing: ProtectedSummaryMetadata;
+  incoming: ProtectedSummaryMetadata;
+};
+
+const PROTECTED_SUMMARY_FILES = new Set(["current-research-line.md", "unified-risk-view.md"]);
+const SUMMARY_METADATA_PREFIX = "<!-- operating-loop-write-guard: ";
+const SUMMARY_METADATA_SUFFIX = " -->";
 
 function extractMatch(content: string, pattern: RegExp, fallback: string): string {
   return content.match(pattern)?.[1]?.trim() || fallback;
@@ -127,14 +169,150 @@ function shiftDateOnly(date: string, days: number): string {
   return new Date(parsed + days * 86_400_000).toISOString().slice(0, 10);
 }
 
+function buildProtectedSummaryMetadata(params: {
+  generation: number;
+  producedAt: string;
+  sourceRunId: string;
+}): ProtectedSummaryMetadata {
+  return {
+    generation: params.generation,
+    producedAt: params.producedAt,
+    sourceRunId: params.sourceRunId,
+  };
+}
+
+function serializeProtectedSummaryContent(params: {
+  metadata: ProtectedSummaryMetadata;
+  content: string;
+}): string {
+  return `${SUMMARY_METADATA_PREFIX}${JSON.stringify(params.metadata)}${SUMMARY_METADATA_SUFFIX}\n${params.content}`;
+}
+
+function parseProtectedSummaryMetadata(content: string): ProtectedSummaryMetadata | undefined {
+  const firstLine = content.split("\n", 1)[0]?.trim();
+  if (
+    !firstLine?.startsWith(SUMMARY_METADATA_PREFIX) ||
+    !firstLine.endsWith(SUMMARY_METADATA_SUFFIX)
+  ) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(
+      firstLine.slice(SUMMARY_METADATA_PREFIX.length, -SUMMARY_METADATA_SUFFIX.length),
+    ) as ProtectedSummaryMetadata;
+  } catch {
+    return undefined;
+  }
+}
+
+function compareProtectedSummaryMetadata(
+  existing: ProtectedSummaryMetadata,
+  incoming: ProtectedSummaryMetadata,
+): "accept" | StaleWriteAuditRecord["reason"] {
+  if (existing.generation > incoming.generation) {
+    return "older_generation";
+  }
+  if (existing.generation < incoming.generation) {
+    return "accept";
+  }
+  if (existing.producedAt > incoming.producedAt) {
+    return "older_produced_at";
+  }
+  if (existing.producedAt < incoming.producedAt) {
+    return "accept";
+  }
+  if (existing.sourceRunId !== incoming.sourceRunId) {
+    return "same_generation_conflict";
+  }
+  return "accept";
+}
+
+function sanitizeAuditToken(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-");
+}
+
+async function writeProtectedSummaryAudit(params: {
+  workspaceDir: string;
+  artifact: string;
+  generatedAt: string;
+  reason: StaleWriteAuditRecord["reason"];
+  existing: ProtectedSummaryMetadata;
+  incoming: ProtectedSummaryMetadata;
+}): Promise<void> {
+  const audit: StaleWriteAuditRecord = {
+    version: 1,
+    generatedAt: params.generatedAt,
+    event: "skipped_stale_write",
+    artifact: params.artifact,
+    reason: params.reason,
+    existing: params.existing,
+    incoming: params.incoming,
+  };
+  const auditPath = `bank/operating-loop/write-audits/${sanitizeAuditToken(params.artifact)}-${sanitizeAuditToken(params.incoming.sourceRunId)}.json`;
+  await writeFileWithinRoot({
+    rootDir: params.workspaceDir,
+    relativePath: auditPath,
+    data: `${JSON.stringify(audit, null, 2)}\n`,
+    encoding: "utf-8",
+  });
+}
+
+async function writeProtectedSummaryIfNewer(params: {
+  workspaceDir: string;
+  memoryDir: string;
+  filename: string;
+  content: string;
+  metadata: ProtectedSummaryMetadata;
+}): Promise<void> {
+  const existingPath = path.join(params.memoryDir, params.filename);
+  let existingMetadata: ProtectedSummaryMetadata | undefined;
+  try {
+    existingMetadata = parseProtectedSummaryMetadata(await fs.readFile(existingPath, "utf-8"));
+  } catch {
+    existingMetadata = undefined;
+  }
+
+  if (existingMetadata) {
+    const comparison = compareProtectedSummaryMetadata(existingMetadata, params.metadata);
+    if (comparison !== "accept") {
+      await writeProtectedSummaryAudit({
+        workspaceDir: params.workspaceDir,
+        artifact: params.filename,
+        generatedAt: params.metadata.producedAt,
+        reason: comparison,
+        existing: existingMetadata,
+        incoming: params.metadata,
+      });
+      log.warn("Skipped stale operating-loop summary write", {
+        artifact: params.filename,
+        reason: comparison,
+        existingGeneration: existingMetadata.generation,
+        incomingGeneration: params.metadata.generation,
+      });
+      return;
+    }
+  }
+
+  await writeFileWithinRoot({
+    rootDir: params.memoryDir,
+    relativePath: params.filename,
+    data: serializeProtectedSummaryContent({
+      metadata: params.metadata,
+      content: params.content,
+    }),
+    encoding: "utf-8",
+  });
+}
+
 function deriveWorkingMemoryDiscipline(params: {
   nowIso: string;
   sessionSnapshots: SessionSnapshot[];
   reviewMemos: FundamentalReviewMemoSnapshot[];
   followUpTrackers: FundamentalFollowUpTrackerSnapshot[];
 }): WorkingMemoryDiscipline {
-  const currentDate = params.nowIso.slice(0, 10);
-  const trackerDate = params.followUpTrackers[0]?.tracker.generatedAt.slice(0, 10);
+  const currentDate = extractIsoDateKey(params.nowIso);
+  const trackerDate = extractIsoDateKey(params.followUpTrackers[0]?.tracker.generatedAt);
   if (trackerDate) {
     const ageDays = daysBetweenDateOnly(currentDate, trackerDate);
     return {
@@ -145,7 +323,7 @@ function deriveWorkingMemoryDiscipline(params: {
     };
   }
 
-  const memoDate = params.reviewMemos[0]?.memo.generatedAt.slice(0, 10);
+  const memoDate = extractIsoDateKey(params.reviewMemos[0]?.memo.generatedAt);
   if (memoDate) {
     const ageDays = daysBetweenDateOnly(currentDate, memoDate);
     return {
@@ -464,7 +642,7 @@ async function loadFundamentalRiskSnapshots(
     persistedHandoffs.map(({ data, name, relativePath }) => [
       data.manifestId,
       {
-        date: data.generatedAt.slice(0, 10),
+        date: extractIsoDateKey(data.generatedAt),
         name,
         artifactPath: relativePath,
         handoff: data,
@@ -496,7 +674,7 @@ async function loadFundamentalRiskSnapshots(
       scoringGate,
     });
     snapshots.set(scoringGate.manifestId, {
-      date: synthesized.generatedAt.slice(0, 10),
+      date: extractIsoDateKey(synthesized.generatedAt),
       name,
       artifactPath: `bank/fundamental/risk-handoffs/${scoringGate.manifestId}.json`,
       handoff: synthesized,
@@ -517,7 +695,7 @@ async function loadFundamentalReviewMemoSnapshots(
   });
   return memos
     .map(({ data, name, relativePath }) => ({
-      date: data.generatedAt.slice(0, 10),
+      date: extractIsoDateKey(data.generatedAt),
       name,
       artifactPath: relativePath,
       memo: data,
@@ -537,7 +715,7 @@ async function loadFundamentalFollowUpTrackerSnapshots(
   });
   return trackers
     .map(({ data, name, relativePath }) => ({
-      date: data.generatedAt.slice(0, 10),
+      date: extractIsoDateKey(data.generatedAt),
       name,
       artifactPath: relativePath,
       tracker: data,
@@ -546,6 +724,40 @@ async function loadFundamentalFollowUpTrackerSnapshots(
       (a, b) =>
         b.tracker.generatedAt.localeCompare(a.tracker.generatedAt) || a.name.localeCompare(b.name),
     );
+}
+
+async function loadFundamentalArtifactErrorSnapshots(
+  workspaceDir: string,
+): Promise<FundamentalArtifactErrorSnapshot[]> {
+  const artifactErrors = await loadJsonArtifacts<FundamentalArtifactErrorRecord>({
+    dirPath: path.join(workspaceDir, "bank", "fundamental", "artifact-errors"),
+    relativePrefix: "bank/fundamental/artifact-errors",
+  });
+  return artifactErrors
+    .map(({ data, name, relativePath }) => ({
+      date: extractIsoDateKey(data.lastSeenAt),
+      name,
+      artifactPath: relativePath,
+      error: data,
+    }))
+    .toSorted(
+      (a, b) =>
+        b.error.lastSeenAt.localeCompare(a.error.lastSeenAt) || a.name.localeCompare(b.name),
+    );
+}
+
+function pickActiveArtifactConcern(
+  errors: FundamentalArtifactErrorSnapshot[],
+): FundamentalArtifactErrorSnapshot | undefined {
+  return errors
+    .filter((snapshot) => snapshot.error.occurrenceCount >= 2)
+    .toSorted(
+      (a, b) =>
+        b.error.occurrenceCount - a.error.occurrenceCount ||
+        b.error.lastSeenAt.localeCompare(a.error.lastSeenAt) ||
+        a.name.localeCompare(b.name),
+    )
+    .at(0);
 }
 
 function verdictRank(verdict: FrontierSnapshot["verdict"]): number {
@@ -840,11 +1052,16 @@ function renderCurrentResearchLine(params: {
   sessionSnapshots: SessionSnapshot[];
   learningSnapshots: LearningSnapshot[];
   frontierSnapshots: FrontierSnapshot[];
+  latestLearningCarryover?: LatestLearningCarryover;
   fundamentalHandoffs: FundamentalRiskSnapshot[];
   reviewMemos: FundamentalReviewMemoSnapshot[];
   followUpTrackers: FundamentalFollowUpTrackerSnapshot[];
+  artifactErrors: FundamentalArtifactErrorSnapshot[];
+  priorLineStatus?: "active" | "paused" | "superseded" | "ready_to_resume";
 }) {
-  const latestSession = params.sessionSnapshots[0];
+  const latestSession =
+    params.sessionSnapshots.find((snapshot) => snapshot.name === "(current session)") ??
+    params.sessionSnapshots[0];
   const latestLearning = params.learningSnapshots[0];
   const latestFrontier = params.frontierSnapshots[0];
   const latestMemo = params.reviewMemos[0];
@@ -859,6 +1076,21 @@ function renderCurrentResearchLine(params: {
     reviewMemos: params.reviewMemos,
     followUpTrackers: params.followUpTrackers,
   });
+  const activeArtifactConcern = pickActiveArtifactConcern(params.artifactErrors);
+  const currentSessionSummary = latestSession
+    ? `${latestSession.source}: ${latestSession.intake}`
+    : "none";
+  const latestReviewMemoState = latestMemo?.memo.memoStatus ?? "none";
+  const latestFollowUpState = latestTracker?.tracker.trackerStatus ?? "none";
+  const memoryStateContract =
+    "verified supports current decisions; provisional requires fresh re-check; stale is drill-down only until re-verified";
+  const researchGuardrail =
+    "research-first operating memory only; this is not an execution approval surface";
+  const lineStatus = latestSession
+    ? "active"
+    : params.priorLineStatus === "paused" || params.priorLineStatus === "superseded"
+      ? params.priorLineStatus
+      : "ready_to_resume";
 
   let currentFocus = "session_only";
   let nextStep = latestSession?.intake ?? "No active research line captured yet.";
@@ -894,7 +1126,15 @@ function renderCurrentResearchLine(params: {
     "",
     `- updated_at: ${params.nowIso}`,
     `- current_focus: ${currentFocus}`,
+    `- line_status: ${lineStatus}`,
     `- top_decision: ${topUnifiedDecision}`,
+    `- current_session_summary: ${currentSessionSummary}`,
+    `- latest_review_memo_state: ${latestReviewMemoState}`,
+    `- latest_follow_up_state: ${latestFollowUpState}`,
+    `- next_step: ${nextStep}`,
+    `- research_guardrail: ${researchGuardrail}`,
+    `- memory_state_contract: ${memoryStateContract}`,
+    `- workspace_brain_index_path: MEMORY.md`,
     `- unified_risk_view_path: memory/unified-risk-view.md`,
     "",
     "## Current Session",
@@ -927,19 +1167,58 @@ function renderCurrentResearchLine(params: {
     `- learning_principle: ${latestLearning?.corePrinciple ?? "none"}`,
     `- frontier_focus: ${latestFrontier?.title ?? "none"}`,
     `- frontier_verdict: ${latestFrontier?.verdict ?? "none"}`,
+    ...(params.latestLearningCarryover?.keep
+      ? [`- retained_rule: ${params.latestLearningCarryover.keep}`]
+      : []),
+    ...(params.latestLearningCarryover?.discard
+      ? [`- discarded_rule: ${params.latestLearningCarryover.discard}`]
+      : []),
+    ...(params.latestLearningCarryover?.replay
+      ? [`- replay_trigger: ${params.latestLearningCarryover.replay}`]
+      : []),
+    ...(params.latestLearningCarryover?.nextEval
+      ? [`- next_eval_cue: ${params.latestLearningCarryover.nextEval}`]
+      : []),
     "",
     "## Next Step",
     `- ${nextStep}`,
+    "",
+    "## Continuous Improvement",
+    `- progress_mode: ${currentFocus}`,
+    `- daily_improvement_rule: carry at most one keeper lesson and one wrong-answer lesson into daily strategy work`,
+    `- next_quality_gain: ${nextStep}`,
+    "- lesson_fit_rule: only keep a lesson if it raises today's evidence standard, risk framing, or sizing discipline",
+    "- decision_convergence_rule: start with the current bracket, rule out obvious bad-fit interpretations, then run one highest-information next check before pretending the answer or rule is precise",
+    "- language_precision_repair_rule: if the operator says the prior answer was imprecise or missed the ask, narrow first on requested action, scope, timeframe, and output shape before rewriting content",
+    "- holdings_revalidation_rule: retrieve the old thesis, current anchor, carryover cue, and correction trail before writing any fresh hold/add/reduce stance from scratch",
+    "- holdings_revalidation_foundations: outcome-review -> risk-transmission -> behavior-error-correction -> catalyst-map -> business-quality",
     "",
     "## Working Memory Discipline",
     `- freshness: ${workingMemory.freshness}`,
     `- primary_anchor: ${workingMemory.anchor}`,
     `- anchor_date: ${workingMemory.anchorDate}`,
     `- drill_down_only_before: ${workingMemory.drillDownOnlyBefore}`,
-    "- recall_order: current-research-line -> primary_anchor -> unified-risk-view/review-memo -> older drill-down artifacts",
+    "- local_memory_activation_rule: after the latest carryover set and correction notes, load at most two active local durable memory cards whose subject or use-when rule matches the current ask before older drill-down artifacts",
+    "- recall_order: current-research-line -> MEMORY.md -> primary_anchor -> latest carryover set -> correction notes -> matching local durable memory cards -> unified-risk-view/review-memo -> older drill-down artifacts",
+    "",
+    "## Continuity And File Safety",
+    "- protected_artifacts: current-research-line, latest carryover set, daily strategy protocol, application ledger",
+    "- file_safety_rule: refresh compact anchors first; do not replace continuity artifacts with empty or no-op rewrites",
+    "- compression_rule: compress or downrank older notes before adding new memory layers",
+    "- archive_rule: treat ops/live-handoff notes as drill-down only when current-research-line or MEMORY.md already defines the active brain state",
+    ...(activeArtifactConcern
+      ? [
+          `- active_artifact_error: ${activeArtifactConcern.error.stage}/${activeArtifactConcern.error.manifestId ?? "unknown"} x${activeArtifactConcern.error.occurrenceCount} last_seen=${activeArtifactConcern.error.lastSeenAt}`,
+        ]
+      : []),
+    "",
+    "## Memory Budget",
+    "- active_recall_budget: prefer at most five high-priority anchors before drilling into older artifacts",
+    "- new_artifact_rule: only add a new note when it changes evidence thresholds, risk framing, sizing discipline, or wrong-answer defense",
+    "- stale_artifact_policy: older artifacts are drill-down only unless they become the current anchor again",
     "",
     "## Guardrails",
-    "- Research-first operating memory only; this is not an execution approval surface.",
+    `- ${researchGuardrail}`,
     "- Fundamental notes build screening and conviction, but hard risk gates still remain mandatory.",
     "",
   ].join("\n");
@@ -1028,6 +1307,7 @@ function renderUnifiedRiskView(params: {
   nowIso: string;
   frontierSnapshots: FrontierSnapshot[];
   fundamentalHandoffs: FundamentalRiskSnapshot[];
+  latestLearningCarryover?: LatestLearningCarryover;
 }) {
   const handoffSummary = summarizeFundamentalHandoffs(params.fundamentalHandoffs);
   return [
@@ -1058,6 +1338,24 @@ function renderUnifiedRiskView(params: {
           "- Fundamental handoff targets are not asset approvals; they only indicate readiness for later controlled risk review.",
         ]
       : ["- This view is derived from frontier method cards only."]),
+    ...(params.latestLearningCarryover?.keep || params.latestLearningCarryover?.discard
+      ? [
+          "",
+          "## Carryover Discipline",
+          ...(params.latestLearningCarryover?.keep
+            ? [`- retain: ${params.latestLearningCarryover.keep}`]
+            : []),
+          ...(params.latestLearningCarryover?.discard
+            ? [`- discard: ${params.latestLearningCarryover.discard}`]
+            : []),
+          ...(params.latestLearningCarryover?.replay
+            ? [`- replay: ${params.latestLearningCarryover.replay}`]
+            : []),
+          ...(params.latestLearningCarryover?.nextEval
+            ? [`- next eval: ${params.latestLearningCarryover.nextEval}`]
+            : []),
+        ]
+      : []),
     "- Asset-level approvals or vetoes are intentionally left empty because this repo does not provide that runtime state yet.",
     "",
   ].join("\n");
@@ -1174,9 +1472,12 @@ function buildNotes(params: {
   fundamentalHandoffs: FundamentalRiskSnapshot[];
   reviewMemos: FundamentalReviewMemoSnapshot[];
   followUpTrackers: FundamentalFollowUpTrackerSnapshot[];
+  artifactErrors: FundamentalArtifactErrorSnapshot[];
   weeklySessions: SessionSnapshot[];
   weeklyLearning: LearningSnapshot[];
   weeklyFrontier: FrontierSnapshot[];
+  latestLearningCarryover?: LatestLearningCarryover;
+  priorCurrentResearchLineStatus?: "active" | "paused" | "superseded" | "ready_to_resume";
 }): MemoryNote[] {
   return [
     {
@@ -1222,9 +1523,12 @@ function buildNotes(params: {
           params.dailyLearning.length > 0 ? params.dailyLearning : params.weeklyLearning,
         frontierSnapshots:
           params.dailyFrontier.length > 0 ? params.dailyFrontier : params.weeklyFrontier,
+        latestLearningCarryover: params.latestLearningCarryover,
         fundamentalHandoffs: params.fundamentalHandoffs,
         reviewMemos: params.reviewMemos,
         followUpTrackers: params.followUpTrackers,
+        artifactErrors: params.artifactErrors,
+        priorLineStatus: params.priorCurrentResearchLineStatus,
       }),
     },
     {
@@ -1254,6 +1558,7 @@ function buildNotes(params: {
         frontierSnapshots:
           params.dailyFrontier.length > 0 ? params.dailyFrontier : params.weeklyFrontier,
         fundamentalHandoffs: params.fundamentalHandoffs,
+        latestLearningCarryover: params.latestLearningCarryover,
       }),
     },
   ];
@@ -1281,10 +1586,29 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
       : [];
     const { sessionSnapshots, learningSnapshots, frontierSnapshots } =
       await loadExistingSnapshots(memoryDir);
-    const [fundamentalHandoffs, reviewMemos, followUpTrackers] = await Promise.all([
+    const latestWorkface = await loadNewestMemoryNote({
+      workspaceDir,
+      includes: "lobster-workface",
+    });
+    const latestLearningCarryover = latestWorkface?.content
+      ? (() => {
+          const parsed = parseLobsterWorkfaceArtifact(latestWorkface.content);
+          if (!parsed) {
+            return undefined;
+          }
+          return {
+            keep: parsed.learningKeep,
+            discard: parsed.learningDiscard,
+            replay: parsed.learningReplay,
+            nextEval: parsed.learningNextEval,
+          } satisfies LatestLearningCarryover;
+        })()
+      : undefined;
+    const [fundamentalHandoffs, reviewMemos, followUpTrackers, artifactErrors] = await Promise.all([
       loadFundamentalRiskSnapshots(workspaceDir),
       loadFundamentalReviewMemoSnapshots(workspaceDir),
       loadFundamentalFollowUpTrackerSnapshots(workspaceDir),
+      loadFundamentalArtifactErrorSnapshots(workspaceDir),
     ]);
     const commandSource = event.context?.commandSource;
     const source = typeof commandSource === "string" ? commandSource : "unknown";
@@ -1331,24 +1655,50 @@ const saveOperatingLoopArtifacts: HookHandler = async (event) => {
       return;
     }
 
-    await writeMemoryNotes(
-      memoryDir,
-      buildNotes({
-        dateStr,
-        nowIso: now.toISOString(),
-        sessionKey: event.sessionKey,
-        weekKey,
-        rangeLabel,
-        dailySessions,
-        dailyLearning,
-        dailyFrontier,
-        fundamentalHandoffs,
-        reviewMemos,
-        followUpTrackers,
-        weeklySessions,
-        weeklyLearning,
-        weeklyFrontier,
-      }),
+    const producedAt = now.toISOString();
+    const priorCurrentResearchLine = await fs
+      .readFile(path.join(memoryDir, "current-research-line.md"), "utf-8")
+      .then((content) => parseCurrentResearchLineArtifact(content))
+      .catch(() => undefined);
+    const notes = buildNotes({
+      dateStr,
+      nowIso: producedAt,
+      sessionKey: event.sessionKey,
+      weekKey,
+      rangeLabel,
+      dailySessions,
+      dailyLearning,
+      dailyFrontier,
+      fundamentalHandoffs,
+      reviewMemos,
+      followUpTrackers,
+      artifactErrors,
+      weeklySessions,
+      weeklyLearning,
+      weeklyFrontier,
+      latestLearningCarryover,
+      priorCurrentResearchLineStatus: priorCurrentResearchLine?.lineStatus,
+    });
+    const sourceRunId = `${event.sessionKey}:${sessionId ?? "unknown"}:${event.action}:${producedAt}`;
+    const protectedMetadata = buildProtectedSummaryMetadata({
+      generation: event.timestamp,
+      producedAt,
+      sourceRunId,
+    });
+    const regularNotes = notes.filter((note) => !PROTECTED_SUMMARY_FILES.has(note.filename));
+    const protectedNotes = notes.filter((note) => PROTECTED_SUMMARY_FILES.has(note.filename));
+
+    await writeMemoryNotes(memoryDir, regularNotes);
+    await Promise.all(
+      protectedNotes.map((note) =>
+        writeProtectedSummaryIfNewer({
+          workspaceDir,
+          memoryDir,
+          filename: note.filename,
+          content: note.content,
+          metadata: protectedMetadata,
+        }),
+      ),
     );
 
     log.info(`Operating loop artifacts saved for ${dateStr}`);

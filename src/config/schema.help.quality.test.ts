@@ -633,6 +633,16 @@ describe("config help copy quality", () => {
     );
   });
 
+  it("keeps memory-search help aligned with protected-summary-first recall", () => {
+    const enabledHelp = FIELD_HELP["agents.defaults.memorySearch.enabled"];
+    expect(enabledHelp).toContain("protected summaries stay the first current-state anchors");
+    expect(enabledHelp).toContain("broad recall over MEMORY.md + memory/*.md");
+
+    const vectorHelp = FIELD_HELP["agents.defaults.memorySearch.store.vector.enabled"];
+    expect(vectorHelp).toContain("normal broad-recall search");
+    expect(vectorHelp).toContain("forced direct-read fallback");
+  });
+
   it("documents cron deprecation, migration, and retention formats", () => {
     const legacy = FIELD_HELP["cron.webhook"];
     expect(/deprecated|legacy/i.test(legacy)).toBe(true);

@@ -836,6 +836,32 @@ describe("real daily utterance regression", () => {
     expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
   });
 
+  it("keeps explicit finance pipeline validation ahead of a wrong open-source API route", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance:
+        "真实学习任务端到端验收：请用本地安全 source test/fixtures/finance-learning-pipeline/valid-finance-article.md 跑 finance_learning_pipeline_orchestrator，learningIntent=学习 ETF event triage workflow，必须在回复里明确显示 learningInternalizationStatus=application_ready 或 failedReason；不要说后台已完成，除非 receipt/review 真的证明。",
+      apiProvider: async () => ({
+        family: "learning_external_source",
+        confidence: 0.95,
+        rationale: "wrongly treated source and skills wording as open-source learning",
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "market_capability_learning_intake",
+      source: "semantic",
+      targetSurface: "learning_command",
+      backendToolContract: {
+        toolName: "finance_learning_pipeline_orchestrator",
+        sourceRequirement: "safe_local_or_manual_source_required",
+      },
+    });
+    expect(handoff.notice).toContain("finance_learning_pipeline_orchestrator");
+    expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
+  });
+
   it("sanitizes low-confidence API candidates and keeps deterministic routing authoritative", async () => {
     const entry = LARK_ROUTING_CORPUS.find((candidate) => candidate.id === "technical-001");
     expect(entry).toBeDefined();

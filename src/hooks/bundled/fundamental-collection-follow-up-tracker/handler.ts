@@ -4,6 +4,10 @@ import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import type { FundamentalCollectionPacketsArtifact } from "../fundamental-collection-packets/handler.js";
 import {
   buildManifestPatchReviewEntry,
@@ -431,9 +435,16 @@ const materializeFundamentalCollectionFollowUpTracker: HookHandler = async (even
             blockedTargets: input.blockedTargets.length,
           }),
         };
-        const trackerPath = `bank/fundamental/collection-follow-up-trackers/${input.manifestId}.json`;
+        const trackerPath = buildFundamentalArtifactJsonPath(
+          "fundamental-collection-follow-up-tracker",
+          input.manifestId,
+        );
         const trackerFilePath = `bank/fundamental/follow-up-trackers/${input.manifestId}.md`;
-        const noteRelativePath = `${dateStr}-fundamental-collection-follow-up-tracker-${input.manifestId}.md`;
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-collection-follow-up-tracker",
+          manifestId: input.manifestId,
+        });
 
         await Promise.all([
           writeFileWithinRoot({

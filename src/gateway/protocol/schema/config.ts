@@ -37,6 +37,15 @@ export const UpdateRunParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const UpdateCheckParamsSchema = Type.Object(
+  {
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+    fetchGit: Type.Optional(Type.Boolean()),
+    includeRegistry: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
 export const ConfigUiHintSchema = Type.Object(
   {
     label: Type.Optional(Type.String()),

@@ -121,6 +121,14 @@ struct MenuContent: View {
             } label: {
                 Label("Open Chat", systemImage: "bubble.left.and.bubble.right")
             }
+            Button {
+                Task { @MainActor in
+                    await self.openLobsterPanel()
+                }
+            } label: {
+                Label("Open Lobster Panel", systemImage: "chart.bar.doc.horizontal")
+            }
+            .disabled(!self.state.canvasEnabled)
             if self.state.canvasEnabled {
                 Button {
                     Task { @MainActor in
@@ -346,6 +354,18 @@ struct MenuContent: View {
         } catch {
             let alert = NSAlert()
             alert.messageText = "Dashboard unavailable"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    @MainActor
+    private func openLobsterPanel() async {
+        do {
+            _ = try LobsterWorkfacePanel.openInCanvas()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Lobster panel unavailable"
             alert.informativeText = error.localizedDescription
             alert.runModal()
         }

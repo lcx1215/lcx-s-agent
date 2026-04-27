@@ -13,6 +13,7 @@ import {
   scoreLarkRoutingCorpus,
   type LarkRoutingCorpusCase,
   type LarkRoutingFamily,
+  type LarkRoutingGuardMatcher,
   type SemanticRouteCandidate,
 } from "./lark-routing-corpus.js";
 import type { FeishuConfig } from "./types.js";
@@ -145,7 +146,7 @@ function buildCandidateId(params: {
 function expectedGuardMatchersForUtterance(
   utterance: string,
 ): LarkRoutingCorpusCase["expectedGuardMatchers"] {
-  const matchers: NonNullable<LarkRoutingCorpusCase["expectedGuardMatchers"]> = [];
+  const matchers: LarkRoutingGuardMatcher[] = [];
   if (LARK_ROUTING_GUARD_MATCHERS.sourceCoverage(utterance)) {
     matchers.push("sourceCoverage");
   }
@@ -235,11 +236,10 @@ export function evaluateLarkPendingRoutingCandidate(params: {
     id: candidate.id,
     utterance: candidate.utterance,
     family: semantic.family as LarkRoutingFamily,
-    expectedSurface:
-      LARK_ROUTING_FAMILY_CONTRACTS[semantic.family as LarkRoutingFamily].target ===
-      "protocol_truth_surface"
-        ? undefined
-        : LARK_ROUTING_FAMILY_CONTRACTS[semantic.family as LarkRoutingFamily].target,
+    expectedSurface: (() => {
+      const target = LARK_ROUTING_FAMILY_CONTRACTS[semantic.family as LarkRoutingFamily].target;
+      return target === "protocol_truth_surface" ? undefined : target;
+    })(),
     expectedGuardMatchers: expectedGuardMatchersForUtterance(candidate.utterance),
     truthBoundary: "evidence_required",
     notes: "Auto-normalized language-routing candidate; not a finance learning artifact.",

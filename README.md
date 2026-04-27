@@ -1,15 +1,15 @@
-# Lobster OpenClaw
+# LCX Agent
 
-[![Lobster OpenClaw daily progress wave](docs/assets/lobster-daily-progress-wave.svg)](docs/assets/lobster-daily-progress-wave.svg)
+[![LCX Agent daily progress wave](docs/assets/lcx-agent-daily-progress-wave.svg)](docs/assets/lcx-agent-daily-progress-wave.svg)
 
-Lobster OpenClaw is a personal research operating system built on top of
-OpenClaw. Its job is to turn one Lark/Feishu control room into a practical
-daily loop: understand the operator's language, route the work, learn useful
-material, preserve evidence, and answer with honest status.
+LCX Agent is a personal research operating system built on top of OpenClaw.
+Its job is to turn one Lark/Feishu control room into a practical daily loop:
+understand the operator's language, route the work, learn useful material,
+preserve evidence, and answer with honest status.
 
 This is not the upstream OpenClaw product README. This repository is the
-`lcx1215/lcx-s-openclaw` development fork where Lobster-specific behavior is
-designed, tested, and hardened before any live rollout.
+`lcx1215/lcx-s-openclaw` development fork where LCX Agent behavior is designed,
+tested, and hardened before any live rollout.
 
 ## At A Glance
 
@@ -24,7 +24,7 @@ designed, tested, and hardened before any live rollout.
 
 ## What This Project Is
 
-Lobster turns OpenClaw into a low-frequency research and operating loop:
+LCX Agent turns OpenClaw into a low-frequency research and operating loop:
 
 - one main Lark/Feishu control room for natural-language requests
 - internal routing across research, learning, operations, and audit lanes
@@ -67,7 +67,7 @@ answer without making the user manually remember multiple specialist chats.
 
 ### Truth Surfaces
 
-Lobster prefers honest degraded output over polished fake certainty. Important
+LCX Agent prefers honest degraded output over polished fake certainty. Important
 reply surfaces distinguish:
 
 - live verification vs local development proof
@@ -83,7 +83,7 @@ not just demoed once.
 
 ### Learning That Compounds
 
-Learning is only useful when it changes future judgment. Lobster tries to turn
+Learning is only useful when it changes future judgment. LCX Agent tries to turn
 learning runs into:
 
 - concise keeper lessons
@@ -107,8 +107,8 @@ it live-fixed by themselves.
 ## Module Responsibilities
 
 These short labels are the intended meaning of the main project files and
-directories. They replace generic import-history labels with the actual Lobster
-responsibilities.
+directories. They replace generic import-history labels with the actual LCX
+Agent responsibilities.
 
 | Path                         | Owns                                                                                              |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -208,7 +208,7 @@ has been checked.
 OpenClaw provides the execution substrate: gateway, channel integrations,
 agent runtime, CLI, tools, sessions, and platform apps.
 
-Lobster adds the operating layer: research discipline, control-room semantics,
+LCX Agent adds the operating layer: research discipline, control-room semantics,
 learning carryover, memory hygiene, correction loops, truth surfaces, and daily
 workface behavior.
 
@@ -218,8 +218,13 @@ Upstream project:
 - https://docs.openclaw.ai
 
 This fork keeps upstream compatibility where practical, but the README and
-default operating doctrine describe the Lobster use case rather than the general
-OpenClaw product.
+default operating doctrine describe the LCX Agent use case rather than the
+general OpenClaw product.
+
+Some internal files and scripts still use `lobster_*` names. Treat those as
+legacy compatibility handles for the existing local runtime, not as the public
+project identity. They should be migrated gradually only when the live path and
+artifact history stay compatible.
 
 ## Status
 

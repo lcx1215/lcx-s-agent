@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
+import { withEnvAsync } from "../test-utils/env.js";
 import {
   buildAllowedModelSet,
   inferUniqueProviderFromConfiguredModels,
@@ -12,6 +13,7 @@ import {
   modelKey,
   resolveAllowedModelRef,
   resolveConfiguredModelRef,
+  resolveDefaultModelForAgent,
   resolveThinkingDefault,
   resolveModelRefFromString,
 } from "./model-selection.js";
@@ -480,6 +482,24 @@ describe("model-selection", () => {
         defaultModel: "gpt-4",
       });
       expect(result).toEqual({ provider: "openai", model: "gpt-4" });
+    });
+  });
+
+  describe("resolveDefaultModelForAgent", () => {
+    it("prefers MiniMax runtime default when MiniMax auth exists and config is empty", async () => {
+      await withEnvAsync(
+        {
+          MINIMAX_API_KEY: "sk-minimax-test",
+          MINIMAX_OAUTH_TOKEN: undefined,
+          OPENCLAW_MINIMAX_DEFAULT_MODEL: "MiniMax-M2.7",
+        },
+        async () => {
+          expect(resolveDefaultModelForAgent({ cfg: {} as OpenClawConfig })).toEqual({
+            provider: "minimax",
+            model: "MiniMax-M2.7",
+          });
+        },
+      );
     });
   });
 

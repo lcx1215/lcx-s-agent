@@ -23,6 +23,7 @@ type SmokeCase =
   | "local-file"
   | "lark-market-capability-intake"
   | "lark-market-capability-missing-source"
+  | "lark-market-capability-extraction-gap"
   | "capability-apply"
   | "capability-apply-unmatched"
   | "external-rss"
@@ -74,6 +75,31 @@ function getString(value: unknown, label: string): string {
   return value;
 }
 
+function getNumber(value: unknown, label: string): number {
+  assert(typeof value === "number" && Number.isFinite(value), `${label} should be finite number`);
+  return value;
+}
+
+function buildAgentVisibleLearningLine(retrieval: Record<string, unknown>): string {
+  const status = getString(
+    retrieval.learningInternalizationStatus,
+    "learningInternalizationStatus",
+  );
+  const applicationReadyCandidateCount = getNumber(
+    retrieval.applicationReadyCandidateCount,
+    "applicationReadyCandidateCount",
+  );
+  const weakLearningIntents = Array.isArray(retrieval.weakLearningIntents)
+    ? retrieval.weakLearningIntents
+    : [];
+  if (status === "application_ready") {
+    return `learningInternalizationStatus=application_ready; applicationReadyCandidateCount=${applicationReadyCandidateCount}`;
+  }
+  const firstWeakIntent = getRecord(weakLearningIntents[0], "weakLearningIntent");
+  const reason = getString(firstWeakIntent.reason, "weakLearningIntent.reason");
+  return `learningInternalizationStatus=${status}; failedReason=${reason}; applicationReadyCandidateCount=${applicationReadyCandidateCount}`;
+}
+
 function buildLarkSmokeConfig(): FeishuConfig {
   return {
     enabled: true,
@@ -97,6 +123,37 @@ async function assertArtifactExists(workspaceDir: string, relativePath: string):
     `artifact path must be workspace-relative: ${relativePath}`,
   );
   await fs.access(path.join(workspaceDir, relativePath));
+}
+
+async function readWorkspaceJson(
+  workspaceDir: string,
+  relativePath: string,
+): Promise<Record<string, unknown>> {
+  await assertArtifactExists(workspaceDir, relativePath);
+  return JSON.parse(await fs.readFile(path.join(workspaceDir, relativePath), "utf8")) as Record<
+    string,
+    unknown
+  >;
+}
+
+async function countJsonFilesUnder(workspaceDir: string, relativePath: string): Promise<number> {
+  const absolutePath = path.join(workspaceDir, relativePath);
+  let entries: Array<fs.Dirent>;
+  try {
+    entries = await fs.readdir(absolutePath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let count = 0;
+  for (const entry of entries) {
+    const entryPath = path.join(relativePath, entry.name);
+    if (entry.isDirectory()) {
+      count += await countJsonFilesUnder(workspaceDir, entryPath);
+    } else if (entry.isFile() && entry.name.endsWith(".json")) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 async function seedValidCapabilityFromLocalFile(params: {
@@ -183,7 +240,7 @@ async function runCase(
         "valid-finance-article.md",
       );
       const utterance =
-        "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略，使用本地 source memory/demo/lark-valid-finance-article.md，走 source intake、extract、attach 和 review";
+        "在 Lark 里验证一套完整学习流程：学习 ETF event triage workflow，使用本地 source memory/demo/lark-valid-finance-article.md，走 source intake、extract、attach 和 review";
       const apiProvider: LarkApiRouteProvider = async () => ({
         family: "market_capability_learning_intake",
         confidence: 0.96,
@@ -221,16 +278,61 @@ async function runCase(
         allowedActionAuthority: "research_only",
         learningIntent: handoff.backendToolContract.learningIntent,
         maxRetrievedCapabilities: 5,
+        applicationValidationQuery: utterance,
+        maxAppliedCapabilities: 3,
       });
       assert(result.details.ok === true, "lark-market-capability-intake should complete pipeline");
       const retrieval = getRecord(result.details.retrievalFirstLearning, "retrievalFirstLearning");
+      const applicationValidation = getRecord(
+        result.details.applicationValidation,
+        "applicationValidation",
+      );
       const retrievalReceiptPath = getString(
         retrieval.retrievalReceiptPath,
         "retrievalReceiptPath",
       );
       const retrievalReviewPath = getString(retrieval.retrievalReviewPath, "retrievalReviewPath");
+      const usageReceiptPath = getString(applicationValidation.usageReceiptPath, "usageReceiptPath");
+      const usageReviewPath = getString(applicationValidation.usageReviewPath, "usageReviewPath");
+      const agentVisibleLearningLine = buildAgentVisibleLearningLine(retrieval);
+      assert(
+        agentVisibleLearningLine.includes("application_ready") ||
+          agentVisibleLearningLine.includes("failedReason="),
+        "agent-visible learning line should expose application_ready or a concrete failure reason",
+      );
+      assert(
+        applicationValidation.applicationValidationStatus === "application_ready" ||
+          typeof applicationValidation.failedReason === "string",
+        "application validation should expose application_ready or a concrete failure reason",
+      );
       await assertArtifactExists(workspaceDir, retrievalReceiptPath);
       await assertArtifactExists(workspaceDir, retrievalReviewPath);
+      await assertArtifactExists(workspaceDir, usageReceiptPath);
+      const retrievalReview = await readWorkspaceJson(workspaceDir, retrievalReviewPath);
+      const retrievalReviewRows = Array.isArray(retrievalReview.rows) ? retrievalReview.rows : [];
+      assert(
+        retrievalReviewRows.some((row) => {
+          if (!row || typeof row !== "object") {
+            return false;
+          }
+          const record = row as Record<string, unknown>;
+          return (
+            record.applicationValidationUsageReceiptPath === usageReceiptPath &&
+            record.applicationValidationUsageReviewPath === usageReviewPath
+          );
+        }),
+        "retrieval review should link application validation usage receipt and usage review",
+      );
+      const usageReview = await readWorkspaceJson(workspaceDir, usageReviewPath);
+      assert(
+        usageReview.boundary === "finance_learning_capability_apply_usage_review",
+        "usage review should be the finance apply usage review",
+      );
+      const usageReviewCounts = getRecord(usageReview.counts, "usageReview.counts");
+      assert(
+        getNumber(usageReviewCounts.usageReceipts, "usageReview.counts.usageReceipts") > 0,
+        "usage review should include at least one usage receipt",
+      );
       return {
         case: caseName,
         ok: true,
@@ -241,6 +343,20 @@ async function runCase(
         sourceRequirement: handoff.backendToolContract.sourceRequirement,
         retainedCandidateCount: result.details.retainedCandidateCount,
         normalizedArticleArtifactPaths: result.details.normalizedArticleArtifactPaths,
+        learningInternalizationStatus: retrieval.learningInternalizationStatus,
+        postAttachCandidateCount: retrieval.postAttachCandidateCount,
+        applicationReadyCandidateCount: retrieval.applicationReadyCandidateCount,
+        applicationValidationStatus: applicationValidation.applicationValidationStatus,
+        applicationValidationCandidateCount: applicationValidation.candidateCount,
+        applicationValidationFailedReason: applicationValidation.failedReason,
+        synthesisMode: applicationValidation.synthesisMode,
+        usageReceiptPath,
+        usageReviewPath,
+        retrievalReviewLinksUsage: true,
+        usageReviewBoundary: usageReview.boundary,
+        usageReviewReceipts: usageReviewCounts.usageReceipts,
+        weakLearningIntents: retrieval.weakLearningIntents,
+        agentVisibleLearningLine,
         retrievalReceiptPath,
         retrievalReviewPath,
       };
@@ -284,6 +400,107 @@ async function runCase(
         backendTool: handoff.backendToolContract.toolName,
         sourceRequirement: handoff.backendToolContract.sourceRequirement,
         blockedReason: "safe_local_or_manual_source_required",
+        agentVisibleLearningLine:
+          "learningInternalizationStatus=not_started; failedReason=safe_local_or_manual_source_required",
+      };
+    }
+    case "lark-market-capability-extraction-gap": {
+      const localFilePath = "memory/demo/lark-weak-finance-note.md";
+      const absolutePath = path.join(workspaceDir, localFilePath);
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(
+        absolutePath,
+        [
+          "# Weak ETF timing note",
+          "",
+          "This note mentions ETF factor timing and regime risk, but it lacks structured method summary, evidence categories, causal claim, risk and failure modes, implementation requirements, and action authority fields.",
+        ].join("\n"),
+        "utf8",
+      );
+      const utterance =
+        "在 Lark 里验证一套完整学习流程：学习 ETF 因子择时策略，使用本地 source memory/demo/lark-weak-finance-note.md，走 source intake、extract、attach 和 review";
+      const apiProvider: LarkApiRouteProvider = async () => ({
+        family: "market_capability_learning_intake",
+        confidence: 0.94,
+        rationale: "offline smoke candidate with a weak local source",
+      });
+      const handoff = await resolveLarkAgentInstructionHandoff({
+        cfg: buildLarkSmokeConfig(),
+        chatId: "oc-control-room-smoke",
+        utterance,
+        apiProvider,
+      });
+      assert(
+        handoff.family === "market_capability_learning_intake",
+        "extraction-gap Lark handoff should still classify the learning intent",
+      );
+      assert(
+        handoff.backendToolContract?.toolName === "finance_learning_pipeline_orchestrator",
+        "extraction-gap Lark handoff should expose backend contract",
+      );
+      const retrievalReceiptCountBefore = await countJsonFilesUnder(
+        workspaceDir,
+        "memory/finance-learning-retrieval-receipts",
+      );
+      const usageReviewCountBefore = await countJsonFilesUnder(
+        workspaceDir,
+        "memory/finance-learning-apply-usage-reviews",
+      );
+      const result = await tool.execute("smoke-lark-market-capability-extraction-gap", {
+        sourceName: "Lark Weak Finance Learning Smoke Fixture",
+        sourceType: "manual_article_source",
+        localFilePath,
+        title: "Lark weak finance capability learning request",
+        retrievalNotes:
+          "Lark offline smoke verified that weak local source content fails closed before attachment and review.",
+        allowedActionAuthority: "research_only",
+        learningIntent: handoff.backendToolContract.learningIntent,
+        maxRetrievedCapabilities: 5,
+        applicationValidationQuery: utterance,
+        maxAppliedCapabilities: 3,
+      });
+      assert(result.details.ok === false, "extraction-gap source should fail closed");
+      assert(result.details.failedStep === "extract", "extraction-gap should stop at extraction");
+      assert(
+        result.details.reason === "finance_article_extraction_gap",
+        "extraction-gap should expose the extraction gap reason",
+      );
+      const extractionGap = getRecord(result.details.extractionGap, "extractionGap");
+      const missingFields = Array.isArray(extractionGap.missingFields)
+        ? extractionGap.missingFields
+        : [];
+      assert(missingFields.length > 0, "extraction-gap should expose missing fields");
+      const retrievalReceiptCountAfter = await countJsonFilesUnder(
+        workspaceDir,
+        "memory/finance-learning-retrieval-receipts",
+      );
+      const usageReviewCountAfter = await countJsonFilesUnder(
+        workspaceDir,
+        "memory/finance-learning-apply-usage-reviews",
+      );
+      assert(
+        retrievalReceiptCountAfter === retrievalReceiptCountBefore,
+        "extraction-gap should not create a new retrieval receipt",
+      );
+      assert(
+        usageReviewCountAfter === usageReviewCountBefore,
+        "extraction-gap should not create a new apply usage review",
+      );
+      return {
+        case: caseName,
+        ok: false,
+        expectedFailure: true,
+        handoffFamily: handoff.family,
+        handoffSource: handoff.source,
+        targetSurface: handoff.targetSurface,
+        backendTool: handoff.backendToolContract.toolName,
+        failedStep: result.details.failedStep,
+        reason: result.details.reason,
+        missingFields,
+        retrievalReceiptCreated: retrievalReceiptCountAfter > retrievalReceiptCountBefore,
+        usageReviewCreated: usageReviewCountAfter > usageReviewCountBefore,
+        agentVisibleLearningLine:
+          "learningInternalizationStatus=not_started; failedReason=finance_article_extraction_gap",
       };
     }
     case "capability-apply": {
@@ -300,6 +517,7 @@ async function runCase(
       });
       assert(applyResult.details.ok === true, "capability-apply should apply a retained card");
       const answerSkeleton = getRecord(applyResult.details.answerSkeleton, "answerSkeleton");
+      const answerScaffold = getRecord(answerSkeleton.answerScaffold, "answerScaffold");
       const appliedCapabilities = Array.isArray(applyResult.details.appliedCapabilities)
         ? applyResult.details.appliedCapabilities
         : [];
@@ -309,13 +527,30 @@ async function runCase(
           "This application is research-only and does not approve trades, auto-promotion, doctrine mutation, or standalone prediction.",
         "capability-apply should preserve the no-action boundary",
       );
+      assert(
+        answerScaffold.status === "scaffold_only_until_fresh_inputs_are_checked",
+        "capability-apply should return a research answer scaffold, not only a checklist",
+      );
+      const usageReceiptPath = getString(applyResult.details.usageReceiptPath, "usageReceiptPath");
+      const usageReviewPath = getString(applyResult.details.usageReviewPath, "usageReviewPath");
+      await assertArtifactExists(workspaceDir, usageReceiptPath);
+      const usageReview = await readWorkspaceJson(workspaceDir, usageReviewPath);
+      assert(
+        usageReview.boundary === "finance_learning_capability_apply_usage_review",
+        "capability-apply should refresh the same-day usage review",
+      );
       return {
         case: caseName,
         ok: true,
         seedRetainedCandidateCount: seedResult.details.retainedCandidateCount,
         applicationMode: applyResult.details.applicationMode,
+        synthesisMode: applyResult.details.synthesisMode,
+        usageReceiptPath,
+        usageReviewPath,
+        usageReviewBoundary: usageReview.boundary,
         candidateCount: applyResult.details.candidateCount,
         noActionBoundary: answerSkeleton.noActionBoundary,
+        answerScaffoldStatus: answerScaffold.status,
         appliedCapabilityNames: appliedCapabilities.map((entry) =>
           typeof entry === "object" && entry && "capabilityName" in entry
             ? (entry.capabilityName as unknown)
@@ -339,11 +574,22 @@ async function runCase(
         applyResult.details.reason === "no_retrievable_finance_capability",
         "unmatched apply should not improvise a learned answer",
       );
+      const usageReceiptPath = getString(applyResult.details.usageReceiptPath, "usageReceiptPath");
+      const usageReviewPath = getString(applyResult.details.usageReviewPath, "usageReviewPath");
+      await assertArtifactExists(workspaceDir, usageReceiptPath);
+      const usageReview = await readWorkspaceJson(workspaceDir, usageReviewPath);
+      assert(
+        usageReview.boundary === "finance_learning_capability_apply_usage_review",
+        "unmatched apply should still refresh the same-day usage review",
+      );
       return {
         case: caseName,
         ok: false,
         expectedFailure: true,
         reason: applyResult.details.reason,
+        usageReceiptPath,
+        usageReviewPath,
+        usageReviewBoundary: usageReview.boundary,
         action: applyResult.details.action,
       };
     }
@@ -451,6 +697,7 @@ async function main() {
           "local-file",
           "lark-market-capability-intake",
           "lark-market-capability-missing-source",
+          "lark-market-capability-extraction-gap",
           "capability-apply",
           "capability-apply-unmatched",
           "external-rss",

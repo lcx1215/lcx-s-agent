@@ -3,6 +3,10 @@ import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
 import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
+import {
   loadTargetPacketsWithFallback,
   type FundamentalTargetPacketsArtifact,
 } from "../fundamental-target-workfiles/handler.js";
@@ -193,8 +197,15 @@ const materializeFundamentalDossierDrafts: HookHandler = async (event) => {
           draftFiles,
           notes: buildArtifactNotes(draftFiles.length),
         };
-        const draftsPath = `bank/fundamental/dossier-drafts/${targetPackets.manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-dossier-drafts-${targetPackets.manifestId}.md`;
+        const draftsPath = buildFundamentalArtifactJsonPath(
+          "fundamental-dossier-drafts",
+          targetPackets.manifestId,
+        );
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-dossier-drafts",
+          manifestId: targetPackets.manifestId,
+        });
         writes.push(
           writeFileWithinRoot({
             rootDir: workspaceDir,

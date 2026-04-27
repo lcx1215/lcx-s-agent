@@ -16,6 +16,7 @@ import {
   applyMinimaxProviderConfig,
   setMinimaxApiKey,
 } from "./onboard-auth.js";
+import { resolveMinimaxHostedModelId } from "./onboard-auth.models.js";
 
 export async function applyAuthChoiceMiniMax(
   params: ApplyAuthChoiceParams,
@@ -112,7 +113,9 @@ export async function applyAuthChoiceMiniMax(
       promptMessage: "Enter MiniMax API key",
       modelRefPrefix: "minimax",
       modelId:
-        params.authChoice === "minimax-api-lightning" ? "MiniMax-M2.5-highspeed" : "MiniMax-M2.5",
+        params.authChoice === "minimax-api-lightning"
+          ? "MiniMax-M2.5-highspeed"
+          : resolveMinimaxHostedModelId(),
       applyDefaultConfig: applyMinimaxApiConfig,
       applyProviderConfig: applyMinimaxApiProviderConfig,
     });
@@ -124,7 +127,7 @@ export async function applyAuthChoiceMiniMax(
       provider: "minimax-cn",
       promptMessage: "Enter MiniMax China API key",
       modelRefPrefix: "minimax-cn",
-      modelId: "MiniMax-M2.5",
+      modelId: resolveMinimaxHostedModelId(),
       applyDefaultConfig: applyMinimaxApiConfigCn,
       applyProviderConfig: applyMinimaxApiProviderConfigCn,
     });

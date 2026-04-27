@@ -6,6 +6,10 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
+import {
   summarizeFundamentalIntakeSession,
   type FundamentalDocumentMetadata,
   type FundamentalManifestScaffold,
@@ -57,6 +61,24 @@ function createManifestFixture(params?: {
     reviewGate: {
       ...manifestScaffold.reviewGate,
       status: params?.reviewGateStatus ?? manifestScaffold.reviewGate.status,
+    },
+  };
+}
+
+function withManifestId(
+  manifest: FundamentalManifestScaffold,
+  manifestId: string,
+): FundamentalManifestScaffold {
+  return {
+    ...manifest,
+    manifestId,
+    documentWorkspace: {
+      ...manifest.documentWorkspace,
+      baseDir: `bank/fundamental/documents/${manifestId}`,
+      targetDirs: manifest.documentWorkspace.targetDirs.map((targetDir) => ({
+        ...targetDir,
+        dir: `bank/fundamental/documents/${manifestId}/${targetDir.targetSlug}`,
+      })),
     },
   };
 }
@@ -152,22 +174,22 @@ async function runScoringGate(params: {
 
   await handler(event);
 
-  const scoringGatesDir = path.join(tempDir, "bank", "fundamental", "scoring-gates");
-  const scoringGateFiles = await fs.readdir(scoringGatesDir);
   const memoryDir = path.join(tempDir, "memory");
-  const memoryFiles = await fs.readdir(memoryDir);
+  const scoringGatePath = buildFundamentalArtifactJsonPath(
+    "fundamental-scoring-gate",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalArtifactNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-scoring-gate",
+    manifestId: params.manifest.manifestId,
+  });
 
   return {
     scoringGate: JSON.parse(
-      await fs.readFile(path.join(scoringGatesDir, scoringGateFiles[0]), "utf-8"),
+      await fs.readFile(path.join(tempDir, scoringGatePath), "utf-8"),
     ) as Record<string, unknown>,
-    noteContent: await fs.readFile(
-      path.join(
-        memoryDir,
-        memoryFiles.find((name) => name.includes("fundamental-scoring-gate-")) ?? memoryFiles[0],
-      ),
-      "utf-8",
-    ),
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
   };
 }
 
@@ -325,5 +347,81 @@ describe("fundamental-scoring-gate hook", () => {
     ]);
     expect(result.noteContent).toContain("scoring_decision: allowed");
     expect(result.noteContent).toContain("AAPL: decision=allowed, readiness=baseline_ready");
+  });
+
+  it("quarantines malformed snapshot artifacts while keeping healthy scoring gates", async () => {
+    const tempDir = await createCaseWorkspace("malformed-snapshot");
+    const healthyManifest = withManifestId(
+      createManifestFixture({
+        reviewGateStatus: "approved_for_collection",
+        requestText:
+          "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+      }),
+      "aapl-healthy",
+    );
+    const brokenManifest = withManifestId(
+      createManifestFixture({
+        reviewGateStatus: "approved_for_collection",
+        requestText:
+          "Build a fundamental research scaffold for MSFT in the US. Use annual reports and investor presentations.",
+      }),
+      "msft-artifact-error",
+    );
+
+    await prepareSnapshotArtifact({
+      workspaceDir: tempDir,
+      manifest: healthyManifest,
+      documents: [
+        {
+          fileName: "doc-annual-primary.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "annual_report",
+            sourceType: "issuer_primary",
+          },
+        },
+        {
+          fileName: "doc-presentation-primary.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "investor_presentation",
+            sourceType: "company_presentation",
+          },
+        },
+      ],
+    });
+    await prepareSnapshotArtifact({
+      workspaceDir: tempDir,
+      manifest: brokenManifest,
+    });
+
+    await fs.writeFile(
+      path.join(tempDir, "bank", "fundamental", "snapshots", `${brokenManifest.manifestId}.json`),
+      '{"broken": true',
+      "utf-8",
+    );
+
+    const event = createHookEvent("command", "reset", "agent:main:main", {
+      cfg: makeConfig(tempDir),
+    });
+    event.timestamp = new Date("2026-03-15T12:00:00.000Z");
+
+    await handler(event);
+
+    const scoringGatesDir = path.join(tempDir, "bank", "fundamental", "scoring-gates");
+    const scoringGateFiles = await fs.readdir(scoringGatesDir);
+    expect(scoringGateFiles).toEqual([`${healthyManifest.manifestId}.json`]);
+
+    const artifactErrorsDir = path.join(tempDir, "bank", "fundamental", "artifact-errors");
+    const artifactError = JSON.parse(
+      await fs.readFile(
+        path.join(artifactErrorsDir, `scoring-gate-${brokenManifest.manifestId}.json`),
+        "utf-8",
+      ),
+    ) as Record<string, unknown>;
+    expect(artifactError.errorStatus).toBe("blocked_due_to_artifact_error");
+    expect(artifactError.manifestId).toBe(brokenManifest.manifestId);
   });
 });

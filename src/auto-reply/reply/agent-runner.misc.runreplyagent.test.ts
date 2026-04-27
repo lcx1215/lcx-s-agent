@@ -15,6 +15,7 @@ const runEmbeddedPiAgentMock = vi.fn();
 const runCliAgentMock = vi.fn();
 const runWithModelFallbackMock = vi.fn();
 const runtimeErrorMock = vi.fn();
+const runtimeLogMock = vi.fn();
 
 vi.mock("../../agents/model-fallback.js", () => ({
   runWithModelFallback: (params: {
@@ -51,7 +52,7 @@ vi.mock("../../runtime.js", async () => {
     ...actual,
     defaultRuntime: {
       ...actual.defaultRuntime,
-      log: vi.fn(),
+      log: (...args: unknown[]) => runtimeLogMock(...args),
       error: (...args: unknown[]) => runtimeErrorMock(...args),
       exit: vi.fn(),
     },
@@ -89,6 +90,7 @@ beforeEach(() => {
   runCliAgentMock.mockClear();
   runWithModelFallbackMock.mockClear();
   runtimeErrorMock.mockClear();
+  runtimeLogMock.mockClear();
   loadCronStoreMock.mockClear();
   // Default: no cron jobs in store.
   loadCronStoreMock.mockResolvedValue({ version: 1, jobs: [] });
@@ -214,6 +216,94 @@ describe("runReplyAgent onAgentRunStart", () => {
     expect(onAgentRunStart).toHaveBeenCalledTimes(1);
     expect(onAgentRunStart).toHaveBeenCalledWith("run-started");
     expect(result).toMatchObject({ text: "ok" });
+  });
+});
+
+describe("runReplyAgent reply tracing", () => {
+  it("logs the selected model, active model, web search usage, and fallback state", async () => {
+    runEmbeddedPiAgentMock.mockImplementationOnce(async (params: Record<string, unknown>) => {
+      await (
+        params.onAgentEvent as
+          | ((evt: { stream: string; data: Record<string, unknown> }) => Promise<void>)
+          | undefined
+      )?.({
+        stream: "tool",
+        data: { phase: "start", name: "web_search" },
+      });
+      return {
+        payloads: [{ text: "ok" }],
+        meta: {
+          agentMeta: {
+            provider: "custom-api-deepseek-com",
+            model: "deepseek-chat",
+          },
+        },
+      };
+    });
+
+    const typing = createMockTypingController();
+    const sessionCtx = {
+      Provider: "feishu",
+      OriginatingTo: "chat:1",
+      AccountId: "default",
+      MessageSid: "msg",
+    } as unknown as TemplateContext;
+    const followupRun = {
+      prompt: "macro",
+      summaryLine: "macro",
+      enqueuedAt: Date.now(),
+      run: {
+        sessionId: "session",
+        sessionKey: "main",
+        messageProvider: "feishu",
+        sessionFile: "/tmp/session.jsonl",
+        workspaceDir: "/tmp",
+        config: {
+          tools: { web: { search: { provider: "kimi" } } },
+        },
+        skillsSnapshot: {},
+        provider: "custom-api-deepseek-com",
+        model: "deepseek-chat",
+        thinkLevel: "low",
+        verboseLevel: "off",
+        elevatedLevel: "off",
+        bashElevated: {
+          enabled: false,
+          allowed: false,
+          defaultLevel: "off",
+        },
+        timeoutMs: 1_000,
+        blockReplyBreak: "message_end",
+      },
+    } as unknown as FollowupRun;
+
+    const result = await runReplyAgent({
+      commandBody: "macro",
+      followupRun,
+      queueKey: "main",
+      resolvedQueue: { mode: "interrupt" } as unknown as QueueSettings,
+      shouldSteer: false,
+      shouldFollowup: false,
+      isActive: false,
+      isStreaming: false,
+      typing,
+      sessionCtx,
+      defaultModel: "custom-api-deepseek-com/deepseek-chat",
+      resolvedVerboseLevel: "off",
+      isNewSession: false,
+      blockStreamingEnabled: false,
+      resolvedBlockStreamingBreak: "message_end",
+      shouldInjectGroupIntro: false,
+      typingMode: "instant",
+    });
+
+    expect(result).toMatchObject({ text: "ok" });
+    expect(runtimeLogMock).toHaveBeenCalledWith(expect.stringContaining("[reply-trace]"));
+    expect(runtimeLogMock).toHaveBeenCalledWith(
+      expect.stringContaining("active=custom-api-deepseek-com/deepseek-chat"),
+    );
+    expect(runtimeLogMock).toHaveBeenCalledWith(expect.stringContaining("web_search=kimi"));
+    expect(runtimeLogMock).toHaveBeenCalledWith(expect.stringContaining("fallback=no"));
   });
 });
 

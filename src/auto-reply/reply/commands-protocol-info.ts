@@ -91,7 +91,7 @@ function isWriteFailureRelevantToLearningArtifact(params: {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(failureDay ?? "")) {
     return true;
   }
-  return failureDay >= params.learning.date;
+  return (failureDay ?? "") >= params.learning.date;
 }
 
 function normalizeLearningTimeboxStatus(state: {
@@ -265,15 +265,14 @@ function readLatestWriteFailureEvidence(cfg?: OpenClawConfig): WriteFailureEvide
     const latest = fs
       .readdirSync(anomaliesDir)
       .filter((name) => name.endsWith(".json"))
-      .map((name) => {
+      .flatMap((name) => {
         const parsed = parseWatchtowerAnomalyRecord(
           fs.readFileSync(path.join(anomaliesDir, name), "utf-8"),
         );
-        return parsed;
+        return parsed ? [parsed] : [];
       })
       .filter(
-        (entry): entry is NonNullable<typeof entry> =>
-          Boolean(entry) &&
+        (entry) =>
           entry.category === "write_edit_failure" &&
           (entry.source === "feishu.surface_memory" ||
             entry.source === "feishu.work_receipts" ||
@@ -300,15 +299,14 @@ function readLatestSearchHealthEvidence(cfg?: OpenClawConfig): SearchHealthEvide
     const latest = fs
       .readdirSync(anomaliesDir)
       .filter((name) => name.endsWith(".json"))
-      .map((name) => {
+      .flatMap((name) => {
         const parsed = parseWatchtowerAnomalyRecord(
           fs.readFileSync(path.join(anomaliesDir, name), "utf-8"),
         );
-        return parsed;
+        return parsed ? [parsed] : [];
       })
       .filter(
-        (entry): entry is NonNullable<typeof entry> =>
-          Boolean(entry) &&
+        (entry) =>
           entry.category === "provider_degradation" &&
           (entry.source.startsWith("feishu.") || entry.source.startsWith("provider.")),
       )
@@ -335,15 +333,14 @@ function readLatestLearningWorkflowRiskEvidence(
     const latest = fs
       .readdirSync(anomaliesDir)
       .filter((name) => name.endsWith(".json"))
-      .map((name) => {
+      .flatMap((name) => {
         const parsed = parseWatchtowerAnomalyRecord(
           fs.readFileSync(path.join(anomaliesDir, name), "utf-8"),
         );
-        return parsed;
+        return parsed ? [parsed] : [];
       })
       .filter(
-        (entry): entry is NonNullable<typeof entry> =>
-          Boolean(entry) &&
+        (entry) =>
           entry.source === "feishu.learning_command" &&
           (entry.category === "write_edit_failure" ||
             entry.category === "learning_quality_drift" ||
@@ -378,7 +375,7 @@ export function buildProtocolInfoReply(params: {
   }
   const protocol = buildLobsterProtocolSurface(params.cfg ?? {});
   const capabilityReport = buildCapabilitySurfaceReport(params.cfg ?? {});
-  const lobsterLine = formatLobsterProtocolLine(params.cfg);
+  const lobsterLine = formatLobsterProtocolLine(params.cfg) ?? "";
   const selectedProvider = params.provider?.trim();
   const selectedModel = params.model?.trim();
   const modelRefs =
@@ -1135,7 +1132,7 @@ export function buildProtocolInfoReply(params: {
     };
   }
   if (kind === "runtime_model") {
-    if (modelRefs) {
+    if (modelRefs && fallbackState) {
       return {
         text: [
           "🎛️ Runtime model",
@@ -1163,7 +1160,7 @@ export function buildProtocolInfoReply(params: {
     };
   }
   if (kind === "fallback_reason") {
-    if (modelRefs) {
+    if (modelRefs && fallbackState) {
       const reason = fallbackState.reason?.trim();
       return {
         text: [

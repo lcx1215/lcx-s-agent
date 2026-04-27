@@ -797,7 +797,7 @@ export function parseFeishuClassifiedArtifacts(text: string): FeishuClassifiedAr
         foundations,
       } satisfies FeishuClassifiedArtifact;
     })
-    .filter((artifact): artifact is FeishuClassifiedArtifact => Boolean(artifact));
+    .flatMap((artifact) => (artifact ? [artifact] : []));
 }
 
 function buildDistributionSummary(params: {
@@ -854,7 +854,13 @@ export function resolveFeishuClassifiedPublishResult(params: {
   const publishTargets: FeishuClassifiedPublishRouting[] = [];
 
   for (const artifact of specialistArtifacts) {
-    const surface = FEISHU_CLASSIFIED_PUBLISH_ROUTES[artifact.type];
+    const surface =
+      artifact.type === "control_summary"
+        ? undefined
+        : FEISHU_CLASSIFIED_PUBLISH_ROUTES[artifact.type];
+    if (!surface) {
+      continue;
+    }
     const chatId = params.cfg?.surfaces?.[surface]?.chatId?.trim() || undefined;
     const publishable =
       params.publishMode === "classified_publish" &&

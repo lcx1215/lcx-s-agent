@@ -23,6 +23,7 @@ import {
   resolveDefaultModelForAgent,
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
+import { resolveBuiltInDefaultModelRef } from "../../agents/defaults.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { withProgressTotals } from "../../cli/progress.js";
 import { CONFIG_PATH } from "../../config/config.js";
@@ -52,8 +53,6 @@ import {
 } from "./list.probe.js";
 import { loadModelsConfig } from "./load-config.js";
 import {
-  DEFAULT_MODEL,
-  DEFAULT_PROVIDER,
   ensureFlagCompatibility,
   resolveKnownAgentId,
 } from "./shared.js";
@@ -84,12 +83,13 @@ export async function modelsStatusCommand(
   const agentFallbacksOverride = agentId
     ? resolveAgentModelFallbacksOverride(cfg, agentId)
     : undefined;
+  const builtInDefault = resolveBuiltInDefaultModelRef();
   const resolved = agentId
     ? resolveDefaultModelForAgent({ cfg, agentId })
     : resolveConfiguredModelRef({
         cfg,
-        defaultProvider: DEFAULT_PROVIDER,
-        defaultModel: DEFAULT_MODEL,
+        defaultProvider: builtInDefault.provider,
+        defaultModel: builtInDefault.model,
       });
 
   const rawDefaultsModel = resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model) ?? "";
@@ -128,13 +128,13 @@ export async function modelsStatusCommand(
   const providersFromModels = new Set<string>();
   const providersInUse = new Set<string>();
   for (const raw of [defaultLabel, ...fallbacks, imageModel, ...imageFallbacks, ...allowed]) {
-    const parsed = parseModelRef(String(raw ?? ""), DEFAULT_PROVIDER);
+    const parsed = parseModelRef(String(raw ?? ""), builtInDefault.provider);
     if (parsed?.provider) {
       providersFromModels.add(parsed.provider);
     }
   }
   for (const raw of [defaultLabel, ...fallbacks, imageModel, ...imageFallbacks]) {
-    const parsed = parseModelRef(String(raw ?? ""), DEFAULT_PROVIDER);
+    const parsed = parseModelRef(String(raw ?? ""), builtInDefault.provider);
     if (parsed?.provider) {
       providersInUse.add(parsed.provider);
     }
@@ -155,6 +155,8 @@ export async function modelsStatusCommand(
     "openrouter",
     "zai",
     "mistral",
+    "minimax",
+    "minimax-portal",
     "synthetic",
   ];
   for (const provider of envProbeProviders) {
@@ -213,7 +215,7 @@ export async function modelsStatusCommand(
     throw new Error("--probe-max-tokens must be > 0.");
   }
 
-  const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: DEFAULT_PROVIDER });
+  const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: builtInDefault.provider });
   const rawCandidates = [
     rawModel || resolvedLabel,
     ...fallbacks,
@@ -226,7 +228,7 @@ export async function modelsStatusCommand(
       (raw) =>
         resolveModelRefFromString({
           raw: String(raw ?? ""),
-          defaultProvider: DEFAULT_PROVIDER,
+          defaultProvider: builtInDefault.provider,
           aliasIndex,
         })?.ref,
     )

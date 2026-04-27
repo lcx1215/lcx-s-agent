@@ -208,6 +208,10 @@
       "destination": "/concepts/agent-loop"
     },
     {
+      "source": "/lobster-operating-protocol",
+      "destination": "/concepts/lobster-operating-protocol"
+    },
+    {
       "source": "/agent-send",
       "destination": "/tools/agent-send"
     },
@@ -945,6 +949,7 @@
                   "concepts/architecture",
                   "concepts/agent",
                   "concepts/agent-loop",
+                  "concepts/lobster-operating-protocol",
                   "concepts/system-prompt",
                   "concepts/context",
                   "concepts/agent-workspace",
@@ -999,6 +1004,7 @@
                   "tools/exec",
                   "tools/exec-approvals",
                   "tools/firecrawl",
+                  "tools/finance-learning-pipeline-runbook",
                   "tools/llm-task",
                   "tools/lobster",
                   "tools/loop-detection",

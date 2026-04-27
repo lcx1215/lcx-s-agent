@@ -5,6 +5,7 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import { makeTempWorkspace, writeWorkspaceFile } from "../../../test-helpers/workspace.js";
 import type { AgentBootstrapHookContext } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
+import { buildFrontierRecallFilename } from "../lobster-brain-registry.js";
 import handler from "./handler.js";
 
 function createConfig(recentCount = 3): OpenClawConfig {
@@ -53,18 +54,33 @@ describe("frontier-research-bootstrap hook", () => {
     await fs.mkdir(memoryDir, { recursive: true });
     await writeWorkspaceFile({
       dir: memoryDir,
-      name: "2026-W11-frontier-upgrade.md",
+      name: buildFrontierRecallFilename("2026-W11", "frontier-upgrade"),
       content: "# Frontier Upgrade Prompt\n\n- Primary Research Candidate: WaveLSFormer",
     });
     await writeWorkspaceFile({
       dir: memoryDir,
-      name: "2026-W11-frontier-methods-weekly-review.md",
+      name: buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
       content: "# Weekly Methods Review\n\n- Cards Reviewed: 2",
     });
     await writeWorkspaceFile({
       dir: memoryDir,
-      name: "2026-W11-frontier-replication-backlog.md",
-      content: "# Frontier Replication Backlog\n\n## WaveLSFormer\n- leakage_check_first: temporal windowing can leak future information",
+      name: buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
+      content:
+        "# Frontier Replication Backlog\n\n## WaveLSFormer\n- leakage_check_first: temporal windowing can leak future information",
+    });
+    await writeWorkspaceFile({
+      dir: memoryDir,
+      name: "2026-03-15-lobster-workface.md",
+      content: [
+        "# Lobster Workface: 2026-03-15",
+        "",
+        "## Yesterday Learned",
+        "",
+        "- keep: force leakage and OOS checks before admiring results.",
+        "- discard: do not let novelty outrun replication cost.",
+        "- replay: when a paper looks surprisingly strong, re-check leakage before admiring it.",
+        "- next eval: next batch verify the replication gate actually changed before promoting the lesson.",
+      ].join("\n"),
     });
     await writeWorkspaceFile({
       dir: memoryDir,
@@ -86,23 +102,60 @@ describe("frontier-research-bootstrap hook", () => {
     const event = createHookEvent("agent", "bootstrap", "agent:main:main", context);
     await handler(event);
 
-    const injected = context.bootstrapFiles.find((file) => file.path.endsWith("_frontier-research-bootstrap.md"));
+    const injected = context.bootstrapFiles.find((file) =>
+      file.path.endsWith("_frontier-research-bootstrap.md"),
+    );
     expect(injected).toBeTruthy();
     expect(injected?.name).toBe("memory.md");
     expect(injected?.content).toContain("Recent Frontier Research");
+    expect(injected?.content).toContain("Latest Learning Carryover Cue");
+    expect(injected?.content).toContain(
+      "- retain: force leakage and OOS checks before admiring results.",
+    );
+    expect(injected?.content).toContain("- discard: do not let novelty outrun replication cost.");
+    expect(injected?.content).toContain(
+      "- replay: when a paper looks surprisingly strong, re-check leakage before admiring it.",
+    );
+    expect(injected?.content).toContain(
+      "- next eval: next batch verify the replication gate actually changed",
+    );
     expect(injected?.content).toContain("Priority Frontier Upgrade");
-    expect(injected?.content).toContain("2026-W11-frontier-upgrade.md");
-    expect(injected?.content).toContain("2026-W11-frontier-methods-weekly-review.md");
-    expect(injected?.content).toContain("2026-W11-frontier-replication-backlog.md");
+    expect(injected?.content).toContain(
+      buildFrontierRecallFilename("2026-W11", "frontier-upgrade"),
+    );
+    expect(injected?.content).toContain(
+      buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
+    );
+    expect(injected?.content).toContain(
+      buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
+    );
     expect(injected?.content).toContain("2026-03-15-frontier-research-wave.md");
     expect(injected?.content).toContain("2026-03-14-frontier-research-factor.md");
-    expect(injected?.content.indexOf("2026-W11-frontier-upgrade.md")).toBeLessThan(
-      injected?.content.indexOf("2026-W11-frontier-methods-weekly-review.md") ?? Number.MAX_SAFE_INTEGER,
+    expect(injected?.content.indexOf("Latest Learning Carryover Cue")).toBeLessThan(
+      injected?.content.indexOf(buildFrontierRecallFilename("2026-W11", "frontier-upgrade")) ??
+        Number.MAX_SAFE_INTEGER,
     );
-    expect(injected?.content.indexOf("2026-W11-frontier-methods-weekly-review.md")).toBeLessThan(
-      injected?.content.indexOf("2026-W11-frontier-replication-backlog.md") ?? Number.MAX_SAFE_INTEGER,
+    expect(
+      injected?.content.indexOf(buildFrontierRecallFilename("2026-W11", "frontier-upgrade")),
+    ).toBeLessThan(
+      injected?.content.indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
+      ) ?? Number.MAX_SAFE_INTEGER,
     );
-    expect(injected?.content.indexOf("2026-W11-frontier-replication-backlog.md")).toBeLessThan(
+    expect(
+      injected?.content.indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-methods-weekly-review"),
+      ),
+    ).toBeLessThan(
+      injected?.content.indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
+      ) ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(
+      injected?.content.indexOf(
+        buildFrontierRecallFilename("2026-W11", "frontier-replication-backlog"),
+      ),
+    ).toBeLessThan(
       injected?.content.indexOf("2026-03-15-frontier-research-wave.md") ?? Number.MAX_SAFE_INTEGER,
     );
   });

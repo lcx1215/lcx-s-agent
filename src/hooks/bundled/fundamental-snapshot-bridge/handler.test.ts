@@ -6,6 +6,10 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
+import {
   summarizeFundamentalIntakeSession,
   type FundamentalManifestScaffold,
   type FundamentalReviewGateStatus,
@@ -146,16 +150,22 @@ async function runSnapshotBridge(params: {
 
   await handler(event);
 
-  const snapshotInputDir = path.join(tempDir, "bank", "fundamental", "snapshot-inputs");
-  const snapshotInputFiles = await fs.readdir(snapshotInputDir);
   const memoryDir = path.join(tempDir, "memory");
-  const memoryFiles = await fs.readdir(memoryDir);
+  const snapshotInputPath = buildFundamentalArtifactJsonPath(
+    "fundamental-snapshot-bridge",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalArtifactNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-snapshot-bridge",
+    manifestId: params.manifest.manifestId,
+  });
 
   return {
     snapshotInput: JSON.parse(
-      await fs.readFile(path.join(snapshotInputDir, snapshotInputFiles[0]), "utf-8"),
+      await fs.readFile(path.join(tempDir, snapshotInputPath), "utf-8"),
     ) as Record<string, unknown>,
-    noteContent: await fs.readFile(path.join(memoryDir, memoryFiles[0]), "utf-8"),
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
   };
 }
 

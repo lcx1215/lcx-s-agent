@@ -255,6 +255,53 @@ function stripFinalTagsFromText(text: string): string {
   return text.replace(FINAL_TAG_RE, "");
 }
 
+function stripInternalArtifactSections(text: string): string {
+  if (!text) {
+    return text;
+  }
+
+  const withoutToolFailures = text.replace(
+    /\n{2,}## Tool Failures[\s\S]*?(?=(?:\n{2,}##\s|\n{2,}<(?:read|modified)-files>|\s*$))/g,
+    "",
+  );
+
+  const withoutFileLists = withoutToolFailures
+    .replace(/\n{2,}<read-files>\n[\s\S]*?\n<\/read-files>/g, "")
+    .replace(/\n{2,}<modified-files>\n[\s\S]*?\n<\/modified-files>/g, "");
+
+  return withoutFileLists
+    .split("\n")
+    .filter((line) => !/^\s*\[non-text content(?::.*)?\]\s*$/.test(line))
+    .join("\n");
+}
+
+function normalizeBookkeepingFailureLines(text: string): string {
+  if (!text) {
+    return text;
+  }
+
+  return text
+    .replace(
+      /^.*Bookkeeping failed:\s*could not record the memory update in .*$/gim,
+      "Bookkeeping: the result may be complete, but the memory update was not recorded. Verify the main artifact separately.",
+    )
+    .replace(
+      /^.*(?:⚠️\s*)?(?:📝\s*)?Edit:\s*in .*?(?:\/|\\)MEMORY\.md failed\s*$/gim,
+      "Bookkeeping: failed to update MEMORY.md. Verify the main artifact separately.",
+    );
+}
+
+function stripFeishuAgentWrapperArtifacts(text: string): string {
+  if (!text) {
+    return text;
+  }
+
+  return text
+    .replace(/\n?Conversation info \(untrusted metadata\):\n```json[\s\S]*?```\n?/g, "\n")
+    .replace(/\n?Sender \(untrusted metadata\):\n```json[\s\S]*?```\n?/g, "\n")
+    .replace(/^\[message_id:\s*[^\]\n]+\]\s*$/gm, "");
+}
+
 function collapseConsecutiveDuplicateBlocks(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -572,7 +619,9 @@ export function sanitizeUserFacingText(text: string, opts?: { errorContext?: boo
     return text;
   }
   const errorContext = opts?.errorContext ?? false;
-  const stripped = stripFinalTagsFromText(text);
+  const stripped = normalizeBookkeepingFailureLines(
+    stripFeishuAgentWrapperArtifacts(stripInternalArtifactSections(stripFinalTagsFromText(text))),
+  );
   const trimmed = stripped.trim();
   if (!trimmed) {
     return "";

@@ -38,6 +38,7 @@ import {
   ZAI_CODING_CN_BASE_URL,
   ZAI_GLOBAL_BASE_URL,
 } from "./onboard-auth.js";
+import { resolveMinimaxHostedModelId, resolveMinimaxHostedModelRef } from "./onboard-auth.models.js";
 import {
   createAuthTestLifecycle,
   readAuthProfilesForAgent,
@@ -410,7 +411,7 @@ describe("applyMinimaxApiConfig", () => {
     expect(cfg.models?.providers?.minimax?.apiKey).toBe("old-key");
     expect(cfg.models?.providers?.minimax?.models.map((m) => m.id)).toEqual([
       "old-model",
-      "MiniMax-M2.5",
+      resolveMinimaxHostedModelId(),
     ]);
   });
 
@@ -645,8 +646,8 @@ describe("provider alias defaults", () => {
   it("adds expected alias for provider defaults", () => {
     const aliasCases = [
       {
-        applyConfig: () => applyMinimaxApiConfig({}, "MiniMax-M2.5"),
-        modelRef: "minimax/MiniMax-M2.5",
+        applyConfig: () => applyMinimaxApiConfig({}, resolveMinimaxHostedModelId()),
+        modelRef: resolveMinimaxHostedModelRef(),
         alias: "Minimax",
       },
       {

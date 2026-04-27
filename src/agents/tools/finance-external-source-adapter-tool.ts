@@ -301,7 +301,7 @@ function parseFeedItemsFromXml(xml: string): ParsedExportItem[] {
         contentKind: bodyText ? ("article" as const) : ("reference" as const),
       };
     })
-    .filter((item): item is ParsedExportItem => item !== null);
+    .flatMap((item) => (item ? [item] : []));
 }
 
 function parseFeedItemsFromJson(content: string): ParsedExportItem[] {
@@ -375,7 +375,7 @@ function parseFeedItemsFromJson(content: string): ParsedExportItem[] {
         contentKind: bodyText ? ("article" as const) : ("reference" as const),
       };
     })
-    .filter((item): item is ParsedExportItem => item !== null);
+    .flatMap((item) => (item ? [item] : []));
 }
 
 function parseSearchResultItemsFromJson(content: string): ParsedExportItem[] {
@@ -426,7 +426,7 @@ function parseSearchResultItemsFromJson(content: string): ParsedExportItem[] {
         contentKind: "reference" as const,
       };
     })
-    .filter((item): item is ParsedExportItem => item !== null);
+    .flatMap((item) => (item ? [item] : []));
 }
 
 function parseOpmlEntries(content: string): ParsedExportItem[] {
@@ -450,7 +450,7 @@ function parseOpmlEntries(content: string): ParsedExportItem[] {
         retrievalNotesSuffix: xmlUrl ? `OPML feed: ${xmlUrl}` : undefined,
       };
     })
-    .filter((item): item is ParsedExportItem => item !== null);
+    .flatMap((item) => (item ? [item] : []));
 }
 
 async function collectFilesRecursively(dirPath: string): Promise<string[]> {

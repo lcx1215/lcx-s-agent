@@ -10,6 +10,7 @@ import {
   buildCommandsMessagePaginated,
   buildHelpMessage,
   buildStatusMessage,
+  formatLobsterProtocolLine,
 } from "./status.js";
 
 const { listPluginCommands } = vi.hoisted(() => ({
@@ -254,6 +255,66 @@ describe("buildStatusMessage", () => {
     });
 
     expect(normalizeTestText(text)).not.toContain("Media:");
+  });
+
+  it("includes lobster operating protocol summary when config is present", async () => {
+    await withTempHome(async (home) => {
+      const workspace = path.join(home, "workspace");
+      fs.mkdirSync(path.join(workspace, "memory"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "memory", "current-research-line.md"), "# current\n");
+      fs.writeFileSync(path.join(workspace, "MEMORY.md"), "# memory\n");
+
+      const text = buildStatusMessage({
+        config: {
+          agents: {
+            defaults: {
+              workspace,
+              model: { primary: "moonshot/kimi-k2.6" },
+            },
+          },
+        } as unknown as OpenClawConfig,
+        agent: { model: "moonshot/kimi-k2.6" },
+        sessionEntry: { sessionId: "lobster", updatedAt: 0 },
+        sessionKey: "agent:main:main",
+        queue: { mode: "collect", depth: 0 },
+      });
+
+      const normalized = normalizeTestText(text);
+      expect(normalized).toContain(
+        "Lobster: control_room_main_lane · openclaw_embedded_agent · plugin optional · dm=main · anchors 2/3",
+      );
+    });
+  });
+
+  it("shows lobster plugin as on when policy enables it", async () => {
+    await withTempHome(async (home) => {
+      const workspace = path.join(home, "workspace");
+      fs.mkdirSync(path.join(workspace, "memory"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "memory", "current-research-line.md"), "# current\n");
+      fs.writeFileSync(path.join(workspace, "memory", "unified-risk-view.md"), "# risk\n");
+      fs.writeFileSync(path.join(workspace, "MEMORY.md"), "# memory\n");
+
+      const text = buildStatusMessage({
+        config: {
+          tools: { alsoAllow: ["lobster"] },
+          agents: {
+            defaults: {
+              workspace,
+              model: { primary: "moonshot/kimi-k2.6" },
+            },
+          },
+        } as unknown as OpenClawConfig,
+        agent: { model: "moonshot/kimi-k2.6" },
+        sessionEntry: { sessionId: "lobster-enabled", updatedAt: 0 },
+        sessionKey: "agent:main:main",
+        queue: { mode: "collect", depth: 0 },
+      });
+
+      const normalized = normalizeTestText(text);
+      expect(normalized).toContain(
+        "Lobster: control_room_main_lane · openclaw_embedded_agent · plugin on · dm=main · anchors 3/3",
+      );
+    });
   });
 
   it("does not show elevated label when session explicitly disables it", () => {
@@ -673,6 +734,34 @@ describe("buildHelpMessage", () => {
     expect(text).toContain("/skill <name> [input]");
     expect(text).not.toContain("/config");
     expect(text).not.toContain("/debug");
+  });
+
+  it("includes lobster protocol summary when config is present", async () => {
+    await withTempHome(async (home) => {
+      const workspace = path.join(home, "workspace");
+      fs.mkdirSync(path.join(workspace, "memory"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "memory", "current-research-line.md"), "# current\n");
+      fs.writeFileSync(path.join(workspace, "MEMORY.md"), "# memory\n");
+
+      const text = buildHelpMessage({
+        agents: {
+          defaults: {
+            workspace,
+            model: { primary: "moonshot/kimi-k2.6" },
+          },
+        },
+      } as unknown as OpenClawConfig);
+
+      expect(normalizeTestText(text)).toContain(
+        "Lobster: control_room_main_lane · openclaw_embedded_agent · plugin optional · dm=main · anchors 2/3",
+      );
+    });
+  });
+});
+
+describe("formatLobsterProtocolLine", () => {
+  it("returns null without config", () => {
+    expect(formatLobsterProtocolLine()).toBeNull();
   });
 });
 

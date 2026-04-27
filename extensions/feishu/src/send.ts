@@ -208,8 +208,8 @@ export async function getMessageFeishu(params: {
     const rawItem = response.data?.items?.[0] ?? response.data;
     const item: FeishuRawMessageItem | null =
       rawItem &&
-      (rawItem.body !== undefined || (rawItem as { message_id?: string }).message_id !== undefined)
-        ? rawItem
+      ("body" in rawItem || (rawItem as { message_id?: string }).message_id !== undefined)
+        ? (rawItem as FeishuRawMessageItem)
         : null;
     return parseFeishuMessageItem(item, messageId);
   } catch {

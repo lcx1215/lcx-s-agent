@@ -1,5 +1,6 @@
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import { compactText, createSessionArtifactHandler, type SessionTurn } from "../artifact-memory.js";
+import { renderFrontierResearchCardArtifact } from "../lobster-brain-registry.js";
 
 const log = createSubsystemLogger("hooks/frontier-research");
 
@@ -16,6 +17,12 @@ type ResearchCardHints = {
   doNotCopyBlindly: string;
   relevanceToLobster: string;
 };
+
+type FrontierFoundationTemplate =
+  | "portfolio-sizing-discipline"
+  | "risk-transmission"
+  | "outcome-review"
+  | "execution-hygiene";
 
 export type FrontierSessionSummary = {
   title: string;
@@ -497,6 +504,23 @@ export function researchHintsForFamily(methodFamily: string): ResearchCardHints 
   }
 }
 
+export function foundationTemplateForMethodFamily(
+  methodFamily: string,
+): FrontierFoundationTemplate {
+  switch (methodFamily) {
+    case "factor-model":
+      return "portfolio-sizing-discipline";
+    case "time-series-transformer":
+    case "multimodal-finance":
+      return "risk-transmission";
+    case "reinforcement-learning":
+    case "llm-finance-method":
+      return "outcome-review";
+    default:
+      return "execution-hygiene";
+  }
+}
+
 export function inferVerdict(
   turns: SessionTurn[],
 ): "archive_for_knowledge" | "watch_for_followup" | "worth_reproducing" | "ignore" {
@@ -567,38 +591,37 @@ const saveFrontierResearchCard = createSessionArtifactHandler({
   fallbackSlug: (turns) => `frontier-research-${inferMethodFamily(turns)}`,
   renderContent: ({ event, sessionId, turns, dateStr, timeStr }) => {
     const summary = summarizeFrontierResearchSession(turns);
+    const foundationTemplate = foundationTemplateForMethodFamily(summary.hints.methodFamily);
     const latestTurns = turns.toReversed();
     const latestUser = latestTurns.find((turn) => turn.role === "user")?.text ?? "";
     const latestAssistant = latestTurns.find((turn) => turn.role === "assistant")?.text ?? "";
-
-    return [
-      `# Frontier Research Card: ${dateStr} ${timeStr} UTC`,
-      "",
-      `- **Session Key**: ${event.sessionKey}`,
-      `- **Session ID**: ${sessionId ?? "unknown"}`,
-      "",
-      "## Research Card",
-      `- title: ${summary.title}`,
-      `- material_type: ${summary.materialType}`,
-      `- method_family: ${summary.hints.methodFamily}`,
-      `- problem_statement: ${compactText(latestUser || turns[0]?.text || "Method-heavy research session")}`,
-      `- method_summary: ${compactText(latestAssistant || summary.hints.methodSummary)}`,
-      `- claimed_contribution: ${summary.claimedContribution}`,
-      `- data_setup: ${summary.dataSetup}`,
-      `- evaluation_protocol: ${summary.evaluationProtocol}`,
-      `- key_results: ${summary.keyResults}`,
-      `- possible_leakage_points: ${summary.hints.leakageRisk}`,
-      `- overfitting_risks: ${summary.hints.overfittingRisk}`,
-      `- replication_cost: ${summary.hints.replicationCost}`,
-      `- relevance_to_lobster: ${summary.hints.relevanceToLobster}`,
-      `- adoptable_ideas: ${summary.hints.adoptableIdea}`,
-      `- do_not_copy_blindly: ${summary.hints.doNotCopyBlindly}`,
-      `- verdict: ${summary.verdict}`,
-      "",
-      "## Session Trace",
-      ...turns.slice(-8).map((turn) => `- ${turn.role}: ${compactText(turn.text, 160)}`),
-      "",
-    ].join("\n");
+    return renderFrontierResearchCardArtifact(
+      {
+        sessionKey: event.sessionKey,
+        sessionId: sessionId ?? "unknown",
+        title: summary.title,
+        materialType: summary.materialType,
+        methodFamily: summary.hints.methodFamily,
+        problemStatement: compactText(latestUser || turns[0]?.text || "Method-heavy research session"),
+        methodSummary: compactText(latestAssistant || summary.hints.methodSummary),
+        claimedContribution: summary.claimedContribution,
+        dataSetup: summary.dataSetup,
+        evaluationProtocol: summary.evaluationProtocol,
+        keyResults: summary.keyResults,
+        possibleLeakagePoints: summary.hints.leakageRisk,
+        overfittingRisks: summary.hints.overfittingRisk,
+        replicationCost: summary.hints.replicationCost,
+        relevanceToLobster: summary.hints.relevanceToLobster,
+        adoptableIdeas: summary.hints.adoptableIdea,
+        doNotCopyBlindly: summary.hints.doNotCopyBlindly,
+        foundationTemplate,
+        verdict: summary.verdict,
+        sessionTraceLines: turns.slice(-8).map(
+          (turn) => `${turn.role}: ${compactText(turn.text, 160)}`,
+        ),
+      },
+      { dateStr, timeStr },
+    );
   },
 });
 

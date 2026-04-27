@@ -1,12 +1,15 @@
+import fs from "node:fs/promises";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   resetMemoryToolMockState,
   setMemoryBackend,
+  setMemoryManagerUnavailable,
   setMemoryReadFileImpl,
   setMemorySearchImpl,
   type MemoryReadParams,
 } from "../../../test/helpers/memory-tool-manager-mock.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { makeTempWorkspace, writeWorkspaceFile } from "../../test-helpers/workspace.js";
 import { createMemoryGetTool, createMemorySearchTool } from "./memory-tool.js";
 
 function asOpenClawConfig(config: Partial<OpenClawConfig>): OpenClawConfig {
@@ -15,6 +18,37 @@ function asOpenClawConfig(config: Partial<OpenClawConfig>): OpenClawConfig {
 
 function createToolConfig() {
   return asOpenClawConfig({ agents: { list: [{ id: "main", default: true }] } });
+}
+
+async function createWorkspaceWithProtectedSummaries(paths?: {
+  currentResearchLine?: boolean;
+  unifiedRiskView?: boolean;
+  rootMemory?: boolean;
+}): Promise<string> {
+  const workspaceDir = await makeTempWorkspace("openclaw-memory-tool-");
+  await fs.mkdir(`${workspaceDir}/memory`, { recursive: true });
+  if (paths?.currentResearchLine ?? true) {
+    await writeWorkspaceFile({
+      dir: `${workspaceDir}/memory`,
+      name: "current-research-line.md",
+      content: "# Current Research Line",
+    });
+  }
+  if (paths?.unifiedRiskView ?? true) {
+    await writeWorkspaceFile({
+      dir: `${workspaceDir}/memory`,
+      name: "unified-risk-view.md",
+      content: "# Unified Risk View",
+    });
+  }
+  if (paths?.rootMemory ?? true) {
+    await writeWorkspaceFile({
+      dir: workspaceDir,
+      name: "MEMORY.md",
+      content: "# Root Memory",
+    });
+  }
+  return workspaceDir;
 }
 
 function createMemoryGetToolOrThrow(config: OpenClawConfig = createToolConfig()) {
@@ -122,18 +156,36 @@ describe("memory search citations", () => {
       throw new Error("tool missing");
     }
     const result = await tool.execute("auto_mode_group", { query: "notes" });
-    const details = result.details as { results: Array<{ snippet: string }> };
+    const details = result.details as {
+      results: Array<{ snippet: string }>;
+      retrievalKind: string;
+      retrievalContract: string;
+    };
     expect(details.results[0]?.snippet).not.toMatch(/Source:/);
+    expect(details.retrievalKind).toBe("semantic");
+    expect(details.retrievalContract).toBe("supplemental_recall");
   });
 });
 
 describe("memory tools", () => {
+  it("keeps protected summaries as the first anchor in tool descriptions", () => {
+    const searchTool = createMemorySearchTool({ config: createToolConfig() });
+    const getTool = createMemoryGetToolOrThrow();
+
+    expect(searchTool?.description).toContain("anchor first on protected summaries when present");
+    expect(searchTool?.description).toContain("protected summaries remain the primary anchors");
+    expect(getTool.description).toContain(
+      "read protected summaries directly first when current-state truth matters",
+    );
+  });
+
   it("does not throw when memory_search fails (e.g. embeddings 429)", async () => {
     setMemorySearchImpl(async () => {
       throw new Error("openai embeddings failed: 429 insufficient_quota");
     });
 
-    const cfg = { agents: { list: [{ id: "main", default: true }] } };
+    const workspaceDir = await createWorkspaceWithProtectedSummaries();
+    const cfg = { agents: { list: [{ id: "main", default: true, workspace: workspaceDir }] } };
     const tool = createMemorySearchTool({ config: cfg });
     expect(tool).not.toBeNull();
     if (!tool) {
@@ -145,9 +197,61 @@ describe("memory tools", () => {
       results: [],
       disabled: true,
       unavailable: true,
+      retrievalContract: "supplemental_recall",
+      primaryAnchors: [
+        "memory/current-research-line.md",
+        "memory/unified-risk-view.md",
+        "MEMORY.md",
+      ],
+      primaryAnchorRule:
+        "Protected summaries present in this workspace are the canonical first anchors for current state; retrieved snippets are supporting recall until re-verified.",
       error: "openai embeddings failed: 429 insufficient_quota",
       warning: "Memory search is unavailable because the embedding provider quota is exhausted.",
-      action: "Top up or switch embedding provider, then retry memory_search.",
+      action:
+        "Top up or switch embedding provider, then retry memory_search. Until then, fall back to direct memory_get reads on any protected summaries that are present.",
+      fallbackStrategy:
+        "Read any protected summaries present in this workspace directly with memory_get before declaring recall degraded.",
+      fallbackPaths: [
+        "memory/current-research-line.md",
+        "memory/unified-risk-view.md",
+        "MEMORY.md",
+      ],
+    });
+  });
+
+  it("only returns protected anchors that actually exist in the workspace", async () => {
+    setMemorySearchImpl(async () => {
+      throw new Error("embedding provider timeout");
+    });
+
+    const workspaceDir = await createWorkspaceWithProtectedSummaries({
+      currentResearchLine: true,
+      unifiedRiskView: false,
+      rootMemory: false,
+    });
+    const tool = createMemorySearchTool({
+      config: { agents: { list: [{ id: "main", default: true, workspace: workspaceDir }] } },
+    });
+    if (!tool) {
+      throw new Error("tool missing");
+    }
+
+    const result = await tool.execute("partial_anchors", { query: "hello" });
+    expect(result.details).toEqual({
+      results: [],
+      disabled: true,
+      unavailable: true,
+      retrievalContract: "supplemental_recall",
+      primaryAnchors: ["memory/current-research-line.md"],
+      primaryAnchorRule:
+        "Protected summaries present in this workspace are the canonical first anchors for current state; retrieved snippets are supporting recall until re-verified.",
+      error: "embedding provider timeout",
+      warning: "Memory search is unavailable due to an embedding/provider error.",
+      action:
+        "Check embedding provider configuration and retry memory_search. Until then, fall back to direct memory_get reads on any protected summaries that are present.",
+      fallbackStrategy:
+        "Read any protected summaries present in this workspace directly with memory_get before declaring recall degraded.",
+      fallbackPaths: ["memory/current-research-line.md"],
     });
   });
 
@@ -172,12 +276,53 @@ describe("memory tools", () => {
       return { text: "", path: "memory/2026-02-19.md" };
     });
 
-    const tool = createMemoryGetToolOrThrow();
+    const workspaceDir = await createWorkspaceWithProtectedSummaries({
+      currentResearchLine: true,
+      unifiedRiskView: false,
+      rootMemory: false,
+    });
+    const tool = createMemoryGetToolOrThrow(
+      asOpenClawConfig({
+        agents: { list: [{ id: "main", default: true, workspace: workspaceDir }] },
+      }),
+    );
 
     const result = await tool.execute("call_enoent", { path: "memory/2026-02-19.md" });
     expect(result.details).toEqual({
       text: "",
       path: "memory/2026-02-19.md",
+      missing: true,
+    });
+  });
+
+  it("still reads protected summaries directly when the memory manager is unavailable", async () => {
+    setMemoryManagerUnavailable("openai embeddings failed: 429 insufficient_quota");
+
+    const workspaceDir = await createWorkspaceWithProtectedSummaries({
+      currentResearchLine: true,
+      unifiedRiskView: false,
+      rootMemory: false,
+    });
+    await writeWorkspaceFile({
+      dir: `${workspaceDir}/memory`,
+      name: "current-research-line.md",
+      content: ["alpha", "beta", "gamma"].join("\n"),
+    });
+
+    const tool = createMemoryGetToolOrThrow(
+      asOpenClawConfig({
+        agents: { list: [{ id: "main", default: true, workspace: workspaceDir }] },
+      }),
+    );
+
+    const result = await tool.execute("call_direct_fallback", {
+      path: "memory/current-research-line.md",
+      from: 2,
+      lines: 1,
+    });
+    expect(result.details).toEqual({
+      text: "beta",
+      path: "memory/current-research-line.md",
     });
   });
 });

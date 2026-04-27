@@ -1,11 +1,14 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildContextReply } from "./commands-context-report.js";
 import type { HandleCommandsParams } from "./commands-types.js";
+import { withTempHome } from "../../../test/helpers/temp-home.js";
 
 function makeParams(
   commandBodyNormalized: string,
   truncated: boolean,
-  options?: { omitBootstrapLimits?: boolean },
+  options?: { omitBootstrapLimits?: boolean; cfg?: HandleCommandsParams["cfg"] },
 ): HandleCommandsParams {
   return {
     command: {
@@ -58,7 +61,7 @@ function makeParams(
         },
       },
     },
-    cfg: {},
+    cfg: options?.cfg ?? {},
     ctx: {},
     commandBody: "",
     commandArgs: [],
@@ -67,6 +70,31 @@ function makeParams(
 }
 
 describe("buildContextReply", () => {
+  it("shows lobster protocol summary in help output when config is present", async () => {
+    await withTempHome(async (home) => {
+      const workspace = path.join(home, "workspace");
+      fs.mkdirSync(path.join(workspace, "memory"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "memory", "current-research-line.md"), "# current\n");
+      fs.writeFileSync(path.join(workspace, "MEMORY.md"), "# memory\n");
+
+      const result = await buildContextReply(
+        makeParams("/context", false, {
+          cfg: {
+            agents: {
+              defaults: {
+                workspace,
+                model: { primary: "moonshot/kimi-k2.6" },
+              },
+            },
+          } as never,
+        }),
+      );
+      expect(result.text).toContain(
+        "🦞 Lobster: control_room_main_lane · openclaw_embedded_agent · plugin optional · dm=main · anchors 2/3",
+      );
+    });
+  });
+
   it("shows bootstrap truncation warning in list output when context exceeds configured limits", async () => {
     const result = await buildContextReply(makeParams("/context list", true));
     expect(result.text).toContain("Bootstrap max/total: 150,000 chars");
@@ -88,5 +116,61 @@ describe("buildContextReply", () => {
     expect(result.text).toContain("Bootstrap max/file: 20,000 chars");
     expect(result.text).toContain("Bootstrap max/total: 150,000 chars");
     expect(result.text).not.toContain("Bootstrap max/file: ? chars");
+  });
+
+  it("shows lobster protocol summary in list output when config is present", async () => {
+    await withTempHome(async (home) => {
+      const workspace = path.join(home, "workspace");
+      fs.mkdirSync(path.join(workspace, "memory"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "memory", "current-research-line.md"), "# current\n");
+      fs.writeFileSync(path.join(workspace, "MEMORY.md"), "# memory\n");
+
+      const result = await buildContextReply(
+        makeParams("/context list", false, {
+          cfg: {
+            tools: { alsoAllow: ["lobster"] },
+            agents: {
+              defaults: {
+                workspace,
+                model: { primary: "moonshot/kimi-k2.6" },
+              },
+            },
+          } as never,
+        }),
+      );
+      expect(result.text).toContain(
+        "🦞 Lobster: control_room_main_lane · openclaw_embedded_agent · plugin on · dm=main · anchors 2/3",
+      );
+    });
+  });
+
+  it("shows lobster protocol detail block in detailed output when config is present", async () => {
+    await withTempHome(async (home) => {
+      const workspace = path.join(home, "workspace");
+      fs.mkdirSync(path.join(workspace, "memory"), { recursive: true });
+      fs.writeFileSync(path.join(workspace, "memory", "current-research-line.md"), "# current\n");
+      fs.writeFileSync(path.join(workspace, "memory", "unified-risk-view.md"), "# risk\n");
+      fs.writeFileSync(path.join(workspace, "MEMORY.md"), "# memory\n");
+
+      const result = await buildContextReply(
+        makeParams("/context detail", false, {
+          cfg: {
+            tools: { alsoAllow: ["lobster"] },
+            agents: {
+              defaults: {
+                workspace,
+                model: { primary: "moonshot/kimi-k2.6" },
+              },
+            },
+          } as never,
+        }),
+      );
+      expect(result.text).toContain("Lobster operating protocol:");
+      expect(result.text).toContain("- defaultMode: control_room_main_lane");
+      expect(result.text).toContain("enabledByPolicy: true");
+      expect(result.text).toContain(
+        "  - memory/unified-risk-view.md: present (configured)",
+      );
+    });
   });
 });

@@ -12,6 +12,10 @@ import {
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import { buildFundamentalReviewBrief } from "../fundamental-review-brief/handler.js";
 import { buildFundamentalReviewPlan } from "../fundamental-review-plan/handler.js";
 import { buildFundamentalReviewQueue } from "../fundamental-review-queue/handler.js";
@@ -262,6 +266,7 @@ async function runFollowUpTracker(params: {
   const event = createHookEvent("command", "reset", "agent:main:main", {
     cfg: makeConfig(tempDir),
   });
+  event.timestamp = new Date("2026-03-15T12:00:00.000Z");
 
   if (params.persistCollectionPackets) {
     await collectionPacketsHandler(event);
@@ -273,10 +278,10 @@ async function runFollowUpTracker(params: {
 
   const artifactPath = path.join(
     tempDir,
-    "bank",
-    "fundamental",
-    "collection-follow-up-trackers",
-    `${params.manifest.manifestId}.json`,
+    buildFundamentalArtifactJsonPath(
+      "fundamental-collection-follow-up-tracker",
+      params.manifest.manifestId,
+    ),
   );
   const trackerPath = path.join(
     tempDir,
@@ -285,22 +290,22 @@ async function runFollowUpTracker(params: {
     "follow-up-trackers",
     `${params.manifest.manifestId}.md`,
   );
-  const notePath = await fs
-    .readdir(path.join(tempDir, "memory"))
-    .then((entries) =>
-      entries.find((entry) =>
-        entry.endsWith(`fundamental-collection-follow-up-tracker-${params.manifest.manifestId}.md`),
-      ),
-    )
-    .then((entry) => (entry ? path.join(tempDir, "memory", entry) : null))
-    .catch(() => null);
+  const notePath = path.join(
+    tempDir,
+    "memory",
+    buildFundamentalArtifactNoteFilename({
+      dateStr: "2026-03-15",
+      stageName: "fundamental-collection-follow-up-tracker",
+      manifestId: params.manifest.manifestId,
+    }),
+  );
 
   const artifact = await fs
     .readFile(artifactPath, "utf-8")
     .then((raw) => JSON.parse(raw) as Record<string, unknown>)
     .catch(() => null);
   const trackerContent = await fs.readFile(trackerPath, "utf-8").catch(() => null);
-  const noteContent = notePath ? await fs.readFile(notePath, "utf-8").catch(() => null) : null;
+  const noteContent = await fs.readFile(notePath, "utf-8").catch(() => null);
 
   return { artifact, noteContent, trackerContent };
 }

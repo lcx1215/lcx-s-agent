@@ -88,11 +88,31 @@ async function runResetWithSession(params: {
 describe("frontier-research hook", () => {
   it("writes a frontier research card for paper-heavy sessions", async () => {
     const sessionContent = createMockSessionContent([
-      { role: "user", content: "Please review this WaveLSFormer paper and tell me whether it is worth a toy reproduction." },
-      { role: "assistant", content: "It looks like a time-series transformer paper with multi-scale structure extraction and possible leakage risk in windowing." },
-      { role: "user", content: "Focus on leakage, overfitting, the data setup, and whether we should reproduce it." },
-      { role: "assistant", content: "The paper claims multi-scale preprocessing improves signal quality, but the evaluation should use walk-forward splits and benchmark simpler baselines." },
-      { role: "assistant", content: "My tentative verdict is worth reproducing, but only with leakage-safe splits over historical time series." },
+      {
+        role: "user",
+        content:
+          "Please review this WaveLSFormer paper and tell me whether it is worth a toy reproduction.",
+      },
+      {
+        role: "assistant",
+        content:
+          "It looks like a time-series transformer paper with multi-scale structure extraction and possible leakage risk in windowing.",
+      },
+      {
+        role: "user",
+        content:
+          "Focus on leakage, overfitting, the data setup, and whether we should reproduce it.",
+      },
+      {
+        role: "assistant",
+        content:
+          "The paper claims multi-scale preprocessing improves signal quality, but the evaluation should use walk-forward splits and benchmark simpler baselines.",
+      },
+      {
+        role: "assistant",
+        content:
+          "My tentative verdict is worth reproducing, but only with leakage-safe splits over historical time series.",
+      },
     ]);
 
     const { files, cardContent } = await runResetWithSession({ sessionContent });
@@ -108,6 +128,7 @@ describe("frontier-research hook", () => {
     expect(cardContent).toContain("key_results:");
     expect(cardContent).toContain("possible_leakage_points:");
     expect(cardContent).toContain("overfitting_risks:");
+    expect(cardContent).toContain("foundation_template: risk-transmission");
     expect(cardContent).toContain("verdict: worth_reproducing");
     expect(cardContent).toContain("WaveLSFormer paper");
   });
@@ -160,7 +181,10 @@ describe("frontier-research hook", () => {
     expect(cardContent).toContain(
       "claimed_contribution: a structured LLM extraction pipeline can improve event representation consistency.",
     );
-    expect(cardContent).toContain("key_results: extraction quality may improve, but market-signal claims remain weak.");
+    expect(cardContent).toContain(
+      "key_results: extraction quality may improve, but market-signal claims remain weak.",
+    );
+    expect(cardContent).toContain("foundation_template: outcome-review");
     expect(cardContent).toContain("verdict: archive_for_knowledge");
   });
 });

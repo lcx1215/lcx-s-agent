@@ -1,6 +1,15 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  AssistantMessageEventStream,
+  Api,
+  Context,
+  Model,
+  SimpleStreamOptions,
+  StopReason,
+} from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream, streamSimple } from "@mariozechner/pi-ai";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { log } from "./logger.js";
@@ -849,6 +858,210 @@ function createZaiToolStreamWrapper(
         originalOnPayload?.(payload);
       },
     });
+  };
+}
+
+function createEmptyUsage(): AssistantMessage["usage"] {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function createTerminalAssistantMessage(params: {
+  model: Model<Api>;
+  stopReason: Extract<StopReason, "error" | "aborted">;
+  errorMessage: string;
+}): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: params.model.api,
+    provider: params.model.provider,
+    model: params.model.id,
+    usage: createEmptyUsage(),
+    stopReason: params.stopReason,
+    errorMessage: params.errorMessage,
+    timestamp: Date.now(),
+  };
+}
+
+function readAbortReason(signal: AbortSignal): unknown {
+  return "reason" in signal ? (signal as { reason?: unknown }).reason : undefined;
+}
+
+function normalizeAbortError(signal: AbortSignal): Error {
+  const reason = readAbortReason(signal);
+  if (reason instanceof Error) {
+    return reason;
+  }
+  const err = new Error(reason ? String(reason) : "Request aborted");
+  err.name = "AbortError";
+  return err;
+}
+
+function isAbortErrorLike(err: unknown): boolean {
+  return Boolean(
+    err &&
+    typeof err === "object" &&
+    "name" in err &&
+    ((err as { name?: unknown }).name === "AbortError" ||
+      (err as { name?: unknown }).name === "TimeoutError"),
+  );
+}
+
+function createAbortRace(signal: AbortSignal | undefined): Promise<never> | undefined {
+  if (!signal) {
+    return undefined;
+  }
+  if (signal.aborted) {
+    return Promise.reject(normalizeAbortError(signal));
+  }
+  return new Promise<never>((_, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(normalizeAbortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  const abortRace = createAbortRace(signal);
+  if (!abortRace) {
+    return promise;
+  }
+  return Promise.race([promise, abortRace]);
+}
+
+function pushFinalAssistantEvent(
+  stream: AssistantMessageEventStream,
+  message: AssistantMessage,
+): AssistantMessageEvent {
+  if (message.stopReason === "error" || message.stopReason === "aborted") {
+    const event: AssistantMessageEvent = {
+      type: "error",
+      reason: message.stopReason,
+      error: message,
+    };
+    stream.push(event);
+    return event;
+  }
+  const event: AssistantMessageEvent = {
+    type: "done",
+    reason: message.stopReason,
+    message,
+  };
+  stream.push(event);
+  return event;
+}
+
+/**
+ * Cron-only wrapper that converts provider request timeouts into protocol-valid
+ * terminal stream events instead of raw iterator rejections.
+ *
+ * @internal Exported for testing and run/attempt wiring only.
+ */
+export function createEmbeddedProviderRequestTimeoutWrapper(
+  baseStreamFn: StreamFn | undefined,
+  params: { timeoutMs: number; runId?: string; sessionId?: string },
+): StreamFn {
+  const underlying = baseStreamFn ?? streamSimple;
+  return async (
+    model: Model<Api>,
+    context: Context,
+    options?: SimpleStreamOptions,
+  ): Promise<AssistantMessageEventStream> => {
+    if (!Number.isFinite(params.timeoutMs) || params.timeoutMs <= 0) {
+      return await underlying(model, context, options);
+    }
+
+    const timeoutError = new Error(`LLM provider request timed out after ${params.timeoutMs}ms.`);
+    timeoutError.name = "TimeoutError";
+    const timeoutController = new AbortController();
+    const mergedSignal = options?.signal
+      ? AbortSignal.any([options.signal, timeoutController.signal])
+      : timeoutController.signal;
+    const proxyStream = createAssistantMessageEventStream();
+    let terminalEventSeen = false;
+    const timeoutTimer = setTimeout(
+      () => {
+        log.warn(
+          `embedded provider request timeout: runId=${params.runId ?? "unknown"} sessionId=${params.sessionId ?? "unknown"} provider=${model.provider}/${model.id} timeoutMs=${params.timeoutMs}`,
+        );
+        timeoutController.abort(timeoutError);
+      },
+      Math.max(1, params.timeoutMs),
+    );
+
+    void (async () => {
+      try {
+        const response = await underlying(model, context, {
+          ...options,
+          signal: mergedSignal,
+        });
+        const iterator = response[Symbol.asyncIterator]();
+
+        while (true) {
+          const nextItem = await raceWithAbort(iterator.next(), mergedSignal);
+          if (nextItem.done) {
+            break;
+          }
+          proxyStream.push(nextItem.value);
+          if (nextItem.value.type === "done" || nextItem.value.type === "error") {
+            terminalEventSeen = true;
+            break;
+          }
+        }
+
+        if (!terminalEventSeen) {
+          const finalMessage = await raceWithAbort(response.result(), mergedSignal);
+          pushFinalAssistantEvent(proxyStream, finalMessage);
+          terminalEventSeen = true;
+        }
+      } catch (err) {
+        if (!terminalEventSeen) {
+          const timeoutFired =
+            timeoutController.signal.aborted &&
+            readAbortReason(timeoutController.signal) === timeoutError;
+          const stopReason: Extract<StopReason, "error" | "aborted"> =
+            timeoutFired || !isAbortErrorLike(err) ? "error" : "aborted";
+          const message =
+            err instanceof Error ? err.message : timeoutFired ? timeoutError.message : String(err);
+          pushFinalAssistantEvent(
+            proxyStream,
+            createTerminalAssistantMessage({
+              model,
+              stopReason,
+              errorMessage: message,
+            }),
+          );
+          terminalEventSeen = true;
+        }
+      } finally {
+        clearTimeout(timeoutTimer);
+        proxyStream.end();
+      }
+    })().catch((err) => {
+      if (terminalEventSeen) {
+        return;
+      }
+      pushFinalAssistantEvent(
+        proxyStream,
+        createTerminalAssistantMessage({
+          model,
+          stopReason: "error",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      proxyStream.end();
+    });
+
+    return proxyStream;
   };
 }
 

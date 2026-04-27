@@ -113,6 +113,9 @@ Swabble/build/
 dist/protocol.schema.json
 .ant-colony/
 
+# Generated extension declaration output
+extensions/feishu/src/*.d.ts
+
 # Eclipse
 **/.project
 **/.classpath

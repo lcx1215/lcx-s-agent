@@ -10,6 +10,7 @@ import {
   withTempEnv,
   withModelsTempHome as withTempHome,
 } from "./models-config.e2e-harness.js";
+import { resolveMinimaxDefaultTextModelId } from "./minimax-model-catalog.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
 
 installModelsConfigTestHooks();
@@ -98,7 +99,7 @@ describe("models-config", () => {
         providerKey: "minimax",
         expectedBaseUrl: "https://api.minimax.io/anthropic",
         expectedApiKeyRef: "MINIMAX_API_KEY",
-        expectedModelIds: ["MiniMax-M2.5", "MiniMax-VL-01"],
+        expectedModelIds: [resolveMinimaxDefaultTextModelId(), "MiniMax-VL-01"],
       });
     });
   });

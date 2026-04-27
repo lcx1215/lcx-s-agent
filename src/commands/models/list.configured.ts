@@ -4,23 +4,25 @@ import {
   resolveConfiguredModelRef,
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
+import { resolveBuiltInDefaultModelRef } from "../../agents/defaults.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   resolveAgentModelFallbackValues,
   resolveAgentModelPrimaryValue,
 } from "../../config/model-input.js";
 import type { ConfiguredEntry } from "./list.types.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER, modelKey } from "./shared.js";
+import { modelKey } from "./shared.js";
 
 export function resolveConfiguredEntries(cfg: OpenClawConfig) {
+  const builtInDefault = resolveBuiltInDefaultModelRef();
   const resolvedDefault = resolveConfiguredModelRef({
     cfg,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
+    defaultProvider: builtInDefault.provider,
+    defaultModel: builtInDefault.model,
   });
   const aliasIndex = buildModelAliasIndex({
     cfg,
-    defaultProvider: DEFAULT_PROVIDER,
+    defaultProvider: builtInDefault.provider,
   });
   const order: string[] = [];
   const tagsByKey = new Map<string, Set<string>>();
@@ -48,7 +50,7 @@ export function resolveConfiguredEntries(cfg: OpenClawConfig) {
   modelFallbacks.forEach((raw, idx) => {
     const resolved = resolveModelRefFromString({
       raw: String(raw ?? ""),
-      defaultProvider: DEFAULT_PROVIDER,
+      defaultProvider: builtInDefault.provider,
       aliasIndex,
     });
     if (!resolved) {
@@ -60,7 +62,7 @@ export function resolveConfiguredEntries(cfg: OpenClawConfig) {
   if (imagePrimary) {
     const resolved = resolveModelRefFromString({
       raw: imagePrimary,
-      defaultProvider: DEFAULT_PROVIDER,
+      defaultProvider: builtInDefault.provider,
       aliasIndex,
     });
     if (resolved) {
@@ -71,7 +73,7 @@ export function resolveConfiguredEntries(cfg: OpenClawConfig) {
   imageFallbacks.forEach((raw, idx) => {
     const resolved = resolveModelRefFromString({
       raw: String(raw ?? ""),
-      defaultProvider: DEFAULT_PROVIDER,
+      defaultProvider: builtInDefault.provider,
       aliasIndex,
     });
     if (!resolved) {
@@ -81,7 +83,7 @@ export function resolveConfiguredEntries(cfg: OpenClawConfig) {
   });
 
   for (const key of Object.keys(cfg.agents?.defaults?.models ?? {})) {
-    const parsed = parseModelRef(String(key ?? ""), DEFAULT_PROVIDER);
+    const parsed = parseModelRef(String(key ?? ""), builtInDefault.provider);
     if (!parsed) {
       continue;
     }

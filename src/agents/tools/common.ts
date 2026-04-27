@@ -227,7 +227,7 @@ export function readReactionParams(
   return { emoji, remove, isEmpty: !emoji };
 }
 
-export function jsonResult(payload: unknown): AgentToolResult<unknown> {
+export function jsonResult<T>(payload: T): AgentToolResult<T> {
   return {
     content: [
       {

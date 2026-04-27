@@ -4,6 +4,10 @@ import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
 import {
   buildCollectionManifestPatch,
@@ -271,8 +275,15 @@ const materializeFundamentalManifestPatchReview: HookHandler = async (event) => 
           patchReviews,
           notes: buildArtifactNotes({ patchReviews }),
         };
-        const reviewPath = `bank/fundamental/manifest-patch-reviews/${manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-manifest-patch-review-${manifestId}.md`;
+        const reviewPath = buildFundamentalArtifactJsonPath(
+          "fundamental-manifest-patch-review",
+          manifestId,
+        );
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-manifest-patch-review",
+          manifestId,
+        });
 
         await Promise.all([
           writeFileWithinRoot({

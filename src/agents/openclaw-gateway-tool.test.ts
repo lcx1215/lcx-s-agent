@@ -166,4 +166,26 @@ describe("gateway tool", () => {
       expect(params).toMatchObject({ timeoutMs: 20 * 60_000 });
     }
   });
+
+  it("passes update.check through gateway call", async () => {
+    const { callGatewayTool } = await import("./tools/gateway.js");
+    const tool = requireGatewayTool();
+
+    await tool.execute("call5", {
+      action: "update.check",
+      timeoutMs: 4321,
+      fetchGit: false,
+      includeRegistry: true,
+    });
+
+    expect(callGatewayTool).toHaveBeenCalledWith(
+      "update.check",
+      expect.any(Object),
+      expect.objectContaining({
+        timeoutMs: 4321,
+        fetchGit: false,
+        includeRegistry: true,
+      }),
+    );
+  });
 });

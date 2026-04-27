@@ -1,4 +1,5 @@
 import type { ChannelId } from "../channels/plugins/types.js";
+import type { LobsterProtocolSurface } from "./capabilities.js";
 
 export type SessionStatus = {
   agentId?: string;
@@ -46,10 +47,16 @@ export type StatusSummary = {
   };
   channelSummary: string[];
   queuedSystemEvents: string[];
+  lobsterProtocol: LobsterProtocolSurface;
   sessions: {
     paths: string[];
     count: number;
-    defaults: { model: string | null; contextTokens: number | null };
+    defaults: {
+      model: string | null;
+      contextTokens: number | null;
+      builtInDefaultModel?: string | null;
+      builtInDefaultReason?: string | null;
+    };
     recent: SessionStatus[];
     byAgent: Array<{
       agentId: string;

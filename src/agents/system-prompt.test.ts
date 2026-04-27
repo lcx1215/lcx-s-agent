@@ -499,7 +499,25 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("retrieval-first capability-card recall");
     expect(prompt).toContain("learningInternalizationStatus");
     expect(prompt).toContain("applicationReadyCandidateCount");
+    expect(prompt).toContain("applicationValidationQuery");
+    expect(prompt).toContain("applicationValidationStatus");
+    expect(prompt).toContain("auto-refreshed same-day retrieval review");
+    expect(prompt).toContain("usageReceiptPath");
+    expect(prompt).toContain("usageReviewPath");
     expect(prompt).toContain("application_ready");
+  });
+
+  it("includes per-apply usage automation guidance when the finance apply tool is available", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["finance_learning_capability_apply"],
+    });
+
+    expect(prompt).toContain("finance_learning_capability_apply");
+    expect(prompt).toContain("multi-capability synthesis plans");
+    expect(prompt).toContain("writes a usage receipt");
+    expect(prompt).toContain("refreshes the same-day usage review");
+    expect(prompt).toContain("including no-match refusals");
   });
 
   it("includes finance research source workbench guidance when the tool is available", () => {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import { applyAuthChoiceMiniMax } from "./auth-choice.apply.minimax.js";
+import { resolveMinimaxHostedModelRef } from "./onboard-auth.models.js";
 import {
   createAuthTestLifecycle,
   createExitThrowingRuntime,
@@ -110,7 +111,7 @@ describe("applyAuthChoiceMiniMax", () => {
       token: "mm-opts-token",
       profileId: "minimax:default",
       provider: "minimax",
-      expectedModel: "minimax/MiniMax-M2.5",
+      expectedModel: resolveMinimaxHostedModelRef(),
     },
     {
       caseName:
@@ -120,7 +121,7 @@ describe("applyAuthChoiceMiniMax", () => {
       token: "mm-cn-opts-token",
       profileId: "minimax-cn:default",
       provider: "minimax-cn",
-      expectedModel: "minimax-cn/MiniMax-M2.5",
+      expectedModel: `minimax-cn/${resolveMinimaxHostedModelRef().slice("minimax/".length)}`,
     },
   ])(
     "$caseName",
@@ -182,7 +183,7 @@ describe("applyAuthChoiceMiniMax", () => {
         mode: "api_key",
       });
       expect(resolveAgentModelPrimaryValue(result?.config.agents?.defaults?.model)).toBe(
-        "minimax-cn/MiniMax-M2.5",
+        `minimax-cn/${resolveMinimaxHostedModelRef().slice("minimax/".length)}`,
       );
     }
     expect(text).not.toHaveBeenCalled();
@@ -219,5 +220,32 @@ describe("applyAuthChoiceMiniMax", () => {
 
     const parsed = await readAuthProfiles(agentDir);
     expect(parsed.profiles?.["minimax:default"]?.key).toBe("mm-lightning-token");
+  });
+
+  it("uses OPENCLAW_MINIMAX_DEFAULT_MODEL for the default minimax api choice", async () => {
+    const previous = process.env.OPENCLAW_MINIMAX_DEFAULT_MODEL;
+    process.env.OPENCLAW_MINIMAX_DEFAULT_MODEL = "MiniMax-M2.7";
+    try {
+      const { agentDir, result } = await runMiniMaxChoice({
+        authChoice: "minimax-api",
+        opts: {
+          tokenProvider: "minimax",
+          token: "mm-27-token",
+        },
+      });
+
+      expect(resolveAgentModelPrimaryValue(result?.config.agents?.defaults?.model)).toBe(
+        "minimax/MiniMax-M2.7",
+      );
+
+      const parsed = await readAuthProfiles(agentDir);
+      expect(parsed.profiles?.["minimax:default"]?.key).toBe("mm-27-token");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OPENCLAW_MINIMAX_DEFAULT_MODEL;
+      } else {
+        process.env.OPENCLAW_MINIMAX_DEFAULT_MODEL = previous;
+      }
+    }
   });
 });

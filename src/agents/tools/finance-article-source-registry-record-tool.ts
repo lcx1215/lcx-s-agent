@@ -74,9 +74,11 @@ export function createFinanceArticleSourceRegistryRecordTool(options?: {
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const sourceName = normalizeRequiredText(params, "sourceName", "sourceName");
-      const sourceType = normalizeRequiredText(params, "sourceType", "sourceType") as
-        | FinanceArticleSourceRegistryArtifact["sources"][number]["sourceType"]
-        | undefined;
+      const sourceType = normalizeRequiredText(
+        params,
+        "sourceType",
+        "sourceType",
+      ) as FinanceArticleSourceRegistryArtifact["sources"][number]["sourceType"];
       const sourceUrlOrIdentifier = normalizeRequiredText(
         params,
         "sourceUrlOrIdentifier",

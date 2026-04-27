@@ -6,12 +6,20 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 import {
+  writeFundamentalArtifactErrors,
+  type FundamentalArtifactErrorStatus,
+} from "../fundamental-artifact-errors.js";
+import {
   summarizeFundamentalIntakeSession,
   type FundamentalDocumentMetadata,
   type FundamentalManifestScaffold,
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 import { buildFundamentalRiskHandoff } from "../fundamental-risk-handoff/handler.js";
 import { buildFundamentalScoringGate } from "../fundamental-scoring-gate/handler.js";
 import { buildSnapshotInput } from "../fundamental-snapshot-bridge/handler.js";
@@ -179,22 +187,81 @@ async function runReviewQueue(params: {
 
   await handler(event);
 
-  const queueDir = path.join(tempDir, "bank", "fundamental", "review-queues");
-  const queueFiles = await fs.readdir(queueDir);
   const memoryDir = path.join(tempDir, "memory");
-  const memoryFiles = await fs.readdir(memoryDir);
+  const queuePath = buildFundamentalReviewChainJsonPath(
+    "fundamental-review-queue",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalReviewChainNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-review-queue",
+    manifestId: params.manifest.manifestId,
+  });
 
   return {
     reviewQueue: JSON.parse(
-      await fs.readFile(path.join(queueDir, queueFiles[0]), "utf-8"),
+      await fs.readFile(path.join(tempDir, queuePath), "utf-8"),
     ) as Record<string, unknown>,
-    noteContent: await fs.readFile(
-      path.join(
-        memoryDir,
-        memoryFiles.find((name) => name.includes("fundamental-review-queue-")) ?? memoryFiles[0],
-      ),
-      "utf-8",
-    ),
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
+  };
+}
+
+async function runReviewQueueFromArtifactError(params: {
+  manifest: FundamentalManifestScaffold;
+  errorStage?: string;
+  errorStatus?: FundamentalArtifactErrorStatus;
+}): Promise<{
+  reviewQueue: Record<string, unknown>;
+  noteContent: string;
+}> {
+  const tempDir = await createCaseWorkspace("artifact-error");
+  const memoryDir = path.join(tempDir, "memory");
+  const manifestsDir = path.join(tempDir, "bank", "fundamental", "manifests");
+  await fs.mkdir(memoryDir, { recursive: true });
+  await fs.mkdir(manifestsDir, { recursive: true });
+  await fs.writeFile(
+    path.join(manifestsDir, `2026-03-15-fundamental-manifest-${params.manifest.manifestId}.json`),
+    `${JSON.stringify(params.manifest, null, 2)}\n`,
+    "utf-8",
+  );
+  await writeFundamentalArtifactErrors({
+    workspaceDir: tempDir,
+    memoryDir,
+    nowIso: "2026-03-15T12:00:00.000Z",
+    errors: [
+      {
+        stage: params.errorStage ?? "snapshot",
+        relativePath: `bank/fundamental/${params.errorStage ?? "snapshot"}/${params.manifest.manifestId}.json`,
+        fileName: `${params.manifest.manifestId}.json`,
+        manifestId: params.manifest.manifestId,
+        errorStatus: params.errorStatus ?? "blocked_due_to_artifact_error",
+        errorMessage: "Unexpected end of JSON input",
+      },
+    ],
+  });
+
+  const event = createHookEvent("command", "reset", "agent:main:main", {
+    cfg: makeConfig(tempDir),
+  });
+  event.timestamp = new Date("2026-03-15T13:00:00.000Z");
+
+  await handler(event);
+
+  const queuePath = buildFundamentalReviewChainJsonPath(
+    "fundamental-review-queue",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalReviewChainNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-review-queue",
+    manifestId: params.manifest.manifestId,
+  });
+
+  return {
+    reviewQueue: JSON.parse(
+      await fs.readFile(path.join(tempDir, queuePath), "utf-8"),
+    ) as Record<string, unknown>,
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
   };
 }
 
@@ -374,5 +441,37 @@ describe("fundamental-review-queue hook", () => {
     ]);
     expect(result.noteContent).toContain("queue_status: deeper_review");
     expect(result.noteContent).toContain("AAPL: priority=high, action=deeper_review");
+  });
+
+  it("materializes an explicit blocked queue when upstream artifact errors exist", async () => {
+    const manifest = createManifestFixture();
+    const result = await runReviewQueueFromArtifactError({ manifest });
+
+    expect(result.reviewQueue.queueStatus).toBe("blocked");
+    expect(result.reviewQueue.blockedList).toEqual(["AAPL"]);
+    expect(result.reviewQueue.followUpQueue).toEqual([]);
+    expect(result.reviewQueue.missingDocumentsQueue).toEqual([]);
+    expect(result.reviewQueue.targets).toEqual([
+      {
+        targetLabel: "AAPL",
+        region: "us",
+        handoffDecision: "blocked",
+        queueAction: "blocked",
+        reviewPriority: "medium",
+        watchlistCandidate: false,
+        missingCriticalInputs: ["artifact_error"],
+        requestedMaterials: [],
+        nextActions: ["resolve_artifact_error"],
+        documentPaths: [],
+        notes: [
+          "Target is blocked because upstream artifact parsing failed in stage(s): snapshot.",
+          "Downstream review queue remains explicitly blocked until the artifact error is resolved.",
+        ],
+      },
+    ]);
+    expect(result.reviewQueue.notes).toContain(
+      "This queue is explicitly blocked due to upstream artifact parsing failure.",
+    );
+    expect(result.noteContent).toContain("queue_status: blocked");
   });
 });

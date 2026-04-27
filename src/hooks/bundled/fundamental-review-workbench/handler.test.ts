@@ -5,13 +5,19 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
+import { writeFundamentalArtifactErrors } from "../fundamental-artifact-errors.js";
 import {
   summarizeFundamentalIntakeSession,
+  type FundamentalArtifactErrorStatus,
   type FundamentalDocumentMetadata,
   type FundamentalManifestScaffold,
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 import { buildFundamentalReviewBrief } from "../fundamental-review-brief/handler.js";
 import { buildFundamentalReviewPlan } from "../fundamental-review-plan/handler.js";
 import { buildFundamentalReviewQueue } from "../fundamental-review-queue/handler.js";
@@ -223,23 +229,103 @@ async function runReviewWorkbench(params: {
 
   await handler(event);
 
-  const workbenchDir = path.join(tempDir, "bank", "fundamental", "review-workbenches");
-  const workbenchFiles = await fs.readdir(workbenchDir);
   const memoryDir = path.join(tempDir, "memory");
-  const memoryFiles = await fs.readdir(memoryDir);
+  const workbenchPath = buildFundamentalReviewChainJsonPath(
+    "fundamental-review-workbench",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalReviewChainNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-review-workbench",
+    manifestId: params.manifest.manifestId,
+  });
 
   return {
     reviewWorkbench: JSON.parse(
-      await fs.readFile(path.join(workbenchDir, workbenchFiles[0]), "utf-8"),
+      await fs.readFile(path.join(tempDir, workbenchPath), "utf-8"),
     ) as Record<string, unknown>,
-    noteContent: await fs.readFile(
-      path.join(
-        memoryDir,
-        memoryFiles.find((name) => name.includes("fundamental-review-workbench-")) ??
-          memoryFiles[0],
-      ),
-      "utf-8",
-    ),
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
+  };
+}
+
+async function writeArtifactError(params: {
+  workspaceDir: string;
+  manifest: FundamentalManifestScaffold;
+  generatedAt: string;
+  stage?: string;
+  errorStatus?: FundamentalArtifactErrorStatus;
+}): Promise<void> {
+  await fs.mkdir(path.join(params.workspaceDir, "memory"), { recursive: true });
+  await writeFundamentalArtifactErrors({
+    workspaceDir: params.workspaceDir,
+    memoryDir: path.join(params.workspaceDir, "memory"),
+    nowIso: params.generatedAt,
+    errors: [
+      {
+        stage: params.stage ?? "snapshot",
+        relativePath: `bank/fundamental/${params.stage ?? "snapshot"}/${params.manifest.manifestId}.json`,
+        fileName: `${params.manifest.manifestId}.json`,
+        manifestId: params.manifest.manifestId,
+        errorStatus: params.errorStatus ?? "blocked_due_to_artifact_error",
+        errorMessage: "Unexpected end of JSON input",
+      },
+    ],
+  });
+}
+
+async function runReviewWorkbenchWithArtifactScenario(params: {
+  manifest: FundamentalManifestScaffold;
+  artifactErrorGeneratedAt: string;
+  documents?: Array<{ fileName: string; metadata?: FundamentalDocumentMetadata }>;
+  recoveryManifest?: FundamentalManifestScaffold;
+  recoveryDocuments?: Array<{ fileName: string; metadata?: FundamentalDocumentMetadata }>;
+}): Promise<{
+  reviewWorkbench: Record<string, unknown>;
+  noteContent: string;
+}> {
+  const tempDir = await createCaseWorkspace("artifact-error");
+  await prepareReviewPlanArtifact({
+    workspaceDir: tempDir,
+    manifest: params.manifest,
+    documents: params.documents,
+  });
+  if (params.recoveryManifest) {
+    await prepareReviewPlanArtifact({
+      workspaceDir: tempDir,
+      manifest: params.recoveryManifest,
+      documents: params.recoveryDocuments ?? params.documents,
+    });
+  }
+  await writeArtifactError({
+    workspaceDir: tempDir,
+    manifest: params.manifest,
+    generatedAt: params.artifactErrorGeneratedAt,
+  });
+
+  const event = createHookEvent("command", "reset", "agent:main:main", {
+    cfg: makeConfig(tempDir),
+  });
+  event.timestamp = new Date("2026-03-15T13:00:00.000Z");
+
+  await handler(event);
+
+  const workbenchPath = path.join(
+    tempDir,
+    buildFundamentalReviewChainJsonPath("fundamental-review-workbench", params.manifest.manifestId),
+  );
+  const memoryDir = path.join(tempDir, "memory");
+  const notePath = buildFundamentalReviewChainNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-review-workbench",
+    manifestId: params.manifest.manifestId,
+  });
+
+  return {
+    reviewWorkbench: JSON.parse(await fs.readFile(workbenchPath, "utf-8")) as Record<
+      string,
+      unknown
+    >,
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
   };
 }
 
@@ -371,5 +457,230 @@ describe("fundamental-review-workbench hook", () => {
       "Open a deeper-review packet for AAPL.",
     ]);
     expect(result.noteContent).toContain("workbench_status: deeper_review");
+  });
+
+  it("materializes an explicit blocked workbench when upstream artifact errors are newer than recovery", async () => {
+    const manifest = createManifestFixture({
+      reviewGateStatus: "approved_for_collection",
+      requestText:
+        "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+    });
+    const documents = [
+      {
+        fileName: "doc-annual-primary.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "annual_report",
+          sourceType: "issuer_primary",
+        },
+      },
+      {
+        fileName: "doc-annual-regulatory.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "annual_report",
+          sourceType: "regulatory_filing",
+        },
+      },
+      {
+        fileName: "doc-presentation.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "investor_presentation",
+          sourceType: "company_presentation",
+        },
+      },
+    ] satisfies Array<{ fileName: string; metadata?: FundamentalDocumentMetadata }>;
+    const result = await runReviewWorkbenchWithArtifactScenario({
+      manifest,
+      artifactErrorGeneratedAt: "2026-03-15T13:00:00.000Z",
+      documents,
+    });
+
+    expect(result.reviewWorkbench.workbenchStatus).toBe("blocked");
+    expect(result.reviewWorkbench.deeperReviewScaffolds).toEqual([]);
+    expect(result.reviewWorkbench.followUpCollectionPlans).toEqual([]);
+    expect(result.reviewWorkbench.blockedMonitoringChecklists).toEqual([
+      expect.objectContaining({
+        targetLabel: "AAPL",
+        requestedMaterials: [],
+      }),
+    ]);
+    expect(result.noteContent).toContain("workbench_status: blocked");
+  });
+
+  it("clears artifact blocking when a newer valid review plan exists for the same manifest", async () => {
+    const manifest = createManifestFixture({
+      reviewGateStatus: "approved_for_collection",
+      requestText:
+        "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+    });
+    const documents = [
+      {
+        fileName: "doc-annual-primary.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "annual_report",
+          sourceType: "issuer_primary",
+        },
+      },
+      {
+        fileName: "doc-annual-regulatory.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "annual_report",
+          sourceType: "regulatory_filing",
+        },
+      },
+      {
+        fileName: "doc-presentation.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "investor_presentation",
+          sourceType: "company_presentation",
+        },
+      },
+    ] satisfies Array<{ fileName: string; metadata?: FundamentalDocumentMetadata }>;
+    const result = await runReviewWorkbenchWithArtifactScenario({
+      manifest,
+      artifactErrorGeneratedAt: "2026-03-15T11:00:00.000Z",
+      documents,
+    });
+
+    expect(result.reviewWorkbench.workbenchStatus).toBe("deeper_review");
+    expect(result.reviewWorkbench.blockedMonitoringChecklists).toEqual([]);
+    expect(result.reviewWorkbench.deeperReviewScaffolds).toEqual([
+      expect.objectContaining({
+        targetLabel: "AAPL",
+        evidenceReadinessLevel: "baseline_ready",
+      }),
+    ]);
+  });
+
+  it("does not clear artifact blocking when recovery has the same generatedAt timestamp", async () => {
+    const manifest = createManifestFixture({
+      reviewGateStatus: "approved_for_collection",
+      requestText:
+        "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+    });
+    const documents = [
+      {
+        fileName: "doc-annual-primary.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "annual_report",
+          sourceType: "issuer_primary",
+        },
+      },
+      {
+        fileName: "doc-annual-regulatory.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "annual_report",
+          sourceType: "regulatory_filing",
+        },
+      },
+      {
+        fileName: "doc-presentation.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "investor_presentation",
+          sourceType: "company_presentation",
+        },
+      },
+    ] satisfies Array<{ fileName: string; metadata?: FundamentalDocumentMetadata }>;
+    const result = await runReviewWorkbenchWithArtifactScenario({
+      manifest,
+      artifactErrorGeneratedAt: "2026-03-15T12:00:00.000Z",
+      documents,
+    });
+
+    expect(result.reviewWorkbench.workbenchStatus).toBe("blocked");
+    expect(result.reviewWorkbench.deeperReviewScaffolds).toEqual([]);
+    expect(result.reviewWorkbench.blockedMonitoringChecklists).toEqual([
+      expect.objectContaining({
+        targetLabel: "AAPL",
+      }),
+    ]);
+  });
+
+  it("does not allow cross-manifest recovery to clear blocking", async () => {
+    const manifest = createManifestFixture({
+      reviewGateStatus: "approved_for_collection",
+      requestText:
+        "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+    });
+    const recoveryManifest = {
+      ...createManifestFixture({
+        reviewGateStatus: "approved_for_collection",
+        requestText:
+          "Build a fundamental research scaffold for MSFT in the US. Use annual reports and investor presentations.",
+      }),
+      manifestId: "msft-cross-manifest-recovery",
+    };
+    const aaplDocuments = [
+      {
+        fileName: "aapl-annual-primary.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "annual_report",
+          sourceType: "issuer_primary",
+        },
+      },
+      {
+        fileName: "aapl-presentation.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "AAPL",
+          category: "investor_presentation",
+          sourceType: "company_presentation",
+        },
+      },
+    ] satisfies Array<{ fileName: string; metadata?: FundamentalDocumentMetadata }>;
+    const msftDocuments = [
+      {
+        fileName: "msft-annual-primary.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "MSFT",
+          category: "annual_report",
+          sourceType: "issuer_primary",
+        },
+      },
+      {
+        fileName: "msft-presentation.bin",
+        metadata: {
+          version: 1,
+          targetLabel: "MSFT",
+          category: "investor_presentation",
+          sourceType: "company_presentation",
+        },
+      },
+    ] satisfies Array<{ fileName: string; metadata?: FundamentalDocumentMetadata }>;
+    const result = await runReviewWorkbenchWithArtifactScenario({
+      manifest,
+      artifactErrorGeneratedAt: "2026-03-15T13:00:00.000Z",
+      documents: aaplDocuments,
+      recoveryManifest,
+      recoveryDocuments: msftDocuments,
+    });
+
+    expect(result.reviewWorkbench.workbenchStatus).toBe("blocked");
+    expect(result.reviewWorkbench.deeperReviewScaffolds).toEqual([]);
+    expect(result.reviewWorkbench.blockedMonitoringChecklists).toEqual([
+      expect.objectContaining({
+        targetLabel: "AAPL",
+      }),
+    ]);
   });
 });

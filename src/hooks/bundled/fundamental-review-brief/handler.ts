@@ -1,19 +1,16 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
-import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
 import {
-  buildFundamentalReviewQueue,
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
+import {
+  loadReviewQueuesWithFallback,
   type FundamentalReviewQueueArtifact,
 } from "../fundamental-review-queue/handler.js";
-import {
-  buildFundamentalRiskHandoff,
-  type FundamentalRiskHandoffArtifact,
-} from "../fundamental-risk-handoff/handler.js";
-import type { FundamentalScoringGateArtifact } from "../fundamental-scoring-gate/handler.js";
+import type { FundamentalRiskHandoffArtifact } from "../fundamental-risk-handoff/handler.js";
 
 const log = createSubsystemLogger("hooks/fundamental-review-brief");
 
@@ -49,144 +46,6 @@ export type FundamentalReviewBriefArtifact = {
   blockedTargets: ReviewBriefTarget[];
   notes: string[];
 };
-
-async function loadJsonFiles<T>(params: {
-  dirPath: string;
-  relativePrefix: string;
-}): Promise<Array<{ relativePath: string; data: T }>> {
-  try {
-    const fileNames = (await fs.readdir(params.dirPath))
-      .filter((name) => name.endsWith(".json"))
-      .toSorted();
-    return await Promise.all(
-      fileNames.map(async (name) => {
-        const relativePath = `${params.relativePrefix}/${name}`;
-        const raw = await fs.readFile(path.join(params.dirPath, name), "utf-8");
-        return {
-          relativePath,
-          data: JSON.parse(raw) as T,
-        };
-      }),
-    );
-  } catch {
-    return [];
-  }
-}
-
-async function loadRiskHandoffsWithFallback(
-  workspaceDir: string,
-): Promise<Array<{ relativePath: string; handoff: FundamentalRiskHandoffArtifact }>> {
-  const [manifests, scoringGates, persistedHandoffs] = await Promise.all([
-    loadJsonFiles<FundamentalManifestScaffold>({
-      dirPath: path.join(workspaceDir, "bank", "fundamental", "manifests"),
-      relativePrefix: "bank/fundamental/manifests",
-    }),
-    loadJsonFiles<FundamentalScoringGateArtifact>({
-      dirPath: path.join(workspaceDir, "bank", "fundamental", "scoring-gates"),
-      relativePrefix: "bank/fundamental/scoring-gates",
-    }),
-    loadJsonFiles<FundamentalRiskHandoffArtifact>({
-      dirPath: path.join(workspaceDir, "bank", "fundamental", "risk-handoffs"),
-      relativePrefix: "bank/fundamental/risk-handoffs",
-    }),
-  ]);
-
-  const manifestById = new Map(manifests.map(({ data }) => [data.manifestId, data]));
-  const resolved = new Map(
-    persistedHandoffs.map(({ relativePath, data }) => [
-      data.manifestId,
-      { relativePath, handoff: data },
-    ]),
-  );
-
-  for (const { relativePath, data: scoringGate } of scoringGates) {
-    if (resolved.has(scoringGate.manifestId)) {
-      continue;
-    }
-    const manifest = manifestById.get(scoringGate.manifestId);
-    if (!manifest) {
-      continue;
-    }
-    resolved.set(scoringGate.manifestId, {
-      relativePath: `bank/fundamental/risk-handoffs/${scoringGate.manifestId}.json`,
-      handoff: buildFundamentalRiskHandoff({
-        nowIso: scoringGate.generatedAt,
-        scoringGatePath: relativePath,
-        manifestRiskHandoffStatus: manifest.riskHandoff.status,
-        scoringGate,
-      }),
-    });
-  }
-
-  return [...resolved.values()].toSorted(
-    (a, b) =>
-      b.handoff.generatedAt.localeCompare(a.handoff.generatedAt) ||
-      a.handoff.manifestId.localeCompare(b.handoff.manifestId),
-  );
-}
-
-async function loadReviewQueuesWithFallback(workspaceDir: string): Promise<
-  Array<{
-    relativePath: string;
-    reviewQueue: FundamentalReviewQueueArtifact;
-    riskHandoffPath: string;
-    handoff: FundamentalRiskHandoffArtifact;
-  }>
-> {
-  const [persistedQueues, handoffs] = await Promise.all([
-    loadJsonFiles<FundamentalReviewQueueArtifact>({
-      dirPath: path.join(workspaceDir, "bank", "fundamental", "review-queues"),
-      relativePrefix: "bank/fundamental/review-queues",
-    }),
-    loadRiskHandoffsWithFallback(workspaceDir),
-  ]);
-
-  const handoffById = new Map(handoffs.map((entry) => [entry.handoff.manifestId, entry]));
-  const resolved = new Map<
-    string,
-    {
-      relativePath: string;
-      reviewQueue: FundamentalReviewQueueArtifact;
-      riskHandoffPath: string;
-      handoff: FundamentalRiskHandoffArtifact;
-    }
-  >();
-
-  for (const { relativePath, data } of persistedQueues) {
-    const handoff = handoffById.get(data.manifestId);
-    if (!handoff) {
-      continue;
-    }
-    resolved.set(data.manifestId, {
-      relativePath,
-      reviewQueue: data,
-      riskHandoffPath: handoff.relativePath,
-      handoff: handoff.handoff,
-    });
-  }
-
-  for (const handoff of handoffs) {
-    if (resolved.has(handoff.handoff.manifestId)) {
-      continue;
-    }
-    resolved.set(handoff.handoff.manifestId, {
-      relativePath: `bank/fundamental/review-queues/${handoff.handoff.manifestId}.json`,
-      reviewQueue: buildFundamentalReviewQueue({
-        nowIso: handoff.handoff.generatedAt,
-        riskHandoffPath: handoff.relativePath,
-        handoff: handoff.handoff,
-      }),
-      riskHandoffPath: handoff.relativePath,
-      handoff: handoff.handoff,
-    });
-  }
-
-  return [...resolved.values()].toSorted(
-    (a, b) =>
-      b.reviewQueue.generatedAt.localeCompare(a.reviewQueue.generatedAt) ||
-      a.reviewQueue.manifestId.localeCompare(b.reviewQueue.manifestId),
-  );
-}
 
 function buildReviewFocus(params: {
   deeperReviewTargets: ReviewBriefTarget[];
@@ -265,12 +124,12 @@ function renderReviewBriefNote(params: {
 export function buildFundamentalReviewBrief(params: {
   nowIso: string;
   reviewQueuePath: string;
-  riskHandoffPath: string;
+  riskHandoffPath: string | null;
   reviewQueue: FundamentalReviewQueueArtifact;
-  handoff: FundamentalRiskHandoffArtifact;
+  handoff?: FundamentalRiskHandoffArtifact;
 }): FundamentalReviewBriefArtifact {
   const handoffByTarget = new Map(
-    params.handoff.targetDecisions.map((target) => [target.targetLabel, target]),
+    (params.handoff?.targetDecisions ?? []).map((target) => [target.targetLabel, target]),
   );
   const targets = params.reviewQueue.targets.map((target) => {
     const handoff = handoffByTarget.get(target.targetLabel);
@@ -308,7 +167,9 @@ export function buildFundamentalReviewBrief(params: {
     manifestId: params.reviewQueue.manifestId,
     manifestPath: params.reviewQueue.manifestPath,
     reviewQueuePath: params.reviewQueuePath,
-    riskHandoffPath: params.riskHandoffPath,
+    riskHandoffPath:
+      params.riskHandoffPath ??
+      `bank/fundamental/risk-handoffs/${params.reviewQueue.manifestId}.json`,
     requestTitle: params.reviewQueue.requestTitle,
     researchBranch: params.reviewQueue.researchBranch,
     briefStatus,
@@ -329,6 +190,31 @@ export function buildFundamentalReviewBrief(params: {
   };
 }
 
+export async function loadReviewBriefsWithFallback(workspaceDir: string): Promise<
+  Array<{
+    relativePath: string;
+    reviewBrief: FundamentalReviewBriefArtifact;
+    reviewQueuePath: string;
+    riskHandoffPath: string | null;
+    handoff?: FundamentalRiskHandoffArtifact;
+  }>
+> {
+  const entries = await loadReviewQueuesWithFallback(workspaceDir);
+  return entries.map(({ relativePath, reviewQueue, riskHandoffPath, handoff }) => ({
+    relativePath: `bank/fundamental/review-briefs/${reviewQueue.manifestId}.json`,
+    reviewBrief: buildFundamentalReviewBrief({
+      nowIso: reviewQueue.generatedAt,
+      reviewQueuePath: relativePath,
+      riskHandoffPath,
+      reviewQueue,
+      handoff,
+    }),
+    reviewQueuePath: relativePath,
+    riskHandoffPath,
+    handoff,
+  }));
+}
+
 const materializeFundamentalReviewBrief: HookHandler = async (event) => {
   if (event.type !== "command" || (event.action !== "new" && event.action !== "reset")) {
     return;
@@ -336,7 +222,7 @@ const materializeFundamentalReviewBrief: HookHandler = async (event) => {
 
   try {
     const { workspaceDir, memoryDir } = await resolveMemorySessionContext({ event });
-    const entries = await loadReviewQueuesWithFallback(workspaceDir);
+    const entries = await loadReviewBriefsWithFallback(workspaceDir);
     if (entries.length === 0) {
       return;
     }
@@ -347,16 +233,16 @@ const materializeFundamentalReviewBrief: HookHandler = async (event) => {
     const timeStr = nowIso.split("T")[1].split(".")[0];
 
     await Promise.all(
-      entries.map(async ({ relativePath, reviewQueue, riskHandoffPath, handoff }) => {
-        const reviewBrief = buildFundamentalReviewBrief({
-          nowIso,
-          reviewQueuePath: relativePath,
-          riskHandoffPath,
-          reviewQueue,
-          handoff,
+      entries.map(async ({ reviewBrief }) => {
+        const reviewBriefPath = buildFundamentalReviewChainJsonPath(
+          "fundamental-review-brief",
+          reviewBrief.manifestId,
+        );
+        const noteRelativePath = buildFundamentalReviewChainNoteFilename({
+          dateStr,
+          stageName: "fundamental-review-brief",
+          manifestId: reviewBrief.manifestId,
         });
-        const reviewBriefPath = `bank/fundamental/review-briefs/${reviewQueue.manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-review-brief-${reviewQueue.manifestId}.md`;
         await Promise.all([
           writeFileWithinRoot({
             rootDir: workspaceDir,

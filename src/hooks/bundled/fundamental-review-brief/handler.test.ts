@@ -5,13 +5,19 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
+import { writeFundamentalArtifactErrors } from "../fundamental-artifact-errors.js";
 import {
   summarizeFundamentalIntakeSession,
+  type FundamentalArtifactErrorStatus,
   type FundamentalDocumentMetadata,
   type FundamentalManifestScaffold,
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 import { buildFundamentalReviewQueue } from "../fundamental-review-queue/handler.js";
 import { buildFundamentalRiskHandoff } from "../fundamental-risk-handoff/handler.js";
 import { buildFundamentalScoringGate } from "../fundamental-scoring-gate/handler.js";
@@ -192,22 +198,104 @@ async function runReviewBrief(params: {
 
   await handler(event);
 
-  const briefsDir = path.join(tempDir, "bank", "fundamental", "review-briefs");
-  const briefFiles = await fs.readdir(briefsDir);
   const memoryDir = path.join(tempDir, "memory");
-  const memoryFiles = await fs.readdir(memoryDir);
+  const reviewBriefPath = buildFundamentalReviewChainJsonPath(
+    "fundamental-review-brief",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalReviewChainNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-review-brief",
+    manifestId: params.manifest.manifestId,
+  });
 
   return {
     reviewBrief: JSON.parse(
-      await fs.readFile(path.join(briefsDir, briefFiles[0]), "utf-8"),
+      await fs.readFile(path.join(tempDir, reviewBriefPath), "utf-8"),
     ) as Record<string, unknown>,
-    noteContent: await fs.readFile(
-      path.join(
-        memoryDir,
-        memoryFiles.find((name) => name.includes("fundamental-review-brief-")) ?? memoryFiles[0],
-      ),
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
+  };
+}
+
+async function writeArtifactError(params: {
+  workspaceDir: string;
+  manifest: FundamentalManifestScaffold;
+  nowIso: string;
+  stage?: string;
+  errorStatus?: FundamentalArtifactErrorStatus;
+}): Promise<void> {
+  await fs.mkdir(path.join(params.workspaceDir, "memory"), { recursive: true });
+  await writeFundamentalArtifactErrors({
+    workspaceDir: params.workspaceDir,
+    memoryDir: path.join(params.workspaceDir, "memory"),
+    nowIso: params.nowIso,
+    errors: [
+      {
+        stage: params.stage ?? "snapshot",
+        relativePath: `bank/fundamental/${params.stage ?? "snapshot"}/${params.manifest.manifestId}.json`,
+        fileName: `${params.manifest.manifestId}.json`,
+        manifestId: params.manifest.manifestId,
+        errorStatus: params.errorStatus ?? "blocked_due_to_artifact_error",
+        errorMessage: "Unexpected end of JSON input",
+      },
+    ],
+  });
+}
+
+async function runReviewBriefWithArtifactScenario(params: {
+  manifest: FundamentalManifestScaffold;
+  artifactErrorAt: string;
+  prepareQueue?: boolean;
+  documents?: Array<{ fileName: string; metadata?: FundamentalDocumentMetadata }>;
+}): Promise<{
+  reviewBrief: Record<string, unknown>;
+  noteContent: string;
+}> {
+  const tempDir = await createCaseWorkspace("artifact-error");
+  if (params.prepareQueue) {
+    await prepareReviewQueueArtifact({
+      workspaceDir: tempDir,
+      manifest: params.manifest,
+      documents: params.documents,
+    });
+  } else {
+    const manifestsDir = path.join(tempDir, "bank", "fundamental", "manifests");
+    await fs.mkdir(manifestsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(manifestsDir, `2026-03-15-fundamental-manifest-${params.manifest.manifestId}.json`),
+      `${JSON.stringify(params.manifest, null, 2)}\n`,
       "utf-8",
-    ),
+    );
+  }
+  await writeArtifactError({
+    workspaceDir: tempDir,
+    manifest: params.manifest,
+    nowIso: params.artifactErrorAt,
+  });
+
+  const event = createHookEvent("command", "reset", "agent:main:main", {
+    cfg: makeConfig(tempDir),
+  });
+  event.timestamp = new Date("2026-03-15T13:00:00.000Z");
+
+  await handler(event);
+
+  const memoryDir = path.join(tempDir, "memory");
+  const reviewBriefPath = buildFundamentalReviewChainJsonPath(
+    "fundamental-review-brief",
+    params.manifest.manifestId,
+  );
+  const notePath = buildFundamentalReviewChainNoteFilename({
+    dateStr: "2026-03-15",
+    stageName: "fundamental-review-brief",
+    manifestId: params.manifest.manifestId,
+  });
+
+  return {
+    reviewBrief: JSON.parse(
+      await fs.readFile(path.join(tempDir, reviewBriefPath), "utf-8"),
+    ) as Record<string, unknown>,
+    noteContent: await fs.readFile(path.join(memoryDir, notePath), "utf-8"),
   };
 }
 
@@ -331,6 +419,112 @@ describe("fundamental-review-brief hook", () => {
       }),
     ]);
     expect(result.reviewBrief.reviewFocus).toEqual(["Start deeper review for AAPL."]);
+    expect(result.noteContent).toContain("brief_status: ready_for_review");
+  });
+
+  it("materializes an explicit blocked brief when upstream artifact errors are newer than recovery", async () => {
+    const manifest = createManifestFixture({
+      reviewGateStatus: "approved_for_collection",
+      requestText:
+        "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+    });
+    const result = await runReviewBriefWithArtifactScenario({
+      manifest,
+      prepareQueue: true,
+      artifactErrorAt: "2026-03-15T13:00:00.000Z",
+      documents: [
+        {
+          fileName: "doc-annual-primary.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "annual_report",
+            sourceType: "issuer_primary",
+          },
+        },
+        {
+          fileName: "doc-annual-regulatory.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "annual_report",
+            sourceType: "regulatory_filing",
+          },
+        },
+        {
+          fileName: "doc-presentation.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "investor_presentation",
+            sourceType: "company_presentation",
+          },
+        },
+      ],
+    });
+
+    expect(result.reviewBrief.briefStatus).toBe("blocked");
+    expect(result.reviewBrief.deeperReviewTargets).toEqual([]);
+    expect(result.reviewBrief.followUpTargets).toEqual([]);
+    expect(result.reviewBrief.blockedTargets).toEqual([
+      expect.objectContaining({
+        targetLabel: "AAPL",
+        queueAction: "blocked",
+        missingCriticalInputs: ["artifact_error"],
+      }),
+    ]);
+    expect(result.noteContent).toContain("brief_status: blocked");
+  });
+
+  it("clears artifact blocking when a newer valid review queue exists for the same manifest", async () => {
+    const manifest = createManifestFixture({
+      reviewGateStatus: "approved_for_collection",
+      requestText:
+        "Build a fundamental research scaffold for AAPL in the US. Use annual reports and investor presentations.",
+    });
+    const result = await runReviewBriefWithArtifactScenario({
+      manifest,
+      prepareQueue: true,
+      artifactErrorAt: "2026-03-15T11:00:00.000Z",
+      documents: [
+        {
+          fileName: "doc-annual-primary.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "annual_report",
+            sourceType: "issuer_primary",
+          },
+        },
+        {
+          fileName: "doc-annual-regulatory.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "annual_report",
+            sourceType: "regulatory_filing",
+          },
+        },
+        {
+          fileName: "doc-presentation.bin",
+          metadata: {
+            version: 1,
+            targetLabel: "AAPL",
+            category: "investor_presentation",
+            sourceType: "company_presentation",
+          },
+        },
+      ],
+    });
+
+    expect(result.reviewBrief.briefStatus).toBe("ready_for_review");
+    expect(result.reviewBrief.blockedTargets).toEqual([]);
+    expect(result.reviewBrief.deeperReviewTargets).toEqual([
+      expect.objectContaining({
+        targetLabel: "AAPL",
+        queueAction: "deeper_review",
+      }),
+    ]);
     expect(result.noteContent).toContain("brief_status: ready_for_review");
   });
 });

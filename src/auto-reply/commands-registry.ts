@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { resolveBuiltInDefaultModelRef } from "../agents/defaults.js";
 import { resolveConfiguredModelRef } from "../agents/model-selection.js";
 import type { SkillCommandSpec } from "../agents/skills.js";
 import { isCommandFlagEnabled } from "../config/commands.js";
@@ -294,14 +294,15 @@ function resolveDefaultCommandContext(cfg?: OpenClawConfig): {
   provider: string;
   model: string;
 } {
+  const builtInDefault = resolveBuiltInDefaultModelRef();
   const resolved = resolveConfiguredModelRef({
     cfg: cfg ?? ({} as OpenClawConfig),
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
+    defaultProvider: builtInDefault.provider,
+    defaultModel: builtInDefault.model,
   });
   return {
-    provider: resolved.provider ?? DEFAULT_PROVIDER,
-    model: resolved.model ?? DEFAULT_MODEL,
+    provider: resolved.provider ?? builtInDefault.provider,
+    model: resolved.model ?? builtInDefault.model,
   };
 }
 

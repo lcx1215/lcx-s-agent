@@ -8,6 +8,7 @@ import {
   parseFeishuFinanceDoctrineTeacherFeedbackArtifact,
   parseFeishuFinanceDoctrineTeacherReviewArtifact,
   renderFeishuFinanceDoctrineTeacherReviewArtifact,
+  type FeishuFinanceDoctrineTeacherReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -210,7 +211,7 @@ export function createFinanceDoctrineTeacherFeedbackReviewTool(options?: {
         });
       }
 
-      const nextArtifact = {
+      const nextArtifact: FeishuFinanceDoctrineTeacherReviewArtifact = {
         reviewedAt: new Date().toISOString(),
         sourceTeacherFeedbackArtifact: feedbackRelPath,
         reviews: [
@@ -221,7 +222,7 @@ export function createFinanceDoctrineTeacherFeedbackReviewTool(options?: {
             reviewOutcome: outcome,
           },
         ],
-      } as const;
+      };
 
       await fs.writeFile(
         reviewAbsPath,

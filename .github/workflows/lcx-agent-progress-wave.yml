@@ -1,4 +1,4 @@
-name: Lobster progress wave
+name: LCX Agent progress wave
 
 on:
   push:
@@ -26,16 +26,16 @@ jobs:
           node-version: "22"
 
       - name: Generate progress wave
-        run: node scripts/generate-lobster-progress-wave.mjs
+        run: node scripts/generate-lcx-agent-progress-wave.mjs
 
       - name: Commit refreshed image
         run: |
-          if git diff --quiet -- docs/assets/lobster-daily-progress-wave.svg; then
+          if git diff --quiet -- docs/assets/lcx-agent-daily-progress-wave.svg docs/assets/lobster-daily-progress-wave.svg; then
             echo "Progress wave is already current."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/assets/lobster-daily-progress-wave.svg
-          git commit -m "Docs: refresh Lobster progress wave"
+          git add docs/assets/lcx-agent-daily-progress-wave.svg docs/assets/lobster-daily-progress-wave.svg
+          git commit -m "Docs: refresh LCX Agent progress wave"
           git push

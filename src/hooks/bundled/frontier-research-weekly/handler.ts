@@ -7,6 +7,12 @@ import { resolveStateDir } from "../../../config/paths.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import { resolveAgentIdFromSessionKey } from "../../../routing/session-key.js";
 import type { HookHandler } from "../../hooks.js";
+import {
+  buildFrontierRecallFilename,
+  FRONTIER_RESEARCH_CARD_PREFIX,
+  FRONTIER_WEEKLY_MEMORY_NOTES,
+  parseFrontierResearchCardArtifact,
+} from "../lobster-brain-registry.js";
 import { renderUpgradePrompt } from "../upgrade-memory.js";
 import {
   countTop,
@@ -17,55 +23,13 @@ import {
 } from "../weekly-memory.js";
 
 const log = createSubsystemLogger("hooks/frontier-research-weekly");
-const RESEARCH_FILE_RE = /^(\d{4}-\d{2}-\d{2})-frontier-research-.*\.md$/;
+const RESEARCH_FILE_RE = new RegExp(`^(\\d{4}-\\d{2}-\\d{2})-${FRONTIER_RESEARCH_CARD_PREFIX}.+\\.md$`);
 
-type ParsedResearchCard = {
-  name: string;
-  date: string;
-  title: string;
-  materialType: string;
-  methodFamily: string;
-  claimedContribution: string;
-  dataSetup: string;
-  evaluationProtocol: string;
-  keyResults: string;
+type ParsedResearchCard = NonNullable<ReturnType<typeof parseFrontierResearchCardArtifact>> & {
   leakage: string;
   overfitting: string;
   adoptableIdea: string;
-  replicationCost: string;
-  verdict: string;
 };
-
-function parseResearchCardContent(name: string, content: string): ParsedResearchCard | undefined {
-  const fileMatch = name.match(RESEARCH_FILE_RE);
-  if (!fileMatch) {
-    return undefined;
-  }
-  const extract = (pattern: RegExp, fallback: string) =>
-    content.match(pattern)?.[1]?.trim() || fallback;
-  return {
-    name,
-    date: fileMatch[1],
-    title: extract(/^- title:\s*(.+)$/m, "Untitled research card"),
-    materialType: extract(/^- material_type:\s*(.+)$/m, "paper"),
-    methodFamily: extract(/^- method_family:\s*(.+)$/m, "frontier-method"),
-    claimedContribution: extract(
-      /^- claimed_contribution:\s*(.+)$/m,
-      "No claimed contribution captured.",
-    ),
-    dataSetup: extract(/^- data_setup:\s*(.+)$/m, "No data setup captured."),
-    evaluationProtocol: extract(
-      /^- evaluation_protocol:\s*(.+)$/m,
-      "No evaluation protocol captured.",
-    ),
-    keyResults: extract(/^- key_results:\s*(.+)$/m, "No key results captured."),
-    leakage: extract(/^- possible_leakage_points:\s*(.+)$/m, "No leakage note captured."),
-    overfitting: extract(/^- overfitting_risks:\s*(.+)$/m, "No overfitting note captured."),
-    adoptableIdea: extract(/^- adoptable_ideas:\s*(.+)$/m, "No adoptable idea captured."),
-    replicationCost: extract(/^- replication_cost:\s*(.+)$/m, "medium"),
-    verdict: extract(/^- verdict:\s*(.+)$/m, "watch_for_followup"),
-  };
-}
 
 async function loadRecentResearchCards(
   memoryDir: string,
@@ -80,7 +44,15 @@ async function loadRecentResearchCards(
         .filter((entry) => entry.isFile() && RESEARCH_FILE_RE.test(entry.name))
         .map(async (entry) => {
           const content = await fs.readFile(path.join(memoryDir, entry.name), "utf-8");
-          return parseResearchCardContent(entry.name, content);
+          const parsed = parseFrontierResearchCardArtifact({ filename: entry.name, content });
+          return parsed
+            ? {
+                ...parsed,
+                leakage: parsed.possibleLeakagePoints,
+                overfitting: parsed.overfittingRisks,
+                adoptableIdea: parsed.adoptableIdeas,
+              }
+            : undefined;
         }),
     );
 
@@ -110,6 +82,10 @@ function renderWeeklyMethodsReview(params: {
   const adoptableIdeas = countTop(
     params.cards.map((card) => card.adoptableIdea),
     3,
+  );
+  const foundationTemplates = countTop(
+    params.cards.map((card) => card.foundationTemplate),
+    4,
   );
   const leakageRisks = countTop(
     params.cards.map((card) => card.leakage),
@@ -165,6 +141,9 @@ function renderWeeklyMethodsReview(params: {
     "",
     "## Methods To Transfer",
     ...adoptableIdeas.map((entry) => `- ${entry.value} (${entry.count})`),
+    "",
+    "## Foundation Template Focus",
+    ...foundationTemplates.map((entry) => `- ${entry.value} (${entry.count})`),
     "",
     "## Replication Backlog",
     ...(cardsByVerdict("worth_reproducing").length > 0
@@ -233,6 +212,12 @@ function renderFrontierUpgrade(params: {
       params.cards.map((card) => card.adoptableIdea),
       1,
     )[0]?.value;
+  const topFoundation =
+    primaryCandidate?.foundationTemplate ??
+    countTop(
+      params.cards.map((card) => card.foundationTemplate),
+      1,
+    )[0]?.value;
 
   return renderUpgradePrompt({
     heading: `Frontier Upgrade Prompt: ${params.weekKey}`,
@@ -263,8 +248,12 @@ function renderFrontierUpgrade(params: {
         label: "Replication Cost Bias",
         value: primaryCandidate?.replicationCost ?? "medium",
       },
+      {
+        label: "Primary Foundation Transfer",
+        value: topFoundation ?? "No foundation transfer captured yet.",
+      },
     ],
-    cueBody: `Before forming a verdict, check ${topLeakage ?? "the main leakage path"} and require ${topEvaluation ?? "a leakage-safe evaluation protocol"} before trusting reported gains.`,
+    cueBody: `Before forming a verdict, check ${topLeakage ?? "the main leakage path"}, require ${topEvaluation ?? "a leakage-safe evaluation protocol"}, and ask whether the method really strengthens ${topFoundation ?? "a durable decision foundation"} before trusting reported gains.`,
   });
 }
 
@@ -274,20 +263,15 @@ function buildMemoryNotes(params: {
   weekKey: string;
   rangeLabel: string;
 }): MemoryNote[] {
-  return [
-    {
-      filename: `${params.weekKey}-frontier-methods-weekly-review.md`,
-      content: renderWeeklyMethodsReview(params),
-    },
-    {
-      filename: `${params.weekKey}-frontier-upgrade.md`,
-      content: renderFrontierUpgrade(params),
-    },
-    {
-      filename: `${params.weekKey}-frontier-replication-backlog.md`,
-      content: renderReplicationBacklog(params),
-    },
-  ];
+  const contentByNoteName = {
+    "frontier-methods-weekly-review": renderWeeklyMethodsReview(params),
+    "frontier-upgrade": renderFrontierUpgrade(params),
+    "frontier-replication-backlog": renderReplicationBacklog(params),
+  } as const satisfies Record<(typeof FRONTIER_WEEKLY_MEMORY_NOTES)[number], string>;
+  return FRONTIER_WEEKLY_MEMORY_NOTES.map((noteName) => ({
+    filename: buildFrontierRecallFilename(params.weekKey, noteName),
+    content: contentByNoteName[noteName],
+  }));
 }
 
 const saveFrontierResearchWeeklyReview: HookHandler = async (event) => {

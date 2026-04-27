@@ -4,6 +4,11 @@ import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import type { FundamentalArtifactErrorRecord } from "../fundamental-artifact-errors.js";
+import {
+  buildFundamentalReviewChainJsonPath,
+  buildFundamentalReviewChainNoteFilename,
+} from "../lobster-brain-registry.js";
 import type { FundamentalManifestScaffold } from "../fundamental-intake/handler.js";
 import {
   buildFundamentalRiskHandoff,
@@ -97,6 +102,107 @@ async function loadJsonFiles<T>(params: {
   }
 }
 
+export async function loadArtifactErrorsByManifestId(
+  workspaceDir: string,
+): Promise<Map<string, FundamentalArtifactErrorRecord[]>> {
+  const records = await loadJsonFiles<FundamentalArtifactErrorRecord>({
+    dirPath: path.join(workspaceDir, "bank", "fundamental", "artifact-errors"),
+    relativePrefix: "bank/fundamental/artifact-errors",
+  });
+  const byManifestId = new Map<string, FundamentalArtifactErrorRecord[]>();
+  for (const { data } of records) {
+    if (!data.manifestId) {
+      continue;
+    }
+    const existing = byManifestId.get(data.manifestId) ?? [];
+    existing.push(data);
+    byManifestId.set(data.manifestId, existing);
+  }
+  return byManifestId;
+}
+
+export function hasValidRecoveryAfterArtifactError(params: {
+  artifactErrors: FundamentalArtifactErrorRecord[];
+  recoveryGeneratedAt: string | undefined;
+}): boolean {
+  if (!params.recoveryGeneratedAt) {
+    return false;
+  }
+  const latestError = params.artifactErrors.toSorted(
+    (a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt) || a.stage.localeCompare(b.stage),
+  )[0];
+  if (!latestError) {
+    return true;
+  }
+  // Recovery must be both manifest-specific and strictly newer than the latest
+  // recorded artifact failure. Equal timestamps are treated as ambiguous and do
+  // not clear the blocked state.
+  return params.recoveryGeneratedAt > latestError.lastSeenAt;
+}
+
+export function buildBlockedReviewQueueFromArtifactErrors(params: {
+  nowIso: string;
+  manifestPath: string;
+  manifest: FundamentalManifestScaffold;
+  artifactErrors: FundamentalArtifactErrorRecord[];
+}): FundamentalReviewQueueArtifact {
+  const latestError = params.artifactErrors.toSorted(
+    (a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt) || a.stage.localeCompare(b.stage),
+  )[0];
+  const stages = [...new Set(params.artifactErrors.map((error) => error.stage))].toSorted();
+  const targets = params.manifest.targets.map((target) => ({
+    targetLabel: target.label,
+    region: target.region,
+    handoffDecision: "blocked" as const,
+    queueAction: "blocked" as const,
+    reviewPriority: "medium" as const,
+    watchlistCandidate: false,
+    missingCriticalInputs: ["artifact_error"],
+    requestedMaterials: [],
+    nextActions: ["resolve_artifact_error"],
+    documentPaths: [],
+    notes: [
+      `Target is blocked because upstream artifact parsing failed in stage(s): ${stages.join(", ")}.`,
+      "Downstream review queue remains explicitly blocked until the artifact error is resolved.",
+    ],
+  }));
+
+  return {
+    version: 1,
+    generatedAt: params.nowIso,
+    manifestId: params.manifest.manifestId,
+    manifestPath: params.manifestPath,
+    riskHandoffPath: `bank/fundamental/risk-handoffs/${params.manifest.manifestId}.json`,
+    requestTitle: params.manifest.requestTitle,
+    researchBranch: params.manifest.researchBranch,
+    queueStatus: "blocked",
+    summary: {
+      totalTargets: targets.length,
+      deeperReviewTargets: 0,
+      followUpTargets: 0,
+      blockedTargets: targets.length,
+      watchlistTargets: 0,
+      missingDocumentsQueueItems: 0,
+    },
+    watchlist: [],
+    blockedList: targets.map((target) => target.targetLabel),
+    reviewPriorityRanking: targets.map((target) => ({
+      targetLabel: target.targetLabel,
+      reviewPriority: target.reviewPriority,
+      queueAction: target.queueAction,
+    })),
+    followUpQueue: [],
+    missingDocumentsQueue: [],
+    targets,
+    notes: [
+      "This queue is explicitly blocked due to upstream artifact parsing failure.",
+      `Latest artifact error stage: ${latestError?.stage ?? "unknown"}.`,
+      `Latest artifact error seen at: ${latestError?.lastSeenAt ?? params.nowIso}.`,
+      "Do not promote this manifest into deeper review until the artifact error is resolved.",
+    ],
+  };
+}
+
 async function loadRiskHandoffsWithFallback(
   workspaceDir: string,
 ): Promise<Array<{ relativePath: string; handoff: FundamentalRiskHandoffArtifact }>> {
@@ -156,6 +262,142 @@ async function loadRiskHandoffsWithFallback(
     (a, b) =>
       b.handoff.generatedAt.localeCompare(a.handoff.generatedAt) ||
       a.handoff.manifestId.localeCompare(b.handoff.manifestId),
+  );
+}
+
+export async function loadReviewQueuesWithFallback(workspaceDir: string): Promise<
+  Array<{
+    relativePath: string;
+    reviewQueue: FundamentalReviewQueueArtifact;
+    riskHandoffPath: string | null;
+    handoff?: FundamentalRiskHandoffArtifact;
+  }>
+> {
+  const [persistedQueues, handoffs, manifests, artifactErrorsByManifestId] = await Promise.all([
+    loadJsonFiles<FundamentalReviewQueueArtifact>({
+      dirPath: path.join(workspaceDir, "bank", "fundamental", "review-queues"),
+      relativePrefix: "bank/fundamental/review-queues",
+    }),
+    loadRiskHandoffsWithFallback(workspaceDir),
+    loadJsonFiles<FundamentalManifestScaffold>({
+      dirPath: path.join(workspaceDir, "bank", "fundamental", "manifests"),
+      relativePrefix: "bank/fundamental/manifests",
+    }),
+    loadArtifactErrorsByManifestId(workspaceDir),
+  ]);
+
+  const handoffById = new Map(handoffs.map((entry) => [entry.handoff.manifestId, entry]));
+  const persistedById = new Map(
+    persistedQueues.map(({ relativePath, data }) => [
+      data.manifestId,
+      { relativePath, reviewQueue: data },
+    ]),
+  );
+  const manifestById = new Map(
+    manifests.map(({ relativePath, data }) => [data.manifestId, { relativePath, manifest: data }]),
+  );
+  const manifestIds = new Set<string>([
+    ...persistedById.keys(),
+    ...handoffById.keys(),
+    ...manifestById.keys(),
+    ...artifactErrorsByManifestId.keys(),
+  ]);
+  const resolved = new Map<
+    string,
+    {
+      relativePath: string;
+      reviewQueue: FundamentalReviewQueueArtifact;
+      riskHandoffPath: string | null;
+      handoff?: FundamentalRiskHandoffArtifact;
+    }
+  >();
+
+  for (const manifestId of manifestIds) {
+    const artifactErrors = artifactErrorsByManifestId.get(manifestId);
+    const persisted = persistedById.get(manifestId);
+    const handoff = handoffById.get(manifestId);
+    const manifestEntry = manifestById.get(manifestId);
+
+    if (artifactErrors && artifactErrors.length > 0) {
+      if (
+        persisted &&
+        hasValidRecoveryAfterArtifactError({
+          artifactErrors,
+          recoveryGeneratedAt: persisted.reviewQueue.generatedAt,
+        })
+      ) {
+        resolved.set(manifestId, {
+          relativePath: persisted.relativePath,
+          reviewQueue: persisted.reviewQueue,
+          riskHandoffPath: handoff?.relativePath ?? persisted.reviewQueue.riskHandoffPath,
+          handoff: handoff?.handoff,
+        });
+        continue;
+      }
+      if (
+        !persisted &&
+        handoff &&
+        hasValidRecoveryAfterArtifactError({
+          artifactErrors,
+          recoveryGeneratedAt: handoff.handoff.generatedAt,
+        })
+      ) {
+        resolved.set(manifestId, {
+          relativePath: `bank/fundamental/review-queues/${manifestId}.json`,
+          reviewQueue: buildFundamentalReviewQueue({
+            nowIso: handoff.handoff.generatedAt,
+            riskHandoffPath: handoff.relativePath,
+            handoff: handoff.handoff,
+          }),
+          riskHandoffPath: handoff.relativePath,
+          handoff: handoff.handoff,
+        });
+        continue;
+      }
+      if (manifestEntry) {
+        resolved.set(manifestId, {
+          relativePath: `bank/fundamental/review-queues/${manifestId}.json`,
+          reviewQueue: buildBlockedReviewQueueFromArtifactErrors({
+            nowIso:
+              artifactErrors.toSorted((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))[0]
+                ?.lastSeenAt ?? new Date().toISOString(),
+            manifestPath: manifestEntry.relativePath,
+            manifest: manifestEntry.manifest,
+            artifactErrors,
+          }),
+          riskHandoffPath: null,
+        });
+        continue;
+      }
+    }
+
+    if (persisted) {
+      resolved.set(manifestId, {
+        relativePath: persisted.relativePath,
+        reviewQueue: persisted.reviewQueue,
+        riskHandoffPath: handoff?.relativePath ?? persisted.reviewQueue.riskHandoffPath,
+        handoff: handoff?.handoff,
+      });
+      continue;
+    }
+    if (handoff) {
+      resolved.set(manifestId, {
+        relativePath: `bank/fundamental/review-queues/${manifestId}.json`,
+        reviewQueue: buildFundamentalReviewQueue({
+          nowIso: handoff.handoff.generatedAt,
+          riskHandoffPath: handoff.relativePath,
+          handoff: handoff.handoff,
+        }),
+        riskHandoffPath: handoff.relativePath,
+        handoff: handoff.handoff,
+      });
+    }
+  }
+
+  return [...resolved.values()].toSorted(
+    (a, b) =>
+      b.reviewQueue.generatedAt.localeCompare(a.reviewQueue.generatedAt) ||
+      a.reviewQueue.manifestId.localeCompare(b.reviewQueue.manifestId),
   );
 }
 
@@ -452,25 +694,33 @@ const materializeFundamentalReviewQueue: HookHandler = async (event) => {
 
   try {
     const { workspaceDir, memoryDir } = await resolveMemorySessionContext({ event });
-    const riskHandoffs = await loadRiskHandoffsWithFallback(workspaceDir);
-    if (riskHandoffs.length === 0) {
-      return;
-    }
-
+    // Keep queue materialization on the same semantic path as the upstream
+    // fallback helper. A prior bug let the materializer rebuild queue candidates
+    // directly from risk handoffs plus ad-hoc artifact blocking, which made
+    // seam-by-seam tests pass while end-to-end chain validation still landed on
+    // a false happy path. Reuse the helper here so blocked/recovery semantics
+    // stay manifest-scoped and identical for queue -> brief -> plan -> workbench.
+    const entries = await loadReviewQueuesWithFallback(workspaceDir);
     const now = new Date(event.timestamp);
     const nowIso = now.toISOString();
     const dateStr = nowIso.split("T")[0];
     const timeStr = nowIso.split("T")[1].split(".")[0];
 
+    if (entries.length === 0) {
+      return;
+    }
+
     await Promise.all(
-      riskHandoffs.map(async ({ relativePath, handoff }) => {
-        const reviewQueue = buildFundamentalReviewQueue({
-          nowIso,
-          riskHandoffPath: relativePath,
-          handoff,
+      entries.map(async ({ reviewQueue }) => {
+        const reviewQueuePath = buildFundamentalReviewChainJsonPath(
+          "fundamental-review-queue",
+          reviewQueue.manifestId,
+        );
+        const noteRelativePath = buildFundamentalReviewChainNoteFilename({
+          dateStr,
+          stageName: "fundamental-review-queue",
+          manifestId: reviewQueue.manifestId,
         });
-        const reviewQueuePath = `bank/fundamental/review-queues/${handoff.manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-review-queue-${handoff.manifestId}.md`;
         await Promise.all([
           writeFileWithinRoot({
             rootDir: workspaceDir,
@@ -493,7 +743,7 @@ const materializeFundamentalReviewQueue: HookHandler = async (event) => {
       }),
     );
 
-    log.info(`Fundamental review queue materialized ${riskHandoffs.length} risk handoff(s)`);
+    log.info(`Fundamental review queue materialized ${entries.length} queue candidate(s)`);
   } catch (err) {
     log.error("Failed to materialize fundamental review queue", {
       error: err instanceof Error ? err.message : String(err),

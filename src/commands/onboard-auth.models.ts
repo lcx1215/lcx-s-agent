@@ -1,3 +1,8 @@
+import {
+  MINIMAX_BUILTIN_DEFAULT_TEXT_MODEL_ID,
+  resolveMinimaxDefaultTextModelId,
+  resolveMinimaxTextModelCatalog,
+} from "../agents/minimax-model-catalog.js";
 import { QIANFAN_BASE_URL, QIANFAN_DEFAULT_MODEL_ID } from "../agents/models-config.providers.js";
 import type { ModelDefinitionConfig } from "../config/types.js";
 import {
@@ -17,8 +22,14 @@ export {
 export const DEFAULT_MINIMAX_BASE_URL = "https://api.minimax.io/v1";
 export const MINIMAX_API_BASE_URL = "https://api.minimax.io/anthropic";
 export const MINIMAX_CN_API_BASE_URL = "https://api.minimaxi.com/anthropic";
-export const MINIMAX_HOSTED_MODEL_ID = "MiniMax-M2.5";
+export const MINIMAX_HOSTED_MODEL_ID = MINIMAX_BUILTIN_DEFAULT_TEXT_MODEL_ID;
 export const MINIMAX_HOSTED_MODEL_REF = `minimax/${MINIMAX_HOSTED_MODEL_ID}`;
+export function resolveMinimaxHostedModelId(): string {
+  return resolveMinimaxDefaultTextModelId();
+}
+export function resolveMinimaxHostedModelRef(): string {
+  return `minimax/${resolveMinimaxHostedModelId()}`;
+}
 export const DEFAULT_MINIMAX_CONTEXT_WINDOW = 200000;
 export const DEFAULT_MINIMAX_MAX_TOKENS = 8192;
 
@@ -88,14 +99,6 @@ export const ZAI_DEFAULT_COST = {
   cacheWrite: 0,
 };
 
-const MINIMAX_MODEL_CATALOG = {
-  "MiniMax-M2.5": { name: "MiniMax M2.5", reasoning: true },
-  "MiniMax-M2.5-highspeed": { name: "MiniMax M2.5 Highspeed", reasoning: true },
-  "MiniMax-M2.5-Lightning": { name: "MiniMax M2.5 Lightning", reasoning: true },
-} as const;
-
-type MinimaxCatalogId = keyof typeof MINIMAX_MODEL_CATALOG;
-
 const ZAI_MODEL_CATALOG = {
   "glm-5": { name: "GLM-5", reasoning: true },
   "glm-4.7": { name: "GLM-4.7", reasoning: true },
@@ -113,7 +116,7 @@ export function buildMinimaxModelDefinition(params: {
   contextWindow: number;
   maxTokens: number;
 }): ModelDefinitionConfig {
-  const catalog = MINIMAX_MODEL_CATALOG[params.id as MinimaxCatalogId];
+  const catalog = resolveMinimaxTextModelCatalog().find((model) => model.id === params.id);
   return {
     id: params.id,
     name: params.name ?? catalog?.name ?? `MiniMax ${params.id}`,

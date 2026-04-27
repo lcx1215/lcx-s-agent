@@ -1,9 +1,16 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import {
+  loadJsonFilesIsolated,
+  writeFundamentalArtifactErrors,
+} from "../fundamental-artifact-errors.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import type {
   FundamentalManifestScaffold,
   FundamentalRiskHandoffStatus,
@@ -54,27 +61,8 @@ export type FundamentalRiskHandoffArtifact = {
   notes: string[];
 };
 
-async function loadJsonFiles<T>(params: {
-  dirPath: string;
-  relativePrefix: string;
-}): Promise<Array<{ relativePath: string; data: T }>> {
-  try {
-    const files = (await fs.readdir(params.dirPath))
-      .filter((name) => name.endsWith(".json"))
-      .toSorted();
-    return await Promise.all(
-      files.map(async (fileName) => {
-        const relativePath = `${params.relativePrefix}/${fileName}`;
-        const raw = await fs.readFile(path.join(params.dirPath, fileName), "utf-8");
-        return {
-          relativePath,
-          data: JSON.parse(raw) as T,
-        };
-      }),
-    );
-  } catch {
-    return [];
-  }
+function parseManifestIdFromManifestFileName(fileName: string): string | undefined {
+  return fileName.match(/fundamental-manifest-(.+)\.json$/)?.[1];
 }
 
 function deriveTargetHandoffDecision(
@@ -260,26 +248,38 @@ const materializeFundamentalRiskHandoff: HookHandler = async (event) => {
 
   try {
     const { workspaceDir, memoryDir } = await resolveMemorySessionContext({ event });
-    const manifests = await loadJsonFiles<FundamentalManifestScaffold>({
+    const manifests = await loadJsonFilesIsolated<FundamentalManifestScaffold>({
       dirPath: path.join(workspaceDir, "bank", "fundamental", "manifests"),
       relativePrefix: "bank/fundamental/manifests",
+      stage: "risk-handoff",
+      manifestIdFromFileName: parseManifestIdFromManifestFileName,
     });
-    const scoringGates = await loadJsonFiles<FundamentalScoringGateArtifact>({
+    const scoringGates = await loadJsonFilesIsolated<FundamentalScoringGateArtifact>({
       dirPath: path.join(workspaceDir, "bank", "fundamental", "scoring-gates"),
       relativePrefix: "bank/fundamental/scoring-gates",
+      stage: "risk-handoff",
+      manifestIdFromFileName: (fileName) => path.basename(fileName, ".json"),
     });
-    if (manifests.length === 0 || scoringGates.length === 0) {
+    const now = new Date(event.timestamp);
+    const nowIso = now.toISOString();
+    await writeFundamentalArtifactErrors({
+      workspaceDir,
+      memoryDir,
+      nowIso,
+      errors: [...manifests.errors, ...scoringGates.errors],
+    });
+    if (manifests.entries.length === 0 || scoringGates.entries.length === 0) {
       return;
     }
 
-    const manifestById = new Map(manifests.map((entry) => [entry.data.manifestId, entry.data]));
-    const now = new Date(event.timestamp);
-    const nowIso = now.toISOString();
+    const manifestById = new Map(
+      manifests.entries.map((entry) => [entry.data.manifestId, entry.data]),
+    );
     const dateStr = nowIso.split("T")[0];
     const timeStr = nowIso.split("T")[1].split(".")[0];
 
     await Promise.all(
-      scoringGates.map(async ({ relativePath, data: scoringGate }) => {
+      scoringGates.entries.map(async ({ relativePath, data: scoringGate }) => {
         const manifest = manifestById.get(scoringGate.manifestId);
         if (!manifest) {
           return;
@@ -291,8 +291,15 @@ const materializeFundamentalRiskHandoff: HookHandler = async (event) => {
           manifestRiskHandoffStatus: manifest.riskHandoff.status,
           scoringGate,
         });
-        const handoffPath = `bank/fundamental/risk-handoffs/${scoringGate.manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-risk-handoff-${scoringGate.manifestId}.md`;
+        const handoffPath = buildFundamentalArtifactJsonPath(
+          "fundamental-risk-handoff",
+          scoringGate.manifestId,
+        );
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-risk-handoff",
+          manifestId: scoringGate.manifestId,
+        });
 
         await Promise.all([
           writeFileWithinRoot({
@@ -316,7 +323,9 @@ const materializeFundamentalRiskHandoff: HookHandler = async (event) => {
       }),
     );
 
-    log.info(`Fundamental risk handoff materialized ${scoringGates.length} scoring gate(s)`);
+    log.info(
+      `Fundamental risk handoff materialized ${scoringGates.entries.length} scoring gate(s)`,
+    );
   } catch (err) {
     log.error("Failed to materialize fundamental risk handoff", {
       error: err instanceof Error ? err.message : String(err),

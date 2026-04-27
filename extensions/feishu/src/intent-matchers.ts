@@ -34,6 +34,10 @@ export function looksLikeVerticalFinanceLearningAsk(text: string): boolean {
 
 export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
+  const hasExplicitPipelineExecutionCue =
+    /(finance_learning_pipeline_orchestrator|source intake|extract|attach|retrieval review|retrieval receipt|learninginternalizationstatus|application_ready|failedreason)/iu.test(
+      normalized,
+    );
   const hasLearningIntent =
     /(开始学|开始学习|去学|学一下|学学|学习|学会|学成|训练|练出|练好|补一下|补齐|补强|提升|强化|加强|研究一下|研究明白|搞懂|内化|做成能力|能力做好|能力补齐|接下来学|让它学|让你学|你去学|learn|study|internalize)/u.test(
       normalized,
@@ -60,6 +64,9 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
     );
   if (isAgentOrPlatformLearning && !hasConcreteFinanceMethod) {
     return false;
+  }
+  if (hasExplicitPipelineExecutionCue && hasFinanceDomain) {
+    return true;
   }
   return hasLearningIntent && hasFinanceDomain && hasPipelineCue && !asksAuditOnly;
 }

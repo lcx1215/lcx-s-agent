@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RestartSentinelPayload } from "../../infra/restart-sentinel.js";
+import type { UpdateCheckResult } from "../../infra/update-check.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 
 // Capture the sentinel payload written during update.run
 let capturedPayload: RestartSentinelPayload | undefined;
 
 const runGatewayUpdateMock = vi.fn<() => Promise<UpdateRunResult>>();
+const checkUpdateStatusMock = vi.fn<() => Promise<UpdateCheckResult>>();
 
 const scheduleGatewaySigusr1RestartMock = vi.fn(() => ({ scheduled: true }));
 
@@ -59,7 +61,16 @@ vi.mock("../../infra/update-runner.js", () => ({
   runGatewayUpdate: runGatewayUpdateMock,
 }));
 
+vi.mock("../../infra/update-check.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../infra/update-check.js")>();
+  return {
+    ...actual,
+    checkUpdateStatus: checkUpdateStatusMock,
+  };
+});
+
 vi.mock("../protocol/index.js", () => ({
+  validateUpdateCheckParams: () => true,
   validateUpdateRunParams: () => true,
 }));
 
@@ -78,6 +89,32 @@ vi.mock("./validation.js", () => ({
 beforeEach(() => {
   capturedPayload = undefined;
   runGatewayUpdateMock.mockClear();
+  checkUpdateStatusMock.mockClear();
+  checkUpdateStatusMock.mockResolvedValue({
+    root: "/tmp/openclaw",
+    installKind: "git",
+    packageManager: "pnpm",
+    git: {
+      root: "/tmp/openclaw",
+      sha: "abc123",
+      tag: null,
+      branch: "main",
+      upstream: "origin/main",
+      dirty: false,
+      ahead: 0,
+      behind: 2,
+      fetchOk: true,
+    },
+    deps: {
+      manager: "pnpm",
+      status: "ok",
+      lockfilePath: "/tmp/openclaw/pnpm-lock.yaml",
+      markerPath: "/tmp/openclaw/node_modules/.modules.yaml",
+    },
+    registry: {
+      latestVersion: "2026.4.9",
+    },
+  });
   runGatewayUpdateMock.mockResolvedValue({
     status: "ok",
     mode: "npm",
@@ -140,6 +177,49 @@ describe("update.run sentinel deliveryContext", () => {
       accountId: "workspace-1",
     });
     expect(capturedPayload!.threadId).toBe("1234567890.123456");
+  });
+});
+
+describe("update.check", () => {
+  it("returns a read-only worthiness preflight with normalized timeout", async () => {
+    const { updateHandlers } = await import("./update.js");
+    let payload:
+      | {
+          ok?: boolean;
+          worthwhile?: boolean;
+          availability?: { available?: boolean; hasGitUpdate?: boolean; hasRegistryUpdate?: boolean };
+          summary?: string;
+          hint?: string | null;
+        }
+      | undefined;
+
+    await updateHandlers["update.check"]({
+      params: {
+        timeoutMs: 1,
+        fetchGit: false,
+        includeRegistry: true,
+      },
+      respond: ((_ok: boolean, response?: unknown) => {
+        payload = response as typeof payload;
+      }) as never,
+    } as never);
+
+    expect(checkUpdateStatusMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 1000,
+        fetchGit: false,
+        includeRegistry: true,
+      }),
+    );
+    expect(payload?.ok).toBe(true);
+    expect(payload?.worthwhile).toBe(true);
+    expect(payload?.availability).toMatchObject({
+      available: true,
+      hasGitUpdate: true,
+      hasRegistryUpdate: true,
+    });
+    expect(payload?.summary).toContain("Update:");
+    expect(payload?.hint).toContain("Update available");
   });
 });
 

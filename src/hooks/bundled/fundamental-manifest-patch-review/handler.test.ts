@@ -12,6 +12,10 @@ import {
   type FundamentalReviewGateStatus,
 } from "../fundamental-intake/handler.js";
 import { bridgeManifest } from "../fundamental-manifest-bridge/handler.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import { buildFundamentalReviewBrief } from "../fundamental-review-brief/handler.js";
 import { buildFundamentalReviewPlan } from "../fundamental-review-plan/handler.js";
 import { buildFundamentalReviewQueue } from "../fundamental-review-queue/handler.js";
@@ -258,29 +262,31 @@ async function runPatchReview(params: {
 
   await handler(event);
 
-  const reviewsDir = path.join(tempDir, "bank", "fundamental", "manifest-patch-reviews");
   const memoryDir = path.join(tempDir, "memory");
+  const reviewPath = buildFundamentalArtifactJsonPath(
+    "fundamental-manifest-patch-review",
+    params.manifest.manifestId,
+  );
+  const notePath = path.join(
+    memoryDir,
+    buildFundamentalArtifactNoteFilename({
+      dateStr: "2026-03-15",
+      stageName: "fundamental-manifest-patch-review",
+      manifestId: params.manifest.manifestId,
+    }),
+  );
 
   let artifact: Record<string, unknown> | null = null;
   let noteContent: string | null = null;
   try {
-    const files = await fs.readdir(reviewsDir);
-    artifact = JSON.parse(await fs.readFile(path.join(reviewsDir, files[0]), "utf-8")) as Record<
+    artifact = JSON.parse(await fs.readFile(path.join(tempDir, reviewPath), "utf-8")) as Record<
       string,
       unknown
     >;
   } catch {}
 
   try {
-    const memoryFiles = await fs.readdir(memoryDir);
-    noteContent = await fs.readFile(
-      path.join(
-        memoryDir,
-        memoryFiles.find((name) => name.includes("fundamental-manifest-patch-review-")) ??
-          memoryFiles[0],
-      ),
-      "utf-8",
-    );
+    noteContent = await fs.readFile(notePath, "utf-8");
   } catch {}
 
   return { artifact, noteContent };

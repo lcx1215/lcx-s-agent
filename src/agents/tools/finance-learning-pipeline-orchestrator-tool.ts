@@ -12,6 +12,7 @@ import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringOrNumberParam, readStringParam, ToolInputError } from "./common.js";
 import { createFinanceArticleExtractCapabilityInputTool } from "./finance-article-extract-capability-input-tool.js";
 import { createFinanceExternalSourceAdapterTool } from "./finance-external-source-adapter-tool.js";
+import { createFinanceLearningCapabilityApplyTool } from "./finance-learning-capability-apply-tool.js";
 import { createFinanceLearningCapabilityAttachTool } from "./finance-learning-capability-attach-tool.js";
 import { createFinanceLearningCapabilityInspectTool } from "./finance-learning-capability-inspect-tool.js";
 import {
@@ -86,6 +87,18 @@ const FinanceLearningPipelineOrchestratorSchema = Type.Object({
         "Maximum existing capability cards to retrieve for learningIntent before and after intake.",
     }),
   ),
+  applicationValidationQuery: Type.Optional(
+    Type.String({
+      description:
+        "Optional bounded research question used after successful attachment to prove the retained capability can be applied, not just retrieved.",
+    }),
+  ),
+  maxAppliedCapabilities: Type.Optional(
+    Type.Number({
+      description:
+        "Maximum retained capabilities to apply during application validation. Defaults to 3.",
+    }),
+  ),
 });
 
 type IntakeRoute = "external_source_adapter" | "research_source_workbench";
@@ -155,6 +168,14 @@ async function writeLearningRetrievalReceipt(params: {
   normalizedReferenceArtifactPaths: string[];
   preflightCapabilityRetrieval: unknown;
   postAttachCapabilityRetrieval: unknown;
+  applicationValidation: {
+    requested: boolean;
+    status: string;
+    candidateCount: number;
+    failedReason: string | null;
+    usageReceiptPath: string | null;
+    usageReviewPath: string | null;
+  } | null;
   retainedCandidateCount: number;
 }): Promise<string> {
   const preflightCandidateCount = countRetrievedCandidates(params.preflightCapabilityRetrieval);
@@ -195,8 +216,9 @@ async function writeLearningRetrievalReceipt(params: {
         noDoctrineMutation: true,
         preflightCapabilityRetrieval: params.preflightCapabilityRetrieval,
         postAttachCapabilityRetrieval: params.postAttachCapabilityRetrieval,
+        applicationValidation: params.applicationValidation,
         action:
-          "Use this receipt to verify whether a learning run became retrievable through stable finance domains, capability tags, and query-ranked capability cards.",
+          "Use this receipt to verify whether a learning run became retrievable and, when requested, application-validated through stable finance domains, capability tags, query-ranked capability cards, and read-only apply guidance.",
       },
       null,
       2,
@@ -219,6 +241,14 @@ function clampMaxRetrievedCapabilities(value: string | undefined): number {
     return 5;
   }
   return Math.max(1, Math.min(20, Math.floor(parsed)));
+}
+
+function clampMaxAppliedCapabilities(value: string | undefined): number {
+  const parsed = value ? Number(value) : 3;
+  if (!Number.isFinite(parsed)) {
+    return 3;
+  }
+  return Math.max(1, Math.min(8, Math.floor(parsed)));
 }
 
 function buildLearningInternalizationStatus(params: {
@@ -271,6 +301,7 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
   const extractTool = createFinanceArticleExtractCapabilityInputTool({ workspaceDir });
   const attachTool = createFinanceLearningCapabilityAttachTool({ workspaceDir });
   const inspectTool = createFinanceLearningCapabilityInspectTool({ workspaceDir });
+  const applyTool = createFinanceLearningCapabilityApplyTool({ workspaceDir });
 
   return {
     label: "Finance Learning Pipeline Orchestrator",
@@ -300,6 +331,12 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
       );
       const maxRetrievedCapabilities = clampMaxRetrievedCapabilities(
         readStringOrNumberParam(params, "maxRetrievedCapabilities"),
+      );
+      const applicationValidationQuery = normalizeOptionalString(
+        readStringParam(params, "applicationValidationQuery", { allowEmpty: true }),
+      );
+      const maxAppliedCapabilities = clampMaxAppliedCapabilities(
+        readStringOrNumberParam(params, "maxAppliedCapabilities"),
       );
       const preflightCapabilityRetrieval = learningIntent
         ? (
@@ -607,6 +644,45 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
       const retainedCandidateCount = inspectResults.reduce((sum, item) => {
         return sum + (typeof item.candidateCount === "number" ? item.candidateCount : 0);
       }, 0);
+      const applicationValidation = applicationValidationQuery
+        ? ((await applyTool.execute(`${toolCallId}:application-validation`, {
+            queryText: applicationValidationQuery,
+            maxCandidates: maxAppliedCapabilities,
+          })).details as Record<string, unknown>)
+        : null;
+      const applicationValidationCandidateCount =
+        applicationValidation && typeof applicationValidation.candidateCount === "number"
+          ? applicationValidation.candidateCount
+          : 0;
+      const applicationValidationStatus =
+        applicationValidationQuery && applicationValidation?.ok === true
+          ? applicationValidationCandidateCount > 0
+            ? "application_ready"
+            : "no_applicable_capability"
+          : applicationValidationQuery
+            ? "application_validation_failed"
+            : "not_requested";
+      const applicationValidationReceiptSummary = applicationValidationQuery
+        ? {
+            requested: true,
+            status: applicationValidationStatus,
+            candidateCount: applicationValidationCandidateCount,
+            failedReason:
+              applicationValidation?.ok === true
+                ? null
+                : typeof applicationValidation?.reason === "string"
+                  ? applicationValidation.reason
+                  : "finance_learning_capability_apply_failed",
+            usageReceiptPath:
+              typeof applicationValidation?.usageReceiptPath === "string"
+                ? applicationValidation.usageReceiptPath
+                : null,
+            usageReviewPath:
+              typeof applicationValidation?.usageReviewPath === "string"
+                ? applicationValidation.usageReviewPath
+                : null,
+          }
+        : null;
       const retrievalReceiptPath = learningIntent
         ? await writeLearningRetrievalReceipt({
             workspaceDir,
@@ -618,6 +694,7 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
             normalizedReferenceArtifactPaths,
             preflightCapabilityRetrieval,
             postAttachCapabilityRetrieval,
+            applicationValidation: applicationValidationReceiptSummary,
             retainedCandidateCount,
           })
         : null;
@@ -660,10 +737,51 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
               postAttachCapabilityRetrieval,
             }
           : null,
+        applicationValidation: applicationValidationQuery
+          ? {
+              ok: applicationValidation?.ok === true,
+              applicationValidationQuery,
+              maxAppliedCapabilities,
+              applicationValidationStatus,
+              candidateCount: applicationValidationCandidateCount,
+              failedReason: applicationValidationReceiptSummary?.failedReason ?? null,
+              applicationMode:
+                typeof applicationValidation?.applicationMode === "string"
+                  ? applicationValidation.applicationMode
+                  : null,
+              synthesisMode:
+                typeof applicationValidation?.synthesisMode === "string"
+                  ? applicationValidation.synthesisMode
+                  : null,
+              usageReceiptPath:
+                typeof applicationValidation?.usageReceiptPath === "string"
+                  ? applicationValidation.usageReceiptPath
+                  : null,
+              usageReviewPath:
+                typeof applicationValidation?.usageReviewPath === "string"
+                  ? applicationValidation.usageReviewPath
+                  : null,
+              answerSkeleton:
+                applicationValidation?.answerSkeleton &&
+                typeof applicationValidation.answerSkeleton === "object"
+                  ? applicationValidation.answerSkeleton
+                  : null,
+              appliedCapabilities: Array.isArray(applicationValidation?.appliedCapabilities)
+                ? applicationValidation.appliedCapabilities
+                : [],
+            }
+          : null,
         inspectTool: "finance_learning_capability_inspect",
-        inspectTargets: inspectResults.map((item) => ({
-          sourceArticlePath: item.filters?.sourceArticlePath ?? null,
-        })),
+        inspectTargets: inspectResults.map((item) => {
+          const filters =
+            item.filters && typeof item.filters === "object"
+              ? (item.filters as Record<string, unknown>)
+              : {};
+          return {
+            sourceArticlePath:
+              typeof filters.sourceArticlePath === "string" ? filters.sourceArticlePath : null,
+          };
+        }),
         extractionTool: "finance_article_extract_capability_input",
         attachTool: "finance_learning_capability_attach",
         noRemoteFetchOccurred: true,

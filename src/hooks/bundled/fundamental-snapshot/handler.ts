@@ -1,9 +1,16 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { writeFileWithinRoot } from "../../../infra/fs-safe.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveMemorySessionContext } from "../artifact-memory.js";
+import {
+  loadJsonFilesIsolated,
+  writeFundamentalArtifactErrors,
+} from "../fundamental-artifact-errors.js";
+import {
+  buildFundamentalArtifactJsonPath,
+  buildFundamentalArtifactNoteFilename,
+} from "../lobster-brain-registry.js";
 import type {
   DocumentType,
   FundamentalManifestScaffold,
@@ -69,27 +76,8 @@ export type FundamentalSnapshotArtifact = {
   notes: string[];
 };
 
-async function loadJsonFiles<T>(params: {
-  dirPath: string;
-  relativePrefix: string;
-}): Promise<Array<{ relativePath: string; data: T }>> {
-  try {
-    const files = (await fs.readdir(params.dirPath))
-      .filter((name) => name.endsWith(".json"))
-      .toSorted();
-    return await Promise.all(
-      files.map(async (fileName) => {
-        const relativePath = `${params.relativePrefix}/${fileName}`;
-        const raw = await fs.readFile(path.join(params.dirPath, fileName), "utf-8");
-        return {
-          relativePath,
-          data: JSON.parse(raw) as T,
-        };
-      }),
-    );
-  } catch {
-    return [];
-  }
+function parseManifestIdFromManifestFileName(fileName: string): string | undefined {
+  return fileName.match(/fundamental-manifest-(.+)\.json$/)?.[1];
 }
 
 function findReadinessTarget(
@@ -344,35 +332,51 @@ const materializeFundamentalSnapshot: HookHandler = async (event) => {
 
   try {
     const { workspaceDir, memoryDir } = await resolveMemorySessionContext({ event });
-    const manifests = await loadJsonFiles<FundamentalManifestScaffold>({
+    const manifests = await loadJsonFilesIsolated<FundamentalManifestScaffold>({
       dirPath: path.join(workspaceDir, "bank", "fundamental", "manifests"),
       relativePrefix: "bank/fundamental/manifests",
+      stage: "snapshot",
+      manifestIdFromFileName: parseManifestIdFromManifestFileName,
     });
-    const readinessFiles = await loadJsonFiles<FundamentalManifestReadiness>({
+    const readinessFiles = await loadJsonFilesIsolated<FundamentalManifestReadiness>({
       dirPath: path.join(workspaceDir, "bank", "fundamental", "readiness"),
       relativePrefix: "bank/fundamental/readiness",
+      stage: "snapshot",
+      manifestIdFromFileName: (fileName) => path.basename(fileName, ".json"),
     });
-    const snapshotInputs = await loadJsonFiles<FundamentalSnapshotInput>({
+    const snapshotInputs = await loadJsonFilesIsolated<FundamentalSnapshotInput>({
       dirPath: path.join(workspaceDir, "bank", "fundamental", "snapshot-inputs"),
       relativePrefix: "bank/fundamental/snapshot-inputs",
+      stage: "snapshot",
+      manifestIdFromFileName: (fileName) => path.basename(fileName, ".json"),
     });
-    if (manifests.length === 0 || readinessFiles.length === 0 || snapshotInputs.length === 0) {
+    const now = new Date(event.timestamp);
+    const nowIso = now.toISOString();
+    await writeFundamentalArtifactErrors({
+      workspaceDir,
+      memoryDir,
+      nowIso,
+      errors: [...manifests.errors, ...readinessFiles.errors, ...snapshotInputs.errors],
+    });
+    if (
+      manifests.entries.length === 0 ||
+      readinessFiles.entries.length === 0 ||
+      snapshotInputs.entries.length === 0
+    ) {
       return;
     }
 
     const readinessByManifestId = new Map(
-      readinessFiles.map((entry) => [entry.data.manifestId, entry]),
+      readinessFiles.entries.map((entry) => [entry.data.manifestId, entry]),
     );
     const snapshotInputByManifestId = new Map(
-      snapshotInputs.map((entry) => [entry.data.manifestId, entry]),
+      snapshotInputs.entries.map((entry) => [entry.data.manifestId, entry]),
     );
-    const now = new Date(event.timestamp);
-    const nowIso = now.toISOString();
     const dateStr = nowIso.split("T")[0];
     const timeStr = nowIso.split("T")[1].split(".")[0];
 
     await Promise.all(
-      manifests.map(async ({ relativePath, data: manifest }) => {
+      manifests.entries.map(async ({ relativePath, data: manifest }) => {
         const readiness = readinessByManifestId.get(manifest.manifestId);
         const snapshotInput = snapshotInputByManifestId.get(manifest.manifestId);
         if (!readiness || !snapshotInput) {
@@ -388,8 +392,15 @@ const materializeFundamentalSnapshot: HookHandler = async (event) => {
           readiness: readiness.data,
           snapshotInput: snapshotInput.data,
         });
-        const snapshotPath = `bank/fundamental/snapshots/${manifest.manifestId}.json`;
-        const noteRelativePath = `${dateStr}-fundamental-snapshot-${manifest.manifestId}.md`;
+        const snapshotPath = buildFundamentalArtifactJsonPath(
+          "fundamental-snapshot",
+          manifest.manifestId,
+        );
+        const noteRelativePath = buildFundamentalArtifactNoteFilename({
+          dateStr,
+          stageName: "fundamental-snapshot",
+          manifestId: manifest.manifestId,
+        });
 
         await Promise.all([
           writeFileWithinRoot({
@@ -413,7 +424,7 @@ const materializeFundamentalSnapshot: HookHandler = async (event) => {
       }),
     );
 
-    log.info(`Fundamental snapshot materialized ${manifests.length} manifest(s)`);
+    log.info(`Fundamental snapshot materialized ${manifests.entries.length} manifest(s)`);
   } catch (err) {
     log.error("Failed to materialize fundamental snapshot", {
       error: err instanceof Error ? err.message : String(err),

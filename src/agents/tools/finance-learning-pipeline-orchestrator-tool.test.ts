@@ -23,6 +23,28 @@ const SAFE_RETRIEVAL_NOTES =
 const SAFE_COMPLIANCE_NOTES =
   "Use only public feeds, local exports, normal browser-visible access, or manual operator capture with no bypasses.";
 
+type PipelineDetails = Record<string, unknown> & {
+  inspectTargets: unknown[];
+  normalizedArticleArtifactPaths: string[];
+  normalizedReferenceArtifactPaths: string[];
+  extractionResults: unknown[];
+  retrievalFirstLearning: {
+    postAttachCapabilityRetrieval: { candidates: unknown[] };
+    retrievalReceiptPath: string;
+    retrievalReviewPath: string;
+  };
+  applicationValidation: {
+    usageReceiptPath: string | null;
+    usageReviewPath: string | null;
+  };
+  attachResults: unknown[];
+  extractionGap: unknown;
+};
+
+function asPipelineDetails(details: unknown): PipelineDetails {
+  return details as PipelineDetails;
+}
+
 function buildStructuredArticle(overrides?: {
   title?: string;
   source?: string;
@@ -141,7 +163,7 @@ describe("finance learning pipeline orchestrator tool", () => {
       complianceNotes: SAFE_COMPLIANCE_NOTES,
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: true,
         intakeRoute: "external_source_adapter",
@@ -152,12 +174,12 @@ describe("finance learning pipeline orchestrator tool", () => {
         provenancePreserved: true,
       }),
     );
-    expect(result.details.inspectTargets).toHaveLength(1);
-    expect(result.details.normalizedArticleArtifactPaths).toHaveLength(1);
+    expect(asPipelineDetails(result.details).inspectTargets).toHaveLength(1);
+    expect(asPipelineDetails(result.details).normalizedArticleArtifactPaths).toHaveLength(1);
 
     const normalizedArtifact = await readWorkspaceFile(
       workspaceDir,
-      result.details.normalizedArticleArtifactPaths[0],
+      asPipelineDetails(result.details).normalizedArticleArtifactPaths[0],
     );
     expect(normalizedArtifact).toContain("**Adapter Name**: markdown-exporter");
     expect(normalizedArtifact).toContain("**Adapter Type**: markdown_article_export");
@@ -167,7 +189,7 @@ describe("finance learning pipeline orchestrator tool", () => {
     expect(parsedCandidates?.candidates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          sourceArticlePath: result.details.normalizedArticleArtifactPaths[0],
+          sourceArticlePath: asPipelineDetails(result.details).normalizedArticleArtifactPaths[0],
           capabilityName: "ETF event triage workflow",
           relatedFinanceDomains: ["event_driven", "etf_regime"],
         }),
@@ -197,7 +219,7 @@ describe("finance learning pipeline orchestrator tool", () => {
       isPubliclyAccessible: true,
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: true,
         intakeRoute: "external_source_adapter",
@@ -205,7 +227,7 @@ describe("finance learning pipeline orchestrator tool", () => {
         noRemoteFetchOccurred: true,
       }),
     );
-    expect(result.details.extractionResults).toEqual([
+    expect(asPipelineDetails(result.details).extractionResults).toEqual([
       expect.objectContaining({
         extractedCandidateCount: 1,
       }),
@@ -227,9 +249,12 @@ describe("finance learning pipeline orchestrator tool", () => {
       learningIntent:
         "学习一套 ETF 事件驱动和因子择时研究流程，能处理 catalyst mapping、regime risk 和 out of sample 失效风险",
       maxRetrievedCapabilities: 3,
+      applicationValidationQuery:
+        "把刚学到的 ETF event triage workflow 应用到一个新的 ETF catalyst mapping 和 regime risk 研究问题",
+      maxAppliedCapabilities: 2,
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: true,
         intakeRoute: "research_source_workbench",
@@ -270,9 +295,49 @@ describe("finance learning pipeline orchestrator tool", () => {
             candidateCount: 1,
           }),
         }),
+        applicationValidation: expect.objectContaining({
+          ok: true,
+          applicationValidationQuery:
+            "把刚学到的 ETF event triage workflow 应用到一个新的 ETF catalyst mapping 和 regime risk 研究问题",
+          maxAppliedCapabilities: 2,
+          applicationValidationStatus: "application_ready",
+          candidateCount: 1,
+          failedReason: null,
+          applicationMode: "reuse_guidance_bounded_research_answer",
+          synthesisMode: "single_capability_application",
+          usageReceiptPath: expect.stringMatching(
+            /^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/.+\.json$/u,
+          ),
+          usageReviewPath: expect.stringMatching(
+            /^memory\/finance-learning-apply-usage-reviews\/\d{4}-\d{2}-\d{2}\.json$/u,
+          ),
+          answerSkeleton: expect.objectContaining({
+            applyOrRefuseRule: expect.stringContaining("say the retained capability is not ready"),
+            answerScaffold: expect.objectContaining({
+              status: "scaffold_only_until_fresh_inputs_are_checked",
+              sections: expect.arrayContaining([
+                expect.objectContaining({
+                  heading: "Evidence families checked",
+                }),
+              ]),
+              outputDiscipline: expect.objectContaining({
+                forbidden: expect.stringContaining("trade execution approval"),
+              }),
+            }),
+            noActionBoundary: expect.stringContaining("research-only"),
+          }),
+          appliedCapabilities: [
+            expect.objectContaining({
+              capabilityName: "ETF event triage workflow",
+              applicationChecklist: expect.arrayContaining([
+                expect.stringContaining("Refresh inputs"),
+              ]),
+            }),
+          ],
+        }),
       }),
     );
-    expect(result.details.retrievalFirstLearning.postAttachCapabilityRetrieval.candidates).toEqual([
+    expect(asPipelineDetails(result.details).retrievalFirstLearning.postAttachCapabilityRetrieval.candidates).toEqual([
       expect.objectContaining({
         capabilityName: "ETF event triage workflow",
         retrievalScore: expect.any(Number),
@@ -281,7 +346,7 @@ describe("finance learning pipeline orchestrator tool", () => {
     const receipt = JSON.parse(
       await readWorkspaceFile(
         workspaceDir,
-        result.details.retrievalFirstLearning.retrievalReceiptPath,
+        asPipelineDetails(result.details).retrievalFirstLearning.retrievalReceiptPath,
       ),
     ) as {
       boundary: string;
@@ -292,6 +357,14 @@ describe("finance learning pipeline orchestrator tool", () => {
       retrievalFirstLearningApplied: boolean;
       noExecutionAuthority: boolean;
       noDoctrineMutation: boolean;
+      applicationValidation: {
+        requested: boolean;
+        status: string;
+        candidateCount: number;
+        failedReason: string | null;
+        usageReceiptPath: string | null;
+        usageReviewPath: string | null;
+      };
     };
     expect(receipt).toMatchObject({
       boundary: "finance_learning_retrieval_receipt",
@@ -303,11 +376,23 @@ describe("finance learning pipeline orchestrator tool", () => {
       retrievalFirstLearningApplied: true,
       noExecutionAuthority: true,
       noDoctrineMutation: true,
+      applicationValidation: {
+        requested: true,
+        status: "application_ready",
+        candidateCount: 1,
+        failedReason: null,
+        usageReceiptPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/.+\.json$/u,
+        ),
+        usageReviewPath: expect.stringMatching(
+          /^memory\/finance-learning-apply-usage-reviews\/\d{4}-\d{2}-\d{2}\.json$/u,
+        ),
+      },
     });
     const review = JSON.parse(
       await readWorkspaceFile(
         workspaceDir,
-        result.details.retrievalFirstLearning.retrievalReviewPath,
+        asPipelineDetails(result.details).retrievalFirstLearning.retrievalReviewPath,
       ),
     ) as {
       boundary: string;
@@ -318,14 +403,22 @@ describe("finance learning pipeline orchestrator tool", () => {
       counts: {
         validReceipts: number;
         applicationReadyAfterLearning: number;
+        applicationValidatedAfterLearning: number;
+        applicationValidationRequested: number;
         weakLearningReceipts: number;
       };
+      rows: Array<{
+        applicationValidationUsageReceiptPath: string | null;
+        applicationValidationUsageReviewPath: string | null;
+      }>;
     };
     expect(review).toMatchObject({
       boundary: "finance_learning_retrieval_review",
       counts: {
         validReceipts: 1,
         applicationReadyAfterLearning: 1,
+        applicationValidatedAfterLearning: 1,
+        applicationValidationRequested: 1,
         weakLearningReceipts: 0,
       },
       separationContract: {
@@ -333,7 +426,13 @@ describe("finance learning pipeline orchestrator tool", () => {
         protectedMemoryUntouched: true,
       },
     });
-    expect(result.details.attachResults).toEqual([
+    expect(review.rows).toEqual([
+      expect.objectContaining({
+        applicationValidationUsageReceiptPath: asPipelineDetails(result.details).applicationValidation.usageReceiptPath,
+        applicationValidationUsageReviewPath: asPipelineDetails(result.details).applicationValidation.usageReviewPath,
+      }),
+    ]);
+    expect(asPipelineDetails(result.details).attachResults).toEqual([
       expect.objectContaining({
         inspectTool: "finance_learning_capability_inspect",
       }),
@@ -366,7 +465,7 @@ describe("finance learning pipeline orchestrator tool", () => {
       retrievalNotes: SAFE_RETRIEVAL_NOTES,
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: true,
         intakeRoute: "research_source_workbench",
@@ -389,7 +488,7 @@ describe("finance learning pipeline orchestrator tool", () => {
         "Operator recorded a web discovery reference only as metadata for later manual source capture, with no remote fetch in this step.",
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: true,
         extractionSkipped: true,
@@ -398,8 +497,8 @@ describe("finance learning pipeline orchestrator tool", () => {
         inspectTool: null,
       }),
     );
-    expect(result.details.normalizedArticleArtifactPaths).toEqual([]);
-    expect(result.details.normalizedReferenceArtifactPaths).toHaveLength(1);
+    expect(asPipelineDetails(result.details).normalizedArticleArtifactPaths).toEqual([]);
+    expect(asPipelineDetails(result.details).normalizedReferenceArtifactPaths).toHaveLength(1);
   });
 
   it("fails closed before extraction for blocked or bypass collection requests", async () => {
@@ -414,7 +513,7 @@ describe("finance learning pipeline orchestrator tool", () => {
         "Use paywall bypass and hidden API scraping if needed to capture the article for research.",
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: false,
         failedStep: "intake",
@@ -436,14 +535,14 @@ describe("finance learning pipeline orchestrator tool", () => {
       retrievalNotes: SAFE_RETRIEVAL_NOTES,
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: false,
         failedStep: "extract",
         reason: "finance_article_extraction_gap",
       }),
     );
-    expect(result.details.extractionGap).toEqual(
+    expect(asPipelineDetails(result.details).extractionGap).toEqual(
       expect.objectContaining({
         missingFields: expect.arrayContaining(["methodSummary", "evidenceCategories"]),
       }),
@@ -469,7 +568,7 @@ describe("finance learning pipeline orchestrator tool", () => {
       retrievalNotes: SAFE_RETRIEVAL_NOTES,
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: false,
         failedStep: "attach",
@@ -502,7 +601,7 @@ describe("finance learning pipeline orchestrator tool", () => {
         [flag]: true,
       });
 
-      expect(result.details).toEqual(
+      expect(asPipelineDetails(result.details)).toEqual(
         expect.objectContaining({
           ok: false,
           failedStep: "intake",
@@ -529,7 +628,7 @@ describe("finance learning pipeline orchestrator tool", () => {
       retrievalNotes: SAFE_RETRIEVAL_NOTES,
     });
 
-    expect(result.details).toEqual(
+    expect(asPipelineDetails(result.details)).toEqual(
       expect.objectContaining({
         ok: false,
         failedStep: "extract",

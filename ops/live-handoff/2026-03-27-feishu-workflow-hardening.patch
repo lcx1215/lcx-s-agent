@@ -1,0 +1,3396 @@
+diff --git a/extensions/feishu/src/bot.test.ts b/extensions/feishu/src/bot.test.ts
+index a9e0a7d27..ea6cce0f5 100644
+--- a/extensions/feishu/src/bot.test.ts
++++ b/extensions/feishu/src/bot.test.ts
+@@ -1,3 +1,6 @@
++import fs from "node:fs/promises";
++import os from "node:os";
++import path from "node:path";
+ import type { ClawdbotConfig, PluginRuntime, RuntimeEnv } from "openclaw/plugin-sdk";
+ import { beforeEach, describe, expect, it, vi } from "vitest";
+ import { createPluginRuntimeMock } from "../../test-utils/plugin-runtime-mock.js";
+@@ -5,6 +8,7 @@ import type { FeishuMessageEvent } from "./bot.js";
+ import {
+   buildBroadcastSessionKey,
+   buildFeishuAgentBody,
++  buildSurfaceScopedSessionKey,
+   handleFeishuMessage,
+   resolveBroadcastAgents,
+   toMessageResourceType,
+@@ -17,10 +21,27 @@ const {
+   mockGetMessageFeishu,
+   mockDownloadMessageResourceFeishu,
+   mockCreateFeishuClient,
++  mockRecordOperationalAnomaly,
+   mockResolveAgentRoute,
++  mockRunFeishuLearningCouncil,
+ } = vi.hoisted(() => ({
++  createMockDispatcher: () => ({
++    sendToolResult: vi.fn(() => false),
++    sendBlockReply: vi.fn(() => false),
++    sendFinalReply: vi.fn(() => true),
++    waitForIdle: vi.fn(async () => {}),
++    getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),
++    markComplete: vi.fn(),
++  }),
+   mockCreateFeishuReplyDispatcher: vi.fn(() => ({
+-    dispatcher: vi.fn(),
++    dispatcher: {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),
++      markComplete: vi.fn(),
++    },
+     replyOptions: {},
+     markDispatchIdle: vi.fn(),
+   })),
+@@ -32,6 +53,7 @@ const {
+     fileName: "clip.mp4",
+   }),
+   mockCreateFeishuClient: vi.fn(),
++  mockRecordOperationalAnomaly: vi.fn(),
+   mockResolveAgentRoute: vi.fn(() => ({
+     agentId: "main",
+     channel: "feishu",
+@@ -40,6 +62,7 @@ const {
+     mainSessionKey: "agent:main:main",
+     matchedBy: "default",
+   })),
++  mockRunFeishuLearningCouncil: vi.fn(),
+ }));
+
+ vi.mock("./reply-dispatcher.js", () => ({
+@@ -59,6 +82,14 @@ vi.mock("./client.js", () => ({
+   createFeishuClient: mockCreateFeishuClient,
+ }));
+
++vi.mock("../../../src/infra/operational-anomalies.js", () => ({
++  recordOperationalAnomaly: mockRecordOperationalAnomaly,
++}));
++
++vi.mock("./learning-council.js", () => ({
++  runFeishuLearningCouncil: mockRunFeishuLearningCouncil,
++}));
++
+ function createRuntimeEnv(): RuntimeEnv {
+   return {
+     log: vi.fn(),
+@@ -69,101 +100,1774 @@ function createRuntimeEnv(): RuntimeEnv {
+   } as RuntimeEnv;
+ }
+
+-async function dispatchMessage(params: { cfg: ClawdbotConfig; event: FeishuMessageEvent }) {
+-  await handleFeishuMessage({
+-    cfg: params.cfg,
+-    event: params.event,
+-    runtime: createRuntimeEnv(),
+-  });
+-}
++async function dispatchMessage(params: { cfg: ClawdbotConfig; event: FeishuMessageEvent }) {
++  await handleFeishuMessage({
++    cfg: params.cfg,
++    event: params.event,
++    runtime: createRuntimeEnv(),
++  });
++}
++
++beforeEach(() => {
++  mockRecordOperationalAnomaly.mockReset();
++  mockRunFeishuLearningCouncil.mockReset();
++  mockSendMessageFeishu.mockReset();
++  mockSendMessageFeishu.mockResolvedValue({ messageId: "pairing-msg", chatId: "oc-dm" });
++});
++
++describe("buildFeishuAgentBody", () => {
++  it("builds message id, speaker, quoted content, mentions, and permission notice in order", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "hello world",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-42",
++        mentionTargets: [{ openId: "ou-target", name: "Target User", key: "@_user_1" }],
++      },
++      quotedContent: "previous message",
++      permissionErrorForAgent: {
++        code: 99991672,
++        message: "permission denied",
++        grantUrl: "https://open.feishu.cn/app/cli_test",
++      },
++    });
++
++    expect(body).toBe(
++      '[message_id: msg-42]\nSender Name: [Replying to: "previous message"]\n\nhello world\n\n[System: Your reply will automatically @mention: Target User. Do not write @xxx yourself.]\n\n[System: The bot encountered a Feishu API permission error. Please inform the user about this issue and provide the permission grant URL for the admin to authorize. Permission grant URL: https://open.feishu.cn/app/cli_test]',
++    );
++  });
++
++  it("adds a macro intent notice for high-confidence macro prompts", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "查一下最近美国非农、通胀预期和 QQQ / TLT 的关系",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-macro-42",
++      },
++    });
++
++    expect(body).toContain("[System: Treat this as macro and major-asset research.");
++    expect(body).toContain(
++      "When freshness is weak, stale, cached, or provider-limited, do not present high-specificity market figures, exact levels, exact percentages, or exact point estimates as if they were freshly verified in this turn",
++    );
++    expect(body).toContain("查一下最近美国非农、通胀预期和 QQQ / TLT 的关系");
++  });
++
++  it("adds a frontier intent notice for leakage and overfitting prompts", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-frontier-42",
++      },
++    });
++
++    expect(body).toContain(
++      "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Speak human-first: what this method is actually useful for, what is dangerous, and whether it changes daily Lobster usage now. Do not rewrite it into a fundamental intake.]",
++    );
++    expect(body).toContain(
++      "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
++    );
++  });
++
++  it("adds a learning intent notice for open-source study prompts", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "今天你去学学开源的新技术，顺手总结一下关键原理和坑",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-learning-42",
++      },
++    });
++
++    expect(body).toContain(
++      "[System: Treat this as learning or open-source study work. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. If the topic is Chinese/English understanding, prioritize terminology mapping, ambiguity reduction, workflow-trigger understanding, and plain-language reporting rather than generic language tutoring. If the user says 日频技术 or 日频策略 without extra qualifiers, interpret it as finance or quant methods for daily-frequency research by default, not Japanese-language technology or generic HFT hype. Explain the result in plain language first: what was learned, what is still weak, and what changes for Lobster now. If source coverage or search breadth is weak in this turn, say so explicitly instead of pretending the learning set was broad. Do not rewrite it into a fundamental intake or reset alias.]",
++    );
++    expect(body).toContain("今天你去学学开源的新技术，顺手总结一下关键原理和坑");
++  });
++
++  it("adds a live search-health notice for web-search availability questions", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "现在网络搜索可以用吗",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-search-health-42",
++      },
++    });
++
++    expect(body).toContain("[System: Treat this as a live search/provider health question.");
++    expect(body).toContain("Distinguish clearly between current availability and stale past failures.");
++    expect(body).toContain("If web search is working now, say so directly in plain language.");
++  });
++
++  it("adds an explicit implementation notice for build-style requests", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "开始实现这个复盘系统，写出代码并保存文件",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-implement-42",
++      },
++    });
++
++    expect(body).toContain("[System: Treat this as explicit implementation work.");
++    expect(body).toContain("state the root cause or design gap");
++    expect(body).toContain("Do not silently expand into adjacent refactors");
++  });
++
++  it("adds a continuation guard notice for terse next-step prompts", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "下一步：Week 9-10 低频研究卫生",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-next-step-42",
++      },
++    });
++
++    expect(body).toContain("[System: Treat this as a bounded continuation turn");
++    expect(body).toContain("Reply with the next concrete step, current status");
++    expect(body).toContain(
++      "Do not silently escalate a terse continuation or approval into long code generation, file creation, workspace writes, or multi-step implementation work",
++    );
++    expect(body).toContain("下一步：Week 9-10 低频研究卫生");
++  });
++
++  it("adds a structured correction-loop notice for feedback-prefixed prompts", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "反馈：你昨天那条风险判断证据不够，而且已经重复两次了。",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-feedback-42",
++      },
++    });
++
++    expect(body).toContain("[System: Treat this as operator correction-loop input");
++    expect(body).toContain(
++      "Start with one short human sentence that plainly acknowledges what was wrong and what changes now.",
++    );
++    expect(body).toContain("Then convert it into a structured correction note");
++    expect(body).toContain("prior claim or behavior");
++    expect(body).toContain("replacement rule or corrected stance");
++    expect(body).toContain("repair-ticket candidate");
++  });
++
++  it("adds a macro intent notice for plain-language index risk prompts", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "去看看几个指数最新的风险和潜在收益",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-index-risk-42",
++      },
++    });
++
++    expect(body).toContain("[System: Treat this as macro and major-asset research.");
++    expect(body).toContain(
++      "When freshness is weak, stale, cached, or provider-limited, do not present high-specificity market figures, exact levels, exact percentages, or exact point estimates as if they were freshly verified in this turn",
++    );
++    expect(body).toContain("去看看几个指数最新的风险和潜在收益");
++  });
++
++  it("adds a position-management notice for buy or reduce questions", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "我现在该不该减仓 QQQ，还是继续持有？",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-position-42",
++      },
++    });
++
++    expect(body).toContain(
++      "[System: Treat this as a portfolio or position-management question, not as prediction theater and not as direct execution authority. Use a fixed reply structure with these sections in order when possible: 1. current stance, 2. key reasons, 3. main counter-case / risk, 4. action triggers, 5. confidence, 6. one-line summary. Use exact markdown headings when possible: ## Current Stance, ## Key Reasons, ## Main Counter-Case / Risk, ## Action Triggers, ## Confidence, ## One-Line Summary. In current stance, use one plain label only: hold, watch, reduce, do not add yet, or add only if conditions trigger. Apply sizing discipline explicitly: name any concentration risk, distinguish conviction from actual size, and default low confidence toward smaller size or wait. If macro or cross-asset context matters, explain the live driver and transmission path instead of hand-wavy market color. In action triggers, separate what would justify adding, what would justify reducing, and what means wait. Use execution hygiene too: if event risk, liquidity, or volatility makes the setup noisy, say wait explicitly. Also check for behavior-error drift: urgency theater, confirmation bias, narrative overreach, or emotional discomfort with waiting. If known events matter, map the real catalysts too: what would confirm, what would break, and what is mostly noise. Keep key reasons to the top 2-3 points. Keep confidence to low, medium, or high plus one short justification. Make the one-line summary exactly one sentence. Keep it concise, disciplined, and risk-controlled. No hype, no fake certainty, and no long rambling essay.]",
++    );
++    expect(body).toContain("Apply sizing discipline explicitly");
++    expect(body).toContain("explain the live driver and transmission path");
++    expect(body).toContain("Use execution hygiene too");
++    expect(body).toContain("behavior-error drift");
++    expect(body).toContain("map the real catalysts too");
++    expect(body).toContain("我现在该不该减仓 QQQ，还是继续持有？");
++  });
++
++  it("adds a business-quality and catalyst-map notice for fundamental asks", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "读一下苹果最新财报，告诉我商业质量和接下来值得跟的催化剂",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-fundamental-42",
++      },
++    });
++
++    expect(body).toContain(
++      "Treat this as fundamental research or watchlist maintenance. Prefer current fundamental artifacts, follow-up trackers, and review memos.",
++    );
++    expect(body).toContain("Judge the company through business quality");
++    expect(body).toContain(
++      "industry structure, pricing power, capital allocation, management credibility",
++    );
++    expect(body).toContain("build a simple catalyst map");
++  });
++
++  it("adds an explicit Feishu surface role contract notice when routed to a named surface", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "去看看几个指数最新的风险和潜在收益",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-surface-42",
++      },
++      surfaceNotice:
++        "[System: Feishu operating surface target = technical_daily.]\n[System: Surface role contract = technical analyst. Use this surface for ETF / major-asset / timing-discipline analysis, current anchors, structural narrative, and pricing-gap framing.]\n[System: Configured target chat for this surface = oc-tech-daily.]",
++    });
++
++    expect(body).toContain("[System: Feishu operating surface target = technical_daily.]");
++    expect(body).toContain("[System: Surface role contract = technical analyst.");
++    expect(body).toContain("[System: Configured target chat for this surface = oc-tech-daily.]");
++  });
++
++  it("adds control-room orchestration guidance for aggregate front-end summaries", () => {
++    const body = buildFeishuAgentBody({
++      ctx: {
++        content: "今天该关注什么，给我一个总览",
++        senderName: "Sender Name",
++        senderOpenId: "ou-sender",
++        messageId: "msg-control-room-42",
++      },
++      surfaceNotice:
++        "[System: Feishu operating surface target = control_room.]\n[System: Surface role contract = orchestrator. Use this surface for orchestration, resets, routing decisions, and explicit control-plane coordination.]\n[System: Configured target chat for this surface = oc-control-room.]\n[System: Control-room orchestration mode is active.]\n[System: Internally fan this request out to the relevant specialist surfaces: technical_daily, fundamental_research, ops_audit.]\n[System: Return one clear control-room summary first. Keep it simple for a non-technical user: what matters, what to watch, and what action or next step is most sensible.]\n[System: Specialist detail is optional. Do not tell the user to manually message other groups. If a deeper dive would help, mention the follow-up pattern: expand technical / expand fundamental / expand ops / expand knowledge.]",
++    });
++
++    expect(body).toContain("[System: Feishu operating surface target = control_room.]");
++    expect(body).toContain("[System: Control-room orchestration mode is active.]");
++    expect(body).toContain("Internally fan this request out to the relevant specialist surfaces");
++    expect(body).toContain("Return one clear control-room summary first");
++    expect(body).toContain("expand technical / expand fundamental / expand ops / expand knowledge");
++  });
++});
++
++describe("classified publish routing", () => {
++  it("publishes classified specialist slices to explicit Feishu surfaces and keeps a summary in control room", async () => {
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
++    });
++
++    const mockDispatchReplyFromConfig = vi.fn(
++      async ({
++        dispatcher,
++      }: {
++        dispatcher: {
++          sendFinalReply: (payload: { text?: string }) => boolean;
++        };
++      }) => {
++        dispatcher.sendFinalReply({
++          text: `
++## Control Summary
++今天先看风险框架，不追高。
++
++## Technical Slice
++publish: yes
++confidence: high
++QQQ / SPY / TLT 先看谁对长端利率更敏感。
++
++## Fundamental Slice
++publish: no
++confidence: low
++科技财报还缺新鲜交叉验证，先保留草稿。
++`,
++        });
++        return { queuedFinal: true, counts: { final: 1 } };
++      },
++    );
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
++
++    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-lane-"));
++    const cfg: ClawdbotConfig = {
++      agents: { defaults: { workspace: tempDir } },
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            control_room: { chatId: "oc-control-room" },
++            technical_daily: { chatId: "oc-tech" },
++            fundamental_research: { chatId: "oc-fund" },
++            knowledge_maintenance: { chatId: "oc-knowledge" },
++            ops_audit: { chatId: "oc-ops" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    const event: FeishuMessageEvent = {
++      sender: { sender_id: { open_id: "ou-user" } },
++      message: {
++        message_id: "msg-control-classified",
++        chat_id: "oc-control-room",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "今天该关注什么，给我一个总览" }),
++      },
++    };
++
++    await dispatchMessage({ cfg, event });
++
++    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
++      text: "今天先看风险框架，不追高。\n\nDistribution: published technical slice; held as draft fundamental slice.",
++    });
++    expect(mockSendMessageFeishu).toHaveBeenCalledWith(
++      expect.objectContaining({
++        to: "chat:oc-tech",
++        text: "Technical Slice\nQQQ / SPY / TLT 先看谁对长端利率更敏感。",
++      }),
++    );
++    expect(mockSendMessageFeishu).not.toHaveBeenCalledWith(
++      expect.objectContaining({
++        to: "chat:oc-fund",
++      }),
++    );
++  });
++
++  it("appends the latest workface summary to daily briefs and publishes the full panel to watchtower", async () => {
++    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-feishu-workface-"));
++    await fs.mkdir(path.join(tempDir, "memory"), { recursive: true });
++    await fs.writeFile(
++      path.join(tempDir, "memory", "2026-03-26-lobster-workface.md"),
++      [
++        "# Lobster Workface: 2026-03-26",
++        "",
++        "- **Learning Items**: 3",
++        "- **Correction Notes**: 1",
++        "- **Watchtower Signals**: 2",
++        "- **Active Surface Lanes**: 2",
++        "- **Portfolio Scorecard**: 3.6 / 5.0",
++        "- **Total Tokens**: 12,345",
++        "- **Estimated Cost**: $1.2345",
++        "",
++        "## Validation Radar",
++        "- Strongest Domain: bounded repair planning: factual 4.0/5, reasoning 4.0/5 (1 note)",
++        "- Weakest Domain: position management: factual 3.0/5, reasoning 2.0/5 (1 note)",
++        "- Hallucination Watch: position management: 1 risky validation note",
++        "",
++        "## Feishu Lane Panel",
++        "- Active Lanes: 2",
++        "- learning_command / oc-main: 2 turns · session agent:main:feishu:dm:oc-main:surface:learning_command · updated 2026-03-26T14:00:00.000Z",
++        "- fundamental_research / oc-main: 1 turn · session agent:main:feishu:dm:oc-main:surface:fundamental_research · updated 2026-03-26T13:45:00.000Z",
++        "",
++        "## Yesterday Learned",
++        "- review / risk-transmission: trace the live driver first.",
++      ].join("\n"),
++      "utf-8",
++    );
++    await fs.writeFile(
++      path.join(tempDir, "memory", "2026-W13-portfolio-answer-scorecard.md"),
++      [
++        "# Portfolio Answer Scorecard: 2026-W13",
++        "",
++        "- **Average Score**: 3.6 / 5.0",
++        "",
++        "## Next Upgrade Focus",
++        "- do-now: improve wait discipline before trying to sound smarter elsewhere.",
++      ].join("\n"),
++      "utf-8",
++    );
++    await fs.writeFile(
++      path.join(tempDir, "memory", "2026-W13-knowledge-validation-weekly.md"),
++      [
++        "# Knowledge Validation Weekly: 2026-W13",
++        "",
++        "## Strongest Domains",
++        "- bounded repair planning: factual 4.0/5, reasoning 4.0/5 (1 note)",
++        "",
++        "## Weakest Domains",
++        "- position management: factual 3.0/5, reasoning 2.0/5 (1 note)",
++        "",
++        "## Hallucination-Prone Domains",
++        "- position management: 1 risky validation note",
++      ].join("\n"),
++      "utf-8",
++    );
++
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
++    });
++
++    const mockDispatchReplyFromConfig = vi.fn(
++      async ({
++        dispatcher,
++      }: {
++        dispatcher: {
++          sendFinalReply: (payload: { text?: string }) => boolean;
++        };
++      }) => {
++        dispatcher.sendFinalReply({
++          text: `
++## Control Summary
++今天主看风险预算、财报跟进和系统健康。
++
++## Technical Slice
++publish: yes
++confidence: high
++先看利率与风险偏好的共振。
++`,
++        });
++        return { queuedFinal: true, counts: { final: 1 } };
++      },
++    );
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
++
++    const cfg: ClawdbotConfig = {
++      agents: { defaults: { workspace: tempDir } },
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            control_room: { chatId: "oc-control-room-workface" },
++            technical_daily: { chatId: "oc-tech-workface" },
++            watchtower: { chatId: "oc-watchtower-workface" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    const event: FeishuMessageEvent = {
++      sender: { sender_id: { open_id: "ou-user" } },
++      message: {
++        message_id: "msg-control-daily-brief",
++        chat_id: "oc-control-room-workface",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "给我今天的健康卓越日报" }),
++      },
++    };
++
++    await dispatchMessage({ cfg, event });
++
++    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith(
++      expect.objectContaining({
++        text: expect.stringContaining("今天主看风险预算、财报跟进和系统健康。"),
++      }),
++    );
++    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith(
++      expect.objectContaining({
++        text: expect.stringContaining("Distribution: suppressed low-signal technical slice."),
++      }),
++    );
++    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith(
++      expect.objectContaining({
++        text: expect.stringContaining(
++          "Workface (2026-03-26): learned 3, corrected 1, watchtower 2, scorecard 3.6 / 5.0, weakest position management: factual 3.0/5, reasoning 2.0/5 (1 note), hallucination watch position management: 1 risky validation note, lane panel 2 active lanes, meter learning_command / oc-main: 2 turns; fundamental_research / oc-main: 1 turn, tokens 12,345, estimated cost $1.2345.",
++        ),
++      }),
++    );
++    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith(
++      expect.objectContaining({
++        text: expect.stringContaining(
++          "Portfolio scorecard (2026-W13): average 3.6 / 5.0, focus wait discipline before trying to sound smarter elsewhere.",
++        ),
++      }),
++    );
++    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith(
++      expect.objectContaining({
++        text: expect.stringContaining(
++          "Validation radar: strongest bounded repair planning: factual 4.0/5, reasoning 4.0/5 (1 note); weakest position management: factual 3.0/5, reasoning 2.0/5 (1 note); hallucination watch position management: 1 risky validation note.",
++        ),
++      }),
++    );
++    expect(mockSendMessageFeishu).not.toHaveBeenCalledWith(
++      expect.objectContaining({
++        to: "chat:oc-tech-workface",
++      }),
++    );
++    expect(mockSendMessageFeishu).toHaveBeenCalledWith(
++      expect.objectContaining({
++        to: "chat:oc-watchtower-workface",
++        text: expect.stringContaining("Lobster Workface: 2026-03-26"),
++      }),
++    );
++    expect(mockSendMessageFeishu).toHaveBeenCalledWith(
++      expect.objectContaining({
++        to: "chat:oc-watchtower-workface",
++        text: expect.stringContaining("Portfolio Answer Scorecard: 2026-W13"),
++      }),
++    );
++    expect(mockSendMessageFeishu).toHaveBeenCalledWith(
++      expect.objectContaining({
++        to: "chat:oc-watchtower-workface",
++        text: expect.stringContaining("Knowledge Validation Weekly: 2026-W13"),
++      }),
++    );
++
++    await fs.rm(tempDir, { recursive: true, force: true });
++  });
++
++  it("republishes watchtower artifacts when the same filename gets new content", async () => {
++    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-feishu-workface-refresh-"));
++    await fs.mkdir(path.join(tempDir, "memory"), { recursive: true });
++    const workfacePath = path.join(tempDir, "memory", "2026-03-26-lobster-workface.md");
++    const writeWorkface = async (tokens: string) =>
++      fs.writeFile(
++        workfacePath,
++        [
++          "# Lobster Workface: 2026-03-26",
++          "",
++          "- **Learning Items**: 3",
++          "- **Correction Notes**: 1",
++          "- **Watchtower Signals**: 2",
++          "- **Active Surface Lanes**: 2",
++          "- **Portfolio Scorecard**: 3.6 / 5.0",
++          `- **Total Tokens**: ${tokens}`,
++          "- **Estimated Cost**: $1.2345",
++          "",
++          "## Validation Radar",
++          "- Strongest Domain: bounded repair planning: factual 4.0/5, reasoning 4.0/5 (1 note)",
++          "- Weakest Domain: position management: factual 3.0/5, reasoning 2.0/5 (1 note)",
++          "- Hallucination Watch: position management: 1 risky validation note",
++        ].join("\n"),
++        "utf-8",
++      );
++
++    await writeWorkface("12,345");
++
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
++    });
++
++    const mockDispatchReplyFromConfig = vi.fn(
++      async ({
++        dispatcher,
++      }: {
++        dispatcher: {
++          sendFinalReply: (payload: { text?: string }) => boolean;
++        };
++      }) => {
++        dispatcher.sendFinalReply({ text: "今天看系统健康。" });
++        return { queuedFinal: true, counts: { final: 1 } };
++      },
++    );
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
++
++    const cfg: ClawdbotConfig = {
++      agents: { defaults: { workspace: tempDir } },
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            control_room: { chatId: "oc-control-room-workface-refresh" },
++            watchtower: { chatId: "oc-watchtower-workface-refresh" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    const event: FeishuMessageEvent = {
++      sender: { sender_id: { open_id: "ou-user" } },
++      message: {
++        message_id: "msg-control-workface-refresh-1",
++        chat_id: "oc-control-room-workface-refresh",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "给我今天的健康卓越日报" }),
++      },
++    };
++
++    await dispatchMessage({ cfg, event });
++    await writeWorkface("22,222");
++    await dispatchMessage({
++      cfg,
++      event: {
++        ...event,
++        message: { ...event.message, message_id: "msg-control-workface-refresh-2" },
++      },
++    });
++
++    const watchtowerPublishes = mockSendMessageFeishu.mock.calls.filter(
++      ([payload]) => payload?.to === "chat:oc-watchtower-workface-refresh",
++    );
++    expect(watchtowerPublishes).toHaveLength(2);
++    expect(watchtowerPublishes[0]?.[0]?.text).toContain("12,345");
++    expect(watchtowerPublishes[1]?.[0]?.text).toContain("22,222");
++
++    await fs.rm(tempDir, { recursive: true, force: true });
++  });
++
++  it("suppresses duplicate or low-signal specialist slices during classified publish", async () => {
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
++    });
++
++    const replyText = `
++## Control Summary
++今天先别追，先看结构。
++
++## Technical Slice
++publish: yes
++confidence: high
++Monitor only.
++`;
++
++    const mockDispatchReplyFromConfig = vi.fn(
++      async ({
++        dispatcher,
++      }: {
++        dispatcher: {
++          sendFinalReply: (payload: { text?: string }) => boolean;
++        };
++      }) => {
++        dispatcher.sendFinalReply({ text: replyText });
++        return { queuedFinal: true, counts: { final: 1 } };
++      },
++    );
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
++
++    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-lane-"));
++    const cfg: ClawdbotConfig = {
++      agents: { defaults: { workspace: tempDir } },
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            control_room: { chatId: "oc-control-room-duplicate" },
++            technical_daily: { chatId: "oc-tech-duplicate" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    const event: FeishuMessageEvent = {
++      sender: { sender_id: { open_id: "ou-user" } },
++      message: {
++        message_id: "msg-control-classified-duplicate",
++        chat_id: "oc-control-room-duplicate",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "今天该关注什么，给我一个总览" }),
++      },
++    };
++
++    await dispatchMessage({ cfg, event });
++
++    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
++      text: "今天先别追，先看结构。\n\nDistribution: suppressed low-signal technical slice.",
++    });
++    expect(mockSendMessageFeishu).not.toHaveBeenCalledWith(
++      expect.objectContaining({
++        to: "chat:oc-tech-duplicate",
++      }),
++    );
++  });
++
++  it("suppresses duplicate specialist slices across repeated control-room runs", async () => {
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
++    });
++
++    const replyText = `
++## Control Summary
++今天先看利率和风险偏好。
++
++## Technical Slice
++publish: yes
++confidence: high
++QQQ 对长端利率更敏感，先看 10Y 与风险偏好是否继续共振走弱。
++`;
++
++    const mockDispatchReplyFromConfig = vi.fn(
++      async ({
++        dispatcher,
++      }: {
++        dispatcher: {
++          sendFinalReply: (payload: { text?: string }) => boolean;
++        };
++      }) => {
++        dispatcher.sendFinalReply({ text: replyText });
++        return { queuedFinal: true, counts: { final: 1 } };
++      },
++    );
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
++
++    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-lane-"));
++    const cfg: ClawdbotConfig = {
++      agents: { defaults: { workspace: tempDir } },
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            control_room: { chatId: "oc-control-room-dedupe" },
++            technical_daily: { chatId: "oc-tech-dedupe" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    const event: FeishuMessageEvent = {
++      sender: { sender_id: { open_id: "ou-user" } },
++      message: {
++        message_id: "msg-control-classified-dedupe",
++        chat_id: "oc-control-room-dedupe",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "今天该关注什么，给我一个总览" }),
++      },
++    };
++
++    await dispatchMessage({ cfg, event });
++    await dispatchMessage({
++      cfg,
++      event: {
++        ...event,
++        message: { ...event.message, message_id: "msg-control-classified-dedupe-2" },
++      },
++    });
++
++    const techPublishes = mockSendMessageFeishu.mock.calls.filter(
++      ([payload]) => payload?.to === "chat:oc-tech-dedupe",
++    );
++    expect(techPublishes).toHaveLength(1);
++    expect(baseDispatcher.sendFinalReply).toHaveBeenLastCalledWith({
++      text: "今天先看利率和风险偏好。\n\nDistribution: suppressed duplicate technical slice.",
++    });
++  });
++});
++
++describe("learning council routing", () => {
++  it("runs the real learning council flow for learning_command instead of normal single-pass dispatch", async () => {
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
++    });
++    mockRunFeishuLearningCouncil.mockResolvedValue(
++      "Learning council run: full three-model execution completed.\n\n## Kimi synthesis\n- one point",
++    );
++
++    const mockDispatchReplyFromConfig = vi.fn();
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
++
++    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-lane-"));
++    const cfg: ClawdbotConfig = {
++      agents: { defaults: { workspace: tempDir } },
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            learning_command: { chatId: "oc-learning" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    const event: FeishuMessageEvent = {
++      sender: { sender_id: { open_id: "ou-user" } },
++      message: {
++        message_id: "msg-learning-live",
++        chat_id: "oc-learning",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "用三个模型一起学这个主题" }),
++      },
++    };
++
++    await dispatchMessage({ cfg, event });
++
++    expect(mockRunFeishuLearningCouncil).toHaveBeenCalledWith(
++      expect.objectContaining({
++        userMessage: "用三个模型一起学这个主题",
++        routeAgentId: "main",
++        sessionKey: "agent:main:feishu:dm:ou-attacker:surface:learning_command",
++        workspaceDir: tempDir,
++      }),
++    );
++    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
++    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
++      text: "Learning council run: full three-model execution completed.\n\n## Kimi synthesis\n- one point",
++    });
++  });
++
++  it("scopes sessions by specialist surface when different intents share the same control-room chat", async () => {
++    const finalizeInboundContext = vi.fn((ctx: unknown) => ctx);
++    const mockDispatchReplyFromConfig = vi.fn(async ({ ctx }: { ctx: { SessionKey: string } }) => ({
++      queuedFinal: true,
++      counts: { final: ctx.SessionKey.includes("fundamental_research") ? 1 : 0 },
++    }));
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    mockRunFeishuLearningCouncil.mockResolvedValue("learning ok");
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext:
++              finalizeInboundContext as unknown as PluginRuntime["channel"]["reply"]["finalizeInboundContext"],
++            dispatchReplyFromConfig:
++              mockDispatchReplyFromConfig as unknown as PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"],
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
++
++    const cfg: ClawdbotConfig = {
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            control_room: { chatId: "oc-main" },
++            learning_command: { chatId: "oc-learning" },
++            fundamental_research: { chatId: "oc-fund" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    await dispatchMessage({
++      cfg,
++      event: {
++        sender: { sender_id: { open_id: "ou-user" } },
++        message: {
++          message_id: "msg-learning-overlap",
++          chat_id: "oc-main",
++          chat_type: "p2p",
++          message_type: "text",
++          content: JSON.stringify({ text: "去学一下最近开源里有什么值得学" }),
++        },
++      },
++    });
++
++    await dispatchMessage({
++      cfg,
++      event: {
++        sender: { sender_id: { open_id: "ou-user" } },
++        message: {
++          message_id: "msg-fund-overlap",
++          chat_id: "oc-main",
++          chat_type: "p2p",
++          message_type: "text",
++          content: JSON.stringify({ text: "读一下科技财报" }),
++        },
++      },
++    });
++
++    expect(mockRunFeishuLearningCouncil).toHaveBeenCalledWith(
++      expect.objectContaining({
++        sessionKey: "agent:main:feishu:dm:ou-attacker:surface:learning_command",
++      }),
++    );
++    expect(mockDispatchReplyFromConfig).toHaveBeenCalledWith(
++      expect.objectContaining({
++        ctx: expect.objectContaining({
++          SessionKey: "agent:main:feishu:dm:ou-attacker:surface:fundamental_research",
++        }),
++      }),
++    );
++    const sessionKeys = finalizeInboundContext.mock.calls.map(
++      (call: unknown[]) => (call[0] as { SessionKey: string }).SessionKey,
++    );
++    expect(sessionKeys).toContain("agent:main:feishu:dm:ou-attacker:surface:learning_command");
++    expect(sessionKeys).toContain("agent:main:feishu:dm:ou-attacker:surface:fundamental_research");
++  });
++
++  it("persists separate bounded memory ledgers for different specialist lines in the same chat", async () => {
++    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-feishu-lines-"));
++    await fs.mkdir(path.join(tempDir, "memory"), { recursive: true });
++
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
++    });
++
++    const mockDispatchReplyFromConfig = vi.fn(
++      async ({
++        dispatcher,
++        ctx,
++      }: {
++        dispatcher: { sendFinalReply: (payload: { text?: string }) => boolean };
++        ctx: { SessionKey: string };
++      }) => {
++        dispatcher.sendFinalReply({
++          text: ctx.SessionKey.includes("fundamental_research")
++            ? "先看苹果和微软财报的商业质量。"
++            : "先看最近值得学的开源量化工具和方法坑点。",
++        });
++        return { queuedFinal: true, counts: { final: 1 } };
++      },
++    );
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    mockRunFeishuLearningCouncil.mockResolvedValue(
++      "先说人话：最近值得学的是更稳的仓位纪律和回测卫生。\n\n## Kimi synthesis\n- one point",
++    );
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig:
++              mockDispatchReplyFromConfig as unknown as PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"],
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
++
++    const cfg: ClawdbotConfig = {
++      agents: {
++        defaults: {
++          workspace: tempDir,
++        },
++      },
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            control_room: { chatId: "oc-main" },
++            learning_command: { chatId: "oc-learning" },
++            fundamental_research: { chatId: "oc-fund" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    await dispatchMessage({
++      cfg,
++      event: {
++        sender: { sender_id: { open_id: "ou-user" } },
++        message: {
++          message_id: "msg-learning-ledger",
++          chat_id: "oc-main",
++          chat_type: "p2p",
++          message_type: "text",
++          content: JSON.stringify({ text: "去学一下最近开源里有什么值得学" }),
++        },
++      },
++    });
++
++    await dispatchMessage({
++      cfg,
++      event: {
++        sender: { sender_id: { open_id: "ou-user" } },
++        message: {
++          message_id: "msg-fund-ledger",
++          chat_id: "oc-main",
++          chat_type: "p2p",
++          message_type: "text",
++          content: JSON.stringify({ text: "读一下科技财报" }),
++        },
++      },
++    });
++
++    const learningLedger = await fs.readFile(
++      path.join(tempDir, "memory", "feishu-surface-lines", "learning_command-oc-main.md"),
++      "utf-8",
++    );
++    const fundamentalLedger = await fs.readFile(
++      path.join(tempDir, "memory", "feishu-surface-lines", "fundamental_research-oc-main.md"),
++      "utf-8",
++    );
++    const lanePanel = await fs.readFile(
++      path.join(tempDir, "memory", "feishu-surface-lines", "index.md"),
++      "utf-8",
++    );
++    const laneHealth = await fs.readFile(
++      path.join(tempDir, "memory", "feishu-surface-lines", "health.md"),
++      "utf-8",
++    );
++
++    expect(learningLedger).toContain("# Feishu Surface Line: learning_command / oc-main");
++    expect(learningLedger).toContain("- User: 去学一下最近开源里有什么值得学");
++    expect(learningLedger).toContain("- **Lane Key**: learning_command:oc-main");
++    expect(learningLedger).toContain("surface:learning_command");
++    expect(learningLedger).toContain("最近值得学的是更稳的仓位纪律和回测卫生");
++
++    expect(fundamentalLedger).toContain("# Feishu Surface Line: fundamental_research / oc-main");
++    expect(fundamentalLedger).toContain("- User: 读一下科技财报");
++    expect(fundamentalLedger).toContain("- **Lane Key**: fundamental_research:oc-main");
++    expect(fundamentalLedger).toContain("surface:fundamental_research");
++    expect(fundamentalLedger).toContain("苹果和微软财报的商业质量");
++    expect(lanePanel).toContain("# Feishu Surface Lane Panel");
++    expect(lanePanel).toContain("- **Active Lanes**: 2");
++    expect(lanePanel).toContain("learning_command / oc-main: 1 turn");
++    expect(lanePanel).toContain("fundamental_research / oc-main: 1 turn");
++    expect(laneHealth).toContain("# Feishu Surface Lane Health");
++    expect(laneHealth).toContain("- **Status**: stable");
++    expect(laneHealth).toContain("- **Active Lanes**: 2");
++    expect(laneHealth).toContain("- **Crowded Chats**: none");
++    expect(mockRecordOperationalAnomaly).not.toHaveBeenCalledWith(
++      expect.objectContaining({
++        category: "lane_overload",
++      }),
++    );
++  });
++
++  it("records a lane-overload anomaly when one chat accumulates too many specialist lanes", async () => {
++    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-feishu-lane-overload-"));
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
++    });
++
++    const mockDispatchReplyFromConfig = vi.fn(
++      async ({
++        dispatcher,
++        ctx,
++      }: {
++        dispatcher: { sendFinalReply: (payload: { text?: string }) => boolean };
++        ctx: { SessionKey: string };
++      }) => {
++        dispatcher.sendFinalReply({
++          text: ctx.SessionKey.includes("fundamental_research")
++            ? "先看科技龙头的商业质量与资本配置。"
++            : "先看长端利率、QQQ 与风险偏好的传导。",
++        });
++        return { queuedFinal: true, counts: { final: 1 } };
++      },
++    );
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
++
++    mockRunFeishuLearningCouncil.mockResolvedValue(
++      "先说人话：最近值得学的是更稳的仓位纪律和回测卫生。\n\n## Kimi synthesis\n- one point",
++    );
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig:
++              mockDispatchReplyFromConfig as unknown as PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"],
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
++    );
+
+-describe("buildFeishuAgentBody", () => {
+-  it("builds message id, speaker, quoted content, mentions, and permission notice in order", () => {
+-    const body = buildFeishuAgentBody({
+-      ctx: {
+-        content: "hello world",
+-        senderName: "Sender Name",
+-        senderOpenId: "ou-sender",
+-        messageId: "msg-42",
+-        mentionTargets: [{ openId: "ou-target", name: "Target User", key: "@_user_1" }],
++    const cfg: ClawdbotConfig = {
++      agents: {
++        defaults: {
++          workspace: tempDir,
++        },
+       },
+-      quotedContent: "previous message",
+-      permissionErrorForAgent: {
+-        code: 99991672,
+-        message: "permission denied",
+-        grantUrl: "https://open.feishu.cn/app/cli_test",
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            control_room: { chatId: "oc-main" },
++            learning_command: { chatId: "oc-learning" },
++            fundamental_research: { chatId: "oc-fund" },
++            technical_daily: { chatId: "oc-tech" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    await dispatchMessage({
++      cfg,
++      event: {
++        sender: { sender_id: { open_id: "ou-user" } },
++        message: {
++          message_id: "msg-overload-learning",
++          chat_id: "oc-main",
++          chat_type: "p2p",
++          message_type: "text",
++          content: JSON.stringify({ text: "去学一下最近开源里有什么值得学" }),
++        },
+       },
+     });
+
+-    expect(body).toBe(
+-      '[message_id: msg-42]\nSender Name: [Replying to: "previous message"]\n\nhello world\n\n[System: Your reply will automatically @mention: Target User. Do not write @xxx yourself.]\n\n[System: The bot encountered a Feishu API permission error. Please inform the user about this issue and provide the permission grant URL for the admin to authorize. Permission grant URL: https://open.feishu.cn/app/cli_test]',
+-    );
+-  });
++    await dispatchMessage({
++      cfg,
++      event: {
++        sender: { sender_id: { open_id: "ou-user" } },
++        message: {
++          message_id: "msg-overload-fund",
++          chat_id: "oc-main",
++          chat_type: "p2p",
++          message_type: "text",
++          content: JSON.stringify({ text: "读一下科技财报" }),
++        },
++      },
++    });
+
+-  it("adds a macro intent notice for high-confidence macro prompts", () => {
+-    const body = buildFeishuAgentBody({
+-      ctx: {
+-        content: "查一下最近美国非农、通胀预期和 QQQ / TLT 的关系",
+-        senderName: "Sender Name",
+-        senderOpenId: "ou-sender",
+-        messageId: "msg-macro-42",
++    await dispatchMessage({
++      cfg,
++      event: {
++        sender: { sender_id: { open_id: "ou-user" } },
++        message: {
++          message_id: "msg-overload-tech",
++          chat_id: "oc-main",
++          chat_type: "p2p",
++          message_type: "text",
++          content: JSON.stringify({ text: "去看看几个指数最新的风险和潜在收益" }),
++        },
+       },
+     });
+
+-    expect(body).toContain(
+-      "[System: Treat this as macro and major-asset research. Skip textbook 101 summaries and generic index quote recaps unless the user explicitly asks for basics. Prefer a concise watchlist-style risk review over raw price tables: name the major index or asset exposures that matter, the current structural narrative, what is already priced by consensus, where the marginal surprise or pricing gap still is, and which cross-asset signals (rates, dollar, duration, credit, or related risk assets) confirm or contradict the story. For current market, index, rate, or macro-event questions, use web search first if available so the answer is anchored in fresh facts instead of stale priors. Anchor any risk/reward ranking to fresh hard datapoints when available, such as current rates or rate expectations, relevant ETF or index moves, and supporting cross-asset signals; do not pad with stale quote tables. If the user asks in plain language about a few indices, interpret that as a request for current risk/reward framing, not a request for a market data dump. If the live-data layer looks stale or cached, say so explicitly, name the missing anchors, and avoid a fake confident ranking. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks. If the answer is still generic, say so instead of pretending it is decision-useful.]",
++    const laneHealth = await fs.readFile(
++      path.join(tempDir, "memory", "feishu-surface-lines", "health.md"),
++      "utf-8",
+     );
+-    expect(body).toContain("查一下最近美国非农、通胀预期和 QQQ / TLT 的关系");
++
++    expect(laneHealth).toContain("- **Status**: crowded");
++    expect(laneHealth).toContain("- **Active Lanes**: 3");
++    expect(laneHealth).toContain("- **Crowded Chats**: oc-main");
++    expect(mockRecordOperationalAnomaly).toHaveBeenCalledWith(
++      expect.objectContaining({
++        category: "lane_overload",
++        source: "feishu.surface_memory",
++        problem: "one or more chats are carrying too many specialist lanes",
++      }),
++    );
++
++    await fs.rm(tempDir, { recursive: true, force: true });
+   });
+
+-  it("adds a frontier intent notice for leakage and overfitting prompts", () => {
+-    const body = buildFeishuAgentBody({
+-      ctx: {
+-        content: "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
+-        senderName: "Sender Name",
+-        senderOpenId: "ou-sender",
+-        messageId: "msg-frontier-42",
+-      },
++  it("keeps technical_daily on the normal single-pass dispatch path", async () => {
++    const baseDispatcher = {
++      sendToolResult: vi.fn(() => false),
++      sendBlockReply: vi.fn(() => false),
++      sendFinalReply: vi.fn(() => true),
++      waitForIdle: vi.fn(async () => {}),
++      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
++      markComplete: vi.fn(),
++    };
++    mockCreateFeishuReplyDispatcher.mockReturnValue({
++      dispatcher: baseDispatcher,
++      replyOptions: {},
++      markDispatchIdle: vi.fn(),
+     });
+
+-    expect(body).toContain(
+-      "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Do not rewrite it into a fundamental intake.]",
++    const mockDispatchReplyFromConfig = vi.fn(async () => ({
++      queuedFinal: true,
++      counts: { final: 1 },
++    }));
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
+     );
+-    expect(body).toContain(
+-      "继续这个方法研究，但先检查这个 paper 有没有 leakage 和 overfitting 风险",
++
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
+     );
+-  });
+
+-  it("adds a learning intent notice for open-source study prompts", () => {
+-    const body = buildFeishuAgentBody({
+-      ctx: {
+-        content: "今天你去学学开源的新技术，顺手总结一下关键原理和坑",
+-        senderName: "Sender Name",
+-        senderOpenId: "ou-sender",
+-        messageId: "msg-learning-42",
++    const cfg: ClawdbotConfig = {
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            technical_daily: { chatId: "oc-tech" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    const event: FeishuMessageEvent = {
++      sender: { sender_id: { open_id: "ou-user" } },
++      message: {
++        message_id: "msg-tech-normal",
++        chat_id: "oc-tech",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "去看看几个指数最新的风险和潜在收益" }),
+       },
++    };
++
++    await dispatchMessage({ cfg, event });
++
++    expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
++    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
++  });
++});
++
++describe("watchtower anomaly reporting", () => {
++  it("records a structured anomaly when final dispatch fails", async () => {
++    const mockDispatchReplyFromConfig = vi.fn(async () => {
++      throw new Error("dispatch exploded");
+     });
++    const mockWithReplyDispatcher = vi.fn(
++      async ({
++        dispatcher,
++        run,
++        onSettled,
++      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
++        try {
++          return await run();
++        } finally {
++          dispatcher.markComplete();
++          try {
++            await dispatcher.waitForIdle();
++          } finally {
++            await onSettled?.();
++          }
++        }
++      },
++    );
+
+-    expect(body).toContain(
+-      "[System: Treat this as learning or open-source study work. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. Do not rewrite it into a fundamental intake or reset alias.]",
++    setFeishuRuntime(
++      createPluginRuntimeMock({
++        channel: {
++          routing: {
++            resolveAgentRoute:
++              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
++          },
++          reply: {
++            resolveEnvelopeFormatOptions: vi.fn(
++              () => ({}),
++            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
++            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
++            finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
++            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
++            withReplyDispatcher:
++              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
++          },
++          commands: {
++            shouldComputeCommandAuthorized: vi.fn(() => false),
++            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
++          },
++          pairing: {
++            readAllowFromStore: vi.fn().mockResolvedValue([]),
++            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
++            buildPairingReply: vi.fn(() => "Pairing response"),
++          },
++        },
++      }),
+     );
+-    expect(body).toContain("今天你去学学开源的新技术，顺手总结一下关键原理和坑");
+-  });
+
+-  it("adds a macro intent notice for plain-language index risk prompts", () => {
+-    const body = buildFeishuAgentBody({
+-      ctx: {
+-        content: "去看看几个指数最新的风险和潜在收益",
+-        senderName: "Sender Name",
+-        senderOpenId: "ou-sender",
+-        messageId: "msg-index-risk-42",
++    const cfg: ClawdbotConfig = {
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          resolveSenderNames: false,
++        },
+       },
+-    });
++    } as ClawdbotConfig;
+
+-    expect(body).toContain(
+-      "[System: Treat this as macro and major-asset research. Skip textbook 101 summaries and generic index quote recaps unless the user explicitly asks for basics. Prefer a concise watchlist-style risk review over raw price tables: name the major index or asset exposures that matter, the current structural narrative, what is already priced by consensus, where the marginal surprise or pricing gap still is, and which cross-asset signals (rates, dollar, duration, credit, or related risk assets) confirm or contradict the story. For current market, index, rate, or macro-event questions, use web search first if available so the answer is anchored in fresh facts instead of stale priors. Anchor any risk/reward ranking to fresh hard datapoints when available, such as current rates or rate expectations, relevant ETF or index moves, and supporting cross-asset signals; do not pad with stale quote tables. If the user asks in plain language about a few indices, interpret that as a request for current risk/reward framing, not a request for a market data dump. If the live-data layer looks stale or cached, say so explicitly, name the missing anchors, and avoid a fake confident ranking. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks. If the answer is still generic, say so instead of pretending it is decision-useful.]",
++    const event: FeishuMessageEvent = {
++      sender: { sender_id: { open_id: "ou-user" } },
++      message: {
++        message_id: "msg-dispatch-failure",
++        chat_id: "oc-control-room",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "今天该关注什么，给我一个总览" }),
++      },
++    };
++
++    await dispatchMessage({ cfg, event });
++
++    expect(mockRecordOperationalAnomaly).toHaveBeenCalledWith(
++      expect.objectContaining({
++        category: "write_edit_failure",
++        source: "feishu.dispatch",
++        problem: "failed to dispatch message",
++      }),
+     );
+-    expect(body).toContain("去看看几个指数最新的风险和潜在收益");
+   });
+ });
+
+@@ -377,7 +2081,7 @@ describe("handleFeishuMessage command authorization", () => {
+     expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+   });
+
+-  it("normalizes high-confidence natural-language reset intents before dispatch", async () => {
++  it("keeps natural-language continuation prompts untouched before dispatch", async () => {
+     mockShouldComputeCommandAuthorized.mockReturnValue(true);
+     mockResolveCommandAuthorizedFromAuthorizers.mockReturnValue(true);
+
+@@ -406,11 +2110,11 @@ describe("handleFeishuMessage command authorization", () => {
+
+     await dispatchMessage({ cfg, event });
+
+-    expect(mockShouldComputeCommandAuthorized).toHaveBeenCalledWith("/new 继续这个研究线", cfg);
++    expect(mockShouldComputeCommandAuthorized).toHaveBeenCalledWith("继续这个研究线", cfg);
+     expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+       expect.objectContaining({
+-        RawBody: "/new 继续这个研究线",
+-        CommandBody: "/new 继续这个研究线",
++        RawBody: "继续这个研究线",
++        CommandBody: "继续这个研究线",
+         BodyForAgent: expect.stringContaining("继续这个研究线"),
+       }),
+     );
+@@ -458,6 +2162,56 @@ describe("handleFeishuMessage command authorization", () => {
+     );
+   });
+
++  it("records role drift but keeps a bound specialist chat on its own lane", async () => {
++    mockShouldComputeCommandAuthorized.mockReturnValue(true);
++    mockResolveCommandAuthorizedFromAuthorizers.mockReturnValue(true);
++
++    const cfg: ClawdbotConfig = {
++      channels: {
++        feishu: {
++          dmPolicy: "open",
++          surfaces: {
++            fundamental_research: { chatId: "oc-fundamental" },
++            technical_daily: { chatId: "oc-tech" },
++          },
++        },
++      },
++    } as ClawdbotConfig;
++
++    const event: FeishuMessageEvent = {
++      sender: {
++        sender_id: {
++          open_id: "ou-attacker",
++        },
++      },
++      message: {
++        message_id: "msg-specialist-role-drift",
++        chat_id: "oc-fundamental",
++        chat_type: "p2p",
++        message_type: "text",
++        content: JSON.stringify({ text: "去看看几个指数最新的风险和潜在收益" }),
++      },
++    };
++
++    await dispatchMessage({ cfg, event });
++
++    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
++      expect.objectContaining({
++        SessionKey: "agent:main:feishu:dm:ou-attacker:surface:fundamental_research",
++        BodyForAgent: expect.stringContaining(
++          "This specialist lane is pinned to fundamental_research",
++        ),
++      }),
++    );
++    expect(mockRecordOperationalAnomaly).toHaveBeenCalledWith(
++      expect.objectContaining({
++        category: "role_drift",
++        source: "feishu.surface_routing",
++        problem: "suppressed cross-surface drift from fundamental_research toward technical_daily",
++      }),
++    );
++  });
++
+   it("keeps frontier research prompts as natural language before dispatch", async () => {
+     mockShouldComputeCommandAuthorized.mockReturnValue(true);
+     mockResolveCommandAuthorizedFromAuthorizers.mockReturnValue(true);
+@@ -681,7 +2435,7 @@ describe("handleFeishuMessage command authorization", () => {
+     );
+   });
+
+-  it("normalizes continue alias in group topic sessions before dispatch", async () => {
++  it("keeps continuation text natural inside group topic sessions", async () => {
+     mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+     const cfg: ClawdbotConfig = {
+@@ -723,8 +2477,8 @@ describe("handleFeishuMessage command authorization", () => {
+     );
+     expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+       expect.objectContaining({
+-        RawBody: "/new 继续这个研究线",
+-        CommandBody: "/new 继续这个研究线",
++        RawBody: "继续这个研究线",
++        CommandBody: "继续这个研究线",
+       }),
+     );
+   });
+@@ -2115,6 +3869,26 @@ describe("buildBroadcastSessionKey", () => {
+   });
+ });
+
++describe("buildSurfaceScopedSessionKey", () => {
++  it("keeps control-room traffic on the base session key", () => {
++    expect(buildSurfaceScopedSessionKey("agent:main:feishu:group:oc_main", "control_room")).toBe(
++      "agent:main:feishu:group:oc_main",
++    );
++  });
++
++  it("adds a specialist surface suffix once", () => {
++    expect(
++      buildSurfaceScopedSessionKey("agent:main:feishu:group:oc_main", "learning_command"),
++    ).toBe("agent:main:feishu:group:oc_main:surface:learning_command");
++    expect(
++      buildSurfaceScopedSessionKey(
++        "agent:main:feishu:group:oc_main:surface:learning_command",
++        "learning_command",
++      ),
++    ).toBe("agent:main:feishu:group:oc_main:surface:learning_command");
++  });
++});
++
+ describe("broadcast dispatch", () => {
+   const mockFinalizeInboundContext = vi.fn((ctx: unknown) => ctx);
+   const mockDispatchReplyFromConfig = vi
+diff --git a/extensions/feishu/src/bot.ts b/extensions/feishu/src/bot.ts
+index 0314306b7..1d54f46be 100644
+--- a/extensions/feishu/src/bot.ts
++++ b/extensions/feishu/src/bot.ts
+@@ -1,4 +1,6 @@
+-import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
++import fs from "node:fs/promises";
++import path from "node:path";
++import type { ClawdbotConfig, ReplyPayload, RuntimeEnv } from "openclaw/plugin-sdk";
+ import {
+   buildAgentMediaPayload,
+   buildPendingHistoryContextFromMap,
+@@ -12,12 +14,17 @@ import {
+   resolveDefaultGroupPolicy,
+   warnMissingProviderGroupPolicyFallbackOnce,
+ } from "openclaw/plugin-sdk";
++import { resolveAgentWorkspaceDir } from "../../../src/agents/agent-scope.js";
++import type { OpenClawConfig } from "../../../src/config/config.js";
++import { recordOperationalAnomaly } from "../../../src/infra/operational-anomalies.js";
+ import { resolveFeishuAccount } from "./accounts.js";
+ import { createFeishuClient } from "./client.js";
+ import { tryRecordMessage, tryRecordMessagePersistent } from "./dedup.js";
++import { normalizeFeishuDisplayText } from "./display-text.js";
+ import { maybeCreateDynamicAgent } from "./dynamic-agent.js";
+ import { normalizeFeishuExternalKey } from "./external-keys.js";
+ import { normalizeFeishuCommandText } from "./feishu-command-handler.js";
++import { runFeishuLearningCouncil } from "./learning-council.js";
+ import { downloadMessageResourceFeishu } from "./media.js";
+ import { extractMentionTargets, isMentionForwardRequest } from "./mention.js";
+ import {
+@@ -30,6 +37,14 @@ import { parsePostContent } from "./post.js";
+ import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
+ import { getFeishuRuntime } from "./runtime.js";
+ import { getMessageFeishu, sendMessageFeishu } from "./send.js";
++import {
++  buildFeishuControlRoomOrchestrationNotice,
++  buildFeishuSurfaceNotice,
++  resolveFeishuClassifiedPublishResult,
++  resolveFeishuControlRoomOrchestration,
++  resolveFeishuSurfaceRouting,
++  type FeishuChatSurfaceName,
++} from "./surfaces.js";
+ import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
+ import type { DynamicAgentCreationConfig } from "./types.js";
+
+@@ -771,6 +786,22 @@ export function buildBroadcastSessionKey(
+   return baseSessionKey;
+ }
+
++export function buildSurfaceScopedSessionKey(
++  baseSessionKey: string,
++  targetSurface?: FeishuChatSurfaceName,
++): string {
++  if (!targetSurface || targetSurface === "control_room") {
++    return baseSessionKey;
++  }
++
++  const suffix = `:surface:${targetSurface}`;
++  if (baseSessionKey.endsWith(suffix)) {
++    return baseSessionKey;
++  }
++
++  return `${baseSessionKey}${suffix}`;
++}
++
+ /**
+  * Build media payload for inbound context.
+  * Similar to Discord's buildDiscordMediaPayload().
+@@ -831,19 +862,24 @@ export function buildFeishuAgentBody(params: {
+   quotedContent?: string;
+   permissionErrorForAgent?: PermissionError;
+   botOpenId?: string;
++  surfaceNotice?: string;
+ }): string {
+-  const { ctx, quotedContent, permissionErrorForAgent, botOpenId } = params;
++  const { ctx, quotedContent, permissionErrorForAgent, botOpenId, surfaceNotice } = params;
+   let messageBody = ctx.content;
+   const intentNotice = inferFeishuResearchIntentNotice(ctx.content);
++  const systemNotices = [surfaceNotice, intentNotice].filter(Boolean).join("\n");
+   if (intentNotice) {
+-    messageBody = `${intentNotice}\n\n${messageBody}`;
++    messageBody = `${systemNotices}\n\n${messageBody}`;
+   }
+   if (quotedContent) {
+     messageBody = `[Replying to: "${quotedContent}"]\n\n${ctx.content}`;
+-    if (intentNotice) {
+-      messageBody = `[Replying to: "${quotedContent}"]\n\n${intentNotice}\n\n${ctx.content}`;
++    if (systemNotices) {
++      messageBody = `[Replying to: "${quotedContent}"]\n\n${systemNotices}\n\n${ctx.content}`;
+     }
+   }
++  if (!quotedContent && !intentNotice && surfaceNotice) {
++    messageBody = `${surfaceNotice}\n\n${messageBody}`;
++  }
+
+   // DMs already have per-sender sessions, but this label still improves attribution.
+   const speaker = ctx.senderName ?? ctx.senderOpenId;
+@@ -875,12 +911,759 @@ export function buildFeishuAgentBody(params: {
+   return messageBody;
+ }
+
++type FeishuReplyDispatcherShape = {
++  sendToolResult: (payload: ReplyPayload) => boolean;
++  sendBlockReply: (payload: ReplyPayload) => boolean;
++  sendFinalReply: (payload: ReplyPayload) => boolean;
++  waitForIdle: () => Promise<void>;
++  getQueuedCounts: () => Record<string, number>;
++  markComplete: () => void;
++};
++
++const CLASSIFIED_PUBLISH_DEDUP_TTL_MS = 6 * 60 * 60 * 1000;
++const classifiedPublishSeenAt = new Map<string, number>();
++const DAILY_WORKFACE_PUBLISH_DEDUP_TTL_MS = 6 * 60 * 60 * 1000;
++const dailyWorkfaceSeenAt = new Map<string, number>();
++
++type DailyWorkfaceArtifact = {
++  filename: string;
++  content: string;
++  controlRoomSummary: string;
++};
++
++type PortfolioScorecardArtifact = {
++  filename: string;
++  content: string;
++  controlRoomSummary: string;
++};
++
++type ValidationWeeklyArtifact = {
++  filename: string;
++  content: string;
++  controlRoomSummary: string;
++};
++
++type FeishuSurfaceLineArtifact = {
++  heading: string;
++  relativePath: string;
++  content: string;
++};
++
++type FeishuSurfaceLineIndexRow = {
++  surface: FeishuChatSurfaceName;
++  chat: string;
++  laneKey: string;
++  lastUpdated: string;
++  sessionKey: string;
++  turnCount: number;
++};
++
++type FeishuSurfaceLaneHealth = {
++  status: "stable" | "crowded";
++  activeLanes: number;
++  crowdedChats: string[];
++  busiestLane?: string;
++};
++
++function normalizeClassifiedPublishFingerprint(text: string): string {
++  return text.trim().toLowerCase().replace(/\s+/g, " ");
++}
++
++function isLowSignalClassifiedSlice(text: string): boolean {
++  const normalized = normalizeClassifiedPublishFingerprint(text);
++  return (
++    normalized.length < 20 ||
++    /^(no major update|nothing new|same as before|keep watching|monitor only|continue watching)\b/i.test(
++      normalized,
++    )
++  );
++}
++
++function shouldSuppressDuplicateClassifiedSlice(params: {
++  chatId: string;
++  heading: string;
++  body: string;
++}) {
++  const fingerprint = `${params.chatId}:${params.heading}:${normalizeClassifiedPublishFingerprint(params.body)}`;
++  const now = Date.now();
++  const previousSeenAt = classifiedPublishSeenAt.get(fingerprint) ?? 0;
++  if (now - previousSeenAt < CLASSIFIED_PUBLISH_DEDUP_TTL_MS) {
++    return true;
++  }
++  classifiedPublishSeenAt.set(fingerprint, now);
++  return false;
++}
++
++function parseWorkfaceMetric(content: string, label: string): string | undefined {
++  return content.match(new RegExp(`- \\*\\*${label}\\*\\*: ([^\\n]+)`))?.[1]?.trim();
++}
++
++function parseWorkfaceLanePanelSummary(content: string): string | undefined {
++  const activeLanes = parseWorkfaceMetric(content, "Active Surface Lanes");
++  const laneBlock = content.match(/## Feishu Lane Panel\n([\s\S]*?)(?:\n## |\n?$)/)?.[1] ?? "";
++  const laneRows = laneBlock
++    .split("\n")
++    .map((line) => line.trim())
++    .filter((line) => line.startsWith("- "))
++    .filter((line) => !/^- Active Lanes:/i.test(line))
++    .slice(0, 2)
++    .map((line) =>
++      line
++        .replace(/^- /, "")
++        .replace(/\s*·\s*session[\s\S]*$/u, "")
++        .trim(),
++    );
++
++  if (!activeLanes && laneRows.length === 0) {
++    return undefined;
++  }
++
++  const parts = [
++    activeLanes ? `${activeLanes} active lane${activeLanes === "1" ? "" : "s"}` : undefined,
++  ];
++  if (laneRows.length > 0) {
++    parts.push(`meter ${laneRows.join("; ")}`);
++  }
++  return `lane panel ${parts.filter(Boolean).join(", ")}`;
++}
++
++function sanitizeSurfaceLedgerSegment(value: string): string {
++  return value
++    .trim()
++    .replace(/[^a-zA-Z0-9._-]+/g, "-")
++    .replace(/-+/g, "-")
++    .replace(/^-|-$/g, "");
++}
++
++function buildDailyWorkfaceSummary(params: { filename: string; content: string }): string {
++  const date = params.filename.replace(/-lobster-workface\.md$/u, "");
++  const learningItems = parseWorkfaceMetric(params.content, "Learning Items") ?? "0";
++  const correctionNotes = parseWorkfaceMetric(params.content, "Correction Notes") ?? "0";
++  const watchtowerSignals = parseWorkfaceMetric(params.content, "Watchtower Signals") ?? "0";
++  const portfolioScorecard = parseWorkfaceMetric(params.content, "Portfolio Scorecard");
++  const totalTokens = parseWorkfaceMetric(params.content, "Total Tokens") ?? "0";
++  const estimatedCost = parseWorkfaceMetric(params.content, "Estimated Cost") ?? "$0.0000";
++  const weakestDomain =
++    params.content.match(/- Weakest Domain: ([^\n]+)/)?.[1]?.trim() ??
++    params.content.match(/## Weakest Domains\n- ([^\n]+)/)?.[1]?.trim();
++  const hallucinationWatch =
++    params.content.match(/- Hallucination Watch: ([^\n]+)/)?.[1]?.trim() ??
++    params.content.match(/## Hallucination-Prone Domains\n- ([^\n]+)/)?.[1]?.trim();
++  const lanePanel = parseWorkfaceLanePanelSummary(params.content);
++  const scorecardPart = portfolioScorecard ? `, scorecard ${portfolioScorecard}` : "";
++  const validationPart = weakestDomain ? `, weakest ${weakestDomain}` : "";
++  const riskPart = hallucinationWatch ? `, hallucination watch ${hallucinationWatch}` : "";
++  const lanePart = lanePanel ? `, ${lanePanel}` : "";
++  return `Workface (${date}): learned ${learningItems}, corrected ${correctionNotes}, watchtower ${watchtowerSignals}${scorecardPart}${validationPart}${riskPart}${lanePart}, tokens ${totalTokens}, estimated cost ${estimatedCost}.`;
++}
++
++function buildValidationWeeklySummary(content: string): string | undefined {
++  const strongest = content.match(/## Strongest Domains\n- ([^\n]+)/)?.[1]?.trim();
++  const weakest = content.match(/## Weakest Domains\n- ([^\n]+)/)?.[1]?.trim();
++  const hallucination = content.match(/## Hallucination-Prone Domains\n- ([^\n]+)/)?.[1]?.trim();
++  const parts = [
++    strongest ? `strongest ${strongest}` : undefined,
++    weakest ? `weakest ${weakest}` : undefined,
++    hallucination ? `hallucination watch ${hallucination}` : undefined,
++  ].filter(Boolean);
++  if (parts.length === 0) {
++    return undefined;
++  }
++  return `Validation radar: ${parts.join("; ")}.`;
++}
++
++async function loadLatestDailyWorkface(params: {
++  cfg: ClawdbotConfig;
++  agentId: string;
++}): Promise<DailyWorkfaceArtifact | undefined> {
++  try {
++    const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
++    const memoryDir = path.join(workspaceDir, "memory");
++    const entries = await fs.readdir(memoryDir, { withFileTypes: true });
++    const latest = entries
++      .filter(
++        (entry) => entry.isFile() && /^\d{4}-\d{2}-\d{2}-lobster-workface\.md$/u.test(entry.name),
++      )
++      .map((entry) => entry.name)
++      .toSorted()
++      .at(-1);
++    if (!latest) {
++      return undefined;
++    }
++    const content = await fs.readFile(path.join(memoryDir, latest), "utf-8");
++    return {
++      filename: latest,
++      content,
++      controlRoomSummary: buildDailyWorkfaceSummary({ filename: latest, content }),
++    };
++  } catch {
++    return undefined;
++  }
++}
++
++function buildPortfolioScorecardSummary(params: { filename: string; content: string }): string {
++  const week = params.filename.replace(/-portfolio-answer-scorecard\.md$/u, "");
++  const averageScore = params.content.match(/- \*\*Average Score\*\*: ([^\n]+)/)?.[1]?.trim();
++  const focus =
++    params.content.match(/- do-now: improve ([^.\n]+)/i)?.[1]?.trim() ??
++    "keep improving decision quality";
++  if (!averageScore) {
++    return `Portfolio scorecard (${week}): latest weekly scorecard available.`;
++  }
++  return `Portfolio scorecard (${week}): average ${averageScore}, focus ${focus}.`;
++}
++
++async function loadLatestPortfolioScorecard(params: {
++  cfg: ClawdbotConfig;
++  agentId: string;
++}): Promise<PortfolioScorecardArtifact | undefined> {
++  try {
++    const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
++    const memoryDir = path.join(workspaceDir, "memory");
++    const entries = await fs.readdir(memoryDir, { withFileTypes: true });
++    const latest = entries
++      .filter(
++        (entry) =>
++          entry.isFile() && /^\d{4}-W\d{2}-portfolio-answer-scorecard\.md$/u.test(entry.name),
++      )
++      .map((entry) => entry.name)
++      .toSorted()
++      .at(-1);
++    if (!latest) {
++      return undefined;
++    }
++    const content = await fs.readFile(path.join(memoryDir, latest), "utf-8");
++    return {
++      filename: latest,
++      content,
++      controlRoomSummary: buildPortfolioScorecardSummary({ filename: latest, content }),
++    };
++  } catch {
++    return undefined;
++  }
++}
++
++async function loadLatestValidationWeekly(params: {
++  cfg: ClawdbotConfig;
++  agentId: string;
++}): Promise<ValidationWeeklyArtifact | undefined> {
++  try {
++    const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
++    const memoryDir = path.join(workspaceDir, "memory");
++    const entries = await fs.readdir(memoryDir, { withFileTypes: true });
++    const latest = entries
++      .filter(
++        (entry) =>
++          entry.isFile() && /^\d{4}-W\d{2}-knowledge-validation-weekly\.md$/u.test(entry.name),
++      )
++      .map((entry) => entry.name)
++      .toSorted()
++      .at(-1);
++    if (!latest) {
++      return undefined;
++    }
++    const content = await fs.readFile(path.join(memoryDir, latest), "utf-8");
++    return {
++      filename: latest,
++      content,
++      controlRoomSummary:
++        buildValidationWeeklySummary(content) ??
++        "Validation radar: latest weekly report available.",
++    };
++  } catch {
++    return undefined;
++  }
++}
++
++function summarizeSurfaceLineReply(text: string): string {
++  return text
++    .replace(/```[\s\S]*?```/g, "")
++    .split("\n")
++    .map((line) => line.trim())
++    .filter((line) => line.length > 0 && !/^#{1,6}\s+/.test(line))
++    .slice(0, 3)
++    .join(" ")
++    .replace(/\s+/g, " ")
++    .slice(0, 280);
++}
++
++function trimSurfaceLineEntries(entries: string[], maxEntries = 5): string[] {
++  return entries.filter(Boolean).slice(0, maxEntries);
++}
++
++function parseSurfaceLineIndexRow(content: string): FeishuSurfaceLineIndexRow | undefined {
++  const surface = content.match(/- \*\*Surface\*\*: ([^\n]+)/)?.[1]?.trim() as
++    | FeishuChatSurfaceName
++    | undefined;
++  const chat = content.match(/- \*\*Chat\*\*: ([^\n]+)/)?.[1]?.trim();
++  const laneKey = content.match(/- \*\*Lane Key\*\*: ([^\n]+)/)?.[1]?.trim();
++  const lastUpdated = content.match(/- \*\*Last Updated\*\*: ([^\n]+)/)?.[1]?.trim();
++  const sessionKey = content.match(/- \*\*Current Session Key\*\*: ([^\n]+)/)?.[1]?.trim();
++  const turnCount = content
++    .match(/## Recent Turns\n([\s\S]*)$/)?.[1]
++    ?.split(/\n(?=### )/u)
++    .map((entry) => entry.trim())
++    .filter(Boolean).length;
++  if (!surface || !chat || !laneKey || !lastUpdated || !sessionKey) {
++    return undefined;
++  }
++  return {
++    surface,
++    chat,
++    laneKey,
++    lastUpdated,
++    sessionKey,
++    turnCount: turnCount ?? 0,
++  };
++}
++
++async function writeFeishuSurfaceLineIndex(params: {
++  memoryDir: string;
++}): Promise<FeishuSurfaceLineIndexRow[]> {
++  const entries = await fs.readdir(params.memoryDir, { withFileTypes: true }).catch(() => []);
++  const rows: FeishuSurfaceLineIndexRow[] = [];
++  for (const entry of entries) {
++    if (!entry.isFile() || !entry.name.endsWith(".md") || entry.name === "index.md") {
++      continue;
++    }
++    try {
++      const content = await fs.readFile(path.join(params.memoryDir, entry.name), "utf-8");
++      const parsed = parseSurfaceLineIndexRow(content);
++      if (parsed) {
++        rows.push(parsed);
++      }
++    } catch {}
++  }
++
++  const sortedRows = rows.toSorted((a, b) => b.lastUpdated.localeCompare(a.lastUpdated));
++  const content = [
++    "# Feishu Surface Lane Panel",
++    "",
++    `- **Active Lanes**: ${sortedRows.length}`,
++    "",
++    "## Lane Meter",
++    ...(sortedRows.length > 0
++      ? sortedRows.map(
++          (row) =>
++            `- ${row.surface} / ${row.chat}: ${row.turnCount} turn${row.turnCount === 1 ? "" : "s"} · session ${row.sessionKey} · updated ${row.lastUpdated}`,
++        )
++      : ["- No active surface lanes are recorded yet."]),
++    "",
++  ].join("\n");
++
++  await fs.writeFile(path.join(params.memoryDir, "index.md"), content, "utf-8");
++  return sortedRows;
++}
++
++function assessFeishuSurfaceLaneHealth(rows: FeishuSurfaceLineIndexRow[]): FeishuSurfaceLaneHealth {
++  const crowdedChats = Array.from(
++    rows.reduce((map, row) => {
++      const surfaces = map.get(row.chat) ?? new Set<FeishuChatSurfaceName>();
++      if (row.surface !== "control_room" && row.surface !== "watchtower") {
++        surfaces.add(row.surface);
++      }
++      map.set(row.chat, surfaces);
++      return map;
++    }, new Map<string, Set<FeishuChatSurfaceName>>()),
++  )
++    .filter(([, surfaces]) => surfaces.size >= 3)
++    .map(([chat]) => chat)
++    .toSorted();
++
++  const busiestLane = rows.toSorted((a, b) => b.turnCount - a.turnCount)[0];
++  return {
++    status: rows.length >= 8 || crowdedChats.length > 0 ? "crowded" : "stable",
++    activeLanes: rows.length,
++    crowdedChats,
++    busiestLane: busiestLane ? `${busiestLane.surface} / ${busiestLane.chat}` : undefined,
++  };
++}
++
++async function writeFeishuSurfaceLaneHealth(params: {
++  memoryDir: string;
++  rows: FeishuSurfaceLineIndexRow[];
++}): Promise<FeishuSurfaceLaneHealth> {
++  const health = assessFeishuSurfaceLaneHealth(params.rows);
++  const content = [
++    "# Feishu Surface Lane Health",
++    "",
++    `- **Status**: ${health.status}`,
++    `- **Active Lanes**: ${health.activeLanes}`,
++    `- **Crowded Chats**: ${health.crowdedChats.length > 0 ? health.crowdedChats.join(", ") : "none"}`,
++    `- **Busiest Lane**: ${health.busiestLane ?? "none"}`,
++    "",
++    "## Guidance",
++    ...(health.status === "stable"
++      ? [
++          "- Lane load is healthy. Keep specialist work in dedicated chats and use control_room for orchestration.",
++        ]
++      : [
++          "- Lane load is getting crowded. Keep each specialist line focused and move mixed requests back to control_room.",
++          "- If one chat keeps carrying too many specialist lanes, split the work across dedicated windows before quality drifts.",
++        ]),
++    "",
++  ].join("\n");
++
++  await fs.writeFile(path.join(params.memoryDir, "health.md"), content, "utf-8");
++  return health;
++}
++
++async function persistFeishuSurfaceLine(params: {
++  cfg: ClawdbotConfig;
++  agentId: string;
++  targetSurface?: FeishuChatSurfaceName;
++  chatId: string;
++  sessionKey: string;
++  messageId: string;
++  userMessage: string;
++  finalReplyText?: string;
++}): Promise<FeishuSurfaceLineArtifact | undefined> {
++  if (!params.targetSurface) {
++    return undefined;
++  }
++
++  const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
++  const memoryDir = path.join(workspaceDir, "memory", "feishu-surface-lines");
++  const chatStem = sanitizeSurfaceLedgerSegment(params.chatId) || "chat";
++  const fileName = `${params.targetSurface}-${chatStem}.md`;
++  const filePath = path.join(memoryDir, fileName);
++  const laneKey = `${params.targetSurface}:${chatStem}`;
++  const now = new Date().toISOString();
++  const replySummary = params.finalReplyText
++    ? summarizeSurfaceLineReply(params.finalReplyText)
++    : "reply summary unavailable";
++  const latestEntry = [
++    `### ${now} · ${params.messageId}`,
++    `- User: ${params.userMessage.replace(/\s+/g, " ").trim()}`,
++    `- Reply summary: ${replySummary}`,
++    `- Session Key: ${params.sessionKey}`,
++  ].join("\n");
++
++  let priorEntries: string[] = [];
++  try {
++    const existing = await fs.readFile(filePath, "utf-8");
++    const marker = "\n## Recent Turns\n";
++    const markerIndex = existing.indexOf(marker);
++    if (markerIndex >= 0) {
++      priorEntries = existing
++        .slice(markerIndex + marker.length)
++        .split(/\n(?=### )/u)
++        .map((entry) => entry.trim())
++        .filter(Boolean);
++    }
++  } catch {}
++
++  const entries = trimSurfaceLineEntries([latestEntry, ...priorEntries]);
++  const content = [
++    `# Feishu Surface Line: ${params.targetSurface} / ${params.chatId}`,
++    "",
++    `- **Surface**: ${params.targetSurface}`,
++    `- **Chat**: ${params.chatId}`,
++    `- **Lane Key**: ${laneKey}`,
++    `- **Last Updated**: ${now}`,
++    `- **Current Session Key**: ${params.sessionKey}`,
++    "",
++    "## Recent Turns",
++    ...entries,
++    "",
++  ].join("\n");
++
++  await fs.mkdir(memoryDir, { recursive: true });
++  await fs.writeFile(filePath, content, "utf-8");
++  const indexRows = await writeFeishuSurfaceLineIndex({ memoryDir });
++  const laneHealth = await writeFeishuSurfaceLaneHealth({ memoryDir, rows: indexRows });
++  if (laneHealth.status !== "stable") {
++    const evidence = [`active_lanes=${laneHealth.activeLanes}`];
++    if (laneHealth.crowdedChats.length > 0) {
++      evidence.push(`crowded_chats=${laneHealth.crowdedChats.join(",")}`);
++    }
++    if (laneHealth.busiestLane) {
++      evidence.push(`busiest_lane=${laneHealth.busiestLane}`);
++    }
++    await recordOperationalAnomaly({
++      cfg: params.cfg as OpenClawConfig,
++      category: "lane_overload",
++      severity: laneHealth.crowdedChats.length > 0 ? "medium" : "low",
++      source: "feishu.surface_memory",
++      problem:
++        laneHealth.crowdedChats.length > 0
++          ? "one or more chats are carrying too many specialist lanes"
++          : "active feishu surface lane count is growing toward crowding",
++      evidence,
++      impact:
++        "lane isolation still holds, but the operator surface topology is getting crowded and may drift into mixed-context usage",
++      foundationTemplate: "execution-hygiene",
++      suggestedScope:
++        "keep specialist chats pinned, keep mixed requests in control_room, and inspect whether crowded lanes need tighter workflow boundaries before changing routing logic",
++      fingerprint:
++        laneHealth.crowdedChats.length > 0
++          ? `crowded:${laneHealth.crowdedChats.join(",")}`
++          : `active-lanes:${laneHealth.activeLanes >= 8 ? "8plus" : laneHealth.activeLanes}`,
++    });
++  }
++  return {
++    heading: `${params.targetSurface} line memory`,
++    relativePath: path.join("memory", "feishu-surface-lines", fileName).split(path.sep).join("/"),
++    content,
++  };
++}
++
++function createSurfaceLineCaptureDispatcher(params: { dispatcher: FeishuReplyDispatcherShape }): {
++  dispatcher: FeishuReplyDispatcherShape;
++  getLastFinalReplyText: () => string | undefined;
++} {
++  let lastFinalReplyText: string | undefined;
++  return {
++    dispatcher: {
++      ...params.dispatcher,
++      sendFinalReply: (payload: ReplyPayload) => {
++        const text = payload.text?.trim();
++        if (text) {
++          lastFinalReplyText = text;
++        }
++        return params.dispatcher.sendFinalReply(payload);
++      },
++    },
++    getLastFinalReplyText: () => lastFinalReplyText,
++  };
++}
++
++function shouldSuppressDuplicateDailyWorkface(params: {
++  chatId: string;
++  filename: string;
++  content: string;
++}) {
++  const fingerprint = `${params.chatId}:${params.filename}:${normalizeClassifiedPublishFingerprint(params.content)}`;
++  const now = Date.now();
++  const previousSeenAt = dailyWorkfaceSeenAt.get(fingerprint) ?? 0;
++  if (now - previousSeenAt < DAILY_WORKFACE_PUBLISH_DEDUP_TTL_MS) {
++    return true;
++  }
++  dailyWorkfaceSeenAt.set(fingerprint, now);
++  return false;
++}
++
++function createClassifiedPublishDispatcher(params: {
++  dispatcher: FeishuReplyDispatcherShape;
++  cfg: ClawdbotConfig;
++  accountId: string;
++  controlRoomOrchestration?: {
++    mode: "aggregate" | "expand";
++    specialistSurfaces: import("./surfaces.js").FeishuSpecialistSurfaceName[];
++    publishMode: import("./surfaces.js").FeishuPublishMode;
++  };
++}): FeishuReplyDispatcherShape {
++  const orchestration = params.controlRoomOrchestration;
++  if (!orchestration || orchestration.mode !== "aggregate") {
++    return params.dispatcher;
++  }
++
++  const pendingPublishes: Promise<unknown>[] = [];
++
++  return {
++    ...params.dispatcher,
++    sendFinalReply: (payload: ReplyPayload) => {
++      const text = payload.text?.trim();
++      if (!text) {
++        return params.dispatcher.sendFinalReply(payload);
++      }
++
++      const classified = resolveFeishuClassifiedPublishResult({
++        cfg: params.cfg.channels?.feishu,
++        publishMode: orchestration.publishMode,
++        specialistSurfaces: orchestration.specialistSurfaces,
++        text,
++      });
++      const publishedHeadings: string[] = [];
++      const draftHeadings = classified.draftArtifacts.map((artifact) =>
++        artifact.heading.toLowerCase(),
++      );
++      const suppressedHeadings: string[] = [];
++
++      for (const target of classified.publishTargets) {
++        const artifact = classified.publishableArtifacts.find(
++          (candidate) => candidate.type === target.artifactType,
++        );
++        if (!artifact || !target.chatId) {
++          continue;
++        }
++        if (isLowSignalClassifiedSlice(artifact.body)) {
++          suppressedHeadings.push(`low-signal ${artifact.heading.toLowerCase()}`);
++          continue;
++        }
++        if (
++          shouldSuppressDuplicateClassifiedSlice({
++            chatId: target.chatId,
++            heading: artifact.heading,
++            body: artifact.body,
++          })
++        ) {
++          suppressedHeadings.push(`duplicate ${artifact.heading.toLowerCase()}`);
++          continue;
++        }
++
++        pendingPublishes.push(
++          sendMessageFeishu({
++            cfg: params.cfg,
++            to: `chat:${target.chatId}`,
++            text: normalizeFeishuDisplayText(`## ${artifact.heading}\n${artifact.body}`),
++            accountId: params.accountId,
++          }),
++        );
++        publishedHeadings.push(artifact.heading.toLowerCase());
++      }
++
++      const distributionParts: string[] = [];
++      if (publishedHeadings.length > 0) {
++        distributionParts.push(`published ${publishedHeadings.join(", ")}`);
++      }
++      if (draftHeadings.length > 0) {
++        distributionParts.push(`held as draft ${draftHeadings.join(", ")}`);
++      }
++      if (suppressedHeadings.length > 0) {
++        distributionParts.push(`suppressed ${suppressedHeadings.join(", ")}`);
++      }
++      const distributionSummary =
++        distributionParts.length > 0
++          ? `Distribution: ${distributionParts.join("; ")}.`
++          : "Distribution: summary only.";
++
++      return params.dispatcher.sendFinalReply({
++        ...payload,
++        text: `${classified.controlSummary}\n\n${distributionSummary}`.trim(),
++      });
++    },
++    waitForIdle: async () => {
++      await params.dispatcher.waitForIdle();
++      if (pendingPublishes.length > 0) {
++        await Promise.allSettled(pendingPublishes);
++      }
++    },
++  };
++}
++
++function createDailyWorkfacePublishDispatcher(params: {
++  dispatcher: FeishuReplyDispatcherShape;
++  cfg: ClawdbotConfig;
++  accountId: string;
++  dailyWorkface?: DailyWorkfaceArtifact;
++  portfolioScorecard?: PortfolioScorecardArtifact;
++  validationWeekly?: ValidationWeeklyArtifact;
++  watchtowerChatId?: string;
++}): FeishuReplyDispatcherShape {
++  if (!params.dailyWorkface && !params.portfolioScorecard && !params.validationWeekly) {
++    return params.dispatcher;
++  }
++
++  const pendingPublishes: Promise<unknown>[] = [];
++
++  return {
++    ...params.dispatcher,
++    sendFinalReply: (payload: ReplyPayload) => {
++      const text = payload.text?.trim();
++      if (!text) {
++        return params.dispatcher.sendFinalReply(payload);
++      }
++
++      if (
++        params.watchtowerChatId &&
++        params.dailyWorkface &&
++        !shouldSuppressDuplicateDailyWorkface({
++          chatId: params.watchtowerChatId,
++          filename: params.dailyWorkface.filename,
++          content: params.dailyWorkface.content,
++        })
++      ) {
++        pendingPublishes.push(
++          sendMessageFeishu({
++            cfg: params.cfg,
++            to: `chat:${params.watchtowerChatId}`,
++            text: normalizeFeishuDisplayText(params.dailyWorkface.content),
++            accountId: params.accountId,
++          }),
++        );
++      }
++
++      if (
++        params.watchtowerChatId &&
++        params.portfolioScorecard &&
++        !shouldSuppressDuplicateDailyWorkface({
++          chatId: params.watchtowerChatId,
++          filename: params.portfolioScorecard.filename,
++          content: params.portfolioScorecard.content,
++        })
++      ) {
++        pendingPublishes.push(
++          sendMessageFeishu({
++            cfg: params.cfg,
++            to: `chat:${params.watchtowerChatId}`,
++            text: normalizeFeishuDisplayText(params.portfolioScorecard.content),
++            accountId: params.accountId,
++          }),
++        );
++      }
++
++      if (
++        params.watchtowerChatId &&
++        params.validationWeekly &&
++        !shouldSuppressDuplicateDailyWorkface({
++          chatId: params.watchtowerChatId,
++          filename: params.validationWeekly.filename,
++          content: params.validationWeekly.content,
++        })
++      ) {
++        pendingPublishes.push(
++          sendMessageFeishu({
++            cfg: params.cfg,
++            to: `chat:${params.watchtowerChatId}`,
++            text: normalizeFeishuDisplayText(params.validationWeekly.content),
++            accountId: params.accountId,
++          }),
++        );
++      }
++
++      const summaryParts = [
++        text,
++        params.dailyWorkface?.controlRoomSummary,
++        params.portfolioScorecard?.controlRoomSummary,
++        params.validationWeekly?.controlRoomSummary,
++      ].filter(Boolean);
++
++      return params.dispatcher.sendFinalReply({
++        ...payload,
++        text: summaryParts.join("\n\n").trim(),
++      });
++    },
++    waitForIdle: async () => {
++      await params.dispatcher.waitForIdle();
++      if (pendingPublishes.length > 0) {
++        await Promise.allSettled(pendingPublishes);
++      }
++    },
++  };
++}
++
+ function inferFeishuResearchIntentNotice(content: string): string | undefined {
++  const trimmed = content.trim();
+   const normalized = content.trim().toLowerCase();
+   if (!normalized) {
+     return undefined;
+   }
+
++  const isCorrectionLoopInput = /^(反馈：|复盘：|纠正：)/u.test(trimmed);
++  const looksRepeatedCorrection =
++    /(重复|反复|再次|又出现|还是|连续|same issue|again|repeated|recurring|repeat)/u.test(
++      normalized,
++    );
++
++  if (isCorrectionLoopInput) {
++    return `[System: Treat this as operator correction-loop input, not as ordinary chat. Start with one short human sentence that plainly acknowledges what was wrong and what changes now. Then convert it into a structured correction note with these sections in order: 1. prior claim or behavior, 2. what was wrong, 3. evidence or user-observed failure, 4. replacement rule or corrected stance, 5. confidence downgrade on the old rule, 6. follow-up or watch item. Do not argue with the feedback, do not hide it, and do not rewrite history as if the prior mistake never happened. Keep the note compact, high-signal, and suitable for durable memory. ${
++      looksRepeatedCorrection
++        ? "This looks repeated or recurring, so after the correction note add one short repair-ticket candidate with: Category, Problem, Evidence, Impact, Suggested scope. Do not propose a broad refactor."
++        : "If the same failure mode appears repeatedly, escalate it later as a repair-ticket candidate instead of silently absorbing it into doctrine."
++    }]`;
++  }
++
+   const hasMacroCue =
+     /(非农|cpi|ppi|fomc|通胀|通胀预期|利率|美债|收益率|期限溢价|美元|油价|就业|加息|降息|qqq|tlt|spy|iwm|dxy|etf|指数|大类资产|风险|潜在收益|macro|inflation|payroll|treasury|yield|duration|fomc|rates?)/u.test(
+       normalized,
+@@ -894,21 +1677,61 @@ function inferFeishuResearchIntentNotice(content: string): string | undefined {
+       normalized,
+     );
+   const hasLearningCue =
+-    /(学学|学习|复盘|开源|新技术|源码|技术栈|原理|教程|文档|study|learn|open source)/u.test(
++    /(学学|学习|复盘|开源|新技术|日频技术|日频策略|源码|技术栈|原理|教程|文档|study|learn|open source|daily[-\s]?frequency|中文理解|英文理解|中英理解|双语理解|bilingual|multilingual|language understanding|language comprehension|术语映射|术语对照|翻译歧义|语义理解|自然语言理解)/u.test(
++      normalized,
++    );
++  const hasPositionCue =
++    /(买|买入|卖|卖出|加仓|减仓|持有|持仓|补仓|止盈|止损|要不要买|要不要卖|该不该买|该不该卖|该不该加|该不该减|should i buy|should i sell|should i add|should i reduce|should i hold|add to position|reduce position|current holdings|position sizing|risk\/reward on)/u.test(
++      normalized,
++    );
++  const hasSearchHealthCue =
++    /(网络搜索可以用吗|网络搜索能用吗|搜索可以用吗|搜索能用吗|web search available|is web search available|search health|search status)/u.test(
++      normalized,
++    );
++  const hasContinuationCue =
++    /^(继续|继续做|继续这个|下一步|按优先级学|扎实补好|好的|好|ok|okay|continue|next step)\b/u.test(
++      trimmed,
++    ) ||
++    /^(继续|下一步|按优先级学|扎实补好|continue|next step)/u.test(normalized);
++  const hasExplicitImplementationCue =
++    /(写代码|写出|实现|开始实现|完整实现|生成代码|保存|落盘|创建文件|patch|改代码|implement|write code|write file|save|create file)/u.test(
+       normalized,
+     );
+
++  if (hasExplicitImplementationCue) {
++    return "[System: Treat this as explicit implementation work. First infer the concrete work target, then stay bounded: state the root cause or design gap, make the smallest safe patch or artifact, and keep the scope local to what the operator actually asked for. Do not silently expand into adjacent refactors, broad architecture changes, or extra file churn.]";
++  }
++
++  if (
++    hasContinuationCue &&
++    !hasExplicitImplementationCue &&
++    !hasMacroCue &&
++    !hasFundamentalCue &&
++    !hasFrontierCue &&
++    !hasLearningCue &&
++    !hasPositionCue
++  ) {
++    return "[System: Treat this as a bounded continuation turn inside the current Feishu lane. Reply with the next concrete step, current status, and one small follow-up in plain language first. Do not silently escalate a terse continuation or approval into long code generation, file creation, workspace writes, or multi-step implementation work unless the operator explicitly asks to implement, write, save, create a file, or patch something.]";
++  }
++
++  if (hasSearchHealthCue) {
++    return "[System: Treat this as a live search/provider health question. Check current runtime status before answering. Distinguish clearly between current availability and stale past failures. If web search is working now, say so directly in plain language. If it is degraded now, name the current failing seam instead of reusing an old generic fallback.]";
++  }
++
++  if (hasPositionCue && (hasMacroCue || hasFundamentalCue || /[A-Z]{2,5}/.test(content))) {
++    return "[System: Treat this as a portfolio or position-management question, not as prediction theater and not as direct execution authority. Use a fixed reply structure with these sections in order when possible: 1. current stance, 2. key reasons, 3. main counter-case / risk, 4. action triggers, 5. confidence, 6. one-line summary. Use exact markdown headings when possible: ## Current Stance, ## Key Reasons, ## Main Counter-Case / Risk, ## Action Triggers, ## Confidence, ## One-Line Summary. In current stance, use one plain label only: hold, watch, reduce, do not add yet, or add only if conditions trigger. Apply sizing discipline explicitly: name any concentration risk, distinguish conviction from actual size, and default low confidence toward smaller size or wait. If macro or cross-asset context matters, explain the live driver and transmission path instead of hand-wavy market color. In action triggers, separate what would justify adding, what would justify reducing, and what means wait. Use execution hygiene too: if event risk, liquidity, or volatility makes the setup noisy, say wait explicitly. Also check for behavior-error drift: urgency theater, confirmation bias, narrative overreach, or emotional discomfort with waiting. If known events matter, map the real catalysts too: what would confirm, what would break, and what is mostly noise. Keep key reasons to the top 2-3 points. Keep confidence to low, medium, or high plus one short justification. Make the one-line summary exactly one sentence. Keep it concise, disciplined, and risk-controlled. No hype, no fake certainty, and no long rambling essay.]";
++  }
+   if (hasMacroCue && !hasFundamentalCue && !hasFrontierCue) {
+-    return "[System: Treat this as macro and major-asset research. Skip textbook 101 summaries and generic index quote recaps unless the user explicitly asks for basics. Prefer a concise watchlist-style risk review over raw price tables: name the major index or asset exposures that matter, the current structural narrative, what is already priced by consensus, where the marginal surprise or pricing gap still is, and which cross-asset signals (rates, dollar, duration, credit, or related risk assets) confirm or contradict the story. For current market, index, rate, or macro-event questions, use web search first if available so the answer is anchored in fresh facts instead of stale priors. Anchor any risk/reward ranking to fresh hard datapoints when available, such as current rates or rate expectations, relevant ETF or index moves, and supporting cross-asset signals; do not pad with stale quote tables. If the user asks in plain language about a few indices, interpret that as a request for current risk/reward framing, not a request for a market data dump. If the live-data layer looks stale or cached, say so explicitly, name the missing anchors, and avoid a fake confident ranking. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks. If the answer is still generic, say so instead of pretending it is decision-useful.]";
++    return "[System: Treat this as macro and major-asset research. Skip textbook 101 summaries and generic index quote recaps unless the user explicitly asks for basics. Prefer a concise watchlist-style risk review over raw price tables: name the major index or asset exposures that matter, the current structural narrative, what is already priced by consensus, where the marginal surprise or pricing gap still is, and which cross-asset signals (rates, dollar, duration, credit, or related risk assets) confirm or contradict the story. For current market, index, rate, or macro-event questions, use web search first if available so the answer is anchored in fresh facts instead of stale priors. Anchor any risk/reward ranking to fresh hard datapoints when available, such as current rates or rate expectations, relevant ETF or index moves, and supporting cross-asset signals; do not pad with stale quote tables. Do not let technical signal tables, buy/sell badges, or quote recaps become the main conclusion. Do not default to vague liquidity-stress explanations unless fresh cross-asset evidence supports them. If the user asks in plain language about a few indices, interpret that as a request for current risk/reward framing, not a request for a market data dump. If the live-data layer looks stale or cached, say so explicitly, name the missing anchors, and refuse to fake a confident ranking. When freshness is weak, stale, cached, or provider-limited, do not present high-specificity market figures, exact levels, exact percentages, or exact point estimates as if they were freshly verified in this turn; use directional wording or explicitly label any inherited number as stale, prior, or illustrative instead. End with one short red-team note explaining what new data or regime shift would invalidate the view. Do not silently convert it into a fundamental intake or issuer watchlist task unless the user explicitly asks. If the answer is still generic, say so instead of pretending it is decision-useful.]";
+   }
+   if (hasFundamentalCue && !hasFrontierCue) {
+-    return "[System: Treat this as fundamental research or watchlist maintenance. Prefer current fundamental artifacts, follow-up trackers, and review memos. Do not rewrite it into a reset alias.]";
++    return "[System: Treat this as fundamental research or watchlist maintenance. Prefer current fundamental artifacts, follow-up trackers, and review memos. Judge the company through business quality, not just surface valuation: industry structure, pricing power, capital allocation, management credibility, and principal structural risks. If known events matter, build a simple catalyst map: what could confirm, what could break, and what is mostly noise. Speak plain language first: what matters about the business, what is attractive, what is risky, and what to follow up next. Do not rewrite it into a reset alias.]";
+   }
+   if (hasFrontierCue && !hasFundamentalCue) {
+-    return "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Do not rewrite it into a fundamental intake.]";
++    return "[System: Treat this as method or paper research. Focus on leakage, overfitting, replication risk, and method quality. Speak human-first: what this method is actually useful for, what is dangerous, and whether it changes daily Lobster usage now. Do not rewrite it into a fundamental intake.]";
+   }
+   if (hasLearningCue && !hasFundamentalCue && !hasFrontierCue) {
+-    return "[System: Treat this as learning or open-source study work. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. Do not rewrite it into a fundamental intake or reset alias.]";
++    return "[System: Treat this as learning or open-source study work. Focus on extracting concepts, implementation ideas, pitfalls, and next study steps. If the topic is Chinese/English understanding, prioritize terminology mapping, ambiguity reduction, workflow-trigger understanding, and plain-language reporting rather than generic language tutoring. If the user says 日频技术 or 日频策略 without extra qualifiers, interpret it as finance or quant methods for daily-frequency research by default, not Japanese-language technology or generic HFT hype. Explain the result in plain language first: what was learned, what is still weak, and what changes for Lobster now. If source coverage or search breadth is weak in this turn, say so explicitly instead of pretending the learning set was broad. Do not rewrite it into a fundamental intake or reset alias.]";
+   }
+
+   return undefined;
+@@ -1044,6 +1867,49 @@ export async function handleFeishuMessage(params: {
+     : null;
+   const groupHistoryKey = isGroup ? (groupSession?.peerId ?? ctx.chatId) : undefined;
+   const dmPolicy = feishuCfg?.dmPolicy ?? "pairing";
++  const surfaceRouting = resolveFeishuSurfaceRouting({
++    cfg: feishuCfg,
++    chatId: ctx.chatId,
++    content: ctx.content,
++    normalizedCommandText,
++  });
++  const controlRoomOrchestration = resolveFeishuControlRoomOrchestration({
++    currentSurface: surfaceRouting.currentSurface,
++    targetSurface: surfaceRouting.targetSurface,
++    content: ctx.content,
++    normalizedCommandText,
++  });
++  if (surfaceRouting.targetSurface) {
++    log(
++      `feishu[${account.accountId}]: surface route current=${surfaceRouting.currentSurface ?? "none"} target=${surfaceRouting.targetSurface} source=${surfaceRouting.source}`,
++    );
++  }
++  if (surfaceRouting.currentSurface && surfaceRouting.suppressedIntentSurface) {
++    void Promise.resolve(
++      recordOperationalAnomaly({
++        cfg: cfg as OpenClawConfig,
++        category: "role_drift",
++        severity: "medium",
++        source: "feishu.surface_routing",
++        problem: `suppressed cross-surface drift from ${surfaceRouting.currentSurface} toward ${surfaceRouting.suppressedIntentSurface}`,
++        evidence: [
++          `chat ${ctx.chatId} is explicitly bound to ${surfaceRouting.currentSurface}`,
++          `message ${ctx.messageId} also matched ${surfaceRouting.suppressedIntentSurface}`,
++          `preview: ${ctx.content.replace(/\s+/g, " ").slice(0, 160)}`,
++        ],
++        impact:
++          "without lane pinning, specialist conversations can jump workflows and contaminate the wrong session",
++        suggestedScope:
++          "keep specialist chats pinned to their configured lane; only route across surfaces via control_room or explicit operator intent",
++        repairTicketThreshold: 2,
++      }),
++    ).catch(() => {});
++  }
++  if (controlRoomOrchestration) {
++    log(
++      `feishu[${account.accountId}]: control-room orchestration mode=${controlRoomOrchestration.mode} specialists=${controlRoomOrchestration.specialistSurfaces.join(",")}`,
++    );
++  }
+   const configAllowFrom = feishuCfg?.allowFrom ?? [];
+   const useAccessGroups = cfg.commands?.useAccessGroups !== false;
+   const rawBroadcastAgents = isGroup ? resolveBroadcastAgents(cfg, ctx.chatId) : null;
+@@ -1267,6 +2133,34 @@ export async function handleFeishuMessage(params: {
+       }
+     }
+
++    const effectiveSessionKey = buildSurfaceScopedSessionKey(
++      route.sessionKey,
++      surfaceRouting.targetSurface,
++    );
++
++    const dailyWorkface =
++      controlRoomOrchestration?.includeDailyWorkface === true
++        ? await loadLatestDailyWorkface({
++            cfg: effectiveCfg,
++            agentId: route.agentId,
++          })
++        : undefined;
++    const validationWeekly =
++      controlRoomOrchestration?.includeDailyWorkface === true
++        ? await loadLatestValidationWeekly({
++            cfg: effectiveCfg,
++            agentId: route.agentId,
++          })
++        : undefined;
++    const portfolioScorecard =
++      controlRoomOrchestration?.includeDailyWorkface === true
++        ? await loadLatestPortfolioScorecard({
++            cfg: effectiveCfg,
++            agentId: route.agentId,
++          })
++        : undefined;
++    const watchtowerChatId = feishuCfg?.surfaces?.watchtower?.chatId?.trim() || undefined;
++
+     const preview = ctx.content.replace(/\s+/g, " ").slice(0, 160);
+     const inboundLabel = isGroup
+       ? `Feishu[${account.accountId}] message in group ${ctx.chatId}`
+@@ -1316,6 +2210,12 @@ export async function handleFeishuMessage(params: {
+       quotedContent,
+       permissionErrorForAgent,
+       botOpenId,
++      surfaceNotice: [
++        buildFeishuSurfaceNotice(surfaceRouting),
++        buildFeishuControlRoomOrchestrationNotice(controlRoomOrchestration),
++      ]
++        .filter(Boolean)
++        .join("\n"),
+     });
+     const envelopeFrom = isGroup ? `${ctx.chatId}:${ctx.senderOpenId}` : ctx.senderOpenId;
+     if (permissionErrorForAgent) {
+@@ -1440,7 +2340,11 @@ export async function handleFeishuMessage(params: {
+           return;
+         }
+
+-        const agentSessionKey = buildBroadcastSessionKey(route.sessionKey, route.agentId, agentId);
++        const agentSessionKey = buildBroadcastSessionKey(
++          effectiveSessionKey,
++          route.agentId,
++          agentId,
++        );
+         const agentCtx = buildCtxPayloadForAgent(
+           agentSessionKey,
+           route.accountId,
+@@ -1463,18 +2367,32 @@ export async function handleFeishuMessage(params: {
+             accountId: account.accountId,
+             messageCreateTimeMs,
+           });
++          const effectiveDispatcher = createClassifiedPublishDispatcher({
++            dispatcher: createDailyWorkfacePublishDispatcher({
++              dispatcher,
++              cfg,
++              accountId: account.accountId,
++              dailyWorkface,
++              portfolioScorecard,
++              validationWeekly,
++              watchtowerChatId,
++            }),
++            cfg,
++            accountId: account.accountId,
++            controlRoomOrchestration,
++          });
+
+           log(
+             `feishu[${account.accountId}]: broadcast active dispatch agent=${agentId} (session=${agentSessionKey})`,
+           );
+           await core.channel.reply.withReplyDispatcher({
+-            dispatcher,
++            dispatcher: effectiveDispatcher,
+             onSettled: () => markDispatchIdle(),
+             run: () =>
+               core.channel.reply.dispatchReplyFromConfig({
+                 ctx: agentCtx,
+                 cfg,
+-                dispatcher,
++                dispatcher: effectiveDispatcher,
+                 replyOptions,
+               }),
+           });
+@@ -1515,6 +2433,20 @@ export async function handleFeishuMessage(params: {
+             log(
+               `feishu[${account.accountId}]: broadcast dispatch failed for agent=${agentId}: ${String(err)}`,
+             );
++            await recordOperationalAnomaly({
++              cfg,
++              category: "write_edit_failure",
++              severity: "high",
++              source: "feishu.dispatch",
++              problem: "broadcast dispatch failed",
++              evidence: [
++                `account=${account.accountId}`,
++                `agent=${agentId}`,
++                `message_id=${ctx.messageId}`,
++                `error=${String(err)}`,
++              ],
++              impact: "one or more broadcast reply paths failed during active user operation",
++            });
+           }
+         }
+       } else {
+@@ -1524,6 +2456,20 @@ export async function handleFeishuMessage(params: {
+             log(
+               `feishu[${account.accountId}]: broadcast dispatch failed for agent=${broadcastAgents[i]}: ${String((results[i] as PromiseRejectedResult).reason)}`,
+             );
++            await recordOperationalAnomaly({
++              cfg,
++              category: "write_edit_failure",
++              severity: "high",
++              source: "feishu.dispatch",
++              problem: "broadcast dispatch failed",
++              evidence: [
++                `account=${account.accountId}`,
++                `agent=${broadcastAgents[i]}`,
++                `message_id=${ctx.messageId}`,
++                `error=${String((results[i] as PromiseRejectedResult).reason)}`,
++              ],
++              impact: "one or more broadcast reply paths failed during active user operation",
++            });
+           }
+         }
+       }
+@@ -1542,7 +2488,7 @@ export async function handleFeishuMessage(params: {
+     } else {
+       // --- Single-agent dispatch (existing behavior) ---
+       const ctxPayload = buildCtxPayloadForAgent(
+-        route.sessionKey,
++        effectiveSessionKey,
+         route.accountId,
+         ctx.mentionedBot,
+       );
+@@ -1561,10 +2507,92 @@ export async function handleFeishuMessage(params: {
+         accountId: account.accountId,
+         messageCreateTimeMs,
+       });
++      const surfaceLineCapture = createSurfaceLineCaptureDispatcher({
++        dispatcher: createClassifiedPublishDispatcher({
++          dispatcher: createDailyWorkfacePublishDispatcher({
++            dispatcher,
++            cfg,
++            accountId: account.accountId,
++            dailyWorkface,
++            portfolioScorecard,
++            validationWeekly,
++            watchtowerChatId,
++          }),
++          cfg,
++          accountId: account.accountId,
++          controlRoomOrchestration,
++        }),
++      });
++      const effectiveDispatcher = surfaceLineCapture.dispatcher;
+
+-      log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);
++      if (surfaceRouting.targetSurface === "learning_command") {
++        log(
++          `feishu[${account.accountId}]: running real learning council for message ${ctx.messageId}`,
++        );
++        const councilText = await runFeishuLearningCouncil({
++          cfg,
++          userMessage: ctx.content,
++          routeAgentId: route.agentId,
++          sessionKey: effectiveSessionKey,
++          messageId: ctx.messageId,
++          workspaceDir: resolveAgentWorkspaceDir(cfg as OpenClawConfig, route.agentId),
++        });
++
++        await core.channel.reply.withReplyDispatcher({
++          dispatcher: effectiveDispatcher,
++          onSettled: () => {
++            markDispatchIdle();
++          },
++          run: async () => {
++            effectiveDispatcher.sendFinalReply({ text: councilText });
++            return { queuedFinal: true, counts: { final: 1 } };
++          },
++        });
++
++        if (isGroup && historyKey && chatHistories) {
++          clearHistoryEntriesIfEnabled({
++            historyMap: chatHistories,
++            historyKey,
++            limit: historyLimit,
++          });
++        }
++
++        try {
++          await persistFeishuSurfaceLine({
++            cfg,
++            agentId: route.agentId,
++            targetSurface: surfaceRouting.targetSurface,
++            chatId: ctx.chatId,
++            sessionKey: effectiveSessionKey,
++            messageId: ctx.messageId,
++            userMessage: ctx.content,
++            finalReplyText: surfaceLineCapture.getLastFinalReplyText(),
++          });
++        } catch (err) {
++          await recordOperationalAnomaly({
++            cfg,
++            category: "write_edit_failure",
++            severity: "medium",
++            source: "feishu.surface_memory",
++            problem: "failed to persist feishu surface line",
++            evidence: [
++              `surface=${surfaceRouting.targetSurface ?? "none"}`,
++              `chat_id=${ctx.chatId}`,
++              `message_id=${ctx.messageId}`,
++              `error=${String(err)}`,
++            ],
++            impact:
++              "the specialist line kept working, but the bounded memory ledger was not updated",
++          });
++        }
++
++        log(`feishu[${account.accountId}]: learning council dispatch complete`);
++        return;
++      }
++
++      log(`feishu[${account.accountId}]: dispatching to agent (session=${effectiveSessionKey})`);
+       const { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
+-        dispatcher,
++        dispatcher: effectiveDispatcher,
+         onSettled: () => {
+           markDispatchIdle();
+         },
+@@ -1572,11 +2600,39 @@ export async function handleFeishuMessage(params: {
+           core.channel.reply.dispatchReplyFromConfig({
+             ctx: ctxPayload,
+             cfg,
+-            dispatcher,
++            dispatcher: effectiveDispatcher,
+             replyOptions,
+           }),
+       });
+
++      try {
++        await persistFeishuSurfaceLine({
++          cfg,
++          agentId: route.agentId,
++          targetSurface: surfaceRouting.targetSurface,
++          chatId: ctx.chatId,
++          sessionKey: effectiveSessionKey,
++          messageId: ctx.messageId,
++          userMessage: ctx.content,
++          finalReplyText: surfaceLineCapture.getLastFinalReplyText(),
++        });
++      } catch (err) {
++        await recordOperationalAnomaly({
++          cfg,
++          category: "write_edit_failure",
++          severity: "medium",
++          source: "feishu.surface_memory",
++          problem: "failed to persist feishu surface line",
++          evidence: [
++            `surface=${surfaceRouting.targetSurface ?? "none"}`,
++            `chat_id=${ctx.chatId}`,
++            `message_id=${ctx.messageId}`,
++            `error=${String(err)}`,
++          ],
++          impact: "the specialist line kept working, but the bounded memory ledger was not updated",
++        });
++      }
++
+       if (isGroup && historyKey && chatHistories) {
+         clearHistoryEntriesIfEnabled({
+           historyMap: chatHistories,
+@@ -1591,5 +2647,20 @@ export async function handleFeishuMessage(params: {
+     }
+   } catch (err) {
+     error(`feishu[${account.accountId}]: failed to dispatch message: ${String(err)}`);
++    await recordOperationalAnomaly({
++      cfg,
++      category: "write_edit_failure",
++      severity: "high",
++      source: "feishu.dispatch",
++      problem: "failed to dispatch message",
++      evidence: [
++        `account=${account.accountId}`,
++        `message_id=${ctx.messageId}`,
++        `chat_id=${ctx.chatId}`,
++        `chat_type=${ctx.chatType}`,
++        `error=${String(err)}`,
++      ],
++      impact: "the user-facing Feishu reply path failed before a final answer was delivered",
++    });
+   }
+ }
+diff --git a/extensions/feishu/src/reply-dispatcher.ts b/extensions/feishu/src/reply-dispatcher.ts
+index a5c45e2ce..32ddc8126 100644
+--- a/extensions/feishu/src/reply-dispatcher.ts
++++ b/extensions/feishu/src/reply-dispatcher.ts
+@@ -8,6 +8,7 @@ import {
+ } from "openclaw/plugin-sdk";
+ import { resolveFeishuAccount } from "./accounts.js";
+ import { createFeishuClient } from "./client.js";
++import { normalizeFeishuDisplayText } from "./display-text.js";
+ import { sendMediaFeishu } from "./media.js";
+ import type { MentionTarget } from "./mention.js";
+ import { buildMentionedCardContent } from "./mention.js";
+@@ -22,6 +23,8 @@ function shouldUseCard(text: string): boolean {
+   return /```[\s\S]*?```/.test(text) || /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text);
+ }
+
++export { normalizeFeishuDisplayText } from "./display-text.js";
++
+ /** Maximum age (ms) for a message to receive a typing indicator reaction.
+  * Messages older than this are likely replays after context compaction (#30418). */
+ const TYPING_INDICATOR_MAX_AGE_MS = 2 * 60_000;
+@@ -254,7 +257,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
+         void typingCallbacks.onReplyStart?.();
+       },
+       deliver: async (payload: ReplyPayload, info) => {
+-        const text = payload.text ?? "";
++        if (info?.kind === "tool") {
++          return;
++        }
++
++        const rawText = payload.text ?? "";
++        const text = normalizeFeishuDisplayText(rawText);
+         const mediaList =
+           payload.mediaUrls && payload.mediaUrls.length > 0
+             ? payload.mediaUrls
+@@ -269,7 +277,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
+         }
+
+         if (hasText) {
+-          const useCard = renderMode === "card" || (renderMode === "auto" && shouldUseCard(text));
++          const useCard =
++            renderMode === "card" || (renderMode === "auto" && shouldUseCard(rawText));
+
+           if (info?.kind === "block") {
+             // Drop internal block chunks unless we can safely consume them as
+diff --git a/extensions/feishu/src/send.ts b/extensions/feishu/src/send.ts
+index e5f61a374..4efe2883f 100644
+--- a/extensions/feishu/src/send.ts
++++ b/extensions/feishu/src/send.ts
+@@ -1,6 +1,7 @@
+ import type { ClawdbotConfig } from "openclaw/plugin-sdk";
+ import { resolveFeishuAccount } from "./accounts.js";
+ import { createFeishuClient } from "./client.js";
++import { normalizeFeishuDisplayText } from "./display-text.js";
+ import type { MentionTarget } from "./mention.js";
+ import { buildMentionedMessage, buildMentionedCardContent } from "./mention.js";
+ import { parsePostContent } from "./post.js";
+@@ -232,7 +233,7 @@ export async function sendMessageFeishu(
+   });
+
+   // Build message content (with @mention support)
+-  let rawText = text ?? "";
++  let rawText = normalizeFeishuDisplayText(text ?? "");
+   if (mentions && mentions.length > 0) {
+     rawText = buildMentionedMessage(mentions, rawText);
+   }
