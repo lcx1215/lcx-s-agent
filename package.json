@@ -2,7 +2,11 @@
   "name": "openclaw",
   "version": "2026.3.3",
   "description": "Multi-channel AI gateway with extensible messaging integrations",
-  "keywords": [],
+  "keywords": [
+    "gateway",
+    "lobster",
+    "openclaw"
+  ],
   "homepage": "https://github.com/openclaw/openclaw#readme",
   "bugs": {
     "url": "https://github.com/openclaw/openclaw/issues"
