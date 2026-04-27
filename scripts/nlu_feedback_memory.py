@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from learning_goal_registry import resolve_learning_goal
+
 DEFAULT_EVENT_PATH = ROOT / "branches" / "nlu" / "feedback_events.jsonl"
 
 
@@ -339,7 +345,47 @@ def first_parser_task(parser_result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def evaluate_routing_evalset(evalset: dict[str, Any]) -> dict[str, Any]:
+def run_semantic_candidate(utterance: str) -> dict[str, Any]:
+    goal = resolve_learning_goal(utterance)
+    topic = str(goal.get("canonical_topic") or "").strip()
+    family = str(goal.get("family") or "").strip()
+    is_learning = bool(goal.get("is_learning_request"))
+    score = int(goal.get("score") or 0)
+    if not is_learning or not topic:
+        return {
+            "action": "",
+            "family": family,
+            "topic": topic,
+            "needs_clarification": True,
+            "confidence": 0,
+            "semantic_score": score,
+        }
+    return {
+        "action": "learn_topic",
+        "family": family,
+        "topic": topic,
+        "needs_clarification": False,
+        "confidence": min(1, round(score / 20, 4)),
+        "semantic_score": score,
+    }
+
+
+def predict_case(utterance: str, router: str) -> tuple[dict[str, Any], bool, str]:
+    if router == "semantic_candidate":
+        return run_semantic_candidate(utterance), True, ""
+    parser_result = run_deterministic_parser(utterance)
+    if parser_result.get("ok", True):
+        return first_parser_task(parser_result), True, ""
+    return {
+        "action": "",
+        "family": "",
+        "topic": "",
+        "needs_clarification": True,
+        "confidence": 0,
+    }, False, str(parser_result.get("error") or "")
+
+
+def evaluate_routing_evalset(evalset: dict[str, Any], router: str = "deterministic_parser") -> dict[str, Any]:
     cases = evalset.get("cases", []) if isinstance(evalset.get("cases"), list) else []
     results = []
     by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -349,14 +395,7 @@ def evaluate_routing_evalset(evalset: dict[str, Any]) -> dict[str, Any]:
             continue
         expected = case.get("expected", {}) if isinstance(case.get("expected"), dict) else {}
         utterance = str(case.get("utterance") or "")
-        parser_result = run_deterministic_parser(utterance)
-        predicted = first_parser_task(parser_result) if parser_result.get("ok", True) else {
-            "action": "",
-            "family": "",
-            "topic": "",
-            "needs_clarification": True,
-            "confidence": 0,
-        }
+        predicted, parser_ok, error = predict_case(utterance, router)
         action_match = predicted["action"] == str(expected.get("action") or "")
         family_match = predicted["family"] == str(expected.get("family") or "")
         topic_match = predicted["topic"] == str(expected.get("topic") or "")
@@ -372,8 +411,8 @@ def evaluate_routing_evalset(evalset: dict[str, Any]) -> dict[str, Any]:
                 "family": family_match,
                 "topic": topic_match,
             },
-            "parser_ok": parser_result.get("ok", True),
-            "error": parser_result.get("error", ""),
+            "parser_ok": parser_ok,
+            "error": error,
         }
         results.append(row)
         family = str(expected.get("family") or "unknown")
@@ -402,11 +441,41 @@ def evaluate_routing_evalset(evalset: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "schema": "lobster.routing_eval_result.v1",
         "created_at": now_iso(),
+        "router": router,
         "case_count": total,
         "passed": passed,
         "accuracy": round(passed / total, 4) if total else 0,
         "families": family_scores,
         "failures": [row for row in results if not row["passed"]][:20],
+    }
+
+
+def compare_router_evalset(evalset: dict[str, Any]) -> dict[str, Any]:
+    deterministic = evaluate_routing_evalset(evalset, router="deterministic_parser")
+    semantic = evaluate_routing_evalset(evalset, router="semantic_candidate")
+    family_names = sorted(set(deterministic.get("families", {})) | set(semantic.get("families", {})))
+    family_deltas = {}
+    for family in family_names:
+        d = deterministic.get("families", {}).get(family, {})
+        s = semantic.get("families", {}).get(family, {})
+        family_deltas[family] = {
+            "deterministic_accuracy": d.get("accuracy", 0),
+            "semantic_accuracy": s.get("accuracy", 0),
+            "delta": round(float(s.get("accuracy", 0)) - float(d.get("accuracy", 0)), 4),
+            "deterministic_failures": d.get("failures", []),
+            "semantic_failures": s.get("failures", []),
+        }
+    delta = round(float(semantic.get("accuracy", 0)) - float(deterministic.get("accuracy", 0)), 4)
+    return {
+        "ok": True,
+        "schema": "lobster.routing_router_comparison.v1",
+        "created_at": now_iso(),
+        "case_count": evalset.get("case_count", 0),
+        "deterministic": deterministic,
+        "semantic_candidate": semantic,
+        "accuracy_delta": delta,
+        "family_deltas": family_deltas,
+        "recommendation": "review_semantic_candidate" if delta > 0 else "keep_deterministic_primary",
     }
 
 
@@ -478,6 +547,10 @@ def main() -> int:
     if cmd == "run-eval":
         evalset = build_routing_evalset(build_absorption_plan(summary))
         print_json(evaluate_routing_evalset(evalset))
+        return 0
+    if cmd == "compare-routers":
+        evalset = build_routing_evalset(build_absorption_plan(summary))
+        print_json(compare_router_evalset(evalset))
         return 0
     print_json({"ok": False, "error": f"unknown command: {cmd}"})
     return 2

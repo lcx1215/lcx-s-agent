@@ -196,9 +196,22 @@ def main() -> int:
 
         eval_result = module.evaluate_routing_evalset(evalset)
         assert eval_result["schema"] == "lobster.routing_eval_result.v1", eval_result
+        assert eval_result["router"] == "deterministic_parser", eval_result
         assert eval_result["case_count"] == 2, eval_result
         assert eval_result["families"]["frontier_paper"]["action_accuracy"] == 1, eval_result
         assert "topic_accuracy" in eval_result["families"]["options"], eval_result
+
+        semantic_result = module.evaluate_routing_evalset(evalset, router="semantic_candidate")
+        assert semantic_result["router"] == "semantic_candidate", semantic_result
+        assert semantic_result["case_count"] == 2, semantic_result
+        assert semantic_result["families"]["frontier_paper"]["family_accuracy"] == 1, semantic_result
+        assert semantic_result["families"]["options"]["topic_accuracy"] == 1, semantic_result
+
+        comparison = module.compare_router_evalset(evalset)
+        assert comparison["schema"] == "lobster.routing_router_comparison.v1", comparison
+        assert comparison["case_count"] == 2, comparison
+        assert "frontier_paper" in comparison["family_deltas"], comparison
+        assert comparison["recommendation"] in {"review_semantic_candidate", "keep_deterministic_primary"}, comparison
 
         cli_run_eval = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "run-eval", str(event_path)],
@@ -211,6 +224,18 @@ def main() -> int:
         cli_eval_result = json.loads((cli_run_eval.stdout or "").strip())
         assert cli_eval_result["schema"] == "lobster.routing_eval_result.v1", cli_eval_result
         assert cli_eval_result["case_count"] == 2, cli_eval_result
+
+        cli_compare = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "compare-routers", str(event_path)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli_compare.returncode == 0, cli_compare.stderr
+        cli_comparison = json.loads((cli_compare.stdout or "").strip())
+        assert cli_comparison["schema"] == "lobster.routing_router_comparison.v1", cli_comparison
+        assert cli_comparison["semantic_candidate"]["router"] == "semantic_candidate", cli_comparison
 
     print("OK nlu_feedback_memory")
     return 0
