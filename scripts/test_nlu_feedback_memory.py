@@ -80,10 +80,80 @@ def main() -> int:
         assert rows[0]["distillation_sample"]["utterance"] == "顺便学习宏观利率框架", rows
         assert rows[0]["distillation_sample"]["queued"] is True, rows
 
+        summary = module.summarize_feedback_events(rows)
+        assert summary["sample_count"] == 1, summary
+        assert summary["family_count"] == 1, summary
+        assert summary["families"]["macro_regime"]["count"] == 1, summary
+        assert summary["families"]["macro_regime"]["queued"] == 1, summary
+        assert summary["families"]["macro_regime"]["example_utterances"] == ["顺便学习宏观利率框架"], summary
+
+        cli = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "summary", str(event_path)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli.returncode == 0, cli.stderr
+        cli_summary = json.loads((cli.stdout or "").strip())
+        assert cli_summary["families"]["macro_regime"]["score"] > 0, cli_summary
+
+    with tempfile.TemporaryDirectory() as td:
+        event_path = Path(td) / "mixed_events.jsonl"
+        rows = [
+            {
+                "raw_text": "现在先学最新的好的金融策略论文里的值得你记住的",
+                "reply_text": "已识别：前沿金融论文。",
+                "feedback": {
+                    "status": "success",
+                    "understood": [{"action": "learn_topic", "topic": "前沿金融论文", "family": "frontier_paper"}],
+                    "queued": [{"topic": "前沿金融论文"}],
+                    "completed": [{"action": "run_next", "status": "success"}],
+                    "artifacts": [{"report_path": "knowledge/learn/a.md", "sources_path": "knowledge/learn/a.sources.json"}],
+                    "learning_quality": {"status": "usable"},
+                },
+            },
+            {
+                "raw_text": "现在先学最新的好的金融策略论文里的值得你记住的",
+                "reply_text": "重复样本",
+                "feedback": {
+                    "status": "success",
+                    "understood": [{"action": "learn_topic", "topic": "前沿金融论文", "family": "frontier_paper"}],
+                    "queued": [{"topic": "前沿金融论文"}],
+                    "completed": [{"action": "run_next", "status": "success"}],
+                    "artifacts": [{"report_path": "knowledge/learn/a.md", "sources_path": "knowledge/learn/a.sources.json"}],
+                    "learning_quality": {"status": "usable"},
+                },
+            },
+            {
+                "raw_text": "补一下期权 greek 和对冲基本功",
+                "reply_text": "已识别：期权能力。",
+                "feedback": {
+                    "status": "success",
+                    "understood": [{"action": "learn_topic", "topic": "期权能力", "family": "options"}],
+                    "queued": [{"topic": "期权能力"}],
+                    "completed": [],
+                    "artifacts": [],
+                    "learning_quality": {},
+                },
+            },
+        ]
+        with event_path.open("w", encoding="utf-8") as fp:
+            for row in rows:
+                row["distillation_sample"] = module.build_distillation_sample(row)
+                fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+        summary = module.summarize_feedback_events(module.read_feedback_events(event_path))
+        assert summary["event_count"] == 3, summary
+        assert summary["sample_count"] == 2, summary
+        assert summary["families"]["frontier_paper"]["executed"] == 1, summary
+        assert summary["families"]["frontier_paper"]["artifacts"] == 1, summary
+        assert summary["families"]["frontier_paper"]["usable_quality"] == 1, summary
+        assert summary["families"]["options"]["executed"] == 0, summary
+
     print("OK nlu_feedback_memory")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

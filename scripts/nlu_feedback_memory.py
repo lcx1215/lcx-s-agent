@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -68,6 +70,108 @@ def build_distillation_sample(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def read_feedback_events(path: Path | None = None) -> list[dict[str, Any]]:
+    target = path or feedback_event_path()
+    if not target.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for line in target.read_text(encoding="utf-8", errors="ignore").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+def sample_key(sample: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(sample.get("utterance") or ""),
+        str(sample.get("action") or ""),
+        str(sample.get("family") or ""),
+        str(sample.get("topic") or ""),
+    )
+
+
+def collect_distillation_samples(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for event in events:
+        sample = event.get("distillation_sample")
+        if not isinstance(sample, dict):
+            sample = build_distillation_sample(event)
+        if not sample.get("utterance"):
+            continue
+        key = sample_key(sample)
+        if key in seen:
+            continue
+        seen.add(key)
+        samples.append(sample)
+    return samples
+
+
+def score_family(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(samples)
+    queued = sum(1 for s in samples if s.get("queued"))
+    executed = sum(1 for s in samples if s.get("executed"))
+    artifacts = sum(1 for s in samples if s.get("has_artifact"))
+    usable_quality = sum(1 for s in samples if s.get("quality_status") == "usable")
+    failures = sum(1 for s in samples if s.get("status") == "failed")
+    score = 0
+    if total:
+        score = round(
+            100
+            * (
+                0.25 * (queued / total)
+                + 0.30 * (executed / total)
+                + 0.25 * (artifacts / total)
+                + 0.20 * (usable_quality / total)
+            )
+            - 30 * (failures / total),
+            2,
+        )
+    return {
+        "count": total,
+        "queued": queued,
+        "executed": executed,
+        "artifacts": artifacts,
+        "usable_quality": usable_quality,
+        "failures": failures,
+        "score": max(0, score),
+        "example_utterances": [str(s.get("utterance") or "") for s in samples[:5]],
+    }
+
+
+def summarize_feedback_events(events: list[dict[str, Any]]) -> dict[str, Any]:
+    samples = collect_distillation_samples(events)
+    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for sample in samples:
+        family = str(sample.get("family") or "").strip() or "unknown"
+        buckets[family].append(sample)
+
+    families = {
+        family: score_family(rows)
+        for family, rows in sorted(buckets.items(), key=lambda item: item[0])
+    }
+    return {
+        "ok": True,
+        "schema": "lobster.nlu_feedback_summary.v1",
+        "event_count": len(events),
+        "sample_count": len(samples),
+        "family_count": len(families),
+        "families": families,
+        "samples": samples,
+    }
+
+
+def print_json(obj: dict[str, Any]) -> None:
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
 def append_feedback_event(
     *,
     raw_text: str,
@@ -110,3 +214,22 @@ def safe_append_feedback_event(**kwargs: Any) -> dict[str, Any]:
     except Exception as exc:
         return {"ok": False, "error": str(exc)[:300]}
 
+
+def main() -> int:
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "summary"
+    path = Path(sys.argv[2]) if len(sys.argv) > 2 else feedback_event_path()
+    events = read_feedback_events(path)
+    summary = summarize_feedback_events(events)
+
+    if cmd == "summary":
+        print_json(summary)
+        return 0
+    if cmd == "samples":
+        print_json({"ok": True, "samples": summary["samples"]})
+        return 0
+    print_json({"ok": False, "error": f"unknown command: {cmd}"})
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
