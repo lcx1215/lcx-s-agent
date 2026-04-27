@@ -69,20 +69,43 @@ export type SemanticRouteCandidate = {
   matchedUtterance?: string;
 };
 
+export type LarkApiRouteCandidate = {
+  family: LarkRoutingFamily | "unknown";
+  confidence: number;
+  rationale?: string;
+};
+
+export type LarkApiRouteProvider = (params: {
+  utterance: string;
+  families: readonly LarkRoutingFamily[];
+  contracts: typeof LARK_ROUTING_FAMILY_CONTRACTS;
+}) => Promise<LarkApiRouteCandidate>;
+
+export type LarkHybridRouteCandidate = {
+  deterministicPassed: boolean;
+  semantic: SemanticRouteCandidate;
+  api?: LarkApiRouteCandidate;
+  acceptedFamily: LarkRoutingFamily | "unknown";
+  source: "deterministic" | "semantic" | "api" | "unknown";
+};
+
 export type LarkRoutingFamilyScore = {
   total: number;
   deterministicPassed: number;
   semanticCandidatePassed: number;
+  apiCandidatePassed: number;
 };
 
 export type LarkRoutingCorpusScore = {
   total: number;
   deterministicPassed: number;
   semanticCandidatePassed: number;
+  apiCandidatePassed?: number;
   families: Record<LarkRoutingFamily, LarkRoutingFamilyScore>;
 };
 
 export const LARK_ROUTING_SEMANTIC_THRESHOLD = 0.28;
+export const LARK_ROUTING_API_CONFIDENCE_THRESHOLD = 0.72;
 
 export const LARK_ROUTING_GUARD_MATCHERS: Record<
   LarkRoutingGuardMatcher,
@@ -629,6 +652,28 @@ export function resolveLarkSemanticRouteCandidate(
   return best.score >= threshold ? best : { family: "unknown", score: best.score };
 }
 
+export function sanitizeLarkApiRouteCandidate(
+  candidate: LarkApiRouteCandidate,
+  threshold = LARK_ROUTING_API_CONFIDENCE_THRESHOLD,
+): LarkApiRouteCandidate {
+  if (
+    candidate.confidence < threshold ||
+    candidate.family === "unknown" ||
+    !(candidate.family in LARK_ROUTING_FAMILY_CONTRACTS)
+  ) {
+    return {
+      family: "unknown",
+      confidence: Math.max(0, Math.min(1, candidate.confidence)),
+      rationale: candidate.rationale,
+    };
+  }
+  return {
+    family: candidate.family,
+    confidence: Math.max(0, Math.min(1, candidate.confidence)),
+    rationale: candidate.rationale,
+  };
+}
+
 export function resolveLarkDeterministicCorpusCase(params: {
   cfg: FeishuConfig;
   entry: LarkRoutingCorpusCase;
@@ -674,9 +719,117 @@ function emptyFamilyScores(): Record<LarkRoutingFamily, LarkRoutingFamilyScore> 
       total: 0,
       deterministicPassed: 0,
       semanticCandidatePassed: 0,
+      apiCandidatePassed: 0,
     };
   }
   return scores;
+}
+
+export async function resolveLarkHybridRouteCandidate(params: {
+  cfg: FeishuConfig;
+  entry: LarkRoutingCorpusCase;
+  apiProvider?: LarkApiRouteProvider;
+}): Promise<LarkHybridRouteCandidate> {
+  const deterministic = resolveLarkDeterministicCorpusCase({
+    cfg: params.cfg,
+    entry: params.entry,
+  });
+  const semantic = resolveLarkSemanticRouteCandidate(params.entry.utterance);
+  const api = params.apiProvider
+    ? sanitizeLarkApiRouteCandidate(
+        await params.apiProvider({
+          utterance: params.entry.utterance,
+          families: Object.keys(LARK_ROUTING_FAMILY_CONTRACTS) as LarkRoutingFamily[],
+          contracts: LARK_ROUTING_FAMILY_CONTRACTS,
+        }),
+      )
+    : undefined;
+
+  if (deterministic.passed) {
+    return {
+      deterministicPassed: true,
+      semantic,
+      api,
+      acceptedFamily: params.entry.family,
+      source: "deterministic",
+    };
+  }
+
+  if (semantic.family !== "unknown") {
+    return {
+      deterministicPassed: false,
+      semantic,
+      api,
+      acceptedFamily: semantic.family,
+      source: "semantic",
+    };
+  }
+
+  if (api && api.family !== "unknown") {
+    return {
+      deterministicPassed: false,
+      semantic,
+      api,
+      acceptedFamily: api.family,
+      source: "api",
+    };
+  }
+
+  return {
+    deterministicPassed: false,
+    semantic,
+    api,
+    acceptedFamily: "unknown",
+    source: "unknown",
+  };
+}
+
+export async function scoreLarkRoutingCorpusAsync(params: {
+  cfg: FeishuConfig;
+  corpus?: readonly LarkRoutingCorpusCase[];
+  apiProvider?: LarkApiRouteProvider;
+}): Promise<LarkRoutingCorpusScore> {
+  const corpus = params.corpus ?? LARK_ROUTING_CORPUS;
+  const families = emptyFamilyScores();
+  let deterministicPassed = 0;
+  let semanticCandidatePassed = 0;
+  let apiCandidatePassed = 0;
+
+  for (const entry of corpus) {
+    const deterministic = resolveLarkDeterministicCorpusCase({ cfg: params.cfg, entry });
+    const semantic = resolveLarkSemanticRouteCandidate(entry.utterance);
+    const api = params.apiProvider
+      ? sanitizeLarkApiRouteCandidate(
+          await params.apiProvider({
+            utterance: entry.utterance,
+            families: Object.keys(LARK_ROUTING_FAMILY_CONTRACTS) as LarkRoutingFamily[],
+            contracts: LARK_ROUTING_FAMILY_CONTRACTS,
+          }),
+        )
+      : undefined;
+    const familyScore = families[entry.family];
+    familyScore.total += 1;
+    if (deterministic.passed) {
+      deterministicPassed += 1;
+      familyScore.deterministicPassed += 1;
+    }
+    if (semantic.family === entry.family) {
+      semanticCandidatePassed += 1;
+      familyScore.semanticCandidatePassed += 1;
+    }
+    if (api?.family === entry.family) {
+      apiCandidatePassed += 1;
+      familyScore.apiCandidatePassed += 1;
+    }
+  }
+
+  return {
+    total: corpus.length,
+    deterministicPassed,
+    semanticCandidatePassed,
+    apiCandidatePassed: params.apiProvider ? apiCandidatePassed : undefined,
+    families,
+  };
 }
 
 export function scoreLarkRoutingCorpus(params: {

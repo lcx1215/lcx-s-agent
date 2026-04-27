@@ -18,8 +18,10 @@ import {
 import {
   LARK_ROUTING_CORPUS,
   LARK_ROUTING_FAMILY_CONTRACTS,
+  resolveLarkHybridRouteCandidate,
   resolveLarkSemanticRouteCandidate,
   scoreLarkRoutingCorpus,
+  scoreLarkRoutingCorpusAsync,
   type LarkRoutingFamily,
 } from "./lark-routing-corpus.js";
 import { resolveFeishuControlRoomOrchestration, resolveFeishuSurfaceRouting } from "./surfaces.js";
@@ -748,6 +750,44 @@ describe("real daily utterance regression", () => {
       expect(familyScore.deterministicPassed, family).toBe(familyScore.total);
       expect(familyScore.semanticCandidatePassed, family).toBe(familyScore.total);
     }
+  });
+
+  it("can score an API semantic-router candidate layer without replacing deterministic gates", async () => {
+    const apiProvider = async ({ utterance }: { utterance: string }) => {
+      const entry = LARK_ROUTING_CORPUS.find((candidate) => candidate.utterance === utterance);
+      return {
+        family: entry?.family ?? "unknown",
+        confidence: entry ? 0.91 : 0.2,
+        rationale: "test provider mirrors the supervised corpus",
+      };
+    };
+    const score = await scoreLarkRoutingCorpusAsync({ cfg, apiProvider });
+
+    expect(score.total).toBe(LARK_ROUTING_CORPUS.length);
+    expect(score.deterministicPassed).toBe(score.total);
+    expect(score.semanticCandidatePassed).toBe(score.total);
+    expect(score.apiCandidatePassed).toBe(score.total);
+  });
+
+  it("sanitizes low-confidence API candidates and keeps deterministic routing authoritative", async () => {
+    const entry = LARK_ROUTING_CORPUS.find((candidate) => candidate.id === "technical-001");
+    expect(entry).toBeDefined();
+    const hybrid = await resolveLarkHybridRouteCandidate({
+      cfg,
+      entry: entry!,
+      apiProvider: async () => ({
+        family: "fundamental_research",
+        confidence: 0.2,
+        rationale: "low-confidence wrong family should not be accepted",
+      }),
+    });
+
+    expect(hybrid.api).toMatchObject({
+      family: "unknown",
+      confidence: 0.2,
+    });
+    expect(hybrid.acceptedFamily).toBe("technical_timing");
+    expect(hybrid.source).toBe("deterministic");
   });
 
   it("keeps semantic-route near misses out of their tempting families", () => {
