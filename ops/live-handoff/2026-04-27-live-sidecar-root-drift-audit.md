@@ -414,8 +414,37 @@ Runtime watchdog receipt:
 This prevents a false-green state where the LaunchAgent exits successfully but
 the language/brain/analysis/memory loop failed or crossed a protected boundary.
 
+## Feishu Proxy Health Visibility
+
+Current live status:
+
+```text
+scheduler_cycle.status=fresh
+host_watchdog.ok=false
+host_watchdog.issues=feishu_proxy
+feishu_proxy.status=log_errors
+feishu_proxy.points_at_desktop=true
+feishu_proxy.error_markers=Operation not permitted, Address already in use, cannot access parent directories
+```
+
+The watchdog now includes Feishu/Lark proxy health in the retained receipt. This
+does not migrate the proxy yet. It prevents a false-green live state while the
+front-door proxy still points at `/Users/liuchengxu/Desktop/openclaw` and has
+recent error markers in `~/.openclaw/logs/feishu_proxy.err.log`.
+
+Current runtime receipt:
+
+```text
+/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/branches/_system/host_watchdog_state.json
+```
+
+Important boundary: Feishu = Lark for this system. This is a visibility and
+fail-closed health patch only; the actual proxy migration remains separate
+because replacing the front-door event proxy is higher risk than scheduler or
+watchdog sidecars.
+
 ## Out Of Scope
 
 - No deletion of old `Desktop/openclaw`.
-- No migration of Feishu proxy yet.
+- No migration of Feishu/Lark proxy yet.
 - No Feishu/Lark proxy restart in this audit step.

@@ -24,6 +24,8 @@ SCHEDULER_HEARTBEAT_STALE_AFTER_HOURS = 36.0
 SCHEDULER_HEARTBEAT_STUCK_AFTER_HOURS = 6.0
 SCHEDULER_CYCLE_STALE_AFTER_HOURS = 36.0
 REQUIRED_CYCLE_CHECK_COUNT = 5
+FEISHU_PROXY_LABEL = "ai.openclaw.feishu.proxy"
+FEISHU_PROXY_ERR_LOG = Path.home() / ".openclaw" / "logs" / "feishu_proxy.err.log"
 ENABLE_ALERTS_ENV = "OPENCLAW_HOST_WATCHDOG_ENABLE_ALERTS"
 
 
@@ -81,6 +83,95 @@ def detect_scheduler_disabled(skip_launchd: bool = False) -> dict[str, Any]:
         "code": result.get("code"),
         "stderr": (result.get("stderr", "") or "")[:1000],
         "skipped": False,
+    }
+
+
+def inspect_launchagent(label: str, skip_launchd: bool = False) -> dict[str, Any]:
+    if skip_launchd:
+        return {
+            "checked_at": now_iso(),
+            "known": False,
+            "running": False,
+            "program_arguments": [],
+            "working_directory": "",
+            "code": None,
+            "stderr": "",
+            "skipped": True,
+        }
+    result = run_text(["launchctl", "print", f"gui/{os.getuid()}/{label}"])
+    stdout = result.get("stdout", "") or ""
+    args: list[str] = []
+    in_arguments = False
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if line == "arguments = {":
+            in_arguments = True
+            continue
+        if in_arguments and line == "}":
+            in_arguments = False
+            continue
+        if in_arguments and line:
+            args.append(line)
+    working_directory = ""
+    match = re.search(r"working directory = (.+)", stdout)
+    if match:
+        working_directory = match.group(1).strip()
+    return {
+        "checked_at": now_iso(),
+        "known": result.get("code") == 0,
+        "running": "state = running" in stdout or "job state = running" in stdout,
+        "program_arguments": args,
+        "working_directory": working_directory,
+        "code": result.get("code"),
+        "stderr": (result.get("stderr", "") or "")[:1000],
+        "skipped": False,
+    }
+
+
+def read_tail(path: Path, limit: int = 6000) -> str:
+    try:
+        data = path.read_bytes()
+    except Exception:
+        return ""
+    return data[-limit:].decode("utf-8", errors="ignore")
+
+
+def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
+    launchd = inspect_launchagent(FEISHU_PROXY_LABEL, skip_launchd=skip_launchd)
+    err_tail = read_tail(FEISHU_PROXY_ERR_LOG)
+    desktop_root = "/Users/liuchengxu/Desktop/openclaw"
+    runtime_root = "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw"
+    args_text = "\n".join(str(item) for item in launchd.get("program_arguments", []))
+    working_directory = str(launchd.get("working_directory") or "")
+    points_at_desktop = desktop_root in args_text or working_directory == desktop_root
+    points_at_runtime = runtime_root in args_text or working_directory == runtime_root
+    error_markers = [
+        marker
+        for marker in [
+            "Operation not permitted",
+            "Address already in use",
+            "cannot access parent directories",
+        ]
+        if marker in err_tail
+    ]
+    status = "ok"
+    if not launchd.get("known") and not skip_launchd:
+        status = "unknown"
+    elif not launchd.get("running") and not skip_launchd:
+        status = "not_running"
+    elif error_markers:
+        status = "log_errors"
+    elif points_at_desktop:
+        status = "root_drift"
+    return {
+        "status": status,
+        "label": FEISHU_PROXY_LABEL,
+        "launchd": launchd,
+        "points_at_desktop": points_at_desktop,
+        "points_at_runtime": points_at_runtime,
+        "error_markers": error_markers,
+        "err_log_path": str(FEISHU_PROXY_ERR_LOG),
+        "err_tail_sample": err_tail[-1000:] if error_markers else "",
     }
 
 
@@ -206,6 +297,7 @@ def build_watchdog_snapshot(
     cycle_report_state: dict[str, Any],
     cycle_failure_state: dict[str, Any],
     launchd_state: dict[str, Any],
+    feishu_proxy_state: dict[str, Any],
     mode: str,
 ) -> dict[str, Any]:
     freshness = build_branch_freshness_snapshot(branch_state, scheduler_state)
@@ -237,6 +329,8 @@ def build_watchdog_snapshot(
         "incomplete",
     }:
         issues.append("scheduler_cycle")
+    if str(feishu_proxy_state.get("status") or "") in {"unknown", "not_running", "log_errors"}:
+        issues.append("feishu_proxy")
     if nonfresh:
         issues.append("branch_freshness")
 
@@ -251,6 +345,7 @@ def build_watchdog_snapshot(
         "launchd": launchd_state,
         "scheduler_heartbeat": heartbeat,
         "scheduler_cycle": cycle,
+        "feishu_proxy": feishu_proxy_state,
         "branch_freshness": freshness,
         "nonfresh_branches": nonfresh,
         "boundary": {
@@ -283,6 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="Emit the full JSON snapshot")
     parser.add_argument("--dry-run", action="store_true", help="Force no-alert compatibility mode")
     parser.add_argument("--skip-launchd", action="store_true", help="Skip launchctl read during tests")
+    parser.add_argument("--skip-feishu-proxy", action="store_true", help="Skip Feishu/Lark proxy inspection")
     parser.add_argument("--write-receipt", action="store_true", help="Write host_watchdog_state.json")
     return parser
 
@@ -295,6 +391,9 @@ def main(argv: list[str] | None = None) -> int:
     alerts_enabled = truthy(os.environ.get(ENABLE_ALERTS_ENV)) and not args.dry_run
     mode = "live_guarded" if alerts_enabled else "dry_run_no_alert"
     launchd_state = detect_scheduler_disabled(skip_launchd=args.skip_launchd)
+    feishu_proxy_state = build_feishu_proxy_snapshot(
+        skip_launchd=args.skip_launchd or args.skip_feishu_proxy
+    )
     snapshot = build_watchdog_snapshot(
         branch_state=branch_state,
         scheduler_state=scheduler_state,
@@ -302,6 +401,7 @@ def main(argv: list[str] | None = None) -> int:
         cycle_report_state=cycle_report_state,
         cycle_failure_state=cycle_failure_state,
         launchd_state=launchd_state,
+        feishu_proxy_state=feishu_proxy_state,
         mode=mode,
     )
 

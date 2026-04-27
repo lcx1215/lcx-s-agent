@@ -53,6 +53,7 @@ describe("host watchdog clean-root entrypoint", () => {
       "scripts/lobster_host_watchdog.py",
       "--dry-run",
       "--skip-launchd",
+      "--skip-feishu-proxy",
       "--json",
     ]);
     expect(result.status).toBe(0);
@@ -95,6 +96,7 @@ describe("host watchdog clean-root entrypoint", () => {
         "scripts/lobster_host_watchdog.py",
         "--dry-run",
         "--skip-launchd",
+        "--skip-feishu-proxy",
         "--write-receipt",
         "--json",
       ],
@@ -140,12 +142,41 @@ describe("host watchdog clean-root entrypoint", () => {
       "scripts/lobster_host_watchdog.py",
       "--dry-run",
       "--skip-launchd",
+      "--skip-feishu-proxy",
       "--json",
     ]);
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout);
     expect(payload.scheduler_cycle.status).toBe("boundary_violation");
     expect(payload.issues).toContain("scheduler_cycle");
+    cleanupState("scheduler_cycle_report.json");
+  });
+
+  it("includes Feishu proxy health when launchd inspection is enabled", () => {
+    writeState("scheduler_cycle_report.json", {
+      status: "cycle_completed",
+      generatedAt: new Date().toISOString(),
+      cycleResult: {
+        checkCount: 5,
+        checks: [
+          { name: "finance-pipeline-all", ok: true },
+          { name: "finance-multi-candidate", ok: true },
+          { name: "finance-event-review", ok: true },
+          { name: "lark-brain-language-loop", ok: true },
+          { name: "lark-routing-and-distillation-tests", ok: true },
+        ],
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+        remoteFetchOccurred: false,
+        executionAuthorityGranted: false,
+      },
+    });
+    const result = runPython(["scripts/lobster_host_watchdog.py", "--dry-run", "--json"]);
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.feishu_proxy.label).toBe("ai.openclaw.feishu.proxy");
+    expect(typeof payload.feishu_proxy.status).toBe("string");
     cleanupState("scheduler_cycle_report.json");
   });
 });
