@@ -19,6 +19,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from learning_goal_registry import resolve_learning_goal
 
 DEFAULT_EVENT_PATH = ROOT / "branches" / "nlu" / "feedback_events.jsonl"
+DEFAULT_RECEIPT_DIR = ROOT / "branches" / "nlu" / "router_override_receipts"
 
 
 def now_iso() -> str:
@@ -28,6 +29,11 @@ def now_iso() -> str:
 def feedback_event_path() -> Path:
     override = os.environ.get("LOBSTER_NLU_FEEDBACK_EVENTS_PATH", "").strip()
     return Path(override) if override else DEFAULT_EVENT_PATH
+
+
+def receipt_dir() -> Path:
+    override = os.environ.get("LOBSTER_NLU_ROUTER_RECEIPT_DIR", "").strip()
+    return Path(override) if override else DEFAULT_RECEIPT_DIR
 
 
 def current_lane_key() -> str:
@@ -545,6 +551,44 @@ def build_router_override_candidates(
     }
 
 
+def write_override_receipt(
+    candidates: dict[str, Any],
+    *,
+    source_path: Path,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    created = now_iso()
+    target = output_path
+    if target is None:
+        safe_stamp = created.replace(":", "").replace("-", "")
+        target = receipt_dir() / f"{safe_stamp}_router_override_candidates.json"
+    receipt = {
+        "ok": True,
+        "schema": "lobster.routing_override_receipt.v1",
+        "created_at": created,
+        "source_event_path": str(source_path),
+        "auto_apply": False,
+        "decision": "record_only",
+        "reason": "router override candidates require explicit review before activation",
+        "candidate_schema": candidates.get("schema"),
+        "candidate_count": candidates.get("candidate_count", 0),
+        "eligible_count": candidates.get("eligible_count", 0),
+        "policy": {
+            "min_cases": candidates.get("min_cases"),
+            "min_delta": candidates.get("min_delta"),
+            "review_required": True,
+        },
+        "overrides": candidates.get("overrides", []),
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "ok": True,
+        "path": str(target.relative_to(ROOT)) if target.is_relative_to(ROOT) else str(target),
+        "receipt": receipt,
+    }
+
+
 def print_json(obj: dict[str, Any]) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
@@ -622,6 +666,13 @@ def main() -> int:
         evalset = build_routing_evalset(build_absorption_plan(summary))
         comparison = compare_router_evalset(evalset)
         print_json(build_router_override_candidates(comparison))
+        return 0
+    if cmd == "write-override-receipt":
+        evalset = build_routing_evalset(build_absorption_plan(summary))
+        comparison = compare_router_evalset(evalset)
+        candidates = build_router_override_candidates(comparison)
+        out_path = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+        print_json(write_override_receipt(candidates, source_path=path, output_path=out_path))
         return 0
     print_json({"ok": False, "error": f"unknown command: {cmd}"})
     return 2

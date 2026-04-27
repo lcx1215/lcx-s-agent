@@ -237,6 +237,20 @@ def main() -> int:
         assert synthetic_overrides["overrides"][0]["eligible"] is True, synthetic_overrides
         assert "semantic_candidate_passes_family_gate" in synthetic_overrides["overrides"][0]["reasons"], synthetic_overrides
 
+        receipt_path = Path(td) / "override_receipt.json"
+        receipt_result = module.write_override_receipt(
+            override_candidates,
+            source_path=event_path,
+            output_path=receipt_path,
+        )
+        assert receipt_result["ok"] is True, receipt_result
+        written_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert written_receipt["schema"] == "lobster.routing_override_receipt.v1", written_receipt
+        assert written_receipt["auto_apply"] is False, written_receipt
+        assert written_receipt["decision"] == "record_only", written_receipt
+        assert written_receipt["candidate_count"] == 2, written_receipt
+        assert written_receipt["policy"]["review_required"] is True, written_receipt
+
         cli_run_eval = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "nlu_feedback_memory.py"), "run-eval", str(event_path)],
             cwd=str(ROOT),
@@ -272,6 +286,25 @@ def main() -> int:
         cli_overrides = json.loads((cli_select.stdout or "").strip())
         assert cli_overrides["schema"] == "lobster.routing_override_candidates.v1", cli_overrides
         assert cli_overrides["auto_apply"] is False, cli_overrides
+
+        cli_receipt_path = Path(td) / "cli_override_receipt.json"
+        cli_receipt = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "nlu_feedback_memory.py"),
+                "write-override-receipt",
+                str(event_path),
+                str(cli_receipt_path),
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli_receipt.returncode == 0, cli_receipt.stderr
+        cli_receipt_result = json.loads((cli_receipt.stdout or "").strip())
+        assert cli_receipt_result["receipt"]["schema"] == "lobster.routing_override_receipt.v1", cli_receipt_result
+        assert cli_receipt_path.exists(), cli_receipt_result
 
     print("OK nlu_feedback_memory")
     return 0
