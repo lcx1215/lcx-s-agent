@@ -70,6 +70,50 @@ cat > "$PLIST" <<PLIST
 PLIST
 
 SERVICE="gui/$UID_NUM/$LABEL"
+PROXY_SCRIPT="$ROOT/feishu_event_proxy.py"
+
+process_command() {
+  ps -p "$1" -o command= 2>/dev/null || true
+}
+
+is_own_proxy_pid() {
+  local pid="$1"
+  local command
+  command="$(process_command "$pid")"
+  [[ "$command" == *"$PROXY_SCRIPT"* ]]
+}
+
+terminate_own_proxy_pid() {
+  local pid="$1"
+  [[ -z "$pid" ]] && return 0
+  if is_own_proxy_pid "$pid"; then
+    kill "$pid" 2>/dev/null || true
+  fi
+}
+
+kill_own_proxy_pid() {
+  local pid="$1"
+  [[ -z "$pid" ]] && return 0
+  if is_own_proxy_pid "$pid"; then
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+}
+
+ensure_port_is_free() {
+  local pid
+  while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    if is_own_proxy_pid "$pid"; then
+      echo "ERROR: port 3011 is still occupied by this Feishu proxy after stop:" >&2
+      process_command "$pid" >&2
+      exit 4
+    else
+      echo "ERROR: port 3011 is occupied by a non-Feishu-proxy process:" >&2
+      process_command "$pid" >&2
+      exit 3
+    fi
+  done < <(lsof -tiTCP:3011 -sTCP:LISTEN 2>/dev/null || true)
+}
 
 launchctl bootout "gui/$UID_NUM" "$PLIST" 2>/dev/null || true
 launchctl bootout "$SERVICE" 2>/dev/null || true
@@ -77,21 +121,20 @@ launchctl bootout "$SERVICE" 2>/dev/null || true
 # Clear only this checkout's proxy process. A stale orphan on 3011 prevents
 # launchd from supervising the real service and causes a silent restart loop.
 while IFS= read -r pid; do
-  [[ -z "$pid" ]] && continue
-  kill "$pid" 2>/dev/null || true
-done < <(pgrep -f "$ROOT/feishu_event_proxy.py" || true)
+  terminate_own_proxy_pid "$pid"
+done < <(pgrep -f "$PROXY_SCRIPT" || true)
 
 sleep 1
 
 while IFS= read -r pid; do
-  [[ -z "$pid" ]] && continue
-  kill -9 "$pid" 2>/dev/null || true
-done < <(pgrep -f "$ROOT/feishu_event_proxy.py" || true)
+  kill_own_proxy_pid "$pid"
+done < <(pgrep -f "$PROXY_SCRIPT" || true)
 
 while IFS= read -r pid; do
-  [[ -z "$pid" ]] && continue
-  kill -9 "$pid" 2>/dev/null || true
+  kill_own_proxy_pid "$pid"
 done < <(lsof -tiTCP:3011 -sTCP:LISTEN 2>/dev/null || true)
+
+ensure_port_is_free
 
 launchctl bootstrap "gui/$UID_NUM" "$PLIST"
 launchctl kickstart -k "$SERVICE"
