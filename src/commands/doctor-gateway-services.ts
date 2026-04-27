@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayPort, resolveIsNixMode } from "../config/paths.js";
 import {
   findExtraGatewayServices,
+  inferOpenClawRootFromGatewayCommand,
   renderGatewayServiceCleanupHints,
   type ExtraGatewayService,
 } from "../daemon/inspect.js";
@@ -320,8 +321,16 @@ export async function maybeScanExtraGatewayServices(
   runtime: RuntimeEnv,
   prompter: DoctorPrompter,
 ) {
+  const service = resolveGatewayService();
+  let command: Awaited<ReturnType<typeof service.readCommand>> | null = null;
+  try {
+    command = await service.readCommand(process.env);
+  } catch {
+    command = null;
+  }
   const extraServices = await findExtraGatewayServices(process.env, {
     deep: options.deep,
+    expectedRoot: inferOpenClawRootFromGatewayCommand(command),
   });
   if (extraServices.length === 0) {
     return;

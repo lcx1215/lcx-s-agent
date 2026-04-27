@@ -21,7 +21,13 @@ export type ExtraGatewayService = {
 
 export type FindExtraGatewayServicesOptions = {
   deep?: boolean;
+  expectedRoot?: string;
 };
+
+type GatewayCommandForRootInference = {
+  programArguments?: string[];
+  workingDirectory?: string;
+} | null;
 
 const EXTRA_MARKERS = ["openclaw", "clawdbot", "moltbot"] as const;
 
@@ -160,6 +166,10 @@ type ServiceFileEntry = {
   contents: string;
 };
 
+type LaunchdCommand = NonNullable<
+  Awaited<ReturnType<typeof readLaunchAgentProgramArgumentsFromFile>>
+>;
+
 function appendDetailPart(parts: string[], label: string, value: string | undefined) {
   const trimmed = value?.trim();
   if (trimmed) {
@@ -167,7 +177,62 @@ function appendDetailPart(parts: string[], label: string, value: string | undefi
   }
 }
 
-async function renderLaunchdServiceDetail(plistPath: string): Promise<string> {
+function isWithinPath(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+export function inferOpenClawRootFromGatewayCommand(
+  command: GatewayCommandForRootInference,
+): string | undefined {
+  const workingDirectory = command?.workingDirectory?.trim();
+  if (workingDirectory) {
+    return workingDirectory;
+  }
+  for (const arg of command?.programArguments ?? []) {
+    const normalized = path.resolve(arg);
+    if (normalized.endsWith(path.join("dist", "index.js"))) {
+      return path.dirname(path.dirname(normalized));
+    }
+    if (normalized.endsWith(path.join("src", "index.ts"))) {
+      return path.dirname(path.dirname(normalized));
+    }
+  }
+  return undefined;
+}
+
+function collectRootDriftCandidates(command: LaunchdCommand): string[] {
+  return [
+    command.workingDirectory,
+    command.environment?.OPENCLAW_ROOT,
+    command.environment?.OPENCLAW_BIN,
+    command.environment?.LOBSTER_COMMAND_BIN,
+  ].filter((value): value is string => Boolean(value?.trim()));
+}
+
+function renderRootDriftDetail(params: {
+  command: LaunchdCommand;
+  expectedRoot?: string;
+}): string | undefined {
+  const expectedRoot = params.expectedRoot?.trim();
+  if (!expectedRoot) {
+    return undefined;
+  }
+  const normalizedExpected = path.resolve(expectedRoot);
+  const drifted = collectRootDriftCandidates(params.command)
+    .filter((candidate) => candidate.includes("openclaw"))
+    .map((candidate) => path.resolve(candidate))
+    .filter((candidate) => !isWithinPath(candidate, normalizedExpected));
+  if (drifted.length === 0) {
+    return undefined;
+  }
+  return `expected ${normalizedExpected}, observed ${Array.from(new Set(drifted)).join("; ")}`;
+}
+
+async function renderLaunchdServiceDetail(
+  plistPath: string,
+  expectedRoot?: string,
+): Promise<string> {
   const parts = [`plist: ${plistPath}`];
   const command = await readLaunchAgentProgramArgumentsFromFile(plistPath);
   if (!command) {
@@ -179,6 +244,7 @@ async function renderLaunchdServiceDetail(plistPath: string): Promise<string> {
   appendDetailPart(parts, "OPENCLAW_ROOT", command.environment?.OPENCLAW_ROOT);
   appendDetailPart(parts, "OPENCLAW_BIN", command.environment?.OPENCLAW_BIN);
   appendDetailPart(parts, "LOBSTER_COMMAND_BIN", command.environment?.LOBSTER_COMMAND_BIN);
+  appendDetailPart(parts, "root-drift", renderRootDriftDetail({ command, expectedRoot }));
   return parts.join(", ");
 }
 
@@ -210,6 +276,7 @@ async function collectServiceFiles(params: {
 async function scanLaunchdDir(params: {
   dir: string;
   scope: "user" | "system";
+  expectedRoot?: string;
 }): Promise<ExtraGatewayService[]> {
   const results: ExtraGatewayService[] = [];
   const candidates = await collectServiceFiles({
@@ -229,7 +296,7 @@ async function scanLaunchdDir(params: {
       results.push({
         platform: "darwin",
         label,
-        detail: await renderLaunchdServiceDetail(fullPath),
+        detail: await renderLaunchdServiceDetail(fullPath, params.expectedRoot),
         scope: params.scope,
         marker: isLegacyLabel(label) ? "clawdbot" : "moltbot",
         legacy: true,
@@ -245,7 +312,7 @@ async function scanLaunchdDir(params: {
     results.push({
       platform: "darwin",
       label,
-      detail: await renderLaunchdServiceDetail(fullPath),
+      detail: await renderLaunchdServiceDetail(fullPath, params.expectedRoot),
       scope: params.scope,
       marker,
       legacy: marker !== "openclaw" || isLegacyLabel(label),
@@ -357,6 +424,7 @@ export async function findExtraGatewayServices(
       for (const svc of await scanLaunchdDir({
         dir: userDir,
         scope: "user",
+        expectedRoot: opts.expectedRoot,
       })) {
         push(svc);
       }
@@ -364,12 +432,14 @@ export async function findExtraGatewayServices(
         for (const svc of await scanLaunchdDir({
           dir: path.join(path.sep, "Library", "LaunchAgents"),
           scope: "system",
+          expectedRoot: opts.expectedRoot,
         })) {
           push(svc);
         }
         for (const svc of await scanLaunchdDir({
           dir: path.join(path.sep, "Library", "LaunchDaemons"),
           scope: "system",
+          expectedRoot: opts.expectedRoot,
         })) {
           push(svc);
         }

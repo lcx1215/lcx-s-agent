@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { findExtraGatewayServices } from "./inspect.js";
+import { findExtraGatewayServices, inferOpenClawRootFromGatewayCommand } from "./inspect.js";
 
 const { execSchtasksMock } = vi.hoisted(() => ({
   execSchtasksMock: vi.fn(),
@@ -89,6 +89,20 @@ describe("findExtraGatewayServices (win32)", () => {
   });
 });
 
+describe("inferOpenClawRootFromGatewayCommand", () => {
+  it("infers the repo root from a dist entrypoint when working directory is missing", () => {
+    expect(
+      inferOpenClawRootFromGatewayCommand({
+        programArguments: [
+          "/usr/local/bin/node",
+          "/Users/example/Desktop/lcx-s-openclaw/dist/index.js",
+          "gateway",
+        ],
+      }),
+    ).toBe("/Users/example/Desktop/lcx-s-openclaw");
+  });
+});
+
 describe("findExtraGatewayServices (darwin)", () => {
   const originalPlatform = process.platform;
   let tempDir: string | undefined;
@@ -143,7 +157,10 @@ describe("findExtraGatewayServices (darwin)", () => {
       "utf8",
     );
 
-    const result = await findExtraGatewayServices({ HOME: home });
+    const result = await findExtraGatewayServices(
+      { HOME: home },
+      { expectedRoot: "/Users/example/Desktop/lcx-s-openclaw" },
+    );
 
     expect(result).toEqual([
       expect.objectContaining({
@@ -162,5 +179,9 @@ describe("findExtraGatewayServices (darwin)", () => {
     expect(result[0]?.detail).toContain(
       "OPENCLAW_BIN: /Users/example/Desktop/openclaw/send_feishu_reply.sh",
     );
+    expect(result[0]?.detail).toContain(
+      "root-drift: expected /Users/example/Desktop/lcx-s-openclaw",
+    );
+    expect(result[0]?.detail).toContain("observed /Users/example/Desktop/openclaw");
   });
 });

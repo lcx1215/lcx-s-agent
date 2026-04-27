@@ -22,6 +22,7 @@ vi.mock("../config/paths.js", () => ({
 
 vi.mock("../daemon/inspect.js", () => ({
   findExtraGatewayServices: mocks.findExtraGatewayServices,
+  inferOpenClawRootFromGatewayCommand: vi.fn(() => "/tmp/openclaw-daemon"),
   renderGatewayServiceCleanupHints: mocks.renderGatewayServiceCleanupHints,
 }));
 

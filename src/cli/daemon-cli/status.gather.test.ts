@@ -73,6 +73,7 @@ vi.mock("../../daemon/diagnostics.js", () => ({
 
 vi.mock("../../daemon/inspect.js", () => ({
   findExtraGatewayServices: (env: unknown, opts?: unknown) => findExtraGatewayServices(env, opts),
+  inferOpenClawRootFromGatewayCommand: () => "/tmp/openclaw-daemon",
 }));
 
 vi.mock("../../daemon/service-audit.js", () => ({

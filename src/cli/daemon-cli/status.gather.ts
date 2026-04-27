@@ -12,7 +12,10 @@ import type {
 import { normalizeSecretInputString, resolveSecretInputRef } from "../../config/types.secrets.js";
 import { readLastGatewayErrorLine } from "../../daemon/diagnostics.js";
 import type { FindExtraGatewayServicesOptions } from "../../daemon/inspect.js";
-import { findExtraGatewayServices } from "../../daemon/inspect.js";
+import {
+  findExtraGatewayServices,
+  inferOpenClawRootFromGatewayCommand,
+} from "../../daemon/inspect.js";
 import type { ServiceConfigAudit } from "../../daemon/service-audit.js";
 import { auditGatewayServiceConfig } from "../../daemon/service-audit.js";
 import type { GatewayServiceRuntime } from "../../daemon/service-runtime.js";
@@ -271,7 +274,7 @@ export async function gatherDaemonStatus(
 
   const extraServices = await findExtraGatewayServices(
     process.env as Record<string, string | undefined>,
-    { deep: Boolean(opts.deep) },
+    { deep: Boolean(opts.deep), expectedRoot: inferOpenClawRootFromGatewayCommand(command) },
   ).catch(() => []);
 
   const timeoutMsRaw = Number.parseInt(String(opts.rpc.timeout ?? "10000"), 10);
