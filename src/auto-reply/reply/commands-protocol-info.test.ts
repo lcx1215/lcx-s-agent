@@ -349,6 +349,10 @@ describe("commands-protocol-info", () => {
         "finance_learning_pipeline_orchestrator",
       );
       expect(learningCapabilityStateReply?.text).toContain("finance_learning_capability_inspect");
+      expect(learningCapabilityStateReply?.text).toContain(
+        "retrievalFirstLearning.learningInternalizationStatus",
+      );
+      expect(learningCapabilityStateReply?.text).toContain("application_ready");
       expect(learningCapabilityStateReply?.text).toContain("not live-fixed by itself");
       expect(learningCapabilityStateReply?.text).toContain("Required live proof");
 
@@ -428,6 +432,9 @@ describe("commands-protocol-info", () => {
       );
       expect(learningApplicationReply?.text).toContain(
         "Internalization: I only count it as learned when the result is recorded as a reusable lesson, replay cue, or next-eval item.",
+      );
+      expect(learningApplicationReply?.text).toContain(
+        "learningInternalizationStatus=application_ready",
       );
       expect(learningApplicationReply?.text).toContain(
         "Application: I should apply it through explicit summaries, correction notes, and later decisions, not by claiming instant permanent mastery.",

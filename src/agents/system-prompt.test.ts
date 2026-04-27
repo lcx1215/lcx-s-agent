@@ -494,6 +494,9 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("fail closed on the first broken step");
     expect(prompt).toContain("learningIntent");
     expect(prompt).toContain("retrieval-first capability-card recall");
+    expect(prompt).toContain("learningInternalizationStatus");
+    expect(prompt).toContain("applicationReadyCandidateCount");
+    expect(prompt).toContain("application_ready");
   });
 
   it("includes finance research source workbench guidance when the tool is available", () => {

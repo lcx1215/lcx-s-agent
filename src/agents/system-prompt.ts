@@ -92,12 +92,12 @@ function buildMemorySection(params: {
       : []),
     ...(params.availableTools.has("finance_learning_pipeline_orchestrator")
       ? [
-          "When one safe finance source input should run end-to-end through intake, article extraction, capability attachment, evidence-gated retention, and inspect-ready output, use finance_learning_pipeline_orchestrator. For broad learning asks, pass the user's natural-language objective as learningIntent so existing capability cards are retrieved before new retention and again after attachment; the tool writes a finance-learning retrieval receipt and refreshes the daily retrieval review that proves whether the learned capability became retrievable later. It chooses the correct intake tool, fails closed on the first broken step, never fetches remote content automatically, and only returns inspect-ready success after attachment and evidence-gate validation succeed.",
+          "When one safe finance source input should run end-to-end through intake, article extraction, capability attachment, evidence-gated retention, and inspect-ready output, use finance_learning_pipeline_orchestrator. For broad learning asks, pass the user's natural-language objective as learningIntent so existing capability cards are retrieved before new retention and again after attachment; the tool writes a finance-learning retrieval receipt and refreshes the daily retrieval review that proves whether the learned capability became retrievable and application-ready later. In the user-facing reply, explicitly report retrievalFirstLearning.learningInternalizationStatus, postAttachCandidateCount, applicationReadyCandidateCount, and any weakLearningIntents; do not describe a run as learned/internalized when the status is not application_ready. It chooses the correct intake tool, fails closed on the first broken step, never fetches remote content automatically, and only returns inspect-ready success after attachment and evidence-gate validation succeed.",
         ]
       : []),
     ...(params.availableTools.has("finance_learning_retrieval_review")
       ? [
-          "When finance learning runs need a daily quality check, use finance_learning_retrieval_review. It reads finance-learning retrieval receipts, writes a finance-only retrieval review, flags weak learning that did not become retrievable, and does not touch Lark language corpus, protected memory, doctrine cards, or execution authority.",
+          "When finance learning runs need a daily quality check, use finance_learning_retrieval_review. It reads finance-learning retrieval receipts, writes a finance-only retrieval review, flags weak learning that did not become retrievable or did not become application-ready, and does not touch Lark language corpus, protected memory, doctrine cards, or execution authority.",
         ]
       : []),
     ...(params.availableTools.has("finance_learning_capability_apply")
@@ -665,9 +665,9 @@ export function buildAgentSystemPrompt(params: {
     finance_external_source_adapter:
       "Normalize safe external finance source tool outputs, feed exports, OPML exports, or public references into local research artifacts, preserve adapter metadata, and return finance_article_extract_capability_input for normalized articles without fetching remote content automatically",
     finance_learning_pipeline_orchestrator:
-      "Run one bounded finance learning pipeline from safe source intake through extraction, capability attachment, evidence-gated retention, inspect-ready output, a retrieval receipt, and an auto-refreshed retrieval review proving whether learning became retrievable; pass learningIntent for retrieval-first capability-card recall, fail closed on the first broken step, and never fetch remote content automatically",
+      "Run one bounded finance learning pipeline from safe source intake through extraction, capability attachment, evidence-gated retention, inspect-ready output, a retrieval receipt, and an auto-refreshed retrieval review proving whether learning became retrievable and application-ready; pass learningIntent for retrieval-first capability-card recall, surface learningInternalizationStatus plus applicationReadyCandidateCount in replies, only call it internalized when status is application_ready, fail closed on the first broken step, and never fetch remote content automatically",
     finance_learning_retrieval_review:
-      "Summarize finance learning retrieval receipts into a daily quality review, flag weak learning that did not become retrievable, and keep Lark language corpus plus protected memory untouched",
+      "Summarize finance learning retrieval receipts into a daily quality review, flag weak learning that did not become retrievable or application-ready, and keep Lark language corpus plus protected memory untouched",
     finance_learning_capability_apply:
       "Apply retained finance learning capability cards to one bounded research question by surfacing reuse guidance, required inputs, causal checks, and risk checks; read-only and never creates trading advice, execution approval, or doctrine mutation",
     finance_research_source_workbench:
