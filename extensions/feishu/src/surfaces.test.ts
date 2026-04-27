@@ -406,6 +406,32 @@ describe("resolveFeishuSurfaceRouting", () => {
     }
   });
 
+  it("routes learning-capability Lark command hardening asks to learning_command", () => {
+    const examples = [
+      "现在你的任务很繁重，把以前的学习能力收紧加强，连上lark接口命令",
+      "把之前的学习管线接到 Lark 命令上，语言接口也继续加强",
+      "把已有学习能力和飞书自然语言路由打通，别只停在内部工具",
+      "内部学习系统要做稳，接起来 learning_command 和 Lark surface",
+    ];
+
+    for (const content of examples) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg: {
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+            knowledge_maintenance: { chatId: "oc-knowledge" },
+            ops_audit: { chatId: "oc-ops" },
+          },
+        } as FeishuConfig,
+        chatId: "oc-random",
+        content,
+      });
+
+      expect(routing.targetSurface, content).toBe("learning_command");
+      expect(routing.targetChatId, content).toBe("oc-learning");
+    }
+  });
+
   it("routes explicit technical-slice summary asks to technical_daily", () => {
     const routing = resolveFeishuSurfaceRouting({
       cfg: {
@@ -730,6 +756,10 @@ describe("buildFeishuSurfaceNotice", () => {
     expect(notice).toContain(
       "If the user asks to maintain, consolidate, or strengthen prior finance-learning work",
     );
+    expect(notice).toContain(
+      "If the user asks to connect or harden learning capability through Lark / Feishu language commands",
+    );
+    expect(notice).toContain("finance_learning_pipeline_orchestrator");
     expect(notice).toContain(
       "For external-source learning requests such as Google/web search, arXiv/papers, blogs/docs, GitHub/repos, peer agents, competitor systems, or benchmark examples, do not produce a source tour.",
     );
@@ -1175,6 +1205,21 @@ describe("resolveFeishuControlRoomOrchestration", () => {
       currentSurface: "control_room",
       targetSurface: "learning_command",
       content: "之前内部做了很多的金融学习，你应该把它们维护好并加强",
+    });
+
+    expect(plan).toEqual({
+      mode: "aggregate",
+      specialistSurfaces: ["learning_command"],
+      publishMode: "classified_publish",
+      replyContract: "default",
+    });
+  });
+
+  it("keeps learning-capability Lark command hardening asks on the learning-only aggregate path", () => {
+    const plan = resolveFeishuControlRoomOrchestration({
+      currentSurface: "control_room",
+      targetSurface: "learning_command",
+      content: "把以前的学习能力收紧加强，连上 Lark 接口命令，Lark 语言能力也继续加强",
     });
 
     expect(plan).toEqual({

@@ -223,6 +223,16 @@ const CRITICAL_SINGLE_SPECIALIST_CASES = [
     specialistSurfaces: ["learning_command"],
   },
   {
+    phrase: "现在你的任务很繁重，把以前的学习能力收紧加强，连上lark接口命令",
+    targetSurface: "learning_command",
+    specialistSurfaces: ["learning_command"],
+  },
+  {
+    phrase: "把之前的学习管线接到 Lark 命令上，语言接口也继续加强",
+    targetSurface: "learning_command",
+    specialistSurfaces: ["learning_command"],
+  },
+  {
     phrase: "去github上学值得你学的，但别做开源综述，直接告诉我哪些会改你以后的做法",
     targetSurface: "learning_command",
     specialistSurfaces: ["learning_command"],

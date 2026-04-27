@@ -16,6 +16,7 @@ import {
   looksLikeHoldingsRevalidationAsk,
   looksLikeHighStakesRiskScopeAsk,
   looksLikeInstructionConflictScopeAsk,
+  looksLikeLearningCapabilityLarkCommandAsk,
   looksLikeLearningInternalizationAuditAsk,
   looksLikeLearningTimeboxStatusAsk,
   looksLikeLearningWorkflowAuditAsk,
@@ -77,6 +78,22 @@ describe("feishu intent matchers", () => {
       false,
     );
     expect(looksLikeFinanceLearningMaintenanceAsk("现在 ETF 还能拿吗")).toBe(false);
+  });
+
+  it("detects learning-capability Lark command hardening asks", () => {
+    const positiveCases = [
+      "现在你的任务很繁重，把以前的学习能力收紧加强，连上lark接口命令",
+      "把之前的学习管线接到 Lark 命令上，语言接口也继续加强",
+      "把已有学习能力和飞书自然语言路由打通，别只停在内部工具",
+      "内部学习系统要做稳，接起来 learning_command 和 Lark surface",
+    ];
+
+    for (const phrase of positiveCases) {
+      expect(looksLikeLearningCapabilityLarkCommandAsk(phrase), phrase).toBe(true);
+    }
+
+    expect(looksLikeLearningCapabilityLarkCommandAsk("学习状态现在还在跑吗")).toBe(false);
+    expect(looksLikeLearningCapabilityLarkCommandAsk("Lark 回复 live-ok")).toBe(false);
   });
 
   it("detects correction carryover asks by family cues", () => {

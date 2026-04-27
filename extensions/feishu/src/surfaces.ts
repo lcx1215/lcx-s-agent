@@ -6,6 +6,7 @@ import {
   looksLikeLearningWorkflowAuditAsk,
   looksLikeMethodLearningTopic,
   looksLikeFinanceLearningMaintenanceAsk,
+  looksLikeLearningCapabilityLarkCommandAsk,
   looksLikeSourceGroundingAsk,
   looksLikeStrategicLearningAsk,
   looksLikeVerticalFinanceLearningAsk,
@@ -214,6 +215,11 @@ function inferIntentSurfaces(params: {
     surfaces,
     "learning_command",
     looksLikeFinanceLearningMaintenanceAsk(normalized),
+  );
+  addIntentSurfaceIf(
+    surfaces,
+    "learning_command",
+    looksLikeLearningCapabilityLarkCommandAsk(normalized),
   );
   addIntentSurfaceIf(
     surfaces,
@@ -484,6 +490,15 @@ export function resolveFeishuControlRoomOrchestration(params: {
   }
 
   if (looksLikeFinanceLearningMaintenanceAsk(params.content)) {
+    return {
+      mode: "aggregate",
+      specialistSurfaces: ["learning_command"],
+      publishMode: requestedPublishMode ?? "classified_publish",
+      replyContract: "default",
+    };
+  }
+
+  if (looksLikeLearningCapabilityLarkCommandAsk(params.content)) {
     return {
       mode: "aggregate",
       specialistSurfaces: ["learning_command"],
@@ -891,6 +906,7 @@ export function buildFeishuSurfaceNotice(
       "[System: Do not optimize for becoming a generic super-agent. Stable finance-domain usefulness comes first: fewer errors, cleaner iteration, and better cumulative judgment beat broad capability theater.]",
       "[System: If a learning request is mostly about agent tooling, platform design, or open-source patterns, keep it bounded and only retain what clearly improves Lobster's finance research workflow, filtering, timing discipline, or risk control.]",
       "[System: If the user asks to maintain, consolidate, or strengthen prior finance-learning work, start by preserving and inspecting existing finance learning artifacts, capability candidates, pipeline receipts, and promotion handoff state. Do not restart from a blank learning plan unless the existing artifacts are missing or malformed.]",
+      "[System: If the user asks to connect or harden learning capability through Lark / Feishu language commands, treat the Lark wording as the user-facing entrypoint and the finance learning pipeline as the backend capability. Name the intended command family, the routed surface, the reusable tool path such as finance_learning_capability_inspect or finance_learning_pipeline_orchestrator, and the proof still needed before calling it live-fixed.]",
       "[System: For external-source learning requests such as Google/web search, arXiv/papers, blogs/docs, GitHub/repos, peer agents, competitor systems, or benchmark examples, do not produce a source tour. Convert source material into bounded adoption knowledge: retain, discard, replay trigger, next eval, compatibility risk, and one verifiable next step for Lobster.]",
       "[System: For another-agent, GitHub CLI, install/setup/migration, context-file, skills/plugin, or memory-provider topic, distill it as bounded adoption knowledge: what Lobster should adopt now, what to skip, what compatibility risk to watch, and one next patch or install step it can verify locally.]",
       "[System: A valid extra learning lane is bilingual Chinese/English comprehension for Lobster itself: finance and system terminology mapping, ambiguity reduction, workflow-trigger understanding, and plain-language reporting. Do not turn this into generic language tutoring or fake mastery claims.]",

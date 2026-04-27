@@ -53,6 +53,29 @@ export function looksLikeFinanceLearningMaintenanceAsk(text: string): boolean {
   return hasMaintenanceDirective && hasPriorLearningCue && hasFinanceLearningCue && !asksAuditOnly;
 }
 
+export function looksLikeLearningCapabilityLarkCommandAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasLearningCapabilityCue =
+    /(学习能力|学习管线|学习系统|学习资产|learning capability|learning capabilities|learning pipeline|learning command|learning_command|内部学习|以前的学习|之前的学习|过去的学习|已有学习|现有学习)/u.test(
+      normalized,
+    );
+  const hasHardeningDirective =
+    /(收紧|收敛|加强|强化|补强|维护|维护好|修补|修好|接上|连上|接起来|连起来|打通|做实|做稳|harden|strengthen|tighten|connect|wire)/u.test(
+      normalized,
+    );
+  const hasLarkInterfaceCue =
+    /(lark|feishu|飞书|语言接口|对话接口|接口命令|接口|命令|command|commands|自然语言|语义|语言能力|对话理解|分类干活|surface|routing|路由)/u.test(
+      normalized,
+    );
+  const asksStatusOnly =
+    /(有没有|现在.*吗|到底|是不是|状态|进度|还在跑|卡住|卡在哪|status|running|completed|blocked)/u.test(
+      normalized,
+    );
+  return (
+    hasLearningCapabilityCue && hasHardeningDirective && hasLarkInterfaceCue && !asksStatusOnly
+  );
+}
+
 export function looksLikeStrategicLearningAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   if (
