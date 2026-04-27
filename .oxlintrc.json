@@ -25,6 +25,7 @@
   "ignorePatterns": [
     "assets/",
     "dist/",
+    "README.md",
     "docs/_layouts/",
     "extensions/",
     "node_modules/",
