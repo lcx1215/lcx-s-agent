@@ -14,3 +14,4 @@ onlyBuiltDependencies:
   - node-llama-cpp
   - protobufjs
   - sharp
+# Declares workspace package boundaries for the OpenClaw monorepo.

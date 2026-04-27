@@ -191,3 +191,4 @@ export default defineConfig({
     },
   },
 });
+// Main Vitest configuration for unit and integration-style repository tests.

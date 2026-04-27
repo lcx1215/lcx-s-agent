@@ -131,3 +131,4 @@ export default defineConfig([
     platform: "node",
   },
 ]);
+// Bundles CLI, runtime, plugin SDK, and bundled hook entrypoints.

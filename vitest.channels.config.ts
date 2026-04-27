@@ -18,3 +18,4 @@ export default defineConfig({
     exclude: [...(baseTest.exclude ?? []), "src/gateway/**", "extensions/**"],
   },
 });
+// Vitest configuration for channel integration and messaging surface tests.

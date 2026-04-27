@@ -14,3 +14,4 @@ export default defineConfig({
     exclude,
   },
 });
+// Vitest configuration for opt-in live provider and channel tests.

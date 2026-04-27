@@ -28,3 +28,4 @@ export default defineConfig({
     ],
   },
 });
+// Vitest configuration for fast unit-test runs.

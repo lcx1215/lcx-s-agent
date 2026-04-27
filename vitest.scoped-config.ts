@@ -15,3 +15,4 @@ export function createScopedVitestConfig(include: string[]) {
     },
   });
 }
+// Vitest configuration for scoped regression suites.

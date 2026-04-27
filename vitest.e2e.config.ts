@@ -30,3 +30,4 @@ export default defineConfig({
     exclude,
   },
 });
+// Vitest configuration for end-to-end OpenClaw runtime tests.

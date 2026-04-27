@@ -26,3 +26,4 @@
   "include": ["src/**/*", "ui/**/*", "extensions/**/*"],
   "exclude": ["node_modules", "dist"]
 }
+// TypeScript project config for the main OpenClaw runtime and CLI sources.
