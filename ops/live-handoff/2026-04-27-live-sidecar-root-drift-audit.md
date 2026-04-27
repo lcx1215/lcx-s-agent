@@ -210,6 +210,47 @@ backup files, and does not run `launchctl`. A direct read of the live plists
 after the dry-run still shows both sidecars pointing at
 `/Users/liuchengxu/Desktop/openclaw`.
 
+## Smoke Install Attempt And Rollback
+
+Current live status:
+
+```text
+smoke install attempted: yes
+smoke install result: rolled back
+live-fixed: no
+```
+
+The smoke-mode install copied the clean-root smoke plist candidates and
+successfully reloaded both LaunchAgents, but the actual LaunchAgent process
+failed to open Python files under the Desktop checkout:
+
+```text
+/Library/Developer/CommandLineTools/usr/bin/python3: can't open file '/Users/liuchengxu/Desktop/lcx-s-openclaw/scripts/lobster_host_watchdog.py': [Errno 1] Operation not permitted
+```
+
+The rollback commands from the smoke receipt were applied immediately. A direct
+read of the live plists after rollback shows both sidecars are back on the old
+`/Users/liuchengxu/Desktop/openclaw` paths.
+
+Rollback receipt:
+
+```text
+ops/live-handoff/launchagent-candidates/live-sidecar-install-smoke-rollback-receipt.json
+```
+
+The smoke installer now blocks Desktop targets by default and records a blocked
+receipt without live changes unless an explicit override is passed:
+
+```text
+ops/live-handoff/launchagent-candidates/live-sidecar-install-smoke-receipt.json
+liveLaunchAgentChanged=false
+```
+
+Important updated migration constraint: do not point LaunchAgents directly at
+Desktop checkouts. The next safe patch is to generate a non-Desktop runtime
+bundle under `~/.openclaw/live-sidecars` and point smoke LaunchAgents at that
+bundle.
+
 ## Out Of Scope
 
 - No plist changes in this audit step.

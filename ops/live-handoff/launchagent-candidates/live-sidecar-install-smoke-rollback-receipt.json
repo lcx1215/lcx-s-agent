@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-27T22:01:20Z",
+  "status": "rolled_back_after_smoke_launch_failure",
+  "attemptedReceiptPath": "ops/live-handoff/launchagent-candidates/live-sidecar-install-smoke-receipt.json",
+  "failureMode": "macOS LaunchAgent Python process could not open Python files under Desktop checkout and returned Operation not permitted",
+  "observedError": "/Library/Developer/CommandLineTools/usr/bin/python3: can't open file '/Users/liuchengxu/Desktop/lcx-s-openclaw/scripts/lobster_host_watchdog.py': [Errno 1] Operation not permitted",
+  "rollbackApplied": true,
+  "rollbackSourceBackups": [
+    "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T22-00-50-941Z",
+    "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T22-00-50-941Z"
+  ],
+  "postRollbackLivePlists": {
+    "schedulerProgram": "/Users/liuchengxu/Desktop/openclaw/daily_learning_runner.py",
+    "schedulerWorkingDirectory": "/Users/liuchengxu/Desktop/openclaw",
+    "hostWatchdogProgram": "/Users/liuchengxu/Desktop/openclaw/scripts/lobster_host_watchdog.py",
+    "hostWatchdogWorkingDirectory": "/Users/liuchengxu/Desktop/openclaw"
+  },
+  "liveFixed": false,
+  "nextSafePatch": "Generate a non-Desktop runtime bundle under ~/.openclaw/live-sidecars and point LaunchAgents at that bundle instead of directly at Desktop checkouts."
+}
