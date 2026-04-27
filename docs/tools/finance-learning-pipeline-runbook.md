@@ -68,6 +68,12 @@ Run the full language-to-brain loop smoke when the whole Lark language, finance 
 pnpm exec tsx scripts/dev/lark-brain-language-loop-smoke.ts
 ```
 
+Run the full dev system loop when the Lark language system, finance learning brain, analysis application, memory receipt path, fail-closed cases, and language corpus review tests must be checked in one command:
+
+```bash
+pnpm exec tsx scripts/dev/agent-system-loop-smoke.ts
+```
+
 Supported smoke cases:
 
 - `manual-paste`
@@ -265,3 +271,4 @@ Smoke coverage:
 - `finance-learning-multi-candidate-smoke.ts` seeds four ETF event and risk-gate fixtures, then verifies `candidateCount >= 3`, `synthesisMode=multi_capability_synthesis`, and the research-only no-action boundary.
 - `finance-learning-event-review-smoke.ts` adds a local fresh ETF event fixture, checks required inputs and evidence coverage, and verifies `eventReviewDraft.status=research_review_ready` without approving trades.
 - `lark-brain-language-loop-smoke.ts` starts from a Lark utterance handoff, runs the finance learning brain, applies retained capabilities to fresh event analysis, and writes a loop receipt proving the language corpus and protected memory were untouched.
+- `agent-system-loop-smoke.ts` runs the full dev loop: all finance pipeline cases, multi-candidate synthesis, fresh event review, Lark/Feishu language-to-brain handoff, and Lark language routing/distillation tests.
