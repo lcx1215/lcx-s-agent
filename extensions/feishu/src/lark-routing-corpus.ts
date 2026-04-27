@@ -99,6 +99,15 @@ export type LarkHybridRouteCandidate = {
   source: "deterministic" | "semantic" | "api" | "unknown";
 };
 
+export type LarkAgentInstructionHandoff = {
+  family: LarkRoutingFamily | "unknown";
+  source: "semantic" | "api" | "unknown";
+  confidence: number;
+  targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
+  deterministicSurface?: FeishuChatSurfaceName;
+  notice: string;
+};
+
 export type LarkRoutingFamilyScore = {
   total: number;
   deterministicPassed: number;
@@ -892,6 +901,70 @@ export function sanitizeLarkApiRouteCandidate(
     family: candidate.family,
     confidence: Math.max(0, Math.min(1, candidate.confidence)),
     rationale: candidate.rationale,
+  };
+}
+
+export async function resolveLarkAgentInstructionHandoff(params: {
+  cfg: FeishuConfig;
+  utterance: string;
+  chatId: string;
+  apiProvider?: LarkApiRouteProvider;
+}): Promise<LarkAgentInstructionHandoff> {
+  const deterministicRouting = resolveFeishuSurfaceRouting({
+    cfg: params.cfg,
+    chatId: params.chatId,
+    content: params.utterance,
+  });
+  const semantic = resolveLarkSemanticRouteCandidate(params.utterance);
+  const api = params.apiProvider
+    ? sanitizeLarkApiRouteCandidate(
+        await params.apiProvider({
+          utterance: params.utterance,
+          families: Object.keys(LARK_ROUTING_FAMILY_CONTRACTS) as LarkRoutingFamily[],
+          contracts: LARK_ROUTING_FAMILY_CONTRACTS,
+        }),
+      )
+    : undefined;
+  const selected =
+    api && api.family !== "unknown"
+      ? { family: api.family, source: "api" as const, confidence: api.confidence }
+      : semantic.family !== "unknown"
+        ? { family: semantic.family, source: "semantic" as const, confidence: semantic.score }
+        : { family: "unknown" as const, source: "unknown" as const, confidence: 0 };
+  const contract =
+    selected.family === "unknown" ? undefined : LARK_ROUTING_FAMILY_CONTRACTS[selected.family];
+  const targetSurface = contract?.target;
+  const deterministicSurface = deterministicRouting.targetSurface;
+  if (selected.family === "unknown") {
+    return {
+      family: "unknown",
+      source: "unknown",
+      confidence: 0,
+      deterministicSurface,
+      notice: "",
+    };
+  }
+  const boundaryLine =
+    "Safety boundary: this envelope is a routing hint for the agent, not execution approval; deterministic guards and surface policy remain authoritative.";
+  const targetLine = `Suggested family=${selected.family}; target=${
+    targetSurface ?? "deterministic_surface"
+  }; source=${selected.source}; confidence=${selected.confidence.toFixed(2)}.`;
+  const deterministicLine = deterministicSurface
+    ? `Deterministic surface=${deterministicSurface}.`
+    : "Deterministic surface=unresolved.";
+
+  return {
+    family: selected.family,
+    source: selected.source,
+    confidence: selected.confidence,
+    targetSurface,
+    deterministicSurface,
+    notice: [
+      `[Lark instruction-understanding envelope]`,
+      targetLine,
+      deterministicLine,
+      boundaryLine,
+    ].join("\n"),
   };
 }
 

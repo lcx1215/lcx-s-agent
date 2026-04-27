@@ -77,6 +77,7 @@ import {
   looksLikeSourceCoverageScopeAsk,
   looksLikeTemporalScopeControlAsk,
 } from "./intent-matchers.js";
+import { resolveLarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
 import { runFeishuLearningCouncil } from "./learning-council.js";
 import {
   findLatestFeishuLearningTimeboxSession,
@@ -4571,16 +4572,27 @@ export async function handleFeishuMessage(params: {
       }
     }
 
+    const larkInstructionHandoff = await resolveLarkAgentInstructionHandoff({
+      cfg: feishuCfg,
+      utterance: ctx.content,
+      chatId: ctx.chatId,
+    });
     const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
+    const surfaceNotice = [
+      buildFeishuPromptSurfaceNotice({
+        surfaceRouting,
+        controlRoomOrchestration,
+      }),
+      larkInstructionHandoff.notice,
+    ]
+      .filter(Boolean)
+      .join("\n");
     const messageBody = buildFeishuAgentBody({
       ctx,
       quotedContent,
       permissionErrorForAgent,
       botOpenId,
-      surfaceNotice: buildFeishuPromptSurfaceNotice({
-        surfaceRouting,
-        controlRoomOrchestration,
-      }),
+      surfaceNotice,
       continuationNotice:
         researchContinuation.kind === "anchored" ? researchContinuation.notice : undefined,
     });

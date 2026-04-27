@@ -18,6 +18,7 @@ import {
 import {
   LARK_ROUTING_CORPUS,
   LARK_ROUTING_FAMILY_CONTRACTS,
+  resolveLarkAgentInstructionHandoff,
   resolveLarkHybridRouteCandidate,
   resolveLarkSemanticRouteCandidate,
   scoreLarkRoutingCorpus,
@@ -767,6 +768,28 @@ describe("real daily utterance regression", () => {
     expect(score.deterministicPassed).toBe(score.total);
     expect(score.semanticCandidatePassed).toBe(score.total);
     expect(score.apiCandidatePassed).toBe(score.total);
+  });
+
+  it("builds a Lark instruction-understanding envelope before handing work to the agent", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance:
+        "现在先靠大模型 API 回复，每次对话都产出一个可蒸馏样本，日积月累喂给我们的智能体。",
+      apiProvider: async () => ({
+        family: "api_reply_distillation",
+        confidence: 0.93,
+        rationale: "API router understood the request as reply distillation",
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "api_reply_distillation",
+      source: "api",
+      targetSurface: "learning_command",
+    });
+    expect(handoff.notice).toContain("Lark instruction-understanding envelope");
+    expect(handoff.notice).toContain("not execution approval");
   });
 
   it("sanitizes low-confidence API candidates and keeps deterministic routing authoritative", async () => {
