@@ -1,3 +1,5 @@
+<!-- Owns the long-term product direction inherited from OpenClaw and adapted by the Lobster fork. -->
+
 ## OpenClaw Vision
 
 OpenClaw is the AI that actually does things.
