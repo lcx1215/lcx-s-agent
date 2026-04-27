@@ -56,6 +56,12 @@ Run the multi-candidate regression when the apply layer must prove it is not rel
 pnpm exec tsx scripts/dev/finance-learning-multi-candidate-smoke.ts
 ```
 
+Run the fresh event application smoke when the apply layer must prove it can move from scaffold to a bounded research review draft:
+
+```bash
+pnpm exec tsx scripts/dev/finance-learning-event-review-smoke.ts
+```
+
 Supported smoke cases:
 
 - `manual-paste`
@@ -251,3 +257,4 @@ Smoke coverage:
 - `capability-apply` seeds one valid local finance capability, applies it to a bounded research question, and checks that the no-action boundary is preserved.
 - `capability-apply-unmatched` seeds the same capability, asks an unrelated repository-governance question, and verifies the apply layer fails closed instead of inventing a learned finance answer.
 - `finance-learning-multi-candidate-smoke.ts` seeds four ETF event and risk-gate fixtures, then verifies `candidateCount >= 3`, `synthesisMode=multi_capability_synthesis`, and the research-only no-action boundary.
+- `finance-learning-event-review-smoke.ts` adds a local fresh ETF event fixture, checks required inputs and evidence coverage, and verifies `eventReviewDraft.status=research_review_ready` without approving trades.

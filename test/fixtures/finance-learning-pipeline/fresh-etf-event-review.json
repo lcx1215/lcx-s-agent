@@ -1,0 +1,57 @@
+{
+  "eventTitle": "Semiconductor ETF headline cluster with liquidity and drawdown checks",
+  "asOfDate": "2026-04-27",
+  "researchQuestion": "Use retained ETF event triage, liquidity regime, catalyst follow-up, and portfolio risk gates for a research-only ETF event review.",
+  "freshInputs": [
+    {
+      "name": "public headlines",
+      "summary": "Multiple public headlines mention semiconductor supply-chain pressure and ETF concentration risk.",
+      "evidenceCategories": [
+        "event_catalyst_evidence",
+        "sentiment_evidence",
+        "equity_market_evidence"
+      ]
+    },
+    {
+      "name": "ETF issuer notes",
+      "summary": "Issuer notes describe top holdings, sector concentration, and index methodology exposure.",
+      "evidenceCategories": ["etf_regime_evidence", "equity_market_evidence"]
+    },
+    {
+      "name": "earnings calendar",
+      "summary": "Upcoming top-holding earnings dates are listed for catalyst follow-up only.",
+      "evidenceCategories": ["event_catalyst_evidence", "company_ir"]
+    },
+    {
+      "name": "company IR notes",
+      "summary": "Company IR pages provide event source context without adding a price forecast.",
+      "evidenceCategories": ["company_ir", "event_catalyst_evidence"]
+    },
+    {
+      "name": "credit spreads",
+      "summary": "Credit spread proxy is stable enough that the event is not treated as broad credit stress.",
+      "evidenceCategories": ["credit_evidence", "liquidity_evidence"]
+    },
+    {
+      "name": "funding stress indicators",
+      "summary": "Funding stress proxy is monitored as a liquidity-regime gate rather than a trading trigger.",
+      "evidenceCategories": ["liquidity_evidence", "credit_evidence"]
+    },
+    {
+      "name": "drawdown context",
+      "summary": "Recent drawdown context is checked before any qualitative risk implication.",
+      "evidenceCategories": ["portfolio_risk_evidence", "implementation_evidence"]
+    },
+    {
+      "name": "volatility indicators",
+      "summary": "Volatility proxy is elevated enough to require wait discipline and red-team invalidation.",
+      "evidenceCategories": ["portfolio_risk_evidence", "implementation_evidence"]
+    }
+  ],
+  "redTeamInvalidation": [
+    "If issuer exposure is small or unrelated to the headline cluster, the ETF event frame is weak.",
+    "If credit and funding stress remain benign, do not promote the headline cluster into a liquidity-regime thesis.",
+    "If volatility rises while source evidence stays thin, keep the output at watch-only research framing."
+  ],
+  "noActionBoundary": "research_only_no_trade_approval"
+}
