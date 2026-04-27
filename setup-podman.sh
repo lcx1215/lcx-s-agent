@@ -254,3 +254,4 @@ if [[ "$INSTALL_QUADLET" == true ]]; then
 else
   echo "To install systemd quadlet later: $0 --quadlet"
 fi
+# Bootstraps Podman-based OpenClaw setup for rootless/container hosts.

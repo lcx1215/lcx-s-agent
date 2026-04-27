@@ -30,3 +30,4 @@ WORKDIR /home/sandbox
 EXPOSE 9222 5900 6080
 
 CMD ["openclaw-sandbox-browser"]
+# Builds the browser-enabled sandbox image for web automation tasks.

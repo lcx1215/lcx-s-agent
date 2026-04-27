@@ -18,3 +18,4 @@ USER sandbox
 WORKDIR /home/sandbox
 
 CMD ["sleep", "infinity"]
+# Builds the sandbox image used by isolated agent execution paths.

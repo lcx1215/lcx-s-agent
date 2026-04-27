@@ -37,3 +37,4 @@ memory = "2048mb"
 [mounts]
 source = "openclaw_data"
 destination = "/data"
+# Describes private Fly.io deployment settings for operator-owned runtime services.

@@ -19,3 +19,4 @@ services:
       name: openclaw-data
       mountPath: /data
       sizeGB: 1
+# Describes Render Blueprint deployment for hosted OpenClaw runtime services.

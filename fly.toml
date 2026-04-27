@@ -32,3 +32,4 @@ memory = "2048mb"
 [mounts]
 source = "openclaw_data"
 destination = "/data"
+# Describes the public Fly.io deployment shape for OpenClaw runtime services.

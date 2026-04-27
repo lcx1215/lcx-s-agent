@@ -74,3 +74,4 @@ services:
     entrypoint: ["node", "dist/index.js"]
     depends_on:
       - openclaw-gateway
+# Runs local OpenClaw services for container-based development and smoke tests.
