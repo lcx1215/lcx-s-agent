@@ -77,6 +77,7 @@ import {
   looksLikeSourceCoverageScopeAsk,
   looksLikeTemporalScopeControlAsk,
 } from "./intent-matchers.js";
+import { createGatewayLarkApiRouteProvider } from "./lark-api-route-provider.js";
 import { resolveLarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
 import { runFeishuLearningCouncil } from "./learning-council.js";
 import {
@@ -4576,6 +4577,11 @@ export async function handleFeishuMessage(params: {
       cfg: feishuCfg,
       utterance: ctx.content,
       chatId: ctx.chatId,
+      apiProvider: createGatewayLarkApiRouteProvider({
+        routeAgentId: route.agentId,
+        sessionKey: effectiveSessionKey,
+        messageId: ctx.messageId,
+      }),
     });
     const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
     const surfaceNotice = [

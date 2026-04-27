@@ -45,6 +45,7 @@ const {
   mockFindLatestFeishuLearningTimeboxSession,
   mockRunFeishuLearningCouncil,
   mockRunFeishuMarketIntelligencePacket,
+  mockCreateGatewayLarkApiRouteProvider,
   mockPeekFeishuLearningTimeboxSession,
   mockStartFeishuLearningTimeboxSession,
 } = vi.hoisted(() => ({
@@ -85,6 +86,11 @@ const {
     mainSessionKey: "agent:main:main",
     matchedBy: "default",
   })),
+  mockCreateGatewayLarkApiRouteProvider: vi.fn(() => async () => ({
+    family: "unknown" as const,
+    confidence: 0,
+    rationale: "test default skips live API routing",
+  })),
   mockRunFeishuLearningCouncil: vi.fn(),
   mockRunFeishuMarketIntelligencePacket: vi.fn(),
   mockFindRunningFeishuLearningTimeboxSession: vi.fn(() => undefined),
@@ -120,6 +126,10 @@ vi.mock("./learning-council.js", () => ({
 
 vi.mock("./market-intelligence.js", () => ({
   runFeishuMarketIntelligencePacket: mockRunFeishuMarketIntelligencePacket,
+}));
+
+vi.mock("./lark-api-route-provider.js", () => ({
+  createGatewayLarkApiRouteProvider: mockCreateGatewayLarkApiRouteProvider,
 }));
 
 vi.mock("./learning-timebox.js", () => ({
@@ -225,6 +235,12 @@ beforeEach(() => {
   mockRecordOperationalAnomaly.mockReset();
   mockRunFeishuLearningCouncil.mockReset();
   mockRunFeishuMarketIntelligencePacket.mockReset();
+  mockCreateGatewayLarkApiRouteProvider.mockReset();
+  mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+    family: "unknown",
+    confidence: 0,
+    rationale: "test default skips live API routing",
+  }));
   mockFindRunningFeishuLearningTimeboxSession.mockReset();
   mockFindRunningFeishuLearningTimeboxSession.mockReturnValue(undefined);
   mockFindLatestFeishuLearningTimeboxSession.mockReset();

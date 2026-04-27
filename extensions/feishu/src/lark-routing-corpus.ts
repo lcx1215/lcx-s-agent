@@ -916,15 +916,24 @@ export async function resolveLarkAgentInstructionHandoff(params: {
     content: params.utterance,
   });
   const semantic = resolveLarkSemanticRouteCandidate(params.utterance);
-  const api = params.apiProvider
-    ? sanitizeLarkApiRouteCandidate(
+  let api: LarkApiRouteCandidate | undefined;
+  if (params.apiProvider) {
+    try {
+      api = sanitizeLarkApiRouteCandidate(
         await params.apiProvider({
           utterance: params.utterance,
           families: Object.keys(LARK_ROUTING_FAMILY_CONTRACTS) as LarkRoutingFamily[],
           contracts: LARK_ROUTING_FAMILY_CONTRACTS,
         }),
-      )
-    : undefined;
+      );
+    } catch (error) {
+      api = {
+        family: "unknown",
+        confidence: 0,
+        rationale: `api route provider failed: ${String(error).slice(0, 180)}`,
+      };
+    }
+  }
   const selected =
     api && api.family !== "unknown"
       ? { family: api.family, source: "api" as const, confidence: api.confidence }
