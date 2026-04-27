@@ -151,9 +151,29 @@ const barSvg = points
     const barY = yBase - point.barHeight;
     return `
       <rect x="${barX.toFixed(1)}" y="${barY.toFixed(1)}" width="${barWidth}" height="${point.barHeight.toFixed(1)}" rx="22" fill="${chartColors[index]}" stroke="#ffffff" stroke-width="3"/>
-      <text x="${point.x.toFixed(1)}" y="${(barY - 16).toFixed(1)}" text-anchor="middle" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="900">${point.commits}</text>
       <text x="${point.x.toFixed(1)}" y="496" text-anchor="middle" fill="#475b66" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="850">${point.label}</text>
       <text x="${point.x.toFixed(1)}" y="522" text-anchor="middle" fill="#8b9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="750">${point.iso.slice(5)}</text>`;
+  })
+  .join("");
+
+const valueLabelSvg = points
+  .map((point, index) => {
+    const label = String(point.commits);
+    const width = Math.max(42, 22 + label.length * 13);
+    const height = 30;
+    const isHighPoint = point.y < yBase - 128;
+    const isLastPoint = index === points.length - 1;
+    const x = isHighPoint
+      ? isLastPoint
+        ? point.x - width - 28
+        : point.x + 30
+      : point.x - width / 2;
+    const y = isHighPoint ? point.y + 20 : point.y - 50;
+    return `
+      <g>
+        <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${width}" height="${height}" rx="15" fill="#ffffff" stroke="#d9e5ec" stroke-width="2"/>
+        <text x="${(x + width / 2).toFixed(1)}" y="${(y + 21).toFixed(1)}" text-anchor="middle" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="950">${label}</text>
+      </g>`;
   })
   .join("");
 
@@ -248,6 +268,7 @@ ${barSvg}
           `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="12" fill="#ffffff" stroke="#263238" stroke-width="3"/>`,
       )
       .join("")}
+${valueLabelSvg}
   </g>
 
   <g>
