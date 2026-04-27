@@ -376,6 +376,44 @@ language/brain/analysis/memory eval cycle. It still does not migrate the
 Feishu/Lark proxy, does not grant execution authority, and does not turn the
 system into an autonomous trading agent.
 
+## Watchdog Cycle Health Gate
+
+Current live status:
+
+```text
+host_watchdog.runs=4
+host_watchdog.last_exit_code=0
+scheduler_cycle.status=fresh
+scheduler_cycle.check_count=5
+scheduler_cycle.boundary_ok=true
+```
+
+The host watchdog now checks more than scheduler process heartbeat. It reads the
+latest scheduler cycle report and treats the scheduler as unhealthy if the
+bounded cycle is missing, stale, failed, incomplete, or violates the safety
+boundary.
+
+Checked report fields:
+
+```text
+status=cycle_completed
+cycleResult.checkCount >= 5
+cycleResult.liveTouched=false
+cycleResult.providerConfigTouched=false
+cycleResult.protectedMemoryTouched=false
+cycleResult.remoteFetchOccurred=false
+cycleResult.executionAuthorityGranted=false
+```
+
+Runtime watchdog receipt:
+
+```text
+/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/branches/_system/host_watchdog_state.json
+```
+
+This prevents a false-green state where the LaunchAgent exits successfully but
+the language/brain/analysis/memory loop failed or crossed a protected boundary.
+
 ## Out Of Scope
 
 - No deletion of old `Desktop/openclaw`.

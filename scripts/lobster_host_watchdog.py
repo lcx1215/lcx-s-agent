@@ -22,6 +22,8 @@ except ModuleNotFoundError:
 SCHEDULER_LABEL = "ai.openclaw.lobster.scheduler"
 SCHEDULER_HEARTBEAT_STALE_AFTER_HOURS = 36.0
 SCHEDULER_HEARTBEAT_STUCK_AFTER_HOURS = 6.0
+SCHEDULER_CYCLE_STALE_AFTER_HOURS = 36.0
+REQUIRED_CYCLE_CHECK_COUNT = 5
 ENABLE_ALERTS_ENV = "OPENCLAW_HOST_WATCHDOG_ENABLE_ALERTS"
 
 
@@ -125,16 +127,90 @@ def build_scheduler_heartbeat_snapshot(
     }
 
 
+def build_scheduler_cycle_snapshot(
+    cycle_report: dict[str, Any],
+    cycle_failure: dict[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current = now or datetime.now(timezone.utc)
+    source = "failure" if cycle_failure else "report"
+    report = cycle_failure or cycle_report
+    if not report:
+        return {
+            "status": "never_run",
+            "source": "none",
+            "generated_at": "",
+            "lag_hours": None,
+            "stale_after_hours": SCHEDULER_CYCLE_STALE_AFTER_HOURS,
+            "check_count": 0,
+            "failed_checks": [],
+            "boundary_ok": False,
+        }
+
+    generated_at = str(report.get("generatedAt") or "").strip()
+    generated_dt = parse_iso(generated_at)
+    lag_hours: float | None = None
+    if generated_dt is None:
+        stale = True
+        status = "invalid"
+    else:
+        lag_hours = max((current - generated_dt).total_seconds() / 3600.0, 0.0)
+        stale = lag_hours > SCHEDULER_CYCLE_STALE_AFTER_HOURS
+        status = "stale" if stale else "fresh"
+
+    cycle_result = report.get("cycleResult") if isinstance(report.get("cycleResult"), dict) else {}
+    checks = cycle_result.get("checks") if isinstance(cycle_result, dict) else []
+    checks_list = checks if isinstance(checks, list) else []
+    failed_checks = [
+        str(item.get("name") or "unknown")
+        for item in checks_list
+        if isinstance(item, dict) and item.get("ok") is not True
+    ]
+    boundary_ok = (
+        report.get("status") == "cycle_completed"
+        and cycle_result.get("liveTouched") is False
+        and cycle_result.get("providerConfigTouched") is False
+        and cycle_result.get("protectedMemoryTouched") is False
+        and cycle_result.get("remoteFetchOccurred") is False
+        and cycle_result.get("executionAuthorityGranted") is False
+    )
+    check_count = int(cycle_result.get("checkCount") or len(checks_list) or 0)
+    if source == "failure" or report.get("status") != "cycle_completed":
+        status = "failed"
+    elif not boundary_ok:
+        status = "boundary_violation"
+    elif failed_checks:
+        status = "failed_checks"
+    elif check_count < REQUIRED_CYCLE_CHECK_COUNT:
+        status = "incomplete"
+
+    return {
+        "status": status,
+        "source": source,
+        "generated_at": generated_at,
+        "lag_hours": lag_hours,
+        "stale_after_hours": SCHEDULER_CYCLE_STALE_AFTER_HOURS,
+        "check_count": check_count,
+        "required_check_count": REQUIRED_CYCLE_CHECK_COUNT,
+        "failed_checks": failed_checks,
+        "boundary_ok": boundary_ok,
+        "summary": cycle_result.get("summary") if isinstance(cycle_result, dict) else None,
+    }
+
+
 def build_watchdog_snapshot(
     *,
     branch_state: dict[str, Any],
     scheduler_state: dict[str, Any],
     heartbeat_state: dict[str, Any],
+    cycle_report_state: dict[str, Any],
+    cycle_failure_state: dict[str, Any],
     launchd_state: dict[str, Any],
     mode: str,
 ) -> dict[str, Any]:
     freshness = build_branch_freshness_snapshot(branch_state, scheduler_state)
     heartbeat = build_scheduler_heartbeat_snapshot(heartbeat_state)
+    cycle = build_scheduler_cycle_snapshot(cycle_report_state, cycle_failure_state)
     nonfresh = [
         {"branch": branch_name, "status": str(row.get("status") or "")}
         for branch_name, row in freshness.items()
@@ -151,6 +227,16 @@ def build_watchdog_snapshot(
         heartbeat_issue = bool(launchd_state.get("disabled")) or bool(nonfresh)
     if heartbeat_issue:
         issues.append("scheduler_heartbeat")
+    if str(cycle.get("status") or "") in {
+        "never_run",
+        "invalid",
+        "stale",
+        "failed",
+        "boundary_violation",
+        "failed_checks",
+        "incomplete",
+    }:
+        issues.append("scheduler_cycle")
     if nonfresh:
         issues.append("branch_freshness")
 
@@ -164,6 +250,7 @@ def build_watchdog_snapshot(
         "scheduler_disabled": bool(launchd_state.get("disabled", False)),
         "launchd": launchd_state,
         "scheduler_heartbeat": heartbeat,
+        "scheduler_cycle": cycle,
         "branch_freshness": freshness,
         "nonfresh_branches": nonfresh,
         "boundary": {
@@ -175,11 +262,13 @@ def build_watchdog_snapshot(
     }
 
 
-def load_snapshot_inputs() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+def load_snapshot_inputs() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     return (
         load_state_json("branch_state.json", {}),
         load_state_json("branch_scheduler.json", {}),
         load_state_json("scheduler_heartbeat.json", {}),
+        load_state_json("scheduler_cycle_report.json", {}),
+        load_state_json("scheduler_cycle_failure.json", {}),
     )
 
 
@@ -200,7 +289,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    branch_state, scheduler_state, heartbeat_state = load_snapshot_inputs()
+    branch_state, scheduler_state, heartbeat_state, cycle_report_state, cycle_failure_state = (
+        load_snapshot_inputs()
+    )
     alerts_enabled = truthy(os.environ.get(ENABLE_ALERTS_ENV)) and not args.dry_run
     mode = "live_guarded" if alerts_enabled else "dry_run_no_alert"
     launchd_state = detect_scheduler_disabled(skip_launchd=args.skip_launchd)
@@ -208,6 +299,8 @@ def main(argv: list[str] | None = None) -> int:
         branch_state=branch_state,
         scheduler_state=scheduler_state,
         heartbeat_state=heartbeat_state,
+        cycle_report_state=cycle_report_state,
+        cycle_failure_state=cycle_failure_state,
         launchd_state=launchd_state,
         mode=mode,
     )

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-27T22:22:27.667Z",
+  "generatedAt": "2026-04-27T22:27:04.653Z",
   "sourceRoot": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
   "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
   "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
@@ -976,15 +976,15 @@
     },
     {
       "relativePath": "docs/assets/lcx-agent-daily-progress-wave.svg",
-      "sourceSha256": "8f6040ad6f9307abb3a9649a6a2bf3068f324343a70ce949660a469d92076089",
-      "targetSha256": "8f6040ad6f9307abb3a9649a6a2bf3068f324343a70ce949660a469d92076089",
+      "sourceSha256": "f9d49577bb799909e6da6dc650b000076ac0ffe333659ce5aab69bda8d678639",
+      "targetSha256": "f9d49577bb799909e6da6dc650b000076ac0ffe333659ce5aab69bda8d678639",
       "copied": true,
       "executable": false
     },
     {
       "relativePath": "docs/assets/lobster-daily-progress-wave.svg",
-      "sourceSha256": "8f6040ad6f9307abb3a9649a6a2bf3068f324343a70ce949660a469d92076089",
-      "targetSha256": "8f6040ad6f9307abb3a9649a6a2bf3068f324343a70ce949660a469d92076089",
+      "sourceSha256": "f9d49577bb799909e6da6dc650b000076ac0ffe333659ce5aab69bda8d678639",
+      "targetSha256": "f9d49577bb799909e6da6dc650b000076ac0ffe333659ce5aab69bda8d678639",
       "copied": true,
       "executable": false
     },
@@ -1409,8 +1409,8 @@
       "executable": false
     }
   ],
-  "fileCount": 7127,
-  "omittedFileCount": 6927,
+  "fileCount": 7129,
+  "omittedFileCount": 6929,
   "compileCheck": {
     "command": "python3 -m py_compile daily_learning_runner.py lobster_orchestrator.py scripts/lobster_paths.py scripts/branch_freshness.py scripts/lobster_host_watchdog.py",
     "code": 0,
