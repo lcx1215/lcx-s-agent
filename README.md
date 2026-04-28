@@ -1,5 +1,7 @@
 # LCX Agent
 
+![LCX Agent architecture](docs/assets/lcx-agent-architecture.png)
+
 [![LCX Agent daily progress wave](docs/assets/lcx-agent-daily-progress-wave.svg)](docs/assets/lcx-agent-daily-progress-wave.svg)
 
 LCX Agent is a personal research operating system built on top of OpenClaw.
