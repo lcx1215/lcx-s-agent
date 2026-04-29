@@ -265,6 +265,34 @@ function buildLearningInternalizationStatus(params: {
   return "application_ready";
 }
 
+function firstWeakLearningFailedReason(weakLearningIntents: unknown): string | null {
+  if (!Array.isArray(weakLearningIntents)) {
+    return null;
+  }
+  const first = weakLearningIntents[0];
+  if (!first || typeof first !== "object" || Array.isArray(first)) {
+    return null;
+  }
+  const record = first as Record<string, unknown>;
+  if (typeof record.failedReason === "string" && record.failedReason.trim()) {
+    return record.failedReason.trim();
+  }
+  if (typeof record.reason === "string" && record.reason.trim()) {
+    return record.reason.trim();
+  }
+  return null;
+}
+
+function buildLearningInternalizationFailedReason(params: {
+  status: ReturnType<typeof buildLearningInternalizationStatus>;
+  weakLearningIntents: unknown;
+}): string | null {
+  if (params.status === "application_ready") {
+    return null;
+  }
+  return firstWeakLearningFailedReason(params.weakLearningIntents) ?? params.status;
+}
+
 function wrapStepFailure(params: {
   route: IntakeRoute;
   failedStep: "intake" | "extract" | "attach" | "inspect";
@@ -709,6 +737,12 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
                 new Date().toISOString().slice(0, 10),
             })
           : null;
+      const weakLearningIntents = retrievalReview?.review.weakLearningIntents ?? [];
+      const learningInternalizationStatus = buildLearningInternalizationStatus({
+        retainedCandidateCount,
+        postAttachCandidateCount,
+        applicationReadyCandidateCount,
+      });
 
       return jsonResult({
         ok: true,
@@ -727,12 +761,12 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
               retrievalReviewCounts: retrievalReview?.review.counts ?? null,
               postAttachCandidateCount,
               applicationReadyCandidateCount,
-              learningInternalizationStatus: buildLearningInternalizationStatus({
-                retainedCandidateCount,
-                postAttachCandidateCount,
-                applicationReadyCandidateCount,
+              learningInternalizationStatus,
+              failedReason: buildLearningInternalizationFailedReason({
+                status: learningInternalizationStatus,
+                weakLearningIntents,
               }),
-              weakLearningIntents: retrievalReview?.review.weakLearningIntents ?? [],
+              weakLearningIntents,
               classificationContract:
                 "Use stable finance domains plus capability tags and query-ranked capability cards before creating narrower categories.",
               preflightCapabilityRetrieval,

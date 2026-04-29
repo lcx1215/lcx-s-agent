@@ -32,6 +32,7 @@ type PipelineDetails = Record<string, unknown> & {
     postAttachCapabilityRetrieval: { candidates: unknown[] };
     retrievalReceiptPath: string;
     retrievalReviewPath: string;
+    failedReason: string | null;
   };
   applicationValidation: {
     usageReceiptPath: string | null;
@@ -282,6 +283,7 @@ describe("finance learning pipeline orchestrator tool", () => {
           postAttachCandidateCount: 1,
           applicationReadyCandidateCount: 1,
           learningInternalizationStatus: "application_ready",
+          failedReason: null,
           weakLearningIntents: [],
           classificationContract:
             "Use stable finance domains plus capability tags and query-ranked capability cards before creating narrower categories.",
@@ -442,6 +444,41 @@ describe("finance learning pipeline orchestrator tool", () => {
         inspectTool: "finance_learning_capability_inspect",
       }),
     ]);
+  });
+
+  it("surfaces retrieval-first failedReason when a learned source is retained but not retrievable for the learning intent", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-pipeline-");
+    const tool = createFinanceLearningPipelineOrchestratorTool({ workspaceDir });
+
+    const result = await tool.execute("retrieval-first-mismatch", {
+      sourceName: "ETF event note",
+      sourceType: "manual_article_source",
+      pastedText: buildStructuredArticle(),
+      title: "ETF event triage workflow",
+      retrievalNotes: SAFE_RETRIEVAL_NOTES,
+      allowedActionAuthority: "research_only",
+      learningIntent: "学习期权隐含波动率曲面套利和 vega 对冲框架",
+      maxRetrievedCapabilities: 3,
+    });
+
+    expect(asPipelineDetails(result.details)).toEqual(
+      expect.objectContaining({
+        ok: true,
+        retainedCandidateCount: 1,
+        retrievalFirstLearning: expect.objectContaining({
+          learningInternalizationStatus: "not_retrievable",
+          failedReason: "not_retrievable_after_learning",
+          postAttachCandidateCount: 0,
+          applicationReadyCandidateCount: 0,
+          weakLearningIntents: [
+            expect.objectContaining({
+              reason: "not_retrievable_after_learning",
+              failedReason: "not_retrievable_after_learning",
+            }),
+          ],
+        }),
+      }),
+    );
   });
 
   it("completes the full pipeline for a valid local file", async () => {
