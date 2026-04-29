@@ -95,6 +95,9 @@ function buildAgentVisibleLearningLine(retrieval: Record<string, unknown>): stri
   if (status === "application_ready") {
     return `learningInternalizationStatus=application_ready; applicationReadyCandidateCount=${applicationReadyCandidateCount}`;
   }
+  if (typeof retrieval.failedReason === "string" && retrieval.failedReason.trim()) {
+    return `learningInternalizationStatus=${status}; failedReason=${retrieval.failedReason.trim()}; applicationReadyCandidateCount=${applicationReadyCandidateCount}`;
+  }
   const firstWeakIntent = getRecord(weakLearningIntents[0], "weakLearningIntent");
   const reason =
     typeof firstWeakIntent.failedReason === "string" && firstWeakIntent.failedReason.trim()
