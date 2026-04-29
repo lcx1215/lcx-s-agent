@@ -502,6 +502,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("applicationValidationQuery");
     expect(prompt).toContain("applicationValidationStatus");
     expect(prompt).toContain("auto-refreshed same-day retrieval review");
+    expect(prompt).toContain("weakLearningIntents.failedReason");
     expect(prompt).toContain("usageReceiptPath");
     expect(prompt).toContain("usageReviewPath");
     expect(prompt).toContain("application_ready");
