@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CommandCheck = {
   name: string;
@@ -46,15 +47,7 @@ function numberValue(value: unknown, label: string): number {
 }
 
 function parseJsonOutput(stdout: string): Record<string, unknown> {
-  const trimmed = stdout.trim();
-  assert(trimmed.length > 0, "command produced no JSON output");
-  try {
-    return record(JSON.parse(trimmed), "json output");
-  } catch {
-    const lastJsonStart = trimmed.lastIndexOf("\n{");
-    assert(lastJsonStart !== -1, "command output did not contain a JSON object");
-    return record(JSON.parse(trimmed.slice(lastJsonStart + 1)), "json output");
-  }
+  return record(parseJsonObjectFromOutput(stdout), "json output");
 }
 
 function runCommand(check: CommandCheck): Promise<CommandResult> {
