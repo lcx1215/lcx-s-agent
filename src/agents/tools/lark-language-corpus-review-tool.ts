@@ -36,14 +36,6 @@ function normalizeRelativePath(value: string): string {
   return value.split(path.sep).join("/");
 }
 
-function countSkippedReasons(skipped: readonly { reason: string }[]): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const entry of skipped) {
-    counts[entry.reason] = (counts[entry.reason] ?? 0) + 1;
-  }
-  return counts;
-}
-
 function buildReviewAction(params: {
   promotedCases: number;
   skippedCounts: Record<string, number>;
@@ -122,9 +114,10 @@ export function createLarkLanguageCorpusReviewTool(options?: {
           existingCorpus: LARK_ROUTING_CORPUS,
           minAcceptedPerFamily:
             minAcceptedPerFamily && minAcceptedPerFamily > 0 ? minAcceptedPerFamily : undefined,
+          skipped: dryReadResult?.skipped ?? [],
         });
       const skipped = writeResult?.skipped ?? dryReadResult?.skipped ?? [];
-      const skippedCounts = countSkippedReasons(skipped);
+      const skippedCounts = review.skippedCounts;
 
       return jsonResult({
         ok: true,

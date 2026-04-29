@@ -102,6 +102,7 @@ export type LarkRoutingCandidatePromotionReview = {
     duplicateCases: number;
     promotedCases: number;
   };
+  skippedCounts: Record<string, number>;
   corpusPatch: string;
 };
 
@@ -124,6 +125,16 @@ export type LarkRoutingCandidatePromotionReviewWriteResult = {
   patchPath: string;
   skipped: LarkRoutingCandidatePromotionArtifactReadResult["skipped"];
 };
+
+function countPromotionSkippedReasons(
+  skipped: readonly LarkRoutingCandidatePromotionArtifactReadResult["skipped"][number][],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const entry of skipped) {
+    counts[entry.reason] = (counts[entry.reason] ?? 0) + 1;
+  }
+  return counts;
+}
 
 export const LARK_LANGUAGE_CANDIDATE_DIR = path.join("memory", "lark-language-routing-candidates");
 export const LARK_LANGUAGE_REVIEW_DIR = path.join("memory", "lark-language-routing-reviews");
@@ -445,6 +456,7 @@ export function buildLarkRoutingCandidatePromotionReview(params: {
   existingCorpus?: readonly LarkRoutingCorpusCase[];
   minAcceptedPerFamily?: number;
   generatedAt?: string;
+  skipped?: readonly LarkRoutingCandidatePromotionArtifactReadResult["skipped"][number][];
 }): LarkRoutingCandidatePromotionReview {
   const minAcceptedPerFamily = params.minAcceptedPerFamily ?? 2;
   const existingKeys = new Set(
@@ -538,6 +550,7 @@ export function buildLarkRoutingCandidatePromotionReview(params: {
       duplicateCases,
       promotedCases: promotedCases.length,
     },
+    skippedCounts: countPromotionSkippedReasons(params.skipped ?? []),
     corpusPatch: renderLarkRoutingCandidatePromotionPatch(promotedCases),
   };
 }
@@ -566,6 +579,7 @@ export async function writeLarkRoutingCandidatePromotionReview(params: {
     existingCorpus: params.existingCorpus,
     minAcceptedPerFamily: params.minAcceptedPerFamily,
     generatedAt: params.generatedAt,
+    skipped: readResult.skipped,
   });
   const reviewRelPath = path.join(LARK_LANGUAGE_REVIEW_DIR, `${params.dateKey}.json`);
   const patchRelPath = path.join(LARK_LANGUAGE_REVIEW_DIR, `${params.dateKey}.patch.ts`);

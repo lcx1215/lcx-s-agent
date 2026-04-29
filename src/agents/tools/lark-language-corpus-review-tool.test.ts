@@ -123,6 +123,12 @@ describe("lark_language_corpus_review tool", () => {
       }),
     );
     expect(details.action).toContain("noFinanceLearningArtifact=true");
+    const reviewJson = JSON.parse(
+      await fs.readFile(path.join(workspaceDir, details.reviewPath), "utf-8"),
+    ) as { skippedCounts?: Record<string, number> };
+    expect(reviewJson.skippedCounts).toEqual({
+      missing_language_brain_boundary_marker: 1,
+    });
     const patch = await fs.readFile(path.join(workspaceDir, details.patchPath), "utf-8");
     expect(patch).toContain("append these cases to LARK_ROUTING_CORPUS");
     expect(patch).toContain("Promoted from pending Lark language-routing candidate review");
