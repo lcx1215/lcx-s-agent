@@ -46,6 +46,14 @@ function numberValue(value: unknown, label: string): number {
   return value;
 }
 
+function caseResult(cases: unknown[], name: string): Record<string, unknown> {
+  const match = cases
+    .map((entry) => record(entry, "case result"))
+    .find((entry) => entry.case === name);
+  assert(match, `finance pipeline missing case ${name}`);
+  return match;
+}
+
 function parseJsonOutput(stdout: string): Record<string, unknown> {
   return record(parseJsonObjectFromOutput(stdout), "json output");
 }
@@ -147,12 +155,36 @@ const checks: CommandCheck[] = [
       for (const required of [
         "lark-market-capability-intake",
         "lark-market-capability-missing-source",
+        "lark-market-capability-extraction-gap",
         "capability-apply",
         "capability-apply-unmatched",
         "blocked",
       ]) {
         assert(caseNames.has(required), `finance pipeline missing case ${required}`);
       }
+      const intake = caseResult(cases, "lark-market-capability-intake");
+      assert(
+        stringValue(intake.agentVisibleLearningLine, "intake.agentVisibleLearningLine").includes(
+          "learningInternalizationStatus=application_ready",
+        ),
+        "successful Lark learning case should expose application_ready",
+      );
+      const missingSource = caseResult(cases, "lark-market-capability-missing-source");
+      assert(
+        stringValue(
+          missingSource.agentVisibleLearningLine,
+          "missingSource.agentVisibleLearningLine",
+        ).includes("failedReason=safe_local_or_manual_source_required"),
+        "missing source case should expose safe-source failedReason",
+      );
+      const extractionGap = caseResult(cases, "lark-market-capability-extraction-gap");
+      assert(
+        stringValue(
+          extractionGap.agentVisibleLearningLine,
+          "extractionGap.agentVisibleLearningLine",
+        ).includes("failedReason=finance_article_extraction_gap"),
+        "extraction gap case should expose extraction failedReason",
+      );
     },
   },
   {
