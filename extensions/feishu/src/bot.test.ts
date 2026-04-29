@@ -6895,6 +6895,8 @@ describe("learning council routing", () => {
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
     expect(replyText).toContain("金融能力学习流水线没有完成");
+    expect(replyText).toContain("learningInternalizationStatus: not_started");
+    expect(replyText).toContain("failedReason: finance_article_extraction_gap");
     expect(replyText).toContain("failed step: extract");
     expect(replyText).toContain("reason: finance_article_extraction_gap");
     expect(replyText).toContain("extraction gap:");
