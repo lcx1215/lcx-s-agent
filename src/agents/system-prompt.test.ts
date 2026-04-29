@@ -498,6 +498,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("learningIntent");
     expect(prompt).toContain("retrieval-first capability-card recall");
     expect(prompt).toContain("learningInternalizationStatus");
+    expect(prompt).toContain("retrievalFirstLearning.failedReason");
     expect(prompt).toContain("applicationReadyCandidateCount");
     expect(prompt).toContain("applicationValidationQuery");
     expect(prompt).toContain("applicationValidationStatus");
