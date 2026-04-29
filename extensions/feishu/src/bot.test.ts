@@ -6776,6 +6776,8 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
+    expect(replyText).toContain("learningInternalizationStatus: not_started");
+    expect(replyText).toContain("failedReason: safe_local_or_manual_source_required");
     expect(replyText).toContain("未产生: retrievalReceiptPath / retrievalReviewPath");
     await expect(
       fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),

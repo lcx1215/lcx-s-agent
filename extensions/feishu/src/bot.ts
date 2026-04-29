@@ -1204,6 +1204,8 @@ function renderFeishuFinanceLearningPipelineMissingSourceReply(): string {
     "",
     "- 已识别: market_capability_learning_intake",
     "- 后端: finance_learning_pipeline_orchestrator",
+    "- learningInternalizationStatus: not_started",
+    "- failedReason: safe_local_or_manual_source_required",
     "- 还缺: workspace-relative `.md` / `.txt` / `.html` 文件路径，或直接粘贴/引用一段完整金融研究材料",
     "- 未产生: retrievalReceiptPath / retrievalReviewPath",
     "",
