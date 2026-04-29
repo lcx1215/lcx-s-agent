@@ -25,6 +25,7 @@ async function writePendingArtifact(params: {
   dateKey: string;
   messageId: string;
   utterance: string;
+  noFinanceLearningArtifact?: boolean;
 }) {
   const corpus = buildLarkPendingRoutingCandidateCorpus({
     source: "lark_user_utterance",
@@ -50,7 +51,7 @@ async function writePendingArtifact(params: {
       boundary: "language_routing_only",
       source: "feishu_final_reply_capture",
       messageId: params.messageId,
-      noFinanceLearningArtifact: true,
+      ...(params.noFinanceLearningArtifact === false ? {} : { noFinanceLearningArtifact: true }),
       evaluation,
     })}\n`,
     "utf-8",
@@ -72,6 +73,13 @@ describe("lark_language_corpus_review tool", () => {
       messageId: "msg-two",
       utterance: "去 GitHub 上学习 ETF 风控项目，但要说清楚实际看了哪些来源",
     });
+    await writePendingArtifact({
+      workspaceDir,
+      dateKey: "2026-04-27",
+      messageId: "msg-unmarked",
+      utterance: "去网上学一批交易员真实指令，别混进学习大脑",
+      noFinanceLearningArtifact: false,
+    });
 
     const tool = createLarkLanguageCorpusReviewTool({ workspaceDir });
     const result = await tool.execute("lark-language-review", {
@@ -86,6 +94,9 @@ describe("lark_language_corpus_review tool", () => {
       patchPath: string;
       counts: { promotedCases: number };
       familyDecisions: Array<{ status: string; family: string }>;
+      skippedCounts: Record<string, number>;
+      skipped: Array<{ path: string; reason: string }>;
+      action: string;
     };
 
     expect(details).toMatchObject({
@@ -101,7 +112,17 @@ describe("lark_language_corpus_review tool", () => {
           status: "eligible_for_review",
         },
       ],
+      skippedCounts: {
+        missing_language_brain_boundary_marker: 1,
+      },
     });
+    expect(details.skipped).toContainEqual(
+      expect.objectContaining({
+        path: "memory/lark-language-routing-candidates/2026-04-27/msg-unmarked.json",
+        reason: "missing_language_brain_boundary_marker",
+      }),
+    );
+    expect(details.action).toContain("noFinanceLearningArtifact=true");
     const patch = await fs.readFile(path.join(workspaceDir, details.patchPath), "utf-8");
     expect(patch).toContain("append these cases to LARK_ROUTING_CORPUS");
     expect(patch).toContain("Promoted from pending Lark language-routing candidate review");

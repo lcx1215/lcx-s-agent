@@ -36,6 +36,27 @@ function normalizeRelativePath(value: string): string {
   return value.split(path.sep).join("/");
 }
 
+function countSkippedReasons(skipped: readonly { reason: string }[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const entry of skipped) {
+    counts[entry.reason] = (counts[entry.reason] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function buildReviewAction(params: {
+  promotedCases: number;
+  skippedCounts: Record<string, number>;
+}): string {
+  if ((params.skippedCounts.missing_language_brain_boundary_marker ?? 0) > 0) {
+    return "Some pending artifacts were skipped because they lack noFinanceLearningArtifact=true; repair the capture boundary before promoting language-routing cases.";
+  }
+  if (params.promotedCases > 0) {
+    return "Review the generated patch text before manually appending any cases to LARK_ROUTING_CORPUS.";
+  }
+  return "No formal corpus patch is ready yet; keep collecting pending language-routing candidates.";
+}
+
 function resolveCandidateRoot(params: {
   workspaceDir: string;
   rootDir?: string;
@@ -102,6 +123,8 @@ export function createLarkLanguageCorpusReviewTool(options?: {
           minAcceptedPerFamily:
             minAcceptedPerFamily && minAcceptedPerFamily > 0 ? minAcceptedPerFamily : undefined,
         });
+      const skipped = writeResult?.skipped ?? dryReadResult?.skipped ?? [];
+      const skippedCounts = countSkippedReasons(skipped);
 
       return jsonResult({
         ok: true,
@@ -112,14 +135,15 @@ export function createLarkLanguageCorpusReviewTool(options?: {
         patchPath: writeReview ? normalizeRelativePath(patchRelPath) : undefined,
         counts: review.counts,
         familyDecisions: review.familyDecisions,
-        skipped: (writeResult?.skipped ?? dryReadResult?.skipped ?? []).map((entry) => ({
+        skippedCounts,
+        skipped: skipped.map((entry) => ({
           ...entry,
           path: normalizeRelativePath(path.relative(workspaceDir, entry.path) || entry.path),
         })),
-        action:
-          review.counts.promotedCases > 0
-            ? "Review the generated patch text before manually appending any cases to LARK_ROUTING_CORPUS."
-            : "No formal corpus patch is ready yet; keep collecting pending language-routing candidates.",
+        action: buildReviewAction({
+          promotedCases: review.counts.promotedCases,
+          skippedCounts,
+        }),
       });
     },
   };
