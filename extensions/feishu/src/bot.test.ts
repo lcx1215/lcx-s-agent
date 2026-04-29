@@ -6585,6 +6585,8 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
+    expect(replyText).toContain("learningInternalizationStatus: application_ready");
+    expect(replyText).toContain("failedReason: none");
     expect(replyText).toContain("receipt: memory/finance-learning-retrieval-receipts/");
     expect(replyText).toContain("review: memory/finance-learning-retrieval-reviews/");
     expect(replyText).toContain("weak learning receipts: 0");

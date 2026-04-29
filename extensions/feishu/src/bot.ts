@@ -1223,6 +1223,8 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     return [
       "金融能力学习流水线没有完成。",
       "",
+      `- learningInternalizationStatus: not_started`,
+      `- failedReason: ${String(details.reason ?? "unknown")}`,
       `- failed step: ${String(details.failedStep ?? "unknown")}`,
       `- reason: ${String(details.reason ?? "unknown")}`,
       `- error: ${String(details.errorMessage ?? "none")}`,
@@ -1257,6 +1259,10 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
   return [
     "金融能力学习流水线已完成 dev 验收。",
     "",
+    `- learningInternalizationStatus: ${String(
+      retrievalFirstLearning.learningInternalizationStatus ?? "missing",
+    )}`,
+    `- failedReason: ${String(retrievalFirstLearning.failedReason ?? "none")}`,
     `- retained candidates: ${String(details.retainedCandidateCount ?? 0)}`,
     `- receipt: ${String(retrievalFirstLearning.retrievalReceiptPath ?? "missing")}`,
     `- review: ${String(retrievalFirstLearning.retrievalReviewPath ?? "missing")}`,
