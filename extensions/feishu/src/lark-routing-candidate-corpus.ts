@@ -109,7 +109,12 @@ export type LarkRoutingCandidatePromotionArtifactReadResult = {
   artifacts: LarkRoutingCandidatePromotionSourceArtifact[];
   skipped: Array<{
     path: string;
-    reason: "not_json" | "read_failed" | "parse_failed" | "invalid_language_boundary";
+    reason:
+      | "not_json"
+      | "read_failed"
+      | "parse_failed"
+      | "invalid_language_boundary"
+      | "missing_language_brain_boundary_marker";
   }>;
 };
 
@@ -415,6 +420,14 @@ export async function readLarkRoutingCandidatePromotionArtifacts(params: {
       parsed = JSON.parse(raw) as unknown;
     } catch {
       skipped.push({ path: filePath, reason: "parse_failed" });
+      continue;
+    }
+    if (!isRecord(parsed) || parsed.boundary !== "language_routing_only") {
+      skipped.push({ path: filePath, reason: "invalid_language_boundary" });
+      continue;
+    }
+    if (parsed.noFinanceLearningArtifact !== true) {
+      skipped.push({ path: filePath, reason: "missing_language_brain_boundary_marker" });
       continue;
     }
     if (!isLarkRoutingCandidatePromotionSourceArtifact(parsed)) {

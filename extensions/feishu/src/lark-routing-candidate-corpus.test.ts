@@ -317,6 +317,21 @@ describe("lark routing candidate corpus", () => {
       }),
       "utf-8",
     );
+    await fs.writeFile(
+      path.join(validDir, "language-without-brain-boundary-marker.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        boundary: "language_routing_only",
+        source: "feishu_final_reply_capture",
+        messageId: "msg-unmarked",
+        evaluation: evaluateLarkRoutingCandidateCorpus({
+          cfg,
+          corpus,
+          evaluatedAt: "2026-04-27T00:01:00.000Z",
+        }),
+      }),
+      "utf-8",
+    );
 
     const result = await readLarkRoutingCandidatePromotionArtifacts({ rootDir });
 
@@ -330,6 +345,7 @@ describe("lark routing candidate corpus", () => {
       expect.arrayContaining([
         expect.objectContaining({ reason: "parse_failed" }),
         expect.objectContaining({ reason: "invalid_language_boundary" }),
+        expect.objectContaining({ reason: "missing_language_brain_boundary_marker" }),
       ]),
     );
 
