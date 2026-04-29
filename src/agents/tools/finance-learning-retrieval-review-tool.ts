@@ -230,13 +230,8 @@ export function buildFinanceLearningRetrievalReview(params: {
   });
   const weakLearningIntents = rows
     .filter((row) => row.weak)
-    .map((row) => ({
-      learningIntent: row.learningIntent,
-      sourceName: row.sourceName,
-      receiptPath: row.receiptPath,
-      usageReceiptPath: row.applicationValidationUsageReceiptPath,
-      usageReviewPath: row.applicationValidationUsageReviewPath,
-      reason:
+    .map((row) => {
+      const reason =
         row.retainedCandidateCount <= 0
           ? "no_retained_capability_candidates"
           : row.postAttachCandidateCount <= 0
@@ -245,14 +240,23 @@ export function buildFinanceLearningRetrievalReview(params: {
               ? "not_application_ready_after_learning"
               : row.applicationValidationRequested && !row.applicationValidatedAfterLearning
                 ? "not_application_validated_after_learning"
-                : "receipt_contract_incomplete",
-      action:
-        row.applicationValidationRequested && !row.applicationValidatedAfterLearning
-          ? "Re-run finance learning capability apply on a bounded research question and repair reuse guidance before treating this learning as usable in future answers."
-          : row.applicationReadyCandidateCount <= 0
-            ? "Re-run inspect/apply so retained capabilities expose reuse guidance, required inputs, evidence categories, causal checks, implementation checks, and risk checks before treating this learning as internalized."
-            : "Re-extract or retag the source into stable finance domains and capability tags before treating this learning as internalized.",
-    }));
+                : "receipt_contract_incomplete";
+      return {
+        learningIntent: row.learningIntent,
+        sourceName: row.sourceName,
+        receiptPath: row.receiptPath,
+        usageReceiptPath: row.applicationValidationUsageReceiptPath,
+        usageReviewPath: row.applicationValidationUsageReviewPath,
+        reason,
+        failedReason: row.applicationValidationFailedReason ?? reason,
+        action:
+          row.applicationValidationRequested && !row.applicationValidatedAfterLearning
+            ? "Re-run finance learning capability apply on a bounded research question and repair reuse guidance before treating this learning as usable in future answers."
+            : row.applicationReadyCandidateCount <= 0
+              ? "Re-run inspect/apply so retained capabilities expose reuse guidance, required inputs, evidence categories, causal checks, implementation checks, and risk checks before treating this learning as internalized."
+              : "Re-extract or retag the source into stable finance domains and capability tags before treating this learning as internalized.",
+      };
+    });
 
   return {
     schemaVersion: 1,

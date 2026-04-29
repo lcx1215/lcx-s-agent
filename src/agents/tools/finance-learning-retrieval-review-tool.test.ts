@@ -172,10 +172,12 @@ describe("finance learning retrieval review tool", () => {
           expect.objectContaining({
             learningIntent: "学习一个还没有稳定标签的策略",
             reason: "not_retrievable_after_learning",
+            failedReason: "no_retrievable_finance_capability",
           }),
           expect.objectContaining({
             learningIntent: "学习一个能检索但不能应用的能力",
             reason: "not_application_ready_after_learning",
+            failedReason: "missing_reuse_guidance",
           }),
         ]),
         separationContract: expect.objectContaining({
