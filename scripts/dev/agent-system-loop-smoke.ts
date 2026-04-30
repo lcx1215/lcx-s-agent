@@ -185,6 +185,20 @@ const checks: CommandCheck[] = [
         ).includes("failedReason=finance_article_extraction_gap"),
         "extraction gap case should expose extraction failedReason",
       );
+      const capabilityApply = caseResult(cases, "capability-apply");
+      assert(
+        capabilityApply.applicationStatus === "application_ready",
+        "capability apply should expose application_ready",
+      );
+      const unmatchedApply = caseResult(cases, "capability-apply-unmatched");
+      assert(
+        unmatchedApply.applicationStatus === "not_application_ready",
+        "unmatched apply should expose not_application_ready",
+      );
+      assert(
+        unmatchedApply.failedReason === "no_retrievable_finance_capability",
+        "unmatched apply should expose concrete failedReason",
+      );
     },
   },
   {

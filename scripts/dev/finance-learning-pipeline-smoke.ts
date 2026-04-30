@@ -525,6 +525,14 @@ async function runCase(
         maxCandidates: 1,
       });
       assert(applyResult.details.ok === true, "capability-apply should apply a retained card");
+      assert(
+        applyResult.details.applicationStatus === "application_ready",
+        "capability-apply should expose application_ready status",
+      );
+      assert(
+        applyResult.details.failedReason === null,
+        "capability-apply success should expose null failedReason",
+      );
       const answerSkeleton = getRecord(applyResult.details.answerSkeleton, "answerSkeleton");
       const answerScaffold = getRecord(answerSkeleton.answerScaffold, "answerScaffold");
       const appliedCapabilities = Array.isArray(applyResult.details.appliedCapabilities)
@@ -552,6 +560,8 @@ async function runCase(
         case: caseName,
         ok: true,
         seedRetainedCandidateCount: seedResult.details.retainedCandidateCount,
+        applicationStatus: applyResult.details.applicationStatus,
+        failedReason: applyResult.details.failedReason,
         applicationMode: applyResult.details.applicationMode,
         synthesisMode: applyResult.details.synthesisMode,
         usageReceiptPath,
@@ -583,6 +593,14 @@ async function runCase(
         applyResult.details.reason === "no_retrievable_finance_capability",
         "unmatched apply should not improvise a learned answer",
       );
+      assert(
+        applyResult.details.applicationStatus === "not_application_ready",
+        "unmatched apply should expose not_application_ready status",
+      );
+      assert(
+        applyResult.details.failedReason === "no_retrievable_finance_capability",
+        "unmatched apply should expose concrete failedReason",
+      );
       const usageReceiptPath = getString(applyResult.details.usageReceiptPath, "usageReceiptPath");
       const usageReviewPath = getString(applyResult.details.usageReviewPath, "usageReviewPath");
       await assertArtifactExists(workspaceDir, usageReceiptPath);
@@ -595,6 +613,8 @@ async function runCase(
         case: caseName,
         ok: false,
         expectedFailure: true,
+        applicationStatus: applyResult.details.applicationStatus,
+        failedReason: applyResult.details.failedReason,
         reason: applyResult.details.reason,
         usageReceiptPath,
         usageReviewPath,
