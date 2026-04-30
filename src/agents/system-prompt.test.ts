@@ -516,6 +516,8 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("finance_learning_capability_apply");
+    expect(prompt).toContain("applicationStatus");
+    expect(prompt).toContain("failedReason");
     expect(prompt).toContain("multi-capability synthesis plans");
     expect(prompt).toContain("writes a usage receipt");
     expect(prompt).toContain("refreshes the same-day usage review");

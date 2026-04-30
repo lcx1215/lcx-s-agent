@@ -102,7 +102,7 @@ function buildMemorySection(params: {
       : []),
     ...(params.availableTools.has("finance_learning_capability_apply")
       ? [
-          "When answering a finance research question from retained learning, use finance_learning_capability_apply before drafting the answer. It retrieves capability cards through inspect, returns reuse guidance, required inputs, causal checks, risk checks, answer scaffolds, and multi-capability synthesis plans; every non-dry apply writes a usage receipt and refreshes the same-day usage review immediately, including refusal/no-match cases. It keeps the answer research-only without execution approval or doctrine mutation.",
+          "When answering a finance research question from retained learning, use finance_learning_capability_apply before drafting the answer. It retrieves capability cards through inspect, returns applicationStatus plus failedReason, reuse guidance, required inputs, causal checks, risk checks, answer scaffolds, and multi-capability synthesis plans; every non-dry apply writes a usage receipt and refreshes the same-day usage review immediately, including refusal/no-match cases. It keeps the answer research-only without execution approval or doctrine mutation.",
         ]
       : []),
     ...(params.availableTools.has("finance_research_source_workbench")
@@ -669,7 +669,7 @@ export function buildAgentSystemPrompt(params: {
     finance_learning_retrieval_review:
       "Summarize finance learning retrieval receipts into a same-day per-run quality review, link apply usage receipts/reviews when present, flag weak learning that did not become retrievable or application-ready, and keep Lark language corpus plus protected memory untouched",
     finance_learning_capability_apply:
-      "Apply retained finance learning capability cards to one bounded research question by surfacing reuse guidance, required inputs, causal checks, risk checks, answer scaffolds, and multi-capability synthesis plans; writes a usage receipt and refreshes the same-day usage review on every non-dry apply, including no-match refusals; read-only and never creates trading advice, execution approval, or doctrine mutation",
+      "Apply retained finance learning capability cards to one bounded research question by surfacing applicationStatus, failedReason, reuse guidance, required inputs, causal checks, risk checks, answer scaffolds, and multi-capability synthesis plans; writes a usage receipt and refreshes the same-day usage review on every non-dry apply, including no-match refusals; read-only and never creates trading advice, execution approval, or doctrine mutation",
     finance_research_source_workbench:
       "Normalize safe finance research sources from manual paste, local files, or manual URL references into local audit artifacts, preserve source metadata, and return finance_article_extract_capability_input as the next step without fetching remote content automatically",
     finance_article_extract_capability_input:
