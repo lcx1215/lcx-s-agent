@@ -471,6 +471,11 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
         return jsonResult({
           ok: false,
           boundary: "finance_learning_capability_apply_read_only",
+          applicationStatus: "not_application_ready",
+          failedReason:
+            typeof inspectDetails.reason === "string"
+              ? inspectDetails.reason
+              : "finance_learning_capability_inspect_failed",
           queryText,
           usageReceiptPath: usageRecord?.usageReceiptPath ?? null,
           usageReviewPath: usageRecord?.usageReviewPath ?? null,
@@ -499,6 +504,8 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
         return jsonResult({
           ok: false,
           boundary: "finance_learning_capability_apply_read_only",
+          applicationStatus: "not_application_ready",
+          failedReason: "no_retrievable_finance_capability",
           queryText,
           usageReceiptPath: usageRecord?.usageReceiptPath ?? null,
           usageReviewPath: usageRecord?.usageReviewPath ?? null,
@@ -536,6 +543,8 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
         return jsonResult({
           ok: false,
           boundary: "finance_learning_capability_apply_read_only",
+          applicationStatus: "not_application_ready",
+          failedReason: "missing_reuse_guidance",
           queryText,
           usageReceiptPath: usageRecord?.usageReceiptPath ?? null,
           usageReviewPath: usageRecord?.usageReviewPath ?? null,
@@ -565,6 +574,8 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
       return jsonResult({
         ok: true,
         boundary: "finance_learning_capability_apply_read_only",
+        applicationStatus: "application_ready",
+        failedReason: null,
         queryText,
         usageReceiptPath: usageRecord?.usageReceiptPath ?? null,
         usageReviewPath: usageRecord?.usageReviewPath ?? null,

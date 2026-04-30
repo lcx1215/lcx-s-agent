@@ -279,6 +279,8 @@ describe("finance learning capability tools", () => {
       expect.objectContaining({
         ok: true,
         boundary: "finance_learning_capability_apply_read_only",
+        applicationStatus: "application_ready",
+        failedReason: null,
         applicationMode: "reuse_guidance_bounded_research_answer",
         synthesisMode: "single_capability_application",
         candidateCount: 1,
@@ -532,6 +534,8 @@ describe("finance learning capability tools", () => {
       expect.objectContaining({
         ok: false,
         boundary: "finance_learning_capability_apply_read_only",
+        applicationStatus: "not_application_ready",
+        failedReason: "no_retrievable_finance_capability",
         usageReceiptPath: expect.stringMatching(
           /^memory\/finance-learning-apply-usage-receipts\/\d{4}-\d{2}-\d{2}\/.+\.json$/u,
         ),
@@ -622,6 +626,8 @@ describe("finance learning capability tools", () => {
       expect.objectContaining({
         ok: false,
         boundary: "finance_learning_capability_apply_read_only",
+        applicationStatus: "not_application_ready",
+        failedReason: "missing_reuse_guidance",
         reason: "missing_reuse_guidance",
         candidateCount: 1,
         usageReceiptPath: expect.stringMatching(
