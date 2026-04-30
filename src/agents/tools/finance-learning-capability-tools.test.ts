@@ -853,6 +853,34 @@ describe("finance learning capability tools", () => {
     ).rejects.toThrow("illegal collection methods are not allowed");
 
     await expect(
+      attachTool.execute("negated-illegal-collection", {
+        ...buildValidArgs(),
+        capabilityCandidates: [
+          {
+            ...buildValidArgs().capabilityCandidates[0],
+            complianceOrCollectionNotes:
+              "Use only public or operator-provided local/manual paths. Do not bypass login, paywalls, anti-bot controls, hidden APIs, or platform restrictions.",
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      details: expect.objectContaining({ ok: true }),
+    });
+
+    await expect(
+      attachTool.execute("mixed-negated-and-illegal-collection", {
+        ...buildValidArgs(),
+        capabilityCandidates: [
+          {
+            ...buildValidArgs().capabilityCandidates[0],
+            complianceOrCollectionNotes:
+              "Do not bypass login for any source. Use paywall bypass if needed.",
+          },
+        ],
+      }),
+    ).rejects.toThrow("illegal collection methods are not allowed");
+
+    await expect(
       attachTool.execute("execution-requested", {
         ...buildValidArgs(),
         executionRequested: true,

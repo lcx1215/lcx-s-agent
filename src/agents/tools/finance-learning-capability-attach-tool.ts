@@ -142,6 +142,25 @@ function readFlag(params: Record<string, unknown>, key: string): boolean {
   return typeof params[key] === "boolean" ? params[key] : false;
 }
 
+function hasUnnegatedPatternMatch(params: { text: string; pattern: RegExp }): boolean {
+  const flags = params.pattern.flags.includes("g")
+    ? params.pattern.flags
+    : `${params.pattern.flags}g`;
+  const scanner = new RegExp(params.pattern.source, flags);
+  for (const match of params.text.matchAll(scanner)) {
+    if (match.index == null) {
+      continue;
+    }
+    const prefix = params.text.slice(Math.max(0, match.index - 64), match.index);
+    if (
+      !NEGATED_GUARDRAIL_PREFIX_PATTERNS.some((negationPattern) => negationPattern.test(prefix))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function ensureNoForbiddenSignals(params: Record<string, unknown>, additionalTexts: string[]) {
   if (readFlag(params, "executionRequested")) {
     throw new ToolInputError(
@@ -160,22 +179,19 @@ function ensureNoForbiddenSignals(params: Record<string, unknown>, additionalTex
   }
   const combinedText = additionalTexts.join("\n");
   if (
-    FORBIDDEN_AUTHORITY_PATTERNS.some((pattern) => {
-      const match = combinedText.match(pattern);
-      if (!match || match.index == null) {
-        return false;
-      }
-      const prefix = combinedText.slice(Math.max(0, match.index - 64), match.index);
-      return !NEGATED_GUARDRAIL_PREFIX_PATTERNS.some((negationPattern) =>
-        negationPattern.test(prefix),
-      );
-    })
+    FORBIDDEN_AUTHORITY_PATTERNS.some((pattern) =>
+      hasUnnegatedPatternMatch({ text: combinedText, pattern }),
+    )
   ) {
     throw new ToolInputError(
       "finance learning capability attachment must stay research-bounded and non-executing",
     );
   }
-  if (ILLEGAL_COLLECTION_PATTERNS.some((pattern) => pattern.test(combinedText))) {
+  if (
+    ILLEGAL_COLLECTION_PATTERNS.some((pattern) =>
+      hasUnnegatedPatternMatch({ text: combinedText, pattern }),
+    )
+  ) {
     throw new ToolInputError(
       "illegal collection methods are not allowed in finance learning capability attachment",
     );
