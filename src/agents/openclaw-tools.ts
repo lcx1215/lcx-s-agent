@@ -62,13 +62,14 @@ function createLazyTool(params: {
   name: string;
   label: string;
   description: string;
+  parameters?: Record<string, unknown>;
   load: () => Promise<AnyAgentTool>;
 }): AnyAgentTool {
   return {
     name: params.name,
     label: params.label,
     description: params.description,
-    parameters: {},
+    parameters: params.parameters ?? {},
     execute: async (toolCallId, args) => {
       const tool = await params.load();
       return tool.execute(toolCallId, args);
@@ -85,6 +86,33 @@ function createLazyFeishuLiveProbeTool(options?: {
     label: "Feishu Live Probe",
     description:
       "Send a bounded Feishu/Lark live acceptance probe and write a receipt under memory/feishu-live-probes.",
+    parameters: {
+      type: "object",
+      properties: {
+        surface: {
+          type: "string",
+          enum: [
+            "control_room",
+            "technical_daily",
+            "fundamental_research",
+            "knowledge_maintenance",
+            "ops_audit",
+            "learning_command",
+            "watchtower",
+          ],
+        },
+        chatId: { type: "string" },
+        message: { type: "string" },
+        waitMs: { type: "number" },
+        limit: { type: "number" },
+        mustContainAny: { type: "array", items: { type: "string" } },
+        mustNotContain: { type: "array", items: { type: "string" } },
+        writeReceipt: { type: "boolean" },
+        accountId: { type: "string" },
+      },
+      required: ["message"],
+      additionalProperties: false,
+    },
     load: async () => {
       const modulePath = "./tools/feishu-live-probe-tool.js";
       const mod = (await import(modulePath)) as {
@@ -104,6 +132,17 @@ function createLazyLarkLanguageCorpusReviewTool(options?: { workspaceDir?: strin
     label: "Lark Language Corpus Review",
     description:
       "Review pending Lark language-routing candidate artifacts without mutating the formal routing corpus.",
+    parameters: {
+      type: "object",
+      properties: {
+        dateKey: { type: "string" },
+        rootDir: { type: "string" },
+        minAcceptedPerFamily: { type: "number" },
+        maxFiles: { type: "number" },
+        writeReview: { type: "boolean" },
+      },
+      additionalProperties: false,
+    },
     load: async () => {
       const modulePath = "./tools/lark-language-corpus-review-tool.js";
       const mod = (await import(modulePath)) as {
