@@ -24,6 +24,8 @@ type ReceiptStats = {
   count: number;
   latestPath: string | null;
   latestGeneratedAt: string | null;
+  financeOrchestrationCount: number;
+  latestFinanceOrchestration: FinanceOrchestrationReceiptSummary | null;
 };
 
 type AggregateReceiptStats = {
@@ -31,6 +33,8 @@ type AggregateReceiptStats = {
   count: number;
   latestPath: string | null;
   latestGeneratedAt: string | null;
+  financeOrchestrationCount: number;
+  latestFinanceOrchestration: FinanceOrchestrationReceiptSummary | null;
   workspaces: ReceiptStats[];
 };
 
@@ -43,6 +47,55 @@ type GatewayModelParamSchemaCheck = {
   ok: boolean;
   error: string | null;
 };
+
+type FinanceOrchestrationReceiptSummary = {
+  receiptPath: string;
+  generatedAt: string | null;
+  family: string | null;
+  source: string | null;
+  primaryModules: string[];
+  supportingModules: string[];
+  requiredTools: string[];
+  reviewTools: string[];
+  boundaries: string[];
+};
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    : [];
+}
+
+function summarizeFinanceOrchestrationReceipt(params: {
+  workspaceDir: string;
+  filePath: string;
+  parsed: Record<string, unknown>;
+}): FinanceOrchestrationReceiptSummary | null {
+  const orchestration = params.parsed.financeBrainOrchestration;
+  if (!orchestration || typeof orchestration !== "object" || Array.isArray(orchestration)) {
+    return null;
+  }
+  const handoff = params.parsed.handoff;
+  const handoffRecord =
+    handoff && typeof handoff === "object" && !Array.isArray(handoff)
+      ? (handoff as Record<string, unknown>)
+      : {};
+  const orchestrationRecord = orchestration as Record<string, unknown>;
+  return {
+    receiptPath: path.relative(params.workspaceDir, params.filePath).replaceAll(path.sep, "/"),
+    generatedAt:
+      typeof params.parsed.generatedAt === "string" && params.parsed.generatedAt.trim()
+        ? params.parsed.generatedAt
+        : null,
+    family: typeof handoffRecord.family === "string" ? handoffRecord.family : null,
+    source: typeof handoffRecord.source === "string" ? handoffRecord.source : null,
+    primaryModules: stringArray(orchestrationRecord.primaryModules),
+    supportingModules: stringArray(orchestrationRecord.supportingModules),
+    requiredTools: stringArray(orchestrationRecord.requiredTools),
+    reviewTools: stringArray(orchestrationRecord.reviewTools),
+    boundaries: stringArray(orchestrationRecord.boundaries),
+  };
+}
 
 async function walkJsonFiles(root: string): Promise<string[]> {
   const files: string[] = [];
@@ -111,14 +164,27 @@ async function readSingleReceiptStats(workspace: ReceiptWorkspace): Promise<Rece
   const files = await walkJsonFiles(root);
   let latestPath: string | null = null;
   let latestGeneratedAt: string | null = null;
+  let financeOrchestrationCount = 0;
+  let latestFinanceOrchestration: FinanceOrchestrationReceiptSummary | null = null;
   for (const filePath of files) {
     let generatedAt: string | null = null;
     try {
-      const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as { generatedAt?: unknown };
+      const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
       generatedAt =
         typeof parsed.generatedAt === "string" && parsed.generatedAt.trim()
           ? parsed.generatedAt
           : null;
+      const financeSummary = summarizeFinanceOrchestrationReceipt({
+        workspaceDir,
+        filePath,
+        parsed,
+      });
+      if (financeSummary) {
+        financeOrchestrationCount += 1;
+        if ((financeSummary.generatedAt ?? "") >= (latestFinanceOrchestration?.generatedAt ?? "")) {
+          latestFinanceOrchestration = financeSummary;
+        }
+      }
     } catch {
       generatedAt = null;
     }
@@ -133,6 +199,8 @@ async function readSingleReceiptStats(workspace: ReceiptWorkspace): Promise<Rece
     count: files.length,
     latestPath,
     latestGeneratedAt,
+    financeOrchestrationCount,
+    latestFinanceOrchestration,
   };
 }
 
@@ -143,13 +211,23 @@ export async function readReceiptStats(
   let latestPath: string | null = null;
   let latestGeneratedAt: string | null = null;
   let latestWorkspaceDir: string | null = null;
+  let financeOrchestrationCount = 0;
+  let latestFinanceOrchestration: FinanceOrchestrationReceiptSummary | null = null;
   let count = 0;
   for (const workspace of workspaces) {
     count += workspace.count;
+    financeOrchestrationCount += workspace.financeOrchestrationCount;
     if ((workspace.latestGeneratedAt ?? "") >= (latestGeneratedAt ?? "") && workspace.latestPath) {
       latestGeneratedAt = workspace.latestGeneratedAt;
       latestPath = workspace.latestPath;
       latestWorkspaceDir = workspace.workspaceDir;
+    }
+    if (
+      (workspace.latestFinanceOrchestration?.generatedAt ?? "") >=
+        (latestFinanceOrchestration?.generatedAt ?? "") &&
+      workspace.latestFinanceOrchestration
+    ) {
+      latestFinanceOrchestration = workspace.latestFinanceOrchestration;
     }
   }
   return {
@@ -160,6 +238,8 @@ export async function readReceiptStats(
     count,
     latestPath,
     latestGeneratedAt,
+    financeOrchestrationCount,
+    latestFinanceOrchestration,
     workspaces,
   };
 }
@@ -205,6 +285,16 @@ function formatDiagnosisText(payload: Record<string, unknown>): string {
   if (receipts.latestPath) {
     lines.push(`latestReceipt: ${receipts.latestPath}`);
   }
+  lines.push(`financeOrchestrationReceipts: ${receipts.financeOrchestrationCount}`);
+  if (receipts.latestFinanceOrchestration) {
+    lines.push(`latestFinanceOrchestration: ${receipts.latestFinanceOrchestration.receiptPath}`);
+    lines.push(
+      `latestFinanceModules: ${receipts.latestFinanceOrchestration.primaryModules.join(", ")}`,
+    );
+    lines.push(
+      `latestFinanceTools: ${receipts.latestFinanceOrchestration.requiredTools.join(", ")}`,
+    );
+  }
   if (gatewaySchema.error) {
     lines.push(`gatewayAgentModelParamSchemaError: ${gatewaySchema.error}`);
   }
@@ -230,6 +320,7 @@ export async function larkLoopDiagnoseCommand(
       family: localLoop.language.family,
       backendTool: localLoop.language.backendTool,
       analysisStatus: localLoop.analysis.eventReviewStatus,
+      orchestration: localLoop.orchestration,
       noActionBoundary: localLoop.analysis.noActionBoundary,
       receiptPath: localLoop.memory.loopReceiptPath,
     },
