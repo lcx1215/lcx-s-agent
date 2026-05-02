@@ -163,6 +163,14 @@ This file is priority-ordered. For day-to-day LCX Agent work, the doctrine in th
 - A change is only `live-fixed` after explicit migration, build, restart, probe, and real-entry verification.
 - Keep degraded / partial / rescue states honest; never present degraded behavior as full success.
 
+## Codex Slash Goal Protocol
+
+- `/goal <objective>` is a Codex operator directive for the current work session, not a runtime Lark / Feishu command.
+- When the user sends `/goal`, first restate the objective in plain language, then name success criteria, explicit boundaries, the next execution surface, and the proof command or live acceptance check.
+- After acknowledging `/goal`, proceed with the work unless a missing fact makes execution unsafe; do not keep asking for confirmation on routine next steps.
+- Keep `/goal` scoped to the active thread and repo state. Do not write it into protected memory unless the user explicitly asks for a milestone or durable memory artifact.
+- If `/goal` conflicts with repo doctrine, live safety, protected memory, or higher-priority instructions, surface the conflict and follow the higher-priority rule.
+
 ## Contemporary Agent Work Pattern
 
 - Prefer specialized subagents for bounded exploration, planning, or repair passes that would otherwise pollute the main context window.
