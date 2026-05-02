@@ -5,6 +5,7 @@ import {
   resolveAgentWorkspaceDir,
   resolveDefaultAgentId,
 } from "../../agents/agent-scope.js";
+import { planFinanceBrainOrchestration } from "../../agents/finance-brain-orchestration.js";
 import { loadConfig } from "../../config/config.js";
 import { formatValidationErrors, validateAgentParams } from "../../gateway/protocol/index.js";
 import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
@@ -26,6 +27,7 @@ type ReceiptStats = {
   latestGeneratedAt: string | null;
   financeOrchestrationCount: number;
   latestFinanceOrchestration: FinanceOrchestrationReceiptSummary | null;
+  latestReceiptFinanceReplay: FinanceOrchestrationReceiptSummary | null;
 };
 
 type AggregateReceiptStats = {
@@ -35,6 +37,7 @@ type AggregateReceiptStats = {
   latestGeneratedAt: string | null;
   financeOrchestrationCount: number;
   latestFinanceOrchestration: FinanceOrchestrationReceiptSummary | null;
+  latestReceiptFinanceReplay: FinanceOrchestrationReceiptSummary | null;
   workspaces: ReceiptStats[];
 };
 
@@ -94,6 +97,55 @@ function summarizeFinanceOrchestrationReceipt(params: {
     requiredTools: stringArray(orchestrationRecord.requiredTools),
     reviewTools: stringArray(orchestrationRecord.reviewTools),
     boundaries: stringArray(orchestrationRecord.boundaries),
+  };
+}
+
+function hasLocalMathInputs(text: string): boolean {
+  return /数学|计算|math|calculate|beta|volatility|covariance|回撤|夏普/iu.test(text);
+}
+
+function summarizeFinanceOrchestrationReplay(params: {
+  workspaceDir: string;
+  filePath: string;
+  parsed: Record<string, unknown>;
+}): FinanceOrchestrationReceiptSummary | null {
+  const userMessage =
+    typeof params.parsed.userMessage === "string" ? params.parsed.userMessage.trim() : "";
+  if (!userMessage) {
+    return null;
+  }
+  const handoff = params.parsed.handoff;
+  const handoffRecord =
+    handoff && typeof handoff === "object" && !Array.isArray(handoff)
+      ? (handoff as Record<string, unknown>)
+      : {};
+  const family = typeof handoffRecord.family === "string" ? handoffRecord.family : null;
+  const plan = planFinanceBrainOrchestration({
+    text: userMessage,
+    hasHoldingsOrPortfolioContext:
+      family === "position_risk_adjustment" || family === "bracket_exit_plan",
+    hasLocalMathInputs: hasLocalMathInputs(userMessage),
+    highStakesConclusion:
+      family === "position_risk_adjustment" ||
+      family === "trading_execution_boundary" ||
+      family === "trading_execution_order",
+  });
+  if (plan.primaryModules.length === 0 && plan.supportingModules.length === 0) {
+    return null;
+  }
+  return {
+    receiptPath: path.relative(params.workspaceDir, params.filePath).replaceAll(path.sep, "/"),
+    generatedAt:
+      typeof params.parsed.generatedAt === "string" && params.parsed.generatedAt.trim()
+        ? params.parsed.generatedAt
+        : null,
+    family,
+    source: typeof handoffRecord.source === "string" ? handoffRecord.source : null,
+    primaryModules: plan.primaryModules,
+    supportingModules: plan.supportingModules,
+    requiredTools: plan.requiredTools,
+    reviewTools: plan.reviewTools,
+    boundaries: plan.boundaries,
   };
 }
 
@@ -164,6 +216,8 @@ async function readSingleReceiptStats(workspace: ReceiptWorkspace): Promise<Rece
   const files = await walkJsonFiles(root);
   let latestPath: string | null = null;
   let latestGeneratedAt: string | null = null;
+  let latestParsed: Record<string, unknown> | null = null;
+  let latestFilePath: string | null = null;
   let financeOrchestrationCount = 0;
   let latestFinanceOrchestration: FinanceOrchestrationReceiptSummary | null = null;
   for (const filePath of files) {
@@ -191,8 +245,23 @@ async function readSingleReceiptStats(workspace: ReceiptWorkspace): Promise<Rece
     if ((generatedAt ?? "") >= (latestGeneratedAt ?? "")) {
       latestGeneratedAt = generatedAt;
       latestPath = path.relative(workspaceDir, filePath).replaceAll(path.sep, "/");
+      try {
+        latestParsed = JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+        latestFilePath = filePath;
+      } catch {
+        latestParsed = null;
+        latestFilePath = null;
+      }
     }
   }
+  const latestReceiptFinanceReplay =
+    latestParsed && latestFilePath
+      ? summarizeFinanceOrchestrationReplay({
+          workspaceDir,
+          filePath: latestFilePath,
+          parsed: latestParsed,
+        })
+      : null;
   return {
     agentId: workspace.agentId,
     workspaceDir,
@@ -201,6 +270,7 @@ async function readSingleReceiptStats(workspace: ReceiptWorkspace): Promise<Rece
     latestGeneratedAt,
     financeOrchestrationCount,
     latestFinanceOrchestration,
+    latestReceiptFinanceReplay,
   };
 }
 
@@ -213,6 +283,7 @@ export async function readReceiptStats(
   let latestWorkspaceDir: string | null = null;
   let financeOrchestrationCount = 0;
   let latestFinanceOrchestration: FinanceOrchestrationReceiptSummary | null = null;
+  let latestReceiptFinanceReplay: FinanceOrchestrationReceiptSummary | null = null;
   let count = 0;
   for (const workspace of workspaces) {
     count += workspace.count;
@@ -221,6 +292,7 @@ export async function readReceiptStats(
       latestGeneratedAt = workspace.latestGeneratedAt;
       latestPath = workspace.latestPath;
       latestWorkspaceDir = workspace.workspaceDir;
+      latestReceiptFinanceReplay = workspace.latestReceiptFinanceReplay;
     }
     if (
       (workspace.latestFinanceOrchestration?.generatedAt ?? "") >=
@@ -240,6 +312,7 @@ export async function readReceiptStats(
     latestGeneratedAt,
     financeOrchestrationCount,
     latestFinanceOrchestration,
+    latestReceiptFinanceReplay,
     workspaces,
   };
 }
@@ -293,6 +366,15 @@ function formatDiagnosisText(payload: Record<string, unknown>): string {
     );
     lines.push(
       `latestFinanceTools: ${receipts.latestFinanceOrchestration.requiredTools.join(", ")}`,
+    );
+  }
+  if (receipts.latestReceiptFinanceReplay) {
+    lines.push(`latestReceiptFinanceReplay: ${receipts.latestReceiptFinanceReplay.receiptPath}`);
+    lines.push(
+      `latestReceiptReplayModules: ${receipts.latestReceiptFinanceReplay.primaryModules.join(", ")}`,
+    );
+    lines.push(
+      `latestReceiptReplayTools: ${receipts.latestReceiptFinanceReplay.requiredTools.join(", ")}`,
     );
   }
   if (gatewaySchema.error) {

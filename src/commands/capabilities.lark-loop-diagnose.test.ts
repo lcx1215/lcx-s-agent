@@ -34,6 +34,7 @@ describe("larkLoopDiagnoseCommand", () => {
         workspaceDir: string;
         financeOrchestrationCount: number;
         latestFinanceOrchestration: unknown;
+        latestReceiptFinanceReplay: unknown;
         workspaces: Array<{
           count: number;
           workspaceDir: string;
@@ -57,6 +58,7 @@ describe("larkLoopDiagnoseCommand", () => {
     expect(payload.liveHandoffReceipts.count).toBe(0);
     expect(payload.liveHandoffReceipts.financeOrchestrationCount).toBe(0);
     expect(payload.liveHandoffReceipts.latestFinanceOrchestration).toBeNull();
+    expect(payload.liveHandoffReceipts.latestReceiptFinanceReplay).toBeNull();
     expect(payload.liveHandoffReceipts.workspaceDir).toBe(workspace);
     expect(payload.liveHandoffReceipts.workspaces).toEqual([
       expect.objectContaining({ count: 0, financeOrchestrationCount: 0, workspaceDir: workspace }),
@@ -78,6 +80,7 @@ describe("larkLoopDiagnoseCommand", () => {
       JSON.stringify({
         generatedAt: "2026-05-02T12:00:00.000Z",
         boundary: "language_handoff_only",
+        userMessage: "学习 ETF 因子择时、持仓风险控制、回撤数学和因果证伪。",
         handoff: {
           family: "market_capability_learning_intake",
           source: "api",
@@ -124,6 +127,27 @@ describe("larkLoopDiagnoseCommand", () => {
         reviewTools: ["review_tier", "review_panel"],
         boundaries: ["research_only", "no_execution_authority", "no_model_math_guessing"],
       },
+      latestReceiptFinanceReplay: {
+        receiptPath: "memory/lark-language-handoff-receipts/2026-05-02/om_live.json",
+        generatedAt: "2026-05-02T12:00:00.000Z",
+        family: "market_capability_learning_intake",
+        source: "api",
+        primaryModules: expect.arrayContaining([
+          "etf_regime",
+          "portfolio_risk_gates",
+          "quant_math",
+          "causal_map",
+        ]),
+        supportingModules: ["finance_learning_memory"],
+        requiredTools: expect.arrayContaining([
+          "finance_framework_core_inspect",
+          "quant_math",
+          "review_tier",
+          "review_panel",
+        ]),
+        reviewTools: ["review_tier", "review_panel"],
+        boundaries: expect.arrayContaining(["research_only", "no_execution_authority"]),
+      },
       workspaces: [
         expect.objectContaining({
           count: 1,
@@ -131,6 +155,51 @@ describe("larkLoopDiagnoseCommand", () => {
           workspaceDir: workspace,
         }),
       ],
+    });
+  });
+
+  it("replays finance orchestration for the latest receipt when old live receipt lacks it", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-lark-diagnose-replay-"));
+    const receiptDir = path.join(
+      workspace,
+      "memory",
+      "lark-language-handoff-receipts",
+      "2026-05-02",
+    );
+    await fs.promises.mkdir(receiptDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(receiptDir, "om_nasdaq_math.json"),
+      JSON.stringify({
+        generatedAt: "2026-05-02T21:24:32.499Z",
+        boundary: "language_handoff_only",
+        userMessage: "用你的数学知识分析下最近一个月的纳斯达克指数",
+        handoff: {
+          family: "technical_timing",
+          source: "api",
+        },
+      }),
+      "utf8",
+    );
+
+    const stats = await readReceiptStats({ workspaceDir: workspace });
+
+    expect(stats.financeOrchestrationCount).toBe(0);
+    expect(stats.latestFinanceOrchestration).toBeNull();
+    expect(stats.latestReceiptFinanceReplay).toMatchObject({
+      receiptPath: "memory/lark-language-handoff-receipts/2026-05-02/om_nasdaq_math.json",
+      generatedAt: "2026-05-02T21:24:32.499Z",
+      family: "technical_timing",
+      source: "api",
+      primaryModules: expect.arrayContaining(["etf_regime", "quant_math", "causal_map"]),
+      supportingModules: ["finance_learning_memory"],
+      requiredTools: expect.arrayContaining([
+        "finance_framework_core_inspect",
+        "finance_framework_etf_regime_producer",
+        "quant_math",
+        "review_tier",
+        "review_panel",
+      ]),
+      boundaries: expect.arrayContaining(["research_only", "no_model_math_guessing"]),
     });
   });
 });

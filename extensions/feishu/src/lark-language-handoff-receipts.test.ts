@@ -130,6 +130,43 @@ describe("lark language handoff receipts", () => {
     expect(written).toContain('"no_execution_authority"');
   });
 
+  it("adds finance brain orchestration for technical market math handoffs", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-lark-technical-math-handoff-receipt-");
+
+    const result = await writeLarkLanguageHandoffReceipt({
+      workspaceDir,
+      generatedAt: "2026-05-02T21:24:32.499Z",
+      agentId: "main",
+      targetSurface: "technical_daily",
+      effectiveSurface: "technical_daily",
+      chatId: "oc-control",
+      sessionKey: "session-technical",
+      messageId: "om_nasdaq_math",
+      userMessage: "用你的数学知识分析下最近一个月的纳斯达克指数",
+      handoff: {
+        family: "technical_timing",
+        source: "api",
+        confidence: 0.72,
+        targetSurface: "technical_daily",
+        deterministicSurface: "technical_daily",
+        notice: "handoff",
+      },
+    });
+
+    expect(result.artifact.financeBrainOrchestration).toMatchObject({
+      primaryModules: expect.arrayContaining(["etf_regime", "quant_math", "causal_map"]),
+      supportingModules: ["finance_learning_memory"],
+      requiredTools: expect.arrayContaining([
+        "finance_framework_core_inspect",
+        "finance_framework_etf_regime_producer",
+        "quant_math",
+        "review_tier",
+        "review_panel",
+      ]),
+      boundaries: expect.arrayContaining(["research_only", "no_model_math_guessing"]),
+    });
+  });
+
   it("does not add finance orchestration for non-finance handoff wording", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-lark-nonfinance-handoff-receipt-");
 
