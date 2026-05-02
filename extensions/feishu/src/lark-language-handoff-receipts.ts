@@ -1,5 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  planFinanceBrainOrchestration,
+  type FinanceBrainOrchestrationPlan,
+} from "../../../src/agents/finance-brain-orchestration.js";
 import type { LarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
 import type { FeishuChatSurfaceName } from "./surfaces.js";
 
@@ -23,6 +27,7 @@ export type LarkLanguageHandoffReceiptArtifact = {
   noFinanceLearningArtifact: true;
   noExecutionApproval: true;
   noLiveProbeProof: true;
+  financeBrainOrchestration?: FinanceBrainOrchestrationPlan;
   handoff: {
     family: LarkAgentInstructionHandoff["family"];
     source: LarkAgentInstructionHandoff["source"];
@@ -64,6 +69,48 @@ function resolveMissingBeforeExecution(handoff: LarkAgentInstructionHandoff): re
   }
 }
 
+function hasFinanceBrainOrchestrationSignal(params: {
+  userMessage: string;
+  handoff: LarkAgentInstructionHandoff;
+}): boolean {
+  const plan = planFinanceBrainOrchestration({
+    text: params.userMessage,
+    hasHoldingsOrPortfolioContext:
+      params.handoff.family === "position_risk_adjustment" ||
+      params.handoff.family === "bracket_exit_plan",
+    hasLocalMathInputs: /数学|计算|math|calculate|beta|volatility|covariance|回撤|夏普/iu.test(
+      params.userMessage,
+    ),
+    highStakesConclusion:
+      params.handoff.family === "position_risk_adjustment" ||
+      params.handoff.family === "trading_execution_boundary" ||
+      params.handoff.family === "trading_execution_order",
+  });
+  return plan.primaryModules.length > 0 || plan.supportingModules.length > 0;
+}
+
+function resolveFinanceBrainOrchestration(params: {
+  userMessage: string;
+  handoff: LarkAgentInstructionHandoff;
+}): FinanceBrainOrchestrationPlan | undefined {
+  if (!hasFinanceBrainOrchestrationSignal(params)) {
+    return undefined;
+  }
+  return planFinanceBrainOrchestration({
+    text: params.userMessage,
+    hasHoldingsOrPortfolioContext:
+      params.handoff.family === "position_risk_adjustment" ||
+      params.handoff.family === "bracket_exit_plan",
+    hasLocalMathInputs: /数学|计算|math|calculate|beta|volatility|covariance|回撤|夏普/iu.test(
+      params.userMessage,
+    ),
+    highStakesConclusion:
+      params.handoff.family === "position_risk_adjustment" ||
+      params.handoff.family === "trading_execution_boundary" ||
+      params.handoff.family === "trading_execution_order",
+  });
+}
+
 export function buildLarkLanguageHandoffReceiptArtifact(params: {
   generatedAt: string;
   agentId: string;
@@ -75,6 +122,10 @@ export function buildLarkLanguageHandoffReceiptArtifact(params: {
   userMessage: string;
   handoff: LarkAgentInstructionHandoff;
 }): LarkLanguageHandoffReceiptArtifact {
+  const financeBrainOrchestration = resolveFinanceBrainOrchestration({
+    userMessage: params.userMessage,
+    handoff: params.handoff,
+  });
   return {
     schemaVersion: 1,
     boundary: "language_handoff_only",
@@ -90,6 +141,7 @@ export function buildLarkLanguageHandoffReceiptArtifact(params: {
     noFinanceLearningArtifact: true,
     noExecutionApproval: true,
     noLiveProbeProof: true,
+    ...(financeBrainOrchestration ? { financeBrainOrchestration } : {}),
     handoff: {
       family: params.handoff.family,
       source: params.handoff.source,
