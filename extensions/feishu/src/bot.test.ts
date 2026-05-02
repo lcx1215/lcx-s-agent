@@ -6788,6 +6788,11 @@ describe("learning council routing", () => {
     expect(replyText).toContain("apply mode: reuse_guidance_bounded_research_answer");
     expect(replyText).toContain("applied candidates: 1");
     expect(replyText).toContain("usable answer contract: usable_after_fresh_inputs_are_checked");
+    expect(replyText).toContain("usable answer lines:");
+    expect(replyText).toContain("Use retained capability:");
+    expect(replyText).toContain("How to apply now:");
+    expect(replyText).toContain("Fresh inputs checked or missing:");
+    expect(replyText).toContain("Final status: application_ready");
     expect(replyText).toContain(
       "apply boundary: This application is research-only and does not approve trades",
     );

@@ -1278,6 +1278,11 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     answerSkeleton.usableAnswerContract && typeof answerSkeleton.usableAnswerContract === "object"
       ? (answerSkeleton.usableAnswerContract as Record<string, unknown>)
       : {};
+  const usableAnswerLines = Array.isArray(usableAnswerContract.requiredVisibleLines)
+    ? usableAnswerContract.requiredVisibleLines.filter(
+        (line): line is string => typeof line === "string" && line.trim().length > 0,
+      )
+    : [];
   return [
     "金融能力学习流水线已完成 dev 验收。",
     "",
@@ -1301,6 +1306,9 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     `- apply mode: ${String(applicationValidation.applicationMode ?? "missing")}`,
     `- applied candidates: ${String(applicationValidation.candidateCount ?? "unknown")}`,
     `- usable answer contract: ${String(usableAnswerContract.status ?? "missing")}`,
+    ...(usableAnswerLines.length > 0
+      ? ["- usable answer lines:", ...usableAnswerLines.slice(0, 6).map((line) => `  - ${line}`)]
+      : []),
     `- apply boundary: ${String(answerSkeleton.noActionBoundary ?? "missing")}`,
     "",
     "边界: 这是 research-only 学习，不是交易执行；语言 corpus 没有混入金融学习 artifact。",
