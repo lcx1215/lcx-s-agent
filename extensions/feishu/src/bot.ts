@@ -80,7 +80,11 @@ import {
   looksLikeTemporalScopeControlAsk,
 } from "./intent-matchers.js";
 import { createGatewayLarkApiRouteProvider } from "./lark-api-route-provider.js";
-import { writeLarkLanguageHandoffReceipt } from "./lark-language-handoff-receipts.js";
+import {
+  renderLarkFinanceBrainOrchestrationNotice,
+  writeLarkLanguageHandoffReceipt,
+  type LarkLanguageHandoffReceiptArtifact,
+} from "./lark-language-handoff-receipts.js";
 import {
   buildLarkPendingRoutingCandidateCorpus,
   evaluateLarkRoutingCandidateCorpus,
@@ -3130,7 +3134,13 @@ async function persistLarkLanguageHandoffReceiptWithFailureReceipt(params: {
   messageId: string;
   userMessage: string;
   handoff: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
-}): Promise<{ relativePath: string } | undefined> {
+}): Promise<
+  | {
+      relativePath: string;
+      artifact: LarkLanguageHandoffReceiptArtifact;
+    }
+  | undefined
+> {
   try {
     const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
     return await writeLarkLanguageHandoffReceipt({
@@ -5062,6 +5072,9 @@ export async function handleFeishuMessage(params: {
         controlRoomOrchestration,
       }),
       larkInstructionHandoff.notice,
+      renderLarkFinanceBrainOrchestrationNotice(
+        larkHandoffReceipt?.artifact.financeBrainOrchestration,
+      ),
     ]
       .filter(Boolean)
       .join("\n");

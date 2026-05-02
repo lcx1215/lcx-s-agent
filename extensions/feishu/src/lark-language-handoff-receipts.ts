@@ -41,6 +41,23 @@ export type LarkLanguageHandoffReceiptArtifact = {
   };
 };
 
+export function renderLarkFinanceBrainOrchestrationNotice(
+  plan: FinanceBrainOrchestrationPlan | undefined,
+): string | undefined {
+  if (!plan || (plan.primaryModules.length === 0 && plan.supportingModules.length === 0)) {
+    return undefined;
+  }
+  return [
+    "[Finance brain orchestration contract]",
+    `primaryModules=${plan.primaryModules.join(",") || "none"}`,
+    `supportingModules=${plan.supportingModules.join(",") || "none"}`,
+    `requiredTools=${plan.requiredTools.join(",") || "none"}`,
+    `reviewTools=${plan.reviewTools.join(",") || "none"}`,
+    `boundaries=${plan.boundaries.join(",") || "none"}`,
+    "Use this as an execution expectation for finance/math market tasks: prefer local deterministic tools for calculations, do not replace quant_math with model guesses, keep research_only/no_execution_authority, and if fresh inputs are unavailable state the missing inputs instead of giving pseudo-precise results.",
+  ].join("\n");
+}
+
 function sanitizeReceiptSegment(value: string): string {
   return value
     .trim()

@@ -12,7 +12,9 @@ export function registerPluginCliCommands(program: Command, cfg?: OpenClawConfig
   const config = cfg ?? loadConfig();
   const workspaceDir = resolveAgentWorkspaceDir(config, resolveDefaultAgentId(config));
   const logger: PluginLogger = {
-    info: (msg: string) => log.info(msg),
+    // Plugin registration is part of CLI bootstrap. Keep routine info logs off stdout so
+    // machine-readable commands such as `--json` stay parseable.
+    info: (msg: string) => log.debug(msg),
     warn: (msg: string) => log.warn(msg),
     error: (msg: string) => log.error(msg),
     debug: (msg: string) => log.debug(msg),

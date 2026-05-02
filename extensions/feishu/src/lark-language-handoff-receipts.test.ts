@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeTempWorkspace } from "../../../src/test-helpers/workspace.js";
-import { writeLarkLanguageHandoffReceipt } from "./lark-language-handoff-receipts.js";
+import {
+  renderLarkFinanceBrainOrchestrationNotice,
+  writeLarkLanguageHandoffReceipt,
+} from "./lark-language-handoff-receipts.js";
 
 describe("lark language handoff receipts", () => {
   let workspaceDir: string | undefined;
@@ -165,6 +168,13 @@ describe("lark language handoff receipts", () => {
       ]),
       boundaries: expect.arrayContaining(["research_only", "no_model_math_guessing"]),
     });
+    const notice = renderLarkFinanceBrainOrchestrationNotice(
+      result.artifact.financeBrainOrchestration,
+    );
+    expect(notice).toContain("Finance brain orchestration contract");
+    expect(notice).toContain("primaryModules=etf_regime,quant_math,causal_map");
+    expect(notice).toContain("requiredTools=");
+    expect(notice).toContain("do not replace quant_math with model guesses");
   });
 
   it("does not add finance orchestration for non-finance handoff wording", async () => {

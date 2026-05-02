@@ -39,7 +39,7 @@ export const FINANCE_BRAIN_MODULES = [
       "finance_framework_macro_rates_inflation_producer",
     ],
     triggerPatterns: [
-      /macro|rates?|interest|inflation|fed|fomc|cpi|ppi|real yield|yield curve|duration/u,
+      /\b(?:macro|rates?|interest|inflation|fed|fomc|cpi|ppi|real yield|yield curve|duration)\b/u,
       /宏观|利率|通胀|美联储|央行|收益率曲线|久期/u,
     ],
   },
@@ -48,7 +48,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Map ETF, sector, index, breadth, flow, and rotation signals into a low-frequency regime view.",
     requiredTools: ["finance_framework_core_inspect", "finance_framework_etf_regime_producer"],
     triggerPatterns: [
-      /etf|index|sector|breadth|flow|rotation|spy|qqq|tlt|iwm/u,
+      /\b(?:etf|index|sector|breadth|flow|rotation|spy|qqq|tlt|iwm)\b/u,
       /指数|板块|轮动|宽基|行业/u,
     ],
   },
@@ -60,7 +60,7 @@ export const FINANCE_BRAIN_MODULES = [
       "finance_framework_company_fundamentals_value_producer",
     ],
     triggerPatterns: [
-      /fundamental|earnings?|revenue|margin|cash flow|valuation|moat|balance sheet|guidance|nvda|aapl|msft|tsla/u,
+      /\b(?:fundamentals?|earnings?|revenue|margin|cash flow|valuation|moat|balance sheet|guidance|nvda|aapl|msft|tsla)\b/u,
       /基本面|财报|收入|利润率|现金流|估值|护城河|资产负债|业绩/u,
     ],
   },
@@ -69,7 +69,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Translate trend, momentum, levels, invalidation, and timing discipline into non-execution timing context.",
     requiredTools: ["finance_learning_capability_apply"],
     triggerPatterns: [
-      /technical|timing|trend|momentum|moving average|rsi|breakout|entry|exit|support|resistance/u,
+      /\b(?:technical|timing|trend|momentum|moving average|rsi|breakout|entry|exit|support|resistance)\b/u,
       /技术|择时|趋势|动量|均线|突破|入场|出场|支撑|阻力/u,
     ],
   },
@@ -81,7 +81,7 @@ export const FINANCE_BRAIN_MODULES = [
       "finance_framework_portfolio_risk_gates_producer",
     ],
     triggerPatterns: [
-      /portfolio|holdings?|position|sizing|exposure|drawdown|risk budget|correlation|rebalance|add|reduce|buy|sell/u,
+      /\b(?:portfolio|holdings?|position|sizing|exposure|drawdown|risk budget|correlation|rebalance|add|reduce|buy|sell)\b/u,
       /组合|持仓|仓位|加仓|减仓|买|卖|风险预算|回撤|相关性|再平衡/u,
     ],
   },
@@ -90,7 +90,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Do deterministic calculations locally for beta, volatility, covariance, drawdown, ratio, duration, and risk contribution.",
     requiredTools: ["quant_math"],
     triggerPatterns: [
-      /math|calculate|beta|volatility|covariance|regression|sharpe|sortino|calmar|var|black-scholes|risk contribution/u,
+      /\b(?:math|calculate|beta|volatility|covariance|regression|sharpe|sortino|calmar|var|black-scholes|risk contribution)\b/u,
       /数学|计算|波动率|协方差|回归|夏普|回撤|风险贡献|久期/u,
     ],
   },
@@ -102,7 +102,7 @@ export const FINANCE_BRAIN_MODULES = [
       "finance_framework_options_volatility_producer",
     ],
     triggerPatterns: [
-      /options?|iv|implied vol|skew|gamma|vega|volatility/u,
+      /\b(?:options?|iv|implied vol|skew|gamma|vega|volatility)\b/u,
       /期权|隐含波动率|偏斜|伽马|vega|波动/u,
     ],
   },
@@ -114,7 +114,7 @@ export const FINANCE_BRAIN_MODULES = [
       "finance_framework_credit_liquidity_producer",
     ],
     triggerPatterns: [
-      /credit|spread|liquidity|funding|hy|ig|stress|debt|bank lending/u,
+      /\b(?:credit|spread|liquidity|funding|hy|ig|stress|debt|bank lending)\b/u,
       /信用|利差|流动性|融资|债务|压力/u,
     ],
   },
@@ -126,7 +126,7 @@ export const FINANCE_BRAIN_MODULES = [
       "finance_framework_commodities_oil_gold_producer",
     ],
     triggerPatterns: [
-      /commodity|commodities|oil|gold|energy|copper|inflation hedge/u,
+      /\b(?:commodity|commodities|oil|gold|energy|copper|inflation hedge)\b/u,
       /商品|原油|黄金|能源|铜/u,
     ],
   },
@@ -135,7 +135,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Connect dollar, FX, DXY, currency translation, liquidity, and cross-border pressure.",
     requiredTools: ["finance_framework_core_inspect", "finance_framework_fx_dollar_producer"],
     triggerPatterns: [
-      /fx|foreign exchange|currency|dollar|dxy|usd|yen|euro/u,
+      /\b(?:fx|foreign exchange|currency|dollar|dxy|usd|yen|euro)\b/u,
       /外汇|美元|汇率|日元|欧元/u,
     ],
   },
@@ -144,7 +144,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Handle catalysts, earnings windows, policy events, geopolitical shocks, and event follow-up timing.",
     requiredTools: ["finance_framework_core_inspect", "finance_framework_event_driven_producer"],
     triggerPatterns: [
-      /event|catalyst|earnings|policy|meeting|geopolitical|headline|shock/u,
+      /\b(?:event|catalyst|earnings|policy|meeting|geopolitical|headline|shock)\b/u,
       /事件|催化|财报日|政策|会议|地缘|突发/u,
     ],
   },
@@ -153,7 +153,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Force causal chain, alternative explanation, falsifier, and red-team invalidation before conclusion.",
     requiredTools: ["finance_framework_core_inspect", "finance_framework_causal_map_producer"],
     triggerPatterns: [
-      /why|cause|causal|mechanism|transmission|scenario|invalidate|red[- ]?team/u,
+      /\b(?:why|cause|causal|mechanism|transmission|scenario|invalidate|red[- ]?team)\b/u,
       /为什么|因果|机制|传导|情景|证伪|反驳/u,
     ],
   },
@@ -162,7 +162,7 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Retrieve retained finance capability cards, lessons, correction notes, and reusable rules before drafting.",
     requiredTools: ["finance_learning_capability_apply", "finance_learning_retrieval_review"],
     triggerPatterns: [
-      /learn|lesson|capability|memory|previous|reuse|apply.*rule|strategy|framework/u,
+      /\b(?:learn|lesson|capability|memory|previous|reuse|strategy|framework)\b|\bapply\b.*\brule\b/u,
       /学习|以前|记忆|规则|能力|复用|策略|框架/u,
     ],
   },

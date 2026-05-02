@@ -25,7 +25,9 @@ export function ensurePluginRegistryLoaded(): void {
   const config = loadConfig();
   const workspaceDir = resolveAgentWorkspaceDir(config, resolveDefaultAgentId(config));
   const logger: PluginLogger = {
-    info: (msg) => log.info(msg),
+    // This runs during CLI preAction, including for `--json` commands. Routine plugin
+    // registration chatter must not pollute stdout.
+    info: (msg) => log.debug(msg),
     warn: (msg) => log.warn(msg),
     error: (msg) => log.error(msg),
     debug: (msg) => log.debug(msg),
