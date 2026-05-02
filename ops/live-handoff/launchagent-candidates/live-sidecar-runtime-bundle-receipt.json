@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-27T23:33:44.543Z",
+  "generatedAt": "2026-05-02T17:23:21.393Z",
   "sourceRoot": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
   "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
   "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
@@ -437,8 +437,8 @@
     },
     {
       "relativePath": "README.md",
-      "sourceSha256": "301a76d2a83f99dc1e1c968b68307bc512c63183a51574829502d7daf1b4f212",
-      "targetSha256": "301a76d2a83f99dc1e1c968b68307bc512c63183a51574829502d7daf1b4f212",
+      "sourceSha256": "6f5369a3b5a332c6efc8d04fb9d1178e3cdf39fb74e43c284d3f05b1122a5866",
+      "targetSha256": "6f5369a3b5a332c6efc8d04fb9d1178e3cdf39fb74e43c284d3f05b1122a5866",
       "copied": true,
       "executable": false
     },
@@ -975,16 +975,23 @@
       "executable": false
     },
     {
+      "relativePath": "docs/assets/lcx-agent-architecture.png",
+      "sourceSha256": "a8fff70f885744ef455ac8584745da07ce8406439c969b8b741b4c56d77a5481",
+      "targetSha256": "a8fff70f885744ef455ac8584745da07ce8406439c969b8b741b4c56d77a5481",
+      "copied": true,
+      "executable": false
+    },
+    {
       "relativePath": "docs/assets/lcx-agent-daily-progress-wave.svg",
-      "sourceSha256": "006782c3f2bfcbdefbcb9bb0053210068ef9d33dfcba5a0abef7090ee301d7c0",
-      "targetSha256": "006782c3f2bfcbdefbcb9bb0053210068ef9d33dfcba5a0abef7090ee301d7c0",
+      "sourceSha256": "d850924b48d1943d4d5af5a5dad47b1ae62d1fed87cdfe96412de02715fe5afd",
+      "targetSha256": "d850924b48d1943d4d5af5a5dad47b1ae62d1fed87cdfe96412de02715fe5afd",
       "copied": true,
       "executable": false
     },
     {
       "relativePath": "docs/assets/lobster-daily-progress-wave.svg",
-      "sourceSha256": "006782c3f2bfcbdefbcb9bb0053210068ef9d33dfcba5a0abef7090ee301d7c0",
-      "targetSha256": "006782c3f2bfcbdefbcb9bb0053210068ef9d33dfcba5a0abef7090ee301d7c0",
+      "sourceSha256": "d850924b48d1943d4d5af5a5dad47b1ae62d1fed87cdfe96412de02715fe5afd",
+      "targetSha256": "d850924b48d1943d4d5af5a5dad47b1ae62d1fed87cdfe96412de02715fe5afd",
       "copied": true,
       "executable": false
     },
@@ -1400,17 +1407,10 @@
       "targetSha256": "6b9fe4c74bf5e7c0f59bbaa129ec5270fd29a248551a8a9a7dde6cff8fb46111",
       "copied": true,
       "executable": false
-    },
-    {
-      "relativePath": "docs/channels/pairing.md",
-      "sourceSha256": "65894ceee288fcd03547a4570ee06b9bdc6721cf6e32745a5f9507c34935eba3",
-      "targetSha256": "65894ceee288fcd03547a4570ee06b9bdc6721cf6e32745a5f9507c34935eba3",
-      "copied": true,
-      "executable": false
     }
   ],
-  "fileCount": 7137,
-  "omittedFileCount": 6937,
+  "fileCount": 7153,
+  "omittedFileCount": 6953,
   "compileCheck": {
     "command": "python3 -m py_compile daily_learning_runner.py lobster_orchestrator.py scripts/lobster_paths.py scripts/branch_freshness.py scripts/lobster_host_watchdog.py",
     "code": 0,

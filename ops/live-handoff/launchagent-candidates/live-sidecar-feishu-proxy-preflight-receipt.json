@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-27T22:35:22.020Z",
+  "generatedAt": "2026-05-02T17:19:51.339Z",
   "legacyRoot": "/Users/liuchengxu/Desktop/openclaw",
   "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
   "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/live-handoff/launchagent-candidates/live-sidecar-feishu-proxy-preflight-receipt.json",
@@ -12,8 +12,8 @@
       "relativePath": "feishu_event_proxy.py",
       "legacyExists": true,
       "targetExists": true,
-      "legacySha256": "73cf46e961830e22990aad3f09204f926ccab56cc55c5d0deb75b35e123354f5",
-      "targetSha256": "73cf46e961830e22990aad3f09204f926ccab56cc55c5d0deb75b35e123354f5",
+      "legacySha256": "b57cb0b6ae19b900f299619e966c7c71840ae0391f44863fcbb3b4c22935906f",
+      "targetSha256": "b57cb0b6ae19b900f299619e966c7c71840ae0391f44863fcbb3b4c22935906f",
       "copied": true
     },
     {
@@ -43,11 +43,11 @@
   ],
   "currentLaunchAgent": {
     "exists": true,
-    "pointsAtLegacyRoot": true,
-    "pointsAtTargetRoot": false
+    "pointsAtLegacyRoot": false,
+    "pointsAtTargetRoot": true
   },
   "smoke": {
-    "port": 38112,
+    "port": 3012,
     "commandResults": [
       {
         "command": "python3 -m py_compile feishu_event_proxy.py scripts/learning_goal_registry.py",
@@ -56,15 +56,15 @@
         "stderr": ""
       },
       {
-        "command": "LOBSTER_PROXY_PORT=38112 python3 feishu_event_proxy.py + curl /healthz",
+        "command": "LOBSTER_PROXY_PORT=3012 python3 feishu_event_proxy.py + curl /healthz",
         "code": 0,
-        "stdout": "{\"ok\": true, \"port\": 38112, \"origin_url\": \"http://127.0.0.1:3000/feishu/events\", \"command_bin\": \"/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/lobster_command_v2.sh\", \"reply_bin\": \"/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/send_feishu_reply.sh\", \"last_feishu_target_exists\": true}",
+        "stdout": "{\"ok\": true, \"port\": 3012, \"origin_url\": \"http://127.0.0.1:3000/feishu/events\", \"command_bin\": \"/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/lobster_command_v2.sh\", \"reply_bin\": \"/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/send_feishu_reply.sh\", \"last_feishu_target_exists\": true}",
         "stderr": "\n"
       }
     ],
     "health": {
       "ok": true,
-      "port": 38112,
+      "port": 3012,
       "origin_url": "http://127.0.0.1:3000/feishu/events",
       "command_bin": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/lobster_command_v2.sh",
       "reply_bin": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw/send_feishu_reply.sh",

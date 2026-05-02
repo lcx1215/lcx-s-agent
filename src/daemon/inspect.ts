@@ -134,6 +134,26 @@ function isIgnoredLaunchdLabel(label: string): boolean {
   return label === resolveGatewayLaunchAgentLabel();
 }
 
+function isKnownOpenClawCompanionLaunchdService(label: string, contents: string): boolean {
+  const lowerLabel = label.toLowerCase();
+  const lowerContents = contents.toLowerCase();
+  if (
+    [
+      "ai.openclaw.feishu.proxy",
+      "ai.openclaw.lobster.host_watchdog",
+      "ai.openclaw.lobster.scheduler",
+    ].includes(lowerLabel)
+  ) {
+    return lowerContents.includes("/.openclaw/live-sidecars/");
+  }
+  if (lowerLabel === "com.openclaw.cloudflared") {
+    return (
+      lowerContents.includes("cloudflared") || lowerContents.includes("<string>tunnel</string>")
+    );
+  }
+  return false;
+}
+
 function isIgnoredSystemdName(name: string): boolean {
   return name === resolveGatewaySystemdServiceName();
 }
@@ -304,6 +324,9 @@ async function scanLaunchdDir(params: {
       continue;
     }
     if (isIgnoredLaunchdLabel(label)) {
+      continue;
+    }
+    if (marker === "openclaw" && isKnownOpenClawCompanionLaunchdService(label, contents)) {
       continue;
     }
     if (marker === "openclaw" && isOpenClawGatewayLaunchdService(label, contents)) {

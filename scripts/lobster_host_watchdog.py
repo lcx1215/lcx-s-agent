@@ -10,6 +10,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import urlopen
 
 try:
     from scripts.branch_freshness import build_branch_freshness_snapshot, parse_iso
@@ -137,6 +139,21 @@ def read_tail(path: Path, limit: int = 6000) -> str:
     return data[-limit:].decode("utf-8", errors="ignore")
 
 
+def probe_feishu_proxy_health(timeout_seconds: float = 3.0) -> dict[str, Any]:
+    try:
+        with urlopen("http://127.0.0.1:3011/healthz", timeout=timeout_seconds) as response:
+            raw = response.read(4000).decode("utf-8", errors="ignore")
+    except (OSError, TimeoutError, URLError) as exc:
+        return {"ok": False, "error": str(exc)[:500]}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "invalid_json", "body": raw[:500]}
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "invalid_payload"}
+    return payload
+
+
 def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
     launchd = inspect_launchagent(FEISHU_PROXY_LABEL, skip_launchd=skip_launchd)
     err_tail = read_tail(FEISHU_PROXY_ERR_LOG)
@@ -155,12 +172,17 @@ def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
         ]
         if marker in err_tail
     ]
+    health = probe_feishu_proxy_health() if not skip_launchd else {"ok": None, "skipped": True}
+    health_ok = health.get("ok") is True and health.get("port") == 3011
+    stale_error_markers = (
+        error_markers if health_ok and launchd.get("running") and points_at_runtime else []
+    )
     status = "ok"
     if not launchd.get("known") and not skip_launchd:
         status = "unknown"
     elif not launchd.get("running") and not skip_launchd:
         status = "not_running"
-    elif error_markers:
+    elif error_markers and not stale_error_markers:
         status = "log_errors"
     elif points_at_desktop:
         status = "root_drift"
@@ -171,8 +193,10 @@ def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
         "points_at_desktop": points_at_desktop,
         "points_at_runtime": points_at_runtime,
         "error_markers": error_markers,
+        "stale_error_markers": stale_error_markers,
+        "health": health,
         "err_log_path": str(FEISHU_PROXY_ERR_LOG),
-        "err_tail_sample": err_tail[-1000:] if error_markers else "",
+        "err_tail_sample": err_tail[-1000:] if error_markers and not stale_error_markers else "",
     }
 
 

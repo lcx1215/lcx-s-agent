@@ -184,4 +184,51 @@ describe("findExtraGatewayServices (darwin)", () => {
     );
     expect(result[0]?.detail).toContain("observed /Users/example/Desktop/openclaw");
   });
+
+  it("ignores known live-sidecar companions once they point at non-Desktop runtime", async () => {
+    const home = tempDir ?? "";
+    const launchAgentsDir = path.join(home, "Library", "LaunchAgents");
+    await fs.mkdir(launchAgentsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(launchAgentsDir, "ai.openclaw.feishu.proxy.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>ai.openclaw.feishu.proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/opt/homebrew/bin/python3</string>
+      <string>/Users/example/.openclaw/live-sidecars/lcx-s-openclaw/feishu_event_proxy.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/example/.openclaw/live-sidecars/lcx-s-openclaw</string>
+  </dict>
+</plist>`,
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(launchAgentsDir, "com.openclaw.cloudflared.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.openclaw.cloudflared</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>cloudflared</string>
+      <string>tunnel</string>
+    </array>
+  </dict>
+</plist>`,
+      "utf8",
+    );
+
+    const result = await findExtraGatewayServices(
+      { HOME: home },
+      { expectedRoot: "/Users/example/Desktop/lcx-s-openclaw" },
+    );
+
+    expect(result).toEqual([]);
+  });
 });
