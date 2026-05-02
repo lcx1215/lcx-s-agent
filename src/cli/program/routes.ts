@@ -54,7 +54,8 @@ const routeStatus: RouteSpec = {
 };
 
 const routeCapabilities: RouteSpec = {
-  match: (path) => path[0] === "capabilities",
+  // Fast-path only bare `capabilities`; subcommands must fall through to Commander.
+  match: (path) => path[0] === "capabilities" && !path[1],
   run: async (argv) => {
     const json = hasFlag(argv, "--json");
     const { capabilitiesCommand } = await import("../../commands/capabilities.js");

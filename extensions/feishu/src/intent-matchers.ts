@@ -71,6 +71,27 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
   return hasLearningIntent && hasFinanceDomain && hasPipelineCue && !asksAuditOnly;
 }
 
+export function looksLikeGitHubProjectCapabilityIntakeAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasGitHubProjectCue =
+    /(github|repo|repository|开源|开源项目|热榜|trending|star榜|榜单|同类项目|同行项目|竞品项目|别人家的项目|热门项目)/u.test(
+      normalized,
+    );
+  const hasCapabilityCue =
+    /(功能|能力|feature|capability|做法|架构|设计|模块|雏形|已有|内部有没有|加进去|接进来|吸收|内化|借鉴|迁移|复用|适合我们|值得学|值得吸收|值得加)/u.test(
+      normalized,
+    );
+  const hasIntakeIntent =
+    /(看|看看|查|搜|找|学|学习|审阅|对比|判断|评估|识别|加|接|吸收|内化|能不能|有没有|怎么能|怎么把)/u.test(
+      normalized,
+    );
+  const asksForDirectInstallOrExecution =
+    /(直接安装|马上安装|自动安装|clone.*run|克隆.*运行|执行.*仓库|跑.*仓库代码)/u.test(normalized);
+  return (
+    hasGitHubProjectCue && hasCapabilityCue && hasIntakeIntent && !asksForDirectInstallOrExecution
+  );
+}
+
 export function looksLikeFinanceLearningMaintenanceAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasMaintenanceDirective =

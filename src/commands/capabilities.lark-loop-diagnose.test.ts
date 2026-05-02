@@ -1,0 +1,75 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
+import { larkLoopDiagnoseCommand } from "./capabilities.js";
+import { readReceiptStats } from "./capabilities/lark-loop-diagnose.js";
+import { createTestRuntime } from "./test-runtime-config-helpers.js";
+
+const runtime = createTestRuntime();
+
+describe("larkLoopDiagnoseCommand", () => {
+  beforeEach(() => {
+    runtime.log.mockClear();
+    runtime.error.mockClear();
+    runtime.exit.mockClear();
+  });
+
+  it("reports the local loop as ready and live receipts as the remaining blocker", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-lark-diagnose-test-"));
+    await larkLoopDiagnoseCommand({ workspaceDir: workspace, json: true }, runtime);
+
+    expect(runtime.log).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0])) as {
+      ok: boolean;
+      gatewayAgentModelParamSchema: { ok: boolean; error: string | null };
+      localLoop: { ok: boolean; backendTool: string; analysisStatus: string };
+      liveHandoffReceipts: {
+        count: number;
+        workspaceDir: string;
+        workspaces: Array<{ count: number; workspaceDir: string }>;
+      };
+      nextBlocker: string;
+    };
+    expect(payload.ok).toBe(false);
+    expect(payload.gatewayAgentModelParamSchema).toEqual({ ok: true, error: null });
+    expect(payload.localLoop.ok).toBe(true);
+    expect(payload.localLoop.backendTool).toBe("finance_learning_pipeline_orchestrator");
+    expect(payload.localLoop.analysisStatus).toBe("research_review_ready");
+    expect(payload.liveHandoffReceipts.count).toBe(0);
+    expect(payload.liveHandoffReceipts.workspaceDir).toBe(workspace);
+    expect(payload.liveHandoffReceipts.workspaces).toEqual([
+      expect.objectContaining({ count: 0, workspaceDir: workspace }),
+    ]);
+    expect(payload.nextBlocker).toBe("no_live_lark_user_inbound_handoff_receipt_yet");
+  });
+
+  it("aggregates receipts across inspected agent workspaces", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-lark-diagnose-receipts-"));
+    const receiptDir = path.join(
+      workspace,
+      "memory",
+      "lark-language-handoff-receipts",
+      "2026-05-02",
+    );
+    await fs.promises.mkdir(receiptDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(receiptDir, "om_live.json"),
+      JSON.stringify({
+        generatedAt: "2026-05-02T12:00:00.000Z",
+        boundary: "language_handoff_only",
+      }),
+      "utf8",
+    );
+
+    const stats = await readReceiptStats({ workspaceDir: workspace });
+
+    expect(stats).toMatchObject({
+      workspaceDir: workspace,
+      count: 1,
+      latestPath: "memory/lark-language-handoff-receipts/2026-05-02/om_live.json",
+      latestGeneratedAt: "2026-05-02T12:00:00.000Z",
+      workspaces: [expect.objectContaining({ count: 1, workspaceDir: workspace })],
+    });
+  });
+});

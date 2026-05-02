@@ -289,6 +289,15 @@ beforeEach(() => {
   mockStartFeishuLearningTimeboxSession.mockResolvedValue({ status: "not_requested" });
   mockSendMessageFeishu.mockReset();
   mockSendMessageFeishu.mockResolvedValue({ messageId: "pairing-msg", chatId: "oc-dm" });
+  mockResolveAgentRoute.mockReset();
+  mockResolveAgentRoute.mockReturnValue({
+    agentId: "main",
+    channel: "feishu",
+    accountId: "default",
+    sessionKey: "agent:main:feishu:dm:ou-attacker",
+    mainSessionKey: "agent:main:main",
+    matchedBy: "default",
+  });
 });
 
 describe("ensureFeishuWorkReceiptArtifacts", () => {
@@ -2762,6 +2771,40 @@ confidence: high
       /finance_learning|finance-learning|memory\/local-memory|capability card/u,
     );
 
+    const handoffRoot = path.join(tempDir, "memory", "lark-language-handoff-receipts");
+    const [handoffDateDir] = await fs.readdir(handoffRoot);
+    const handoffText = await fs.readFile(
+      path.join(handoffRoot, handoffDateDir, "msg-language-capture.json"),
+      "utf-8",
+    );
+    const handoff = JSON.parse(handoffText) as {
+      boundary: string;
+      noFinanceLearningArtifact: boolean;
+      noExecutionApproval: boolean;
+      noLiveProbeProof: boolean;
+      userMessage: string;
+      handoff: {
+        family: string;
+        source: string;
+        expectedProof: string[];
+        missingBeforeExecution: string[];
+      };
+    };
+    expect(handoff).toMatchObject({
+      boundary: "language_handoff_only",
+      noFinanceLearningArtifact: true,
+      noExecutionApproval: true,
+      noLiveProbeProof: true,
+      userMessage: "把这个真实回复沉淀成待审语言样本",
+      handoff: expect.objectContaining({
+        expectedProof: expect.any(Array),
+        missingBeforeExecution: expect.any(Array),
+      }),
+    });
+    expect(handoffText).not.toMatch(
+      /finance_learning|finance-learning|memory\/local-memory|capability card/u,
+    );
+
     await expect(
       fs.access(path.join(tempDir, "memory", "local-memory", "msg-language-capture.json")),
     ).rejects.toThrow();
@@ -2788,6 +2831,150 @@ confidence: high
     );
 
     await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("writes Lark handoff receipts into the routed non-default agent workspace", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+
+    const mockDispatchReplyFromConfig = vi.fn(async () => ({
+      queuedFinal: true,
+      counts: { tool: 0, block: 0, final: 1 },
+    }));
+    const mockWithReplyDispatcher = vi.fn(
+      async ({
+        dispatcher,
+        run,
+        onSettled,
+      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+        try {
+          return await run();
+        } finally {
+          dispatcher.markComplete();
+          try {
+            await dispatcher.waitForIdle();
+          } finally {
+            await onSettled?.();
+          }
+        }
+      },
+    );
+
+    mockResolveAgentRoute.mockReturnValue({
+      agentId: "research-minimax",
+      channel: "feishu",
+      accountId: "default",
+      sessionKey: "agent:research-minimax:feishu:dm:ou-user",
+      mainSessionKey: "agent:research-minimax:main",
+      matchedBy: "configured",
+    });
+
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher:
+              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const mainWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-main-"));
+    const routedWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-routed-"));
+    const cfg: ClawdbotConfig = {
+      agents: {
+        defaults: { workspace: mainWorkspace },
+        list: [
+          { id: "main", default: true, workspace: mainWorkspace },
+          { id: "research-minimax", workspace: routedWorkspace },
+        ],
+      },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            control_room: { chatId: "oc-control-room" },
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-routed-language-handoff",
+          chat_id: "oc-control-room",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "去学习一套本地安全的 ETF 因子择时材料" }),
+        },
+      },
+    });
+
+    const routedReceiptPath = path.join(
+      routedWorkspace,
+      "memory",
+      "lark-language-handoff-receipts",
+    );
+    const [dateDir] = await fs.readdir(routedReceiptPath);
+    const receiptText = await fs.readFile(
+      path.join(routedReceiptPath, dateDir, "msg-routed-language-handoff.json"),
+      "utf-8",
+    );
+    expect(JSON.parse(receiptText)).toMatchObject({
+      boundary: "language_handoff_only",
+      agentId: "research-minimax",
+      sessionKey: "agent:research-minimax:feishu:dm:ou-user:surface:learning_command",
+      userMessage: "去学习一套本地安全的 ETF 因子择时材料",
+    });
+    await expect(
+      fs.access(
+        path.join(
+          mainWorkspace,
+          "memory",
+          "lark-language-handoff-receipts",
+          dateDir,
+          "msg-routed-language-handoff.json",
+        ),
+      ),
+    ).rejects.toThrow();
+
+    await fs.rm(mainWorkspace, { recursive: true, force: true });
+    await fs.rm(routedWorkspace, { recursive: true, force: true });
   });
 
   it("writes a repair-minded work receipt for natural complaint corrections", async () => {

@@ -10,6 +10,7 @@ import {
   looksLikeFailureReportScopeAsk,
   looksLikeFinanceLearningMaintenanceAsk,
   looksLikeFinanceLearningPipelineAsk,
+  looksLikeGitHubProjectCapabilityIntakeAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikeProgressStatusScopeAsk,
   looksLikeResultShapeScopeAsk,
@@ -858,6 +859,34 @@ describe("real daily utterance regression", () => {
     });
     expect(handoff.notice).toContain("finance_learning_pipeline_orchestrator");
     expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
+  });
+
+  it("hands GitHub project feature adoption asks to the capability intake backend contract", async () => {
+    const utterance =
+      "现在github上热榜的一些项目，你看看哪些功能可以加进来，或者我们内部有没有这种功能的雏形";
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance,
+      apiProvider: async () => ({
+        family: "learning_external_source",
+        confidence: 0.9,
+        rationale: "API router understood this as GitHub/open-source capability intake",
+      }),
+    });
+
+    expect(looksLikeGitHubProjectCapabilityIntakeAsk(utterance)).toBe(true);
+    expect(handoff).toMatchObject({
+      family: "learning_external_source",
+      source: "api",
+      targetSurface: "learning_command",
+      backendToolContract: {
+        toolName: "github_project_capability_intake",
+        sourceRequirement: "repo_url_or_readme_summary_required",
+      },
+    });
+    expect(handoff.notice).toContain("github_project_capability_intake");
+    expect(handoff.notice).toContain("capabilityFamily,existingEmbryos,adoptionDecision");
   });
 
   it("sanitizes low-confidence API candidates and keeps deterministic routing authoritative", async () => {

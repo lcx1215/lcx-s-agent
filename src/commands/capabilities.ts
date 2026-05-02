@@ -1,9 +1,18 @@
 import fs from "node:fs";
 import { isKnownCoreToolId } from "../agents/tool-catalog.js";
+import { createGitHubProjectCapabilityIntakeTool } from "../agents/tools/github-project-capability-intake-tool.js";
 import { resolveWorkspaceRoot } from "../agents/workspace-dir.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
+import {
+  languageBrainLoopSmokeCommand,
+  type LanguageBrainLoopSmokeCommandOptions,
+} from "./capabilities/language-brain-loop-smoke.js";
+import {
+  larkLoopDiagnoseCommand,
+  type LarkLoopDiagnoseCommandOptions,
+} from "./capabilities/lark-loop-diagnose.js";
 import { resolveConfiguredEntries } from "./models/list.configured.js";
 import { loadModelsConfig } from "./models/load-config.js";
 
@@ -22,6 +31,22 @@ export type CapabilityState =
 export type CapabilitiesCommandOptions = {
   json?: boolean;
 };
+
+export type GitHubCapabilityIntakeCommandOptions = {
+  repoName: string;
+  repoUrl?: string;
+  selectedFeature: string;
+  projectSummary: string;
+  evidenceSnippets?: string[];
+  tags?: string[];
+  requestedAdoptionMode?: string;
+  writeReceipt?: boolean;
+  json?: boolean;
+};
+
+export type { LanguageBrainLoopSmokeCommandOptions };
+export type { LarkLoopDiagnoseCommandOptions };
+export { languageBrainLoopSmokeCommand, larkLoopDiagnoseCommand };
 
 export type ConfiguredModelCapabilitySurface = {
   provider: string;
@@ -577,4 +602,86 @@ export async function capabilitiesCommand(
   const cfg = await loadModelsConfig({ commandName: "capabilities", runtime });
   const report = buildCapabilitySurfaceReport(cfg);
   runtime.log(opts.json ? JSON.stringify(report, null, 2) : formatCapabilitySurfaceText(report));
+}
+
+function displayScalar(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+}
+
+function formatGitHubCapabilityIntakeText(payload: Record<string, unknown>): string {
+  const decision =
+    typeof payload.adoptionDecision === "object" && payload.adoptionDecision !== null
+      ? (payload.adoptionDecision as Record<string, unknown>)
+      : {};
+  const embryos = Array.isArray(payload.existingEmbryos)
+    ? payload.existingEmbryos.filter(
+        (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
+      )
+    : [];
+  const safetyBlockers = Array.isArray(payload.safetyBlockers)
+    ? payload.safetyBlockers.filter((item): item is string => typeof item === "string")
+    : [];
+  const lines: string[] = [];
+  lines.push("GitHub project capability intake");
+  lines.push("");
+  lines.push(`Repo: ${displayScalar(payload.repoName, "unknown")}`);
+  lines.push(`Feature: ${displayScalar(payload.selectedFeature, "unknown")}`);
+  lines.push(`Capability family: ${displayScalar(payload.capabilityFamily, "unknown")}`);
+  lines.push(`Decision: ${displayScalar(decision.status, "unknown")}`);
+  lines.push(`Adoption target: ${displayScalar(decision.target, "unknown")}`);
+  lines.push(`Safety blockers: ${safetyBlockers.length ? safetyBlockers.join(", ") : "none"}`);
+  lines.push("");
+  lines.push("Existing LCX Agent embryos:");
+  if (embryos.length === 0) {
+    lines.push("- none");
+  }
+  for (const embryo of embryos) {
+    lines.push(
+      `- ${displayScalar(embryo.surface, "unknown")}: ${displayScalar(embryo.path, "unknown")} (${displayScalar(embryo.fit, "unknown")})`,
+    );
+  }
+  lines.push("");
+  lines.push(`Next patch: ${displayScalar(payload.nextPatch, "none")}`);
+  if (typeof payload.receiptPath === "string" && payload.receiptPath) {
+    lines.push(`Receipt: ${payload.receiptPath}`);
+  }
+  lines.push("");
+  lines.push("Boundaries:");
+  lines.push("- noRemoteFetchOccurred: true");
+  lines.push("- noCodeExecutionOccurred: true");
+  lines.push("- liveTouched: false");
+  lines.push("- protectedMemoryTouched: false");
+  return lines.join("\n");
+}
+
+export async function githubCapabilityIntakeCommand(
+  opts: GitHubCapabilityIntakeCommandOptions,
+  runtime: RuntimeEnv = defaultRuntime,
+) {
+  const cfg = await loadModelsConfig({ commandName: "capabilities github-intake", runtime });
+  const workspaceDir = resolveWorkspaceRoot(cfg.agents?.defaults?.workspace);
+  const tool = createGitHubProjectCapabilityIntakeTool({ workspaceDir });
+  const result = await tool.execute("cli-github-capability-intake", {
+    repoName: opts.repoName,
+    repoUrl: opts.repoUrl,
+    selectedFeature: opts.selectedFeature,
+    projectSummary: opts.projectSummary,
+    evidenceSnippets: opts.evidenceSnippets ?? [],
+    tags: opts.tags ?? [],
+    requestedAdoptionMode: opts.requestedAdoptionMode ?? "auto",
+    writeReceipt: opts.writeReceipt === true,
+  });
+  const payload =
+    typeof result.details === "object" && result.details !== null
+      ? (result.details as Record<string, unknown>)
+      : {};
+  runtime.log(
+    opts.json ? JSON.stringify(payload, null, 2) : formatGitHubCapabilityIntakeText(payload),
+  );
 }

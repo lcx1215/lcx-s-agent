@@ -237,6 +237,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "github_project_capability_intake",
+    label: "github_project_capability_intake",
+    description:
+      "Map one GitHub project feature into an LCX Agent capability family, existing internal embryos, and a bounded adoption decision without fetching remote content or executing code",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "finance_learning_capability_inspect",
     label: "finance_learning_capability_inspect",
     description:

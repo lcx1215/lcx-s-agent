@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Command } from "commander";
-import { resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
@@ -13,7 +13,7 @@ import { listMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.j
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
-import { shortenHomeInString, shortenHomePath } from "../utils.js";
+import { resolveUserPath, shortenHomeInString, shortenHomePath } from "../utils.js";
 import { formatErrorMessage, withManager } from "./cli-utils.js";
 import { resolveCommandSecretRefsViaGateway } from "./command-secret-gateway.js";
 import { getMemoryCommandSecretTargetIds } from "./command-secret-targets.js";
@@ -33,6 +33,17 @@ type MemoryManager = NonNullable<MemorySearchManagerResult["manager"]>;
 type MemoryManagerPurpose = Parameters<typeof getMemorySearchManager>[0]["purpose"];
 
 type MemorySourceName = "memory" | "sessions";
+
+type LarkHandoffReceiptSummary = {
+  path: string;
+  generatedAt: string | null;
+  boundary: string | null;
+  family: string | null;
+  source: string | null;
+  confidence: number | null;
+  backendTool: string | null;
+  missingBeforeExecution: string[];
+};
 
 type SourceScan = {
   source: MemorySourceName;
@@ -102,6 +113,165 @@ function resolveAgent(cfg: ReturnType<typeof loadConfig>, agent?: string) {
     return trimmed;
   }
   return resolveDefaultAgentId(cfg);
+}
+
+function resolveMemoryWorkspace(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  agent?: string;
+  workspace?: string;
+}): string {
+  const workspace = params.workspace?.trim();
+  if (workspace) {
+    return path.resolve(resolveUserPath(workspace));
+  }
+  const agentId = resolveAgent(params.cfg, params.agent);
+  return resolveAgentWorkspaceDir(params.cfg, agentId);
+}
+
+async function walkFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  async function walk(dir: string) {
+    let entries: fsSync.Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return;
+      }
+      throw err;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile()) {
+        files.push(fullPath);
+      }
+    }
+  }
+  await walk(root);
+  return files;
+}
+
+function readStringField(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readStringArrayField(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+}
+
+function summarizeLarkHandoffReceipt(params: {
+  workspaceDir: string;
+  filePath: string;
+  payload: unknown;
+}): LarkHandoffReceiptSummary {
+  const payload = params.payload && typeof params.payload === "object" ? params.payload : {};
+  const root = payload as Record<string, unknown>;
+  const handoff =
+    root.handoff && typeof root.handoff === "object"
+      ? (root.handoff as Record<string, unknown>)
+      : {};
+  const backendToolContract =
+    handoff.backendToolContract && typeof handoff.backendToolContract === "object"
+      ? (handoff.backendToolContract as Record<string, unknown>)
+      : {};
+  const relative = path.relative(params.workspaceDir, params.filePath).replaceAll(path.sep, "/");
+  const confidence = handoff.confidence;
+  return {
+    path: relative,
+    generatedAt: readStringField(root.generatedAt),
+    boundary: readStringField(root.boundary),
+    family: readStringField(handoff.family),
+    source: readStringField(handoff.source),
+    confidence: typeof confidence === "number" && Number.isFinite(confidence) ? confidence : null,
+    backendTool: readStringField(backendToolContract.toolName),
+    missingBeforeExecution: readStringArrayField(handoff.missingBeforeExecution),
+  };
+}
+
+async function listLarkHandoffReceipts(params: {
+  workspaceDir: string;
+  limit?: number;
+}): Promise<LarkHandoffReceiptSummary[]> {
+  const root = path.join(params.workspaceDir, "memory", "lark-language-handoff-receipts");
+  const files = (await walkFiles(root)).filter((file) => file.endsWith(".json"));
+  const summaries: LarkHandoffReceiptSummary[] = [];
+  for (const filePath of files) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(filePath, "utf-8")) as unknown;
+      summaries.push(
+        summarizeLarkHandoffReceipt({
+          workspaceDir: params.workspaceDir,
+          filePath,
+          payload: parsed,
+        }),
+      );
+    } catch {
+      summaries.push({
+        path: path.relative(params.workspaceDir, filePath).replaceAll(path.sep, "/"),
+        generatedAt: null,
+        boundary: "unreadable_json",
+        family: null,
+        source: null,
+        confidence: null,
+        backendTool: null,
+        missingBeforeExecution: [],
+      });
+    }
+  }
+  summaries.sort((a, b) => {
+    const left = a.generatedAt ?? "";
+    const right = b.generatedAt ?? "";
+    return right.localeCompare(left) || a.path.localeCompare(b.path);
+  });
+  const limit = params.limit && params.limit > 0 ? params.limit : 20;
+  return summaries.slice(0, limit);
+}
+
+async function runLarkHandoffReceiptsCommand(opts: {
+  agent?: string;
+  workspace?: string;
+  limit?: number;
+  json?: boolean;
+}) {
+  const cfg = loadConfig();
+  const workspaceDir = resolveMemoryWorkspace({
+    cfg,
+    agent: opts.agent,
+    workspace: opts.workspace,
+  });
+  const receipts = await listLarkHandoffReceipts({ workspaceDir, limit: opts.limit });
+  if (opts.json) {
+    defaultRuntime.log(JSON.stringify({ workspaceDir, receipts }, null, 2));
+    return;
+  }
+  const rich = isRich();
+  const lines: string[] = [];
+  lines.push(colorize(rich, theme.heading, "Lark language handoff receipts"));
+  lines.push(`${colorize(rich, theme.muted, "Workspace:")} ${shortenHomePath(workspaceDir)}`);
+  if (receipts.length === 0) {
+    lines.push("No lark-language handoff receipts found.");
+    defaultRuntime.log(lines.join("\n"));
+    return;
+  }
+  for (const receipt of receipts) {
+    lines.push("");
+    lines.push(colorize(rich, theme.accent, receipt.path));
+    lines.push(`  generatedAt: ${receipt.generatedAt ?? "unknown"}`);
+    lines.push(`  boundary: ${receipt.boundary ?? "unknown"}`);
+    lines.push(`  family: ${receipt.family ?? "unknown"}`);
+    lines.push(`  backendTool: ${receipt.backendTool ?? "none"}`);
+    lines.push(
+      `  missingBeforeExecution: ${
+        receipt.missingBeforeExecution.length ? receipt.missingBeforeExecution.join(", ") : "none"
+      }`,
+    );
+  }
+  defaultRuntime.log(lines.join("\n"));
 }
 
 function resolveAgentIds(cfg: ReturnType<typeof loadConfig>, agent?: string): string[] {
@@ -586,6 +756,21 @@ export function registerMemoryCli(program: Command) {
           ['openclaw memory search --query "deployment notes"', "Search indexed memory entries."],
           ["openclaw memory status --json", "Output machine-readable JSON."],
         ])}\n\n${theme.muted("Docs:")} ${formatDocsLink("/cli/memory", "docs.openclaw.ai/cli/memory")}\n`,
+    );
+
+  const receipts = memory.command("receipts").description("Inspect memory-backed receipts");
+
+  receipts
+    .command("lark-handoffs")
+    .description("List Lark language handoff receipts")
+    .option("--agent <id>", "Agent id used to resolve the workspace")
+    .option("--workspace <dir>", "Workspace directory override")
+    .option("--limit <n>", "Maximum receipts to show", (value: string) => Number(value))
+    .option("--json", "Print JSON", false)
+    .action(
+      async (opts: { agent?: string; workspace?: string; limit?: number; json?: boolean }) => {
+        await runLarkHandoffReceiptsCommand(opts);
+      },
     );
 
   memory

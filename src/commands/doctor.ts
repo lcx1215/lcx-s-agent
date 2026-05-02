@@ -1,7 +1,11 @@
 import fs from "node:fs";
 import { intro as clackIntro, outro as clackOutro } from "@clack/prompts";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
-import { resolveBuiltInDefaultModelRef } from "../agents/defaults.js";
+import {
+  formatBuiltInDefaultModelReason,
+  resolveBuiltInDefaultModelReason,
+  resolveBuiltInDefaultModelRef,
+} from "../agents/defaults.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import {
   getModelRefStatus,
@@ -12,6 +16,7 @@ import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { CONFIG_PATH, readConfigFileSnapshot, writeConfigFile } from "../config/config.js";
 import { logConfigUpdated } from "../config/logging.js";
+import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { resolveGatewayAuth } from "../gateway/auth.js";
 import { buildGatewayConnectionDetails } from "../gateway/call.js";
@@ -104,6 +109,21 @@ export async function doctorCommand(
   let cfg: OpenClawConfig = configResult.cfg;
   const cfgForPersistence = structuredClone(cfg);
   const sourceConfigValid = configResult.sourceConfigValid ?? true;
+  const builtInDefaultReason = resolveBuiltInDefaultModelReason();
+  if (
+    !resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model) &&
+    builtInDefaultReason !== "anthropic_fallback"
+  ) {
+    const builtInDefault = resolveBuiltInDefaultModelRef();
+    note(
+      [
+        `agents.defaults.model is unset; empty-config agent default resolves to ${builtInDefault.provider}/${builtInDefault.model}.`,
+        `Source: ${formatBuiltInDefaultModelReason(builtInDefaultReason)}.`,
+        "Set agents.defaults.model.primary to pin this machine-independent.",
+      ].join("\n"),
+      "Model default",
+    );
+  }
 
   const configPath = configResult.path ?? CONFIG_PATH;
   if (!cfg.gateway?.mode) {

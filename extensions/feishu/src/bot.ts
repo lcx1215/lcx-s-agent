@@ -80,6 +80,7 @@ import {
   looksLikeTemporalScopeControlAsk,
 } from "./intent-matchers.js";
 import { createGatewayLarkApiRouteProvider } from "./lark-api-route-provider.js";
+import { writeLarkLanguageHandoffReceipt } from "./lark-language-handoff-receipts.js";
 import {
   buildLarkPendingRoutingCandidateCorpus,
   evaluateLarkRoutingCandidateCorpus,
@@ -1211,6 +1212,17 @@ function renderFeishuFinanceLearningPipelineMissingSourceReply(): string {
     "",
     "下一步把本地材料路径发来，例如 `memory/articles/example.md`，或回复/引用一段完整文章，我再走 source intake、extract、attach、inspect 和 retrieval review。",
   ].join("\n");
+}
+
+function looksLikeLearningTimeboxStartRequest(content: string): boolean {
+  return (
+    /(学|学习|研究|读|看|补).{0,12}(半个?小时|一个小时|一小时|两个小时|两小时|二小时|\d+(?:\.\d+)?\s*个?\s*小时|\d+(?:\.\d+)?\s*分(?:钟)?|\d+(?:\.\d+)?\s*h(?:our)?s?\b|\d+(?:\.\d+)?\s*m(?:in(?:ute)?s?)?\b)/u.test(
+      content,
+    ) ||
+    /(半个?小时|一个小时|一小时|两个小时|两小时|二小时|\d+(?:\.\d+)?\s*个?\s*小时|\d+(?:\.\d+)?\s*分(?:钟)?|\d+(?:\.\d+)?\s*h(?:our)?s?\b|\d+(?:\.\d+)?\s*m(?:in(?:ute)?s?)?\b).{0,12}(学|学习|研究|读|看|补)/u.test(
+      content,
+    )
+  );
 }
 
 function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknown>): string {
@@ -3108,6 +3120,82 @@ async function persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt(para
   }
 }
 
+async function persistLarkLanguageHandoffReceiptWithFailureReceipt(params: {
+  cfg: ClawdbotConfig;
+  agentId: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+  chatId: string;
+  sessionKey: string;
+  messageId: string;
+  userMessage: string;
+  handoff: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
+}): Promise<{ relativePath: string } | undefined> {
+  try {
+    const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
+    return await writeLarkLanguageHandoffReceipt({
+      workspaceDir,
+      agentId: params.agentId,
+      targetSurface: params.targetSurface,
+      effectiveSurface: params.effectiveSurface,
+      chatId: params.chatId,
+      sessionKey: params.sessionKey,
+      messageId: params.messageId,
+      userMessage: params.userMessage,
+      handoff: params.handoff,
+    });
+  } catch (error) {
+    await recordOperationalAnomaly({
+      cfg: params.cfg,
+      category: "write_edit_failure",
+      severity: "medium",
+      source: "feishu.lark_language_handoff_receipt",
+      problem: "failed to persist lark language handoff receipt",
+      evidence: [
+        "failure_stage=language_handoff_receipt",
+        "boundary=language_handoff_only",
+        "finance_learning_artifact=false",
+        `surface=${params.targetSurface ?? "none"}`,
+        `effective_surface=${params.effectiveSurface ?? params.targetSurface ?? "none"}`,
+        `chat_id=${params.chatId}`,
+        `message_id=${params.messageId}`,
+        `family=${params.handoff.family}`,
+        `source=${params.handoff.source}`,
+        `backend_tool=${params.handoff.backendToolContract?.toolName ?? "none"}`,
+        `error=${String(error)}`,
+      ],
+      impact:
+        "the Feishu turn can still continue, but this language-routing decision did not leave an audit receipt",
+      suggestedScope:
+        "repair the independent lark-language-handoff-receipts artifact path before relying on handoff receipts for routing eval",
+    });
+    return undefined;
+  }
+}
+
+function renderFeishuKnowledgeInternalizationAuditHandoffReply(params: {
+  handoff: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
+  handoffReceiptPath?: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+}): string {
+  const lines = [
+    "已识别为学习结果复盘/内化审计请求，没有重新学习。",
+    `- family: ${params.handoff.family}`,
+    `- confidence: ${params.handoff.confidence.toFixed(2)}`,
+    `- targetSurface: ${params.targetSurface ?? params.handoff.targetSurface ?? "unknown"}`,
+    `- effectiveSurface: ${params.effectiveSurface ?? params.targetSurface ?? "unknown"}`,
+    `- handoff receipt: ${params.handoffReceiptPath ?? "write_failed_or_unavailable"}`,
+    "- learningInternalizationStatus: audit_handoff_ready",
+    "- failedReason: none",
+    "- boundary: this reply is a language/knowledge audit handoff only; it did not create a new finance learning artifact and did not approve trades.",
+  ];
+  if (params.handoff.apiCandidate?.rationale) {
+    lines.push(`- rationale: ${params.handoff.apiCandidate.rationale}`);
+  }
+  return lines.join("\n");
+}
+
 async function persistFeishuSurfaceLineWithFailureReceipt(params: {
   cfg: ClawdbotConfig;
   agentId: string;
@@ -4956,6 +5044,17 @@ export async function handleFeishuMessage(params: {
     const larkApiReplyPayloads = larkInstructionHandoff.apiCandidate
       ? [larkInstructionHandoff.apiCandidate]
       : undefined;
+    const larkHandoffReceipt = await persistLarkLanguageHandoffReceiptWithFailureReceipt({
+      cfg,
+      agentId: route.agentId,
+      targetSurface: surfaceRouting.targetSurface,
+      effectiveSurface: effectiveStateSurface,
+      chatId: ctx.chatId,
+      sessionKey: effectiveSessionKey,
+      messageId: ctx.messageId,
+      userMessage: ctx.content,
+      handoff: larkInstructionHandoff,
+    });
     const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
     const surfaceNotice = [
       buildFeishuPromptSurfaceNotice({
@@ -5343,6 +5442,46 @@ export async function handleFeishuMessage(params: {
         controlRoomOrchestration,
       });
 
+      if (larkInstructionHandoff.family === "knowledge_internalization_audit") {
+        const auditReplyText = renderFeishuKnowledgeInternalizationAuditHandoffReply({
+          handoff: larkInstructionHandoff,
+          handoffReceiptPath: larkHandoffReceipt?.relativePath,
+          targetSurface: surfaceRouting.targetSurface,
+          effectiveSurface: effectiveStateSurface,
+        });
+        const auditSendResult = await sendFeishuFinalTextReply({
+          replyRuntime: core.channel.reply,
+          dispatcher: effectiveDispatcher,
+          markDispatchIdle,
+          text: auditReplyText,
+        });
+
+        clearFeishuGroupHistoryAfterDispatch({
+          isGroup,
+          chatHistories,
+          historyKey,
+          historyLimit,
+        });
+
+        await persistCapturedFeishuSurfaceLine({
+          ...buildFeishuSurfaceLinePersistContext({
+            cfg,
+            agentId: route.agentId,
+            effectiveStateSurface,
+            replyContract: controlRoomOrchestration?.replyContract,
+            chatId: ctx.chatId,
+            sessionKey: effectiveSessionKey,
+            messageId: ctx.messageId,
+            userMessage: ctx.content,
+            apiReplyPayloads: larkApiReplyPayloads,
+          }),
+          finalReplyText: auditSendResult.queuedFinal ? auditReplyText : undefined,
+          dispatchQueuedFinal: auditSendResult.queuedFinal,
+          dispatchFinalCount: auditSendResult.counts.final,
+        });
+        return;
+      }
+
       if (surfaceRouting.targetSurface === "learning_command") {
         if (looksLikeMarketIntelligencePacketAsk(ctx.content)) {
           log(
@@ -5395,7 +5534,8 @@ export async function handleFeishuMessage(params: {
         }
         if (
           larkInstructionHandoff.backendToolContract?.toolName ===
-          "finance_learning_pipeline_orchestrator"
+            "finance_learning_pipeline_orchestrator" &&
+          !looksLikeLearningTimeboxStartRequest(ctx.content)
         ) {
           const learningWorkspaceDir = resolveAgentWorkspaceDir(
             cfg as OpenClawConfig,

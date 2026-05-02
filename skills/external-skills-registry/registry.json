@@ -44,6 +44,21 @@
         "python3 skills/skill-creator/scripts/quick_validate.py skills/skill-quality-audit"
       ],
       "uninstall": ["rm -rf skills/skill-quality-audit"]
+    },
+    {
+      "name": "ml-research-loop",
+      "localPath": "skills/ml-research-loop",
+      "sourceUrls": [
+        "https://github.com/huggingface/ml-intern",
+        "https://huggingface.co/spaces/smolagents/ml-intern",
+        "https://huggingface.co/blog/cmpatino/ml-intern-takehome"
+      ],
+      "installedAs": "local-adaptation",
+      "purpose": "Adapt ML-intern-style paper reading, experiment planning, evaluation receipts, and report handoffs without vendoring or executing third-party code.",
+      "validation": [
+        "python3 skills/skill-creator/scripts/quick_validate.py skills/ml-research-loop"
+      ],
+      "uninstall": ["rm -rf skills/ml-research-loop"]
     }
   ]
 }

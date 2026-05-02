@@ -55,6 +55,7 @@ vi.mock("../../config/config.js", async () => {
 
 vi.mock("../../agents/agent-scope.js", () => ({
   listAgentIds: () => ["main"],
+  resolveAgentEffectiveModelPrimary: () => undefined,
 }));
 
 vi.mock("../../infra/agent-events.js", () => ({
@@ -320,6 +321,44 @@ describe("gateway agent handler", () => {
     expect(capturedEntry).toBeDefined();
     expect(capturedEntry?.cliSessionIds).toEqual(existingCliSessionIds);
     expect(capturedEntry?.claudeCliSessionId).toBe(existingClaudeCliSessionId);
+  });
+
+  it("persists per-call model overrides from gateway agent params", async () => {
+    mockMainSessionEntry({
+      modelProvider: "minimax",
+      model: "MiniMax-M2.7",
+    });
+
+    let capturedEntry: Record<string, unknown> | undefined;
+    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
+      const store: Record<string, unknown> = {
+        "agent:main:main": buildExistingMainStoreEntry({
+          modelProvider: "minimax",
+          model: "MiniMax-M2.7",
+        }),
+      };
+      const result = await updater(store);
+      capturedEntry = store["agent:main:main"] as Record<string, unknown>;
+      return result;
+    });
+    mocks.agentCommand.mockResolvedValue({
+      payloads: [{ text: "ok" }],
+      meta: { durationMs: 100 },
+    });
+
+    await invokeAgent({
+      message: "run role",
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      model: "moonshot/kimi-k2.5",
+      idempotencyKey: "test-model-param",
+    });
+
+    await vi.waitFor(() => expect(mocks.agentCommand).toHaveBeenCalled());
+    expect(capturedEntry?.providerOverride).toBe("moonshot");
+    expect(capturedEntry?.modelOverride).toBe("kimi-k2.5");
+    expect(capturedEntry?.modelProvider).toBeUndefined();
+    expect(capturedEntry?.model).toBeUndefined();
   });
 
   it("injects a timestamp into the message passed to agentCommand", async () => {

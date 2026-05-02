@@ -9,6 +9,7 @@ import {
   looksLikeExecutionAuthorityScopeAsk,
   looksLikeFailureReportScopeAsk,
   looksLikeFinanceLearningPipelineAsk,
+  looksLikeGitHubProjectCapabilityIntakeAsk,
   looksLikeHighStakesRiskScopeAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikeProgressStatusScopeAsk,
@@ -110,10 +111,12 @@ export type LarkAgentInstructionHandoff = {
   targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
   deterministicSurface?: FeishuChatSurfaceName;
   backendToolContract?: {
-    toolName: "finance_learning_pipeline_orchestrator";
+    toolName: "finance_learning_pipeline_orchestrator" | "github_project_capability_intake";
     learningIntent: string;
-    sourceRequirement: "safe_local_or_manual_source_required";
-    expectedProof: readonly ["retrievalReceiptPath", "retrievalReviewPath"];
+    sourceRequirement:
+      | "safe_local_or_manual_source_required"
+      | "repo_url_or_readme_summary_required";
+    expectedProof: readonly string[];
   };
   notice: string;
 };
@@ -152,6 +155,17 @@ function resolveBackendToolContract(params: {
   family: LarkRoutingFamily;
   utterance: string;
 }): LarkAgentInstructionHandoff["backendToolContract"] {
+  if (
+    params.family === "learning_external_source" &&
+    looksLikeGitHubProjectCapabilityIntakeAsk(params.utterance)
+  ) {
+    return {
+      toolName: "github_project_capability_intake",
+      learningIntent: params.utterance,
+      sourceRequirement: "repo_url_or_readme_summary_required",
+      expectedProof: ["capabilityFamily", "existingEmbryos", "adoptionDecision"],
+    };
+  }
   if (
     params.family !== "market_capability_learning_intake" &&
     !looksLikeFinanceLearningPipelineAsk(params.utterance)

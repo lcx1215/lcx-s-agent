@@ -40,6 +40,7 @@ import { createFinancePromotionProposalStatusTool } from "./tools/finance-promot
 import { createFinancePromotionReviewTool } from "./tools/finance-promotion-review-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./tools/finance-research-source-workbench-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
+import { createGitHubProjectCapabilityIntakeTool } from "./tools/github-project-capability-intake-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
 import { createLobsterWorkfaceAppTool } from "./tools/lobster-workface-app-tool.js";
 import { createLocalMemoryRecordTool } from "./tools/local-memory-record-tool.js";
@@ -319,6 +320,9 @@ export function createOpenClawTools(options?: {
       workspaceDir,
     }),
     createFinanceLearningCapabilityApplyTool({
+      workspaceDir,
+    }),
+    createGitHubProjectCapabilityIntakeTool({
       workspaceDir,
     }),
     ...createFinanceFrameworkDomainProducerTools({

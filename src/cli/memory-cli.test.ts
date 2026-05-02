@@ -7,6 +7,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 const getMemorySearchManager = vi.fn();
 const loadConfig = vi.fn(() => ({}));
 const resolveDefaultAgentId = vi.fn(() => "main");
+const resolveAgentWorkspaceDir = vi.fn(() => "/tmp/openclaw");
 const resolveCommandSecretRefsViaGateway = vi.fn(async ({ config }: { config: unknown }) => ({
   resolvedConfig: config,
   diagnostics: [] as string[],
@@ -21,6 +22,7 @@ vi.mock("../config/config.js", () => ({
 }));
 
 vi.mock("../agents/agent-scope.js", () => ({
+  resolveAgentWorkspaceDir,
   resolveDefaultAgentId,
 }));
 
@@ -42,6 +44,7 @@ beforeAll(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
   getMemorySearchManager.mockClear();
+  resolveAgentWorkspaceDir.mockClear();
   resolveCommandSecretRefsViaGateway.mockClear();
   process.exitCode = undefined;
   setVerbose(false);
@@ -155,6 +158,52 @@ describe("memory cli", () => {
       expect.stringContaining("Embedding cache: enabled (123 entries)"),
     );
     expect(close).toHaveBeenCalled();
+  });
+
+  it("lists Lark language handoff receipts from a workspace override", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-cli-lark-handoffs-"));
+    try {
+      const receiptPath = path.join(
+        tmpDir,
+        "memory",
+        "lark-language-handoff-receipts",
+        "2026-04-30",
+        "om_123.json",
+      );
+      await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+      await fs.writeFile(
+        receiptPath,
+        JSON.stringify({
+          generatedAt: "2026-04-30T10:00:00.000Z",
+          boundary: "language_handoff_only",
+          handoff: {
+            family: "learning_external_source",
+            source: "real_lark_turn",
+            confidence: 0.9,
+            backendToolContract: { toolName: "github_project_capability_intake" },
+            missingBeforeExecution: ["repo_url_or_readme_summary_required"],
+          },
+        }),
+        "utf-8",
+      );
+      const log = spyRuntimeLogs();
+
+      await runMemoryCli(["receipts", "lark-handoffs", "--workspace", tmpDir, "--json"]);
+
+      const payload = firstLoggedJson(log);
+      expect(payload.workspaceDir).toBe(tmpDir);
+      expect(payload.receipts).toEqual([
+        expect.objectContaining({
+          path: "memory/lark-language-handoff-receipts/2026-04-30/om_123.json",
+          boundary: "language_handoff_only",
+          family: "learning_external_source",
+          backendTool: "github_project_capability_intake",
+          missingBeforeExecution: ["repo_url_or_readme_summary_required"],
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("resolves configured memory SecretRefs through gateway snapshot", async () => {

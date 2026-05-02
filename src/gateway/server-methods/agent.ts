@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { listAgentIds } from "../../agents/agent-scope.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
+import { parseModelRef, resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import { buildBareSessionResetPrompt } from "../../auto-reply/reply/session-reset-prompt.js";
 import { agentCommandFromIngress } from "../../commands/agent.js";
 import { loadConfig } from "../../config/config.js";
@@ -21,6 +22,7 @@ import { resolveMessageChannelSelection } from "../../infra/outbound/channel-sel
 import { classifySessionKeyShape, normalizeAgentId } from "../../routing/session-key.js";
 import { defaultRuntime } from "../../runtime.js";
 import { normalizeInputProvenance, type InputProvenance } from "../../sessions/input-provenance.js";
+import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { normalizeSessionDeliveryFields } from "../../utils/delivery-context.js";
 import {
@@ -180,6 +182,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       replyTo?: string;
       sessionId?: string;
       sessionKey?: string;
+      model?: string;
       thinking?: string;
       deliver?: boolean;
       attachments?: Array<{
@@ -397,6 +400,27 @@ export const agentHandlers: GatewayRequestHandlers = {
       resolvedGroupChannel = resolvedGroupChannel || inheritedGroup?.groupChannel;
       resolvedGroupSpace = resolvedGroupSpace || inheritedGroup?.groupSpace;
       const deliveryFields = normalizeSessionDeliveryFields(entry);
+      const modelOverrideRaw =
+        typeof request.model === "string" && request.model.trim()
+          ? request.model.trim()
+          : undefined;
+      const modelOverrideSelection = modelOverrideRaw
+        ? parseModelRef(
+            modelOverrideRaw,
+            resolveDefaultModelForAgent({ cfg, agentId: sessionAgent }).provider,
+          )
+        : undefined;
+      if (modelOverrideRaw && !modelOverrideSelection) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            `invalid agent params: malformed model "${modelOverrideRaw}"`,
+          ),
+        );
+        return;
+      }
       const nextEntryPatch: SessionEntry = {
         sessionId,
         updatedAt: now,
@@ -423,6 +447,12 @@ export const agentHandlers: GatewayRequestHandlers = {
         claudeCliSessionId: entry?.claudeCliSessionId,
       };
       sessionEntry = mergeSessionEntry(entry, nextEntryPatch);
+      if (modelOverrideSelection) {
+        applyModelOverrideToSessionEntry({
+          entry: sessionEntry,
+          selection: modelOverrideSelection,
+        });
+      }
       const sendPolicy = resolveSendPolicy({
         cfg,
         entry,
@@ -456,6 +486,12 @@ export const agentHandlers: GatewayRequestHandlers = {
             candidates: target.storeKeys,
           });
           const merged = mergeSessionEntry(store[canonicalSessionKey], nextEntryPatch);
+          if (modelOverrideSelection) {
+            applyModelOverrideToSessionEntry({
+              entry: merged,
+              selection: modelOverrideSelection,
+            });
+          }
           store[canonicalSessionKey] = merged;
           return merged;
         });

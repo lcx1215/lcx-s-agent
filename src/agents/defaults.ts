@@ -9,13 +9,18 @@ export const DEFAULT_MODEL = "claude-opus-4-6";
 // Conservative fallback used when model metadata is unavailable.
 export const DEFAULT_CONTEXT_TOKENS = 200_000;
 
+export type BuiltInDefaultModelReason =
+  | "minimax_api_key"
+  | "minimax_oauth_token"
+  | "anthropic_fallback";
+
 function hasConfiguredSecret(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
 
 export function resolveBuiltInDefaultModelReason(
   env: NodeJS.ProcessEnv = process.env,
-): "minimax_api_key" | "minimax_oauth_token" | "anthropic_fallback" {
+): BuiltInDefaultModelReason {
   if (hasConfiguredSecret(env.MINIMAX_API_KEY)) {
     return "minimax_api_key";
   }
@@ -23,6 +28,17 @@ export function resolveBuiltInDefaultModelReason(
     return "minimax_oauth_token";
   }
   return "anthropic_fallback";
+}
+
+export function formatBuiltInDefaultModelReason(reason: BuiltInDefaultModelReason): string {
+  switch (reason) {
+    case "minimax_api_key":
+      return "MINIMAX_API_KEY";
+    case "minimax_oauth_token":
+      return "MINIMAX_OAUTH_TOKEN";
+    case "anthropic_fallback":
+      return "built-in Anthropic fallback";
+  }
 }
 
 /**

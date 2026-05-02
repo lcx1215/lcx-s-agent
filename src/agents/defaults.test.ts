@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { withEnvAsync } from "../test-utils/env.js";
-import { resolveBuiltInDefaultModelReason, resolveBuiltInDefaultModelRef } from "./defaults.js";
+import {
+  formatBuiltInDefaultModelReason,
+  resolveBuiltInDefaultModelReason,
+  resolveBuiltInDefaultModelRef,
+} from "./defaults.js";
 
 describe("resolveBuiltInDefaultModelRef", () => {
   it("falls back to Anthropic when MiniMax credentials are absent", async () => {
@@ -16,6 +20,9 @@ describe("resolveBuiltInDefaultModelRef", () => {
           model: "claude-opus-4-6",
         });
         expect(resolveBuiltInDefaultModelReason()).toBe("anthropic_fallback");
+        expect(formatBuiltInDefaultModelReason("anthropic_fallback")).toBe(
+          "built-in Anthropic fallback",
+        );
       },
     );
   });
@@ -33,6 +40,7 @@ describe("resolveBuiltInDefaultModelRef", () => {
           model: "MiniMax-M2.7",
         });
         expect(resolveBuiltInDefaultModelReason()).toBe("minimax_api_key");
+        expect(formatBuiltInDefaultModelReason("minimax_api_key")).toBe("MINIMAX_API_KEY");
       },
     );
   });
@@ -50,6 +58,7 @@ describe("resolveBuiltInDefaultModelRef", () => {
           model: "MiniMax-M2.7",
         });
         expect(resolveBuiltInDefaultModelReason()).toBe("minimax_oauth_token");
+        expect(formatBuiltInDefaultModelReason("minimax_oauth_token")).toBe("MINIMAX_OAUTH_TOKEN");
       },
     );
   });

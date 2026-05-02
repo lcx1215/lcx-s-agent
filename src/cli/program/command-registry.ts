@@ -194,7 +194,7 @@ const coreEntries: CoreCliEntry[] = [
       {
         name: "capabilities",
         description: "Show configured model capabilities and provider-native tool reality",
-        hasSubcommands: false,
+        hasSubcommands: true,
       },
     ],
     register: async ({ program }) => {

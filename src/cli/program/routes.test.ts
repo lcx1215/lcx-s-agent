@@ -51,6 +51,10 @@ describe("program routes", () => {
     );
   });
 
+  it("does not fast-route capabilities subcommands", () => {
+    expect(findRoutedCommand(["capabilities", "github-intake"])).toBeNull();
+  });
+
   it("matches health route and preloads plugins only for text output", () => {
     const route = expectRoute(["health"]);
     expect(typeof route?.loadPlugins).toBe("function");

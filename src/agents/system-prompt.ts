@@ -105,6 +105,11 @@ function buildMemorySection(params: {
           "When answering a finance research question from retained learning, use finance_learning_capability_apply before drafting the answer. It retrieves capability cards through inspect, returns applicationStatus plus failedReason, reuse guidance, required inputs, causal checks, risk checks, answer scaffolds, and multi-capability synthesis plans; every non-dry apply writes a usage receipt and refreshes the same-day usage review immediately, including refusal/no-match cases. It keeps the answer research-only without execution approval or doctrine mutation.",
         ]
       : []),
+    ...(params.availableTools.has("github_project_capability_intake")
+      ? [
+          "When a GitHub project or trending repo feature should be considered for LCX Agent, use github_project_capability_intake first. It maps the selected feature to a capability family, existing internal embryos, and a bounded adoption target, writes an optional receipt, never fetches remote content, never installs or executes repo code, never touches live Feishu/Lark surfaces, and keeps protected memory untouched.",
+        ]
+      : []),
     ...(params.availableTools.has("finance_research_source_workbench")
       ? [
           "When a finance research source arrives as pasted text, a local file, or a safe manual URL reference and needs to become a local audit artifact before extraction, use finance_research_source_workbench. It runs the collection preflight, preserves source metadata for audit, never fetches remote content automatically, and returns finance_article_extract_capability_input as the next step when the posture is safe.",
@@ -670,6 +675,8 @@ export function buildAgentSystemPrompt(params: {
       "Summarize finance learning retrieval receipts into a same-day per-run quality review, link apply usage receipts/reviews when present, flag weak learning that did not become retrievable or application-ready, and keep Lark language corpus plus protected memory untouched",
     finance_learning_capability_apply:
       "Apply retained finance learning capability cards to one bounded research question by surfacing applicationStatus, failedReason, reuse guidance, required inputs, causal checks, risk checks, answer scaffolds, and multi-capability synthesis plans; writes a usage receipt and refreshes the same-day usage review on every non-dry apply, including no-match refusals; read-only and never creates trading advice, execution approval, or doctrine mutation",
+    github_project_capability_intake:
+      "Map one GitHub project feature into an LCX Agent capability family, existing internal embryos, and a bounded adoption decision; optionally writes a receipt and never fetches remote content, installs dependencies, executes repo code, touches live surfaces, or mutates protected memory",
     finance_research_source_workbench:
       "Normalize safe finance research sources from manual paste, local files, or manual URL references into local audit artifacts, preserve source metadata, and return finance_article_extract_capability_input as the next step without fetching remote content automatically",
     finance_article_extract_capability_input:
@@ -756,6 +763,7 @@ export function buildAgentSystemPrompt(params: {
     "finance_learning_retrieval_review",
     "finance_research_source_workbench",
     "finance_article_extract_capability_input",
+    "github_project_capability_intake",
     "finance_promotion_candidates",
     "finance_doctrine_teacher_feedback_candidate_input_review",
     "finance_doctrine_teacher_feedback_candidate_input_reconciliation",
