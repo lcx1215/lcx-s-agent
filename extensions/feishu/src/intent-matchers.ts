@@ -35,7 +35,7 @@ export function looksLikeVerticalFinanceLearningAsk(text: string): boolean {
 export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasExplicitPipelineExecutionCue =
-    /(finance_learning_pipeline_orchestrator|source intake|extract|attach|retrieval review|retrieval receipt|learninginternalizationstatus|application_ready|failedreason)/iu.test(
+    /(finance[_\s-]?learning[_\s-]?pipeline[_\s-]?orchestrator|source intake|extract|attach|retrieval review|retrieval receipt|learninginternalizationstatus|application[_\s-]?ready|failedreason|usable answer contract|usable answer lines)/iu.test(
       normalized,
     );
   const hasLearningIntent =

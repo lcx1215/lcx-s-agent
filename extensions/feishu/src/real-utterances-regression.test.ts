@@ -861,6 +861,32 @@ describe("real daily utterance regression", () => {
     expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
   });
 
+  it("keeps Lark-stripped finance pipeline validation ahead of a wrong live-probe API route", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance:
+        "live valid source check source test/fixtures/finance-learning-pipeline/valid-finance-article.md run financelearningpipelineorchestrator learningIntent ETF event triage workflow. Must show learningInternalizationStatus applicationready or failedReason usable answer contract usable answer lines. code lark-live-valid-source-20260502-1",
+      apiProvider: async () => ({
+        family: "live_probe_failure",
+        confidence: 0.91,
+        rationale: "wrongly treated the learning pipeline execution as a live probe status check",
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "market_capability_learning_intake",
+      source: "semantic",
+      targetSurface: "learning_command",
+      backendToolContract: {
+        toolName: "finance_learning_pipeline_orchestrator",
+        sourceRequirement: "safe_local_or_manual_source_required",
+      },
+    });
+    expect(handoff.notice).toContain("finance_learning_pipeline_orchestrator");
+    expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
+  });
+
   it("hands GitHub project feature adoption asks to the capability intake backend contract", async () => {
     const utterance =
       "现在github上热榜的一些项目，你看看哪些功能可以加进来，或者我们内部有没有这种功能的雏形";

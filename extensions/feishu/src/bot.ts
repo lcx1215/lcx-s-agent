@@ -1203,6 +1203,26 @@ function resolveFeishuFinanceLearningPipelineSource(params: {
   return undefined;
 }
 
+async function validateFeishuFinanceLearningLocalSource(params: {
+  workspaceDir: string;
+  localFilePath: string;
+}): Promise<{ ok: true } | { ok: false; reason: string; resolvedPath: string }> {
+  const resolvedWorkspace = path.resolve(params.workspaceDir);
+  const resolvedPath = path.resolve(resolvedWorkspace, params.localFilePath);
+  if (
+    resolvedPath !== resolvedWorkspace &&
+    !resolvedPath.startsWith(`${resolvedWorkspace}${path.sep}`)
+  ) {
+    return { ok: false, reason: "local_source_outside_workspace", resolvedPath };
+  }
+  try {
+    await fs.access(resolvedPath);
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: "local_source_not_found", resolvedPath };
+  }
+}
+
 function renderFeishuFinanceLearningPipelineMissingSourceReply(): string {
   return [
     "我识别到这是金融能力学习入口，但还缺安全 source，所以没有假装已经学完。",
@@ -5564,11 +5584,12 @@ export async function handleFeishuMessage(params: {
           });
           return;
         }
-        if (
-          larkInstructionHandoff.backendToolContract?.toolName ===
-            "finance_learning_pipeline_orchestrator" &&
-          !looksLikeLearningTimeboxStartRequest(ctx.content)
-        ) {
+        const shouldRunFinanceLearningPipelineBackend =
+          (larkInstructionHandoff.backendToolContract?.toolName ===
+            "finance_learning_pipeline_orchestrator" ||
+            looksLikeFinanceLearningPipelineAsk(ctx.content)) &&
+          !looksLikeLearningTimeboxStartRequest(ctx.content);
+        if (shouldRunFinanceLearningPipelineBackend) {
           const learningWorkspaceDir = resolveAgentWorkspaceDir(
             cfg as OpenClawConfig,
             route.agentId,
@@ -5611,6 +5632,53 @@ export async function handleFeishuMessage(params: {
             });
             return;
           }
+          if (pipelineSource.kind === "local_file") {
+            const sourceValidation = await validateFeishuFinanceLearningLocalSource({
+              workspaceDir: learningWorkspaceDir,
+              localFilePath: pipelineSource.localFilePath,
+            });
+            if (!sourceValidation.ok) {
+              const invalidSourceText = renderFeishuFinanceLearningPipelineReply({
+                ok: false,
+                reason: sourceValidation.reason,
+                failedStep: "source_intake",
+                errorMessage: `${sourceValidation.reason}: ${pipelineSource.localFilePath}`,
+                retrievalReceiptPath: "not_created",
+                retrievalReviewPath: "not_created",
+              });
+              const invalidSourceSendResult = await sendFeishuFinalTextReply({
+                replyRuntime: core.channel.reply,
+                dispatcher: effectiveDispatcher,
+                markDispatchIdle,
+                text: invalidSourceText,
+              });
+
+              clearFeishuGroupHistoryAfterDispatch({
+                isGroup,
+                chatHistories,
+                historyKey,
+                historyLimit,
+              });
+
+              await persistCapturedFeishuSurfaceLine({
+                ...buildFeishuSurfaceLinePersistContext({
+                  cfg,
+                  agentId: route.agentId,
+                  effectiveStateSurface,
+                  replyContract: controlRoomOrchestration?.replyContract,
+                  chatId: ctx.chatId,
+                  sessionKey: effectiveSessionKey,
+                  messageId: ctx.messageId,
+                  userMessage: ctx.content,
+                  apiReplyPayloads: larkApiReplyPayloads,
+                }),
+                finalReplyText: invalidSourceSendResult.queuedFinal ? invalidSourceText : undefined,
+                dispatchQueuedFinal: invalidSourceSendResult.queuedFinal,
+                dispatchFinalCount: invalidSourceSendResult.counts.final,
+              });
+              return;
+            }
+          }
 
           const pipelineTool = createFinanceLearningPipelineOrchestratorTool({
             workspaceDir: learningWorkspaceDir,
@@ -5627,7 +5695,8 @@ export async function handleFeishuMessage(params: {
               retrievalNotes:
                 "Operator provided a Lark-triggered finance learning source for bounded research-only source intake, extraction, attachment, retrieval receipt, and retrieval review.",
               allowedActionAuthority: "research_only",
-              learningIntent: larkInstructionHandoff.backendToolContract.learningIntent,
+              learningIntent:
+                larkInstructionHandoff.backendToolContract?.learningIntent ?? ctx.content,
               maxRetrievedCapabilities: 5,
               applicationValidationQuery: ctx.content,
               maxAppliedCapabilities: 3,
