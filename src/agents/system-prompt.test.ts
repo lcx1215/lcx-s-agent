@@ -802,7 +802,13 @@ describe("buildAgentSystemPrompt", () => {
       "When reviewing prior recommendations or turning a result into a lesson, use the outcome-review template so process quality, error type, and replacement rule are explicit.",
     );
     expect(prompt).toContain(
-      "For quantitative metrics such as beta, correlation, Sharpe, Sortino, max drawdown, or plain bond duration: use the quant_math tool instead of guessing or narrating approximate values from memory.",
+      "For quantitative metrics such as returns, covariance/correlation matrix, regression alpha/beta, rolling beta/correlation, Sharpe, Sortino, tracking error, information ratio, max drawdown/duration, rolling volatility/drawdown, portfolio return/volatility/risk contribution, risk-budget deviation, CAGR/Calmar, z-score, historical VaR, expected shortfall, Black-Scholes/Greeks, or plain bond duration/DV01/convexity: use the quant_math tool instead of guessing or narrating approximate values from memory.",
+    );
+    expect(prompt).toContain(
+      "Before spending extra model review tokens, use the review_tier tool for finance learning, portfolio-risk conclusions, durable-memory updates, doctrine/promotion-adjacent output, or strict-review requests; default to the lowest sufficient tier and only escalate to three_model_review for high-value or high-risk work.",
+    );
+    expect(prompt).toContain(
+      "When review_tier returns three_model_review, use review_panel to prepare the three reviewer work orders and reconciliation boundary before sending or preserving the output; do not treat the panel work order as completed provider review unless reviewer findings are actually available.",
     );
     expect(prompt).toContain(
       "Before finalizing, do one short red-team pass: what regime, narrative, or data path would invalidate the view, and what concrete evidence would falsify it?",

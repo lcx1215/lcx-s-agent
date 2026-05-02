@@ -49,6 +49,8 @@ import { createMessageTool } from "./tools/message-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
+import { createReviewPanelTool } from "./tools/review-panel-tool.js";
+import { createReviewTierTool } from "./tools/review-tier-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
 import { createSessionsHistoryTool } from "./tools/sessions-history-tool.js";
 import { createSessionsListTool } from "./tools/sessions-list-tool.js";
@@ -280,6 +282,10 @@ export function createOpenClawTools(options?: {
       config: options?.config,
     }),
     createQuantMathTool(),
+    createReviewTierTool(),
+    createReviewPanelTool({
+      workspaceDir,
+    }),
     createLocalMemoryRecordTool({
       workspaceDir,
     }),

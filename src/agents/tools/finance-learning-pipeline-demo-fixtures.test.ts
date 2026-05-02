@@ -196,4 +196,127 @@ describe("finance learning pipeline runbook fixtures", () => {
       }),
     );
   });
+
+  it("holdings risk math fixture becomes application-ready for portfolio review", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-runbook-");
+    const localFilePath = await seedFixture(
+      workspaceDir,
+      "valid-holdings-risk-math-article.md",
+      "memory/demo/valid-holdings-risk-math-article.md",
+    );
+    const tool = createFinanceLearningPipelineOrchestratorTool({ workspaceDir });
+
+    const result = await tool.execute("fixture-holdings-risk-math", {
+      sourceName: "Holdings Risk Math Fixture",
+      sourceType: "manual_article_source",
+      localFilePath,
+      title: "Holdings risk math review workflow",
+      retrievalNotes: SAFE_RETRIEVAL_NOTES,
+      allowedActionAuthority: "research_only",
+      learningIntent: "学习未来持仓分析需要的数学：波动、回撤、相关性、集中度、风险贡献和尾部风险",
+      maxRetrievedCapabilities: 5,
+      applicationValidationQuery:
+        "用持仓数学检查当前组合是否因为相关性、波动、集中度和风险贡献而需要 research-only 风险复核",
+      maxAppliedCapabilities: 3,
+    });
+
+    const details = result.details as Record<string, unknown>;
+    const retrievalFirstLearning = details.retrievalFirstLearning as Record<string, unknown>;
+    const applicationValidation = details.applicationValidation as Record<string, unknown>;
+    const appliedCapabilities = applicationValidation.appliedCapabilities as Array<
+      Record<string, unknown>
+    >;
+
+    expect(details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        retainedCandidateCount: 1,
+        inspectTool: "finance_learning_capability_inspect",
+      }),
+    );
+    expect(retrievalFirstLearning).toEqual(
+      expect.objectContaining({
+        learningInternalizationStatus: "application_ready",
+        failedReason: null,
+      }),
+    );
+    expect(String(retrievalFirstLearning.retrievalReceiptPath)).toMatch(
+      /^memory\/finance-learning-retrieval-receipts\//u,
+    );
+    expect(String(retrievalFirstLearning.retrievalReviewPath)).toMatch(
+      /^memory\/finance-learning-retrieval-reviews\//u,
+    );
+    expect(applicationValidation).toEqual(
+      expect.objectContaining({
+        ok: true,
+        applicationValidationStatus: "application_ready",
+        failedReason: null,
+      }),
+    );
+    expect(String(applicationValidation.usageReceiptPath)).toMatch(
+      /^memory\/finance-learning-apply-usage-receipts\//u,
+    );
+    expect(String(applicationValidation.usageReviewPath)).toMatch(
+      /^memory\/finance-learning-apply-usage-reviews\//u,
+    );
+    expect(appliedCapabilities.map((capability) => capability.capabilityName)).toContain(
+      "Holdings risk math review workflow",
+    );
+  });
+
+  it("factor timing validation fixture becomes application-ready for signal review", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-runbook-");
+    const localFilePath = await seedFixture(
+      workspaceDir,
+      "valid-factor-timing-validation-article.md",
+      "memory/demo/valid-factor-timing-validation-article.md",
+    );
+    const tool = createFinanceLearningPipelineOrchestratorTool({ workspaceDir });
+
+    const result = await tool.execute("fixture-factor-timing-validation", {
+      sourceName: "Factor Timing Validation Fixture",
+      sourceType: "manual_article_source",
+      localFilePath,
+      title: "Factor timing validation workflow",
+      retrievalNotes: SAFE_RETRIEVAL_NOTES,
+      allowedActionAuthority: "research_only",
+      learningIntent:
+        "学习 ETF 因子择时验证：walk-forward、样本外、交易成本、换手、confounder、whipsaw 和 drawdown",
+      maxRetrievedCapabilities: 5,
+      applicationValidationQuery:
+        "用因子择时验证流程检查一个 ETF timing signal 是否因为样本外、confounder、whipsaw、drawdown、成本和换手问题而只能 research-only",
+      maxAppliedCapabilities: 3,
+    });
+
+    const details = result.details as Record<string, unknown>;
+    const retrievalFirstLearning = details.retrievalFirstLearning as Record<string, unknown>;
+    const applicationValidation = details.applicationValidation as Record<string, unknown>;
+    const appliedCapabilities = applicationValidation.appliedCapabilities as Array<
+      Record<string, unknown>
+    >;
+
+    expect(details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        retainedCandidateCount: 1,
+        inspectTool: "finance_learning_capability_inspect",
+      }),
+    );
+    expect(retrievalFirstLearning).toEqual(
+      expect.objectContaining({
+        learningInternalizationStatus: "application_ready",
+        failedReason: null,
+      }),
+    );
+    expect(applicationValidation).toEqual(
+      expect.objectContaining({
+        ok: true,
+        applicationValidationStatus: "application_ready",
+        failedReason: null,
+      }),
+    );
+    expect(appliedCapabilities.map((capability) => capability.capabilityName)).toContain(
+      "Factor timing validation workflow",
+    );
+  });
 });

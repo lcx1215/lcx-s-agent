@@ -46,6 +46,103 @@
       "name": "volatility indicators",
       "summary": "Volatility proxy is elevated enough to require wait discipline and red-team invalidation.",
       "evidenceCategories": ["portfolio_risk_evidence", "implementation_evidence"]
+    },
+    {
+      "name": "current position weights",
+      "summary": "Current weights are available for checking whether the ETF event creates concentration risk.",
+      "evidenceCategories": ["portfolio_risk_evidence", "implementation_evidence"]
+    },
+    {
+      "name": "recent price history",
+      "summary": "Recent price history is available for volatility, drawdown, and sample-window checks.",
+      "evidenceCategories": [
+        "equity_market_evidence",
+        "portfolio_risk_evidence",
+        "implementation_evidence"
+      ]
+    },
+    {
+      "name": "realized volatility estimate",
+      "summary": "Realized volatility estimate is available for separating elevated risk from narrative conviction.",
+      "evidenceCategories": [
+        "options_volatility_evidence",
+        "portfolio_risk_evidence",
+        "implementation_evidence"
+      ]
+    },
+    {
+      "name": "drawdown history",
+      "summary": "Drawdown history is available for checking whether the move is normal noise or regime stress.",
+      "evidenceCategories": ["portfolio_risk_evidence", "implementation_evidence"]
+    },
+    {
+      "name": "correlation matrix",
+      "summary": "Correlation matrix is available for checking whether the holding is moving with broader risk exposures.",
+      "evidenceCategories": ["portfolio_risk_evidence", "implementation_evidence"]
+    },
+    {
+      "name": "ETF or index exposure map",
+      "summary": "Exposure map is available for linking the ETF event to major sector, factor, or index exposures.",
+      "evidenceCategories": [
+        "etf_regime_evidence",
+        "equity_market_evidence",
+        "portfolio_risk_evidence"
+      ]
+    },
+    {
+      "name": "macro rate context",
+      "summary": "Macro rate context is available for checking whether valuation or duration pressure amplifies the event.",
+      "evidenceCategories": ["macro_rates_evidence", "portfolio_risk_evidence"]
+    },
+    {
+      "name": "factor definition",
+      "summary": "The timing factor is defined before any validation claim is made.",
+      "evidenceCategories": ["implementation_evidence", "causal_chain_evidence"]
+    },
+    {
+      "name": "ETF or asset universe",
+      "summary": "The ETF or asset universe is frozen for sample-out and benchmark checks.",
+      "evidenceCategories": ["etf_regime_evidence", "equity_market_evidence"]
+    },
+    {
+      "name": "rebalance schedule",
+      "summary": "The rebalance schedule is available for detecting timing leakage and turnover pressure.",
+      "evidenceCategories": ["implementation_evidence", "backtest_or_empirical_evidence"]
+    },
+    {
+      "name": "walk-forward split",
+      "summary": "Walk-forward split is available so the timing signal is not judged only in-sample.",
+      "evidenceCategories": ["backtest_or_empirical_evidence", "implementation_evidence"]
+    },
+    {
+      "name": "out-of-sample returns",
+      "summary": "Out-of-sample returns are available for checking whether factor timing survives beyond the fit window.",
+      "evidenceCategories": ["backtest_or_empirical_evidence", "equity_market_evidence"]
+    },
+    {
+      "name": "benchmark returns",
+      "summary": "Benchmark returns are available for comparing the timing signal to a simpler baseline.",
+      "evidenceCategories": ["backtest_or_empirical_evidence", "equity_market_evidence"]
+    },
+    {
+      "name": "transaction cost assumption",
+      "summary": "Transaction cost assumption is available for testing whether turnover destroys the apparent edge.",
+      "evidenceCategories": ["backtest_or_empirical_evidence", "implementation_evidence"]
+    },
+    {
+      "name": "turnover estimate",
+      "summary": "Turnover estimate is available for checking whether factor timing is too costly or fragile.",
+      "evidenceCategories": ["backtest_or_empirical_evidence", "portfolio_risk_evidence"]
+    },
+    {
+      "name": "whipsaw log",
+      "summary": "Whipsaw log is available for identifying false timing switches and noisy regime transitions.",
+      "evidenceCategories": ["backtest_or_empirical_evidence", "portfolio_risk_evidence"]
+    },
+    {
+      "name": "confounder notes",
+      "summary": "Confounder notes are available for checking whether the factor is just rates, sector, beta, or liquidity exposure in disguise.",
+      "evidenceCategories": ["causal_chain_evidence", "backtest_or_empirical_evidence"]
     }
   ],
   "redTeamInvalidation": [
@@ -53,5 +150,17 @@
     "If credit and funding stress remain benign, do not promote the headline cluster into a liquidity-regime thesis.",
     "If volatility rises while source evidence stays thin, keep the output at watch-only research framing."
   ],
-  "noActionBoundary": "research_only_no_trade_approval"
+  "noActionBoundary": "research_only_no_trade_approval",
+  "quantMathInputs": {
+    "positionWeights": [0.55, 0.3, 0.15],
+    "covarianceMatrix": [
+      [0.0441, 0.018, 0.009],
+      [0.018, 0.0324, 0.006],
+      [0.009, 0.006, 0.0225]
+    ],
+    "targetRiskBudgets": [0.4, 0.35, 0.25],
+    "returns": [0.012, -0.006, 0.018, -0.021, 0.009, 0.014],
+    "benchmarkReturns": [0.009, -0.004, 0.013, -0.015, 0.006, 0.011],
+    "priceLevels": [100, 103, 101, 99, 102, 106, 104]
+  }
 }

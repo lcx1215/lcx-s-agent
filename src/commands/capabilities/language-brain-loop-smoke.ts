@@ -1,8 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolveReviewTier } from "../../agents/review-tier-policy.js";
 import { createFinanceLearningCapabilityApplyTool } from "../../agents/tools/finance-learning-capability-apply-tool.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../agents/tools/finance-learning-pipeline-orchestrator-tool.js";
+import { createQuantMathTool } from "../../agents/tools/quant-math-tool.js";
+import { createReviewPanelTool } from "../../agents/tools/review-panel-tool.js";
 import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
 
 const SAFE_RETRIEVAL_NOTES =
@@ -25,6 +28,16 @@ const CAPABILITY_FIXTURES = [
     "ETF risk sizing review workflow",
     "ETF Risk Sizing Fixture",
   ],
+  [
+    "valid-holdings-risk-math-article.md",
+    "Holdings risk math review workflow",
+    "Holdings Risk Math Fixture",
+  ],
+  [
+    "valid-factor-timing-validation-article.md",
+    "Factor timing validation workflow",
+    "Factor Timing Validation Fixture",
+  ],
 ] as const;
 
 export type LanguageBrainLoopSmokeCommandOptions = {
@@ -40,6 +53,9 @@ export type LanguageBrainLoopSmokePayload = {
   language: Record<string, unknown>;
   brain: Record<string, unknown>;
   analysis: Record<string, unknown>;
+  math: Record<string, unknown>;
+  review: Record<string, unknown>;
+  reviewPanel: Record<string, unknown>;
   memory: {
     loopReceiptPath: string;
   };
@@ -56,6 +72,14 @@ type FreshEventReview = {
   freshInputs: Array<{ name: string; evidenceCategories: string[] }>;
   redTeamInvalidation: string[];
   noActionBoundary: string;
+  quantMathInputs: {
+    positionWeights: number[];
+    covarianceMatrix: number[][];
+    targetRiskBudgets: number[];
+    returns: number[];
+    benchmarkReturns: number[];
+    priceLevels: number[];
+  };
 };
 
 type LocalLarkStyleHandoff = {
@@ -176,11 +200,79 @@ function buildEventReviewDraft(params: {
   };
 }
 
+async function runQuantMathChecks(event: FreshEventReview) {
+  const tool = createQuantMathTool();
+  const riskBudget = asRecord(
+    (
+      await tool.execute("cli-loop-quant-risk-budget", {
+        action: "risk_budget_deviation",
+        weights: event.quantMathInputs.positionWeights,
+        covarianceMatrix: event.quantMathInputs.covarianceMatrix,
+        targetRiskBudgets: event.quantMathInputs.targetRiskBudgets,
+      })
+    ).details,
+    "riskBudget.details",
+  );
+  const rollingBeta = asRecord(
+    (
+      await tool.execute("cli-loop-quant-rolling-beta", {
+        action: "rolling_beta",
+        series: event.quantMathInputs.returns,
+        benchmark: event.quantMathInputs.benchmarkReturns,
+        window: 3,
+      })
+    ).details,
+    "rollingBeta.details",
+  );
+  const drawdownDuration = asRecord(
+    (
+      await tool.execute("cli-loop-quant-drawdown-duration", {
+        action: "drawdown_duration",
+        series: event.quantMathInputs.priceLevels,
+        seriesMode: "levels",
+      })
+    ).details,
+    "drawdownDuration.details",
+  );
+  const calmar = asRecord(
+    (
+      await tool.execute("cli-loop-quant-calmar", {
+        action: "calmar_ratio",
+        series: event.quantMathInputs.priceLevels,
+        seriesMode: "levels",
+        periodsPerYear: 252,
+      })
+    ).details,
+    "calmar.details",
+  );
+
+  assert(
+    typeof riskBudget.maxAbsoluteDeviation === "number",
+    "risk budget deviation should be numeric",
+  );
+  assert(Array.isArray(rollingBeta.values), "rolling beta should return window values");
+  assert(typeof drawdownDuration.maxDuration === "number", "drawdown duration should be numeric");
+  assert(typeof calmar.calmarRatio === "number", "Calmar ratio should be numeric");
+
+  return {
+    localTool: "quant_math",
+    checks: [riskBudget.action, rollingBeta.action, drawdownDuration.action, calmar.action],
+    riskBudgetMaxAbsoluteDeviation: riskBudget.maxAbsoluteDeviation,
+    rollingBetaWindows: rollingBeta.values.length,
+    maxDrawdownDuration: drawdownDuration.maxDuration,
+    calmarRatio: calmar.calmarRatio,
+    noModelMathGuessing: true,
+  };
+}
+
 async function writeLoopReceipt(params: {
   workspaceDir: string;
   language: Record<string, unknown>;
   brain: Record<string, unknown>;
   analysis: Record<string, unknown>;
+  math: Record<string, unknown>;
+  review: Record<string, unknown>;
+  reviewPanel: Record<string, unknown>;
 }) {
   const dateKey = new Date().toISOString().slice(0, 10);
   const relDir = path.join("memory", "agent-loop-receipts", dateKey);
@@ -196,6 +288,9 @@ async function writeLoopReceipt(params: {
       language: params.language,
       brain: params.brain,
       analysis: params.analysis,
+      math: params.math,
+      review: params.review,
+      reviewPanel: params.reviewPanel,
       memory: {
         loopReceiptPath: relPath.split(path.sep).join("/"),
       },
@@ -217,6 +312,9 @@ function formatText(payload: Record<string, unknown>): string {
   const language = asRecord(payload.language, "language");
   const brain = asRecord(payload.brain, "brain");
   const analysis = asRecord(payload.analysis, "analysis");
+  const math = asRecord(payload.math, "math");
+  const review = asRecord(payload.review, "review");
+  const reviewPanel = asRecord(payload.reviewPanel, "reviewPanel");
   const memory = asRecord(payload.memory, "memory");
   return [
     "LCX language-brain-analysis-memory loop smoke",
@@ -228,6 +326,11 @@ function formatText(payload: Record<string, unknown>): string {
     `brain synthesis: ${String(brain.synthesisMode)}`,
     `candidate count: ${String(brain.candidateCount)}`,
     `analysis status: ${String(analysis.eventReviewStatus)}`,
+    `math tool: ${String(math.localTool)}`,
+    `math checks: ${stringArray(math.checks).join(", ")}`,
+    `review tier: ${String(review.tier)}`,
+    `review token policy: ${String(review.tokenPolicy)}`,
+    `review panel status: ${String(reviewPanel.status)}`,
     `no-action boundary: ${String(analysis.noActionBoundary)}`,
     `receipt: ${String(memory.loopReceiptPath)}`,
     "",
@@ -275,7 +378,7 @@ export async function runLanguageBrainLoopSmoke(
   });
   const applyResult = await applyTool.execute("cli-loop-apply", {
     queryText: event.researchQuestion,
-    maxCandidates: 5,
+    maxCandidates: 6,
   });
   const applyDetails = asRecord(applyResult.details, "applyResult.details");
   assert(applyDetails.ok === true, "capability apply should succeed");
@@ -286,6 +389,7 @@ export async function runLanguageBrainLoopSmoke(
   const eventReviewDraft = buildEventReviewDraft({ event, applyDetails });
   assert(eventReviewDraft.status === "research_review_ready", "event review should be ready");
   assert(eventReviewDraft.noActionBoundary, "no-action boundary should hold");
+  const math = await runQuantMathChecks(event);
 
   const language = {
     family: handoff.family,
@@ -305,11 +409,33 @@ export async function runLanguageBrainLoopSmoke(
     missingEvidenceCategories: eventReviewDraft.missingEvidenceCategories,
     noActionBoundary: eventReviewDraft.noActionBoundary,
   };
+  const review = resolveReviewTier({
+    taskKind: "finance_learning",
+    hasLocalToolResults: true,
+    hasQuantMathResults: true,
+    writesDurableMemory: false,
+    involvesPortfolioRisk: true,
+  });
+  const reviewPanelTool = createReviewPanelTool({
+    workspaceDir: workspace.workspaceDir,
+  });
+  const reviewPanelResult = await reviewPanelTool.execute("cli-loop-review-panel", {
+    taskKind: "finance_learning",
+    outputText: JSON.stringify({ language, brain, analysis, math }, null, 2),
+    hasLocalToolResults: true,
+    hasQuantMathResults: true,
+    writesDurableMemory: false,
+    involvesPortfolioRisk: true,
+  });
+  const reviewPanel = asRecord(reviewPanelResult.details, "reviewPanel.details");
   const receipt = await writeLoopReceipt({
     workspaceDir: workspace.workspaceDir,
     language,
     brain,
     analysis,
+    math,
+    review,
+    reviewPanel,
   });
   return {
     ok: true,
@@ -318,6 +444,9 @@ export async function runLanguageBrainLoopSmoke(
     language,
     brain,
     analysis,
+    math,
+    review,
+    reviewPanel,
     memory: {
       loopReceiptPath: receipt.relPath,
     },

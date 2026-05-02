@@ -5482,7 +5482,13 @@ export async function handleFeishuMessage(params: {
         return;
       }
 
-      if (surfaceRouting.targetSurface === "learning_command") {
+      const shouldUseLearningCommandBackend =
+        surfaceRouting.targetSurface === "learning_command" ||
+        (larkInstructionHandoff.targetSurface === "learning_command" &&
+          larkInstructionHandoff.backendToolContract?.toolName ===
+            "finance_learning_pipeline_orchestrator");
+
+      if (shouldUseLearningCommandBackend) {
         if (looksLikeMarketIntelligencePacketAsk(ctx.content)) {
           log(
             `feishu[${account.accountId}]: running bounded market-intelligence packet for message ${ctx.messageId}`,

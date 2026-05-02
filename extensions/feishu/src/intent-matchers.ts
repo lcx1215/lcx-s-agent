@@ -39,7 +39,7 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
       normalized,
     );
   const hasLearningIntent =
-    /(开始学|开始学习|去学|学一下|学学|学习|学会|学成|训练|练出|练好|补一下|补齐|补强|提升|强化|加强|研究一下|研究明白|搞懂|内化|做成能力|能力做好|能力补齐|接下来学|让它学|让你学|你去学|learn|study|internalize)/u.test(
+    /(开始学|开始学习|去学|学一下|学学|学习|学会|学成|训练|练出|练好|补一下|补齐|补强|提升|强化|加强|研究一下|研究明白|搞懂|内化|做成能力|能力做好|能力补齐|接下来学|让它学|让你学|你去学|你自己学|自己学|learn|study|internalize)/u.test(
       normalized,
     );
   const hasFinanceDomain =
@@ -48,6 +48,10 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
     );
   const hasPipelineCue =
     /(能力|能力卡|capability|capability card|pipeline|管线|receipt|review|日结|检索|retrieval|内化|可检索|学成|做成|沉淀|attach|extract|source intake|学习流程|完整学习流程|一套|方法|框架|策略|workflow|checklist|规则|rule)/u.test(
+      normalized,
+    );
+  const hasFinanceMethodKnowledgeCue =
+    /(数学|物理|概率|统计|概率统计|时间序列|随机过程|布朗运动|ito|伊藤|优化|线性代数|矩阵|微观结构|经济物理|金融数学|量化数学|market microstructure|stochastic process|time series|optimization)/iu.test(
       normalized,
     );
   const asksAuditOnly =
@@ -68,7 +72,12 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
   if (hasExplicitPipelineExecutionCue && hasFinanceDomain) {
     return true;
   }
-  return hasLearningIntent && hasFinanceDomain && hasPipelineCue && !asksAuditOnly;
+  return (
+    hasLearningIntent &&
+    hasFinanceDomain &&
+    (hasPipelineCue || hasFinanceMethodKnowledgeCue) &&
+    !asksAuditOnly
+  );
 }
 
 export function looksLikeGitHubProjectCapabilityIntakeAsk(text: string): boolean {
