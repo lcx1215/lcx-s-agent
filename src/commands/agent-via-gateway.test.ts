@@ -107,6 +107,27 @@ describe("agentCliCommand", () => {
     });
   });
 
+  it("forwards model overrides to gateway agent turns", async () => {
+    await withTempStore(async () => {
+      mockGatewaySuccessReply();
+
+      await agentCliCommand(
+        {
+          message: "classify",
+          agent: "main",
+          model: "minimax-portal/MiniMax-M2.5-Lightning",
+        },
+        runtime,
+      );
+
+      const request = vi.mocked(callGateway).mock.calls[0]?.[0] as {
+        params?: { model?: string; modelOnce?: boolean };
+      };
+      expect(request.params?.model).toBe("minimax-portal/MiniMax-M2.5-Lightning");
+      expect(request.params?.modelOnce).toBe(true);
+    });
+  });
+
   it("falls back to embedded agent when gateway fails", async () => {
     await withTempStore(async () => {
       vi.mocked(callGateway).mockRejectedValue(new Error("gateway not connected"));

@@ -29,6 +29,7 @@ import {
   modelKey,
   normalizeModelRef,
   normalizeProviderId,
+  parseModelRef,
   resolveConfiguredModelRef,
   resolveDefaultModelForAgent,
   resolveThinkingDefault,
@@ -636,6 +637,23 @@ async function agentCommandInternal(
       sessionEntry = next;
     }
 
+    const configuredDefaultRef = resolveDefaultModelForAgent({
+      cfg,
+      agentId: sessionAgentId,
+    });
+    const { provider: defaultProvider, model: defaultModel } = normalizeModelRef(
+      configuredDefaultRef.provider,
+      configuredDefaultRef.model,
+    );
+    const modelOverrideRaw =
+      typeof opts.model === "string" && opts.model.trim() ? opts.model.trim() : undefined;
+    const modelOverrideSelection = modelOverrideRaw
+      ? parseModelRef(modelOverrideRaw, defaultProvider)
+      : undefined;
+    if (modelOverrideRaw && !modelOverrideSelection) {
+      throw new Error(`Invalid model override. Use provider/model, got "${modelOverrideRaw}".`);
+    }
+
     // Persist explicit /command overrides to the session store when we have a key.
     if (sessionStore && sessionKey) {
       const entry = sessionStore[sessionKey] ??
@@ -654,21 +672,14 @@ async function agentCommandInternal(
       sessionEntry = next;
     }
 
-    const configuredDefaultRef = resolveDefaultModelForAgent({
-      cfg,
-      agentId: sessionAgentId,
-    });
-    const { provider: defaultProvider, model: defaultModel } = normalizeModelRef(
-      configuredDefaultRef.provider,
-      configuredDefaultRef.model,
-    );
     let provider = defaultProvider;
     let model = defaultModel;
     const hasAllowlist = agentCfg?.models && Object.keys(agentCfg.models).length > 0;
     const hasStoredOverride = Boolean(
       sessionEntry?.modelOverride || sessionEntry?.providerOverride,
     );
-    const needsModelCatalog = hasAllowlist || hasStoredOverride;
+    const hasExplicitModelOverride = Boolean(modelOverrideSelection);
+    const needsModelCatalog = hasAllowlist || hasStoredOverride || hasExplicitModelOverride;
     let allowedModelKeys = new Set<string>();
     let allowedModelCatalog: Awaited<ReturnType<typeof loadModelCatalog>> = [];
     let modelCatalog: Awaited<ReturnType<typeof loadModelCatalog>> | null = null;
@@ -715,9 +726,27 @@ async function agentCommandInternal(
       }
     }
 
+    if (modelOverrideSelection) {
+      const normalizedExplicit = normalizeModelRef(
+        modelOverrideSelection.provider,
+        modelOverrideSelection.model,
+      );
+      const key = modelKey(normalizedExplicit.provider, normalizedExplicit.model);
+      if (
+        !isCliProvider(normalizedExplicit.provider, cfg) &&
+        !allowAnyModel &&
+        !allowedModelKeys.has(key)
+      ) {
+        throw new Error(
+          `Model override "${normalizedExplicit.provider}/${normalizedExplicit.model}" is not allowed for agent "${sessionAgentId}".`,
+        );
+      }
+      provider = normalizedExplicit.provider;
+      model = normalizedExplicit.model;
+    }
     const storedProviderOverride = sessionEntry?.providerOverride?.trim();
     const storedModelOverride = sessionEntry?.modelOverride?.trim();
-    if (storedModelOverride) {
+    if (!modelOverrideSelection && storedModelOverride) {
       const candidateProvider = storedProviderOverride || defaultProvider;
       const normalizedStored = normalizeModelRef(candidateProvider, storedModelOverride);
       const key = modelKey(normalizedStored.provider, normalizedStored.model);
@@ -828,6 +857,7 @@ async function agentCommandInternal(
         agentId: sessionAgentId,
         hasSessionModelOverride: Boolean(storedModelOverride),
       });
+      const explicitFallbacksOverride = modelOverrideSelection ? [] : effectiveFallbacksOverride;
 
       // Track model fallback attempts so retries on an existing session don't
       // re-inject the original prompt as a duplicate user message.
@@ -837,7 +867,7 @@ async function agentCommandInternal(
         provider,
         model,
         agentDir,
-        fallbacksOverride: effectiveFallbacksOverride,
+        fallbacksOverride: explicitFallbacksOverride,
         run: (providerOverride, modelOverride) => {
           const isFallbackRetry = fallbackAttemptIndex > 0;
           fallbackAttemptIndex += 1;

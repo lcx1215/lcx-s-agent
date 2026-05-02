@@ -81,6 +81,7 @@ export const AgentParamsSchema = Type.Object(
     sessionId: Type.Optional(Type.String()),
     sessionKey: Type.Optional(Type.String()),
     model: Type.Optional(NonEmptyString),
+    modelOnce: Type.Optional(Type.Boolean()),
     thinking: Type.Optional(Type.String()),
     deliver: Type.Optional(Type.Boolean()),
     attachments: Type.Optional(Type.Array(Type.Unknown())),

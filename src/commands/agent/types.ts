@@ -39,6 +39,8 @@ export type AgentCommandOpts = {
   to?: string;
   sessionId?: string;
   sessionKey?: string;
+  /** Per-turn model override as provider/model or model using the agent default provider. */
+  model?: string;
   thinking?: string;
   thinkingOnce?: string;
   verbose?: string;

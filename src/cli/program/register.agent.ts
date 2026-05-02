@@ -27,6 +27,7 @@ export function registerAgentCommands(program: Command, args: { agentChannelOpti
     .option("-t, --to <number>", "Recipient number in E.164 used to derive the session key")
     .option("--session-id <id>", "Use an explicit session id")
     .option("--agent <id>", "Agent id (overrides routing bindings)")
+    .option("--model <provider/model>", "Use a model for this agent turn")
     .option("--thinking <level>", "Thinking level: off | minimal | low | medium | high")
     .option("--verbose <on|off>", "Persist agent verbose level for the session")
     .option(
@@ -55,6 +56,10 @@ ${theme.heading("Examples:")}
 ${formatHelpExamples([
   ['openclaw agent --to +15555550123 --message "status update"', "Start a new session."],
   ['openclaw agent --agent ops --message "Summarize logs"', "Use a specific agent."],
+  [
+    'openclaw agent --agent research-kimi --model minimax-portal/MiniMax-M2.5-Lightning --message "Classify this task"',
+    "Run one focused turn on a lighter model.",
+  ],
   [
     'openclaw agent --session-id 1234 --message "Summarize inbox" --thinking medium',
     "Target a session with explicit thinking level.",

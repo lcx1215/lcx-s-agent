@@ -71,7 +71,16 @@ describe("registerAgentCommands", () => {
   });
 
   it("runs agent command with deps and verbose enabled for --verbose on", async () => {
-    await runCli(["agent", "--message", "hi", "--verbose", "ON", "--json"]);
+    await runCli([
+      "agent",
+      "--message",
+      "hi",
+      "--verbose",
+      "ON",
+      "--model",
+      "minimax-portal/MiniMax-M2.5-Lightning",
+      "--json",
+    ]);
 
     expect(setVerboseMock).toHaveBeenCalledWith(true);
     expect(createDefaultDepsMock).toHaveBeenCalledTimes(1);
@@ -79,6 +88,7 @@ describe("registerAgentCommands", () => {
       expect.objectContaining({
         message: "hi",
         verbose: "ON",
+        model: "minimax-portal/MiniMax-M2.5-Lightning",
         json: true,
       }),
       runtime,

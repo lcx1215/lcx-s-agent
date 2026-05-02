@@ -183,6 +183,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       sessionId?: string;
       sessionKey?: string;
       model?: string;
+      modelOnce?: boolean;
       thinking?: string;
       deliver?: boolean;
       attachments?: Array<{
@@ -447,7 +448,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         claudeCliSessionId: entry?.claudeCliSessionId,
       };
       sessionEntry = mergeSessionEntry(entry, nextEntryPatch);
-      if (modelOverrideSelection) {
+      if (modelOverrideSelection && request.modelOnce !== true) {
         applyModelOverrideToSessionEntry({
           entry: sessionEntry,
           selection: modelOverrideSelection,
@@ -486,7 +487,7 @@ export const agentHandlers: GatewayRequestHandlers = {
             candidates: target.storeKeys,
           });
           const merged = mergeSessionEntry(store[canonicalSessionKey], nextEntryPatch);
-          if (modelOverrideSelection) {
+          if (modelOverrideSelection && request.modelOnce !== true) {
             applyModelOverrideToSessionEntry({
               entry: merged,
               selection: modelOverrideSelection,
@@ -645,6 +646,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         to: resolvedTo,
         sessionId: resolvedSessionId,
         sessionKey: resolvedSessionKey,
+        model: request.model,
         thinking: request.thinking,
         deliver,
         deliveryTargetMode,

@@ -300,6 +300,68 @@ describe("agentCommand", () => {
     });
   });
 
+  it("uses a per-turn model override without persisting it", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store, {
+        models: {
+          "anthropic/claude-opus-4-5": {},
+          "minimax-portal/MiniMax-M2.5-Lightning": {},
+        },
+      });
+
+      await agentCommand(
+        {
+          message: "classify this task",
+          to: "+1222",
+          model: "minimax-portal/MiniMax-M2.5-Lightning",
+        },
+        runtime,
+      );
+
+      const saved = JSON.parse(fs.readFileSync(store, "utf-8")) as Record<
+        string,
+        { providerOverride?: string; modelOverride?: string }
+      >;
+      const entry = Object.values(saved)[0];
+      expect(entry.providerOverride).toBeUndefined();
+      expect(entry.modelOverride).toBeUndefined();
+      expectLastRunProviderModel("minimax-portal", "MiniMax-M2.5-Lightning");
+    });
+  });
+
+  it("does not silently fallback when an explicit per-turn model fails", async () => {
+    vi.mocked(runEmbeddedPiAgent).mockRejectedValueOnce(new Error("small model unavailable"));
+
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store, {
+        model: {
+          primary: "anthropic/claude-opus-4-5",
+          fallbacks: ["custom-api-deepseek-com/deepseek-v4-flash"],
+        },
+        models: {
+          "anthropic/claude-opus-4-5": {},
+          "minimax-portal/MiniMax-M2.5-highspeed": {},
+          "custom-api-deepseek-com/deepseek-v4-flash": {},
+        },
+      });
+
+      await expect(
+        agentCommand(
+          {
+            message: "classify this task",
+            to: "+1222",
+            model: "minimax-portal/MiniMax-M2.5-highspeed",
+          },
+          runtime,
+        ),
+      ).rejects.toThrow("small model unavailable");
+
+      expect(vi.mocked(runEmbeddedPiAgent)).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it.each([
     {
       name: "defaults senderIsOwner to true for local agent runs",
