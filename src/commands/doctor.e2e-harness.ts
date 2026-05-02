@@ -91,6 +91,9 @@ export const findExtraGatewayServices = vi.fn().mockResolvedValue([]) as unknown
 export const renderGatewayServiceCleanupHints = vi
   .fn()
   .mockReturnValue(["cleanup"]) as unknown as MockFn;
+export const inferOpenClawRootFromGatewayCommand = vi
+  .fn()
+  .mockReturnValue("/tmp/openclaw-daemon") as unknown as MockFn;
 export const resolveGatewayProgramArguments = vi.fn().mockResolvedValue({
   programArguments: ["node", "cli", "gateway", "--port", "18789"],
 }) as unknown as MockFn;
@@ -202,6 +205,7 @@ vi.mock("../daemon/legacy.js", () => ({
 
 vi.mock("../daemon/inspect.js", () => ({
   findExtraGatewayServices,
+  inferOpenClawRootFromGatewayCommand,
   renderGatewayServiceCleanupHints,
 }));
 
@@ -383,6 +387,7 @@ beforeEach(() => {
   findLegacyGatewayServices.mockReset().mockResolvedValue([]);
   uninstallLegacyGatewayServices.mockReset().mockResolvedValue([]);
   findExtraGatewayServices.mockReset().mockResolvedValue([]);
+  inferOpenClawRootFromGatewayCommand.mockReset().mockReturnValue("/tmp/openclaw-daemon");
   renderGatewayServiceCleanupHints.mockReset().mockReturnValue(["cleanup"]);
   resolveGatewayProgramArguments.mockReset().mockResolvedValue({
     programArguments: ["node", "cli", "gateway", "--port", "18789"],

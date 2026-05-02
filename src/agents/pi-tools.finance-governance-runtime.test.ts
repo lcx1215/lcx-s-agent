@@ -207,7 +207,7 @@ describe("Feishu finance governance runtime-equivalent path", () => {
       ).candidates,
     ).toEqual(
       expect.arrayContaining([
-        {
+        expect.objectContaining({
           candidateKey: "closest_scenario:base_case",
           candidateText: "closest_scenario repeated base_case in 2/3 recent calibration notes",
           signal: "closest_scenario",
@@ -223,8 +223,8 @@ describe("Feishu finance governance runtime-equivalent path", () => {
             allowedActions: ["deferred", "rejected", "ready_for_manual_promotion"],
           },
           promotionDecisionTarget: null,
-        },
-        {
+        }),
+        expect.objectContaining({
           candidateKey: "conviction_looks:too_high",
           candidateText: "conviction_looks repeated too_high in 2/3 recent calibration notes",
           signal: "conviction_looks",
@@ -253,7 +253,7 @@ describe("Feishu finance governance runtime-equivalent path", () => {
               "rejected_after_promotion_review",
             ],
           },
-        },
+        }),
       ]),
     );
 

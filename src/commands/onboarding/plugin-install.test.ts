@@ -1,11 +1,18 @@
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:fs", () => ({
-  default: {
-    existsSync: vi.fn(),
-  },
-}));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const existsSync = vi.fn();
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      existsSync,
+    },
+    existsSync,
+  };
+});
 
 const installPluginFromNpmSpec = vi.fn();
 vi.mock("../../plugins/install.js", () => ({

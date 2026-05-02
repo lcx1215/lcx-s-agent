@@ -247,7 +247,10 @@ describe("after_tool_call fires exactly once in embedded runs", () => {
       result: { content: [{ type: "text", text: "ok" }] },
     });
 
-    expect(beforeToolCallMocks.consumeAdjustedParamsForToolCall).toHaveBeenCalledWith(toolCallId);
+    expect(beforeToolCallMocks.consumeAdjustedParamsForToolCall).toHaveBeenCalledWith(
+      toolCallId,
+      "integration-test",
+    );
     const event = (hookMocks.runner.runAfterToolCall as ReturnType<typeof vi.fn>).mock
       .calls[0]?.[0] as { params?: unknown } | undefined;
     expect(event?.params).toEqual(adjusted);

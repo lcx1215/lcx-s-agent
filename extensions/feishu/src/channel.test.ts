@@ -106,7 +106,7 @@ describe("feishuPlugin.actions", () => {
         limit: 3,
       }),
     );
-    expect(result).toEqual({
+    const payload = {
       messages: [
         {
           id: "om_reply",
@@ -121,6 +121,10 @@ describe("feishuPlugin.actions", () => {
           text: "latest acceptance reply",
         },
       ],
+    };
+    expect(result).toEqual({
+      content: [{ type: "text", text: JSON.stringify(payload) }],
+      details: payload,
     });
   });
 

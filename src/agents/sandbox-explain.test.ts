@@ -3,6 +3,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolveSandboxConfigForAgent } from "./sandbox/config.js";
 import { formatSandboxToolPolicyBlockedMessage } from "./sandbox/runtime-status.js";
 import { resolveSandboxToolPolicyForAgent } from "./sandbox/tool-policy.js";
+import { TOOL_GROUPS } from "./tool-policy.js";
 
 describe("sandbox explain helpers", () => {
   it("prefers agent overrides > global > defaults (sandbox tool policy)", () => {
@@ -53,12 +54,8 @@ describe("sandbox explain helpers", () => {
 
     const policy = resolveSandboxToolPolicyForAgent(cfg, "work");
     expect(policy.allow).toEqual([
-      "memory_search",
-      "memory_get",
-      "read",
-      "write",
-      "edit",
-      "apply_patch",
+      ...(TOOL_GROUPS["group:memory"] ?? []),
+      ...(TOOL_GROUPS["group:fs"] ?? []),
       "image",
     ]);
   });

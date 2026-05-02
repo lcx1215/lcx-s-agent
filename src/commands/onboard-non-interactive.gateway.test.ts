@@ -9,7 +9,7 @@ const gatewayClientCalls: Array<{
   url?: string;
   token?: string;
   password?: string;
-  onHelloOk?: () => void;
+  onHelloOk?: (hello: unknown) => void;
   onClose?: (code: number, reason: string) => void;
 }> = [];
 const ensureWorkspaceAndSessionsMock = vi.fn(async (..._args: unknown[]) => {});
@@ -20,13 +20,13 @@ vi.mock("../gateway/client.js", () => ({
       url?: string;
       token?: string;
       password?: string;
-      onHelloOk?: () => void;
+      onHelloOk?: (hello: unknown) => void;
     };
     constructor(params: {
       url?: string;
       token?: string;
       password?: string;
-      onHelloOk?: () => void;
+      onHelloOk?: (hello: unknown) => void;
     }) {
       this.params = params;
       gatewayClientCalls.push(params);
@@ -35,7 +35,7 @@ vi.mock("../gateway/client.js", () => ({
       return { ok: true };
     }
     start() {
-      queueMicrotask(() => this.params.onHelloOk?.());
+      queueMicrotask(() => this.params.onHelloOk?.({ features: { methods: ["health"] } } as never));
     }
     stop() {}
   },
