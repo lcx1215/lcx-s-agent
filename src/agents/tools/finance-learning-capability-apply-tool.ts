@@ -155,6 +155,18 @@ function buildResearchAnswerScaffold(params: {
     params.appliedCapabilities.map((candidate) => candidate.doNotUseFor),
   );
   const capabilitySynthesis = buildCapabilitySynthesis(params.appliedCapabilities);
+  const reusableCapabilityLine =
+    capabilityNames.length > 0
+      ? `Use retained capability: ${capabilityNames.join("; ")}.`
+      : "Name the retained capability before using it.";
+  const freshInputLine =
+    requiredInputs.length > 0
+      ? `Fresh inputs checked or missing: ${requiredInputs.join("; ")}.`
+      : "Fresh inputs checked or missing: name the required inputs before concluding.";
+  const riskBoundaryLine =
+    riskChecks.length > 0
+      ? `Risk boundary: ${riskChecks.join(" | ")}.`
+      : "Risk boundary: do not use the capability if risk, stale-data, or overfitting checks are missing.";
 
   return {
     question: params.queryText,
@@ -230,6 +242,23 @@ function buildResearchAnswerScaffold(params: {
         "bounded research framing, evidence checklist, causal/risk evaluation, red-team invalidation, and research-only conclusion",
       forbidden:
         "trade execution approval, automatic doctrine promotion, standalone prediction, or position sizing beyond qualitative research implications",
+    },
+    usableAnswerContract: {
+      status: "usable_after_fresh_inputs_are_checked",
+      purpose:
+        "Force the final agent reply to become an operator-usable research answer, not just a hidden receipt or generic summary.",
+      requiredVisibleLines: [
+        reusableCapabilityLine,
+        "How to apply now: state the bounded research use before giving any conclusion.",
+        freshInputLine,
+        "Causal check: say whether the current case supports the retained mechanism.",
+        riskBoundaryLine,
+        "Final status: application_ready only if the checks pass; otherwise give failedReason.",
+      ],
+      refusalRule:
+        "If fresh inputs, evidence families, causal support, or risk checks are missing, answer with not_application_ready plus a concrete failedReason instead of improvising.",
+      noActionBoundary:
+        "Research-only: no trade execution approval, no automatic doctrine mutation, no standalone prediction.",
     },
   };
 }
@@ -611,6 +640,7 @@ export function createFinanceLearningCapabilityApplyTool(options?: {
           ],
           answerScaffold,
           capabilitySynthesis: answerScaffold.capabilitySynthesis,
+          usableAnswerContract: answerScaffold.usableAnswerContract,
           applyOrRefuseRule:
             "If any required input, evidence family, causal check, or risk check is missing for the current question, say the retained capability is not ready to apply instead of filling the gap with generic commentary.",
           redTeam:

@@ -344,6 +344,20 @@ describe("finance learning capability tools", () => {
             outputDiscipline: expect.objectContaining({
               forbidden: expect.stringContaining("trade execution approval"),
             }),
+            usableAnswerContract: expect.objectContaining({
+              status: "usable_after_fresh_inputs_are_checked",
+              requiredVisibleLines: expect.arrayContaining([
+                expect.stringContaining("Use retained capability: Liquidity regime mapper"),
+                expect.stringContaining("Fresh inputs checked or missing: credit spreads"),
+                expect.stringContaining("Final status: application_ready"),
+              ]),
+              refusalRule: expect.stringContaining("not_application_ready"),
+              noActionBoundary: expect.stringContaining("Research-only"),
+            }),
+          }),
+          usableAnswerContract: expect.objectContaining({
+            status: "usable_after_fresh_inputs_are_checked",
+            purpose: expect.stringContaining("operator-usable research answer"),
           }),
           applyOrRefuseRule:
             "If any required input, evidence family, causal check, or risk check is missing for the current question, say the retained capability is not ready to apply instead of filling the gap with generic commentary.",

@@ -202,6 +202,10 @@ const checks: CommandCheck[] = [
         capabilityApply.applicationStatus === "application_ready",
         "capability apply should expose application_ready",
       );
+      assert(
+        capabilityApply.usableAnswerContractStatus === "usable_after_fresh_inputs_are_checked",
+        "capability apply should expose a usable answer contract",
+      );
       const unmatchedApply = caseResult(cases, "capability-apply-unmatched");
       assert(
         unmatchedApply.applicationStatus === "not_application_ready",

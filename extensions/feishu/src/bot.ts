@@ -1274,6 +1274,10 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     answerSkeleton.answerScaffold && typeof answerSkeleton.answerScaffold === "object"
       ? (answerSkeleton.answerScaffold as Record<string, unknown>)
       : {};
+  const usableAnswerContract =
+    answerSkeleton.usableAnswerContract && typeof answerSkeleton.usableAnswerContract === "object"
+      ? (answerSkeleton.usableAnswerContract as Record<string, unknown>)
+      : {};
   return [
     "金融能力学习流水线已完成 dev 验收。",
     "",
@@ -1296,6 +1300,7 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     "- automation: this message refreshed retrieval review and apply usage review; no daily manual command was required",
     `- apply mode: ${String(applicationValidation.applicationMode ?? "missing")}`,
     `- applied candidates: ${String(applicationValidation.candidateCount ?? "unknown")}`,
+    `- usable answer contract: ${String(usableAnswerContract.status ?? "missing")}`,
     `- apply boundary: ${String(answerSkeleton.noActionBoundary ?? "missing")}`,
     "",
     "边界: 这是 research-only 学习，不是交易执行；语言 corpus 没有混入金融学习 artifact。",

@@ -548,6 +548,23 @@ async function runCase(
         answerScaffold.status === "scaffold_only_until_fresh_inputs_are_checked",
         "capability-apply should return a research answer scaffold, not only a checklist",
       );
+      const usableAnswerContract = getRecord(
+        answerSkeleton.usableAnswerContract,
+        "usableAnswerContract",
+      );
+      assert(
+        usableAnswerContract.status === "usable_after_fresh_inputs_are_checked",
+        "capability-apply should expose an agent-visible usable answer contract",
+      );
+      const requiredVisibleLines = Array.isArray(usableAnswerContract.requiredVisibleLines)
+        ? usableAnswerContract.requiredVisibleLines
+        : [];
+      assert(
+        requiredVisibleLines.some(
+          (line) => typeof line === "string" && line.includes("Final status: application_ready"),
+        ),
+        "usable answer contract should force application_ready or failedReason into the reply",
+      );
       const usageReceiptPath = getString(applyResult.details.usageReceiptPath, "usageReceiptPath");
       const usageReviewPath = getString(applyResult.details.usageReviewPath, "usageReviewPath");
       await assertArtifactExists(workspaceDir, usageReceiptPath);
@@ -570,6 +587,7 @@ async function runCase(
         candidateCount: applyResult.details.candidateCount,
         noActionBoundary: answerSkeleton.noActionBoundary,
         answerScaffoldStatus: answerScaffold.status,
+        usableAnswerContractStatus: usableAnswerContract.status,
         appliedCapabilityNames: appliedCapabilities.map((entry) =>
           typeof entry === "object" && entry && "capabilityName" in entry
             ? (entry.capabilityName as unknown)
