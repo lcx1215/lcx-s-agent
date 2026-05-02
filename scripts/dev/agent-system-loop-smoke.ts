@@ -135,6 +135,18 @@ function summarize(name: string, payload: Record<string, unknown>): Record<strin
       languageCorpusUntouched: payload.languageCorpusUntouched,
     };
   }
+  if (name === "lark-adversarial-workflow") {
+    const cases = array(payload.cases, "cases");
+    return {
+      cases: cases.length,
+      financeOrchestrationCases: cases.filter(
+        (entry) => record(entry, "adversarial case").hasFinanceOrchestration === true,
+      ).length,
+      financeNoticeCases: cases.filter(
+        (entry) => record(entry, "adversarial case").financeNoticeReady === true,
+      ).length,
+    };
+  }
   return {
     status: "passed",
   };
@@ -254,6 +266,46 @@ const checks: CommandCheck[] = [
         booleanValue(payload.languageCorpusUntouched, "languageCorpusUntouched"),
         "language corpus untouched",
       );
+    },
+  },
+  {
+    name: "lark-adversarial-workflow",
+    args: ["exec", "tsx", "scripts/dev/lark-adversarial-workflow-smoke.ts"],
+    parseJson: true,
+    assert: (payload) => {
+      assert(payload.ok === true, "adversarial Lark workflow smoke should be ok");
+      const cases = array(payload.cases, "cases");
+      assert(cases.length >= 7, "adversarial smoke should cover real-world utterance families");
+      const byName = new Map(
+        cases.map((entry) => {
+          const item = record(entry, "adversarial case");
+          return [stringValue(item.name, "case.name"), item] as const;
+        }),
+      );
+      const marketMath = record(byName.get("market-math-index"), "market-math-index");
+      assert(
+        array(marketMath.primaryModules, "marketMath.primaryModules").includes("quant_math"),
+        "market math should require quant_math",
+      );
+      assert(
+        booleanValue(marketMath.financeNoticeReady, "marketMath.financeNoticeReady"),
+        "market math should expose finance notice to agent prompt",
+      );
+      const audit = record(byName.get("audit-no-relearn"), "audit-no-relearn");
+      assert(
+        audit.hasFinanceOrchestration === false,
+        "learning audit identifiers should not trigger finance modules",
+      );
+      const execution = record(
+        byName.get("execution-order-research-boundary"),
+        "execution-order-research-boundary",
+      );
+      assert(
+        booleanValue(execution.noExecutionApproval, "execution.noExecutionApproval"),
+        "execution-like wording must retain no-execution approval boundary",
+      );
+      const source = record(byName.get("source-grounding-complaint"), "source-grounding-complaint");
+      assert(source.targetSurface === "ops_audit", "source complaint should route to ops audit");
     },
   },
   {
