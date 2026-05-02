@@ -152,6 +152,9 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("## Skills (mandatory)");
     expect(prompt).toContain("<available_skills>");
+    expect(prompt).toContain("make an explicit skill-selection decision");
+    expect(prompt).toContain("leave a concise usage receipt");
+    expect(prompt).toContain("do not claim a skill was used unless its SKILL.md was read");
     expect(prompt).toContain(
       "When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
     );
@@ -942,7 +945,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("- Read: Read file contents");
     expect(prompt).toContain("- Exec: Run shell commands");
     expect(prompt).toContain(
-      "- If exactly one skill clearly applies: read its SKILL.md at <location> with `Read`, then follow it.",
+      "- If exactly one skill clearly applies: select it, read its SKILL.md at <location> with `Read`, then follow it.",
     );
     expect(prompt).toContain("OpenClaw docs: /tmp/openclaw/docs");
     expect(prompt).toContain(
@@ -1083,7 +1086,7 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("## Skills");
     expect(prompt).toContain(
-      "- If exactly one skill clearly applies: read its SKILL.md at <location> with `read`, then follow it.",
+      "- If exactly one skill clearly applies: select it, read its SKILL.md at <location> with `read`, then follow it.",
     );
   });
 
