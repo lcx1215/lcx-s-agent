@@ -5,6 +5,21 @@ import { loadOpenClawPlugins } from "../plugins/loader.js";
 import { note } from "../terminal/note.js";
 import { detectLegacyWorkspaceDirs, formatLegacyWorkspaceWarning } from "./doctor-workspace.js";
 
+export function formatDoctorSkillsStatus(
+  skillsReport: ReturnType<typeof buildWorkspaceSkillStatus>,
+) {
+  const eligible = skillsReport.skills.filter((s) => s.eligible);
+  const missing = skillsReport.skills.filter(
+    (s) => !s.eligible && !s.disabled && !s.blockedByAllowlist,
+  );
+  const blocked = skillsReport.skills.filter((s) => s.blockedByAllowlist);
+  return [
+    `Ready: ${eligible.length}`,
+    `Optional integrations missing requirements: ${missing.length}`,
+    `Blocked by allowlist: ${blocked.length}`,
+  ].join("\n");
+}
+
 export function noteWorkspaceStatus(cfg: OpenClawConfig) {
   const workspaceDir = resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg));
   const legacyWorkspace = detectLegacyWorkspaceDirs({ workspaceDir });
@@ -13,17 +28,7 @@ export function noteWorkspaceStatus(cfg: OpenClawConfig) {
   }
 
   const skillsReport = buildWorkspaceSkillStatus(workspaceDir, { config: cfg });
-  note(
-    [
-      `Eligible: ${skillsReport.skills.filter((s) => s.eligible).length}`,
-      `Missing requirements: ${
-        skillsReport.skills.filter((s) => !s.eligible && !s.disabled && !s.blockedByAllowlist)
-          .length
-      }`,
-      `Blocked by allowlist: ${skillsReport.skills.filter((s) => s.blockedByAllowlist).length}`,
-    ].join("\n"),
-    "Skills status",
-  );
+  note(formatDoctorSkillsStatus(skillsReport), "Skills status");
 
   const pluginRegistry = loadOpenClawPlugins({
     config: cfg,
