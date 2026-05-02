@@ -266,6 +266,12 @@ describe("buildAgentSystemPrompt", () => {
       "For daily ETF or major-asset analysis after night learning: keep the answer compact and structured around current anchors, structural narrative, pricing gap, one keeper lesson applied, one wrong-answer avoided, at most one qualitative sizing implication, and one red-team invalidation path.",
     );
     expect(prompt).toContain(
+      "For complex finance tasks, first form a module plan across macro/rates, ETF regime, company fundamentals, technical timing, portfolio risk, quant_math, options/volatility, credit/liquidity, commodities, FX/dollar, event-driven catalysts, causal map, and retained finance learning.",
+    );
+    expect(prompt).toContain(
+      "Use deterministic local math through quant_math when numbers are present, run portfolio risk gates before any add/reduce language, and use review_tier or review_panel before high-risk operator-facing conclusions.",
+    );
+    expect(prompt).toContain(
       "When a lesson, rule, correction, holding note, workflow pattern, or preference deserves durable local recall but does not belong in protected summaries, use local_memory_record to upsert a bounded card under memory/local-memory.",
     );
     expect(prompt).toContain(

@@ -23,6 +23,13 @@ describe("languageBrainLoopSmokeCommand", () => {
       ok: boolean;
       workspaceDir: string;
       language: { family: string; backendTool: string };
+      orchestration: {
+        primaryModules: string[];
+        supportingModules: string[];
+        requiredTools: string[];
+        reviewTools: string[];
+        boundaries: string[];
+      };
       brain: { candidateCount: number; synthesisMode: string };
       analysis: { eventReviewStatus: string; noActionBoundary: boolean };
       math: {
@@ -54,6 +61,30 @@ describe("languageBrainLoopSmokeCommand", () => {
     expect(payload.workspaceDir).toBe(workspaceDir);
     expect(payload.language.family).toBe("market_capability_learning_intake");
     expect(payload.language.backendTool).toBe("finance_learning_pipeline_orchestrator");
+    expect(payload.orchestration.primaryModules).toEqual(
+      expect.arrayContaining([
+        "etf_regime",
+        "technical_timing",
+        "portfolio_risk_gates",
+        "quant_math",
+        "event_driven",
+        "causal_map",
+      ]),
+    );
+    expect(payload.orchestration.supportingModules).toContain("finance_learning_memory");
+    expect(payload.orchestration.requiredTools).toEqual(
+      expect.arrayContaining([
+        "finance_framework_core_inspect",
+        "finance_learning_capability_apply",
+        "quant_math",
+        "review_tier",
+        "review_panel",
+      ]),
+    );
+    expect(payload.orchestration.reviewTools).toEqual(["review_tier", "review_panel"]);
+    expect(payload.orchestration.boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_execution_authority", "no_model_math_guessing"]),
+    );
     expect(payload.brain.candidateCount).toBe(6);
     expect(payload.brain.synthesisMode).toBe("multi_capability_synthesis");
     expect(payload.analysis.eventReviewStatus).toBe("research_review_ready");

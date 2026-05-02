@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { planFinanceBrainOrchestration } from "../../agents/finance-brain-orchestration.js";
 import { resolveReviewTier } from "../../agents/review-tier-policy.js";
 import { createFinanceLearningCapabilityApplyTool } from "../../agents/tools/finance-learning-capability-apply-tool.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../agents/tools/finance-learning-pipeline-orchestrator-tool.js";
@@ -51,6 +52,7 @@ export type LanguageBrainLoopSmokePayload = {
   workspaceDir: string;
   temporaryWorkspace: boolean;
   language: Record<string, unknown>;
+  orchestration: Record<string, unknown>;
   brain: Record<string, unknown>;
   analysis: Record<string, unknown>;
   math: Record<string, unknown>;
@@ -268,6 +270,7 @@ async function runQuantMathChecks(event: FreshEventReview) {
 async function writeLoopReceipt(params: {
   workspaceDir: string;
   language: Record<string, unknown>;
+  orchestration: Record<string, unknown>;
   brain: Record<string, unknown>;
   analysis: Record<string, unknown>;
   math: Record<string, unknown>;
@@ -286,6 +289,7 @@ async function writeLoopReceipt(params: {
     generatedAt: new Date().toISOString(),
     loop: {
       language: params.language,
+      orchestration: params.orchestration,
       brain: params.brain,
       analysis: params.analysis,
       math: params.math,
@@ -311,6 +315,7 @@ async function writeLoopReceipt(params: {
 function formatText(payload: Record<string, unknown>): string {
   const language = asRecord(payload.language, "language");
   const brain = asRecord(payload.brain, "brain");
+  const orchestration = asRecord(payload.orchestration, "orchestration");
   const analysis = asRecord(payload.analysis, "analysis");
   const math = asRecord(payload.math, "math");
   const review = asRecord(payload.review, "review");
@@ -323,6 +328,7 @@ function formatText(payload: Record<string, unknown>): string {
     `workspace: ${String(payload.workspaceDir)}`,
     `language family: ${String(language.family)}`,
     `backend tool: ${String(language.backendTool)}`,
+    `finance modules: ${stringArray(orchestration.primaryModules).join(", ")}`,
     `brain synthesis: ${String(brain.synthesisMode)}`,
     `candidate count: ${String(brain.candidateCount)}`,
     `analysis status: ${String(analysis.eventReviewStatus)}`,
@@ -398,6 +404,16 @@ export async function runLanguageBrainLoopSmoke(
     backendTool: handoff.backendTool,
     sourceRequirement: handoff.sourceRequirement,
   };
+  const orchestration = planFinanceBrainOrchestration({
+    text: [
+      utterance,
+      event.researchQuestion,
+      "Include ETF regime, event catalyst, technical timing, portfolio risk budget, deterministic quant math, retained finance learning, and causal red-team checks.",
+    ].join("\n"),
+    hasHoldingsOrPortfolioContext: true,
+    hasLocalMathInputs: true,
+    highStakesConclusion: true,
+  });
   const brain = {
     seededCandidateRuns: seeded.length,
     candidateCount: applyDetails.candidateCount,
@@ -421,7 +437,7 @@ export async function runLanguageBrainLoopSmoke(
   });
   const reviewPanelResult = await reviewPanelTool.execute("cli-loop-review-panel", {
     taskKind: "finance_learning",
-    outputText: JSON.stringify({ language, brain, analysis, math }, null, 2),
+    outputText: JSON.stringify({ language, orchestration, brain, analysis, math }, null, 2),
     hasLocalToolResults: true,
     hasQuantMathResults: true,
     writesDurableMemory: false,
@@ -431,6 +447,7 @@ export async function runLanguageBrainLoopSmoke(
   const receipt = await writeLoopReceipt({
     workspaceDir: workspace.workspaceDir,
     language,
+    orchestration,
     brain,
     analysis,
     math,
@@ -442,6 +459,7 @@ export async function runLanguageBrainLoopSmoke(
     workspaceDir: workspace.workspaceDir,
     temporaryWorkspace: workspace.temporary,
     language,
+    orchestration,
     brain,
     analysis,
     math,
