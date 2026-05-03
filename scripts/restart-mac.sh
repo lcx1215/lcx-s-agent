@@ -75,6 +75,30 @@ check_signing_keys() {
     | grep -Eq '(Developer ID Application|Apple Distribution|Apple Development)'
 }
 
+check_mac_build_toolchain() {
+  if [[ "${OPENCLAW_SKIP_MAC_BUILD_PREFLIGHT:-0}" == "1" ]]; then
+    log "==> Skipping mac build toolchain preflight (OPENCLAW_SKIP_MAC_BUILD_PREFLIGHT=1)"
+    return 0
+  fi
+
+  if ! command -v swift >/dev/null 2>&1; then
+    fail "swift is not available. Install Xcode, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+  fi
+
+  local developer_dir=""
+  if ! developer_dir="$(xcode-select -p 2>/dev/null)"; then
+    fail "xcode-select is not configured. Install Xcode, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+  fi
+
+  if [[ "${developer_dir}" == *"/CommandLineTools" ]]; then
+    fail "mac app rebuild requires full Xcode because Swift package macro plugins are used by dependencies such as Peekaboo. Active developer directory is '${developer_dir}' (CommandLineTools). Install/open Xcode, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+  fi
+
+  if ! xcodebuild -version >/dev/null 2>&1; then
+    fail "xcodebuild is not usable from '${developer_dir}'. Install/open full Xcode, accept its license if prompted, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+  fi
+}
+
 trap cleanup EXIT INT TERM
 
 for arg in "$@"; do
@@ -147,6 +171,11 @@ kill_all_openclaw() {
 stop_launch_agent() {
   launchctl bootout gui/"$UID"/ai.openclaw.mac 2>/dev/null || true
 }
+
+# Build preflight must run before killing the current app. Otherwise a machine
+# with only CommandLineTools can stop a working live app and then fail on Swift
+# macro-plugin dependencies during rebuild.
+run_step "mac build toolchain preflight" check_mac_build_toolchain
 
 # 1) Kill all running instances first.
 log "==> Killing existing OpenClaw instances"
