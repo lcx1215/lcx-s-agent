@@ -252,6 +252,16 @@ describe("larkLoopDiagnoseCommand", () => {
         promotedCaseCount: number;
         latestReviewPath: string;
         latestReviewGeneratedAt: string;
+        autodataLoop: {
+          pattern: string;
+          status: string;
+          currentReplayAcceptanceRate: number;
+          currentReplayRejectedRate: number;
+          topRejectedReason: string | null;
+          topRejectedSemanticFamily: string | null;
+          nextBatchFocus: string[];
+          guardrails: string[];
+        };
       };
     };
     expect(payload.languageCandidates).toMatchObject({
@@ -297,6 +307,24 @@ describe("larkLoopDiagnoseCommand", () => {
       promotedCaseCount: 1,
       latestReviewPath: "memory/lark-language-routing-reviews/2026-05-03.json",
       latestReviewGeneratedAt: "2026-05-03T11:05:00.000Z",
+      autodataLoop: {
+        pattern: "autodata_inspired_language_data_loop",
+        status: "needs_candidate_capture",
+        currentReplayAcceptanceRate: 0,
+        currentReplayRejectedRate: 1,
+        topRejectedReason: "missing_distillable_text",
+        topRejectedSemanticFamily: "unknown",
+        nextBatchFocus: [
+          "capture_more_real_lark_dialogue_candidates",
+          "inspect_candidate_distillation_shape",
+        ],
+        guardrails: [
+          "language_routing_only",
+          "no_finance_learning_artifact_promotion",
+          "no_live_sender_change",
+          "accepted_cases_still_require_review_before_formal_corpus",
+        ],
+      },
     });
   });
 

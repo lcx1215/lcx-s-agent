@@ -80,6 +80,22 @@ type LanguageCandidateCaptureStats = {
   promotedCaseCount: number;
   latestReviewPath: string | null;
   latestReviewGeneratedAt: string | null;
+  autodataLoop: LanguageAutodataLoopReadiness;
+};
+
+type LanguageAutodataLoopReadiness = {
+  pattern: "autodata_inspired_language_data_loop";
+  status:
+    | "needs_candidate_capture"
+    | "needs_route_family_hardening"
+    | "needs_review_promotion"
+    | "ready_for_reviewed_batch_absorption";
+  currentReplayAcceptanceRate: number;
+  currentReplayRejectedRate: number;
+  topRejectedReason: string | null;
+  topRejectedSemanticFamily: string | null;
+  nextBatchFocus: string[];
+  guardrails: string[];
 };
 
 type FinanceOrchestrationReceiptSummary = {
@@ -213,6 +229,22 @@ function incrementCount(counts: Record<string, number>, key: string) {
   counts[key] = (counts[key] ?? 0) + 1;
 }
 
+function divideOrZero(numerator: number, denominator: number): number {
+  return denominator > 0 ? Number((numerator / denominator).toFixed(4)) : 0;
+}
+
+function topCountKey(counts: Record<string, number>): string | null {
+  let top: string | null = null;
+  let topCount = 0;
+  for (const [key, count] of Object.entries(counts)) {
+    if (count > topCount) {
+      top = key;
+      topCount = count;
+    }
+  }
+  return top;
+}
+
 function isRejectedLanguageReason(reason: string): boolean {
   return (
     reason !== "accepted_language_case" &&
@@ -261,6 +293,66 @@ function accumulateLanguageEvaluationStats(params: {
       incrementCount(params.rejectedSemanticFamilyCounts, family);
     }
   }
+}
+
+function summarizeLanguageAutodataLoop(
+  stats: Omit<LanguageCandidateCaptureStats, "autodataLoop">,
+): LanguageAutodataLoopReadiness {
+  const currentReplayAcceptanceRate = divideOrZero(
+    stats.currentReplay.acceptedCaseCount,
+    stats.currentReplay.candidateCount,
+  );
+  const currentReplayRejectedRate = divideOrZero(
+    stats.currentReplay.rejectedCount,
+    stats.currentReplay.candidateCount,
+  );
+  const topRejectedReason = topCountKey(stats.currentReplay.rejectedReasonCounts);
+  const topRejectedSemanticFamily = topCountKey(stats.currentReplay.rejectedSemanticFamilyCounts);
+  const nextBatchFocus: string[] = [];
+  if (stats.candidateCount < 10) {
+    nextBatchFocus.push("capture_more_real_lark_dialogue_candidates");
+  }
+  if (topRejectedReason === "semantic_family_unknown") {
+    nextBatchFocus.push("triage_unknown_semantic_family_examples");
+  }
+  if (topRejectedReason === "deterministic_route_failed") {
+    nextBatchFocus.push("compare_api_family_label_against_deterministic_surface");
+  }
+  if (topRejectedReason === "missing_distillable_text") {
+    nextBatchFocus.push("inspect_candidate_distillation_shape");
+  }
+  if (stats.currentReplay.acceptedCaseCount > stats.promotedCaseCount) {
+    nextBatchFocus.push("review_accepted_cases_before_corpus_promotion");
+  }
+  if (nextBatchFocus.length === 0) {
+    nextBatchFocus.push("continue_small_batch_capture_and_replay");
+  }
+
+  const status =
+    stats.candidateCount < 10
+      ? "needs_candidate_capture"
+      : stats.currentReplay.acceptedCaseCount === 0 ||
+          topRejectedReason === "semantic_family_unknown"
+        ? "needs_route_family_hardening"
+        : stats.currentReplay.acceptedCaseCount > stats.promotedCaseCount
+          ? "needs_review_promotion"
+          : "ready_for_reviewed_batch_absorption";
+
+  return {
+    pattern: "autodata_inspired_language_data_loop",
+    status,
+    currentReplayAcceptanceRate,
+    currentReplayRejectedRate,
+    topRejectedReason,
+    topRejectedSemanticFamily,
+    nextBatchFocus,
+    guardrails: [
+      "language_routing_only",
+      "no_finance_learning_artifact_promotion",
+      "no_live_sender_change",
+      "accepted_cases_still_require_review_before_formal_corpus",
+    ],
+  };
 }
 
 function dedupeReceiptWorkspaces(workspaces: ReceiptWorkspace[]): ReceiptWorkspace[] {
@@ -397,7 +489,7 @@ async function readLanguageCandidateCaptureStats(
     }
   }
 
-  return {
+  const stats = {
     workspaceDir,
     candidateArtifactCount,
     candidateCount,
@@ -415,6 +507,10 @@ async function readLanguageCandidateCaptureStats(
     promotedCaseCount,
     latestReviewPath,
     latestReviewGeneratedAt,
+  };
+  return {
+    ...stats,
+    autodataLoop: summarizeLanguageAutodataLoop(stats),
   };
 }
 
@@ -589,6 +685,9 @@ function formatDiagnosisText(payload: Record<string, unknown>): string {
     `languageCurrentReplayAcceptedCases: ${languageCandidates.currentReplay.acceptedCaseCount}`,
     `languageCurrentReplayRejectedByReason: ${JSON.stringify(languageCandidates.currentReplay.rejectedReasonCounts)}`,
     `languageCurrentReplayRejectedBySemanticFamily: ${JSON.stringify(languageCandidates.currentReplay.rejectedSemanticFamilyCounts)}`,
+    `languageAutodataLoopStatus: ${languageCandidates.autodataLoop.status}`,
+    `languageAutodataLoopAcceptanceRate: ${languageCandidates.autodataLoop.currentReplayAcceptanceRate}`,
+    `languageAutodataLoopNextBatchFocus: ${languageCandidates.autodataLoop.nextBatchFocus.join(", ")}`,
     `languageReviews: ${languageCandidates.reviewArtifactCount}`,
     `languagePromotedCases: ${languageCandidates.promotedCaseCount}`,
   ];
