@@ -134,6 +134,7 @@ export async function appendStatusAllDiagnosis(params: {
   channelIssues: ChannelIssueLike[];
   gatewayReachable: boolean;
   health: unknown;
+  macBuildToolchain?: MacBuildToolchainStatus | null;
 }) {
   const { lines, muted, ok, warn, fail } = params;
 
@@ -176,7 +177,7 @@ export async function appendStatusAllDiagnosis(params: {
     lines.push(`  ${muted("Fix: set gateway.remote.url, or set gateway.mode=local.")}`);
   }
 
-  const macBuildToolchain = inspectMacBuildToolchain();
+  const macBuildToolchain = params.macBuildToolchain ?? inspectMacBuildToolchain();
   if (macBuildToolchain.status !== "not_applicable") {
     emitCheck(
       `Mac app rebuild toolchain: ${macBuildToolchain.developerDir ?? "unconfigured"}`,

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { inspectMacBuildToolchain } from "./diagnosis.js";
+import { appendStatusAllDiagnosis, inspectMacBuildToolchain } from "./diagnosis.js";
+
+const progress = {
+  setLabel: () => {},
+  setPercent: () => {},
+  tick: () => {},
+  done: () => {},
+};
+
+function passthrough(text: string) {
+  return text;
+}
 
 describe("inspectMacBuildToolchain", () => {
   it("reports non-mac platforms as not applicable", () => {
@@ -56,5 +67,48 @@ describe("inspectMacBuildToolchain", () => {
       developerDir: "/Applications/Xcode.app/Contents/Developer",
       fix: null,
     });
+  });
+
+  it("renders the mac app rebuild blocker in status-all diagnosis", async () => {
+    const lines: string[] = [];
+    await appendStatusAllDiagnosis({
+      lines,
+      progress,
+      muted: passthrough,
+      ok: passthrough,
+      warn: passthrough,
+      fail: passthrough,
+      connectionDetailsForReport: "Gateway target: local",
+      snap: null,
+      remoteUrlMissing: false,
+      sentinel: null,
+      lastErr: null,
+      port: 18789,
+      portUsage: null,
+      tailscaleMode: "off",
+      tailscale: { backendState: "Running", dnsName: null, ips: [], error: null },
+      tailscaleHttpsUrl: null,
+      skillStatus: null,
+      channelsStatus: null,
+      channelIssues: [],
+      gatewayReachable: false,
+      health: null,
+      macBuildToolchain: {
+        status: "blocked",
+        developerDir: "/Library/Developer/CommandLineTools",
+        reason:
+          "full Xcode is required for Swift package macro plugins used by mac app dependencies",
+        fix: "Install/open full Xcode, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer",
+      },
+    });
+
+    const output = lines.join("\n");
+    expect(output).toContain("Mac app rebuild toolchain: /Library/Developer/CommandLineTools");
+    expect(output).toContain(
+      "full Xcode is required for Swift package macro plugins used by mac app dependencies",
+    );
+    expect(output).toContain(
+      "Fix: Install/open full Xcode, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer",
+    );
   });
 });
