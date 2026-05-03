@@ -45,6 +45,17 @@ type LarkHandoffReceiptSummary = {
   missingBeforeExecution: string[];
 };
 
+type L5EvalReceiptSummary = {
+  path: string;
+  generatedAt: string | null;
+  boundary: string | null;
+  ok: boolean | null;
+  level: string | null;
+  score: string | null;
+  nextBlocker: string | null;
+  receiptWritten: boolean | null;
+};
+
 type SourceScan = {
   source: MemorySourceName;
   totalFiles: number | null;
@@ -164,6 +175,16 @@ function readStringArrayField(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
 }
 
+function readBooleanField(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function readRecordField(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 function summarizeLarkHandoffReceipt(params: {
   workspaceDir: string;
   filePath: string;
@@ -190,6 +211,31 @@ function summarizeLarkHandoffReceipt(params: {
     confidence: typeof confidence === "number" && Number.isFinite(confidence) ? confidence : null,
     backendTool: readStringField(backendToolContract.toolName),
     missingBeforeExecution: readStringArrayField(handoff.missingBeforeExecution),
+  };
+}
+
+function summarizeL5EvalReceipt(params: {
+  workspaceDir: string;
+  filePath: string;
+  payload: unknown;
+}): L5EvalReceiptSummary {
+  const root = readRecordField(params.payload);
+  const result = readRecordField(root.result);
+  const score = readRecordField(result.score);
+  const receipt = readRecordField(result.receipt);
+  const passed =
+    typeof score.passed === "number" && Number.isFinite(score.passed) ? score.passed : null;
+  const total =
+    typeof score.total === "number" && Number.isFinite(score.total) ? score.total : null;
+  return {
+    path: path.relative(params.workspaceDir, params.filePath).replaceAll(path.sep, "/"),
+    generatedAt: readStringField(root.generatedAt) ?? readStringField(result.generatedAt),
+    boundary: readStringField(root.boundary),
+    ok: readBooleanField(result.ok),
+    level: readStringField(result.level),
+    score: passed !== null && total !== null ? `${passed}/${total}` : null,
+    nextBlocker: readStringField(result.nextBlocker),
+    receiptWritten: readBooleanField(receipt.written),
   };
 }
 
@@ -220,6 +266,45 @@ async function listLarkHandoffReceipts(params: {
         confidence: null,
         backendTool: null,
         missingBeforeExecution: [],
+      });
+    }
+  }
+  summaries.sort((a, b) => {
+    const left = a.generatedAt ?? "";
+    const right = b.generatedAt ?? "";
+    return right.localeCompare(left) || a.path.localeCompare(b.path);
+  });
+  const limit = params.limit && params.limit > 0 ? params.limit : 20;
+  return summaries.slice(0, limit);
+}
+
+async function listL5EvalReceipts(params: {
+  workspaceDir: string;
+  limit?: number;
+}): Promise<L5EvalReceiptSummary[]> {
+  const root = path.join(params.workspaceDir, "memory", "l5-system-eval-receipts");
+  const files = (await walkFiles(root)).filter((file) => file.endsWith(".json"));
+  const summaries: L5EvalReceiptSummary[] = [];
+  for (const filePath of files) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(filePath, "utf-8")) as unknown;
+      summaries.push(
+        summarizeL5EvalReceipt({
+          workspaceDir: params.workspaceDir,
+          filePath,
+          payload: parsed,
+        }),
+      );
+    } catch {
+      summaries.push({
+        path: path.relative(params.workspaceDir, filePath).replaceAll(path.sep, "/"),
+        generatedAt: null,
+        boundary: "unreadable_json",
+        ok: null,
+        level: null,
+        score: null,
+        nextBlocker: null,
+        receiptWritten: null,
       });
     }
   }
@@ -270,6 +355,45 @@ async function runLarkHandoffReceiptsCommand(opts: {
         receipt.missingBeforeExecution.length ? receipt.missingBeforeExecution.join(", ") : "none"
       }`,
     );
+  }
+  defaultRuntime.log(lines.join("\n"));
+}
+
+async function runL5EvalReceiptsCommand(opts: {
+  agent?: string;
+  workspace?: string;
+  limit?: number;
+  json?: boolean;
+}) {
+  const cfg = loadConfig();
+  const workspaceDir = resolveMemoryWorkspace({
+    cfg,
+    agent: opts.agent,
+    workspace: opts.workspace,
+  });
+  const receipts = await listL5EvalReceipts({ workspaceDir, limit: opts.limit });
+  if (opts.json) {
+    defaultRuntime.log(JSON.stringify({ workspaceDir, receipts }, null, 2));
+    return;
+  }
+  const rich = isRich();
+  const lines: string[] = [];
+  lines.push(colorize(rich, theme.heading, "L5 system eval receipts"));
+  lines.push(`${colorize(rich, theme.muted, "Workspace:")} ${shortenHomePath(workspaceDir)}`);
+  if (receipts.length === 0) {
+    lines.push("No L5 system eval receipts found.");
+    defaultRuntime.log(lines.join("\n"));
+    return;
+  }
+  for (const receipt of receipts) {
+    lines.push("");
+    lines.push(colorize(rich, theme.accent, receipt.path));
+    lines.push(`  generatedAt: ${receipt.generatedAt ?? "unknown"}`);
+    lines.push(`  boundary: ${receipt.boundary ?? "unknown"}`);
+    lines.push(`  level: ${receipt.level ?? "unknown"}`);
+    lines.push(`  ok: ${receipt.ok === null ? "unknown" : String(receipt.ok)}`);
+    lines.push(`  score: ${receipt.score ?? "unknown"}`);
+    lines.push(`  nextBlocker: ${receipt.nextBlocker ?? "unknown"}`);
   }
   defaultRuntime.log(lines.join("\n"));
 }
@@ -770,6 +894,19 @@ export function registerMemoryCli(program: Command) {
     .action(
       async (opts: { agent?: string; workspace?: string; limit?: number; json?: boolean }) => {
         await runLarkHandoffReceiptsCommand(opts);
+      },
+    );
+
+  receipts
+    .command("l5-evals")
+    .description("List L5 system eval receipts")
+    .option("--agent <id>", "Agent id used to resolve the workspace")
+    .option("--workspace <dir>", "Workspace directory override")
+    .option("--limit <n>", "Maximum receipts to show", (value: string) => Number(value))
+    .option("--json", "Print JSON", false)
+    .action(
+      async (opts: { agent?: string; workspace?: string; limit?: number; json?: boolean }) => {
+        await runL5EvalReceiptsCommand(opts);
       },
     );
 

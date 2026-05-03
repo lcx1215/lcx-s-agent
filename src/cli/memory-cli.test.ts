@@ -206,6 +206,58 @@ describe("memory cli", () => {
     }
   });
 
+  it("lists L5 system eval receipts from a workspace override", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-cli-l5-evals-"));
+    try {
+      const receiptPath = path.join(
+        tmpDir,
+        "memory",
+        "l5-system-eval-receipts",
+        "2026-05-03",
+        "2026-05-03T10-00-00-000Z__l5-system-eval.json",
+      );
+      await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+      await fs.writeFile(
+        receiptPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          boundary: "l5_system_eval_receipt",
+          generatedAt: "2026-05-03T10:00:00.000Z",
+          result: {
+            ok: true,
+            level: "l5_ready",
+            score: { passed: 12, total: 12 },
+            nextBlocker: "none",
+            receipt: {
+              written: true,
+              path: "memory/l5-system-eval-receipts/2026-05-03/2026-05-03T10-00-00-000Z__l5-system-eval.json",
+            },
+          },
+        }),
+        "utf-8",
+      );
+      const log = spyRuntimeLogs();
+
+      await runMemoryCli(["receipts", "l5-evals", "--workspace", tmpDir, "--json"]);
+
+      const payload = firstLoggedJson(log);
+      expect(payload.workspaceDir).toBe(tmpDir);
+      expect(payload.receipts).toEqual([
+        expect.objectContaining({
+          path: "memory/l5-system-eval-receipts/2026-05-03/2026-05-03T10-00-00-000Z__l5-system-eval.json",
+          boundary: "l5_system_eval_receipt",
+          ok: true,
+          level: "l5_ready",
+          score: "12/12",
+          nextBlocker: "none",
+          receiptWritten: true,
+        }),
+      ]);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("resolves configured memory SecretRefs through gateway snapshot", async () => {
     loadConfig.mockReturnValue({
       agents: {
