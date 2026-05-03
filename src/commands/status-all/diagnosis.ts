@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import type { ProgressReporter } from "../../cli/progress.js";
 import { formatConfigIssueLine } from "../../config/issue-format.js";
 import { resolveGatewayLogPaths } from "../../daemon/launchd.js";
@@ -39,6 +40,77 @@ type ChannelIssueLike = {
   message: string;
   fix?: string;
 };
+
+type CommandProbeResult = {
+  ok: boolean;
+  stdout: string;
+};
+
+type MacBuildToolchainStatus = {
+  status: "not_applicable" | "ready" | "blocked";
+  reason: string | null;
+  developerDir: string | null;
+  fix: string | null;
+};
+
+function runCommandProbe(command: string, args: string[]): CommandProbeResult {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    ok: result.status === 0,
+    stdout: String(result.stdout ?? "").trim(),
+  };
+}
+
+export function inspectMacBuildToolchain(
+  params: {
+    platform?: NodeJS.Platform;
+    runCommand?: (command: string, args: string[]) => CommandProbeResult;
+  } = {},
+): MacBuildToolchainStatus {
+  const platform = params.platform ?? process.platform;
+  if (platform !== "darwin") {
+    return { status: "not_applicable", reason: null, developerDir: null, fix: null };
+  }
+  const runCommand = params.runCommand ?? runCommandProbe;
+  if (!runCommand("swift", ["--version"]).ok) {
+    return {
+      status: "blocked",
+      reason: "swift is not available",
+      developerDir: null,
+      fix: "Install full Xcode, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer",
+    };
+  }
+  const selected = runCommand("xcode-select", ["-p"]);
+  if (!selected.ok || !selected.stdout) {
+    return {
+      status: "blocked",
+      reason: "xcode-select is not configured",
+      developerDir: null,
+      fix: "Install/open full Xcode, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer",
+    };
+  }
+  const developerDir = selected.stdout;
+  if (developerDir.includes("/CommandLineTools")) {
+    return {
+      status: "blocked",
+      reason: "full Xcode is required for Swift package macro plugins used by mac app dependencies",
+      developerDir,
+      fix: "Install/open full Xcode, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer",
+    };
+  }
+  if (!runCommand("xcodebuild", ["-version"]).ok) {
+    return {
+      status: "blocked",
+      reason: "xcodebuild is not usable from the selected developer directory",
+      developerDir,
+      fix: "Open Xcode, accept its license if prompted, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer",
+    };
+  }
+  return { status: "ready", reason: null, developerDir, fix: null };
+}
 
 export async function appendStatusAllDiagnosis(params: {
   lines: string[];
@@ -102,6 +174,20 @@ export async function appendStatusAllDiagnosis(params: {
     lines.push("");
     emitCheck("Gateway remote mode misconfigured (gateway.remote.url missing)", "warn");
     lines.push(`  ${muted("Fix: set gateway.remote.url, or set gateway.mode=local.")}`);
+  }
+
+  const macBuildToolchain = inspectMacBuildToolchain();
+  if (macBuildToolchain.status !== "not_applicable") {
+    emitCheck(
+      `Mac app rebuild toolchain: ${macBuildToolchain.developerDir ?? "unconfigured"}`,
+      macBuildToolchain.status === "ready" ? "ok" : "warn",
+    );
+    if (macBuildToolchain.reason) {
+      lines.push(`  ${muted(macBuildToolchain.reason)}`);
+    }
+    if (macBuildToolchain.fix) {
+      lines.push(`  ${muted(`Fix: ${macBuildToolchain.fix}`)}`);
+    }
   }
 
   if (params.sentinel?.payload) {
