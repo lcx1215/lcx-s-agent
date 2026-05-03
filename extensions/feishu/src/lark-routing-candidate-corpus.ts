@@ -16,6 +16,7 @@ import {
   type LarkRoutingGuardMatcher,
   type SemanticRouteCandidate,
 } from "./lark-routing-corpus.js";
+import type { FeishuChatSurfaceName } from "./surfaces.js";
 import type { FeishuConfig } from "./types.js";
 
 export type LarkRoutingCandidateSource = "api_reply" | "lark_visible_reply" | "lark_user_utterance";
@@ -126,6 +127,29 @@ export type LarkRoutingCandidatePromotionReviewWriteResult = {
   skipped: LarkRoutingCandidatePromotionArtifactReadResult["skipped"];
 };
 
+export type LarkLanguageRoutingCandidateCaptureArtifact = {
+  schemaVersion: 1;
+  boundary: "language_routing_only";
+  source: "feishu_final_reply_capture";
+  generatedAt: string;
+  agentId: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+  chatId: string;
+  sessionKey: string;
+  messageId: string;
+  noFinanceLearningArtifact: true;
+  candidates: LarkPendingRoutingCandidate[];
+  evaluation: LarkRoutingCandidateCorpusEvaluation;
+};
+
+export type LarkLanguageRoutingCandidateCaptureResult = {
+  relativePath: string;
+  dateKey: string;
+  workspaceDir: string;
+  artifact: LarkLanguageRoutingCandidateCaptureArtifact;
+};
+
 function countPromotionSkippedReasons(
   skipped: readonly LarkRoutingCandidatePromotionArtifactReadResult["skipped"][number][],
 ): Record<string, number> {
@@ -157,6 +181,19 @@ function buildCandidateId(params: {
   contentHash: string;
 }): string {
   return `pending-language-${params.source}-${params.contentHash}`;
+}
+
+function sanitizeLanguageCandidateFileSegment(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/gu, "-")
+    .replace(/-+/gu, "-")
+    .replace(/^-|-$/gu, "");
+}
+
+function buildLarkLanguageCandidateCaptureFileName(messageId: string): string {
+  const stem = sanitizeLanguageCandidateFileSegment(messageId) || "message";
+  return `${stem}.json`;
 }
 
 function expectedGuardMatchersForUtterance(
@@ -324,6 +361,94 @@ export function evaluateLarkRoutingCandidateCorpus(params: {
       rejected: evaluations.length - acceptedCases.length - discarded,
       discarded,
     },
+  };
+}
+
+export async function writeLarkLanguageRoutingCandidateCapture(params: {
+  workspaceDir: string;
+  cfg: FeishuConfig;
+  agentId: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+  chatId: string;
+  sessionKey: string;
+  messageId: string;
+  userMessage: string;
+  finalReplyText: string;
+  apiReplyPayloads?: readonly unknown[];
+  generatedAt?: string;
+}): Promise<LarkLanguageRoutingCandidateCaptureResult | undefined> {
+  const userMessage = params.userMessage.trim();
+  const finalReplyText = params.finalReplyText.trim();
+  if (!userMessage && !finalReplyText && !params.apiReplyPayloads?.length) {
+    return undefined;
+  }
+
+  const generatedAt = params.generatedAt ?? new Date().toISOString();
+  const userCorpus = userMessage
+    ? buildLarkPendingRoutingCandidateCorpus({
+        source: "lark_user_utterance",
+        payloads: [userMessage],
+        generatedAt,
+      })
+    : undefined;
+  const replyCorpus = finalReplyText
+    ? buildLarkPendingRoutingCandidateCorpus({
+        source: "lark_visible_reply",
+        payloads: [finalReplyText],
+        generatedAt,
+      })
+    : undefined;
+  const apiCorpus =
+    params.apiReplyPayloads && params.apiReplyPayloads.length > 0
+      ? buildLarkPendingRoutingCandidateCorpus({
+          source: "api_reply",
+          payloads: params.apiReplyPayloads,
+          generatedAt,
+        })
+      : undefined;
+  const candidates = [
+    ...(apiCorpus?.candidates ?? []),
+    ...(userCorpus?.candidates ?? []),
+    ...(replyCorpus?.candidates ?? []),
+  ];
+  const evaluation = evaluateLarkRoutingCandidateCorpus({
+    cfg: params.cfg,
+    corpus: {
+      schemaVersion: 1,
+      boundary: "language_routing_only",
+      generatedAt,
+      candidates,
+    },
+    evaluatedAt: generatedAt,
+  });
+  const artifact: LarkLanguageRoutingCandidateCaptureArtifact = {
+    schemaVersion: 1,
+    boundary: "language_routing_only",
+    source: "feishu_final_reply_capture",
+    generatedAt,
+    agentId: params.agentId,
+    targetSurface: params.targetSurface,
+    effectiveSurface: params.effectiveSurface,
+    chatId: params.chatId,
+    sessionKey: params.sessionKey,
+    messageId: params.messageId,
+    noFinanceLearningArtifact: true,
+    candidates,
+    evaluation,
+  };
+
+  const dateStem = generatedAt.slice(0, 10);
+  const memoryDir = path.join(params.workspaceDir, LARK_LANGUAGE_CANDIDATE_DIR, dateStem);
+  const fileName = buildLarkLanguageCandidateCaptureFileName(params.messageId);
+  const filePath = path.join(memoryDir, fileName);
+  await fs.mkdir(memoryDir, { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(artifact, null, 2)}\n`, "utf-8");
+  return {
+    relativePath: normalizeArtifactPath(path.join(LARK_LANGUAGE_CANDIDATE_DIR, dateStem, fileName)),
+    dateKey: dateStem,
+    workspaceDir: params.workspaceDir,
+    artifact,
   };
 }
 

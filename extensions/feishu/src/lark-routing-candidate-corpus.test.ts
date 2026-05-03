@@ -10,6 +10,7 @@ import {
   evaluateLarkPendingRoutingCandidate,
   evaluateLarkPendingRoutingCandidates,
   readLarkRoutingCandidatePromotionArtifacts,
+  writeLarkLanguageRoutingCandidateCapture,
 } from "./lark-routing-candidate-corpus.js";
 import type { FeishuConfig } from "./types.js";
 
@@ -158,6 +159,56 @@ describe("lark routing candidate corpus", () => {
     expect(JSON.stringify({ corpus, evaluation })).not.toMatch(
       /finance_learning|finance-learning|memory\/local-memory|capability card/u,
     );
+  });
+
+  it("writes a live-shaped candidate capture artifact without mutating the formal corpus", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-capture-"));
+    const capture = await writeLarkLanguageRoutingCandidateCapture({
+      workspaceDir: tempDir,
+      cfg,
+      agentId: "agent-1",
+      targetSurface: "learning_command",
+      effectiveSurface: "learning_command",
+      chatId: "oc-learning",
+      sessionKey: "session-1",
+      messageId: "msg/capture 1",
+      userMessage: "去学习世界顶级大学前沿金融论文",
+      finalReplyText: "我会标清楚 source coverage limits。",
+      apiReplyPayloads: [
+        "去 arxiv 上找资产配置前沿论文，只保留可复用规则并标注覆盖范围",
+        "Authorization: Bearer sk-ant-api03-thisshouldnotbelearned",
+        Buffer.from([0, 1, 2, 3]),
+      ],
+      generatedAt: "2026-04-27T00:00:00.000Z",
+    });
+
+    expect(capture).toMatchObject({
+      relativePath: "memory/lark-language-routing-candidates/2026-04-27/msg-capture-1.json",
+      dateKey: "2026-04-27",
+      workspaceDir: tempDir,
+      artifact: expect.objectContaining({
+        schemaVersion: 1,
+        boundary: "language_routing_only",
+        source: "feishu_final_reply_capture",
+        noFinanceLearningArtifact: true,
+        messageId: "msg/capture 1",
+      }),
+    });
+    expect(capture?.artifact.candidates.length).toBe(5);
+    expect(capture?.artifact.evaluation.counts.accepted).toBeGreaterThanOrEqual(2);
+    expect(capture?.artifact.evaluation.counts.discarded).toBe(2);
+    const file = JSON.parse(
+      await fs.readFile(path.join(tempDir, capture!.relativePath), "utf-8"),
+    ) as { noFinanceLearningArtifact?: boolean; boundary?: string };
+    expect(file).toMatchObject({
+      boundary: "language_routing_only",
+      noFinanceLearningArtifact: true,
+    });
+    expect(JSON.stringify(file)).not.toMatch(
+      /finance_learning|finance-learning|memory\/local-memory|capability card/u,
+    );
+
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
   it("promotes only family batches that meet review thresholds", () => {

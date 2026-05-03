@@ -164,6 +164,14 @@ function summarize(name: string, payload: Record<string, unknown>): Record<strin
       skippedCounts: payload.skippedCounts,
     };
   }
+  if (name === "lark-language-candidate-capture-smoke") {
+    return {
+      candidateCounts: payload.candidateCounts,
+      reviewCounts: payload.reviewCounts,
+      formalCorpusMutated: payload.formalCorpusMutated,
+      liveTouched: payload.liveTouched,
+    };
+  }
   return {
     status: "passed",
   };
@@ -374,6 +382,26 @@ const checks: CommandCheck[] = [
       assert(array(payload.skipped, "skipped").length === 0, "missing dir is an empty queue");
     },
   },
+  {
+    name: "lark-language-candidate-capture-smoke",
+    args: ["exec", "tsx", "scripts/dev/lark-language-candidate-capture-smoke.ts"],
+    parseJson: true,
+    assert: (payload) => {
+      assert(payload.ok === true, "language candidate capture smoke should be ok");
+      assert(payload.boundary === "language_routing_only", "capture boundary");
+      assert(payload.noFinanceLearningArtifact === true, "capture must not be brain artifact");
+      const candidateCounts = record(payload.candidateCounts, "candidateCounts");
+      const reviewCounts = record(payload.reviewCounts, "reviewCounts");
+      assert(numberValue(candidateCounts.accepted, "candidateCounts.accepted") >= 2, "accepted");
+      assert(numberValue(candidateCounts.discarded, "candidateCounts.discarded") >= 2, "discarded");
+      assert(
+        numberValue(reviewCounts.promotedCases, "reviewCounts.promotedCases") >= 2,
+        "promoted",
+      );
+      assert(payload.liveTouched === false, "capture smoke must not touch live");
+      assert(payload.formalCorpusMutated === false, "capture smoke must not mutate formal corpus");
+    },
+  },
 ];
 
 const results: CommandResult[] = [];
@@ -393,7 +421,7 @@ process.stdout.write(
       remoteFetchOccurred: false,
       executionAuthorityGranted: false,
       summary:
-        "Full dev loop passed: Lark/Feishu language routing, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, fail-closed cases, family scoring CLI, and language corpus review CLI.",
+        "Full dev loop passed: Lark/Feishu language routing, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, fail-closed cases, family scoring CLI, language corpus review CLI, and language candidate capture smoke.",
     },
     null,
     2,

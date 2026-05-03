@@ -88,11 +88,9 @@ import {
   type LarkLanguageHandoffReceiptArtifact,
 } from "./lark-language-handoff-receipts.js";
 import {
-  buildLarkPendingRoutingCandidateCorpus,
-  evaluateLarkRoutingCandidateCorpus,
+  writeLarkLanguageRoutingCandidateCapture,
   writeLarkRoutingCandidatePromotionReview,
-  type LarkPendingRoutingCandidate,
-  type LarkRoutingCandidateEvaluation,
+  type LarkLanguageRoutingCandidateCaptureResult,
 } from "./lark-routing-candidate-corpus.js";
 import { LARK_ROUTING_CORPUS, resolveLarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
 import { runFeishuLearningCouncil } from "./learning-council.js";
@@ -3049,45 +3047,6 @@ async function recordFeishuSurfacePersistFailure(params: {
   });
 }
 
-type LarkLanguageRoutingCandidateCaptureArtifact = {
-  schemaVersion: 1;
-  boundary: "language_routing_only";
-  source: "feishu_final_reply_capture";
-  generatedAt: string;
-  agentId: string;
-  targetSurface?: FeishuChatSurfaceName;
-  effectiveSurface?: FeishuChatSurfaceName;
-  chatId: string;
-  sessionKey: string;
-  messageId: string;
-  noFinanceLearningArtifact: true;
-  candidates: LarkPendingRoutingCandidate[];
-  evaluation: {
-    schemaVersion: 1;
-    boundary: "language_routing_only";
-    evaluatedAt: string;
-    counts: {
-      total: number;
-      accepted: number;
-      rejected: number;
-      discarded: number;
-    };
-    acceptedCases: LarkRoutingCandidateEvaluation["acceptedCase"][];
-    evaluations: LarkRoutingCandidateEvaluation[];
-  };
-};
-
-type LarkLanguageRoutingCandidateCaptureResult = {
-  relativePath: string;
-  dateKey: string;
-  workspaceDir: string;
-};
-
-function buildLarkLanguageCandidateCaptureFileName(messageId: string): string {
-  const stem = sanitizeSurfaceLedgerSegment(messageId) || "message";
-  return `${stem}.json`;
-}
-
 async function persistLarkLanguageRoutingCandidateCapture(params: {
   cfg: ClawdbotConfig;
   agentId: string;
@@ -3100,81 +3059,20 @@ async function persistLarkLanguageRoutingCandidateCapture(params: {
   finalReplyText: string;
   apiReplyPayloads?: readonly unknown[];
 }): Promise<LarkLanguageRoutingCandidateCaptureResult | undefined> {
-  const userMessage = params.userMessage.trim();
-  const finalReplyText = params.finalReplyText.trim();
-  if (!userMessage && !finalReplyText) {
-    return undefined;
-  }
-
-  const generatedAt = new Date().toISOString();
-  const userCorpus = userMessage
-    ? buildLarkPendingRoutingCandidateCorpus({
-        source: "lark_user_utterance",
-        payloads: [userMessage],
-        generatedAt,
-      })
-    : undefined;
-  const replyCorpus = finalReplyText
-    ? buildLarkPendingRoutingCandidateCorpus({
-        source: "lark_visible_reply",
-        payloads: [finalReplyText],
-        generatedAt,
-      })
-    : undefined;
-  const apiCorpus =
-    params.apiReplyPayloads && params.apiReplyPayloads.length > 0
-      ? buildLarkPendingRoutingCandidateCorpus({
-          source: "api_reply",
-          payloads: params.apiReplyPayloads,
-          generatedAt,
-        })
-      : undefined;
-  const candidates = [
-    ...(apiCorpus?.candidates ?? []),
-    ...(userCorpus?.candidates ?? []),
-    ...(replyCorpus?.candidates ?? []),
-  ];
-  const evaluation = evaluateLarkRoutingCandidateCorpus({
+  const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
+  return await writeLarkLanguageRoutingCandidateCapture({
+    workspaceDir,
     cfg: (params.cfg.channels?.feishu ?? {}) as FeishuConfig,
-    corpus: {
-      schemaVersion: 1,
-      boundary: "language_routing_only",
-      generatedAt,
-      candidates,
-    },
-    evaluatedAt: generatedAt,
-  });
-  const artifact: LarkLanguageRoutingCandidateCaptureArtifact = {
-    schemaVersion: 1,
-    boundary: "language_routing_only",
-    source: "feishu_final_reply_capture",
-    generatedAt,
     agentId: params.agentId,
     targetSurface: params.targetSurface,
     effectiveSurface: params.effectiveSurface,
     chatId: params.chatId,
     sessionKey: params.sessionKey,
     messageId: params.messageId,
-    noFinanceLearningArtifact: true,
-    candidates,
-    evaluation,
-  };
-
-  const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
-  const dateStem = generatedAt.slice(0, 10);
-  const memoryDir = path.join(workspaceDir, "memory", "lark-language-routing-candidates", dateStem);
-  const fileName = buildLarkLanguageCandidateCaptureFileName(params.messageId);
-  const filePath = path.join(memoryDir, fileName);
-  await fs.mkdir(memoryDir, { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(artifact, null, 2)}\n`, "utf-8");
-  return {
-    relativePath: path
-      .join("memory", "lark-language-routing-candidates", dateStem, fileName)
-      .split(path.sep)
-      .join("/"),
-    dateKey: dateStem,
-    workspaceDir,
-  };
+    userMessage: params.userMessage,
+    finalReplyText: params.finalReplyText,
+    apiReplyPayloads: params.apiReplyPayloads,
+  });
 }
 
 async function persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt(params: {
