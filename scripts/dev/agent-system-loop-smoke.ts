@@ -147,6 +147,23 @@ function summarize(name: string, payload: Record<string, unknown>): Record<strin
       ).length,
     };
   }
+  if (name === "lark-routing-family-score-cli") {
+    return {
+      total: payload.total,
+      deterministicPassRate: payload.deterministicPassRate,
+      semanticPassRate: payload.semanticPassRate,
+      stableFamilies: payload.stableFamilies,
+      weakFamilies: payload.weakFamilies,
+    };
+  }
+  if (name === "lark-language-corpus-review-cli") {
+    return {
+      mode: payload.mode,
+      sourceRoot: payload.sourceRoot,
+      counts: payload.counts,
+      skippedCounts: payload.skippedCounts,
+    };
+  }
   return {
     status: "passed",
   };
@@ -323,6 +340,40 @@ const checks: CommandCheck[] = [
       "src/agents/tools/lark-language-corpus-review-tool.test.ts",
     ],
   },
+  {
+    name: "lark-routing-family-score-cli",
+    args: ["exec", "tsx", "scripts/dev/lark-routing-family-score.ts", "--json"],
+    parseJson: true,
+    assert: (payload) => {
+      assert(payload.total === 72, "routing family score should cover supervised corpus");
+      assert(payload.deterministicPassRate === 1, "deterministic family score should pass");
+      assert(payload.semanticPassRate === 1, "semantic family score should pass");
+      assert(numberValue(payload.stableFamilies, "stableFamilies") >= 20, "stable families");
+      assert(payload.weakFamilies === 0, "no weak routing families expected");
+      assert(array(payload.families, "families").length >= 20, "family list should be present");
+    },
+  },
+  {
+    name: "lark-language-corpus-review-cli",
+    args: [
+      "exec",
+      "tsx",
+      "scripts/dev/lark-language-corpus-review.ts",
+      "--date",
+      "2099-01-01",
+      "--json",
+    ],
+    parseJson: true,
+    assert: (payload) => {
+      assert(payload.ok === true, "language corpus review CLI should be ok");
+      assert(payload.boundary === "language_routing_only", "language corpus boundary");
+      assert(payload.mode === "dry-run", "language corpus CLI should default to dry-run");
+      const counts = record(payload.counts, "counts");
+      assert(counts.sourceArtifacts === 0, "empty queue should have no source artifacts");
+      assert(counts.promotedCases === 0, "empty queue should promote no cases");
+      assert(array(payload.skipped, "skipped").length === 0, "missing dir is an empty queue");
+    },
+  },
 ];
 
 const results: CommandResult[] = [];
@@ -342,7 +393,7 @@ process.stdout.write(
       remoteFetchOccurred: false,
       executionAuthorityGranted: false,
       summary:
-        "Full dev loop passed: Lark/Feishu language routing, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, fail-closed cases, and language corpus review tests.",
+        "Full dev loop passed: Lark/Feishu language routing, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, fail-closed cases, family scoring CLI, and language corpus review CLI.",
     },
     null,
     2,
