@@ -19,7 +19,7 @@ type ConfigSnapshotLike = {
   issues?: ConfigIssueLike[] | null;
 };
 
-type PortUsageLike = { listeners: unknown[] };
+type PortUsageLike = { listeners: Array<{ command?: string; commandLine?: string }> };
 
 type TailscaleStatusLike = {
   backendState: string | null;
@@ -209,9 +209,18 @@ export async function appendStatusAllDiagnosis(params: {
   }
 
   if (params.portUsage) {
-    const portOk = params.portUsage.listeners.length === 0;
+    const gatewayOwnedPort =
+      params.gatewayReachable &&
+      params.portUsage.listeners.some((listener) =>
+        `${listener.commandLine ?? ""} ${listener.command ?? ""}`
+          .toLowerCase()
+          .includes("openclaw"),
+      );
+    const portOk = params.portUsage.listeners.length === 0 || gatewayOwnedPort;
     emitCheck(`Port ${params.port}`, portOk ? "ok" : "warn");
-    if (!portOk) {
+    if (gatewayOwnedPort) {
+      lines.push(`  ${muted("owned by the reachable local OpenClaw gateway")}`);
+    } else if (!portOk) {
       for (const line of formatPortDiagnostics(params.portUsage as never)) {
         lines.push(`  ${muted(line)}`);
       }
@@ -222,12 +231,12 @@ export async function appendStatusAllDiagnosis(params: {
     const backend = params.tailscale.backendState ?? "unknown";
     const okBackend = backend === "Running";
     const hasDns = Boolean(params.tailscale.dnsName);
-    const label =
-      params.tailscaleMode === "off"
-        ? `Tailscale: off · ${backend}${params.tailscale.dnsName ? ` · ${params.tailscale.dnsName}` : ""}`
-        : `Tailscale: ${params.tailscaleMode} · ${backend}${params.tailscale.dnsName ? ` · ${params.tailscale.dnsName}` : ""}`;
-    emitCheck(label, okBackend && (params.tailscaleMode === "off" || hasDns) ? "ok" : "warn");
-    if (params.tailscale.error) {
+    const tailscaleOff = params.tailscaleMode === "off";
+    const label = tailscaleOff
+      ? `Tailscale: off · ${backend}${params.tailscale.dnsName ? ` · ${params.tailscale.dnsName}` : ""}`
+      : `Tailscale: ${params.tailscaleMode} · ${backend}${params.tailscale.dnsName ? ` · ${params.tailscale.dnsName}` : ""}`;
+    emitCheck(label, tailscaleOff || (okBackend && hasDns) ? "ok" : "warn");
+    if (params.tailscale.error && !tailscaleOff) {
       lines.push(`  ${muted(`error: ${params.tailscale.error}`)}`);
     }
     if (params.tailscale.ips.length > 0) {
