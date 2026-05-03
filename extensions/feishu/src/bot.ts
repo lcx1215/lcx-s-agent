@@ -1197,13 +1197,22 @@ const FEISHU_MISSING_SOURCE_CUE_RE =
   /(source_required|source required|no url|no link|no source|without url|without link|without source|do not give a url|do not provide (a )?(url|link|source)|没有.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|没给.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|不给.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|未给.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|不提供.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|缺.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|没.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库))/iu;
 
 const FEISHU_CONCRETE_SOURCE_RE =
-  /(https?:\/\/\S+|file:\/\/\S+|\/[\w./ -]+\.(md|txt|pdf|html?|csv|json|jsonl)|[A-Za-z]:\\[^\s]+|arXiv:\s*\d{4}\.\d{4,5}|10\.\d{4,9}\/[-._;()/:A-Z0-9]+)/iu;
+  /(https?:\/\/\S+|file:\/\/\S+|(?:^|\s)(?:\.{1,2}\/|\/)?[\w./ -]+\.(md|txt|pdf|html?|csv|json|jsonl)|[A-Za-z]:\\[^\s]+|(?:arXiv:\s*)?\b\d{4}\.\d{4,5}(?:v\d+)?\b|10\.\d{4,9}\/[-._;()/:A-Z0-9]+)/iu;
 
-function isFeishuSourceRequiredTruthFamilyAsk(text: string): boolean {
+function hasFeishuConcreteSourceIdentifier(text: string): boolean {
+  if (FEISHU_CONCRETE_SOURCE_RE.test(text)) {
+    return true;
+  }
+  return (
+    /(github|repo|repository|仓库|开源项目|项目)/iu.test(text) && /\b[\w.-]+\/[\w.-]+\b/u.test(text)
+  );
+}
+
+export function isFeishuSourceRequiredTruthFamilyAsk(text: string): boolean {
   return (
     FEISHU_EXTERNAL_LEARNING_SOURCE_INTENT_RE.test(text) &&
     FEISHU_MISSING_SOURCE_CUE_RE.test(text) &&
-    !FEISHU_CONCRETE_SOURCE_RE.test(text)
+    !hasFeishuConcreteSourceIdentifier(text)
   );
 }
 

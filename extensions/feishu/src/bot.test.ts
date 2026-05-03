@@ -28,6 +28,7 @@ import {
   resolveFeishuEffectiveStateSurface,
   buildSurfaceScopedSessionKey,
   handleFeishuMessage,
+  isFeishuSourceRequiredTruthFamilyAsk,
   resolveBroadcastAgents,
   toMessageResourceType,
 } from "./bot.js";
@@ -7692,6 +7693,20 @@ describe("learning council routing", () => {
       expect(replyText).not.toContain("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。");
     }
     await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("does not treat concrete external source identifiers as missing-source family asks", () => {
+    const concreteSourceCases = [
+      "去学习这篇论文，虽然我没有网页链接，但 arXiv id 是 2501.12345，别误判缺来源。",
+      "学习这篇论文，没有普通 URL，但 DOI 是 10.48550/arXiv.2501.12345。",
+      "去 GitHub 上学习这个项目，没给网页链接，但仓库是 huggingface/transformers。",
+      "学习这个本地材料，没有 URL，source test/fixtures/finance-learning-pipeline/valid-finance-article.md。",
+      "吸收这个 PDF，没有网页链接，文件路径是 ./memory/articles/factor-timing.pdf。",
+    ];
+
+    for (const utterance of concreteSourceCases) {
+      expect(isFeishuSourceRequiredTruthFamilyAsk(utterance)).toBe(false);
+    }
   });
 
   it("runs the finance learning pipeline for Lark-stripped live validation wording even when API calls it a probe", async () => {
