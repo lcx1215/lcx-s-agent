@@ -3435,6 +3435,20 @@ function renderFeishuKnowledgeInternalizationAuditHandoffReply(params: {
   return lines.join("\n");
 }
 
+function renderFeishuLiveSchedulingQueueReply(params: {
+  handoff: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
+  handoffReceiptPath?: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+}): string {
+  return [
+    `done — family=live_scheduling_queue; targetSurface=${params.targetSurface ?? params.handoff.targetSurface ?? "unknown"}; effectiveSurface=${params.effectiveSurface ?? params.targetSurface ?? "unknown"}; only the queue contract was classified, no queued work was executed in this reply.`,
+    "queued — requested work items remain pending in order; do not treat queued work as completed until a later receipt proves the specific item ran.",
+    "next step — run the first queued item only, then return with its receipt/proof before starting the next item.",
+    `proof — handoff receipt: ${params.handoffReceiptPath ?? "write_failed_or_unavailable"}; dispatch=direct_queue_guard; model_worker=not_called; boundary=state_report_only_no_trade_no_file_mutation.`,
+  ].join("\n");
+}
+
 async function persistFeishuSurfaceLineWithFailureReceipt(params: {
   cfg: ClawdbotConfig;
   agentId: string;
@@ -5683,6 +5697,46 @@ export async function handleFeishuMessage(params: {
         accountId: account.accountId,
         controlRoomOrchestration,
       });
+
+      if (larkInstructionHandoff.family === "live_scheduling_queue") {
+        const queueReplyText = renderFeishuLiveSchedulingQueueReply({
+          handoff: larkInstructionHandoff,
+          handoffReceiptPath: larkHandoffReceipt?.relativePath,
+          targetSurface: surfaceRouting.targetSurface,
+          effectiveSurface: effectiveStateSurface,
+        });
+        const queueSendResult = await sendFeishuFinalTextReply({
+          replyRuntime: core.channel.reply,
+          dispatcher: effectiveDispatcher,
+          markDispatchIdle,
+          text: queueReplyText,
+        });
+
+        clearFeishuGroupHistoryAfterDispatch({
+          isGroup,
+          chatHistories,
+          historyKey,
+          historyLimit,
+        });
+
+        await persistCapturedFeishuSurfaceLine({
+          ...buildFeishuSurfaceLinePersistContext({
+            cfg,
+            agentId: route.agentId,
+            effectiveStateSurface,
+            replyContract: controlRoomOrchestration?.replyContract,
+            chatId: ctx.chatId,
+            sessionKey: effectiveSessionKey,
+            messageId: ctx.messageId,
+            userMessage: ctx.content,
+            apiReplyPayloads: larkApiReplyPayloads,
+          }),
+          finalReplyText: queueSendResult.queuedFinal ? queueReplyText : undefined,
+          dispatchQueuedFinal: queueSendResult.queuedFinal,
+          dispatchFinalCount: queueSendResult.counts.final,
+        });
+        return;
+      }
 
       if (larkInstructionHandoff.family === "knowledge_internalization_audit") {
         const internalizedLearningProof = await findLatestFeishuInternalizedLearningProof({
