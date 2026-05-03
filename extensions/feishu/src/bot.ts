@@ -1132,7 +1132,7 @@ function renderFeishuProtocolTruthSurfaceReply(params: {
   rationale?: string;
 }): string {
   if (
-    /(source_required|source required|no url|without url|do not give a url|不给.*url|没有.*url|没有.*source|缺.*source)/iu.test(
+    /(source_required|source required|no url|without url|do not give a url|不给.*(url|source|链接|网址|来源|材料|文件)|没有.*(url|source|链接|网址|来源|材料|文件)|缺.*(url|source|链接|网址|来源|材料|文件))/iu.test(
       params.userMessage,
     )
   ) {
@@ -1192,10 +1192,10 @@ function shouldUseFeishuProtocolStatusReadbackReply(text: string): boolean {
 
 function shouldUseFeishuSourceRequiredTruthReply(text: string): boolean {
   return (
-    /(learn|learning|google|webpage|网页|学习|source|url|local source|本地 source|来源)/iu.test(
+    /(learn|learning|google|webpage|网页|学习|source|url|local source|本地 source|来源|链接|网址|材料|文件)/iu.test(
       text,
     ) &&
-    /(source_required|source required|no url|without url|do not give a url|不给.*url|没有.*url|没有.*source|缺.*source|不提供.*url|不给.*source)/iu.test(
+    /(source_required|source required|no url|without url|do not give a url|不给.*(url|source|链接|网址|来源|材料|文件)|没有.*(url|source|链接|网址|来源|材料|文件)|缺.*(url|source|链接|网址|来源|材料|文件)|不提供.*(url|source|链接|网址|来源|材料|文件))/iu.test(
       text,
     )
   );
