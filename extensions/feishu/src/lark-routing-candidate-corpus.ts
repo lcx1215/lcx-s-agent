@@ -243,6 +243,34 @@ function parseApiRouteFamilyHint(payload: unknown): SemanticRouteCandidate | und
   };
 }
 
+function looksLikeApiRouteJsonLabelArtifact(candidate: LarkPendingRoutingCandidate): boolean {
+  if (candidate.source !== "api_reply" || candidate.sample.outputKind !== "json") {
+    return false;
+  }
+  const parsed =
+    typeof candidate.sample.distillableText === "string"
+      ? (() => {
+          try {
+            return JSON.parse(candidate.sample.distillableText) as unknown;
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined;
+  return (
+    parsed != null &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed) &&
+    typeof (parsed as Record<string, unknown>).family === "string"
+  );
+}
+
+function looksLikeApiRouteProviderFailureArtifact(text: string): boolean {
+  return /api route provider failed|gateway timeout|failovererror|llm request timed out|request timed out|provider failed|model timeout|upstream timeout/iu.test(
+    text,
+  );
+}
+
 function resolveCandidateSemantic(
   candidate: LarkPendingRoutingCandidate,
 ): SemanticRouteCandidate | undefined {
@@ -334,24 +362,42 @@ export function evaluateLarkPendingRoutingCandidate(params: {
   if (!candidate.utterance) {
     return { candidate, reason: "missing_distillable_text" };
   }
+  if (
+    candidate.source === "api_reply" &&
+    looksLikeApiRouteProviderFailureArtifact(candidate.utterance)
+  ) {
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        discardReason: "api_route_provider_failure",
+      },
+      reason: "discarded_by_distillation",
+    };
+  }
   const candidateSemantic = resolveCandidateSemantic(candidate);
   if (
     candidate.source === "api_reply" &&
     candidate.sample.outputKind === "json" &&
-    candidateSemantic?.family &&
-    candidateSemantic.family !== "unknown"
+    looksLikeApiRouteJsonLabelArtifact(candidate)
   ) {
     return {
-      candidate: { ...candidate, status: "discarded", semantic: candidateSemantic },
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        semantic: candidateSemantic ?? { family: "unknown", score: 0 },
+      },
       reason: "api_route_label_reference",
     };
   }
+  const directSemantic = resolveLarkSemanticRouteCandidate(candidate.utterance);
   const semantic =
     candidate.source === "lark_user_utterance" &&
     params.familyHint?.family &&
-    params.familyHint.family !== "unknown"
+    params.familyHint.family !== "unknown" &&
+    directSemantic.score < 0.8
       ? params.familyHint
-      : resolveLarkSemanticRouteCandidate(candidate.utterance);
+      : directSemantic;
   if (semantic.family === "unknown") {
     return {
       candidate: { ...candidate, status: "rejected_language_case", semantic },

@@ -2,8 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { larkLoopDiagnoseCommand } from "./capabilities.js";
-import { readReceiptStats } from "./capabilities/lark-loop-diagnose.js";
+import { larkLoopDiagnoseCommand, readReceiptStats } from "./capabilities/lark-loop-diagnose.js";
 import { createTestRuntime } from "./test-runtime-config-helpers.js";
 
 const runtime = createTestRuntime();

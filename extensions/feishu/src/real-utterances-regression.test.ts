@@ -999,6 +999,67 @@ describe("real daily utterance regression", () => {
     }
   });
 
+  it("language-classifies live replay artifacts by family instead of one-off sentences", () => {
+    const replayArtifacts: ReadonlyArray<{
+      label: string;
+      utterance: string;
+      family: LarkRoutingFamily;
+      expectedSurface: "control_room" | "learning_command";
+    }> = [
+      {
+        label: "live sync receipt",
+        utterance: "live-sync-ok gateway 已指向 lcx-s-openclaw",
+        family: "live_probe_failure",
+        expectedSurface: "control_room",
+      },
+      {
+        label: "technical live boundary",
+        utterance:
+          "**数据新鲜度：弱** 搜索未能获取到2026年4月纳斯达克最近一个月真实日线，因此不能声称已完成 live technical check。SMA(50) vs SMA(200), RSI。",
+        family: "live_probe_failure",
+        expectedSurface: "control_room",
+      },
+      {
+        label: "finance learning application-ready receipt",
+        utterance:
+          "金融能力学习流水线完成：learningInternalizationStatus: application_ready failedReason: none retrievalReceiptPath memory/finance-learning-retrieval-receipts/x.json retrievalReviewPath memory/finance-learning-retrieval-reviews/y.json",
+        family: "market_capability_learning_intake",
+        expectedSurface: "learning_command",
+      },
+      {
+        label: "lark stripped finance source check",
+        utterance:
+          "live valid source check source test/fixtures/finance-learning-pipeline/valid-finance-article.md run financelearningpipelineorchestrator learningIntent ETF event triage workflow. Must show learningInternalizationStatus applicationready or failedReason usable answer contract usable answer lines. code lark-live-valid-source-20260502-1",
+        family: "market_capability_learning_intake",
+        expectedSurface: "learning_command",
+      },
+      {
+        label: "arxiv finance application-ready learning request",
+        utterance:
+          "请学习一篇你认为今天最值得吸收的金融/量化 arXiv 论文，输出：论文名、为什么值得学、可复用规则、风险边界、application_ready 或明确失败原因。验收码 lark-live-learning-20260502-1",
+        family: "market_capability_learning_intake",
+        expectedSurface: "learning_command",
+      },
+    ];
+
+    for (const artifact of replayArtifacts) {
+      const semantic = resolveLarkSemanticRouteCandidate(artifact.utterance);
+      const deterministic = resolveLarkDeterministicCorpusCase({
+        cfg,
+        entry: {
+          id: `replay-artifact-${artifact.label}`,
+          utterance: artifact.utterance,
+          family: artifact.family,
+          expectedSurface: artifact.expectedSurface,
+          truthBoundary: "evidence_required",
+        },
+      });
+
+      expect(semantic.family, artifact.label).toBe(artifact.family);
+      expect(deterministic.passed, artifact.label).toBe(true);
+    }
+  });
+
   it("keeps external-source language corpus separate from finance learning memory artifacts", () => {
     for (const entry of LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH) {
       expect(entry.id, entry.utterance).toMatch(/^external-language-batch-/u);

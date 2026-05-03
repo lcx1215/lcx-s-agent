@@ -9,10 +9,6 @@ import {
   languageBrainLoopSmokeCommand,
   type LanguageBrainLoopSmokeCommandOptions,
 } from "./capabilities/language-brain-loop-smoke.js";
-import {
-  larkLoopDiagnoseCommand,
-  type LarkLoopDiagnoseCommandOptions,
-} from "./capabilities/lark-loop-diagnose.js";
 import { resolveConfiguredEntries } from "./models/list.configured.js";
 import { loadModelsConfig } from "./models/load-config.js";
 
@@ -45,8 +41,7 @@ export type GitHubCapabilityIntakeCommandOptions = {
 };
 
 export type { LanguageBrainLoopSmokeCommandOptions };
-export type { LarkLoopDiagnoseCommandOptions };
-export { languageBrainLoopSmokeCommand, larkLoopDiagnoseCommand };
+export { languageBrainLoopSmokeCommand };
 
 export type ConfiguredModelCapabilitySurface = {
   provider: string;

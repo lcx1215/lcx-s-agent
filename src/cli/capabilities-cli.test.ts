@@ -11,6 +11,9 @@ vi.mock("../commands/capabilities.js", () => ({
   capabilitiesCommand,
   githubCapabilityIntakeCommand,
   languageBrainLoopSmokeCommand,
+}));
+
+vi.mock("../commands/capabilities/lark-loop-diagnose.js", () => ({
   larkLoopDiagnoseCommand,
 }));
 

@@ -2,9 +2,9 @@ import type { Command } from "commander";
 import {
   capabilitiesCommand,
   githubCapabilityIntakeCommand,
-  larkLoopDiagnoseCommand,
   languageBrainLoopSmokeCommand,
 } from "../commands/capabilities.js";
+import { larkLoopDiagnoseCommand } from "../commands/capabilities/lark-loop-diagnose.js";
 import { defaultRuntime } from "../runtime.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
 import { formatHelpExamples } from "./help-format.js";

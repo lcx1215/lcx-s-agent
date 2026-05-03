@@ -1091,10 +1091,207 @@ function tokenSimilarity(left: string, right: string): number {
   return intersection / Math.max(leftTokens.size, rightTokens.size);
 }
 
+function buildHighSignalSemanticCandidate(
+  family: LarkRoutingFamily,
+  matchedUtterance: string,
+): SemanticRouteCandidate {
+  return {
+    family,
+    score: 0.9,
+    matchedUtterance,
+  };
+}
+
+function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandidate | undefined {
+  const normalized = normalizeSemanticText(utterance);
+  const compact = normalized.replace(/\s+/gu, "");
+
+  const hasFinanceLearningPipelineResult =
+    /(financelearningpipelineorchestrator|financelearningpipeline|learninginternalizationstatus|application[_\s-]?ready|failedreason|retrievalreceiptpath|retrievalreviewpath|finance-learning-retrieval|usable answer contract|usable answer lines|local_source_not_found)/iu.test(
+      normalized,
+    ) ||
+    /(金融能力学习流水线|学习流水线).{0,48}(application|failedreason|失败原因|完成|receipt|review)/iu.test(
+      normalized,
+    );
+  const hasConcreteFinanceLearningIntent =
+    /(学习|learn|study|internalize|source|pipeline|orchestrator|本地安全|valid source|验收码|论文|paper|arxiv).{0,80}(金融|finance|etf|量化|quant|因子|factor|择时|timing|策略|strategy|portfolio|资产配置)/iu.test(
+      normalized,
+    ) ||
+    /(金融|finance|etf|量化|quant|因子|factor|择时|timing|策略|strategy|portfolio|资产配置).{0,80}(学习|learn|study|internalize|source|pipeline|orchestrator|本地安全|valid source|验收码|论文|paper|arxiv)/iu.test(
+      normalized,
+    );
+  const requiresApplicationReadyProof =
+    /(application[_\s-]?ready|failedreason|失败原因|明确失败原因|retrieval receipt|retrieval review|receipt\/review)/iu.test(
+      normalized,
+    );
+  if (
+    hasFinanceLearningPipelineResult ||
+    (hasConcreteFinanceLearningIntent && requiresApplicationReadyProof)
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "market_capability_learning_intake",
+      "market_capability_pipeline_family",
+    );
+  }
+
+  if (
+    /(学习复盘|复盘回路|audit_handoff_ready|handoff receipt|不重新学习|只复盘)/iu.test(normalized)
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "knowledge_internalization_audit",
+      "learning_audit_replay_family",
+    );
+  }
+
+  if (
+    /(arxiv\s*id|arxiv|论文|paper).{0,80}(source_required|缺source|source coverage|覆盖范围|可定位来源|网页链接|source limits|只保留可复用规则|标注覆盖范围)|(?:source_required|缺source|source coverage|覆盖范围|可定位来源|网页链接|source limits|只保留可复用规则|标注覆盖范围).{0,80}(arxiv\s*id|arxiv|论文|paper)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "external_source_coverage_honesty",
+      "concrete_external_source_family",
+    );
+  }
+
+  if (
+    /(模型路由验收|model.*allowlist|live-council-model|learning council run: full|three-model execution completed|runtime model selected|runtime model|lobster: control_room_main_lane|openclaw_embedded_agent)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "live_probe_failure",
+      "live_model_probe_receipt_family",
+    );
+  }
+
+  if (
+    /(股市|交易|市场|finance|market|纳斯达克|nasdaq).{0,80}(数学|物理|布朗运动|wiener|ito|alpha-stable|随机过程|随机微分|时间序列|概率统计|优化|回归分析|量价|波动率)|(?:数学|物理|布朗运动|wiener|ito|alpha-stable|随机过程|随机微分|时间序列|概率统计|优化|回归分析|量价|波动率).{0,80}(股市|交易|市场|finance|market|纳斯达克|nasdaq)/iu.test(
+      normalized,
+    ) &&
+    /(学习|开始学|本轮学习目标|学到了什么|理解|课程体系|可执行|可验证|分析框架|框架性指导|缺少真实市场数据|需要.*真实数据|source|学完全部)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "market_capability_learning_intake",
+      "finance_math_learning_family",
+    );
+  }
+
+  if (
+    /(learning council|学习委员会|synthesis lane|kimi synthesis|lane receipt|run_failed|degraded execution|partial \/ degraded|invalid agent params)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "learning_capability_maintenance",
+      "learning_council_receipt_family",
+    );
+  }
+
+  if (
+    /(撤回授权|撤销|先停|不要接 live|不要 probe|不要 restart|只保留 dev|不能继承部署|不能继承.*重启)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate("live_stop_boundary", "live_stop_boundary_family");
+  }
+
+  if (
+    /(授权|允许|操控电脑|真实测试|接 live 前).{0,80}(不是授权|不等于授权|build|restart|deploy|验收短语|测试语句|可见回复|是否命中|dev\/live)/iu.test(
+      normalized,
+    ) ||
+    /(不是授权|不等于授权).{0,80}(build|restart|deploy|live)/iu.test(normalized)
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "live_permission_receipt",
+      "live_permission_receipt_family",
+    );
+  }
+
+  if (
+    /(排队|不要并行|别并行|一次只做一个|按优先级|先分类|语义家族分类).{0,80}(done|queued|next step|proof|completed|started|完成|证据|下一步)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate("live_scheduling_queue", "live_scheduling_family");
+  }
+
+  const hasLiveReceipt =
+    /(live-sync-ok|gateway\s*(?:已指向|points? to)|验收码|lark-live-|feishu-live-|可见回复|visible reply|probe|探针|only sent|no reply|无回复|错线程|错 chat|blocked|not_started|started|completed|pass|failed)/iu.test(
+      normalized,
+    );
+  const hasLiveTruthBoundary =
+    /(dev\/live|live|lark|feishu|飞书|gateway|probe|探针|reply|回复|proof|receipt|证据|验收|source check|valid source)/iu.test(
+      normalized,
+    );
+  const hasLiveProbeFailureOrProof =
+    hasLiveReceipt &&
+    hasLiveTruthBoundary &&
+    !/(financelearningpipelineorchestrator|learninginternalizationstatus|application[_\s-]?ready)/iu.test(
+      normalized,
+    );
+  if (hasLiveProbeFailureOrProof) {
+    return buildHighSignalSemanticCandidate("live_probe_failure", "live_probe_receipt_family");
+  }
+
+  const hasTechnicalIndicator =
+    /(sma|ema|rsi|macd|bollinger|均线|相对强弱|动量|趋势|支撑|阻力|technical|技术面|技术指标|日线|周线|月线)/iu.test(
+      normalized,
+    );
+  const hasMarketTickerOrIndex =
+    /(nasdaq|纳斯达克|qqq|spy|tlt|iwm|dxy|美股|指数|etf|标普|sp500|s&p|收益率|利率|duration|treasury)/iu.test(
+      normalized,
+    );
+  const hasFreshnessOrResearchBoundary =
+    /(数据新鲜度|freshness|搜索未能获取|不能声称|不能确认|真实日线|最近一个月|live technical check|risk boundary|弱|缺口)/iu.test(
+      normalized,
+    );
+  if (hasTechnicalIndicator && hasMarketTickerOrIndex) {
+    return buildHighSignalSemanticCandidate(
+      hasFreshnessOrResearchBoundary ? "live_probe_failure" : "technical_timing",
+      hasFreshnessOrResearchBoundary
+        ? "technical_live_probe_boundary_family"
+        : "technical_timing_indicator_family",
+    );
+  }
+
+  if (
+    /(去|请|帮我|让它|让你|学习|learn|study|读|read).{0,60}(arxiv|论文|paper|google|github|网页|web|公开|source)/iu.test(
+      normalized,
+    ) &&
+    /(覆盖|coverage|完整覆盖|source limits|标清|说明实际|别假装|不要假装|今天最值得吸收|值得吸收|可复用规则)/iu.test(
+      normalized,
+    ) &&
+    !/(application[_\s-]?ready|failedreason|financelearningpipelineorchestrator)/iu.test(normalized)
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "external_source_coverage_honesty",
+      "external_source_coverage_family",
+    );
+  }
+
+  if (
+    /(api|llm|大模型|模型).{0,48}(回复|response|reply|样本|sample|蒸馏|distill|语义家族|semanticfamily)|(?:回复|response|reply|样本|sample|蒸馏|distill).{0,48}(api|llm|大模型|模型)/iu.test(
+      compact,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate("api_reply_distillation", "api_reply_artifact_family");
+  }
+
+  return undefined;
+}
+
 export function resolveLarkSemanticRouteCandidate(
   utterance: string,
   threshold = LARK_ROUTING_SEMANTIC_THRESHOLD,
 ): SemanticRouteCandidate {
+  const highSignal = resolveHighSignalSemanticFamily(utterance);
+  if (highSignal && highSignal.score >= threshold) {
+    return highSignal;
+  }
+
   let best: SemanticRouteCandidate = { family: "unknown", score: 0 };
   for (const [family, contract] of Object.entries(LARK_ROUTING_FAMILY_CONTRACTS) as Array<
     [LarkRoutingFamily, (typeof LARK_ROUTING_FAMILY_CONTRACTS)[LarkRoutingFamily]]

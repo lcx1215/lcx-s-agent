@@ -328,6 +328,40 @@ describe("lark routing candidate corpus", () => {
     });
   });
 
+  it("keeps high-confidence user semantics ahead of a wrong API label hint", () => {
+    const apiCandidate = createLarkPendingRoutingCandidate({
+      source: "api_reply",
+      payload: {
+        family: "live_probe_failure",
+        confidence: 0.91,
+        rationale: "wrongly treated a finance pipeline execution as a live probe",
+      },
+      createdAt: "2026-05-03T00:00:00.000Z",
+    });
+    const userCandidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload:
+        "live valid source check source test/fixtures/finance-learning-pipeline/valid-finance-article.md run financelearningpipelineorchestrator learningIntent ETF event triage workflow. Must show learningInternalizationStatus applicationready or failedReason usable answer contract usable answer lines. code lark-live-valid-source-20260502-1",
+      createdAt: "2026-05-03T00:00:01.000Z",
+    });
+
+    const evaluation = evaluateLarkPendingRoutingCandidates({
+      cfg,
+      candidates: [apiCandidate, userCandidate],
+    });
+
+    expect(evaluation).toEqual([
+      expect.objectContaining({ reason: "api_route_label_reference" }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({
+          family: "market_capability_learning_intake",
+          expectedSurface: "learning_command",
+        }),
+      }),
+    ]);
+  });
+
   it("does not expose deterministic route failures as accepted promotion cases", () => {
     const corpus = buildLarkPendingRoutingCandidateCorpus({
       source: "api_reply",
@@ -356,6 +390,67 @@ describe("lark routing candidate corpus", () => {
         discarded: 0,
       },
     });
+  });
+
+  it("accepts real Lark replay families and discards API provider failure chatter", () => {
+    const evaluations = evaluateLarkPendingRoutingCandidates({
+      cfg,
+      candidates: [
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload: "live-sync-ok gateway 已指向 lcx-s-openclaw",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "**数据新鲜度：弱** 搜索未能获取到2026年4月纳斯达克最近一个月真实日线，因此不能声称已完成 live technical check。SMA(50) vs SMA(200), RSI。",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "金融能力学习流水线完成：learningInternalizationStatus: application_ready failedReason: none retrievalReceiptPath memory/finance-learning-retrieval-receipts/x.json retrievalReviewPath memory/finance-learning-retrieval-reviews/y.json",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_user_utterance",
+          payload:
+            "请学习一篇你认为今天最值得吸收的金融/量化 arXiv 论文，输出：论文名、为什么值得学、可复用规则、风险边界、application_ready 或明确失败原因。验收码 lark-live-learning-20260502-1",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "api_reply",
+          payload: {
+            family: "unknown",
+            confidence: 0,
+            rationale: "api route provider failed: Error: gateway timeout after 35000ms",
+          },
+        }),
+      ],
+    });
+
+    expect(evaluations).toEqual([
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({ family: "live_probe_failure" }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({ family: "live_probe_failure" }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({ family: "market_capability_learning_intake" }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({ family: "market_capability_learning_intake" }),
+      }),
+      expect.objectContaining({
+        reason: "discarded_by_distillation",
+        candidate: expect.objectContaining({
+          status: "discarded",
+          discardReason: "api_route_provider_failure",
+        }),
+      }),
+    ]);
   });
 
   it("writes a live-shaped candidate capture artifact without mutating the formal corpus", async () => {
