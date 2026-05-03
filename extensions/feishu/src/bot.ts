@@ -16,6 +16,7 @@ import {
 } from "openclaw/plugin-sdk";
 import { resolveAgentWorkspaceDir } from "../../../src/agents/agent-scope.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../../src/agents/tools/finance-learning-pipeline-orchestrator-tool.js";
+import { buildProtocolInfoReply } from "../../../src/auto-reply/reply/commands-protocol-info.js";
 import type { OpenClawConfig } from "../../../src/config/config.js";
 import { isCorrectionLoopInput } from "../../../src/hooks/bundled/correction-loop/detection.js";
 import {
@@ -1121,6 +1122,46 @@ async function sendFeishuFinalTextReply(params: {
       return { queuedFinal, counts: { final: queuedFinal ? 1 : 0 } };
     },
   });
+}
+
+function renderFeishuProtocolTruthSurfaceReply(params: {
+  userMessage: string;
+  family: string;
+  confidence: number;
+  rationale?: string;
+}): string {
+  return [
+    "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。",
+    "",
+    "当前可用能力:",
+    "- 可以把自然语言请求分到 control_room、learning_command、technical_daily、fundamental_research、knowledge_maintenance、ops_audit 等工作面。",
+    "- 可以在本地 workspace 内跑有 receipt 的 finance learning pipeline；成功时必须出现 application_ready 或明确 failedReason。",
+    "- 可以把学习、复盘、审计、路由和工作回执写成可检查 artifact，而不是只靠聊天记忆。",
+    "",
+    "不可用边界:",
+    "- 这不是自动交易执行器，不会批准下单、付款、删文件、生产发布或其它高风险动作。",
+    "- 没有新鲜来源或工具证明时，不能把旧证据说成今天的 live 事实。",
+    "- dev-fixed 和 live-fixed 必须分开；只有 build/restart/probe/真实 Lark 可见回复都通过，才算 live-fixed。",
+    "",
+    "下一步会做什么:",
+    "- 对每条真实 Lark 消息先分类，再走对应工作面；如果缺 source、权限、证据或 receipt，就直接说失败原因。",
+    "- 继续用真实简单问题打入口，优先修静默失败、错路由、假成功和 artifact 不落账。",
+    "",
+    `本次识别: family=${params.family}, confidence=${params.confidence.toFixed(2)}`,
+    params.rationale ? `识别理由: ${params.rationale}` : undefined,
+    `原始问题: ${params.userMessage}`,
+    "边界: 这是 protocol truth surface 的确定性回复，不是普通自由聊天生成。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function shouldUseFeishuProtocolTruthIdentityReply(text: string): boolean {
+  return (
+    /(你是谁|现在你是谁|who are you|what are you|身份|不要讲大话|别讲大话|下一步会做什么|next step)/iu.test(
+      text,
+    ) && /(能做什么|可用能力|能力|capabilit|边界|不能做什么|不可用)/iu.test(text)
+  );
 }
 
 async function createAndSendFeishuFinalTextReply(params: {
@@ -5524,6 +5565,54 @@ export async function handleFeishuMessage(params: {
           finalReplyText: auditSendResult.queuedFinal ? auditReplyText : undefined,
           dispatchQueuedFinal: auditSendResult.queuedFinal,
           dispatchFinalCount: auditSendResult.counts.final,
+        });
+        return;
+      }
+
+      if (larkInstructionHandoff.family === "protocol_truth_surface") {
+        const protocolInfoReply = shouldUseFeishuProtocolTruthIdentityReply(ctx.content)
+          ? null
+          : buildProtocolInfoReply({
+              text: ctx.content,
+              cfg: effectiveCfg as OpenClawConfig,
+            });
+        const protocolTruthText =
+          protocolInfoReply?.text ??
+          renderFeishuProtocolTruthSurfaceReply({
+            userMessage: ctx.content,
+            family: larkInstructionHandoff.family,
+            confidence: larkInstructionHandoff.confidence,
+            rationale: larkInstructionHandoff.apiCandidate?.rationale,
+          });
+        const protocolTruthSendResult = await sendFeishuFinalTextReply({
+          replyRuntime: core.channel.reply,
+          dispatcher: effectiveDispatcher,
+          markDispatchIdle,
+          text: protocolTruthText,
+        });
+
+        clearFeishuGroupHistoryAfterDispatch({
+          isGroup,
+          chatHistories,
+          historyKey,
+          historyLimit,
+        });
+
+        await persistCapturedFeishuSurfaceLine({
+          ...buildFeishuSurfaceLinePersistContext({
+            cfg,
+            agentId: route.agentId,
+            effectiveStateSurface: "control_room",
+            replyContract: controlRoomOrchestration?.replyContract,
+            chatId: ctx.chatId,
+            sessionKey: buildSurfaceScopedSessionKey(route.sessionKey, "control_room"),
+            messageId: ctx.messageId,
+            userMessage: ctx.content,
+            apiReplyPayloads: larkApiReplyPayloads,
+          }),
+          finalReplyText: protocolTruthSendResult.queuedFinal ? protocolTruthText : undefined,
+          dispatchQueuedFinal: protocolTruthSendResult.queuedFinal,
+          dispatchFinalCount: protocolTruthSendResult.counts.final,
         });
         return;
       }

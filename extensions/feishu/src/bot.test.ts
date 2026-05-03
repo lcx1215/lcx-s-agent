@@ -6867,6 +6867,119 @@ describe("learning council routing", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("answers protocol truth surface asks directly instead of silently dispatching zero replies", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "protocol_truth_surface",
+      confidence: 0.95,
+      rationale: "identity and capability truth surface",
+    }));
+
+    const mockDispatchReplyFromConfig = vi.fn();
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-protocol-truth-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-user" } },
+      message: {
+        message_id: "msg-protocol-truth-simple",
+        chat_id: "oc-dm",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({
+          text: "简单验收：现在你是谁？你能做什么？不要讲大话，只列出当前可用能力、不可用边界、下一步会做什么。验收码 lark-simple-identity-test",
+        }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。"),
+    });
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).toContain("当前可用能力:");
+    expect(replyText).toContain("不可用边界:");
+    expect(replyText).toContain("下一步会做什么:");
+    expect(replyText).toContain("family=protocol_truth_surface");
+    expect(replyText).toContain("lark-simple-identity-test");
+
+    const surfaceLineText = await fs.readFile(
+      path.join(tempDir, "memory", "feishu-surface-lines", "control_room-oc-dm.md"),
+      "utf-8",
+    );
+    expect(surfaceLineText).toContain("msg-protocol-truth-simple");
+    expect(surfaceLineText).toContain("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("runs the finance learning pipeline for Lark-stripped live validation wording even when API calls it a probe", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
