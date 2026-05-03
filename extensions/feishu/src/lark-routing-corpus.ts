@@ -1106,8 +1106,111 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
   const normalized = normalizeSemanticText(utterance);
   const compact = normalized.replace(/\s+/gu, "");
 
+  if (
+    /(source_required|no_url_or_local_source_provided|没有给链接|没给链接|没有网页链接|没给网页链接|没有仓库链接|没给仓库链接|repo url|local source).{0,120}(failedreason|next step|boundary|proof|别假装|不要假装|do not pretend)|(?:what should you do|answer only|只回).{0,120}(source_required|failedreason|no_url_or_local_source_provided)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "protocol_truth_surface",
+      "source_required_boundary_contract_family",
+    );
+  }
+
+  if (
+    /(status readback|dev-fixed|live-fixed|evidence order|visible lark\/feishu reply-flow evidence|current evidence)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "protocol_truth_surface",
+      "status_readback_truth_surface_family",
+    );
+  }
+
+  if (
+    (/(live-council-model|model.*allowlist|模型路由验收|模型允许)/iu.test(normalized) &&
+      /(learning council run|runtime model|验收码|当前模型允许|allowlist)/iu.test(normalized)) ||
+    /(runtime model selected|lobster:\s*control_room_main_lane|openclaw_embedded_agent|use \/status for the full runtime snapshot)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "live_probe_failure",
+      "live_model_probe_receipt_family",
+    );
+  }
+
+  if (
+    /family\s*=\s*live_scheduling_queue|done\s*[—-]\s*family\s*=\s*live_scheduling_queue/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "live_scheduling_queue",
+      "visible_queue_receipt_family",
+    );
+  }
+
+  if (
+    /(?:done|queued|next step|proof).{0,240}(?:done|queued|next step|proof)/iu.test(normalized) &&
+    /(queued|排队|不要并行|receipt 检查|live probe 未观察到|下一步修补|probe receipt)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate("live_scheduling_queue", "visible_queue_status_family");
+  }
+
+  if (
+    /(我是\s+lcx agent|我是\s+openclaw|lark 控制室入口|当前可用能力|不可用边界|dev-fixed 和 live-fixed)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "protocol_truth_surface",
+      "control_room_capability_surface_family",
+    );
+  }
+
+  if (
+    /(学习复盘|复盘回路|audit_handoff_ready|handoff receipt|不重新学习|只复盘|knowledge_internalization_audit|学习结果复盘|内化审计)/iu.test(
+      normalized,
+    ) ||
+    /(?:刚才|刚刚|这次|上次|前面|前一步).{0,40}(?:学会|学到了|内化|吸收|留下|沉淀).{0,80}(?:证据|receipt|review|以后怎么用|failedreason|已内化规则|内化规则)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "knowledge_internalization_audit",
+      "learning_audit_replay_family",
+    );
+  }
+
+  if (
+    /(前台超时验收|visible timeout|foreground timeout|learning_council_reply_timeout|超过\s*\d+\s*秒没形成最终结果|必须显式回复\s*timeout|不准沉默)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "live_probe_failure",
+      "learning_council_visible_timeout_family",
+    );
+  }
+
+  if (
+    /(learning council|学习委员会|synthesis lane|kimi synthesis|lane receipt|run_failed|degraded execution|partial \/ degraded|invalid agent params)/iu.test(
+      normalized,
+    ) &&
+    !/(live-council-model|model.*allowlist|模型路由验收)/iu.test(normalized)
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "learning_capability_maintenance",
+      "learning_council_receipt_family",
+    );
+  }
+
   const hasFinanceLearningPipelineResult =
-    /(financelearningpipelineorchestrator|financelearningpipeline|learninginternalizationstatus|application[_\s-]?ready|failedreason|retrievalreceiptpath|retrievalreviewpath|finance-learning-retrieval|usable answer contract|usable answer lines|local_source_not_found)/iu.test(
+    /(financelearningpipelineorchestrator|financelearningpipeline|learninginternalizationstatus|retrievalreceiptpath|retrievalreviewpath|finance-learning-retrieval|usable answer contract|usable answer lines|local_source_not_found)/iu.test(
       normalized,
     ) ||
     /(金融能力学习流水线|学习流水线).{0,48}(application|failedreason|失败原因|完成|receipt|review)/iu.test(
@@ -1135,15 +1238,6 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
   }
 
   if (
-    /(学习复盘|复盘回路|audit_handoff_ready|handoff receipt|不重新学习|只复盘)/iu.test(normalized)
-  ) {
-    return buildHighSignalSemanticCandidate(
-      "knowledge_internalization_audit",
-      "learning_audit_replay_family",
-    );
-  }
-
-  if (
     /(arxiv\s*id|arxiv|论文|paper).{0,80}(source_required|缺source|source coverage|覆盖范围|可定位来源|网页链接|source limits|只保留可复用规则|标注覆盖范围)|(?:source_required|缺source|source coverage|覆盖范围|可定位来源|网页链接|source limits|只保留可复用规则|标注覆盖范围).{0,80}(arxiv\s*id|arxiv|论文|paper)/iu.test(
       normalized,
     )
@@ -1151,17 +1245,6 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
     return buildHighSignalSemanticCandidate(
       "external_source_coverage_honesty",
       "concrete_external_source_family",
-    );
-  }
-
-  if (
-    /(模型路由验收|model.*allowlist|live-council-model|learning council run: full|three-model execution completed|runtime model selected|runtime model|lobster: control_room_main_lane|openclaw_embedded_agent)/iu.test(
-      normalized,
-    )
-  ) {
-    return buildHighSignalSemanticCandidate(
-      "live_probe_failure",
-      "live_model_probe_receipt_family",
     );
   }
 
@@ -1176,17 +1259,6 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
     return buildHighSignalSemanticCandidate(
       "market_capability_learning_intake",
       "finance_math_learning_family",
-    );
-  }
-
-  if (
-    /(learning council|学习委员会|synthesis lane|kimi synthesis|lane receipt|run_failed|degraded execution|partial \/ degraded|invalid agent params)/iu.test(
-      normalized,
-    )
-  ) {
-    return buildHighSignalSemanticCandidate(
-      "learning_capability_maintenance",
-      "learning_council_receipt_family",
     );
   }
 

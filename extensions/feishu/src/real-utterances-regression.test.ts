@@ -1004,7 +1004,7 @@ describe("real daily utterance regression", () => {
       label: string;
       utterance: string;
       family: LarkRoutingFamily;
-      expectedSurface: "control_room" | "learning_command";
+      expectedSurface?: "control_room" | "learning_command" | "knowledge_maintenance";
     }> = [
       {
         label: "live sync receipt",
@@ -1039,6 +1039,55 @@ describe("real daily utterance regression", () => {
           "请学习一篇你认为今天最值得吸收的金融/量化 arXiv 论文，输出：论文名、为什么值得学、可复用规则、风险边界、application_ready 或明确失败原因。验收码 lark-live-learning-20260502-1",
         family: "market_capability_learning_intake",
         expectedSurface: "learning_command",
+      },
+      {
+        label: "learning council degraded receipt",
+        utterance:
+          "Learning council run: partial / degraded execution. ## Kimi synthesis Lane receipt: contract=synthesis (configured role: kimi); runtime provider=moonshot; runtime model=moonshot/kimi-k2.5 - run_failed: Error: invalid agent params",
+        family: "learning_capability_maintenance",
+        expectedSurface: "learning_command",
+      },
+      {
+        label: "learning council visible timeout contract",
+        utterance:
+          "前台超时验收：进入 learning council，但如果超过 8 秒没形成最终结果，必须显式回复 timeout，不准沉默。验收码 live-council-visible-timeout-20260503-1",
+        family: "live_probe_failure",
+        expectedSurface: "control_room",
+      },
+      {
+        label: "simple learning proof audit",
+        utterance:
+          "简单验收：刚才你真的学会了什么？只列1条已内化规则、证据文件/receipt在哪里、以后怎么用；如果没有证据就说 failedReason。验收码 lark-simple-learning-proof-20260503-2",
+        family: "knowledge_internalization_audit",
+        expectedSurface: "knowledge_maintenance",
+      },
+      {
+        label: "visible internalization audit receipt",
+        utterance:
+          "已识别为学习结果复盘/内化审计请求，没有重新学习。 - family: knowledge_internalization_audit - confidence: 0.95 - targetSurface: ops_audit - effectiveSurface: ops_audit - handoff receipt: memory/lark-language-handoff-receipts/2026-05-03/example.json",
+        family: "knowledge_internalization_audit",
+        expectedSurface: "knowledge_maintenance",
+      },
+      {
+        label: "source-required boundary check",
+        utterance:
+          "Source check: if I say go learn a Google webpage but I do not give a URL or local source, what should you do? Answer only with family, source_required, failedReason, next step, boundary, proof. Do not pretend learned. acceptance code lark-source-required-20260503-1",
+        family: "protocol_truth_surface",
+        expectedSurface: undefined,
+      },
+      {
+        label: "control room capability readback",
+        utterance:
+          "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。 当前可用能力: 可以在本地 workspace 内跑有 receipt 的 finance learning pipeline；成功时必须出现 application_ready 或明确 failedReason。不可用边界: dev-fixed 和 live-fixed 必须区分。",
+        family: "protocol_truth_surface",
+        expectedSurface: undefined,
+      },
+      {
+        label: "runtime model status receipt",
+        utterance:
+          "Runtime model Selected: unknown Active: unknown Lobster: control_room_main_lane · openclaw_embedded_agent · plugin optional · dm=main · anchors 0/3 Use /status for the full runtime snapshot.",
+        family: "live_probe_failure",
+        expectedSurface: "control_room",
       },
     ];
 

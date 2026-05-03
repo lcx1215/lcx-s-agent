@@ -271,6 +271,17 @@ function looksLikeApiRouteProviderFailureArtifact(text: string): boolean {
   );
 }
 
+function looksLikePlainRouteLabelReferenceArtifact(text: string): boolean {
+  return (
+    (/^\s*family\s*[:=]/iu.test(text) &&
+      /(source_required|failedreason|next step|boundary|proof|targetsurface|effectivesurface)/iu.test(
+        text,
+      )) ||
+    (/(family\s*[:=]|targetsurface\s*[:=]|effectivesurface\s*[:=])/iu.test(text) &&
+      /handoff receipt|memory\/lark-language-handoff-receipts/iu.test(text))
+  );
+}
+
 function resolveCandidateSemantic(
   candidate: LarkPendingRoutingCandidate,
 ): SemanticRouteCandidate | undefined {
@@ -373,6 +384,19 @@ export function evaluateLarkPendingRoutingCandidate(params: {
         discardReason: "api_route_provider_failure",
       },
       reason: "discarded_by_distillation",
+    };
+  }
+  if (
+    candidate.source !== "lark_user_utterance" &&
+    looksLikePlainRouteLabelReferenceArtifact(candidate.utterance)
+  ) {
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        semantic: resolveCandidateSemantic(candidate) ?? { family: "unknown", score: 0 },
+      },
+      reason: "api_route_label_reference",
     };
   }
   const candidateSemantic = resolveCandidateSemantic(candidate);

@@ -423,6 +423,11 @@ describe("lark routing candidate corpus", () => {
             rationale: "api route provider failed: Error: gateway timeout after 35000ms",
           },
         }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "family: learning_external_source source_required: true failedReason: no_url_or_local_source_provided next step: ask for URL boundary: do not pretend learned proof: no source",
+        }),
       ],
     });
 
@@ -448,6 +453,12 @@ describe("lark routing candidate corpus", () => {
         candidate: expect.objectContaining({
           status: "discarded",
           discardReason: "api_route_provider_failure",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          status: "discarded",
         }),
       }),
     ]);
