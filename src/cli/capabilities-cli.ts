@@ -5,6 +5,7 @@ import {
   languageBrainLoopSmokeCommand,
 } from "../commands/capabilities.js";
 import { l4SystemDoctorCommand } from "../commands/capabilities/l4-system-doctor.js";
+import { l5SystemEvalCommand } from "../commands/capabilities/l5-system-eval.js";
 import { larkLoopDiagnoseCommand } from "../commands/capabilities/lark-loop-diagnose.js";
 import { defaultRuntime } from "../runtime.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
@@ -110,6 +111,43 @@ export function registerCapabilitiesCli(program: Command) {
     .action(async (opts, command) => {
       await runCapabilitiesCli(async () => {
         await l4SystemDoctorCommand(
+          {
+            agent: typeof opts.agent === "string" ? opts.agent : undefined,
+            workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,
+            fixtureDir: typeof opts.fixtureDir === "string" ? opts.fixtureDir : undefined,
+            json: Boolean(opts.json || command.parent?.opts().json),
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  capabilities
+    .command("l5-system-eval")
+    .description(
+      "Run a fixed L5 eval across language, learning, finance, math, memory, Lark receipts, and review arbitration",
+    )
+    .option("--agent <id>", "Agent id whose workspace should be checked")
+    .option("--workspace <dir>", "Workspace to inspect for live Lark handoff receipts")
+    .option("--fixture-dir <dir>", "Fixture directory with local finance learning sources")
+    .option("--json", "Output JSON", false)
+    .addHelpText(
+      "after",
+      () =>
+        `\nExamples:\n${formatHelpExamples([
+          [
+            "openclaw capabilities l5-system-eval --json",
+            "Score the fixed L5 task set without changing live sender, providers, or protected memory.",
+          ],
+          [
+            "openclaw capabilities l5-system-eval --workspace ~/.openclaw/workspace",
+            "Use a live agent workspace only for receipt inspection while loop artifacts stay temporary.",
+          ],
+        ])}`,
+    )
+    .action(async (opts, command) => {
+      await runCapabilitiesCli(async () => {
+        await l5SystemEvalCommand(
           {
             agent: typeof opts.agent === "string" ? opts.agent : undefined,
             workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,
