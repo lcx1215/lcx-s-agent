@@ -271,6 +271,7 @@ async function seedCurrentResearchLine(params: {
 }
 
 beforeEach(() => {
+  delete process.env.OPENCLAW_FEISHU_LEARNING_COUNCIL_REPLY_TIMEOUT_MS;
   mockRecordOperationalAnomaly.mockReset();
   mockRunFeishuLearningCouncil.mockReset();
   mockRunFeishuMarketIntelligencePacket.mockReset();
@@ -6573,6 +6574,11 @@ describe("learning council routing", () => {
     mockRunFeishuLearningCouncil.mockResolvedValue(
       "Learning council run: full three-model execution completed.\n\n## Kimi synthesis\n- one point",
     );
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "protocol_truth_surface",
+      confidence: 0.82,
+      rationale: "model-routing status wording should not override a deterministic learning lane",
+    }));
 
     const mockDispatchReplyFromConfig = vi.fn();
     const mockWithReplyDispatcher = vi.fn(
@@ -6644,7 +6650,9 @@ describe("learning council routing", () => {
         chat_id: "oc-learning",
         chat_type: "p2p",
         message_type: "text",
-        content: JSON.stringify({ text: "用三个模型一起学这个主题" }),
+        content: JSON.stringify({
+          text: "模型路由验收：用三个模型一起学这个主题，只看是否使用当前允许模型",
+        }),
       },
     };
 
@@ -6652,7 +6660,7 @@ describe("learning council routing", () => {
 
     expect(mockRunFeishuLearningCouncil).toHaveBeenCalledWith(
       expect.objectContaining({
-        userMessage: "用三个模型一起学这个主题",
+        userMessage: "模型路由验收：用三个模型一起学这个主题，只看是否使用当前允许模型",
         routeAgentId: "main",
         sessionKey: "agent:main:feishu:dm:ou-attacker:surface:learning_command",
         workspaceDir: tempDir,
@@ -6661,6 +6669,110 @@ describe("learning council routing", () => {
     expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: "Learning council run: full three-model execution completed.\n\n## Kimi synthesis\n- one point",
+    });
+  });
+
+  it("returns an explicit visible timeout when the learning council does not finish promptly", async () => {
+    process.env.OPENCLAW_FEISHU_LEARNING_COUNCIL_REPLY_TIMEOUT_MS = "5";
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockRunFeishuLearningCouncil.mockReturnValue(new Promise(() => {}));
+
+    const mockDispatchReplyFromConfig = vi.fn();
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-lane-timeout-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-learning-timeout",
+          chat_id: "oc-learning",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "学习委员会验收：进入 learning council，但不要前台沉默",
+          }),
+        },
+      },
+    });
+
+    expect(mockRunFeishuLearningCouncil).toHaveBeenCalled();
+    expect(mockStartFeishuLearningTimeboxSession).not.toHaveBeenCalled();
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("failedReason: learning_council_reply_timeout_after_5ms"),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("Do not treat this turn as application_ready."),
     });
   });
 

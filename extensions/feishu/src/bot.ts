@@ -1089,6 +1089,93 @@ type FeishuFinalTextSendResult = {
   counts: { final: number };
 };
 
+type FeishuLearningCouncilVisibleRun =
+  | { status: "completed"; text: string }
+  | { status: "failed"; text: string }
+  | { status: "timed_out"; text: string };
+
+const DEFAULT_FEISHU_LEARNING_COUNCIL_VISIBLE_TIMEOUT_MS = 90_000;
+
+function resolveFeishuLearningCouncilVisibleTimeoutMs(): number {
+  const raw = process.env.OPENCLAW_FEISHU_LEARNING_COUNCIL_REPLY_TIMEOUT_MS?.trim();
+  if (!raw) {
+    return DEFAULT_FEISHU_LEARNING_COUNCIL_VISIBLE_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_FEISHU_LEARNING_COUNCIL_VISIBLE_TIMEOUT_MS;
+  }
+  return Math.min(parsed, 300_000);
+}
+
+function renderFeishuLearningCouncilVisibleTimeoutReply(params: {
+  timeoutMs: number;
+  messageId: string;
+}): string {
+  return [
+    "Learning council run: delayed / no visible completion yet.",
+    "",
+    "## Status",
+    "- The Lark learning-council lane was entered, but the council did not produce a final visible reply before the foreground timeout.",
+    `- failedReason: learning_council_reply_timeout_after_${params.timeoutMs}ms`,
+    `- messageId: ${params.messageId}`,
+    "",
+    "## Boundary",
+    "- Do not treat this turn as application_ready.",
+    "- Do not promote lessons from this turn until a later receipt proves the council completed and the output was reviewed.",
+    "- This is a foreground reliability failure, not trading advice and not execution approval.",
+    "",
+    "## Next step",
+    "- Inspect provider/lane logs and rerun the same request after the slow or stuck lane is fixed.",
+  ].join("\n");
+}
+
+async function runFeishuLearningCouncilWithVisibleTimeout(
+  params: Parameters<typeof runFeishuLearningCouncil>[0],
+): Promise<FeishuLearningCouncilVisibleRun> {
+  const timeoutMs = resolveFeishuLearningCouncilVisibleTimeoutMs();
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const councilRun = runFeishuLearningCouncil(params)
+    .then(
+      (text): FeishuLearningCouncilVisibleRun => ({
+        status: "completed",
+        text,
+      }),
+    )
+    .catch(
+      (error): FeishuLearningCouncilVisibleRun => ({
+        status: "failed",
+        text: [
+          "Learning council run: failed before a final council reply was available.",
+          "",
+          `failedReason: ${String(error)}`,
+          `messageId: ${params.messageId}`,
+          "",
+          "Boundary: do not treat this turn as application_ready or durable learning.",
+        ].join("\n"),
+      }),
+    )
+    .finally(() => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    });
+
+  const visibleTimeout = new Promise<FeishuLearningCouncilVisibleRun>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      resolve({
+        status: "timed_out",
+        text: renderFeishuLearningCouncilVisibleTimeoutReply({
+          timeoutMs,
+          messageId: params.messageId,
+        }),
+      });
+    }, timeoutMs);
+  });
+
+  return Promise.race([councilRun, visibleTimeout]);
+}
+
 function logFeishuNonLedgerEarlyReturn(params: {
   log: (message: string) => void;
   accountId: string;
@@ -5648,7 +5735,16 @@ export async function handleFeishuMessage(params: {
         controlRoomOrchestration,
       });
 
-      if (shouldUseFeishuProtocolStatusReadbackReply(ctx.content)) {
+      const shouldUseLearningCommandBackend =
+        surfaceRouting.targetSurface === "learning_command" ||
+        (larkInstructionHandoff.targetSurface === "learning_command" &&
+          larkInstructionHandoff.backendToolContract?.toolName ===
+            "finance_learning_pipeline_orchestrator");
+
+      if (
+        !shouldUseLearningCommandBackend &&
+        shouldUseFeishuProtocolStatusReadbackReply(ctx.content)
+      ) {
         const statusReadbackReply = buildProtocolInfoReply({
           text: ctx.content,
           cfg: effectiveCfg as OpenClawConfig,
@@ -5821,7 +5917,10 @@ export async function handleFeishuMessage(params: {
         return;
       }
 
-      if (larkInstructionHandoff.family === "protocol_truth_surface") {
+      if (
+        !shouldUseLearningCommandBackend &&
+        larkInstructionHandoff.family === "protocol_truth_surface"
+      ) {
         const protocolInfoReply = shouldUseFeishuProtocolTruthIdentityReply(ctx.content)
           ? null
           : buildProtocolInfoReply({
@@ -5868,12 +5967,6 @@ export async function handleFeishuMessage(params: {
         });
         return;
       }
-
-      const shouldUseLearningCommandBackend =
-        surfaceRouting.targetSurface === "learning_command" ||
-        (larkInstructionHandoff.targetSurface === "learning_command" &&
-          larkInstructionHandoff.backendToolContract?.toolName ===
-            "finance_learning_pipeline_orchestrator");
 
       if (shouldUseLearningCommandBackend) {
         if (looksLikeMarketIntelligencePacketAsk(ctx.content)) {
@@ -6190,7 +6283,7 @@ export async function handleFeishuMessage(params: {
           return;
         }
         const learningWorkspaceDir = resolveAgentWorkspaceDir(cfg as OpenClawConfig, route.agentId);
-        const councilText = await runFeishuLearningCouncil({
+        const councilRun = await runFeishuLearningCouncilWithVisibleTimeout({
           cfg,
           userMessage: ctx.content,
           routeAgentId: route.agentId,
@@ -6198,17 +6291,21 @@ export async function handleFeishuMessage(params: {
           messageId: ctx.messageId,
           workspaceDir: learningWorkspaceDir,
         });
-        const timeboxStart = await startFeishuLearningTimeboxSession({
-          cfg,
-          accountId: account.accountId,
-          chatId: ctx.chatId,
-          routeAgentId: route.agentId,
-          sessionKey: effectiveSessionKey,
-          messageId: ctx.messageId,
-          userMessage: ctx.content,
-          workspaceDir: learningWorkspaceDir,
-          initialCouncilReply: councilText,
-        });
+        const councilText = councilRun.text;
+        const timeboxStart =
+          councilRun.status === "completed"
+            ? await startFeishuLearningTimeboxSession({
+                cfg,
+                accountId: account.accountId,
+                chatId: ctx.chatId,
+                routeAgentId: route.agentId,
+                sessionKey: effectiveSessionKey,
+                messageId: ctx.messageId,
+                userMessage: ctx.content,
+                workspaceDir: learningWorkspaceDir,
+                initialCouncilReply: councilText,
+              })
+            : ({ status: "not_requested" } satisfies LearningTimeboxStartResult);
         const councilReplyText = await buildFeishuLearningCouncilReplyText({
           councilText,
           timeboxStart,

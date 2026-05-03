@@ -148,7 +148,18 @@ function summarizePromptLine(value: string, maxChars = 260): string {
   return `${normalized.slice(0, maxChars - 13).trimEnd()} [truncated]`;
 }
 
-function resolveLearningCouncilModel(role: LearningCouncilRole): string {
+function findAllowedLearningCouncilModel(
+  cfg: ClawdbotConfig,
+  candidates: readonly string[],
+): string | undefined {
+  const allowedModels = cfg.agents?.defaults?.models;
+  if (!allowedModels) {
+    return undefined;
+  }
+  return candidates.find((candidate) => Object.hasOwn(allowedModels, candidate));
+}
+
+function resolveLearningCouncilModel(role: LearningCouncilRole, cfg: ClawdbotConfig): string {
   const envKey = `OPENCLAW_LEARNING_COUNCIL_${role.toUpperCase()}_MODEL`;
   const override = process.env[envKey]?.trim();
   if (override) {
@@ -156,11 +167,25 @@ function resolveLearningCouncilModel(role: LearningCouncilRole): string {
   }
   switch (role) {
     case "kimi":
-      return "moonshot/kimi-k2.5";
+      return (
+        findAllowedLearningCouncilModel(cfg, ["moonshot/kimi-k2.6", "moonshot/kimi-k2.5"]) ??
+        "moonshot/kimi-k2.5"
+      );
     case "minimax":
-      return `minimax/${resolveMinimaxDefaultTextModelId()}`;
+      return (
+        findAllowedLearningCouncilModel(cfg, [
+          `minimax-portal/${resolveMinimaxDefaultTextModelId()}`,
+          `minimax/${resolveMinimaxDefaultTextModelId()}`,
+        ]) ?? `minimax/${resolveMinimaxDefaultTextModelId()}`
+      );
     case "deepseek":
-      return "qianfan/deepseek-v3.2";
+      return (
+        findAllowedLearningCouncilModel(cfg, [
+          "custom-api-deepseek-com/deepseek-v4-pro",
+          "custom-api-deepseek-com/deepseek-v4-flash",
+          "qianfan/deepseek-v3.2",
+        ]) ?? "qianfan/deepseek-v3.2"
+      );
   }
 }
 
@@ -1298,7 +1323,7 @@ async function runLearningCouncilRole(params: {
   thinking: "off" | "medium" | "high";
   extraSystemPrompt: string;
 }): Promise<LearningCouncilRoleRun> {
-  const model = resolveLearningCouncilModel(params.role);
+  const model = resolveLearningCouncilModel(params.role, params.cfg);
   const capability = LEARNING_COUNCIL_CAPABILITIES[params.role];
   const providerFamily = resolveLearningCouncilProviderFamily(model);
   const heading = LEARNING_COUNCIL_HEADINGS[params.role];

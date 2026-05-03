@@ -145,6 +145,54 @@ describe("runFeishuLearningCouncil", () => {
     expect(mockRecordOperationalAnomaly).not.toHaveBeenCalled();
   });
 
+  it("uses configured allowlisted council models before legacy built-in defaults", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-council-"));
+    const cfg = {
+      agents: {
+        defaults: {
+          models: {
+            "minimax-portal/MiniMax-M2.7": {},
+            "custom-api-deepseek-com/deepseek-v4-flash": {},
+            "custom-api-deepseek-com/deepseek-v4-pro": {},
+            "moonshot/kimi-k2.6": {},
+          },
+        },
+      },
+    } as ClawdbotConfig;
+    mockCallGateway
+      .mockResolvedValueOnce({ result: { payloads: [{ text: "kimi ok" }] } })
+      .mockResolvedValueOnce({ result: { payloads: [{ text: "deepseek ok" }] } })
+      .mockResolvedValueOnce({ result: { payloads: [{ text: "minimax ok" }] } })
+      .mockResolvedValueOnce({ result: { payloads: [{ text: "redteam ok" }] } });
+
+    const result = await runFeishuLearningCouncil({
+      cfg,
+      userMessage: "学习一个低频资产配置研究问题",
+      routeAgentId: "main",
+      sessionKey: "agent:main:feishu:dm:ou-user",
+      messageId: "msg-allowlisted-models",
+      workspaceDir,
+    });
+
+    expect(mockCallGateway.mock.calls[0]?.[0]).toMatchObject({
+      params: expect.objectContaining({ model: "moonshot/kimi-k2.6" }),
+    });
+    expect(mockCallGateway.mock.calls[1]?.[0]).toMatchObject({
+      params: expect.objectContaining({ model: "custom-api-deepseek-com/deepseek-v4-pro" }),
+    });
+    expect(mockCallGateway.mock.calls[2]?.[0]).toMatchObject({
+      params: expect.objectContaining({ model: "minimax-portal/MiniMax-M2.7" }),
+    });
+    expect(result).not.toContain("Model override");
+    expect(result).toMatch(/runtime provider=moonshot; runtime model=moonshot\/kimi-k2\.6/u);
+    expect(result).toMatch(
+      /runtime provider=custom-api-deepseek-com; runtime model=custom-api-deepseek-com\/deepseek-v4-pro/u,
+    );
+    expect(result).toMatch(
+      /runtime provider=minimax-portal; runtime model=minimax-portal\/MiniMax-M2\.7/u,
+    );
+  });
+
   it("persists a bounded learning-council artifact without touching other surface roles", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-council-"));
     mockCallGateway
