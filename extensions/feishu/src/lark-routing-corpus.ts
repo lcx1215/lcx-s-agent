@@ -136,6 +136,30 @@ export type LarkRoutingCorpusScore = {
   families: Record<LarkRoutingFamily, LarkRoutingFamilyScore>;
 };
 
+export type LarkRoutingFamilyScoreStatus = "stable" | "needs_samples" | "weak";
+
+export type LarkRoutingFamilyScoreSummary = {
+  family: LarkRoutingFamily;
+  total: number;
+  deterministicPassRate: number;
+  semanticPassRate: number;
+  apiPassRate?: number;
+  status: LarkRoutingFamilyScoreStatus;
+  needs: string[];
+};
+
+export type LarkRoutingCorpusScoreSummary = {
+  total: number;
+  deterministicPassRate: number;
+  semanticPassRate: number;
+  apiPassRate?: number;
+  minCasesPerFamily: number;
+  stableFamilies: number;
+  needsSampleFamilies: number;
+  weakFamilies: number;
+  families: LarkRoutingFamilyScoreSummary[];
+};
+
 export const LARK_ROUTING_SEMANTIC_THRESHOLD = 0.28;
 export const LARK_ROUTING_API_CONFIDENCE_THRESHOLD = 0.72;
 
@@ -1391,6 +1415,88 @@ export function scoreLarkRoutingCorpus(params: {
     total: corpus.length,
     deterministicPassed,
     semanticCandidatePassed,
+    families,
+  };
+}
+
+function ratio(passed: number | undefined, total: number): number | undefined {
+  if (passed === undefined) {
+    return undefined;
+  }
+  return total > 0 ? passed / total : 0;
+}
+
+export function summarizeLarkRoutingCorpusScore(params: {
+  score: LarkRoutingCorpusScore;
+  minCasesPerFamily?: number;
+}): LarkRoutingCorpusScoreSummary {
+  const minCasesPerFamily = params.minCasesPerFamily ?? 3;
+  const families = (
+    Object.entries(params.score.families) as Array<[LarkRoutingFamily, LarkRoutingFamilyScore]>
+  )
+    .map(([family, familyScore]): LarkRoutingFamilyScoreSummary => {
+      const deterministicPassRate = ratio(familyScore.deterministicPassed, familyScore.total)!;
+      const semanticPassRate = ratio(familyScore.semanticCandidatePassed, familyScore.total)!;
+      const apiPassRate =
+        params.score.apiCandidatePassed === undefined
+          ? undefined
+          : ratio(familyScore.apiCandidatePassed, familyScore.total);
+      const needs: string[] = [];
+
+      if (familyScore.total < minCasesPerFamily) {
+        needs.push(`needs ${minCasesPerFamily - familyScore.total} more corpus case(s)`);
+      }
+      if (deterministicPassRate < 1) {
+        needs.push("deterministic routing misses supervised cases");
+      }
+      if (semanticPassRate < 1) {
+        needs.push("semantic candidate layer misses supervised cases");
+      }
+      if (params.score.apiCandidatePassed !== undefined && apiPassRate !== 1) {
+        needs.push("api candidate layer misses supervised cases");
+      }
+
+      const coreMissed = deterministicPassRate < 1 || semanticPassRate < 1;
+      const apiMissed = apiPassRate !== undefined && apiPassRate < 1;
+      const status: LarkRoutingFamilyScoreStatus =
+        coreMissed || apiMissed
+          ? "weak"
+          : familyScore.total < minCasesPerFamily
+            ? "needs_samples"
+            : "stable";
+
+      return {
+        family,
+        total: familyScore.total,
+        deterministicPassRate,
+        semanticPassRate,
+        apiPassRate: params.score.apiCandidatePassed === undefined ? undefined : apiPassRate,
+        status,
+        needs,
+      };
+    })
+    .sort((left, right) => {
+      const statusRank: Record<LarkRoutingFamilyScoreStatus, number> = {
+        weak: 0,
+        needs_samples: 1,
+        stable: 2,
+      };
+      return (
+        statusRank[left.status] - statusRank[right.status] ||
+        left.total - right.total ||
+        left.family.localeCompare(right.family)
+      );
+    });
+
+  return {
+    total: params.score.total,
+    deterministicPassRate: ratio(params.score.deterministicPassed, params.score.total)!,
+    semanticPassRate: ratio(params.score.semanticCandidatePassed, params.score.total)!,
+    apiPassRate: ratio(params.score.apiCandidatePassed, params.score.total),
+    minCasesPerFamily,
+    stableFamilies: families.filter((family) => family.status === "stable").length,
+    needsSampleFamilies: families.filter((family) => family.status === "needs_samples").length,
+    weakFamilies: families.filter((family) => family.status === "weak").length,
     families,
   };
 }

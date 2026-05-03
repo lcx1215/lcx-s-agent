@@ -28,6 +28,7 @@ import {
   resolveLarkSemanticRouteCandidate,
   scoreLarkRoutingCorpus,
   scoreLarkRoutingCorpusAsync,
+  summarizeLarkRoutingCorpusScore,
   type LarkApiRouteProvider,
   type LarkRoutingFamily,
 } from "./lark-routing-corpus.js";
@@ -765,6 +766,18 @@ describe("real daily utterance regression", () => {
       expect(familyScore.deterministicPassed, family).toBe(familyScore.total);
       expect(familyScore.semanticCandidatePassed, family).toBe(familyScore.total);
     }
+  });
+
+  it("summarizes Lark routing families so weak or thin coverage is visible", () => {
+    const score = scoreLarkRoutingCorpus({ cfg });
+    const summary = summarizeLarkRoutingCorpusScore({ score });
+
+    expect(summary.total).toBe(score.total);
+    expect(summary.deterministicPassRate).toBe(1);
+    expect(summary.semanticPassRate).toBe(1);
+    expect(summary.weakFamilies).toBe(0);
+    expect(summary.families).toHaveLength(Object.keys(score.families).length);
+    expect(summary.families.every((family) => family.total > 0)).toBe(true);
   });
 
   it("can score an API semantic-router candidate layer without replacing deterministic gates", async () => {
