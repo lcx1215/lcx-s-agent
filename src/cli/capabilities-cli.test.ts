@@ -4,6 +4,7 @@ import { runRegisteredCli } from "../test-utils/command-runner.js";
 
 const capabilitiesCommand = vi.fn().mockResolvedValue(undefined);
 const githubCapabilityIntakeCommand = vi.fn().mockResolvedValue(undefined);
+const l4SystemDoctorCommand = vi.fn().mockResolvedValue(undefined);
 const languageBrainLoopSmokeCommand = vi.fn().mockResolvedValue(undefined);
 const larkLoopDiagnoseCommand = vi.fn().mockResolvedValue(undefined);
 
@@ -11,6 +12,10 @@ vi.mock("../commands/capabilities.js", () => ({
   capabilitiesCommand,
   githubCapabilityIntakeCommand,
   languageBrainLoopSmokeCommand,
+}));
+
+vi.mock("../commands/capabilities/l4-system-doctor.js", () => ({
+  l4SystemDoctorCommand,
 }));
 
 vi.mock("../commands/capabilities/lark-loop-diagnose.js", () => ({
@@ -27,6 +32,7 @@ describe("capabilities cli", () => {
   beforeEach(() => {
     capabilitiesCommand.mockClear();
     githubCapabilityIntakeCommand.mockClear();
+    l4SystemDoctorCommand.mockClear();
     languageBrainLoopSmokeCommand.mockClear();
     larkLoopDiagnoseCommand.mockClear();
   });
@@ -90,6 +96,20 @@ describe("capabilities cli", () => {
     expect(languageBrainLoopSmokeCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceDir: "/tmp/lcx-loop",
+        json: true,
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("registers L4 system doctor as a CLI subcommand", async () => {
+    await runRegisteredCli({
+      register: registerCapabilitiesCli as (program: Command) => void,
+      argv: ["capabilities", "l4-system-doctor", "--workspace", "/tmp/lcx-live", "--json"],
+    });
+    expect(l4SystemDoctorCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceDir: "/tmp/lcx-live",
         json: true,
       }),
       expect.any(Object),

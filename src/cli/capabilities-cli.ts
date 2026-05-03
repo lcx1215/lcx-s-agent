@@ -4,6 +4,7 @@ import {
   githubCapabilityIntakeCommand,
   languageBrainLoopSmokeCommand,
 } from "../commands/capabilities.js";
+import { l4SystemDoctorCommand } from "../commands/capabilities/l4-system-doctor.js";
 import { larkLoopDiagnoseCommand } from "../commands/capabilities/lark-loop-diagnose.js";
 import { defaultRuntime } from "../runtime.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
@@ -76,6 +77,43 @@ export function registerCapabilitiesCli(program: Command) {
             evidenceSnippets: Array.isArray(opts.evidence) ? opts.evidence : [],
             tags: Array.isArray(opts.tag) ? opts.tag : [],
             writeReceipt: Boolean(opts.writeReceipt),
+            json: Boolean(opts.json || command.parent?.opts().json),
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  capabilities
+    .command("l4-system-doctor")
+    .description(
+      "Run a read-only L4 contract doctor across Lark, language, brain, finance, math, and safety gates",
+    )
+    .option("--agent <id>", "Agent id whose workspace should be checked")
+    .option("--workspace <dir>", "Workspace to inspect for live Lark handoff receipts")
+    .option("--fixture-dir <dir>", "Fixture directory with local finance learning sources")
+    .option("--json", "Output JSON", false)
+    .addHelpText(
+      "after",
+      () =>
+        `\nExamples:\n${formatHelpExamples([
+          [
+            "openclaw capabilities l4-system-doctor --json",
+            "Run the L4 readiness gate without changing live sender, providers, or protected memory.",
+          ],
+          [
+            "openclaw capabilities l4-system-doctor --workspace ~/.openclaw/workspace",
+            "Check a specific agent workspace for Lark receipts and language replay artifacts.",
+          ],
+        ])}`,
+    )
+    .action(async (opts, command) => {
+      await runCapabilitiesCli(async () => {
+        await l4SystemDoctorCommand(
+          {
+            agent: typeof opts.agent === "string" ? opts.agent : undefined,
+            workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,
+            fixtureDir: typeof opts.fixtureDir === "string" ? opts.fixtureDir : undefined,
             json: Boolean(opts.json || command.parent?.opts().json),
           },
           defaultRuntime,

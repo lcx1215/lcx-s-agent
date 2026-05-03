@@ -109,6 +109,29 @@ type LanguageAutodataLoopReadiness = {
   guardrails: string[];
 };
 
+export type LarkLoopDiagnosePayload = {
+  ok: boolean;
+  gatewayAgentModelParamSchema: GatewayModelParamSchemaCheck;
+  localLoop: {
+    ok: boolean;
+    family: unknown;
+    backendTool: unknown;
+    analysisStatus: unknown;
+    orchestration: Record<string, unknown>;
+    noActionBoundary: unknown;
+    receiptPath: string;
+  };
+  liveHandoffReceipts: AggregateReceiptStats;
+  languageCandidates: LanguageCandidateCaptureStats;
+  nextBlocker: string;
+  boundaries: {
+    noRemoteFetchOccurred: boolean;
+    noExecutionAuthority: boolean;
+    protectedMemoryUntouched: boolean;
+    localLoopDoesNotProveLiveIngress: true;
+  };
+};
+
 type FinanceOrchestrationReceiptSummary = {
   receiptPath: string;
   generatedAt: string | null;
@@ -792,6 +815,13 @@ export async function larkLoopDiagnoseCommand(
   opts: LarkLoopDiagnoseCommandOptions,
   runtime: RuntimeEnv = defaultRuntime,
 ) {
+  const payload = await runLarkLoopDiagnose(opts);
+  runtime.log(opts.json ? JSON.stringify(payload, null, 2) : formatDiagnosisText(payload));
+}
+
+export async function runLarkLoopDiagnose(
+  opts: LarkLoopDiagnoseCommandOptions,
+): Promise<LarkLoopDiagnosePayload> {
   const cfg = loadConfig();
   const feishuCfg = (cfg.channels?.feishu ?? {}) as FeishuConfig;
   const gatewayAgentModelParamSchema = checkGatewayModelParamSchema();
@@ -805,7 +835,7 @@ export async function larkLoopDiagnoseCommand(
       : liveHandoffReceipts.workspaceDir,
     feishuCfg,
   );
-  const payload = {
+  return {
     ok: localLoop.ok && liveHandoffReceipts.count > 0 && gatewayAgentModelParamSchema.ok,
     gatewayAgentModelParamSchema,
     localLoop: {
@@ -831,5 +861,4 @@ export async function larkLoopDiagnoseCommand(
       localLoopDoesNotProveLiveIngress: true,
     },
   };
-  runtime.log(opts.json ? JSON.stringify(payload, null, 2) : formatDiagnosisText(payload));
 }
