@@ -130,6 +130,7 @@ export function registerCapabilitiesCli(program: Command) {
     .option("--agent <id>", "Agent id whose workspace should be checked")
     .option("--workspace <dir>", "Workspace to inspect for live Lark handoff receipts")
     .option("--fixture-dir <dir>", "Fixture directory with local finance learning sources")
+    .option("--write-receipt", "Write an L5 eval receipt into memory/l5-system-eval-receipts")
     .option("--json", "Output JSON", false)
     .addHelpText(
       "after",
@@ -143,6 +144,10 @@ export function registerCapabilitiesCli(program: Command) {
             "openclaw capabilities l5-system-eval --workspace ~/.openclaw/workspace",
             "Use a live agent workspace only for receipt inspection while loop artifacts stay temporary.",
           ],
+          [
+            "openclaw capabilities l5-system-eval --workspace ~/.openclaw/workspace --write-receipt",
+            "Persist the eval result as an audit receipt without changing live sender or protected memory.",
+          ],
         ])}`,
     )
     .action(async (opts, command) => {
@@ -152,6 +157,7 @@ export function registerCapabilitiesCli(program: Command) {
             agent: typeof opts.agent === "string" ? opts.agent : undefined,
             workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,
             fixtureDir: typeof opts.fixtureDir === "string" ? opts.fixtureDir : undefined,
+            writeReceipt: Boolean(opts.writeReceipt),
             json: Boolean(opts.json || command.parent?.opts().json),
           },
           defaultRuntime,

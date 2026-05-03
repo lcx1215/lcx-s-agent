@@ -94,6 +94,11 @@ describe("l5SystemEvalCommand", () => {
       score: { passed: number; total: number };
       gates: Array<{ id: string; status: string; evidence: string }>;
       nextBlocker: string;
+      receipt: {
+        written: boolean;
+        path: string | null;
+        boundary: string;
+      };
       boundaries: {
         evalUsesTempLoopWorkspace: boolean;
         liveProbeNotPerformed: boolean;
@@ -137,5 +142,51 @@ describe("l5SystemEvalCommand", () => {
       noExecutionAuthority: true,
       protectedMemoryUntouched: true,
     });
+    expect(payload.receipt).toEqual({
+      written: false,
+      path: null,
+      boundary: "l5_system_eval_receipt",
+    });
+  });
+
+  it("writes an L5 eval receipt when explicitly requested", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-l5-eval-receipt-"));
+    await seedL5EvalWorkspace(workspace);
+
+    runtime.log.mockClear();
+    await l5SystemEvalCommand({ workspaceDir: workspace, json: true, writeReceipt: true }, runtime);
+
+    const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0])) as {
+      ok: boolean;
+      receipt: {
+        written: boolean;
+        path: string | null;
+        boundary: string;
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.receipt).toMatchObject({
+      written: true,
+      boundary: "l5_system_eval_receipt",
+    });
+    expect(payload.receipt.path).toMatch(
+      /^memory\/l5-system-eval-receipts\/\d{4}-\d{2}-\d{2}\/.+__l5-system-eval\.json$/u,
+    );
+    const receiptPath = path.join(workspace, payload.receipt.path ?? "");
+    const receipt = JSON.parse(await fs.readFile(receiptPath, "utf8")) as {
+      schemaVersion: number;
+      boundary: string;
+      result: {
+        ok: boolean;
+        receipt: {
+          written: boolean;
+          path: string | null;
+        };
+      };
+    };
+    expect(receipt.schemaVersion).toBe(1);
+    expect(receipt.boundary).toBe("l5_system_eval_receipt");
+    expect(receipt.result.ok).toBe(true);
+    expect(receipt.result.receipt).toEqual(payload.receipt);
   });
 });

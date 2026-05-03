@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
+import { resolveUserPath } from "../../utils.js";
 import {
   runL4SystemDoctor,
   type L4SystemDoctorCommandOptions,
@@ -11,7 +12,9 @@ import {
   type LanguageBrainLoopSmokePayload,
 } from "./language-brain-loop-smoke.js";
 
-export type L5SystemEvalCommandOptions = L4SystemDoctorCommandOptions;
+export type L5SystemEvalCommandOptions = L4SystemDoctorCommandOptions & {
+  writeReceipt?: boolean;
+};
 
 type L5GateStatus = "pass" | "blocked";
 
@@ -38,8 +41,14 @@ export type L5SystemEvalPayload = {
   };
   loop: {
     ok: boolean;
+    workspaceDir: string;
     temporaryWorkspace: boolean;
     receiptPath: string;
+  };
+  receipt: {
+    written: boolean;
+    path: string | null;
+    boundary: "l5_system_eval_receipt";
   };
   nextBlocker: string;
   boundaries: {
@@ -283,8 +292,14 @@ async function buildPayload(params: {
     },
     loop: {
       ok: params.loop.ok,
+      workspaceDir: params.loop.workspaceDir,
       temporaryWorkspace: params.loop.temporaryWorkspace,
       receiptPath: params.loop.memory.loopReceiptPath,
+    },
+    receipt: {
+      written: false,
+      path: null,
+      boundary: "l5_system_eval_receipt",
     },
     nextBlocker: blocked ?? "none",
     boundaries: {
@@ -295,6 +310,44 @@ async function buildPayload(params: {
       protectedMemoryUntouched: true,
     },
   };
+}
+
+async function writeL5EvalReceipt(params: {
+  opts: L5SystemEvalCommandOptions;
+  payload: L5SystemEvalPayload;
+}): Promise<string> {
+  const workspaceDir = params.opts.workspaceDir?.trim()
+    ? path.resolve(resolveUserPath(params.opts.workspaceDir.trim()))
+    : params.payload.loop.workspaceDir;
+  const dateKey = params.payload.generatedAt.slice(0, 10);
+  const relDir = path.join("memory", "l5-system-eval-receipts", dateKey);
+  const fileName = `${params.payload.generatedAt.replace(/[:.]/gu, "-")}__l5-system-eval.json`;
+  const relPath = path.join(relDir, fileName).split(path.sep).join("/");
+  const receiptPayload: L5SystemEvalPayload = {
+    ...params.payload,
+    receipt: {
+      written: true,
+      path: relPath,
+      boundary: "l5_system_eval_receipt",
+    },
+  };
+  await fs.mkdir(path.join(workspaceDir, relDir), { recursive: true });
+  await fs.writeFile(
+    path.join(workspaceDir, relPath),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        boundary: "l5_system_eval_receipt",
+        generatedAt: params.payload.generatedAt,
+        result: receiptPayload,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  params.payload.receipt = receiptPayload.receipt;
+  return relPath;
 }
 
 function formatText(payload: L5SystemEvalPayload): string {
@@ -313,6 +366,7 @@ function formatText(payload: L5SystemEvalPayload): string {
     "",
     `l4: ${payload.l4.level} ok=${String(payload.l4.ok)}`,
     `loop receipt: ${payload.loop.receiptPath}`,
+    `l5 receipt: ${payload.receipt.path ?? "not_written"}`,
     "",
     "Boundaries:",
     "- temp loop workspace only",
@@ -339,5 +393,8 @@ export async function l5SystemEvalCommand(
   runtime: RuntimeEnv = defaultRuntime,
 ) {
   const payload = await runL5SystemEval(opts);
+  if (opts.writeReceipt) {
+    await writeL5EvalReceipt({ opts, payload });
+  }
   runtime.log(opts.json ? JSON.stringify(payload, null, 2) : formatText(payload));
 }

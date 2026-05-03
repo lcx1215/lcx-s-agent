@@ -125,11 +125,19 @@ describe("capabilities cli", () => {
   it("registers L5 system eval as a CLI subcommand", async () => {
     await runRegisteredCli({
       register: registerCapabilitiesCli as (program: Command) => void,
-      argv: ["capabilities", "l5-system-eval", "--workspace", "/tmp/lcx-live", "--json"],
+      argv: [
+        "capabilities",
+        "l5-system-eval",
+        "--workspace",
+        "/tmp/lcx-live",
+        "--write-receipt",
+        "--json",
+      ],
     });
     expect(l5SystemEvalCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceDir: "/tmp/lcx-live",
+        writeReceipt: true,
         json: true,
       }),
       expect.any(Object),
