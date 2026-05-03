@@ -1131,6 +1131,22 @@ function renderFeishuProtocolTruthSurfaceReply(params: {
   confidence: number;
   rationale?: string;
 }): string {
+  if (
+    /(source_required|source required|no url|without url|do not give a url|不给.*url|没有.*url|没有.*source|缺.*source)/iu.test(
+      params.userMessage,
+    )
+  ) {
+    return [
+      `family: ${params.family}`,
+      "source_required: true",
+      "failedReason: no_url_or_local_source_provided",
+      "next step: ask the user for an explicit URL, local file path, or pasted source before running any learning pipeline.",
+      "boundary: do not search, fetch, learn, retain, or claim application_ready from a vague external-source reference.",
+      `proof: ${params.rationale ?? "the utterance asks for source_required handling and provides no concrete URL or local source."}`,
+      `original: ${params.userMessage}`,
+    ].join("\n");
+  }
+
   return [
     "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。",
     "",
@@ -1169,6 +1185,17 @@ function shouldUseFeishuProtocolStatusReadbackReply(text: string): boolean {
   return (
     resolveProtocolInfoQuestionKind(text) === "status_readback" &&
     /(status audit|current evidence|dev-fixed|live-fixed|unverified|acceptance code|proof|failedreason|what did you just fix|当前证据|当前 proof|刚才.*修|修了什么)/iu.test(
+      text,
+    )
+  );
+}
+
+function shouldUseFeishuSourceRequiredTruthReply(text: string): boolean {
+  return (
+    /(learn|learning|google|webpage|网页|学习|source|url|local source|本地 source|来源)/iu.test(
+      text,
+    ) &&
+    /(source_required|source required|no url|without url|do not give a url|不给.*url|没有.*url|没有.*source|缺.*source|不提供.*url|不给.*source)/iu.test(
       text,
     )
   );
@@ -5748,6 +5775,51 @@ export async function handleFeishuMessage(params: {
           finalReplyText: statusReadbackSendResult.queuedFinal ? statusReadbackText : undefined,
           dispatchQueuedFinal: statusReadbackSendResult.queuedFinal,
           dispatchFinalCount: statusReadbackSendResult.counts.final,
+        });
+        return;
+      }
+
+      if (shouldUseFeishuSourceRequiredTruthReply(ctx.content)) {
+        const sourceRequiredTruthText = renderFeishuProtocolTruthSurfaceReply({
+          userMessage: ctx.content,
+          family:
+            larkInstructionHandoff.family === "unknown"
+              ? "protocol_truth_surface"
+              : larkInstructionHandoff.family,
+          confidence: larkInstructionHandoff.confidence,
+          rationale: larkInstructionHandoff.apiCandidate?.rationale,
+        });
+        const sourceRequiredTruthSendResult = await sendFeishuFinalTextReply({
+          replyRuntime: core.channel.reply,
+          dispatcher: effectiveDispatcher,
+          markDispatchIdle,
+          text: sourceRequiredTruthText,
+        });
+
+        clearFeishuGroupHistoryAfterDispatch({
+          isGroup,
+          chatHistories,
+          historyKey,
+          historyLimit,
+        });
+
+        await persistCapturedFeishuSurfaceLine({
+          ...buildFeishuSurfaceLinePersistContext({
+            cfg,
+            agentId: route.agentId,
+            effectiveStateSurface: "control_room",
+            replyContract: controlRoomOrchestration?.replyContract,
+            chatId: ctx.chatId,
+            sessionKey: buildSurfaceScopedSessionKey(route.sessionKey, "control_room"),
+            messageId: ctx.messageId,
+            userMessage: ctx.content,
+            apiReplyPayloads: larkApiReplyPayloads,
+          }),
+          finalReplyText: sourceRequiredTruthSendResult.queuedFinal
+            ? sourceRequiredTruthText
+            : undefined,
+          dispatchQueuedFinal: sourceRequiredTruthSendResult.queuedFinal,
+          dispatchFinalCount: sourceRequiredTruthSendResult.counts.final,
         });
         return;
       }
