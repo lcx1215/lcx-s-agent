@@ -176,6 +176,8 @@ const logRunner = (message, deps) => {
   deps.stderr.write(`[openclaw] ${message}\n`);
 };
 
+const shouldProtectJsonStdout = (args) => args.includes("--json");
+
 const runOpenClaw = async (deps) => {
   const nodeProcess = deps.spawn(deps.execPath, ["openclaw.mjs", ...deps.args], {
     cwd: deps.cwd,
@@ -234,11 +236,17 @@ export async function runNodeMain(params = {}) {
   const buildCmd = deps.platform === "win32" ? "cmd.exe" : "pnpm";
   const buildArgs =
     deps.platform === "win32" ? ["/d", "/s", "/c", "pnpm", ...compilerArgs] : compilerArgs;
+  const protectJsonStdout = shouldProtectJsonStdout(deps.args);
   const build = deps.spawn(buildCmd, buildArgs, {
     cwd: deps.cwd,
     env: deps.env,
-    stdio: "inherit",
+    stdio: protectJsonStdout ? ["inherit", "pipe", "inherit"] : "inherit",
   });
+  if (protectJsonStdout && build.stdout) {
+    build.stdout.on("data", (chunk) => {
+      deps.stderr.write(chunk);
+    });
+  }
 
   const buildRes = await new Promise((resolve) => {
     build.on("exit", (exitCode, exitSignal) => resolve({ exitCode, exitSignal }));

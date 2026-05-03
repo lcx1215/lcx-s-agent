@@ -181,18 +181,27 @@ describe("larkLoopDiagnoseCommand", () => {
             {
               reason: "accepted_language_case",
               candidate: {
+                id: "candidate-1",
+                source: "lark_user_utterance",
+                utterance: "去 Google 上学习 ETF 风控资料，但标清覆盖范围",
                 semantic: { family: "external_source_coverage_honesty" },
               },
             },
             {
               reason: "semantic_family_unknown",
               candidate: {
+                id: "candidate-2",
+                source: "lark_user_utterance",
+                utterance: "你像真实研究员一样拆一下这个新行业机会",
                 semantic: { family: "unknown" },
               },
             },
             {
               reason: "deterministic_route_failed",
               candidate: {
+                id: "candidate-3",
+                source: "lark_user_utterance",
+                utterance: "给我做一个纳指回调后的技术择时计划",
                 semantic: { family: "technical_timing" },
               },
             },
@@ -245,6 +254,14 @@ describe("larkLoopDiagnoseCommand", () => {
           discardedCount: number;
           rejectedReasonCounts: Record<string, number>;
           rejectedSemanticFamilyCounts: Record<string, number>;
+          rejectedExamples: Array<{
+            reason: string;
+            semanticFamily: string;
+            source: string | null;
+            utterance: string;
+            candidateId: string | null;
+            artifactPath: string | null;
+          }>;
         };
         latestCandidatePath: string;
         latestCandidateGeneratedAt: string;
@@ -325,6 +342,24 @@ describe("larkLoopDiagnoseCommand", () => {
           "accepted_cases_still_require_review_before_formal_corpus",
         ],
       },
+      rejectedExamples: [
+        {
+          reason: "semantic_family_unknown",
+          semanticFamily: "unknown",
+          source: "lark_user_utterance",
+          utterance: "你像真实研究员一样拆一下这个新行业机会",
+          candidateId: "candidate-2",
+          artifactPath: "memory/lark-language-routing-candidates/2026-05-03/om_language.json",
+        },
+        {
+          reason: "deterministic_route_failed",
+          semanticFamily: "technical_timing",
+          source: "lark_user_utterance",
+          utterance: "给我做一个纳指回调后的技术择时计划",
+          candidateId: "candidate-3",
+          artifactPath: "memory/lark-language-routing-candidates/2026-05-03/om_language.json",
+        },
+      ],
     });
   });
 

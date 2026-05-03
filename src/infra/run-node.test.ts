@@ -66,4 +66,64 @@ describe("run-node script", () => {
       });
     },
   );
+
+  it.runIf(process.platform !== "win32")(
+    "routes rebuild stdout to stderr for json commands",
+    async () => {
+      await withTempDir(async (tmp) => {
+        const stderrChunks: string[] = [];
+        const spawn = (cmd: string, args: string[], options: unknown) => {
+          if (cmd === "pnpm") {
+            const spawnOptions =
+              options && typeof options === "object" && !Array.isArray(options)
+                ? (options as { stdio?: unknown })
+                : {};
+            expect(spawnOptions.stdio).toEqual(["inherit", "pipe", "inherit"]);
+            return {
+              stdout: {
+                on: (event: string, cb: (chunk: Buffer) => void) => {
+                  if (event === "data") {
+                    queueMicrotask(() => cb(Buffer.from("build chatter\n")));
+                  }
+                  return undefined;
+                },
+              },
+              on: (event: string, cb: (code: number | null, signal: string | null) => void) => {
+                if (event === "exit") {
+                  queueMicrotask(() => cb(0, null));
+                }
+                return undefined;
+              },
+            };
+          }
+          return {
+            on: (event: string, cb: (code: number | null, signal: string | null) => void) => {
+              if (event === "exit") {
+                queueMicrotask(() => cb(0, null));
+              }
+              return undefined;
+            },
+          };
+        };
+
+        const { runNodeMain } = await import("../../scripts/run-node.mjs");
+        const exitCode = await runNodeMain({
+          cwd: tmp,
+          args: ["capabilities", "lark-loop-diagnose", "--json"],
+          env: {
+            ...process.env,
+            OPENCLAW_FORCE_BUILD: "1",
+            OPENCLAW_RUNNER_LOG: "0",
+          },
+          spawn,
+          execPath: process.execPath,
+          platform: process.platform,
+          stderr: { write: (chunk: string | Buffer) => stderrChunks.push(String(chunk)) },
+        });
+
+        expect(exitCode).toBe(0);
+        expect(stderrChunks.join("")).toContain("build chatter");
+      });
+    },
+  );
 });

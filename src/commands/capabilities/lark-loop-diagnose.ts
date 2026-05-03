@@ -64,6 +64,7 @@ type LanguageCandidateCaptureStats = {
   semanticFamilyCounts: Record<string, number>;
   rejectedReasonCounts: Record<string, number>;
   rejectedSemanticFamilyCounts: Record<string, number>;
+  rejectedExamples: LanguageRejectedCandidateExample[];
   currentReplay: {
     candidateCount: number;
     acceptedCaseCount: number;
@@ -73,6 +74,7 @@ type LanguageCandidateCaptureStats = {
     semanticFamilyCounts: Record<string, number>;
     rejectedReasonCounts: Record<string, number>;
     rejectedSemanticFamilyCounts: Record<string, number>;
+    rejectedExamples: LanguageRejectedCandidateExample[];
   };
   latestCandidatePath: string | null;
   latestCandidateGeneratedAt: string | null;
@@ -81,6 +83,15 @@ type LanguageCandidateCaptureStats = {
   latestReviewPath: string | null;
   latestReviewGeneratedAt: string | null;
   autodataLoop: LanguageAutodataLoopReadiness;
+};
+
+type LanguageRejectedCandidateExample = {
+  reason: string;
+  semanticFamily: string;
+  source: string | null;
+  utterance: string;
+  candidateId: string | null;
+  artifactPath: string | null;
 };
 
 type LanguageAutodataLoopReadiness = {
@@ -253,12 +264,27 @@ function isRejectedLanguageReason(reason: string): boolean {
   );
 }
 
+function extractCandidateUtterance(candidate: Record<string, unknown>): string | null {
+  if (typeof candidate.utterance === "string" && candidate.utterance.trim()) {
+    return candidate.utterance.trim().slice(0, 240);
+  }
+  const sample =
+    candidate.sample && typeof candidate.sample === "object" && !Array.isArray(candidate.sample)
+      ? (candidate.sample as Record<string, unknown>)
+      : {};
+  return typeof sample.distillableText === "string" && sample.distillableText.trim()
+    ? sample.distillableText.trim().slice(0, 240)
+    : null;
+}
+
 function accumulateLanguageEvaluationStats(params: {
   evaluation: Record<string, unknown>;
   reasonCounts: Record<string, number>;
   semanticFamilyCounts: Record<string, number>;
   rejectedReasonCounts: Record<string, number>;
   rejectedSemanticFamilyCounts: Record<string, number>;
+  rejectedExamples?: LanguageRejectedCandidateExample[];
+  artifactPath?: string | null;
 }) {
   const evaluations = Array.isArray(params.evaluation.evaluations)
     ? params.evaluation.evaluations
@@ -291,6 +317,17 @@ function accumulateLanguageEvaluationStats(params: {
     if (isRejectedLanguageReason(reason)) {
       incrementCount(params.rejectedReasonCounts, reason);
       incrementCount(params.rejectedSemanticFamilyCounts, family);
+      const utterance = extractCandidateUtterance(candidate);
+      if (utterance && params.rejectedExamples && params.rejectedExamples.length < 8) {
+        params.rejectedExamples.push({
+          reason,
+          semanticFamily: family,
+          source: typeof candidate.source === "string" ? candidate.source : null,
+          utterance,
+          candidateId: typeof candidate.id === "string" ? candidate.id : null,
+          artifactPath: params.artifactPath ?? null,
+        });
+      }
     }
   }
 }
@@ -385,6 +422,7 @@ async function readLanguageCandidateCaptureStats(
   const semanticFamilyCounts: Record<string, number> = {};
   const rejectedReasonCounts: Record<string, number> = {};
   const rejectedSemanticFamilyCounts: Record<string, number> = {};
+  const rejectedExamples: LanguageRejectedCandidateExample[] = [];
   const currentReplay = {
     candidateCount: 0,
     acceptedCaseCount: 0,
@@ -394,6 +432,7 @@ async function readLanguageCandidateCaptureStats(
     semanticFamilyCounts: {} as Record<string, number>,
     rejectedReasonCounts: {} as Record<string, number>,
     rejectedSemanticFamilyCounts: {} as Record<string, number>,
+    rejectedExamples: [] as LanguageRejectedCandidateExample[],
   };
   let latestCandidatePath: string | null = null;
   let latestCandidateGeneratedAt: string | null = null;
@@ -427,6 +466,8 @@ async function readLanguageCandidateCaptureStats(
         semanticFamilyCounts,
         rejectedReasonCounts,
         rejectedSemanticFamilyCounts,
+        rejectedExamples,
+        artifactPath: path.relative(workspaceDir, filePath).replaceAll(path.sep, "/"),
       });
       if (candidates.length > 0) {
         const replay = evaluateLarkRoutingCandidateCorpus({
@@ -449,6 +490,8 @@ async function readLanguageCandidateCaptureStats(
           semanticFamilyCounts: currentReplay.semanticFamilyCounts,
           rejectedReasonCounts: currentReplay.rejectedReasonCounts,
           rejectedSemanticFamilyCounts: currentReplay.rejectedSemanticFamilyCounts,
+          rejectedExamples: currentReplay.rejectedExamples,
+          artifactPath: path.relative(workspaceDir, filePath).replaceAll(path.sep, "/"),
         });
       }
       const generatedAt =
@@ -500,6 +543,7 @@ async function readLanguageCandidateCaptureStats(
     semanticFamilyCounts,
     rejectedReasonCounts,
     rejectedSemanticFamilyCounts,
+    rejectedExamples,
     currentReplay,
     latestCandidatePath,
     latestCandidateGeneratedAt,
@@ -682,9 +726,11 @@ function formatDiagnosisText(payload: Record<string, unknown>): string {
     `languageAcceptedCases: ${languageCandidates.acceptedCaseCount}`,
     `languageRejectedByReason: ${JSON.stringify(languageCandidates.rejectedReasonCounts)}`,
     `languageRejectedBySemanticFamily: ${JSON.stringify(languageCandidates.rejectedSemanticFamilyCounts)}`,
+    `languageRejectedExamples: ${languageCandidates.rejectedExamples.length}`,
     `languageCurrentReplayAcceptedCases: ${languageCandidates.currentReplay.acceptedCaseCount}`,
     `languageCurrentReplayRejectedByReason: ${JSON.stringify(languageCandidates.currentReplay.rejectedReasonCounts)}`,
     `languageCurrentReplayRejectedBySemanticFamily: ${JSON.stringify(languageCandidates.currentReplay.rejectedSemanticFamilyCounts)}`,
+    `languageCurrentReplayRejectedExamples: ${languageCandidates.currentReplay.rejectedExamples.length}`,
     `languageAutodataLoopStatus: ${languageCandidates.autodataLoop.status}`,
     `languageAutodataLoopAcceptanceRate: ${languageCandidates.autodataLoop.currentReplayAcceptanceRate}`,
     `languageAutodataLoopNextBatchFocus: ${languageCandidates.autodataLoop.nextBatchFocus.join(", ")}`,
@@ -704,6 +750,16 @@ function formatDiagnosisText(payload: Record<string, unknown>): string {
   }
   if (languageCandidates.latestReviewPath) {
     lines.push(`latestLanguageReview: ${languageCandidates.latestReviewPath}`);
+  }
+  const rejectedExamplesForText =
+    languageCandidates.currentReplay.rejectedExamples.length > 0
+      ? languageCandidates.currentReplay.rejectedExamples
+      : languageCandidates.rejectedExamples;
+  for (const example of rejectedExamplesForText.slice(0, 5)) {
+    const artifactSuffix = example.artifactPath ? ` · ${example.artifactPath}` : "";
+    lines.push(
+      `  rejectedExample[${example.reason}/${example.semanticFamily}]: ${example.utterance}${artifactSuffix}`,
+    );
   }
   lines.push(`financeOrchestrationReceipts: ${receipts.financeOrchestrationCount}`);
   if (receipts.latestFinanceOrchestration) {
