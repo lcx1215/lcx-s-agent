@@ -34,9 +34,9 @@ LCX Agent turns OpenClaw into a low-frequency research and operating loop:
 - explicit truth surfaces for what was searched, learned, written, routed, or
   merely inferred
 - durable correction and learning artifacts instead of relying on chat memory
-- bounded autonomous improvement for safe development, documentation, tests,
-  memory hygiene, and evidence cleanup without asking the operator to approve
-  every small step
+- long-running autonomous improvement for safe development, documentation,
+  tests, memory hygiene, evidence cleanup, and bounded system hardening without
+  asking the operator to approve every small step
 - hard separation between development fixes and live Feishu/Lark verification
 
 The main use case is daily-frequency research and screening around ETFs, major
@@ -76,9 +76,12 @@ answer without making the user manually remember multiple specialist chats.
 
 LCX Agent is expected to keep improving without making the operator say
 "continue" after every small safe step. Within the local development fork, it
-can autonomously harden tests, clean review artifacts, improve documentation,
-tighten routing boundaries, refresh generated README visuals, and make failure
-states more explicit when the change is bounded and verifiable.
+can run long, staged work sessions that inspect, patch, verify, clean up, and
+commit a coherent improvement slice before handing back control. It can
+autonomously harden tests, clean review artifacts, improve documentation,
+tighten routing boundaries, refresh generated README visuals, remove obsolete
+confusion, and make failure states more explicit when the work stays
+reversible, evidence-backed, and verifiable.
 
 This autonomy does not grant authority to trade, move money, delete important
 data, publish releases, change credentials, transmit sensitive data, or claim a
@@ -160,8 +163,9 @@ The default mode is baseline hardening:
 5. improve routing clarity
 6. avoid expanding surface area without evidence
 
-Small, bounded patches are preferred over broad rewrites. If a feature cannot
-prove what it did, it should not pretend to be complete.
+Coherent, bounded improvement batches are preferred over tiny artificial steps
+or broad rewrites. If a feature cannot prove what it did, it should not pretend
+to be complete.
 
 When the operator has given broad improvement authority, safe local
 development work should proceed end to end: inspect, patch, test, commit, and
@@ -169,6 +173,11 @@ push when appropriate. Stop for explicit confirmation only when the action is
 destructive, externally publishes or transmits sensitive data, changes access
 or credentials, executes financial behavior, or changes the live runtime
 without a bounded verification plan.
+
+For long-running work, the expected pattern is staged autonomy: choose the next
+highest-value failure family, work through related files together, verify the
+batch, leave receipts or tests, and continue into the next safe family until the
+goal is genuinely handled or a real blocker appears.
 
 ## Getting Started For Development
 
@@ -267,10 +276,11 @@ experiments, and a strict distinction between:
 - `live-fixed`: migrated, built, restarted, probed, and verified through the
   real Lark/Feishu path
 
-The default operating expectation is continuous bounded improvement: the agent
+The default operating expectation is continuous staged improvement: the agent
 should keep tightening the language interface, learning brain, memory hygiene,
 truth surfaces, and verification receipts without waiting for a new instruction
-after each small safe patch.
+after each small safe patch. A single work session may contain multiple related
+patches when they share one goal and can be verified together.
 
 The system is intentionally optimized for long-horizon usefulness over
 impressive demos.

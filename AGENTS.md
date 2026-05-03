@@ -157,11 +157,21 @@ This file is priority-ordered. For day-to-day LCX Agent work, the doctrine in th
 ## Codex Delivery Discipline
 
 - Use plan-first for non-trivial tasks, especially when a task touches multiple subsystems or changes status/output semantics.
-- Default to bounded local patches; do not perform unrelated cleanup or opportunistic refactors.
+- Default to coherent bounded batches rather than tiny artificial steps. When the user gives broad improvement authority, continue through related failure families end to end instead of stopping after the first small patch.
+- Do not perform unrelated cleanup or opportunistic refactors; cleanup is in scope only when it directly reduces confusion, dead code, or verification risk for the active goal.
 - Treat verification as mandatory: run targeted tests, lint touched files, and name a fixed Feishu/live acceptance phrase for later real verification.
 - Do not confuse `dev-fixed` with `live-fixed`.
 - A change is only `live-fixed` after explicit migration, build, restart, probe, and real-entry verification.
 - Keep degraded / partial / rescue states honest; never present degraded behavior as full success.
+
+## Long-Running Task Autonomy
+
+- When the user asks for a broad goal, convert it into a staged execution loop and keep working until the goal is handled, a real blocker appears, or the available session must hand off.
+- Each stage should close a concrete failure family, improve a core workflow, remove a verified source of confusion, or strengthen a reusable eval/receipt.
+- Stage boundaries should be based on verification value, not on arbitrary file counts or one-file edits.
+- It is acceptable for one session to modify multiple related files across language, brain, CLI, tests, docs, and receipts when they serve the same verified goal and can be checked together.
+- Keep brief progress updates for long work, but do not ask for confirmation between routine safe steps.
+- Before stopping, leave the repo in the cleanest reachable state: tests or smoke checks run, known blockers named, commit/push completed when requested or clearly appropriate.
 
 ## Codex Slash Goal Protocol
 
@@ -183,10 +193,10 @@ This file is priority-ordered. For day-to-day LCX Agent work, the doctrine in th
 - For long-running, scheduled, or background work, require explicit receipts for start, iteration or milestone, finish, and fail. Do not treat “started” as “completed”.
 - Add reusable workflows as skills, bounded tools, or hooks instead of letting prompt text grow into hidden process logic.
 - For autonomous improvement loops, prefer an autoresearch-style bounded eval loop over vague self-improvement.
-- Keep the writable surface narrow; ideally one primary file or one tightly bounded implementation slice at a time.
+- Keep the writable surface purposeful. Prefer one coherent implementation slice or failure family at a time, but allow multi-file batches when the files are tightly related and the verification plan covers them together.
 - Use a fixed runtime or step budget for each experiment so attempts stay comparable.
 - Compare changes on one explicit metric that actually matters; keep or discard based on that metric, not on vibes or eloquence.
-- Human doctrine/spec edits belong in instruction files; agent edit authority should stay on the bounded implementation surface under test.
+- Human doctrine/spec edits belong in instruction files; agent edit authority should stay on the active staged goal and its bounded verification surface.
 - Every experiment loop should leave a receipt with objective, writable scope, budget, metric, result, and keep/discard decision.
 - If OpenSpace is configured, treat it as an optional skill engine, not as the primary brain or control plane.
 - Default OpenSpace to local-only skill evolution; do not enable cloud skill sharing unless the operator explicitly asks.
