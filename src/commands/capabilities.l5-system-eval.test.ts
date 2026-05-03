@@ -104,11 +104,12 @@ describe("l5SystemEvalCommand", () => {
     };
     expect(payload.ok).toBe(true);
     expect(payload.level).toBe("l5_ready");
-    expect(payload.score).toEqual({ passed: 11, total: 11 });
+    expect(payload.score).toEqual({ passed: 12, total: 12 });
     expect(payload.nextBlocker).toBe("none");
     expect(payload.gates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "l4_baseline_clean", status: "pass" }),
+        expect.objectContaining({ id: "eval_scope_isolation", status: "pass" }),
         expect.objectContaining({ id: "natural_language_to_work_order", status: "pass" }),
         expect.objectContaining({ id: "autonomous_learning_application_loop", status: "pass" }),
         expect.objectContaining({ id: "finance_module_orchestration", status: "pass" }),

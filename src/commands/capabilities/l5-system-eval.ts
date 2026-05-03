@@ -165,6 +165,17 @@ async function buildPayload(params: {
       "Keep l4-system-doctor green before promoting any L5 claim.",
     ),
     gate(
+      "eval_scope_isolation",
+      params.loop.temporaryWorkspace &&
+        params.l4.boundaries.doctorIsReadOnly &&
+        params.l4.boundaries.liveProbeNotPerformed &&
+        params.l4.boundaries.noRemoteFetchOccurred &&
+        params.l4.boundaries.noExecutionAuthority &&
+        params.l4.boundaries.protectedMemoryUntouched,
+      `tempLoop=${String(params.loop.temporaryWorkspace)} doctorReadOnly=${String(params.l4.boundaries.doctorIsReadOnly)} liveProbeNotPerformed=${String(params.l4.boundaries.liveProbeNotPerformed)} remoteFetch=${String(!params.l4.boundaries.noRemoteFetchOccurred)} execution=${String(!params.l4.boundaries.noExecutionAuthority)} protectedMemoryUntouched=${String(params.l4.boundaries.protectedMemoryUntouched)}`,
+      "Keep L5 eval scoped to a temporary local loop and read-only doctor; live rollout must be verified by a separate live path.",
+    ),
+    gate(
       "natural_language_to_work_order",
       params.loop.language.family === "market_capability_learning_intake" &&
         params.loop.language.backendTool === "finance_learning_pipeline_orchestrator",
