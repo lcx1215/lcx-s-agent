@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { evaluateLarkRoutingCandidateCorpus } from "../../../extensions/feishu/src/lark-routing-candidate-corpus.js";
+import type { FeishuConfig } from "../../../extensions/feishu/src/types.js";
 import {
   listAgentIds,
   resolveAgentWorkspaceDir,
@@ -49,6 +51,35 @@ type ReceiptWorkspace = {
 type GatewayModelParamSchemaCheck = {
   ok: boolean;
   error: string | null;
+};
+
+type LanguageCandidateCaptureStats = {
+  workspaceDir: string;
+  candidateArtifactCount: number;
+  candidateCount: number;
+  acceptedCaseCount: number;
+  rejectedCount: number;
+  discardedCount: number;
+  reasonCounts: Record<string, number>;
+  semanticFamilyCounts: Record<string, number>;
+  rejectedReasonCounts: Record<string, number>;
+  rejectedSemanticFamilyCounts: Record<string, number>;
+  currentReplay: {
+    candidateCount: number;
+    acceptedCaseCount: number;
+    rejectedCount: number;
+    discardedCount: number;
+    reasonCounts: Record<string, number>;
+    semanticFamilyCounts: Record<string, number>;
+    rejectedReasonCounts: Record<string, number>;
+    rejectedSemanticFamilyCounts: Record<string, number>;
+  };
+  latestCandidatePath: string | null;
+  latestCandidateGeneratedAt: string | null;
+  reviewArtifactCount: number;
+  promotedCaseCount: number;
+  latestReviewPath: string | null;
+  latestReviewGeneratedAt: string | null;
 };
 
 type FinanceOrchestrationReceiptSummary = {
@@ -174,6 +205,64 @@ async function walkJsonFiles(root: string): Promise<string[]> {
   return files;
 }
 
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function incrementCount(counts: Record<string, number>, key: string) {
+  counts[key] = (counts[key] ?? 0) + 1;
+}
+
+function isRejectedLanguageReason(reason: string): boolean {
+  return (
+    reason !== "accepted_language_case" &&
+    reason !== "discarded_by_distillation" &&
+    reason !== "api_route_label_reference"
+  );
+}
+
+function accumulateLanguageEvaluationStats(params: {
+  evaluation: Record<string, unknown>;
+  reasonCounts: Record<string, number>;
+  semanticFamilyCounts: Record<string, number>;
+  rejectedReasonCounts: Record<string, number>;
+  rejectedSemanticFamilyCounts: Record<string, number>;
+}) {
+  const evaluations = Array.isArray(params.evaluation.evaluations)
+    ? params.evaluation.evaluations
+    : [];
+  for (const entry of evaluations) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const evaluationEntry = entry as Record<string, unknown>;
+    const reason =
+      typeof evaluationEntry.reason === "string" && evaluationEntry.reason.trim()
+        ? evaluationEntry.reason
+        : "unknown";
+    const candidate =
+      evaluationEntry.candidate &&
+      typeof evaluationEntry.candidate === "object" &&
+      !Array.isArray(evaluationEntry.candidate)
+        ? (evaluationEntry.candidate as Record<string, unknown>)
+        : {};
+    const semantic =
+      candidate.semantic &&
+      typeof candidate.semantic === "object" &&
+      !Array.isArray(candidate.semantic)
+        ? (candidate.semantic as Record<string, unknown>)
+        : {};
+    const family =
+      typeof semantic.family === "string" && semantic.family.trim() ? semantic.family : "unknown";
+    incrementCount(params.reasonCounts, reason);
+    incrementCount(params.semanticFamilyCounts, family);
+    if (isRejectedLanguageReason(reason)) {
+      incrementCount(params.rejectedReasonCounts, reason);
+      incrementCount(params.rejectedSemanticFamilyCounts, family);
+    }
+  }
+}
+
 function dedupeReceiptWorkspaces(workspaces: ReceiptWorkspace[]): ReceiptWorkspace[] {
   const seen = new Set<string>();
   const result: ReceiptWorkspace[] = [];
@@ -185,6 +274,148 @@ function dedupeReceiptWorkspaces(workspaces: ReceiptWorkspace[]): ReceiptWorkspa
     result.push(workspace);
   }
   return result;
+}
+
+async function readLanguageCandidateCaptureStats(
+  workspaceDir: string,
+  cfg: FeishuConfig,
+): Promise<LanguageCandidateCaptureStats> {
+  const candidateRoot = path.join(workspaceDir, "memory", "lark-language-routing-candidates");
+  const reviewRoot = path.join(workspaceDir, "memory", "lark-language-routing-reviews");
+  const candidateFiles = await walkJsonFiles(candidateRoot);
+  const reviewFiles = await walkJsonFiles(reviewRoot);
+  let candidateArtifactCount = 0;
+  let candidateCount = 0;
+  let acceptedCaseCount = 0;
+  let rejectedCount = 0;
+  let discardedCount = 0;
+  const reasonCounts: Record<string, number> = {};
+  const semanticFamilyCounts: Record<string, number> = {};
+  const rejectedReasonCounts: Record<string, number> = {};
+  const rejectedSemanticFamilyCounts: Record<string, number> = {};
+  const currentReplay = {
+    candidateCount: 0,
+    acceptedCaseCount: 0,
+    rejectedCount: 0,
+    discardedCount: 0,
+    reasonCounts: {} as Record<string, number>,
+    semanticFamilyCounts: {} as Record<string, number>,
+    rejectedReasonCounts: {} as Record<string, number>,
+    rejectedSemanticFamilyCounts: {} as Record<string, number>,
+  };
+  let latestCandidatePath: string | null = null;
+  let latestCandidateGeneratedAt: string | null = null;
+  for (const filePath of candidateFiles) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+      if (parsed.boundary !== "language_routing_only") {
+        continue;
+      }
+      candidateArtifactCount += 1;
+      const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+      candidateCount += candidates.length;
+      const evaluation =
+        parsed.evaluation &&
+        typeof parsed.evaluation === "object" &&
+        !Array.isArray(parsed.evaluation)
+          ? (parsed.evaluation as Record<string, unknown>)
+          : {};
+      const counts =
+        evaluation.counts &&
+        typeof evaluation.counts === "object" &&
+        !Array.isArray(evaluation.counts)
+          ? (evaluation.counts as Record<string, unknown>)
+          : {};
+      acceptedCaseCount += numberValue(counts.accepted);
+      rejectedCount += numberValue(counts.rejected);
+      discardedCount += numberValue(counts.discarded);
+      accumulateLanguageEvaluationStats({
+        evaluation,
+        reasonCounts,
+        semanticFamilyCounts,
+        rejectedReasonCounts,
+        rejectedSemanticFamilyCounts,
+      });
+      if (candidates.length > 0) {
+        const replay = evaluateLarkRoutingCandidateCorpus({
+          cfg,
+          corpus: {
+            schemaVersion: 1,
+            boundary: "language_routing_only",
+            generatedAt: typeof parsed.generatedAt === "string" ? parsed.generatedAt : "",
+            candidates: candidates as never,
+          },
+          evaluatedAt: typeof parsed.generatedAt === "string" ? parsed.generatedAt : undefined,
+        });
+        currentReplay.candidateCount += candidates.length;
+        currentReplay.acceptedCaseCount += replay.counts.accepted;
+        currentReplay.rejectedCount += replay.counts.rejected;
+        currentReplay.discardedCount += replay.counts.discarded;
+        accumulateLanguageEvaluationStats({
+          evaluation: replay as unknown as Record<string, unknown>,
+          reasonCounts: currentReplay.reasonCounts,
+          semanticFamilyCounts: currentReplay.semanticFamilyCounts,
+          rejectedReasonCounts: currentReplay.rejectedReasonCounts,
+          rejectedSemanticFamilyCounts: currentReplay.rejectedSemanticFamilyCounts,
+        });
+      }
+      const generatedAt =
+        typeof parsed.generatedAt === "string" && parsed.generatedAt.trim()
+          ? parsed.generatedAt
+          : null;
+      if ((generatedAt ?? "") >= (latestCandidateGeneratedAt ?? "")) {
+        latestCandidateGeneratedAt = generatedAt;
+        latestCandidatePath = path.relative(workspaceDir, filePath).replaceAll(path.sep, "/");
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  let reviewArtifactCount = 0;
+  let promotedCaseCount = 0;
+  let latestReviewPath: string | null = null;
+  let latestReviewGeneratedAt: string | null = null;
+  for (const filePath of reviewFiles) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+      if (parsed.boundary !== "language_routing_only") {
+        continue;
+      }
+      reviewArtifactCount += 1;
+      promotedCaseCount += Array.isArray(parsed.promotedCases) ? parsed.promotedCases.length : 0;
+      const generatedAt =
+        typeof parsed.generatedAt === "string" && parsed.generatedAt.trim()
+          ? parsed.generatedAt
+          : null;
+      if ((generatedAt ?? "") >= (latestReviewGeneratedAt ?? "")) {
+        latestReviewGeneratedAt = generatedAt;
+        latestReviewPath = path.relative(workspaceDir, filePath).replaceAll(path.sep, "/");
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return {
+    workspaceDir,
+    candidateArtifactCount,
+    candidateCount,
+    acceptedCaseCount,
+    rejectedCount,
+    discardedCount,
+    reasonCounts,
+    semanticFamilyCounts,
+    rejectedReasonCounts,
+    rejectedSemanticFamilyCounts,
+    currentReplay,
+    latestCandidatePath,
+    latestCandidateGeneratedAt,
+    reviewArtifactCount,
+    promotedCaseCount,
+    latestReviewPath,
+    latestReviewGeneratedAt,
+  };
 }
 
 function resolveReceiptWorkspaces(opts: LarkLoopDiagnoseCommandOptions): ReceiptWorkspace[] {
@@ -334,6 +565,7 @@ function checkGatewayModelParamSchema(): GatewayModelParamSchemaCheck {
 function formatDiagnosisText(payload: Record<string, unknown>): string {
   const localLoop = payload.localLoop as Record<string, unknown>;
   const receipts = payload.liveHandoffReceipts as AggregateReceiptStats;
+  const languageCandidates = payload.languageCandidates as LanguageCandidateCaptureStats;
   const gatewaySchema = payload.gatewayAgentModelParamSchema as GatewayModelParamSchemaCheck;
   const scalar = (value: unknown) =>
     typeof value === "string" || typeof value === "number" || typeof value === "boolean"
@@ -349,6 +581,16 @@ function formatDiagnosisText(payload: Record<string, unknown>): string {
     `gatewayAgentModelParamSchema: ${gatewaySchema.ok ? "ok" : "failed"}`,
     `liveHandoffReceipts: ${receipts.count}`,
     `receiptWorkspaces: ${receipts.workspaces.length}`,
+    `languageCandidateArtifacts: ${languageCandidates.candidateArtifactCount}`,
+    `languageCandidates: ${languageCandidates.candidateCount}`,
+    `languageAcceptedCases: ${languageCandidates.acceptedCaseCount}`,
+    `languageRejectedByReason: ${JSON.stringify(languageCandidates.rejectedReasonCounts)}`,
+    `languageRejectedBySemanticFamily: ${JSON.stringify(languageCandidates.rejectedSemanticFamilyCounts)}`,
+    `languageCurrentReplayAcceptedCases: ${languageCandidates.currentReplay.acceptedCaseCount}`,
+    `languageCurrentReplayRejectedByReason: ${JSON.stringify(languageCandidates.currentReplay.rejectedReasonCounts)}`,
+    `languageCurrentReplayRejectedBySemanticFamily: ${JSON.stringify(languageCandidates.currentReplay.rejectedSemanticFamilyCounts)}`,
+    `languageReviews: ${languageCandidates.reviewArtifactCount}`,
+    `languagePromotedCases: ${languageCandidates.promotedCaseCount}`,
   ];
   for (const workspace of receipts.workspaces) {
     lines.push(
@@ -357,6 +599,12 @@ function formatDiagnosisText(payload: Record<string, unknown>): string {
   }
   if (receipts.latestPath) {
     lines.push(`latestReceipt: ${receipts.latestPath}`);
+  }
+  if (languageCandidates.latestCandidatePath) {
+    lines.push(`latestLanguageCandidate: ${languageCandidates.latestCandidatePath}`);
+  }
+  if (languageCandidates.latestReviewPath) {
+    lines.push(`latestLanguageReview: ${languageCandidates.latestReviewPath}`);
   }
   lines.push(`financeOrchestrationReceipts: ${receipts.financeOrchestrationCount}`);
   if (receipts.latestFinanceOrchestration) {
@@ -389,11 +637,19 @@ export async function larkLoopDiagnoseCommand(
   opts: LarkLoopDiagnoseCommandOptions,
   runtime: RuntimeEnv = defaultRuntime,
 ) {
+  const cfg = loadConfig();
+  const feishuCfg = (cfg.channels?.feishu ?? {}) as FeishuConfig;
   const gatewayAgentModelParamSchema = checkGatewayModelParamSchema();
   const [localLoop, liveHandoffReceipts] = await Promise.all([
     runLanguageBrainLoopSmoke({ fixtureDir: opts.fixtureDir }),
     readReceiptStats(opts),
   ]);
+  const languageCandidates = await readLanguageCandidateCaptureStats(
+    liveHandoffReceipts.workspaceDir === "multiple"
+      ? resolveReceiptWorkspaces(opts)[0]?.workspaceDir || process.cwd()
+      : liveHandoffReceipts.workspaceDir,
+    feishuCfg,
+  );
   const payload = {
     ok: localLoop.ok && liveHandoffReceipts.count > 0 && gatewayAgentModelParamSchema.ok,
     gatewayAgentModelParamSchema,
@@ -407,6 +663,7 @@ export async function larkLoopDiagnoseCommand(
       receiptPath: localLoop.memory.loopReceiptPath,
     },
     liveHandoffReceipts,
+    languageCandidates,
     nextBlocker: !gatewayAgentModelParamSchema.ok
       ? "gateway_agent_model_param_schema_rejects_learning_council"
       : liveHandoffReceipts.count > 0

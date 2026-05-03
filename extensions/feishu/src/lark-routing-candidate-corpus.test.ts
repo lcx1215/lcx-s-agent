@@ -161,6 +161,203 @@ describe("lark routing candidate corpus", () => {
     );
   });
 
+  it("uses API route JSON as a label for the paired user utterance without promoting the JSON itself", () => {
+    const corpus = buildLarkPendingRoutingCandidateCorpus({
+      source: "api_reply",
+      generatedAt: "2026-05-03T00:00:00.000Z",
+      payloads: [
+        {
+          family: "learning_external_source",
+          confidence: 0.95,
+          rationale: "The user asks to learn from an arXiv paper.",
+        },
+      ],
+    });
+    const userCandidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload: "给我学arxiv上一篇论文，你认为值得学的",
+      createdAt: "2026-05-03T00:00:00.000Z",
+    });
+    const evaluation = evaluateLarkRoutingCandidateCorpus({
+      cfg,
+      corpus: {
+        ...corpus,
+        candidates: [...corpus.candidates, userCandidate],
+      },
+      evaluatedAt: "2026-05-03T00:01:00.000Z",
+    });
+
+    expect(evaluation.evaluations).toEqual([
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          source: "api_reply",
+          status: "discarded",
+          semantic: expect.objectContaining({
+            family: "learning_external_source",
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({
+          utterance: "给我学arxiv上一篇论文，你认为值得学的",
+          family: "learning_external_source",
+          expectedSurface: "learning_command",
+        }),
+      }),
+    ]);
+    expect(evaluation.acceptedCases).toHaveLength(1);
+    expect(evaluation.acceptedCases[0]?.utterance).toBe("给我学arxiv上一篇论文，你认为值得学的");
+    expect(evaluation.acceptedCases[0]?.utterance).not.toContain('"family"');
+    expect(evaluation.counts).toEqual({
+      total: 2,
+      accepted: 1,
+      rejected: 0,
+      discarded: 1,
+    });
+  });
+
+  it("does not leak one API route label across later user utterances", () => {
+    const apiCandidate = createLarkPendingRoutingCandidate({
+      source: "api_reply",
+      payload: {
+        family: "learning_external_source",
+        confidence: 0.95,
+        rationale: "The user asks to learn from an arXiv paper.",
+      },
+      createdAt: "2026-05-03T00:00:00.000Z",
+    });
+    const pairedUserCandidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload: "给我学arxiv上一篇论文，你认为值得学的",
+      createdAt: "2026-05-03T00:00:01.000Z",
+    });
+    const laterUserCandidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload: "我刚才发的那句现在有没有真的学到，receipt在哪里？",
+      createdAt: "2026-05-03T00:00:02.000Z",
+    });
+
+    const evaluation = evaluateLarkRoutingCandidateCorpus({
+      cfg,
+      corpus: {
+        schemaVersion: 1,
+        boundary: "language_routing_only",
+        generatedAt: "2026-05-03T00:00:00.000Z",
+        candidates: [apiCandidate, pairedUserCandidate, laterUserCandidate],
+      },
+      evaluatedAt: "2026-05-03T00:01:00.000Z",
+    });
+
+    expect(evaluation.evaluations[1]).toEqual(
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({
+          family: "learning_external_source",
+        }),
+      }),
+    );
+    expect(evaluation.evaluations[2]).not.toEqual(
+      expect.objectContaining({
+        acceptedCase: expect.objectContaining({
+          family: "learning_external_source",
+        }),
+      }),
+    );
+  });
+
+  it("replays old API route JSON samples even when stored semantic was unknown", () => {
+    const apiCandidate = createLarkPendingRoutingCandidate({
+      source: "api_reply",
+      payload: {
+        family: "learning_external_source",
+        confidence: 0.95,
+        rationale: "The user asks to learn from an arXiv paper.",
+      },
+      createdAt: "2026-05-03T00:00:00.000Z",
+    });
+    const userCandidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload: "给我学arxiv上一篇论文，你认为值得学的",
+      createdAt: "2026-05-03T00:00:00.000Z",
+    });
+
+    const evaluation = evaluateLarkRoutingCandidateCorpus({
+      cfg,
+      corpus: {
+        schemaVersion: 1,
+        boundary: "language_routing_only",
+        generatedAt: "2026-05-03T00:00:00.000Z",
+        candidates: [
+          {
+            ...apiCandidate,
+            semantic: { family: "unknown", score: 0.1 },
+          },
+          {
+            ...userCandidate,
+            semantic: { family: "unknown", score: 0.1 },
+          },
+        ],
+      },
+      evaluatedAt: "2026-05-03T00:01:00.000Z",
+    });
+
+    expect(evaluation.evaluations[0]).toEqual(
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          semantic: expect.objectContaining({ family: "learning_external_source" }),
+        }),
+      }),
+    );
+    expect(evaluation.evaluations[1]).toEqual(
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({
+          utterance: "给我学arxiv上一篇论文，你认为值得学的",
+          family: "learning_external_source",
+        }),
+      }),
+    );
+    expect(evaluation.counts).toEqual({
+      total: 2,
+      accepted: 1,
+      rejected: 0,
+      discarded: 1,
+    });
+  });
+
+  it("does not expose deterministic route failures as accepted promotion cases", () => {
+    const corpus = buildLarkPendingRoutingCandidateCorpus({
+      source: "api_reply",
+      generatedAt: "2026-04-27T00:00:00.000Z",
+      payloads: ["去 Google 上学习 ETF 轮动的公开资料"],
+    });
+
+    const evaluation = evaluateLarkRoutingCandidateCorpus({
+      cfg,
+      corpus,
+      evaluatedAt: "2026-04-27T00:01:00.000Z",
+    });
+
+    expect(evaluation.evaluations[0]).toMatchObject({
+      reason: "deterministic_route_failed",
+      acceptedCase: expect.objectContaining({
+        family: "external_source_coverage_honesty",
+      }),
+    });
+    expect(evaluation).toMatchObject({
+      acceptedCases: [],
+      counts: {
+        total: 1,
+        accepted: 0,
+        rejected: 1,
+        discarded: 0,
+      },
+    });
+  });
+
   it("writes a live-shaped candidate capture artifact without mutating the formal corpus", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-capture-"));
     const capture = await writeLarkLanguageRoutingCandidateCapture({
@@ -220,7 +417,7 @@ describe("lark routing candidate corpus", () => {
     const secondCorpus = buildLarkPendingRoutingCandidateCorpus({
       source: "lark_visible_reply",
       generatedAt: "2026-04-27T00:02:00.000Z",
-      payloads: ["去 Google 上学习 ETF 轮动的公开资料"],
+      payloads: ["去 Google 上系统性学习最近 agent 记忆怎么做"],
     });
     const review = buildLarkRoutingCandidatePromotionReview({
       generatedAt: "2026-04-27T00:03:00.000Z",

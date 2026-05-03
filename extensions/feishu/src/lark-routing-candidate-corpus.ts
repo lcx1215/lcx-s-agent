@@ -45,6 +45,7 @@ export type LarkRoutingCandidateEvaluation = {
   score?: ReturnType<typeof scoreLarkRoutingCorpus>;
   reason:
     | "accepted_language_case"
+    | "api_route_label_reference"
     | "discarded_by_distillation"
     | "missing_distillable_text"
     | "semantic_family_unknown"
@@ -209,6 +210,55 @@ function expectedGuardMatchersForUtterance(
   return matchers.length > 0 ? matchers : undefined;
 }
 
+function parseApiRouteFamilyHint(payload: unknown): SemanticRouteCandidate | undefined {
+  const parsed =
+    typeof payload === "string"
+      ? (() => {
+          try {
+            return JSON.parse(payload) as unknown;
+          } catch {
+            return undefined;
+          }
+        })()
+      : payload;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  const family = typeof record.family === "string" ? record.family.trim() : "";
+  if (!(family in LARK_ROUTING_FAMILY_CONTRACTS)) {
+    return undefined;
+  }
+  const confidence =
+    typeof record.confidence === "number" && Number.isFinite(record.confidence)
+      ? Math.max(0, Math.min(1, record.confidence))
+      : 0.75;
+  return {
+    family: family as LarkRoutingFamily,
+    score: confidence,
+    matchedUtterance:
+      typeof record.rationale === "string" && record.rationale.trim()
+        ? record.rationale.trim().slice(0, 240)
+        : "api_route_family_label",
+  };
+}
+
+function resolveCandidateSemantic(
+  candidate: LarkPendingRoutingCandidate,
+): SemanticRouteCandidate | undefined {
+  if (candidate.source === "api_reply") {
+    return (
+      parseApiRouteFamilyHint(candidate.sample?.distillableText) ??
+      candidate.semantic ??
+      (candidate.utterance ? resolveLarkSemanticRouteCandidate(candidate.utterance) : undefined)
+    );
+  }
+  return (
+    candidate.semantic ??
+    (candidate.utterance ? resolveLarkSemanticRouteCandidate(candidate.utterance) : undefined)
+  );
+}
+
 export function createLarkPendingRoutingCandidate(params: {
   source: LarkRoutingCandidateSource;
   payload: unknown;
@@ -242,7 +292,13 @@ export function createLarkPendingRoutingCandidate(params: {
     createdAt: params.createdAt ?? new Date().toISOString(),
     sample,
     utterance,
-    semantic: utterance ? resolveLarkSemanticRouteCandidate(utterance) : undefined,
+    semantic:
+      params.source === "api_reply"
+        ? (parseApiRouteFamilyHint(params.payload) ??
+          (utterance ? resolveLarkSemanticRouteCandidate(utterance) : undefined))
+        : utterance
+          ? resolveLarkSemanticRouteCandidate(utterance)
+          : undefined,
   };
 }
 
@@ -269,6 +325,7 @@ export function buildLarkPendingRoutingCandidateCorpus(params: {
 export function evaluateLarkPendingRoutingCandidate(params: {
   cfg: FeishuConfig;
   candidate: LarkPendingRoutingCandidate;
+  familyHint?: SemanticRouteCandidate;
 }): LarkRoutingCandidateEvaluation {
   const candidate = params.candidate;
   if (candidate.status === "discarded") {
@@ -277,7 +334,24 @@ export function evaluateLarkPendingRoutingCandidate(params: {
   if (!candidate.utterance) {
     return { candidate, reason: "missing_distillable_text" };
   }
-  const semantic = resolveLarkSemanticRouteCandidate(candidate.utterance);
+  const candidateSemantic = resolveCandidateSemantic(candidate);
+  if (
+    candidate.source === "api_reply" &&
+    candidate.sample.outputKind === "json" &&
+    candidateSemantic?.family &&
+    candidateSemantic.family !== "unknown"
+  ) {
+    return {
+      candidate: { ...candidate, status: "discarded", semantic: candidateSemantic },
+      reason: "api_route_label_reference",
+    };
+  }
+  const semantic =
+    candidate.source === "lark_user_utterance" &&
+    params.familyHint?.family &&
+    params.familyHint.family !== "unknown"
+      ? params.familyHint
+      : resolveLarkSemanticRouteCandidate(candidate.utterance);
   if (semantic.family === "unknown") {
     return {
       candidate: { ...candidate, status: "rejected_language_case", semantic },
@@ -308,6 +382,17 @@ export function evaluateLarkPendingRoutingCandidate(params: {
       reason: "deterministic_route_failed",
     };
   }
+  if (
+    candidate.source === "lark_user_utterance" &&
+    params.familyHint?.family &&
+    params.familyHint.family !== "unknown"
+  ) {
+    return {
+      candidate: { ...candidate, status: "accepted_language_case", semantic },
+      acceptedCase,
+      reason: "accepted_language_case",
+    };
+  }
   const score = scoreLarkRoutingCorpus({ cfg: params.cfg, corpus: [acceptedCase] });
   if (score.deterministicPassed !== 1 || score.semanticCandidatePassed !== 1) {
     return {
@@ -329,9 +414,28 @@ export function evaluateLarkPendingRoutingCandidates(params: {
   cfg: FeishuConfig;
   candidates: readonly LarkPendingRoutingCandidate[];
 }): LarkRoutingCandidateEvaluation[] {
-  return params.candidates.map((candidate) =>
-    evaluateLarkPendingRoutingCandidate({ cfg: params.cfg, candidate }),
-  );
+  let pendingFamilyHint: SemanticRouteCandidate | undefined;
+  return params.candidates.map((candidate) => {
+    const familyHint = candidate.source === "lark_user_utterance" ? pendingFamilyHint : undefined;
+    const evaluation = evaluateLarkPendingRoutingCandidate({
+      cfg: params.cfg,
+      candidate,
+      familyHint,
+    });
+    if (
+      candidate.source === "api_reply" &&
+      candidate.sample.outputKind === "json" &&
+      evaluation.reason === "api_route_label_reference"
+    ) {
+      const semantic = resolveCandidateSemantic(candidate);
+      if (semantic?.family && semantic.family !== "unknown") {
+        pendingFamilyHint = semantic;
+      }
+    } else if (candidate.source === "lark_user_utterance" && familyHint) {
+      pendingFamilyHint = undefined;
+    }
+    return evaluation;
+  });
 }
 
 export function evaluateLarkRoutingCandidateCorpus(params: {
@@ -344,10 +448,13 @@ export function evaluateLarkRoutingCandidateCorpus(params: {
     candidates: params.corpus.candidates,
   });
   const acceptedCases = evaluations
+    .filter((evaluation) => evaluation.reason === "accepted_language_case")
     .map((evaluation) => evaluation.acceptedCase)
     .filter((entry): entry is LarkRoutingCorpusCase => entry != null);
   const discarded = evaluations.filter(
-    (evaluation) => evaluation.reason === "discarded_by_distillation",
+    (evaluation) =>
+      evaluation.reason === "discarded_by_distillation" ||
+      evaluation.reason === "api_route_label_reference",
   ).length;
   return {
     schemaVersion: 1,

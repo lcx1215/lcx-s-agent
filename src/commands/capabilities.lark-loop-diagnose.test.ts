@@ -158,6 +158,148 @@ describe("larkLoopDiagnoseCommand", () => {
     });
   });
 
+  it("reports language candidate capture and review artifacts separately from brain receipts", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-lark-diagnose-language-"));
+    const candidateDir = path.join(
+      workspace,
+      "memory",
+      "lark-language-routing-candidates",
+      "2026-05-03",
+    );
+    const reviewDir = path.join(workspace, "memory", "lark-language-routing-reviews");
+    await fs.promises.mkdir(candidateDir, { recursive: true });
+    await fs.promises.mkdir(reviewDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(candidateDir, "om_language.json"),
+      JSON.stringify({
+        generatedAt: "2026-05-03T11:00:00.000Z",
+        boundary: "language_routing_only",
+        candidates: [{ id: "candidate-1" }, { id: "candidate-2" }, { id: "candidate-3" }],
+        evaluation: {
+          boundary: "language_routing_only",
+          evaluations: [
+            {
+              reason: "accepted_language_case",
+              candidate: {
+                semantic: { family: "external_source_coverage_honesty" },
+              },
+            },
+            {
+              reason: "semantic_family_unknown",
+              candidate: {
+                semantic: { family: "unknown" },
+              },
+            },
+            {
+              reason: "deterministic_route_failed",
+              candidate: {
+                semantic: { family: "technical_timing" },
+              },
+            },
+          ],
+          counts: {
+            total: 3,
+            accepted: 1,
+            rejected: 2,
+            discarded: 0,
+          },
+          acceptedCases: [
+            {
+              id: "case-1",
+              utterance: "去 Google 上学习 ETF 风控资料，但标清覆盖范围",
+              family: "external_source_coverage_honesty",
+            },
+          ],
+        },
+      }),
+      "utf8",
+    );
+    await fs.promises.writeFile(
+      path.join(reviewDir, "2026-05-03.json"),
+      JSON.stringify({
+        generatedAt: "2026-05-03T11:05:00.000Z",
+        boundary: "language_routing_only",
+        promotedCases: [{ id: "promoted-1" }],
+      }),
+      "utf8",
+    );
+
+    await larkLoopDiagnoseCommand({ workspaceDir: workspace, json: true }, runtime);
+
+    const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0])) as {
+      languageCandidates: {
+        workspaceDir: string;
+        candidateArtifactCount: number;
+        candidateCount: number;
+        acceptedCaseCount: number;
+        rejectedCount: number;
+        discardedCount: number;
+        reasonCounts: Record<string, number>;
+        semanticFamilyCounts: Record<string, number>;
+        rejectedReasonCounts: Record<string, number>;
+        rejectedSemanticFamilyCounts: Record<string, number>;
+        currentReplay: {
+          candidateCount: number;
+          acceptedCaseCount: number;
+          rejectedCount: number;
+          discardedCount: number;
+          rejectedReasonCounts: Record<string, number>;
+          rejectedSemanticFamilyCounts: Record<string, number>;
+        };
+        latestCandidatePath: string;
+        latestCandidateGeneratedAt: string;
+        reviewArtifactCount: number;
+        promotedCaseCount: number;
+        latestReviewPath: string;
+        latestReviewGeneratedAt: string;
+      };
+    };
+    expect(payload.languageCandidates).toMatchObject({
+      workspaceDir: workspace,
+      candidateArtifactCount: 1,
+      candidateCount: 3,
+      acceptedCaseCount: 1,
+      rejectedCount: 2,
+      discardedCount: 0,
+      reasonCounts: {
+        accepted_language_case: 1,
+        semantic_family_unknown: 1,
+        deterministic_route_failed: 1,
+      },
+      semanticFamilyCounts: {
+        external_source_coverage_honesty: 1,
+        unknown: 1,
+        technical_timing: 1,
+      },
+      rejectedReasonCounts: {
+        semantic_family_unknown: 1,
+        deterministic_route_failed: 1,
+      },
+      rejectedSemanticFamilyCounts: {
+        unknown: 1,
+        technical_timing: 1,
+      },
+      currentReplay: {
+        candidateCount: 3,
+        acceptedCaseCount: 0,
+        rejectedCount: 3,
+        discardedCount: 0,
+        rejectedReasonCounts: {
+          missing_distillable_text: 3,
+        },
+        rejectedSemanticFamilyCounts: {
+          unknown: 3,
+        },
+      },
+      latestCandidatePath: "memory/lark-language-routing-candidates/2026-05-03/om_language.json",
+      latestCandidateGeneratedAt: "2026-05-03T11:00:00.000Z",
+      reviewArtifactCount: 1,
+      promotedCaseCount: 1,
+      latestReviewPath: "memory/lark-language-routing-reviews/2026-05-03.json",
+      latestReviewGeneratedAt: "2026-05-03T11:05:00.000Z",
+    });
+  });
+
   it("replays finance orchestration for the latest receipt when old live receipt lacks it", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-lark-diagnose-replay-"));
     const receiptDir = path.join(

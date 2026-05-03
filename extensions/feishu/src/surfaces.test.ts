@@ -273,6 +273,8 @@ describe("resolveFeishuSurfaceRouting", () => {
       "从网上找资料持续学30分钟，主题是 finance agent workflow",
       "看看同类 agent 怎么做长期记忆，筛出能改你工作流的规则",
       "找几个竞品智能体的做法参考一下，别做综述，只留下可复用的",
+      "去 GitHub 上学习这个项目，但我没给仓库链接，别假装已经学了，只回 family source_required failedReason next step boundary proof。",
+      "反例验收：去学习这篇论文，虽然我没有网页链接，但 arXiv id 是 2501.12345。不要误回 source_required；只回 family、是否被缺source拦截、next step、proof。",
     ];
 
     for (const content of cases) {
@@ -289,6 +291,93 @@ describe("resolveFeishuSurfaceRouting", () => {
       expect(routing.targetSurface, content).toBe("learning_command");
       expect(routing.targetChatId, content).toBe("oc-learning");
     }
+  });
+
+  it("routes immediate learning proof audits to knowledge_maintenance", () => {
+    const cases = [
+      "简单验收：刚才你真的学会了什么？只列1条已内化规则、证据文件/receipt在哪里、以后怎么用；如果没有证据就说 failedReason。",
+      "刚刚那次学习到底内化了哪条规则，证据 receipt 在哪，以后怎么用？",
+    ];
+
+    for (const content of cases) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg: {
+          surfaces: {
+            knowledge_maintenance: { chatId: "oc-knowledge" },
+            ops_audit: { chatId: "oc-ops" },
+          },
+        } as FeishuConfig,
+        chatId: "oc-random",
+        content,
+      });
+
+      expect(routing.targetSurface, content).toBe("knowledge_maintenance");
+      expect(routing.targetChatId, content).toBe("oc-knowledge");
+    }
+  });
+
+  it("routes done queued proof work sequencing asks to the control room", () => {
+    const cases = [
+      "简单排队验收：这三个都要做，但一次只能做一个：A 检查学习 receipt，B 检查 Lark 回复质量，C 提出下一步修补。请按语义家族分类，并只用 done / queued / next step / proof 四行回答；不要把 queued 说成 completed。",
+      "这些任务别并行，先分类，再排队，告诉我 done、queued 和 next step，别把 queued 说成 completed。",
+    ];
+
+    for (const content of cases) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg: {
+          surfaces: {
+            control_room: { chatId: "oc-control" },
+            knowledge_maintenance: { chatId: "oc-knowledge" },
+            learning_command: { chatId: "oc-learning" },
+          },
+        } as FeishuConfig,
+        chatId: "oc-random",
+        content,
+      });
+
+      expect(routing.targetSurface, content).toBe("control_room");
+      expect(routing.targetChatId, content).toBe("oc-control");
+    }
+  });
+
+  it("routes live status and timeout probe asks to the control room", () => {
+    const cases = [
+      "live-sync-check 84d8695：请只回复 live-sync-ok，并说明 gateway 已指向 lcx-s-openclaw；不要扩展。",
+      "前台超时验收：进入 learning council，但如果超过 8 秒没形成最终结果，必须显式回复 timeout，不准沉默。验收码 live-council-visible-timeout-20260503-1",
+      "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-fixed unverified next step proof. If unknown say failedReason.",
+    ];
+
+    for (const content of cases) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg: {
+          surfaces: {
+            control_room: { chatId: "oc-control" },
+            learning_command: { chatId: "oc-learning" },
+            ops_audit: { chatId: "oc-ops" },
+          },
+        } as FeishuConfig,
+        chatId: "oc-random",
+        content,
+      });
+
+      expect(routing.targetSurface, content).toBe("control_room");
+      expect(routing.targetChatId, content).toBe("oc-control");
+    }
+  });
+
+  it("routes self-learning correction asks to learning_command", () => {
+    const routing = resolveFeishuSurfaceRouting({
+      cfg: {
+        surfaces: {
+          learning_command: { chatId: "oc-learning" },
+        },
+      } as FeishuConfig,
+      chatId: "oc-random",
+      content: "不是教我学 是你自己学",
+    });
+
+    expect(routing.targetSurface).toBe("learning_command");
+    expect(routing.targetChatId).toBe("oc-learning");
   });
 
   it("routes Hermes install and memory-provider learning asks to learning_command", () => {

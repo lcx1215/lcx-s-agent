@@ -177,8 +177,13 @@ export function looksLikeStrategicLearningAsk(text: string): boolean {
     /(值得学|值得记住|值得内化|内化|留下|只留下|筛出来|筛选|有用的|可复用|复用|规则|启发|自我提升|学完告诉我|学完说人话总结|会改你以后的做法|改变你以后怎么工作|能改|改你以后做法|改你手法|改你工作流|别做.*综述|不要做.*综述|别复述|不要复述|别做分享会|不要做分享会|少犯错)/u.test(
       normalized,
     );
+  const hasSourceBoundaryCue =
+    /(source_required|failedreason|no url|no local source|没有给链接|没给链接|没有网页链接|没给仓库链接|没有仓库链接|没有链接|没链接|arxiv\s*id|别假装.*学|不要假装.*学|do not pretend learned)/u.test(
+      normalized,
+    );
   return (
     looksLikeSourceCoverageScopeAsk(normalized) ||
+    (hasSourceBoundaryCue && (hasLearningIntent || hasSourceDirectedLearning)) ||
     ((hasLearningIntent || hasSourceDirectedLearning) &&
       (hasExternalLearningSource || hasStrategicLearningTopic) &&
       (hasInternalizationCue || (hasTimeboxCue && hasStrategicLearningTopic)))
@@ -195,7 +200,23 @@ export function looksLikeLearningInternalizationAuditAsk(text: string): boolean 
     /(有没有内化|内化成|变成可复用规则|可复用规则|复用规则|真的有用|到底有没有用|别给我做总结秀|别做总结秀|不是做总结|别给我讲总结|值不值得留下|有没有沉淀成规则|沉淀成了哪些.*复用.*规则|以后会复用的规则|嘴上热闹|会改你以后做法|会改你以后手法|进规矩了没|进了你以后干活的规矩|学进规矩|学进去的规矩|明确扔掉|明确丢掉|扔掉的两条|丢掉的两条|扔掉的废话|有没有进长期记忆|留下啥了|过眼云烟|成果展|改掉你老毛病|忘回去了|进总线了|边上堆垃圾|改掉你以前那套坏习惯)/u.test(
       normalized,
     );
-  return hasLearningHistoryCue && hasInternalizationAuditCue;
+  const hasImmediateLearningProofCue =
+    /(刚才|刚刚|这次|上次|前面|前一步).{0,24}(真的)?(学会|学到了|内化|吸收|留下|沉淀)|(?:学会|学到了|内化|吸收).{0,24}(什么|哪条|规则|证据|receipt|以后怎么用|failedreason)/u.test(
+      normalized,
+    );
+  const hasLearningReplayAuditCue =
+    /(学习复盘|复盘回路|复盘.*学习|audit_handoff_ready|handoff receipt|不重新学习|只复盘)/u.test(
+      normalized,
+    );
+  const asksForEvidenceOrUse =
+    /(证据文件|证据|receipt|review|以后怎么用|怎么用|已内化规则|内化规则|failedreason|没有证据)/u.test(
+      normalized,
+    );
+  return (
+    (hasLearningHistoryCue && hasInternalizationAuditCue) ||
+    (hasImmediateLearningProofCue && asksForEvidenceOrUse) ||
+    (hasLearningReplayAuditCue && asksForEvidenceOrUse)
+  );
 }
 
 export function looksLikeLearningWorkflowAuditAsk(text: string): boolean {

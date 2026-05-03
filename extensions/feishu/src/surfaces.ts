@@ -205,10 +205,34 @@ function inferIntentSurfaces(params: {
   addIntentSurfaceIf(surfaces, "control_room", looksLikeLarkWorkRoleManagementAsk(normalized));
   addIntentSurfaceIf(
     surfaces,
+    "control_room",
+    /(live[-\s]?(?:probe|sync|council)|lark.*status|status audit|前台.*(?:超时|验收)|可见回复|visible reply|dev[- ]?fixed|live[- ]?fixed|gateway.*指向)/u.test(
+      normalized,
+    ) &&
+      /(timeout|超时|只回复|不要扩展|不要沉默|current evidence|proof|next step|unverified|failedreason|验收码|acceptance code|live-sync-ok)/u.test(
+        normalized,
+      ) &&
+      !/(finance_?learning|financelearningpipeline|learningintent|source memory\/articles|学习复盘|复盘回路|不重新学习|只复盘)/u.test(
+        normalized,
+      ),
+  );
+  addIntentSurfaceIf(
+    surfaces,
+    "control_room",
+    /(queued|completed|排队|一次只能做一个|不要并行|别并行|按优先级|先分类)/u.test(normalized) &&
+      /(done|queued|next step|proof|completed|完成|证据|receipt|下一步)/u.test(normalized),
+  );
+  addIntentSurfaceIf(
+    surfaces,
     "learning_command",
     /(learning council|学习委员会|学习指令|学习命令|多模型学习|三模型学习|并行学习|批量学习|学这个并给我结论|用三个模型学|让三个模型一起学|帮我学一下|去学一下|开始学习|开始学|现在开始学|先开始学|立刻开始学|学学最近|看看最近有什么值得学|学完告诉我|学完说人话总结|金融策略|financial strategy|quant strategy|日频技术|日频策略|daily[-\s]?frequency strategy|daily[-\s]?frequency trading|金融技术|fintech|agent platform|agent platforms|智能体平台|同类agent|同类 agent|peer agents|同类平台|agent框架|agent 框架|开源策略|开源金融策略|开源金融技术|中文理解|英文理解|中英理解|双语理解|bilingual|multilingual|language understanding|language comprehension|术语映射|术语对照|翻译歧义|语义理解|自然语言理解|hermes(?:-agent)?|nous research|github cli|gh cli|memory provider|memory providers|context file|context files|skills hub|skill installer|plugin system|install(?:ation|ability)?|setup wizard|claw migrate)/u.test(
       normalized,
     ),
+  );
+  addIntentSurfaceIf(
+    surfaces,
+    "learning_command",
+    /不是教我学|你自己学|自己去学/u.test(normalized),
   );
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeStrategicLearningAsk(normalized));
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeMethodLearningTopic(normalized));
