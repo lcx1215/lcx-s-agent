@@ -1,3 +1,4 @@
+import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import { resolveCommandSecretRefsViaGateway } from "../cli/command-secret-gateway.js";
 import { getStatusCommandSecretTargetIds } from "../cli/command-secret-targets.js";
 import { withProgress } from "../cli/progress.js";
@@ -26,6 +27,7 @@ type MemoryPluginStatus = {
   enabled: boolean;
   slot: string | null;
   reason?: string;
+  unavailableReason?: string;
 };
 
 type DeferredResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
@@ -134,8 +136,13 @@ async function resolveMemoryStatusSnapshot(params: {
     return null;
   }
   const agentId = agentStatus.defaultId ?? "main";
+  if (!resolveMemorySearchConfig(cfg, agentId)) {
+    memoryPlugin.unavailableReason = "memory search disabled";
+    return null;
+  }
   const { manager } = await getMemorySearchManager({ cfg, agentId, purpose: "status" });
   if (!manager) {
+    memoryPlugin.unavailableReason = "memory manager unavailable";
     return null;
   }
   try {

@@ -264,6 +264,69 @@ describe("models list/status", () => {
     expect(payload.models[0]?.available).toBe(false);
   });
 
+  it("models list labels configured legacy DeepSeek names as deprecated", async () => {
+    loadConfig.mockReturnValue({
+      agents: {
+        defaults: {
+          model: "custom-api-deepseek-com/deepseek-v4-flash",
+          models: {
+            "custom-api-deepseek-com/deepseek-v4-flash": {},
+            "custom-api-deepseek-com/deepseek-chat": {},
+            "custom-api-deepseek-com/deepseek-reasoner": {},
+          },
+        },
+      },
+    });
+    const deepseekModels = [
+      {
+        provider: "custom-api-deepseek-com",
+        id: "deepseek-v4-flash",
+        name: "DeepSeek V4 Flash",
+        input: ["text"],
+        baseUrl: "https://api.deepseek.com",
+        contextWindow: 1_000_000,
+      },
+      {
+        provider: "custom-api-deepseek-com",
+        id: "deepseek-chat",
+        name: "DeepSeek Chat",
+        input: ["text"],
+        baseUrl: "https://api.deepseek.com",
+        contextWindow: 128_000,
+      },
+      {
+        provider: "custom-api-deepseek-com",
+        id: "deepseek-reasoner",
+        name: "DeepSeek Reasoner",
+        input: ["text"],
+        baseUrl: "https://api.deepseek.com",
+        contextWindow: 128_000,
+      },
+    ];
+    modelRegistryState.models = deepseekModels;
+    modelRegistryState.available = deepseekModels;
+    const runtime = makeRuntime();
+
+    await modelsListCommand({ json: true }, runtime);
+
+    const payload = parseJsonLog(runtime);
+    const chat = payload.models.find(
+      (row: { key: string }) => row.key === "custom-api-deepseek-com/deepseek-chat",
+    );
+    const reasoner = payload.models.find(
+      (row: { key: string }) => row.key === "custom-api-deepseek-com/deepseek-reasoner",
+    );
+    expect(chat.tags).toEqual(
+      expect.arrayContaining([
+        "deprecated",
+        "replaced-by:custom-api-deepseek-com/deepseek-v4-flash",
+      ]),
+    );
+    expect(reasoner.tags).toEqual(
+      expect.arrayContaining(["deprecated", "replaced-by:custom-api-deepseek-com/deepseek-v4-pro"]),
+    );
+  });
+
   it("models list does not treat availability-unavailable code as discovery fallback", async () => {
     configureGoogleAntigravityModel("claude-opus-4-6-thinking");
     modelRegistryState.getAllError = Object.assign(new Error("model discovery failed"), {

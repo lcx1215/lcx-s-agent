@@ -355,7 +355,8 @@ export async function statusCommand(
       if (memoryPlugin.slot && memoryPlugin.slot !== "memory-core") {
         return `enabled (${slot})`;
       }
-      return muted(`enabled (${slot}) · unavailable`);
+      const reason = memoryPlugin.unavailableReason ? ` · ${memoryPlugin.unavailableReason}` : "";
+      return muted(`enabled (${slot}) · unavailable${reason}`);
     }
     const parts: string[] = [];
     const dirtySuffix = memory.dirty ? ` · ${warn("dirty")}` : "";

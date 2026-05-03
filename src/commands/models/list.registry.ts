@@ -11,6 +11,7 @@ import {
 import { ensureOpenClawModelsJson } from "../../agents/models-config.js";
 import { discoverAuthStorage, discoverModels } from "../../agents/pi-model-discovery.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { appendModelDeprecationTags } from "./list.deprecations.js";
 import {
   formatErrorWithStack,
   MODEL_AVAILABILITY_UNAVAILABLE_CODE,
@@ -174,7 +175,7 @@ export function toModelRow(params: {
     contextWindow: model.contextWindow ?? null,
     local,
     available,
-    tags: Array.from(mergedTags),
+    tags: appendModelDeprecationTags({ key, tags: Array.from(mergedTags) }),
     missing: false,
   };
 }
