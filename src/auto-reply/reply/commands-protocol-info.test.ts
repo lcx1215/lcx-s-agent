@@ -69,6 +69,10 @@ describe("commands-protocol-info", () => {
     ["what remains", "status_readback"],
     ["is this live-fixed", "status_readback"],
     ["where are we now", "status_readback"],
+    [
+      "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-fixed unverified next step proof. If unknown say failedReason.",
+      "status_readback",
+    ],
     ["can you use file_search", "specific_capability"],
     ["今天到底学进去了没有", "learning"],
     ["is web search working now", "search_health"],

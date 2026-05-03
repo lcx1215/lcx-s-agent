@@ -16,6 +16,7 @@ import {
 } from "openclaw/plugin-sdk";
 import { resolveAgentWorkspaceDir } from "../../../src/agents/agent-scope.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../../src/agents/tools/finance-learning-pipeline-orchestrator-tool.js";
+import { resolveProtocolInfoQuestionKind } from "../../../src/auto-reply/reply/commands-protocol-families.js";
 import { buildProtocolInfoReply } from "../../../src/auto-reply/reply/commands-protocol-info.js";
 import type { OpenClawConfig } from "../../../src/config/config.js";
 import { isCorrectionLoopInput } from "../../../src/hooks/bundled/correction-loop/detection.js";
@@ -1161,6 +1162,15 @@ function shouldUseFeishuProtocolTruthIdentityReply(text: string): boolean {
     /(你是谁|现在你是谁|who are you|what are you|身份|不要讲大话|别讲大话|下一步会做什么|next step)/iu.test(
       text,
     ) && /(能做什么|可用能力|能力|capabilit|边界|不能做什么|不可用)/iu.test(text)
+  );
+}
+
+function shouldUseFeishuProtocolStatusReadbackReply(text: string): boolean {
+  return (
+    resolveProtocolInfoQuestionKind(text) === "status_readback" &&
+    /(status audit|current evidence|dev-fixed|live-fixed|unverified|acceptance code|proof|failedreason|what did you just fix|当前证据|当前 proof|刚才.*修|修了什么)/iu.test(
+      text,
+    )
   );
 }
 
@@ -5697,6 +5707,50 @@ export async function handleFeishuMessage(params: {
         accountId: account.accountId,
         controlRoomOrchestration,
       });
+
+      if (shouldUseFeishuProtocolStatusReadbackReply(ctx.content)) {
+        const statusReadbackReply = buildProtocolInfoReply({
+          text: ctx.content,
+          cfg: effectiveCfg as OpenClawConfig,
+        });
+        const statusReadbackText = [
+          statusReadbackReply?.text ??
+            "🧭 Status readback\nfailedReason: protocol_status_readback_unavailable",
+          `Handoff receipt: ${larkHandoffReceipt?.relativePath ?? "write_failed_or_unavailable"}`,
+          "Direct dispatch: protocol_status_readback_guard; model_worker=not_called; boundary=current_evidence_only_no_trade_no_file_mutation.",
+        ].join("\n");
+        const statusReadbackSendResult = await sendFeishuFinalTextReply({
+          replyRuntime: core.channel.reply,
+          dispatcher: effectiveDispatcher,
+          markDispatchIdle,
+          text: statusReadbackText,
+        });
+
+        clearFeishuGroupHistoryAfterDispatch({
+          isGroup,
+          chatHistories,
+          historyKey,
+          historyLimit,
+        });
+
+        await persistCapturedFeishuSurfaceLine({
+          ...buildFeishuSurfaceLinePersistContext({
+            cfg,
+            agentId: route.agentId,
+            effectiveStateSurface: "control_room",
+            replyContract: controlRoomOrchestration?.replyContract,
+            chatId: ctx.chatId,
+            sessionKey: buildSurfaceScopedSessionKey(route.sessionKey, "control_room"),
+            messageId: ctx.messageId,
+            userMessage: ctx.content,
+            apiReplyPayloads: larkApiReplyPayloads,
+          }),
+          finalReplyText: statusReadbackSendResult.queuedFinal ? statusReadbackText : undefined,
+          dispatchQueuedFinal: statusReadbackSendResult.queuedFinal,
+          dispatchFinalCount: statusReadbackSendResult.counts.final,
+        });
+        return;
+      }
 
       if (larkInstructionHandoff.family === "live_scheduling_queue") {
         const queueReplyText = renderFeishuLiveSchedulingQueueReply({
