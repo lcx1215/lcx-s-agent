@@ -398,6 +398,10 @@ async function collectJsonFiles(rootDir: string): Promise<string[]> {
   return files.toSorted();
 }
 
+function isMissingPathError(error: unknown): boolean {
+  return isRecord(error) && error.code === "ENOENT";
+}
+
 export async function readLarkRoutingCandidatePromotionArtifacts(params: {
   rootDir: string;
   maxFiles?: number;
@@ -405,7 +409,10 @@ export async function readLarkRoutingCandidatePromotionArtifacts(params: {
   let files: string[];
   try {
     files = await collectJsonFiles(params.rootDir);
-  } catch {
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return { artifacts: [], skipped: [] };
+    }
     return {
       artifacts: [],
       skipped: [{ path: params.rootDir, reason: "read_failed" }],

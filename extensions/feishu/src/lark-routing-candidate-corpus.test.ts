@@ -351,4 +351,18 @@ describe("lark routing candidate corpus", () => {
 
     await fs.rm(tempDir, { recursive: true, force: true });
   });
+
+  it("treats a missing candidate directory as an empty review queue", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lark-pending-empty-"));
+    const result = await readLarkRoutingCandidatePromotionArtifacts({
+      rootDir: path.join(tempDir, "memory", "lark-language-routing-candidates", "2026-04-28"),
+    });
+
+    expect(result).toEqual({
+      artifacts: [],
+      skipped: [],
+    });
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
 });
