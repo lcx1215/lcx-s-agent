@@ -49,6 +49,12 @@ describe("languageBrainLoopSmokeCommand", () => {
         tier: string;
         providerCallsMade: boolean;
         reviewerTasks: unknown[];
+        receiptPath: string;
+        localArbitration: {
+          status: string;
+          providerCallsMade: boolean;
+          reviewerFindings: unknown[];
+        };
       };
       memory: { loopReceiptPath: string };
       protectedMemoryUntouched: boolean;
@@ -98,14 +104,27 @@ describe("languageBrainLoopSmokeCommand", () => {
     ]);
     expect(payload.math.rollingBetaWindows).toBe(4);
     expect(payload.math.noModelMathGuessing).toBe(true);
-    expect(payload.review.tier).toBe("single_model_review");
-    expect(payload.review.reviewers).toEqual(["primary_model_editor"]);
-    expect(payload.review.tokenPolicy).toBe("use_primary_model");
+    expect(payload.review.tier).toBe("three_model_review");
+    expect(payload.review.reviewers).toEqual([
+      "logic_and_expression",
+      "risk_and_countercase",
+      "math_and_evidence_consistency",
+    ]);
+    expect(payload.review.tokenPolicy).toBe("use_three_model_panel");
     expect(payload.review.reasons).toContain("has_quant_math_results");
-    expect(payload.reviewPanel.status).toBe("single_model_review_required");
-    expect(payload.reviewPanel.tier).toBe("single_model_review");
+    expect(payload.review.reasons).toContain("operator_requested_strict_review");
+    expect(payload.reviewPanel.status).toBe("three_model_panel_arbitrated");
+    expect(payload.reviewPanel.tier).toBe("three_model_review");
     expect(payload.reviewPanel.providerCallsMade).toBe(false);
-    expect(payload.reviewPanel.reviewerTasks).toEqual([]);
+    expect(payload.reviewPanel.reviewerTasks).toHaveLength(3);
+    expect(payload.reviewPanel.localArbitration).toMatchObject({
+      status: "passed",
+      providerCallsMade: false,
+    });
+    expect(payload.reviewPanel.localArbitration.reviewerFindings).toHaveLength(3);
+    expect(payload.reviewPanel.receiptPath).toMatch(
+      /^memory\/review-panel-receipts\/\d{4}-\d{2}-\d{2}\//u,
+    );
     expect(payload.protectedMemoryUntouched).toBe(true);
     expect(payload.languageCorpusUntouched).toBe(true);
     expect(payload.noRemoteFetchOccurred).toBe(true);

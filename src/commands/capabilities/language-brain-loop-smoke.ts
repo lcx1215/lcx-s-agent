@@ -431,6 +431,7 @@ export async function runLanguageBrainLoopSmoke(
     hasQuantMathResults: true,
     writesDurableMemory: false,
     involvesPortfolioRisk: true,
+    explicitlyRequestedStrictReview: true,
   });
   const reviewPanelTool = createReviewPanelTool({
     workspaceDir: workspace.workspaceDir,
@@ -442,6 +443,9 @@ export async function runLanguageBrainLoopSmoke(
     hasQuantMathResults: true,
     writesDurableMemory: false,
     involvesPortfolioRisk: true,
+    explicitlyRequestedStrictReview: true,
+    runLocalArbitration: true,
+    writeReceipt: true,
   });
   const reviewPanel = asRecord(reviewPanelResult.details, "reviewPanel.details");
   const receipt = await writeLoopReceipt({

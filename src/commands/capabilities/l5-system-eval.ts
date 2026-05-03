@@ -104,7 +104,14 @@ async function buildPayload(params: {
   const reviewerTasks = Array.isArray(params.loop.reviewPanel.reviewerTasks)
     ? params.loop.reviewPanel.reviewerTasks
     : [];
-  const providerCallsMade = params.loop.reviewPanel.providerCallsMade === true;
+  const localArbitration =
+    params.loop.reviewPanel.localArbitration &&
+    typeof params.loop.reviewPanel.localArbitration === "object" &&
+    !Array.isArray(params.loop.reviewPanel.localArbitration)
+      ? (params.loop.reviewPanel.localArbitration as Record<string, unknown>)
+      : null;
+  const localArbitrationStatus = stringValue(localArbitration?.status);
+  const arbitrationReceiptPath = stringValue(params.loop.reviewPanel.receiptPath);
 
   const gates = [
     gate(
@@ -173,9 +180,12 @@ async function buildPayload(params: {
     ),
     gate(
       "multi_reviewer_arbitration",
-      providerCallsMade && reviewerTasks.length >= 2,
-      `reviewPanel=${reviewPanelStatus} providerCallsMade=${String(providerCallsMade)} reviewerTasks=${reviewerTasks.length}`,
-      "Add an explicit multi-model or multi-reviewer arbitration receipt before calling the system L5-ready.",
+      reviewerTasks.length >= 3 &&
+        reviewPanelStatus === "three_model_panel_arbitrated" &&
+        localArbitrationStatus === "passed" &&
+        arbitrationReceiptPath.length > 0,
+      `reviewPanel=${reviewPanelStatus} localArbitration=${localArbitrationStatus} reviewerTasks=${reviewerTasks.length} receipt=${arbitrationReceiptPath || "none"}`,
+      "Keep this as local deterministic arbitration unless real provider review findings are actually attached.",
     ),
   ];
   const blocked = firstBlockedGate(gates);

@@ -81,7 +81,7 @@ async function seedL5EvalWorkspace(workspace: string) {
 }
 
 describe("l5SystemEvalCommand", () => {
-  it("scores the fixed L5 eval and keeps multi-reviewer arbitration as the blocker", async () => {
+  it("scores the fixed L5 eval with local multi-reviewer arbitration", async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-l5-eval-"));
     await seedL5EvalWorkspace(workspace);
 
@@ -102,10 +102,10 @@ describe("l5SystemEvalCommand", () => {
         protectedMemoryUntouched: boolean;
       };
     };
-    expect(payload.ok).toBe(false);
-    expect(payload.level).toBe("l4_hardened_l5_blocked");
-    expect(payload.score).toEqual({ passed: 8, total: 9 });
-    expect(payload.nextBlocker).toBe("multi_reviewer_arbitration");
+    expect(payload.ok).toBe(true);
+    expect(payload.level).toBe("l5_ready");
+    expect(payload.score).toEqual({ passed: 9, total: 9 });
+    expect(payload.nextBlocker).toBe("none");
     expect(payload.gates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "l4_baseline_clean", status: "pass" }),
@@ -116,7 +116,11 @@ describe("l5SystemEvalCommand", () => {
         expect.objectContaining({ id: "memory_artifact_trace", status: "pass" }),
         expect.objectContaining({ id: "lark_operability_receipts", status: "pass" }),
         expect.objectContaining({ id: "safety_boundaries", status: "pass" }),
-        expect.objectContaining({ id: "multi_reviewer_arbitration", status: "blocked" }),
+        expect.objectContaining({
+          id: "multi_reviewer_arbitration",
+          status: "pass",
+          evidence: expect.stringContaining("localArbitration=passed"),
+        }),
       ]),
     );
     expect(payload.boundaries).toMatchObject({

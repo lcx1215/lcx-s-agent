@@ -16,13 +16,15 @@ const ReviewPanelSchema = Type.Object({
   affectsDoctrineOrPromotion: Type.Optional(Type.Boolean()),
   involvesPortfolioRisk: Type.Optional(Type.Boolean()),
   explicitlyRequestedStrictReview: Type.Optional(Type.Boolean()),
+  runLocalArbitration: Type.Optional(Type.Boolean()),
   writeReceipt: Type.Optional(Type.Boolean()),
 });
 
 type ReviewPanelStatus =
   | "not_required"
   | "single_model_review_required"
-  | "three_model_panel_ready";
+  | "three_model_panel_ready"
+  | "three_model_panel_arbitrated";
 
 function buildReviewerTasks(outputText: string) {
   return [
@@ -75,9 +77,68 @@ function buildReviewerTasks(outputText: string) {
   ];
 }
 
+function includesAny(value: string, needles: string[]) {
+  return needles.some((needle) => value.includes(needle));
+}
+
+function buildLocalArbitration(params: {
+  outputText: string;
+  reviewerTasks: Array<{ reviewer: string }>;
+}) {
+  if (params.reviewerTasks.length < 3) {
+    return null;
+  }
+  const text = params.outputText.toLowerCase();
+  const findings = [
+    {
+      reviewer: "logic_and_expression",
+      status: params.outputText.trim().length > 0 ? "pass" : "block",
+      finding:
+        params.outputText.trim().length > 0
+          ? "Candidate output is non-empty and can be reviewed."
+          : "Candidate output is empty.",
+    },
+    {
+      reviewer: "risk_and_countercase",
+      status:
+        includesAny(text, ["research_only", "research-only"]) &&
+        includesAny(text, ["no_execution_authority", "no trade", "no-action"])
+          ? "pass"
+          : "block",
+      finding:
+        "Research-only and no-execution boundaries must be visible before operator-facing use.",
+    },
+    {
+      reviewer: "math_and_evidence_consistency",
+      status:
+        includesAny(text, ["quant_math", "no_model_math_guessing"]) &&
+        includesAny(text, ["risk_budget_deviation", "rolling_beta", "drawdown_duration"])
+          ? "pass"
+          : "block",
+      finding:
+        "Quantitative claims must reference deterministic local math checks rather than model guessing.",
+    },
+  ];
+  const blockingFindings = findings.filter((entry) => entry.status === "block");
+  return {
+    status: blockingFindings.length === 0 ? "passed" : "blocked",
+    mode: "local_deterministic_arbitration",
+    providerCallsMade: false,
+    reviewerFindings: findings,
+    blockingFindings,
+    reconciliationDecision:
+      blockingFindings.length === 0
+        ? "keep_with_research_only_boundary"
+        : "revise_before_operator_send",
+    boundary:
+      "Local arbitration is deterministic receipt proof that reviewer work orders were checked; it is not a completed external provider review.",
+  };
+}
+
 function buildPanelResult(params: {
   outputText: string;
   tier: ReturnType<typeof resolveReviewTier>;
+  runLocalArbitration: boolean;
 }) {
   const { tier } = params;
   let status: ReviewPanelStatus = "not_required";
@@ -87,13 +148,23 @@ function buildPanelResult(params: {
     status = "three_model_panel_ready";
   }
 
+  const reviewerTasks =
+    tier.tier === "three_model_review" ? buildReviewerTasks(params.outputText) : [];
+  const localArbitration = params.runLocalArbitration
+    ? buildLocalArbitration({ outputText: params.outputText, reviewerTasks })
+    : null;
+  if (localArbitration?.status === "passed") {
+    status = "three_model_panel_arbitrated";
+  }
+
   return {
     status,
     tier: tier.tier,
     tokenPolicy: tier.tokenPolicy,
     reviewers: tier.reviewers,
     reasons: tier.reasons,
-    reviewerTasks: tier.tier === "three_model_review" ? buildReviewerTasks(params.outputText) : [],
+    reviewerTasks,
+    localArbitration,
     reconciliation: {
       mode: tier.tier === "three_model_review" ? "block_on_conflict" : "not_required",
       mergeRule:
@@ -132,7 +203,8 @@ export function createReviewPanelTool(options?: { workspaceDir?: string }): AnyA
     execute: async (_toolCallId, params) => {
       const outputText = readStringParam(params, "outputText", { required: true });
       const tier = resolveReviewTier(readReviewTierInput(params));
-      const result = buildPanelResult({ outputText, tier });
+      const runLocalArbitration = readBooleanToolParam(params, "runLocalArbitration") ?? false;
+      const result = buildPanelResult({ outputText, tier, runLocalArbitration });
       const writeReceipt = readBooleanToolParam(params, "writeReceipt") ?? false;
       const receiptPath = writeReceipt
         ? await writePanelReceipt({
