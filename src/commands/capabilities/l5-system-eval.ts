@@ -87,6 +87,36 @@ async function receiptExists(payload: LanguageBrainLoopSmokePayload): Promise<bo
   }
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+async function readWorkspaceJsonRecord(params: {
+  workspaceDir: string;
+  relativePath: string;
+}): Promise<Record<string, unknown> | null> {
+  if (!params.relativePath.trim() || path.isAbsolute(params.relativePath)) {
+    return null;
+  }
+  const normalized = path.normalize(params.relativePath);
+  if (normalized.startsWith("..") || path.isAbsolute(normalized)) {
+    return null;
+  }
+  try {
+    return recordValue(
+      JSON.parse(await fs.readFile(path.join(params.workspaceDir, normalized), "utf8")),
+    );
+  } catch {
+    return null;
+  }
+}
+
 async function buildPayload(params: {
   l4: L4SystemDoctorPayload;
   loop: LanguageBrainLoopSmokePayload;
@@ -112,6 +142,20 @@ async function buildPayload(params: {
       : null;
   const localArbitrationStatus = stringValue(localArbitration?.status);
   const arbitrationReceiptPath = stringValue(params.loop.reviewPanel.receiptPath);
+  const loopReceipt = await readWorkspaceJsonRecord({
+    workspaceDir: params.loop.workspaceDir,
+    relativePath: params.loop.memory.loopReceiptPath,
+  });
+  const loopReceiptLoop = recordValue(loopReceipt?.loop);
+  const loopReceiptMemory = recordValue(loopReceiptLoop?.memory);
+  const loopReceiptReviewPanel = recordValue(loopReceiptLoop?.reviewPanel);
+  const reviewReceipt = await readWorkspaceJsonRecord({
+    workspaceDir: params.loop.workspaceDir,
+    relativePath: arbitrationReceiptPath,
+  });
+  const reviewReceiptResult = recordValue(reviewReceipt?.result);
+  const reviewReceiptArbitration = recordValue(reviewReceiptResult?.localArbitration);
+  const reviewReceiptReviewerTasks = arrayValue(reviewReceiptResult?.reviewerTasks);
 
   const gates = [
     gate(
@@ -161,6 +205,15 @@ async function buildPayload(params: {
       "Promote only reviewed receipts into durable memory; keep language corpus and learning memory separate.",
     ),
     gate(
+      "loop_receipt_integrity",
+      loopReceipt?.schemaVersion === 1 &&
+        loopReceipt?.boundary === "cli_language_brain_analysis_memory_loop_smoke" &&
+        stringValue(loopReceiptMemory?.loopReceiptPath) === params.loop.memory.loopReceiptPath &&
+        stringValue(loopReceiptReviewPanel?.status) === reviewPanelStatus,
+      `boundary=${stringValue(loopReceipt?.boundary) || "missing"} receiptPath=${stringValue(loopReceiptMemory?.loopReceiptPath) || "missing"} reviewPanel=${stringValue(loopReceiptReviewPanel?.status) || "missing"}`,
+      "Do not let L5 pass on a receipt file that exists but does not contain the loop state being evaluated.",
+    ),
+    gate(
       "lark_operability_receipts",
       params.l4.lark.liveReceiptCount > 0 &&
         params.l4.lark.currentReplayCandidateCount > 0 &&
@@ -186,6 +239,17 @@ async function buildPayload(params: {
         arbitrationReceiptPath.length > 0,
       `reviewPanel=${reviewPanelStatus} localArbitration=${localArbitrationStatus} reviewerTasks=${reviewerTasks.length} receipt=${arbitrationReceiptPath || "none"}`,
       "Keep this as local deterministic arbitration unless real provider review findings are actually attached.",
+    ),
+    gate(
+      "review_receipt_integrity",
+      reviewReceipt?.schemaVersion === 1 &&
+        reviewReceipt?.boundary === "review_panel_work_order" &&
+        stringValue(reviewReceiptResult?.status) === "three_model_panel_arbitrated" &&
+        stringValue(reviewReceiptArbitration?.status) === "passed" &&
+        reviewReceiptArbitration?.providerCallsMade === false &&
+        reviewReceiptReviewerTasks.length >= 3,
+      `boundary=${stringValue(reviewReceipt?.boundary) || "missing"} status=${stringValue(reviewReceiptResult?.status) || "missing"} localArbitration=${stringValue(reviewReceiptArbitration?.status) || "missing"} providerCallsMade=${String(reviewReceiptArbitration?.providerCallsMade)} reviewerTasks=${reviewReceiptReviewerTasks.length}`,
+      "Require the review-panel receipt itself to prove local arbitration; a non-empty path is not enough.",
     ),
   ];
   const blocked = firstBlockedGate(gates);
