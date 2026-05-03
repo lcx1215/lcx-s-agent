@@ -3257,11 +3257,154 @@ async function persistLarkLanguageHandoffReceiptWithFailureReceipt(params: {
   }
 }
 
+type FeishuInternalizedLearningProof =
+  | {
+      status: "found";
+      rule: string;
+      evidencePath: string;
+      receiptPath: string;
+      reviewPath: string;
+      futureUse: string;
+      boundary: string;
+    }
+  | {
+      status: "missing";
+      failedReason: string;
+      searchedPath: string;
+    };
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+async function findLatestFeishuInternalizedLearningProof(params: {
+  workspaceDir: string;
+}): Promise<FeishuInternalizedLearningProof> {
+  const receiptRoot = path.join(
+    params.workspaceDir,
+    "memory",
+    "finance-learning-retrieval-receipts",
+  );
+  const searchedPath = "memory/finance-learning-retrieval-receipts";
+  let dateDirs: string[];
+  try {
+    dateDirs = (await fs.readdir(receiptRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+      .reverse();
+  } catch {
+    return {
+      status: "missing",
+      failedReason: "no_finance_learning_retrieval_receipts",
+      searchedPath,
+    };
+  }
+
+  for (const dateDir of dateDirs) {
+    const datePath = path.join(receiptRoot, dateDir);
+    const files = (await fs.readdir(datePath, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => entry.name)
+      .sort()
+      .reverse();
+
+    for (const file of files) {
+      const absolutePath = path.join(datePath, file);
+      let artifact: Record<string, unknown>;
+      try {
+        artifact = JSON.parse(await fs.readFile(absolutePath, "utf-8")) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const retrievalFirstLearning = asRecord(artifact.retrievalFirstLearning);
+      const applicationValidation = asRecord(artifact.applicationValidation);
+      const learningStatus = firstString(
+        retrievalFirstLearning.learningInternalizationStatus,
+        applicationValidation.status,
+        applicationValidation.applicationValidationStatus,
+      );
+      if (learningStatus !== "application_ready") {
+        continue;
+      }
+
+      const postAttachRetrieval = asRecord(artifact.postAttachCapabilityRetrieval);
+      const preflightRetrieval = asRecord(artifact.preflightCapabilityRetrieval);
+      const candidates = Array.isArray(postAttachRetrieval.candidates)
+        ? postAttachRetrieval.candidates
+        : Array.isArray(preflightRetrieval.candidates)
+          ? preflightRetrieval.candidates
+          : [];
+      const candidate = asRecord(candidates[0]);
+      const reuseGuidance = asRecord(candidate.reuseGuidance);
+      const rule = firstString(
+        candidate.methodSummary,
+        reuseGuidance.implementationCheck,
+        candidate.capabilityName,
+      );
+      const evidencePath = firstString(
+        candidate.sourceArticlePath,
+        ...(Array.isArray(artifact.normalizedArticleArtifactPaths)
+          ? artifact.normalizedArticleArtifactPaths
+          : []),
+      );
+      const futureUse = firstString(
+        reuseGuidance.useFor,
+        reuseGuidance.implementationCheck,
+        candidate.implementationRequirements,
+      );
+      if (!rule || !evidencePath || !futureUse) {
+        return {
+          status: "missing",
+          failedReason: "missing_internalized_rule_evidence",
+          searchedPath,
+        };
+      }
+
+      const receiptPath = `memory/finance-learning-retrieval-receipts/${dateDir}/${file}`;
+      return {
+        status: "found",
+        rule,
+        evidencePath,
+        receiptPath,
+        reviewPath: firstString(
+          retrievalFirstLearning.retrievalReviewPath,
+          `memory/finance-learning-retrieval-reviews/${dateDir}.json`,
+        )!,
+        futureUse,
+        boundary: firstString(
+          candidate.riskAndFailureModes,
+          reuseGuidance.doNotUseFor,
+          "research_only; no trading execution approval",
+        )!,
+      };
+    }
+  }
+
+  return {
+    status: "missing",
+    failedReason: "no_application_ready_learning_receipt",
+    searchedPath,
+  };
+}
+
 function renderFeishuKnowledgeInternalizationAuditHandoffReply(params: {
   handoff: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
   handoffReceiptPath?: string;
   targetSurface?: FeishuChatSurfaceName;
   effectiveSurface?: FeishuChatSurfaceName;
+  proof: FeishuInternalizedLearningProof;
 }): string {
   const lines = [
     "已识别为学习结果复盘/内化审计请求，没有重新学习。",
@@ -3270,8 +3413,20 @@ function renderFeishuKnowledgeInternalizationAuditHandoffReply(params: {
     `- targetSurface: ${params.targetSurface ?? params.handoff.targetSurface ?? "unknown"}`,
     `- effectiveSurface: ${params.effectiveSurface ?? params.targetSurface ?? "unknown"}`,
     `- handoff receipt: ${params.handoffReceiptPath ?? "write_failed_or_unavailable"}`,
-    "- learningInternalizationStatus: audit_handoff_ready",
-    "- failedReason: none",
+    params.proof.status === "found"
+      ? "- learningInternalizationStatus: application_ready"
+      : "- learningInternalizationStatus: not_application_ready",
+    `- failedReason: ${params.proof.status === "found" ? "none" : params.proof.failedReason}`,
+    ...(params.proof.status === "found"
+      ? [
+          `- 已内化规则: ${params.proof.rule}`,
+          `- 证据文件: ${params.proof.evidencePath}`,
+          `- learning receipt: ${params.proof.receiptPath}`,
+          `- review: ${params.proof.reviewPath}`,
+          `- 以后怎么用: ${params.proof.futureUse}`,
+          `- 风险边界: ${params.proof.boundary}`,
+        ]
+      : [`- searched: ${params.proof.searchedPath}`]),
     "- boundary: this reply is a language/knowledge audit handoff only; it did not create a new finance learning artifact and did not approve trades.",
   ];
   if (params.handoff.apiCandidate?.rationale) {
@@ -5530,11 +5685,15 @@ export async function handleFeishuMessage(params: {
       });
 
       if (larkInstructionHandoff.family === "knowledge_internalization_audit") {
+        const internalizedLearningProof = await findLatestFeishuInternalizedLearningProof({
+          workspaceDir: resolveAgentWorkspaceDir(effectiveCfg as OpenClawConfig, route.agentId),
+        });
         const auditReplyText = renderFeishuKnowledgeInternalizationAuditHandoffReply({
           handoff: larkInstructionHandoff,
           handoffReceiptPath: larkHandoffReceipt?.relativePath,
           targetSurface: surfaceRouting.targetSurface,
           effectiveSurface: effectiveStateSurface,
+          proof: internalizedLearningProof,
         });
         const auditSendResult = await sendFeishuFinalTextReply({
           replyRuntime: core.channel.reply,

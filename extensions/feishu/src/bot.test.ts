@@ -6867,6 +6867,264 @@ describe("learning council routing", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("answers knowledge internalization audits with a real retained rule when a receipt proves it", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "knowledge_internalization_audit",
+      confidence: 0.95,
+      rationale: "learning proof audit",
+    }));
+
+    const mockDispatchReplyFromConfig = vi.fn();
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-proof-"));
+    const receiptDir = path.join(
+      tempDir,
+      "memory",
+      "finance-learning-retrieval-receipts",
+      "2026-05-03",
+    );
+    await fs.mkdir(receiptDir, { recursive: true });
+    await fs.writeFile(
+      path.join(receiptDir, "2026-05-03T01-00-00-000Z__proof.json"),
+      JSON.stringify(
+        {
+          applicationValidation: {
+            requested: true,
+            status: "application_ready",
+            failedReason: null,
+            usageReceiptPath: "memory/finance-learning-apply-usage-receipts/2026-05-03/usage.json",
+            usageReviewPath: "memory/finance-learning-apply-usage-reviews/2026-05-03.json",
+          },
+          normalizedArticleArtifactPaths: ["memory/research-sources/proof.md"],
+          postAttachCapabilityRetrieval: {
+            candidates: [
+              {
+                capabilityName: "ETF event triage workflow",
+                sourceArticlePath: "memory/research-sources/proof.md",
+                methodSummary:
+                  "Convert repeated ETF event headlines into bounded follow-up research buckets.",
+                riskAndFailureModes:
+                  "Headline tone can invert quickly, so this is research-only and not a trade signal.",
+                reuseGuidance: {
+                  useFor:
+                    "Use for ETF event triage only after checking public headlines, issuer notes, and event calendars.",
+                  implementationCheck:
+                    "Maintain event buckets and require a causal check before any conclusion.",
+                },
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-user" } },
+      message: {
+        message_id: "msg-learning-proof",
+        chat_id: "oc-proof",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({
+          text: "简单验收：刚才你真的学会了什么？只列1条已内化规则、证据文件/receipt在哪里、以后怎么用；如果没有证据就说 failedReason。",
+        }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).toContain("learningInternalizationStatus: application_ready");
+    expect(replyText).toContain("failedReason: none");
+    expect(replyText).toContain(
+      "已内化规则: Convert repeated ETF event headlines into bounded follow-up research buckets.",
+    );
+    expect(replyText).toContain("证据文件: memory/research-sources/proof.md");
+    expect(replyText).toContain(
+      "learning receipt: memory/finance-learning-retrieval-receipts/2026-05-03/2026-05-03T01-00-00-000Z__proof.json",
+    );
+    expect(replyText).toContain(
+      "review: memory/finance-learning-retrieval-reviews/2026-05-03.json",
+    );
+    expect(replyText).toContain(
+      "以后怎么用: Use for ETF event triage only after checking public headlines",
+    );
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("fails closed on knowledge internalization audits when no learning receipt proves a retained rule", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "knowledge_internalization_audit",
+      confidence: 0.95,
+      rationale: "learning proof audit",
+    }));
+
+    const mockDispatchReplyFromConfig = vi.fn();
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-proof-missing-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-user" } },
+      message: {
+        message_id: "msg-learning-proof-missing",
+        chat_id: "oc-proof",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({
+          text: "简单验收：刚才你真的学会了什么？只列1条已内化规则、证据文件/receipt在哪里、以后怎么用；如果没有证据就说 failedReason。",
+        }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).toContain("learningInternalizationStatus: not_application_ready");
+    expect(replyText).toContain("failedReason: no_finance_learning_retrieval_receipts");
+    expect(replyText).toContain("searched: memory/finance-learning-retrieval-receipts");
+    expect(replyText).not.toContain("failedReason: none");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("answers protocol truth surface asks directly instead of silently dispatching zero replies", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
