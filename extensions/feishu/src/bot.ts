@@ -1131,11 +1131,7 @@ function renderFeishuProtocolTruthSurfaceReply(params: {
   confidence: number;
   rationale?: string;
 }): string {
-  if (
-    /(source_required|source required|no url|without url|do not give a url|不给.*(url|source|链接|网址|来源|材料|文件)|没有.*(url|source|链接|网址|来源|材料|文件)|缺.*(url|source|链接|网址|来源|材料|文件))/iu.test(
-      params.userMessage,
-    )
-  ) {
+  if (isFeishuSourceRequiredTruthFamilyAsk(params.userMessage)) {
     return [
       `family: ${params.family}`,
       "source_required: true",
@@ -1191,13 +1187,23 @@ function shouldUseFeishuProtocolStatusReadbackReply(text: string): boolean {
 }
 
 function shouldUseFeishuSourceRequiredTruthReply(text: string): boolean {
+  return isFeishuSourceRequiredTruthFamilyAsk(text);
+}
+
+const FEISHU_EXTERNAL_LEARNING_SOURCE_INTENT_RE =
+  /(learn|learning|study|read|ingest|absorb|google|webpage|website|page|paper|arxiv|github|repo|repository|wechat|公众号|网页|页面|网站|学习|吸收|阅读|研读|论文|仓库|项目|文章|材料|文件|来源|链接|网址|路径|source|url|local source|local file|本地 source|本地文件)/iu;
+
+const FEISHU_MISSING_SOURCE_CUE_RE =
+  /(source_required|source required|no url|no link|no source|without url|without link|without source|do not give a url|do not provide (a )?(url|link|source)|没有.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|没给.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|不给.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|未给.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|不提供.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|缺.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库)|没.*(url|source|link|链接|网址|来源|材料|文件|路径|pdf|论文|文章|仓库))/iu;
+
+const FEISHU_CONCRETE_SOURCE_RE =
+  /(https?:\/\/\S+|file:\/\/\S+|\/[\w./ -]+\.(md|txt|pdf|html?|csv|json|jsonl)|[A-Za-z]:\\[^\s]+|arXiv:\s*\d{4}\.\d{4,5}|10\.\d{4,9}\/[-._;()/:A-Z0-9]+)/iu;
+
+function isFeishuSourceRequiredTruthFamilyAsk(text: string): boolean {
   return (
-    /(learn|learning|google|webpage|网页|学习|source|url|local source|本地 source|来源|链接|网址|材料|文件)/iu.test(
-      text,
-    ) &&
-    /(source_required|source required|no url|without url|do not give a url|不给.*(url|source|链接|网址|来源|材料|文件)|没有.*(url|source|链接|网址|来源|材料|文件)|缺.*(url|source|链接|网址|来源|材料|文件)|不提供.*(url|source|链接|网址|来源|材料|文件))/iu.test(
-      text,
-    )
+    FEISHU_EXTERNAL_LEARNING_SOURCE_INTENT_RE.test(text) &&
+    FEISHU_MISSING_SOURCE_CUE_RE.test(text) &&
+    !FEISHU_CONCRETE_SOURCE_RE.test(text)
   );
 }
 
