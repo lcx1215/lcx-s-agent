@@ -21,6 +21,9 @@ const MODULE_TAXONOMY = [
   "causal_map",
   "finance_learning_memory",
   "source_registry",
+  "skill_pattern_distillation",
+  "agent_workflow_memory",
+  "eval_harness_design",
   "review_panel",
   "control_room_summary",
   "ops_audit",
@@ -30,6 +33,7 @@ const CONTRACT_HINTS = [
   "If source URL or local file is missing, include source_registry and missing_data source_url_or_local_source_path.",
   "If portfolio math inputs are missing, include missing_data position_weights_and_return_series exactly.",
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
+  "If the user asks to learn or install agent skills, include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
 ];
 
 const DEFAULT_PYTHON = path.join(

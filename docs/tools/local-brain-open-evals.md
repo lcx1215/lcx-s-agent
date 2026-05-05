@@ -48,7 +48,20 @@ available. Do not add it to the runtime package dependencies.
 
 - cross-market US equities, China A-shares, global indices, and crypto planning
 - source-gated finance learning
+- isolated agent-skill distillation from SKILL.md/local skill patterns
 - quant math missing-input refusal
 - Lark context-pollution audit staying ops-first
 
 These evals are dev checks. They are not live Lark proof.
+
+## Skill Learning Config
+
+The local Codex skill installed for future sessions is:
+
+```text
+~/.codex/skills/local-agent-skill-distiller/SKILL.md
+```
+
+It keeps external or local skill learning isolated: source review first, no
+protected memory writes, no provider config edits, no live sender edits, and an
+eval or smoke check before calling a skill useful.

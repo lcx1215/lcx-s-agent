@@ -19,6 +19,9 @@ const MODULE_IDS = [
   "causal_map",
   "finance_learning_memory",
   "source_registry",
+  "skill_pattern_distillation",
+  "agent_workflow_memory",
+  "eval_harness_design",
   "review_panel",
   "control_room_summary",
   "ops_audit",
@@ -163,7 +166,7 @@ function looksLikeEtfTimingFramework(text: string): boolean {
 }
 
 function looksLikeOpsContextAudit(text: string): boolean {
-  return /(上下文污染|串到旧任务|旧任务|lark.*污染|context pollution|不要继续金融分析|ops audit|审计)/iu.test(
+  return /(上下文污染|串到旧任务|旧任务|lark.*污染|lark.*审计|上下文.*审计|旧任务.*审计|context pollution|不要继续金融分析|ops audit)/iu.test(
     text,
   );
 }
@@ -189,6 +192,17 @@ function looksLikeCrossMarketFinance(text: string): boolean {
   return (
     groups >= 2 &&
     /(连贯|跨市场|一起|全局|整体|框架|拆解|分析|研究|风险|未来|portfolio|asset allocation|资产)/iu.test(
+      text,
+    )
+  );
+}
+
+function looksLikeAgentSkillLearning(text: string): boolean {
+  return (
+    /(skill|skills|skill\.md|agent skill|microagent|openhands|hugging face|agent结构|本地agent|本地 agent|技能|工作流|workflow|harness|hermes)/iu.test(
+      text,
+    ) &&
+    /(找|加上|安装|学习|学会|吸收|沉淀|训练|teach|learn|harvest|distill|convert|应用|接入)/iu.test(
       text,
     )
   );
@@ -315,6 +329,56 @@ export function hardenLocalBrainPlanForAsk(
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ]),
+    };
+  }
+
+  if (looksLikeAgentSkillLearning(text)) {
+    return {
+      ...safe,
+      task_family: "agent_skill_pattern_distillation",
+      primary_modules: [
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "review_panel",
+      ],
+      supporting_modules: [
+        "eval_harness_design",
+        "control_room_summary",
+        "finance_learning_memory",
+      ],
+      required_tools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "candidate_skill_source_or_local_skill_path",
+        "target_workflow_acceptance_metric",
+        "license_and_write_scope_review",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_skill",
+        "evaluate_before_installing",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_trading_execution_skill",
+      ],
+      next_step:
+        "collect_candidate_skill_sources_review_license_and_write_scope_then_distill_safe_workflow_into_local_skill_and_eval_case",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "language_routing_candidate_artifacts",
+        "unsupported_execution_language",
+        "cloud_skill_sharing_by_default",
+        "market_alpha_claim_without_source",
+      ],
     };
   }
 

@@ -69,6 +69,9 @@ const MODULE_TAXONOMY = [
   "causal_map",
   "finance_learning_memory",
   "source_registry",
+  "skill_pattern_distillation",
+  "agent_workflow_memory",
+  "eval_harness_design",
   "review_panel",
   "control_room_summary",
   "ops_audit",
@@ -154,6 +157,20 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
     id: "daily_learning_automation",
     userMessage: "这些学习和复盘应该每次对话都自动发生，不要等我每天手动下命令。",
     sourceSummary: "automation loop planning without live sender changes.",
+  },
+  {
+    id: "agent_skill_distillation_open_source",
+    userMessage:
+      "帮这个本地 agent 结构学习网上开源的 SKILL.md 工作流和本地已有 skills：先找候选、隔离审计、沉淀成可复用技能和本地大脑训练样本，不要改 provider config、live sender 或 protected memory。",
+    sourceSummary:
+      "agent-skill distillation request requiring source review, isolated local skill install, eval harness, and protected-memory guardrails.",
+  },
+  {
+    id: "finance_skill_curriculum_bridge",
+    userMessage:
+      "把可学的 agent skills 转成金融研究大脑课程：美股、A股、指数、加密币都能用，但只教任务拆解、证据审计、风险门和审阅流程，不教交易执行。",
+    sourceSummary:
+      "turn general agent skills into a research-only finance brain curriculum across US equities, A-shares, indices, and crypto.",
   },
 ];
 
@@ -277,6 +294,7 @@ function buildPrompt(input: TeacherPrompt): string {
     "- ops audit must not become finance analysis",
     "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
+    "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
     "- crypto work is research-only; include no_high_leverage_crypto and never imply execution approval",
     "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
     "",
@@ -469,6 +487,54 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       risk_boundaries: ["no_execution_authority", "evidence_required"],
       next_step: "inspect_lark_session_store_and_candidate_replay_before_claiming_live_fixed",
       rejected_context: ["old_lark_conversation_history"],
+    };
+  }
+  if (
+    /skill|skills|skill\.md|agent skill|本地 agent|本地agent|技能|工作流|harness|hermes/u.test(text)
+  ) {
+    return {
+      task_family: "agent_skill_pattern_distillation",
+      primary_modules: [
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "review_panel",
+      ],
+      supporting_modules: [
+        "eval_harness_design",
+        "control_room_summary",
+        "finance_learning_memory",
+      ],
+      required_tools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "candidate_skill_source_or_local_skill_path",
+        "target_workflow_acceptance_metric",
+        "license_and_write_scope_review",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_skill",
+        "evaluate_before_installing",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_trading_execution_skill",
+      ],
+      next_step:
+        "collect_candidate_skill_sources_review_license_and_write_scope_then_distill_safe_workflow_into_local_skill_and_eval_case",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "cloud_skill_sharing_by_default",
+        "market_alpha_claim_without_source",
+      ],
     };
   }
   if (/美股|A股|a股|指数|加密|crypto|cross-market|跨市场/u.test(text)) {

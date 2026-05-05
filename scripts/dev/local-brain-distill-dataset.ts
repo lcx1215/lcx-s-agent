@@ -52,6 +52,9 @@ const MODULE_TAXONOMY = [
   "causal_map",
   "finance_learning_memory",
   "source_registry",
+  "skill_pattern_distillation",
+  "agent_workflow_memory",
+  "eval_harness_design",
   "review_panel",
   "control_room_summary",
   "ops_audit",
@@ -64,6 +67,7 @@ const CONTRACT_HINTS = [
   "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
   "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
   "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
+  "Agent skill learning tasks must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
 ];
 
 function usage(): never {
@@ -769,6 +773,7 @@ function buildSeedExamples(): DistillExample[] {
     supportingModules: string[];
     requiredTools: string[];
     missingData: string[];
+    riskBoundaries?: string[];
     nextStep: string;
   }> = [
     {
@@ -1214,6 +1219,43 @@ function buildSeedExamples(): DistillExample[] {
       nextStep: "collect_source_list_then_report_sample_limits_before_any_learning_claim",
     },
     {
+      userAsk:
+        "帮这个本地 agent 结构学习网上开源的 SKILL.md 工作流和本地已有 skills：先找候选、隔离审计、沉淀成可复用技能和本地大脑训练样本，不要改 provider config、live sender 或 protected memory。",
+      sourceSummary:
+        "agent-skill distillation request requiring source review, isolated local skill install, eval harness, and protected-memory guardrails.",
+      taskFamily: "agent_skill_pattern_distillation",
+      primaryModules: [
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "review_panel",
+      ],
+      supportingModules: ["eval_harness_design", "control_room_summary", "finance_learning_memory"],
+      requiredTools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missingData: [
+        "candidate_skill_source_or_local_skill_path",
+        "target_workflow_acceptance_metric",
+        "license_and_write_scope_review",
+      ],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "untrusted_external_skill",
+        "evaluate_before_installing",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_trading_execution_skill",
+      ],
+      nextStep:
+        "collect_candidate_skill_sources_review_license_and_write_scope_then_distill_safe_workflow_into_local_skill_and_eval_case",
+    },
+    {
       userAsk: "Lark 回复看起来又串到旧任务了，先判断是不是旧上下文污染。",
       sourceSummary:
         "ops audit request for dirty Lark context; must inspect session and language-candidate state.",
@@ -1255,7 +1297,7 @@ function buildSeedExamples(): DistillExample[] {
       supportingModules: seed.supportingModules,
       requiredTools: seed.requiredTools,
       missingData: seed.missingData,
-      riskBoundaries: BOUNDARIES,
+      riskBoundaries: seed.riskBoundaries ?? BOUNDARIES,
       nextStep: seed.nextStep,
     }),
     meta: {
