@@ -12,6 +12,8 @@ type CliOptions = {
   trainEvery: number;
   evalEvery: number;
   trainIters: number;
+  loadMax: number;
+  trainLoadMax: number;
   model: string;
   noTrain: boolean;
   mock: boolean;
@@ -67,6 +69,9 @@ const DEFAULT_LOCK = path.join(
   "run",
   "minimax-brain-training-guard.lock",
 );
+const CPU_COUNT = Math.max(1, os.cpus().length);
+const DEFAULT_LOAD_MAX = 6;
+const DEFAULT_TRAIN_LOAD_MAX = 4;
 
 function usage(): never {
   throw new Error(
@@ -74,14 +79,16 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/minimax-brain-training-guard.ts [options]",
       "",
       "Options:",
-      "  --duration-minutes N   default 180",
-      "  --batch-limit N         MiniMax teacher samples per round, default 36 for Plus profile",
+      "  --duration-minutes N   default 60",
+      "  --batch-limit N         MiniMax teacher samples per round, default 12",
       "  --teacher-profile NAME  batch|minimax-plus-brain, default minimax-plus-brain",
-      "  --teacher-duration-minutes N  per-round teacher budget, default 20",
-      "  --teacher-concurrency N       per-round teacher concurrency, default 12",
-      "  --train-every N         train every N rounds, default 2",
-      "  --eval-every N          eval current/new adapter every N rounds, default 1",
-      "  --train-iters N         MLX LoRA iters, default 80",
+      "  --teacher-duration-minutes N  per-round teacher budget, default 10",
+      "  --teacher-concurrency N       per-round teacher concurrency, default 4",
+      "  --train-every N         train every N rounds, default 6",
+      "  --eval-every N          eval current/new adapter every N rounds, default 2",
+      "  --train-iters N         MLX LoRA iters, default 24",
+      "  --load-max N            skip the guard when 1m system load is above N",
+      "  --train-load-max N      skip local MLX LoRA train when 1m system load is above N",
       "  --no-train              only generate/rebuild/smoke/eval",
       "  --mock                  use mock MiniMax teacher for mechanism smoke",
       "  --resolve-current-adapter  print selected stable adapter and exit without writes",
@@ -112,14 +119,16 @@ function readPositiveInteger(value: string): number {
 
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
-    durationMinutes: 180,
-    batchLimit: 36,
+    durationMinutes: 60,
+    batchLimit: 12,
     teacherProfile: "minimax-plus-brain",
-    teacherDurationMinutes: 20,
-    teacherConcurrency: 12,
-    trainEvery: 2,
-    evalEvery: 1,
-    trainIters: 80,
+    teacherDurationMinutes: 10,
+    teacherConcurrency: 4,
+    trainEvery: 6,
+    evalEvery: 2,
+    trainIters: 24,
+    loadMax: DEFAULT_LOAD_MAX,
+    trainLoadMax: DEFAULT_TRAIN_LOAD_MAX,
     model: "Qwen/Qwen3-0.6B",
     noTrain: false,
     mock: false,
@@ -162,6 +171,12 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--train-iters") {
       options.trainIters = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--load-max") {
+      options.loadMax = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--train-load-max") {
+      options.trainLoadMax = readPositiveInteger(readValue(args, index));
       index += 1;
     } else if (arg === "--model") {
       options.model = readValue(args, index);
@@ -587,6 +602,36 @@ async function runJsonStep(
   return parsed;
 }
 
+function systemLoad1m(): number {
+  return os.loadavg()[0] ?? 0;
+}
+
+async function skipForHighLoad(params: {
+  options: CliOptions;
+  round?: number;
+  phase: string;
+  loadMax: number;
+}): Promise<boolean> {
+  const load1m = systemLoad1m();
+  if (load1m <= params.loadMax) {
+    return false;
+  }
+  await appendLog(params.options.logPath, {
+    event: "resource_guard_skip",
+    round: params.round,
+    phase: params.phase,
+    load1m: Number(load1m.toFixed(2)),
+    loadMax: params.loadMax,
+    cpuCount: CPU_COUNT,
+    liveTouched: false,
+    providerConfigTouched: false,
+  });
+  process.stdout.write(
+    `[minimax-guard] resource skip phase=${params.phase} load1m=${load1m.toFixed(2)} max=${params.loadMax}\n`,
+  );
+  return true;
+}
+
 async function runTeacherStep(options: CliOptions, round: number): Promise<unknown> {
   if (options.teacherProfile === "minimax-plus-brain") {
     return runJsonStep(options, round, "minimax_plus_brain_saturator", "node", [
@@ -621,11 +666,24 @@ async function runTeacherStep(options: CliOptions, round: number): Promise<unkno
   ]);
 }
 
-async function runTrain(options: CliOptions, round: number, adapterPath: string): Promise<void> {
+async function runTrain(options: CliOptions, round: number, adapterPath: string): Promise<boolean> {
+  if (
+    await skipForHighLoad({
+      options,
+      round,
+      phase: "train",
+      loadMax: options.trainLoadMax,
+    })
+  ) {
+    return false;
+  }
   process.stdout.write(`\n[minimax-guard] round=${round} step=train adapter=${adapterPath}\n`);
   await fs.rm(adapterPath, { recursive: true, force: true });
   await fs.mkdir(path.dirname(adapterPath), { recursive: true });
-  const result = await runCommand(options.pythonBin, [
+  const result = await runCommand("nice", [
+    "-n",
+    "15",
+    options.pythonBin,
     "-m",
     "mlx_lm",
     "lora",
@@ -645,7 +703,7 @@ async function runTrain(options: CliOptions, round: number, adapterPath: string)
     "--learning-rate",
     "1e-5",
     "--max-seq-length",
-    "2048",
+    "1024",
     "--mask-prompt",
     "--grad-checkpoint",
   ]);
@@ -656,6 +714,7 @@ async function runTrain(options: CliOptions, round: number, adapterPath: string)
     adapterPath,
     durationMs: result.durationMs,
   });
+  return true;
 }
 
 function evalPassed(result: unknown): boolean {
@@ -700,6 +759,16 @@ if (options.resolveCurrentAdapterOnly) {
 }
 
 const releaseRunLock = await acquireRunLock(options);
+if (
+  await skipForHighLoad({
+    options,
+    phase: "start",
+    loadMax: options.loadMax,
+  })
+) {
+  await releaseRunLock();
+  process.exit(0);
+}
 const startedAt = Date.now();
 const deadline = startedAt + options.durationMinutes * 60_000;
 let round = 0;
@@ -718,6 +787,16 @@ await appendLog(options.logPath, {
 try {
   while (Date.now() < deadline) {
     round += 1;
+    if (
+      await skipForHighLoad({
+        options,
+        round,
+        phase: "round_start",
+        loadMax: options.loadMax,
+      })
+    ) {
+      break;
+    }
     await runTeacherStep(options, round);
     await runJsonStep(options, round, "dataset", "node", [
       "--import",
@@ -755,7 +834,10 @@ try {
 
     if (!options.noTrain && round % options.trainEvery === 0) {
       const candidateAdapter = adapterPathForRound(options, round);
-      await runTrain(options, round, candidateAdapter);
+      const trained = await runTrain(options, round, candidateAdapter);
+      if (!trained) {
+        continue;
+      }
       const candidateEval = await runJsonStep(
         options,
         round,
