@@ -1,21 +1,28 @@
 {
   "name": "openclaw",
   "version": "2026.3.3",
-  "description": "Multi-channel AI gateway with extensible messaging integrations",
+  "description": "LCX Agent personal AI research operating system with Lark control room, Harness/Hermes routing, durable memory, evidence audit, and finance research workflows",
   "keywords": [
-    "gateway",
-    "lobster",
-    "openclaw"
+    "ai-research-os",
+    "durable-memory",
+    "evidence-audit",
+    "feishu",
+    "finance-research",
+    "harness",
+    "hermes",
+    "lark",
+    "lcx-agent",
+    "openclaw-runtime"
   ],
-  "homepage": "https://github.com/openclaw/openclaw#readme",
+  "homepage": "https://github.com/lcx1215/lcx-s-agent#readme",
   "bugs": {
-    "url": "https://github.com/openclaw/openclaw/issues"
+    "url": "https://github.com/lcx1215/lcx-s-agent/issues"
   },
   "license": "MIT",
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openclaw/openclaw.git"
+    "url": "git+https://github.com/lcx1215/lcx-s-agent.git"
   },
   "bin": {
     "openclaw": "openclaw.mjs"
