@@ -12,6 +12,7 @@ import { normalizeFeishuDisplayText } from "./display-text.js";
 import { sendMediaFeishu } from "./media.js";
 import type { MentionTarget } from "./mention.js";
 import { buildMentionedCardContent } from "./mention.js";
+import { recordFeishuReplyFlowEvent, type FeishuReplyFlowRecord } from "./reply-flow-audit.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { sendMarkdownCardFeishu, sendMessageFeishu } from "./send.js";
 import { FeishuStreamingSession } from "./streaming-card.js";
@@ -58,6 +59,7 @@ export type CreateFeishuReplyDispatcherParams = {
   rootId?: string;
   mentionTargets?: MentionTarget[];
   accountId?: string;
+  replyFlowCorrelationId?: string;
   /** Epoch ms when the inbound message was created. Used to suppress typing
    *  indicators on old/replayed messages after context compaction (#30418). */
   messageCreateTimeMs?: number;
@@ -155,6 +157,85 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   let lastPartial = "";
   let partialUpdateQueue: Promise<void> = Promise.resolve();
   let streamingStartPromise: Promise<void> | null = null;
+  let streamingAuditAttemptRecorded = false;
+  let streamingAuditResultRecorded = false;
+
+  const recordReplyFlow = (record: Omit<FeishuReplyFlowRecord, "correlationId">) => {
+    const correlationId = params.replyFlowCorrelationId?.trim();
+    if (!correlationId) {
+      return;
+    }
+    void recordFeishuReplyFlowEvent({
+      ...record,
+      correlationId,
+      accountId: account.accountId,
+      chatId,
+      agentId,
+      messageId: replyToMessageId,
+    });
+  };
+
+  const recordOutboundAttempt = (params: {
+    replyKind: string;
+    sendMode: string;
+    textPreview?: string;
+    outboundMessageType?: string;
+  }) => {
+    recordReplyFlow({
+      stage: "outbound_attempt",
+      replyKind: params.replyKind,
+      sendMode: params.sendMode,
+      textPreview: params.textPreview,
+      outboundMessageType: params.outboundMessageType,
+      receiveIdType: resolveReceiveIdType(chatId),
+      usedReplyTarget: Boolean(sendReplyToMessageId),
+      usedFallbackCreate: false,
+    });
+  };
+
+  const recordOutboundSuccess = (params: {
+    replyKind: string;
+    sendMode: string;
+    textPreview?: string;
+    deliveryMessageId?: string;
+    outboundMessageType?: string;
+  }) => {
+    recordReplyFlow({
+      stage: "outbound_result",
+      replyKind: params.replyKind,
+      sendMode: params.sendMode,
+      textPreview: params.textPreview,
+      deliveryStatus: "success",
+      feishuCode: 0,
+      feishuMsg: "success",
+      outboundMessageType: params.outboundMessageType,
+      receiveIdType: resolveReceiveIdType(chatId),
+      usedReplyTarget: Boolean(sendReplyToMessageId),
+      usedFallbackCreate: false,
+      deliveryMessageId: params.deliveryMessageId,
+    });
+  };
+
+  const recordOutboundFailure = (params: {
+    replyKind: string;
+    sendMode: string;
+    textPreview?: string;
+    error: unknown;
+    outboundMessageType?: string;
+  }) => {
+    recordReplyFlow({
+      stage: "outbound_result",
+      replyKind: params.replyKind,
+      sendMode: params.sendMode,
+      textPreview: params.textPreview,
+      deliveryStatus: "failed",
+      outboundMessageType: params.outboundMessageType,
+      receiveIdType: resolveReceiveIdType(chatId),
+      usedReplyTarget: Boolean(sendReplyToMessageId),
+      usedFallbackCreate: false,
+      error: String(params.error),
+    });
+  };
 
   const mergeStreamingText = (nextText: string) => {
     if (!streamText) {
@@ -215,12 +296,28 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         params.runtime.log?.(`feishu[${account.accountId}] ${message}`),
       );
       try {
+        if (!streamingAuditAttemptRecorded) {
+          streamingAuditAttemptRecorded = true;
+          recordOutboundAttempt({
+            replyKind: "final",
+            sendMode: "streaming_card",
+            textPreview: streamText,
+            outboundMessageType: "interactive",
+          });
+        }
         await streaming.start(chatId, resolveReceiveIdType(chatId), {
           replyToMessageId,
           replyInThread: effectiveReplyInThread,
           rootId,
         });
       } catch (error) {
+        recordOutboundFailure({
+          replyKind: "final",
+          sendMode: "streaming_card",
+          textPreview: streamText,
+          outboundMessageType: "interactive",
+          error,
+        });
         params.runtime.error?.(`feishu: streaming start failed: ${String(error)}`);
         streaming = null;
       }
@@ -237,7 +334,33 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       if (mentionTargets?.length) {
         text = buildMentionedCardContent(mentionTargets, text);
       }
-      await streaming.close(text);
+      const deliveryMessageId = (
+        streaming as FeishuStreamingSession & {
+          getDeliveryMessageId?: () => string | undefined;
+        }
+      ).getDeliveryMessageId?.();
+      try {
+        await streaming.close(text);
+        if (!streamingAuditResultRecorded) {
+          streamingAuditResultRecorded = true;
+          recordOutboundSuccess({
+            replyKind: "final",
+            sendMode: "streaming_card",
+            textPreview: text,
+            deliveryMessageId,
+            outboundMessageType: "interactive",
+          });
+        }
+      } catch (error) {
+        recordOutboundFailure({
+          replyKind: "final",
+          sendMode: "streaming_card",
+          textPreview: text,
+          outboundMessageType: "interactive",
+          error,
+        });
+        throw error;
+      }
     }
     streaming = null;
     streamingStartPromise = null;
@@ -332,14 +455,39 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               textChunkLimit,
               chunkMode,
             )) {
-              await sendMarkdownCardFeishu({
-                cfg,
-                to: chatId,
-                text: chunk,
-                replyToMessageId: sendReplyToMessageId,
-                replyInThread: effectiveReplyInThread,
-                mentions: first ? mentionTargets : undefined,
-                accountId,
+              recordOutboundAttempt({
+                replyKind: info?.kind ?? "final",
+                sendMode: "message",
+                textPreview: chunk,
+                outboundMessageType: "post",
+              });
+              let result: Awaited<ReturnType<typeof sendMarkdownCardFeishu>>;
+              try {
+                result = await sendMarkdownCardFeishu({
+                  cfg,
+                  to: chatId,
+                  text: chunk,
+                  replyToMessageId: sendReplyToMessageId,
+                  replyInThread: effectiveReplyInThread,
+                  mentions: first ? mentionTargets : undefined,
+                  accountId,
+                });
+              } catch (error) {
+                recordOutboundFailure({
+                  replyKind: info?.kind ?? "final",
+                  sendMode: "message",
+                  textPreview: chunk,
+                  outboundMessageType: "post",
+                  error,
+                });
+                throw error;
+              }
+              recordOutboundSuccess({
+                replyKind: info?.kind ?? "final",
+                sendMode: "message",
+                textPreview: chunk,
+                deliveryMessageId: result?.messageId,
+                outboundMessageType: "post",
               });
               first = false;
             }
@@ -350,14 +498,39 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               textChunkLimit,
               chunkMode,
             )) {
-              await sendMessageFeishu({
-                cfg,
-                to: chatId,
-                text: chunk,
-                replyToMessageId: sendReplyToMessageId,
-                replyInThread: effectiveReplyInThread,
-                mentions: first ? mentionTargets : undefined,
-                accountId,
+              recordOutboundAttempt({
+                replyKind: info?.kind ?? "final",
+                sendMode: "message",
+                textPreview: chunk,
+                outboundMessageType: "post",
+              });
+              let result: Awaited<ReturnType<typeof sendMessageFeishu>>;
+              try {
+                result = await sendMessageFeishu({
+                  cfg,
+                  to: chatId,
+                  text: chunk,
+                  replyToMessageId: sendReplyToMessageId,
+                  replyInThread: effectiveReplyInThread,
+                  mentions: first ? mentionTargets : undefined,
+                  accountId,
+                });
+              } catch (error) {
+                recordOutboundFailure({
+                  replyKind: info?.kind ?? "final",
+                  sendMode: "message",
+                  textPreview: chunk,
+                  outboundMessageType: "post",
+                  error,
+                });
+                throw error;
+              }
+              recordOutboundSuccess({
+                replyKind: info?.kind ?? "final",
+                sendMode: "message",
+                textPreview: chunk,
+                deliveryMessageId: result?.messageId,
+                outboundMessageType: "post",
               });
               first = false;
             }

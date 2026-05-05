@@ -101,6 +101,7 @@ async function summarizeJsonlReplyFlowEvidence(
       completedAtMs?: number;
       stages: Set<string>;
       outboundResult?: FeishuReplyFlowRecord;
+      outboundResultAtMs?: number;
     }
   >();
 
@@ -136,13 +137,21 @@ async function summarizeJsonlReplyFlowEvidence(
     }
     if (parsed.stage === "outbound_result") {
       entry.outboundResult = parsed;
+      entry.outboundResultAtMs = recordedAtMs;
     }
     groups.set(correlationId, entry);
   }
 
   const latestCompleted = Array.from(groups.entries())
-    .filter(([, entry]) => typeof entry.completedAtMs === "number")
-    .toSorted((a, b) => (b[1].completedAtMs ?? 0) - (a[1].completedAtMs ?? 0))[0];
+    .filter(
+      ([, entry]) =>
+        typeof entry.completedAtMs === "number" || typeof entry.outboundResultAtMs === "number",
+    )
+    .toSorted(
+      (a, b) =>
+        (b[1].completedAtMs ?? b[1].outboundResultAtMs ?? 0) -
+        (a[1].completedAtMs ?? a[1].outboundResultAtMs ?? 0),
+    )[0];
   if (!latestCompleted) {
     return undefined;
   }
@@ -172,7 +181,7 @@ async function summarizeJsonlReplyFlowEvidence(
   ].filter(Boolean);
 
   return {
-    completedAtMs: entry.completedAtMs ?? entry.latestRecordedAtMs,
+    completedAtMs: entry.completedAtMs ?? entry.outboundResultAtMs ?? entry.latestRecordedAtMs,
     text: [
       "## Recent Feishu/Lark Reply Flow Evidence",
       "Use this local artifact summary as the primary truth for Feishu/Lark reply-path verification questions.",

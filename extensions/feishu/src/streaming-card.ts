@@ -338,4 +338,8 @@ export class FeishuStreamingSession {
   isActive(): boolean {
     return this.state !== null && !this.closed;
   }
+
+  getDeliveryMessageId(): string | undefined {
+    return this.state?.messageId;
+  }
 }

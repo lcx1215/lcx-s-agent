@@ -10,6 +10,7 @@ const resolveReceiveIdTypeMock = vi.hoisted(() => vi.fn());
 const createReplyDispatcherWithTypingMock = vi.hoisted(() => vi.fn());
 const addTypingIndicatorMock = vi.hoisted(() => vi.fn(async () => ({ messageId: "om_msg" })));
 const removeTypingIndicatorMock = vi.hoisted(() => vi.fn(async () => {}));
+const recordFeishuReplyFlowEventMock = vi.hoisted(() => vi.fn(async () => {}));
 const streamingInstances = vi.hoisted(() => [] as any[]);
 
 vi.mock("./accounts.js", () => ({ resolveFeishuAccount: resolveFeishuAccountMock }));
@@ -36,11 +37,15 @@ vi.mock("./streaming-card.js", () => ({
       this.active = false;
     });
     isActive = vi.fn(() => this.active);
+    getDeliveryMessageId = vi.fn(() => "om_stream");
 
     constructor() {
       streamingInstances.push(this);
     }
   },
+}));
+vi.mock("./reply-flow-audit.js", () => ({
+  recordFeishuReplyFlowEvent: recordFeishuReplyFlowEventMock,
 }));
 
 import { createFeishuReplyDispatcher, normalizeFeishuDisplayText } from "./reply-dispatcher.js";
@@ -170,11 +175,14 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
   });
 
   it("keeps auto mode plain text on non-streaming send path", async () => {
+    sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om_text", chatId: "oc_chat" });
     createFeishuReplyDispatcher({
       cfg: {} as never,
       agentId: "agent",
       runtime: {} as never,
       chatId: "oc_chat",
+      replyToMessageId: "om_parent",
+      replyFlowCorrelationId: "om_parent",
     });
 
     const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
@@ -183,6 +191,57 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(streamingInstances).toHaveLength(0);
     expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
     expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
+    expect(recordFeishuReplyFlowEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "om_parent",
+        stage: "outbound_attempt",
+        sendMode: "message",
+        replyKind: "final",
+        textPreview: "plain text",
+      }),
+    );
+    expect(recordFeishuReplyFlowEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "om_parent",
+        stage: "outbound_result",
+        deliveryStatus: "success",
+        deliveryMessageId: "om_text",
+      }),
+    );
+  });
+
+  it("records failed direct sends before surfacing the error", async () => {
+    sendMessageFeishuMock.mockRejectedValueOnce(new Error("feishu-send-failed"));
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+      replyToMessageId: "om_parent",
+      replyFlowCorrelationId: "om_parent",
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await expect(options.deliver({ text: "plain text" }, { kind: "final" })).rejects.toThrow(
+      "feishu-send-failed",
+    );
+
+    expect(recordFeishuReplyFlowEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "om_parent",
+        stage: "outbound_attempt",
+        sendMode: "message",
+        textPreview: "plain text",
+      }),
+    );
+    expect(recordFeishuReplyFlowEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "om_parent",
+        stage: "outbound_result",
+        deliveryStatus: "failed",
+        error: "Error: feishu-send-failed",
+      }),
+    );
   });
 
   it("normalizes markdown tables and code fences before sending to Feishu", async () => {
@@ -280,6 +339,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       runtime: { log: vi.fn(), error: vi.fn() } as never,
       chatId: "oc_chat",
       rootId: "om_root_topic",
+      replyFlowCorrelationId: "om_stream_parent",
     });
 
     const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
@@ -295,6 +355,23 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(streamingInstances[0].close).toHaveBeenCalledTimes(1);
     expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
+    expect(recordFeishuReplyFlowEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "om_stream_parent",
+        stage: "outbound_attempt",
+        sendMode: "streaming_card",
+        outboundMessageType: "interactive",
+      }),
+    );
+    expect(recordFeishuReplyFlowEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "om_stream_parent",
+        stage: "outbound_result",
+        sendMode: "streaming_card",
+        deliveryStatus: "success",
+        deliveryMessageId: "om_stream",
+      }),
+    );
   });
 
   it("closes streaming with block text when final reply is missing", async () => {

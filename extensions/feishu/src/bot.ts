@@ -1436,6 +1436,7 @@ async function createAndSendFeishuFinalTextReply(params: {
     mentionTargets: params.mentionTargets,
     accountId: params.accountId,
     messageCreateTimeMs: params.messageCreateTimeMs,
+    replyFlowCorrelationId: params.replyTargetMessageId,
   });
   return sendFeishuFinalTextReply({
     replyRuntime: params.replyRuntime,
@@ -5804,6 +5805,7 @@ export async function handleFeishuMessage(params: {
             mentionTargets: ctx.mentionTargets,
             accountId: account.accountId,
             messageCreateTimeMs,
+            replyFlowCorrelationId: ctx.messageId,
           });
           const surfaceLineCapture = createSurfaceLineCaptureDispatcher({
             dispatcher,
@@ -5968,6 +5970,7 @@ export async function handleFeishuMessage(params: {
         mentionTargets: ctx.mentionTargets,
         accountId: account.accountId,
         messageCreateTimeMs,
+        replyFlowCorrelationId: ctx.messageId,
       });
       const surfaceLineCapture = createSurfaceLineCaptureDispatcher({
         dispatcher,

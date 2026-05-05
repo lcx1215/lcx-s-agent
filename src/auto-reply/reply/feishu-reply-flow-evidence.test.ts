@@ -90,6 +90,39 @@ describe("summarizeRecentFeishuReplyFlowEvidence", () => {
     expect(summary).toContain("feishuCode=19002");
   });
 
+  it("uses a fresh outbound result when dispatch complete has not been recorded yet", async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-reply-flow-"));
+    const logPath = path.join(tempDir, "feishu-reply-flow.jsonl");
+    const lines = [
+      JSON.stringify({
+        correlationId: "stream-corr",
+        stage: "outbound_attempt",
+        recordedAtMs: 20,
+        outboundMessageType: "interactive",
+      }),
+      JSON.stringify({
+        correlationId: "stream-corr",
+        stage: "outbound_result",
+        recordedAtMs: 21,
+        deliveryStatus: "success",
+        feishuCode: 0,
+        feishuMsg: "success",
+        outboundMessageType: "interactive",
+        receiveIdType: "chat_id",
+        deliveryMessageId: "om_stream",
+      }),
+    ];
+    await fs.writeFile(logPath, `${lines.join("\n")}\n`, "utf8");
+
+    const summary = await summarizeRecentFeishuReplyFlowEvidence(logPath);
+
+    expect(summary).toContain("Latest completed correlationId: stream-corr");
+    expect(summary).toContain("Observed stage chain: outbound_attempt -> outbound_result");
+    expect(summary).toContain("Reply-path status evidence: visible_reply_delivered");
+    expect(summary).toContain("outboundMessageType=interactive");
+    expect(summary).toContain("deliveryMessageId=om_stream");
+  });
+
   it("uses gateway dispatch evidence when the reply-flow log is missing", async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-reply-flow-"));
     const logPath = path.join(tempDir, "missing-reply-flow.jsonl");
