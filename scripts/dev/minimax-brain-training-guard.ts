@@ -15,6 +15,7 @@ type CliOptions = {
   loadMax: number;
   trainLoadMax: number;
   model: string;
+  bootstrapIfMissing: boolean;
   noTrain: boolean;
   mock: boolean;
   resolveCurrentAdapterOnly: boolean;
@@ -44,15 +45,11 @@ type ActiveProcess = {
 const HOME = process.env.HOME ?? os.homedir();
 const TRAINER_ROOT = path.join(HOME, ".openclaw", "local-brain-trainer");
 const DEFAULT_DATA_DIR = path.join(TRAINER_ROOT, "datasets", "thought-flow-v1");
-const DEFAULT_ADAPTER = path.join(
+const DEFAULT_MODEL = "Qwen/Qwen3-0.6B";
+const LEGACY_QWEN_0_6B_SEED_ADAPTER = path.join(
   TRAINER_ROOT,
   "adapters",
   "thought-flow-v1-qwen3-0.6b-teacher-v7",
-);
-const DEFAULT_ADAPTER_PREFIX = path.join(
-  TRAINER_ROOT,
-  "adapters",
-  "thought-flow-v1-qwen3-0.6b-minimax-guard",
 );
 const DEFAULT_LOG = path.join(
   HOME,
@@ -71,7 +68,8 @@ const DEFAULT_LOCK = path.join(
 );
 const CPU_COUNT = Math.max(1, os.cpus().length);
 const DEFAULT_LOAD_MAX = 100;
-const DEFAULT_TRAIN_LOAD_MAX = 100;
+const DEFAULT_TRAIN_LOAD_MAX = 12;
+const MIN_PROMOTION_EVAL_CASES = 50;
 
 function usage(): never {
   throw new Error(
@@ -88,7 +86,8 @@ function usage(): never {
       "  --eval-every N          eval current/new adapter every N rounds, default 1",
       "  --train-iters N         MLX LoRA iters, default 40",
       "  --load-max N            skip the guard when 1m system load is above N, default 100",
-      "  --train-load-max N      skip local MLX LoRA train when 1m system load is above N, default 100",
+      "  --train-load-max N      skip local MLX LoRA train when 1m system load is above N, default 12",
+      "  --bootstrap-if-missing  train a first adapter from the base model when no matching adapter exists",
       "  --no-train              only generate/rebuild/smoke/eval",
       "  --mock                  use mock MiniMax teacher for mechanism smoke",
       "  --resolve-current-adapter  print selected stable adapter and exit without writes",
@@ -99,6 +98,22 @@ function usage(): never {
       "  --no-lock               disable lock file, but still checks active guard process",
     ].join("\n"),
   );
+}
+
+function modelSlug(model: string): string {
+  const lastSegment = model.trim().split("/").filter(Boolean).at(-1) ?? model.trim();
+  return lastSegment
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/gu, "-")
+    .replace(/^-|-$/gu, "");
+}
+
+function defaultAdapterPrefixForModel(model: string): string {
+  return path.join(TRAINER_ROOT, "adapters", `thought-flow-v1-${modelSlug(model)}-minimax-guard`);
+}
+
+function defaultSeedAdapterForModel(model: string): string | undefined {
+  return modelSlug(model) === "qwen3-0.6b" ? LEGACY_QWEN_0_6B_SEED_ADAPTER : undefined;
 }
 
 function readValue(args: string[], index: number): string {
@@ -118,6 +133,7 @@ function readPositiveInteger(value: string): number {
 }
 
 function parseArgs(args: string[]): CliOptions {
+  let adapterPrefixProvided = false;
   const options: CliOptions = {
     durationMinutes: 120,
     batchLimit: 20,
@@ -129,7 +145,8 @@ function parseArgs(args: string[]): CliOptions {
     trainIters: 40,
     loadMax: DEFAULT_LOAD_MAX,
     trainLoadMax: DEFAULT_TRAIN_LOAD_MAX,
-    model: "Qwen/Qwen3-0.6B",
+    model: DEFAULT_MODEL,
+    bootstrapIfMissing: false,
     noTrain: false,
     mock: false,
     resolveCurrentAdapterOnly: false,
@@ -137,7 +154,7 @@ function parseArgs(args: string[]): CliOptions {
     dataDir: DEFAULT_DATA_DIR,
     pythonBin: path.join(TRAINER_ROOT, ".venv", "bin", "python"),
     currentAdapter: "latest-passing",
-    adapterPrefix: DEFAULT_ADAPTER_PREFIX,
+    adapterPrefix: defaultAdapterPrefixForModel(DEFAULT_MODEL),
     logPath: DEFAULT_LOG,
     lockPath: DEFAULT_LOCK,
     lockEnabled: true,
@@ -181,6 +198,8 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--model") {
       options.model = readValue(args, index);
       index += 1;
+    } else if (arg === "--bootstrap-if-missing") {
+      options.bootstrapIfMissing = true;
     } else if (arg === "--no-train") {
       options.noTrain = true;
     } else if (arg === "--mock") {
@@ -203,6 +222,7 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--adapter-prefix") {
       options.adapterPrefix = path.resolve(readValue(args, index));
+      adapterPrefixProvided = true;
       index += 1;
     } else if (arg === "--log") {
       options.logPath = path.resolve(readValue(args, index));
@@ -217,6 +237,9 @@ function parseArgs(args: string[]): CliOptions {
     } else {
       usage();
     }
+  }
+  if (!adapterPrefixProvided) {
+    options.adapterPrefix = defaultAdapterPrefixForModel(options.model);
   }
   return options;
 }
@@ -337,9 +360,8 @@ function isProcessAlive(pid: number): boolean {
 }
 
 function isGuardRuntimeCommand(command: string): boolean {
-  return (
-    command.includes("node --import tsx scripts/dev/minimax-brain-training-guard.ts") ||
-    command.includes("node --import=tsx scripts/dev/minimax-brain-training-guard.ts")
+  return /^(?:\S*\/)?node\s+--import(?:=tsx|\s+tsx)\s+scripts\/dev\/minimax-brain-training-guard\.ts(?:\s|$)/u.test(
+    command.trim(),
   );
 }
 
@@ -469,23 +491,99 @@ async function resolveLatestAdapter(adapterPrefix: string): Promise<string | und
   return candidates[0];
 }
 
-function isPassingEvalEvent(payload: Record<string, unknown>): boolean {
+type EvalVerdict = {
+  at: string;
+  adapterPath: string;
+  promotionReady: boolean;
+  total: number;
+  source: string;
+};
+
+function evalSummaryFromPayload(payload: Record<string, unknown>):
+  | {
+      promotionReady: boolean;
+      total: number;
+    }
+  | undefined {
   if (payload.event !== "step_ok") {
-    return false;
+    return undefined;
   }
   if (payload.name !== "stable_hardened_eval" && payload.name !== "candidate_hardened_eval") {
-    return false;
+    return undefined;
   }
   const result = payload.result;
   if (!result || typeof result !== "object") {
-    return false;
+    return undefined;
   }
   const summary = (result as { summary?: unknown }).summary;
-  return (
-    typeof summary === "object" &&
-    summary !== null &&
-    (summary as { promotionReady?: unknown }).promotionReady === true
-  );
+  if (typeof summary !== "object" || summary === null) {
+    return undefined;
+  }
+  const promotionReady = (summary as { promotionReady?: unknown }).promotionReady === true;
+  const total = (summary as { total?: unknown }).total;
+  return { promotionReady, total: typeof total === "number" ? total : 0 };
+}
+
+function evalVerdictFromPayload(payload: Record<string, unknown>): EvalVerdict | undefined {
+  if (payload.event !== "step_ok" && payload.event !== "step_non_passing") {
+    return undefined;
+  }
+  if (payload.name !== "stable_hardened_eval" && payload.name !== "candidate_hardened_eval") {
+    return undefined;
+  }
+  const adapterPath = adapterPathFromEvalEvent(payload);
+  if (!adapterPath) {
+    return undefined;
+  }
+  const summary = evalSummaryFromPayload({ ...payload, event: "step_ok" });
+  if (!summary) {
+    return undefined;
+  }
+  const at = typeof payload.at === "string" ? payload.at : "";
+  return {
+    at,
+    adapterPath,
+    promotionReady:
+      payload.event === "step_ok" &&
+      summary.promotionReady &&
+      summary.total >= MIN_PROMOTION_EVAL_CASES,
+    total: summary.total,
+    source: String(payload.name),
+  };
+}
+
+function failedStableEvalVerdictFromGuardFailure(
+  payload: Record<string, unknown>,
+): EvalVerdict | undefined {
+  if (payload.event !== "guard_failed") {
+    return undefined;
+  }
+  const adapterPath = payload.currentAdapter;
+  const error = payload.error;
+  if (typeof adapterPath !== "string" || !adapterPath || typeof error !== "string") {
+    return undefined;
+  }
+  const stableEvalFailed =
+    error.includes("stable adapter failed hardened eval") ||
+    (error.includes("scripts/dev/local-brain-distill-eval.ts") &&
+      error.includes("--hardened") &&
+      /"promotionReady":\s*false/u.test(error));
+  if (!stableEvalFailed) {
+    return undefined;
+  }
+  const totalMatch = /"total":\s*(\d+)/u.exec(error);
+  const at = typeof payload.at === "string" ? payload.at : "";
+  return {
+    at,
+    adapterPath,
+    promotionReady: false,
+    total: totalMatch ? Number(totalMatch[1]) : 0,
+    source: "guard_failed_stable_hardened_eval",
+  };
+}
+
+function isPassingEvalEvent(payload: Record<string, unknown>): boolean {
+  return evalVerdictFromPayload(payload)?.promotionReady === true;
 }
 
 function adapterPathFromEvalEvent(payload: Record<string, unknown>): string | undefined {
@@ -497,7 +595,16 @@ function adapterPathFromEvalEvent(payload: Record<string, unknown>): string | un
   return typeof adapterPath === "string" && adapterPath ? adapterPath : undefined;
 }
 
-async function resolveLatestPassingAdapter(): Promise<string | undefined> {
+function adapterMatchesPrefix(adapterPath: string, adapterPrefix: string): boolean {
+  const adapterRoot = path.dirname(adapterPrefix);
+  const adapterNamePrefix = `${path.basename(adapterPrefix)}-`;
+  return (
+    path.dirname(adapterPath) === adapterRoot &&
+    path.basename(adapterPath).startsWith(adapterNamePrefix)
+  );
+}
+
+async function resolveLatestPassingAdapter(adapterPrefix: string): Promise<string | undefined> {
   let logFiles: string[];
   try {
     logFiles = (await fs.readdir(DEFAULT_GUARD_LOG_DIR))
@@ -507,7 +614,10 @@ async function resolveLatestPassingAdapter(): Promise<string | undefined> {
     return undefined;
   }
   const rejected = new Set<string>();
-  const passing: Array<{ at: string; adapterPath: string }> = [];
+  const latestEvalByAdapter = new Map<string, EvalVerdict>();
+  const promotedOrCandidate: Array<{ at: string; adapterPath: string }> = [];
+  const completed: Array<{ at: string; adapterPath: string }> = [];
+  const stableFallback: Array<{ at: string; adapterPath: string }> = [];
   for (const logFile of logFiles.toSorted()) {
     const raw = await fs.readFile(logFile, "utf8");
     for (const line of raw.split(/\r?\n/u)) {
@@ -516,51 +626,84 @@ async function resolveLatestPassingAdapter(): Promise<string | undefined> {
       }
       const payload = JSON.parse(line) as Record<string, unknown>;
       const at = typeof payload.at === "string" ? payload.at : "";
+      const evalVerdict =
+        evalVerdictFromPayload(payload) ?? failedStableEvalVerdictFromGuardFailure(payload);
+      if (evalVerdict && adapterMatchesPrefix(evalVerdict.adapterPath, adapterPrefix)) {
+        const current = latestEvalByAdapter.get(evalVerdict.adapterPath);
+        if (!current || current.at.localeCompare(evalVerdict.at) <= 0) {
+          latestEvalByAdapter.set(evalVerdict.adapterPath, evalVerdict);
+        }
+      }
       if (payload.event === "adapter_rejected_for_guard_session") {
         const adapterPath = payload.adapterPath;
-        if (typeof adapterPath === "string" && adapterPath) {
+        if (
+          typeof adapterPath === "string" &&
+          adapterPath &&
+          adapterMatchesPrefix(adapterPath, adapterPrefix)
+        ) {
           rejected.add(adapterPath);
         }
       } else if (payload.event === "adapter_promoted_for_guard_session") {
         const adapterPath = payload.adapterPath;
-        if (typeof adapterPath === "string" && adapterPath) {
-          passing.push({ at, adapterPath });
+        if (
+          typeof adapterPath === "string" &&
+          adapterPath &&
+          adapterMatchesPrefix(adapterPath, adapterPrefix)
+        ) {
+          promotedOrCandidate.push({ at, adapterPath });
         }
       } else if (payload.event === "guard_complete") {
         const adapterPath = payload.currentAdapter;
-        if (typeof adapterPath === "string" && adapterPath) {
-          passing.push({ at, adapterPath });
+        if (
+          typeof adapterPath === "string" &&
+          adapterPath &&
+          adapterMatchesPrefix(adapterPath, adapterPrefix)
+        ) {
+          completed.push({ at, adapterPath });
         }
-      } else if (isPassingEvalEvent(payload)) {
+      } else if (payload.name === "candidate_hardened_eval" && isPassingEvalEvent(payload)) {
         const adapterPath = adapterPathFromEvalEvent(payload);
-        if (adapterPath) {
-          passing.push({ at, adapterPath });
+        if (adapterPath && adapterMatchesPrefix(adapterPath, adapterPrefix)) {
+          promotedOrCandidate.push({ at, adapterPath });
+        }
+      } else if (payload.name === "stable_hardened_eval" && isPassingEvalEvent(payload)) {
+        const adapterPath = adapterPathFromEvalEvent(payload);
+        if (adapterPath && adapterMatchesPrefix(adapterPath, adapterPrefix)) {
+          stableFallback.push({ at, adapterPath });
         }
       }
     }
   }
-  const candidates = passing
-    .filter((entry) => !rejected.has(entry.adapterPath))
-    .toSorted((left, right) => right.at.localeCompare(left.at));
-  for (const candidate of candidates) {
-    if (await hasAdapterConfig(candidate.adapterPath)) {
-      return candidate.adapterPath;
+  for (const group of [promotedOrCandidate, completed, stableFallback]) {
+    const candidates = group
+      .filter((entry) => {
+        if (rejected.has(entry.adapterPath)) {
+          return false;
+        }
+        const latestEval = latestEvalByAdapter.get(entry.adapterPath);
+        return latestEval?.promotionReady === true;
+      })
+      .toSorted((left, right) => right.at.localeCompare(left.at));
+    for (const candidate of candidates) {
+      if (await hasAdapterConfig(candidate.adapterPath)) {
+        return candidate.adapterPath;
+      }
     }
   }
   return undefined;
 }
 
-async function resolveCurrentAdapter(options: CliOptions): Promise<string> {
+async function resolveCurrentAdapter(options: CliOptions): Promise<string | undefined> {
   if (options.currentAdapter !== "latest") {
     if (options.currentAdapter === "latest-passing") {
-      const latestPassing = await resolveLatestPassingAdapter();
+      const latestPassing = await resolveLatestPassingAdapter(options.adapterPrefix);
       if (latestPassing) {
         return latestPassing;
       }
-      if (await hasAdapterConfig(DEFAULT_ADAPTER)) {
-        return DEFAULT_ADAPTER;
+      if ((!options.resolveCurrentAdapterOnly || options.bootstrapIfMissing) && !options.noTrain) {
+        return undefined;
       }
-      throw new Error("no promotion-ready adapter found in guard logs");
+      throw new Error(`no promotion-ready adapter found for model ${options.model}`);
     }
     if (!(await hasAdapterConfig(options.currentAdapter))) {
       throw new Error(`current adapter is missing adapter_config.json: ${options.currentAdapter}`);
@@ -571,8 +714,12 @@ async function resolveCurrentAdapter(options: CliOptions): Promise<string> {
   if (latest) {
     return latest;
   }
-  if (await hasAdapterConfig(DEFAULT_ADAPTER)) {
-    return DEFAULT_ADAPTER;
+  const seedAdapter = defaultSeedAdapterForModel(options.model);
+  if (seedAdapter && (await hasAdapterConfig(seedAdapter))) {
+    return seedAdapter;
+  }
+  if (options.bootstrapIfMissing && !options.noTrain) {
+    return undefined;
   }
   throw new Error(
     `no usable adapter found for latest prefix ${options.adapterPrefix}; pass --current-adapter DIR`,
@@ -747,6 +894,9 @@ if (options.resolveCurrentAdapterOnly) {
         ok: true,
         boundary: "local_auxiliary_thought_flow_only",
         selectedAdapter,
+        model: options.model,
+        adapterPrefix: options.adapterPrefix,
+        bootstrapIfMissing: options.bootstrapIfMissing,
         selectionMode: options.currentAdapter,
         liveTouched: false,
         providerConfigTouched: false,
@@ -812,27 +962,39 @@ try {
     ]);
 
     if (round % options.evalEvery === 0) {
-      const stableEval = await runJsonStep(options, round, "stable_hardened_eval", "node", [
-        "--import",
-        "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
-        "--model",
-        options.model,
-        "--adapter",
-        currentAdapter,
-        "--hardened",
-        "--progress",
-        "--timeout-ms",
-        "180000",
-        "--summary-only",
-        "--json",
-      ]);
-      if (!evalPassed(stableEval)) {
-        throw new Error(`stable adapter failed hardened eval: ${currentAdapter}`);
+      if (currentAdapter) {
+        const stableEval = await runJsonStep(options, round, "stable_hardened_eval", "node", [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--model",
+          options.model,
+          "--adapter",
+          currentAdapter,
+          "--hardened",
+          "--progress",
+          "--timeout-ms",
+          "180000",
+          "--summary-only",
+          "--json",
+        ]);
+        if (!evalPassed(stableEval)) {
+          throw new Error(`stable adapter failed hardened eval: ${currentAdapter}`);
+        }
+      } else {
+        await appendLog(options.logPath, {
+          event: "step_skipped",
+          round,
+          name: "stable_hardened_eval",
+          reason: "bootstrap_adapter_missing",
+          model: options.model,
+          adapterPrefix: options.adapterPrefix,
+          liveTouched: false,
+        });
       }
     }
 
-    if (!options.noTrain && round % options.trainEvery === 0) {
+    if (!options.noTrain && (!currentAdapter || round % options.trainEvery === 0)) {
       const candidateAdapter = adapterPathForRound(options, round);
       const trained = await runTrain(options, round, candidateAdapter);
       if (!trained) {

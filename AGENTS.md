@@ -1,6 +1,36 @@
-# LCX Agent L4 Baseline Doctrine
+# LCX Agent L5 Baseline Doctrine
 
 This file is priority-ordered. For day-to-day LCX Agent work, the doctrine in this top section takes precedence over generic repo maintenance guidance below. Release, security, docs, publish, and platform-specific instructions still apply when the task explicitly touches those areas.
+
+## Fast Recovery For Future Coding Agents
+
+When a new Codex coding window enters this repo without prior chat context, start from the repo-local operator runbook:
+
+```bash
+sed -n '1,220p' ops/local-brain/README.md
+node --import tsx scripts/dev/lcx-system-doctor.ts --json
+```
+
+That runbook points to the current local-brain training commands, MiniMax teacher loop, Qwen adapter selection, eval commands, launchd/log paths, and the most relevant local Codex skills under `/Users/liuchengxu/.codex/skills/`.
+
+If the task asks about external or newly added skills, use the runbook's skill inventory command:
+
+```bash
+find /Users/liuchengxu/.codex/skills -maxdepth 2 -name SKILL.md | sort
+```
+
+Use the matching skill before acting:
+
+- `lcx-baseline-hardening` for scoped stability and verification work.
+- `lcx-evolution-loop` for realistic self-improvement loops.
+- `agent-brain-eval` for judging local-brain learning/internalization.
+- `finance-learning-researcher` for finance, ETF, quant, source-gated learning.
+- `lark-live-loop-debugger` and `lark-post-migration-probe` for Feishu/Lark proof.
+- `agent-runtime-drift-auditor` for dev/live/runtime drift.
+- `l4-regression-batterer` as the legacy-named L5 pressure-test skill.
+- `skill-harvester` for evaluating and isolating new external/local skills.
+
+Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.
 
 ## Mission
 
@@ -97,7 +127,7 @@ This file is priority-ordered. For day-to-day LCX Agent work, the doctrine in th
 - When fixing a problem, identify the exact failure mode.
 - Explain why the failure mode is dangerous.
 - Make the failure explicit.
-- Use the smallest safe patch.
+- Apply a direct bounded patch that closes the verified failure family.
 - Add proof tests.
 - Avoid broad rewrites unless necessary.
 - No fake success on empty topics, blocked artifacts, or degraded provider paths.
@@ -150,7 +180,7 @@ This file is priority-ordered. For day-to-day LCX Agent work, the doctrine in th
 
 ## Default Work Pattern
 
-- Before coding, state: exact failure mode, why it is dangerous, smallest safe patch, and proof test.
+- Before coding, state: exact failure mode, why it is dangerous, direct bounded patch, and proof test.
 - After coding, state: files changed, behavior change, what is now prevented, and what remains intentionally out of scope.
 - Every day, do at least one of: close one real failure mode, improve one core output pattern, compress one useful lesson into reusable form, remove one source of noise or ambiguity, improve one routing/summary/memory contract, or produce one better piece of research than yesterday.
 

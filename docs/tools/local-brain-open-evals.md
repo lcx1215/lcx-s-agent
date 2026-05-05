@@ -56,12 +56,14 @@ These evals are dev checks. They are not live Lark proof.
 
 ## Skill Learning Config
 
-The local Codex skill installed for future sessions is:
+For external or local skill learning, use the repo operator runbook first:
 
 ```text
-~/.codex/skills/local-agent-skill-distiller/SKILL.md
+ops/local-brain/README.md
 ```
 
-It keeps external or local skill learning isolated: source review first, no
-protected memory writes, no provider config edits, no live sender edits, and an
-eval or smoke check before calling a skill useful.
+The current supported pattern is `skill-harvester` for evaluating and isolating
+new skills, plus `agent-brain-eval` for checking whether the learned pattern is
+actually usable. Keep external or local skill learning isolated: source review
+first, no protected memory writes, no provider config edits, no live sender
+edits, and an eval or smoke check before calling a skill useful.

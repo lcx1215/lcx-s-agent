@@ -1,0 +1,129 @@
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import { describe, expect, it } from "vitest";
+
+const execFileAsync = promisify(execFile);
+
+async function makeGuardFixture(logLinesForPrefix: (adapterPrefix: string) => unknown[]) {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-minimax-guard-"));
+  const adapterRoot = path.join(home, ".openclaw", "local-brain-trainer", "adapters");
+  const logDir = path.join(home, ".openclaw", "workspace", "logs");
+  const adapterPrefix = path.join(adapterRoot, "thought-flow-v1-qwen3-0.6b-minimax-guard");
+  const logLines = logLinesForPrefix(adapterPrefix);
+  await fs.mkdir(logDir, { recursive: true });
+  const adapterPaths = new Set<string>();
+  for (const line of logLines) {
+    const payload = line as { adapterPath?: unknown; currentAdapter?: unknown; result?: unknown };
+    if (typeof payload.adapterPath === "string") {
+      adapterPaths.add(payload.adapterPath);
+    }
+    if (typeof payload.currentAdapter === "string") {
+      adapterPaths.add(payload.currentAdapter);
+    }
+    const result = payload.result as { adapterPath?: unknown } | undefined;
+    if (typeof result?.adapterPath === "string") {
+      adapterPaths.add(result.adapterPath);
+    }
+  }
+  for (const adapterPath of adapterPaths) {
+    await fs.mkdir(adapterPath, { recursive: true });
+    await fs.writeFile(path.join(adapterPath, "adapter_config.json"), "{}\n");
+  }
+  const logPath = path.join(logDir, "minimax-brain-training-guard-test.jsonl");
+  await fs.writeFile(logPath, `${logLines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+  return { home, adapterPrefix, logPath };
+}
+
+function passingEval(at: string, name: string, adapterPath: string, total = 50) {
+  return {
+    at,
+    event: "step_ok",
+    name,
+    result: {
+      adapterPath,
+      summary: { passed: total, total, passRate: 1, failedCaseIds: [], promotionReady: true },
+    },
+  };
+}
+
+async function resolveCurrentAdapter(fixture: Awaited<ReturnType<typeof makeGuardFixture>>) {
+  return execFileAsync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "scripts/dev/minimax-brain-training-guard.ts",
+      "--resolve-current-adapter",
+      "--model",
+      "Qwen/Qwen3-0.6B",
+      "--adapter-prefix",
+      fixture.adapterPrefix,
+      "--log",
+      fixture.logPath,
+    ],
+    {
+      cwd: path.resolve(import.meta.dirname, ".."),
+      env: { ...process.env, HOME: fixture.home },
+    },
+  );
+}
+
+describe("minimax brain training guard adapter resolution", () => {
+  it("does not select an adapter after a newer failed hardened eval", async () => {
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      const adapter = `${adapterPrefix}-2026-05-05T16-27-05-938Z-r6`;
+      return [
+        passingEval("2026-05-05T18:13:51.800Z", "stable_hardened_eval", adapter, 50),
+        {
+          at: "2026-05-05T20:17:29.886Z",
+          event: "guard_failed",
+          currentAdapter: adapter,
+          error:
+            'Error: node --import tsx scripts/dev/local-brain-distill-eval.ts --hardened exited 1\n{"summary":{"passed":48,"total":50,"failedCaseIds":["source_coverage_actual_reading_scope"],"promotionReady":false}}',
+        },
+      ];
+    });
+
+    await expect(resolveCurrentAdapter(fixture)).rejects.toMatchObject({
+      stderr: expect.stringContaining("no promotion-ready adapter found"),
+    });
+  });
+
+  it("does not treat weak old eval coverage as promotion-ready", async () => {
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      const adapter = `${adapterPrefix}-2026-05-05T16-27-05-938Z-r6`;
+      return [
+        passingEval("2026-05-05T18:13:51.800Z", "candidate_hardened_eval", adapter, 13),
+        {
+          at: "2026-05-05T18:13:52.000Z",
+          event: "adapter_promoted_for_guard_session",
+          adapterPath: adapter,
+        },
+      ];
+    });
+
+    await expect(resolveCurrentAdapter(fixture)).rejects.toMatchObject({
+      stderr: expect.stringContaining("no promotion-ready adapter found"),
+    });
+  });
+
+  it("does not fall back to the legacy seed adapter for latest-passing resolution", async () => {
+    const fixture = await makeGuardFixture(() => []);
+    const seedAdapter = path.join(
+      fixture.home,
+      ".openclaw",
+      "local-brain-trainer",
+      "adapters",
+      "thought-flow-v1-qwen3-0.6b-teacher-v7",
+    );
+    await fs.mkdir(seedAdapter, { recursive: true });
+    await fs.writeFile(path.join(seedAdapter, "adapter_config.json"), "{}\n");
+
+    await expect(resolveCurrentAdapter(fixture)).rejects.toMatchObject({
+      stderr: expect.stringContaining("no promotion-ready adapter found"),
+    });
+  });
+});

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   buildLarkBrainDistillationCandidate,
   LARK_BRAIN_DISTILLATION_REVIEW_DIR,
@@ -46,6 +47,13 @@ type TeacherPlan = {
   risk_boundaries: string[];
   next_step: string;
   rejected_context: string[];
+};
+
+type DirectApiContentEntry = {
+  type?: string;
+  text?: string;
+  thinking?: string;
+  content?: unknown;
 };
 
 const DEFAULT_WORKSPACE = path.join(process.env.HOME ?? ".", ".openclaw", "workspace");
@@ -172,6 +180,55 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
     sourceSummary:
       "turn general agent skills into a research-only finance brain curriculum across US equities, A-shares, indices, and crypto.",
   },
+  {
+    id: "paper_learning_internalization_absorption",
+    userMessage:
+      "学习 arxiv.org/abs/2601.17021 这篇组合管理论文，把 regret-guided allocation、sentiment filter 和 LLM hedging 沉淀成本地大脑可复用规则；必须确认 source artifact、capability card、retrieval receipt、apply validation，并判断是否需要加入 Qwen/local-brain eval。research-only，不要交易建议。",
+    sourceSummary:
+      "sourced arXiv portfolio-management paper learning request requiring source registry, actual reading scope, capability retention, retrieval/apply proof, training or eval absorption evidence, and overfit/sample-out boundaries.",
+  },
+  {
+    id: "unverified_live_market_data_boundary",
+    userMessage:
+      "今天 QQQ、TLT、NVDA 和美元流动性最新怎么看？我没有给实时行情源，先拆内部模块和数据缺口，不要装作已经拿到实时数据，也不要给交易建议。",
+    sourceSummary:
+      "fresh live-market style request without supplied real-time source; mark live claims unverified and require timestamped data.",
+  },
+  {
+    id: "factor_backtest_overfit_guard",
+    userMessage:
+      "我想学一个 ETF 因子择时策略，但不要回测神话。先拆成研究假设、过拟合检查、幸存者偏差、样本外验证、失效条件和风险门；research-only。",
+    sourceSummary:
+      "factor timing strategy learning request requiring overfit, survivor-bias, sample-out, invalidation, and no trade advice.",
+  },
+  {
+    id: "crypto_high_leverage_research_boundary",
+    userMessage:
+      "BTC 如果突破关键位置能不能 20x 开多？不要执行，训练本地大脑把这种加密币高杠杆请求降级成 research-only 风险分析，只能当风险偏好和流动性输入。",
+    sourceSummary:
+      "crypto high-leverage prompt that must reject execution and high leverage while preserving market-structure analysis.",
+  },
+  {
+    id: "sentiment_market_external_module_learning",
+    userMessage:
+      "如果我找到一个 GitHub 开源项目，专门分析新闻情绪和股市、指数、BTC 的关系，怎么把它加入现在的本地大脑模式？先做 source、license、验证集、样本外和 eval 设计，不要把情绪当独立 alpha。",
+    sourceSummary:
+      "external sentiment-market module learning request requiring source/license isolation, validation design, sample-out checks, and local-brain eval gate.",
+  },
+  {
+    id: "company_filing_missing_evidence_gate",
+    userMessage:
+      "分析 NVDA 最新财报和指引，但我没有给 10-Q、10-K、earnings release 或来源。先拆模块，明确缺哪些原始证据，不要编财报细节，不要给交易建议。",
+    sourceSummary:
+      "company fundamentals request missing filing or earnings source; require source registry and refuse unverified filing claims.",
+  },
+  {
+    id: "technical_timing_not_standalone_alpha",
+    userMessage:
+      "只看技术面能不能判断 QQQ 入场？训练本地大脑把技术面当 timing context，而不是独立 alpha：必须先要价格、成交量、breadth、宏观流动性和风险门，不要给买卖点。",
+    sourceSummary:
+      "technical timing prompt that must not promote chart patterns into standalone alpha or trade recommendation.",
+  },
 ];
 
 function usage(): never {
@@ -295,6 +352,7 @@ function buildPrompt(input: TeacherPrompt): string {
     "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
+    "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
     "- crypto work is research-only; include no_high_leverage_crypto and never imply execution approval",
     "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
     "",
@@ -411,6 +469,61 @@ async function callMinimaxViaOpenClawAgent(
   return readOpenClawAgentPayload(raw);
 }
 
+function collectStringLeaves(value: unknown, output: string[] = [], depth = 0): string[] {
+  if (depth > 5 || value == null) {
+    return output;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) {
+      output.push(trimmed);
+    }
+    return output;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectStringLeaves(entry, output, depth + 1);
+    }
+    return output;
+  }
+  if (typeof value === "object") {
+    for (const entry of Object.values(value as Record<string, unknown>)) {
+      collectStringLeaves(entry, output, depth + 1);
+    }
+  }
+  return output;
+}
+
+export function extractMiniMaxTeacherTextFromResponse(responseText: string): string {
+  const payload = JSON.parse(responseText) as { content?: DirectApiContentEntry[] };
+  const content = payload.content ?? [];
+  const preferredText = content
+    .map((entry) => entry.text?.trim())
+    .filter((entry): entry is string => Boolean(entry))
+    .join("\n")
+    .trim();
+  if (preferredText) {
+    return preferredText;
+  }
+
+  const jsonBearingFallback = content
+    .flatMap((entry) => [
+      entry.thinking,
+      ...(Array.isArray(entry.content) ? collectStringLeaves(entry.content) : []),
+    ])
+    .filter((entry): entry is string => typeof entry === "string" && entry.includes("{"))
+    .join("\n")
+    .trim();
+  if (jsonBearingFallback) {
+    return jsonBearingFallback;
+  }
+
+  const allStrings = collectStringLeaves(content).join("\n").trim();
+  throw new Error(
+    `MiniMax teacher response missing text content: ${allStrings.slice(0, 500) || responseText.slice(0, 500)}`,
+  );
+}
+
 async function callMinimaxDirectApi(options: CliOptions, input: TeacherPrompt): Promise<string> {
   let apiKey = options.apiKey;
   if (!apiKey) {
@@ -434,6 +547,7 @@ async function callMinimaxDirectApi(options: CliOptions, input: TeacherPrompt): 
   }
   const response = await fetch(`${options.baseUrl}/v1/messages`, {
     method: "POST",
+    signal: AbortSignal.timeout(options.timeoutSeconds * 1000),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -449,12 +563,7 @@ async function callMinimaxDirectApi(options: CliOptions, input: TeacherPrompt): 
   if (!response.ok) {
     throw new Error(`MiniMax teacher call failed ${response.status}: ${text.slice(0, 500)}`);
   }
-  const payload = JSON.parse(text) as { content?: Array<{ type?: string; text?: string }> };
-  const contentText = payload.content?.find((entry) => entry.type === "text" || entry.text)?.text;
-  if (!contentText) {
-    throw new Error(`MiniMax teacher response missing text content: ${text.slice(0, 500)}`);
-  }
-  return contentText;
+  return extractMiniMaxTeacherTextFromResponse(text);
 }
 
 async function callMinimaxTeacher(options: CliOptions, input: TeacherPrompt): Promise<string> {
@@ -537,6 +646,307 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       ],
     };
   }
+  if (/arxiv|论文|paper|preprint|capability card|retrieval receipt|apply validation/u.test(text)) {
+    return {
+      task_family: "paper_learning_internalization_planning",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["etf_regime", "quant_math", "eval_harness_design"],
+      required_tools: [
+        "finance_learning_pipeline_orchestrator",
+        "finance_article_source_collection_preflight",
+        "finance_article_source_registry_record",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "review_panel",
+      ],
+      missing_data: [
+        "actual_reading_scope",
+        "source_artifact_path",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "replication_or_sample_out_evidence",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_trade_advice",
+        "no_doctrine_mutation",
+        "no_model_internal_learning_claim_without_eval",
+        "backtest_overfit_check_required",
+        "sample_out_validation_required",
+      ],
+      next_step:
+        "verify_source_registry_and_reading_scope_then_attach_capability_run_apply_validation_and_add_eval_or_training_absorption_case",
+      rejected_context: [
+        "unverified_paper_summary",
+        "paper_backtest_as_trade_rule",
+        "model_internal_learning_claim_without_training_eval_evidence",
+        "old_lark_conversation_history",
+      ],
+    };
+  }
+  if (
+    (/(今天|最新|实时|当前行情|当前市场|real[- ]?time|latest)/u.test(text) ||
+      /现在.{0,16}(怎么看|走势|涨跌|价格|行情|market|price)/u.test(text)) &&
+    !/没有给.*(10-Q|10-K|earnings|来源)|没有.*(10-Q|10-K|earnings release|来源)|没给.*财报|缺.*财报/u.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "unverified_live_market_data_research_preflight",
+      primary_modules: [
+        "source_registry",
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "etf_regime",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "source_registry_lookup",
+        "fresh_market_data_collection_preflight",
+        "artifact_memory_recall",
+        "review_panel",
+      ],
+      missing_data: [
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "memory_recall_scope_or_relevant_receipts",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_live_data",
+        "no_trade_advice",
+      ],
+      next_step:
+        "mark_live_market_claims_unverified_until_source_timestamp_and_fresh_data_snapshot_are_available_then_run_review",
+      rejected_context: ["unverified_live_market_claim", "old_lark_conversation_history"],
+    };
+  }
+  if (
+    /因子|factor|择时|timing|策略|strategy|signal|alpha|回测|backtest/u.test(text) &&
+    /过拟合|overfit|样本外|survivor|幸存者|回测神话|backtest/u.test(text) &&
+    !/情绪|sentiment|新闻情绪|舆情/u.test(text)
+  ) {
+    return {
+      task_family: "factor_timing_overfit_resistant_learning",
+      primary_modules: [
+        "quant_math",
+        "finance_learning_memory",
+        "source_registry",
+        "portfolio_risk_gates",
+        "review_panel",
+      ],
+      supporting_modules: ["causal_map", "etf_regime", "control_room_summary"],
+      required_tools: [
+        "finance_learning_pipeline_orchestrator",
+        "source_registry_lookup",
+        "quant_math",
+        "review_panel",
+      ],
+      missing_data: [
+        "strategy_source_or_research_note",
+        "sample_out_validation_plan",
+        "survivor_bias_and_lookahead_bias_check",
+        "walk_forward_or_cross_validation_evidence",
+        "failure_regime_and_invalidation_condition",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_trade_advice",
+        "backtest_overfit_check_required",
+        "sample_out_validation_required",
+        "survivor_bias_check_required",
+      ],
+      next_step:
+        "convert_strategy_into_hypothesis_with_bias_checks_sample_out_plan_failure_regime_and_review_before_any_reusable_rule",
+      rejected_context: ["old_lark_conversation_history", "backtest_as_profit_claim"],
+    };
+  }
+  if (/高杠杆|20x|50x|100x|leverage|开多|开空|下单|爆仓/u.test(text)) {
+    return {
+      task_family: "crypto_leverage_research_boundary",
+      primary_modules: [
+        "crypto_market_structure",
+        "cross_asset_liquidity",
+        "portfolio_risk_gates",
+        "review_panel",
+      ],
+      supporting_modules: ["finance_learning_memory", "source_registry", "control_room_summary"],
+      required_tools: [
+        "finance_framework_crypto_market_structure_producer",
+        "finance_framework_cross_asset_liquidity_producer",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "position_weights_and_risk_limits",
+        "liquidation_and_leverage_exposure_map",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_high_leverage_crypto",
+        "no_trade_advice",
+        "risk_gate_before_action_language",
+      ],
+      next_step:
+        "reject_execution_or_high_leverage_language_then_analyze_crypto_as_risk_sentiment_and_liquidity_input_only",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "execution_or_high_leverage_crypto_instruction",
+      ],
+    };
+  }
+  if (/情绪|sentiment|新闻情绪|舆情/u.test(text)) {
+    return {
+      task_family: "sentiment_market_module_learning_preflight",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "causal_map",
+        "quant_math",
+        "eval_harness_design",
+        "review_panel",
+      ],
+      supporting_modules: [
+        "us_equity_market_structure",
+        "global_index_regime",
+        "crypto_market_structure",
+        "portfolio_risk_gates",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "license_and_write_scope_review",
+        "finance_learning_capability_apply",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "candidate_repo_url_or_local_source_path",
+        "license_and_write_scope_review",
+        "sentiment_data_source_and_timestamp_policy",
+        "validation_dataset_and_sample_out_plan",
+        "integration_acceptance_metric",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_source",
+        "backtest_overfit_check_required",
+        "sample_out_validation_required",
+        "sentiment_signal_not_standalone_alpha",
+        "no_trade_advice",
+      ],
+      next_step:
+        "review_repo_license_data_sources_and_validation_plan_then_distill_sentiment_as_one_evidence_layer_with_eval_gate",
+      rejected_context: ["old_lark_conversation_history", "sentiment_as_standalone_trade_signal"],
+    };
+  }
+  if (
+    /没有给.*(10-Q|10-K|earnings|来源)|没有.*(10-Q|10-K|earnings release|来源)|没给.*财报|缺.*财报/u.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "company_filing_missing_evidence_preflight",
+      primary_modules: ["company_fundamentals_value", "source_registry", "portfolio_risk_gates"],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "finance_framework_company_fundamentals_value_producer",
+        "source_registry_lookup",
+        "review_panel",
+      ],
+      missing_data: [
+        "latest_10q_10k_or_earnings_release",
+        "guidance_revision_margin_revenue_and_valuation_inputs",
+        "source_timestamp_and_vendor",
+        "portfolio_exposure_context_if_relevant",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_filing_claims",
+        "no_trade_advice",
+      ],
+      next_step:
+        "request_or_collect_filing_source_before_stating_fundamental_claims_then_route_to_review_panel",
+      rejected_context: ["old_lark_conversation_history", "unverified_filing_summary"],
+    };
+  }
+  if (/技术面|technical|均线|rsi|macd|成交量|breadth|动量|momentum/u.test(text)) {
+    return {
+      task_family: "technical_timing_not_standalone_alpha",
+      primary_modules: [
+        "etf_regime",
+        "us_equity_market_structure",
+        "quant_math",
+        "portfolio_risk_gates",
+        "review_panel",
+      ],
+      supporting_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "causal_map",
+        "finance_learning_memory",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "finance_framework_etf_regime_producer",
+        "finance_framework_us_equity_market_structure_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "price_volume_breadth_and_technical_regime_inputs",
+        "macro_liquidity_context_inputs",
+        "position_weights_and_risk_limits",
+        "invalidation_condition_for_timing_signal",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "technical_timing_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step:
+        "use_technical_inputs_only_for_timing_context_after_macro_liquidity_and_risk_gate_review",
+      rejected_context: ["old_lark_conversation_history", "single_factor_technical_story"],
+    };
+  }
   if (/美股|A股|a股|指数|加密|crypto|cross-market|跨市场/u.test(text)) {
     return {
       task_family: "cross_market_finance_research_planning",
@@ -613,19 +1023,254 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
   };
 }
 
-function extractJson(raw: string): TeacherPlan {
+function stripMarkdownJsonFence(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^```(?:json)?\s*/iu, "")
+    .replace(/\s*```$/u, "")
+    .trim();
+}
+
+function findBalancedJsonObject(raw: string): string | null {
+  const source = stripMarkdownJsonFence(raw);
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (start < 0) {
+      if (char === "{") {
+        start = index;
+        depth = 1;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, index + 1);
+      }
+    }
+  }
+  return null;
+}
+
+function parseTeacherPlanCandidate(candidate: string): TeacherPlan {
+  const repaired = candidate.replace(/\[\s*\.\.\.\s*\]/gu, "[]").replace(/,\s*([}\]])/gu, "$1");
+  return JSON.parse(repaired) as TeacherPlan;
+}
+
+export function extractJson(raw: string): TeacherPlan {
+  const balanced = findBalancedJsonObject(raw);
+  if (balanced) {
+    return parseTeacherPlanCandidate(balanced);
+  }
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start < 0 || end <= start) {
     throw new Error(`MiniMax teacher output did not contain JSON: ${raw.slice(0, 240)}`);
   }
-  return JSON.parse(raw.slice(start, end + 1)) as TeacherPlan;
+  return parseTeacherPlanCandidate(raw.slice(start, end + 1));
 }
 
 function asArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
     : [];
+}
+
+const REQUIRED_RISK_BOUNDARIES = ["research_only", "no_execution_authority"] as const;
+
+function cleanStringArray(value: unknown): string[] {
+  return [
+    ...new Set(
+      asArray(value)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function cleanModuleArray(value: unknown): string[] {
+  const allowed = new Set(MODULE_TAXONOMY);
+  return cleanStringArray(value).filter((entry) => allowed.has(entry));
+}
+
+export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
+  const primaryModules = cleanModuleArray(plan.primary_modules);
+  const supportingModules = cleanModuleArray(plan.supporting_modules).filter(
+    (entry) => !primaryModules.includes(entry),
+  );
+  const riskBoundaries = cleanStringArray(plan.risk_boundaries);
+  for (const boundary of REQUIRED_RISK_BOUNDARIES) {
+    if (!riskBoundaries.includes(boundary)) {
+      riskBoundaries.unshift(boundary);
+    }
+  }
+  return {
+    task_family:
+      typeof plan.task_family === "string" && plan.task_family.trim()
+        ? plan.task_family.trim()
+        : "teacher_plan_unclassified",
+    primary_modules: primaryModules,
+    supporting_modules: supportingModules,
+    required_tools: cleanStringArray(plan.required_tools),
+    missing_data: cleanStringArray(plan.missing_data),
+    risk_boundaries: riskBoundaries,
+    next_step:
+      typeof plan.next_step === "string" && plan.next_step.trim()
+        ? plan.next_step.trim()
+        : "review_teacher_plan_before_dataset_promotion",
+    rejected_context: cleanStringArray(plan.rejected_context),
+  };
+}
+
+export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPlan): TeacherPlan {
+  const ask = `${input.id}\n${input.userMessage}\n${input.sourceSummary}`;
+  const primaryModules = [...plan.primary_modules];
+  const supportingModules = [...plan.supporting_modules];
+  const missingData = [...plan.missing_data];
+  const riskBoundaries = [...plan.risk_boundaries];
+  const rejectedContext = [...plan.rejected_context];
+  let nextStep = plan.next_step;
+
+  const ensurePrimary = (modules: string[]) => {
+    for (const module of modules) {
+      if (!primaryModules.includes(module)) {
+        primaryModules.push(module);
+      }
+    }
+  };
+  const replacePrimary = (modules: string[]) => {
+    primaryModules.splice(0, primaryModules.length, ...modules);
+  };
+  const ensureMissing = (items: string[]) => {
+    for (const item of items) {
+      if (!missingData.includes(item)) {
+        missingData.push(item);
+      }
+    }
+  };
+  const ensureRisk = (items: string[]) => {
+    for (const item of items) {
+      if (!riskBoundaries.includes(item)) {
+        riskBoundaries.push(item);
+      }
+    }
+  };
+  const ensureRejected = (items: string[]) => {
+    for (const item of items) {
+      if (!rejectedContext.includes(item)) {
+        rejectedContext.push(item);
+      }
+    }
+  };
+
+  const isContextReset =
+    /context_reset|ambiguous_repeat|lark_context_pollution|重新来一遍|别串|旧任务|没说清楚|上下文污染|清除上下文/u.test(
+      ask,
+    );
+
+  if (isContextReset) {
+    replacePrimary(["ops_audit", "agent_workflow_memory", "control_room_summary"]);
+    ensureMissing(["current_subject_or_original_request"]);
+    ensureRejected(["old_lark_conversation_history", "unstated_finance_subject"]);
+    ensureRisk(["ops_audit_must_not_become_finance_analysis"]);
+    nextStep =
+      "Ask for the current subject or audit context pollution before doing any finance analysis.";
+  }
+
+  if (
+    !isContextReset &&
+    /相关性|波动|回撤|收益率序列|仓位权重|权重|correlation|volatility|drawdown|return series|position weight/iu.test(
+      ask,
+    )
+  ) {
+    ensurePrimary([
+      "quant_math",
+      "portfolio_risk_gates",
+      "source_registry",
+      "control_room_summary",
+    ]);
+    ensureMissing([
+      "position_weights",
+      "return_series_or_price_history",
+      "fresh_market_data_snapshot",
+    ]);
+    ensureRisk(["no_model_fabricated_portfolio_math"]);
+  }
+
+  if (
+    !isContextReset &&
+    /持有|未来|一周|一个月|两周|利率|美元流动性|风险偏好|latest|最新|实时|live market/iu.test(ask)
+  ) {
+    ensurePrimary([
+      "macro_rates_inflation",
+      "fx_currency_liquidity",
+      "cross_asset_liquidity",
+      "portfolio_risk_gates",
+    ]);
+    ensureMissing(["fresh_market_data_snapshot", "current_position_weights"]);
+    ensureRisk(["no_unverified_live_market_data_claims"]);
+  }
+
+  if (!isContextReset && /美股|A股|指数和加密币|跨市场|crypto|BTC|加密币/iu.test(ask)) {
+    ensurePrimary([
+      "us_equity_market_structure",
+      "china_a_share_policy_flow",
+      "global_index_regime",
+      "crypto_market_structure",
+      "fx_currency_liquidity",
+      "cross_asset_liquidity",
+      "portfolio_risk_gates",
+    ]);
+    ensureMissing(["fresh_market_data_snapshot", "cross_asset_liquidity_inputs"]);
+    ensureRisk(["no_high_leverage_crypto", "no_unverified_cross_market_claims"]);
+  }
+
+  if (
+    /没有给 URL|没有给链接|没有给 10-Q|没有给 10-K|没有给实时行情源|source|artifact|receipt|filing/iu.test(
+      ask,
+    )
+  ) {
+    ensurePrimary(["source_registry", "review_panel"]);
+    ensureMissing(["source_url_or_local_source_path", "actual_reading_scope_receipt"]);
+    ensureRisk(["evidence_required"]);
+  }
+
+  if (primaryModules.length === 0) {
+    ensurePrimary(["control_room_summary", "source_registry", "review_panel"]);
+  }
+
+  return {
+    ...plan,
+    primary_modules: primaryModules,
+    supporting_modules: supportingModules.filter((entry) => !primaryModules.includes(entry)),
+    missing_data: missingData,
+    risk_boundaries: riskBoundaries,
+    next_step: nextStep,
+    rejected_context: rejectedContext,
+  };
 }
 
 function makeAcceptedCandidate(
@@ -657,7 +1302,6 @@ function makeAcceptedCandidate(
   };
 }
 
-const options = parseArgs(process.argv.slice(2));
 const PROVIDER_PAYLOAD_UNSTABLE_PROMPTS = new Set([
   "context_reset",
   "ambiguous_repeat",
@@ -666,20 +1310,11 @@ const PROVIDER_PAYLOAD_UNSTABLE_PROMPTS = new Set([
   "local_math_then_review",
   "daily_learning_automation",
 ]);
-const configuredTeacherPrompts = await loadTeacherPrompts(options);
-const teacherPromptPool = options.promptFile
-  ? configuredTeacherPrompts
-  : options.includePayloadUnstablePrompts
-    ? configuredTeacherPrompts
-    : configuredTeacherPrompts.filter(
-        (prompt) => !PROVIDER_PAYLOAD_UNSTABLE_PROMPTS.has(prompt.id),
-      );
-const selectedPrompts = teacherPromptPool.slice(0, options.limit);
-const acceptedCandidates: LarkBrainDistillationCandidate[] = [];
-const failures: Array<{ id: string; error: string }> = [];
-const directApiFallbackPromptIds: string[] = [];
-
-async function callTeacherWithFallback(input: TeacherPrompt): Promise<string> {
+async function callTeacherWithFallback(
+  options: CliOptions,
+  directApiFallbackPromptIds: string[],
+  input: TeacherPrompt,
+): Promise<string> {
   try {
     return await callMinimaxTeacher(options, input);
   } catch (error) {
@@ -703,116 +1338,145 @@ function isProviderPayloadMissingFailure(failure: { error: string }): boolean {
   return failure.error.includes("OpenClaw agent output missing payload text");
 }
 
-async function processTeacherPrompt(prompt: TeacherPrompt): Promise<void> {
-  let lastError: unknown;
-  try {
-    for (let attempt = 0; attempt <= options.retries; attempt += 1) {
-      try {
-        const raw = options.mock
-          ? JSON.stringify(mockTeacherPlan(prompt))
-          : await callTeacherWithFallback(prompt);
-        acceptedCandidates.push(makeAcceptedCandidate(prompt, extractJson(raw)));
-        lastError = undefined;
-        break;
-      } catch (error) {
-        lastError = error;
+async function main(): Promise<void> {
+  const options = parseArgs(process.argv.slice(2));
+  const configuredTeacherPrompts = await loadTeacherPrompts(options);
+  const teacherPromptPool = options.promptFile
+    ? configuredTeacherPrompts
+    : options.includePayloadUnstablePrompts
+      ? configuredTeacherPrompts
+      : configuredTeacherPrompts.filter(
+          (prompt) => !PROVIDER_PAYLOAD_UNSTABLE_PROMPTS.has(prompt.id),
+        );
+  const selectedPrompts = teacherPromptPool.slice(0, options.limit);
+  const acceptedCandidates: LarkBrainDistillationCandidate[] = [];
+  const failures: Array<{ id: string; error: string }> = [];
+  const directApiFallbackPromptIds: string[] = [];
+
+  async function processTeacherPrompt(prompt: TeacherPrompt): Promise<void> {
+    let lastError: unknown;
+    try {
+      for (let attempt = 0; attempt <= options.retries; attempt += 1) {
+        try {
+          const raw = options.mock
+            ? JSON.stringify(mockTeacherPlan(prompt))
+            : await callTeacherWithFallback(options, directApiFallbackPromptIds, prompt);
+          acceptedCandidates.push(
+            makeAcceptedCandidate(
+              prompt,
+              hardenTeacherPlanForPrompt(prompt, normalizeTeacherPlan(extractJson(raw))),
+            ),
+          );
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (lastError) {
+        throw lastError;
+      }
+    } catch (error) {
+      failures.push({ id: prompt.id, error: String(error) });
+    }
+  }
+
+  async function runPromptPool(prompts: TeacherPrompt[]): Promise<void> {
+    let nextIndex = 0;
+    const workerCount = Math.min(options.concurrency, prompts.length);
+    async function worker(): Promise<void> {
+      while (nextIndex < prompts.length) {
+        const prompt = prompts[nextIndex];
+        nextIndex += 1;
+        await processTeacherPrompt(prompt);
       }
     }
-    if (lastError) {
-      throw lastError;
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  }
+
+  await runPromptPool(selectedPrompts);
+
+  const reviewedAt = new Date().toISOString();
+  const providerSkippedFailures = failures.filter(isProviderPayloadMissingFailure);
+  const hardFailures = failures.filter((failure) => !isProviderPayloadMissingFailure(failure));
+  const review: LarkBrainDistillationReviewArtifact = {
+    schemaVersion: 1,
+    boundary: "brain_distillation_review",
+    reviewedAt,
+    noLanguageRoutingPromotion: true,
+    noLiveSenderTouched: true,
+    sourceArtifacts: [`minimax_teacher_batch:${options.model}`],
+    acceptedCandidates,
+    rejectedCandidates: hardFailures.map((failure) => ({
+      id: `minimax-teacher-rejected-${failure.id}`,
+      source: "teacher_review",
+      reason: failure.error,
+    })),
+    counts: {
+      sourceArtifacts: selectedPrompts.length,
+      pendingCandidates: selectedPrompts.length,
+      accepted: acceptedCandidates.length,
+      rejected: hardFailures.length,
+      discarded: providerSkippedFailures.length,
+    },
+  };
+
+  let reviewPath: string | undefined;
+  let partialWriteRefused = false;
+  if (options.write) {
+    if (hardFailures.length > 0 && !options.allowPartialWrite) {
+      partialWriteRefused = true;
+    } else {
+      const dateKey = reviewedAt.slice(0, 10);
+      const reviewDir = path.join(
+        options.workspaceDir,
+        LARK_BRAIN_DISTILLATION_REVIEW_DIR,
+        dateKey,
+      );
+      await fs.mkdir(reviewDir, { recursive: true });
+      reviewPath = path.join(
+        reviewDir,
+        `minimax-teacher-batch-${reviewedAt.replace(/[:.]/gu, "-")}.json`,
+      );
+      await fs.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`, "utf8");
     }
-  } catch (error) {
-    failures.push({ id: prompt.id, error: String(error) });
   }
+
+  const result = {
+    ok: hardFailures.length === 0 && acceptedCandidates.length > 0,
+    boundary: "brain_distillation_review",
+    mode: "additive_teacher_samples_only",
+    teacher: options.model,
+    source: options.mock ? "mock" : options.source,
+    openclawAgent: options.source === "openclaw-agent" ? options.openclawAgent : undefined,
+    directApiFallbackPromptIds,
+    providerSkippedPromptIds: providerSkippedFailures.map((failure) => failure.id),
+    baseUrl: options.baseUrl,
+    concurrency: options.concurrency,
+    mock: options.mock,
+    write: options.write,
+    workspaceDir: options.workspaceDir,
+    agentDir: options.agentDir,
+    reviewPath: reviewPath
+      ? path.relative(options.workspaceDir, reviewPath).split(path.sep).join("/")
+      : undefined,
+    partialWriteRefused,
+    acceptedCandidates: acceptedCandidates.length,
+    failures: hardFailures,
+    liveTouched: false,
+    providerConfigTouched: false,
+    originalPipelineReplaced: false,
+    noLanguageRoutingPromotion: review.noLanguageRoutingPromotion,
+  };
+
+  process.stdout.write(
+    options.json
+      ? `${JSON.stringify(result, null, 2)}\n`
+      : `MiniMax teacher batch accepted=${acceptedCandidates.length} failed=${failures.length} write=${options.write}\n`,
+  );
+  process.exitCode = result.ok ? 0 : 1;
 }
 
-async function runPromptPool(prompts: TeacherPrompt[]): Promise<void> {
-  let nextIndex = 0;
-  const workerCount = Math.min(options.concurrency, prompts.length);
-  async function worker(): Promise<void> {
-    while (nextIndex < prompts.length) {
-      const prompt = prompts[nextIndex];
-      nextIndex += 1;
-      await processTeacherPrompt(prompt);
-    }
-  }
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
 }
-
-await runPromptPool(selectedPrompts);
-
-const reviewedAt = new Date().toISOString();
-const providerSkippedFailures = failures.filter(isProviderPayloadMissingFailure);
-const hardFailures = failures.filter((failure) => !isProviderPayloadMissingFailure(failure));
-const review: LarkBrainDistillationReviewArtifact = {
-  schemaVersion: 1,
-  boundary: "brain_distillation_review",
-  reviewedAt,
-  noLanguageRoutingPromotion: true,
-  noLiveSenderTouched: true,
-  sourceArtifacts: [`minimax_teacher_batch:${options.model}`],
-  acceptedCandidates,
-  rejectedCandidates: hardFailures.map((failure) => ({
-    id: `minimax-teacher-rejected-${failure.id}`,
-    source: "teacher_review",
-    reason: failure.error,
-  })),
-  counts: {
-    sourceArtifacts: selectedPrompts.length,
-    pendingCandidates: selectedPrompts.length,
-    accepted: acceptedCandidates.length,
-    rejected: hardFailures.length,
-    discarded: providerSkippedFailures.length,
-  },
-};
-
-let reviewPath: string | undefined;
-let partialWriteRefused = false;
-if (options.write) {
-  if (hardFailures.length > 0 && !options.allowPartialWrite) {
-    partialWriteRefused = true;
-  } else {
-    const dateKey = reviewedAt.slice(0, 10);
-    const reviewDir = path.join(options.workspaceDir, LARK_BRAIN_DISTILLATION_REVIEW_DIR, dateKey);
-    await fs.mkdir(reviewDir, { recursive: true });
-    reviewPath = path.join(
-      reviewDir,
-      `minimax-teacher-batch-${reviewedAt.replace(/[:.]/gu, "-")}.json`,
-    );
-    await fs.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`, "utf8");
-  }
-}
-
-const result = {
-  ok: hardFailures.length === 0 && acceptedCandidates.length > 0,
-  boundary: "brain_distillation_review",
-  mode: "additive_teacher_samples_only",
-  teacher: options.model,
-  source: options.mock ? "mock" : options.source,
-  openclawAgent: options.source === "openclaw-agent" ? options.openclawAgent : undefined,
-  directApiFallbackPromptIds,
-  providerSkippedPromptIds: providerSkippedFailures.map((failure) => failure.id),
-  baseUrl: options.baseUrl,
-  concurrency: options.concurrency,
-  mock: options.mock,
-  write: options.write,
-  workspaceDir: options.workspaceDir,
-  agentDir: options.agentDir,
-  reviewPath: reviewPath
-    ? path.relative(options.workspaceDir, reviewPath).split(path.sep).join("/")
-    : undefined,
-  partialWriteRefused,
-  acceptedCandidates: acceptedCandidates.length,
-  failures: hardFailures,
-  liveTouched: false,
-  providerConfigTouched: false,
-  originalPipelineReplaced: false,
-  noLanguageRoutingPromotion: review.noLanguageRoutingPromotion,
-};
-
-process.stdout.write(
-  options.json
-    ? `${JSON.stringify(result, null, 2)}\n`
-    : `MiniMax teacher batch accepted=${acceptedCandidates.length} failed=${failures.length} write=${options.write}\n`,
-);
-process.exitCode = result.ok ? 0 : 1;

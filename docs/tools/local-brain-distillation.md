@@ -2,6 +2,12 @@
 
 This is a bounded path for training a local auxiliary model that helps LCX Agent think more smoothly. It does not replace the main API model, does not send live Lark replies, and does not write protected memory.
 
+For fast operator recovery when chat context is missing, start with:
+
+```text
+ops/local-brain/README.md
+```
+
 ## Role
 
 The local model learns only a planning packet:

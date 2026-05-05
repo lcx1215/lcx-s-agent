@@ -26,6 +26,13 @@ const DEFAULT_ADAPTER = path.join(
   "adapters",
   "thought-flow-v1-qwen3-0.6b-taxonomy-v3",
 );
+const HOME = process.env.HOME ?? ".";
+const WORKSPACE_LOG_DIR = path.join(HOME, ".openclaw", "workspace", "logs");
+const MINIMAX_GUARD_LOG = path.join(WORKSPACE_LOG_DIR, "minimax-brain-training-guard-medium.jsonl");
+const MINIMAX_QUOTA_LOG = path.join(
+  WORKSPACE_LOG_DIR,
+  "minimax-quota-brain-saturator-2026-05-05.jsonl",
+);
 
 function usage(): never {
   throw new Error(
@@ -137,6 +144,72 @@ function runCommand(params: {
   });
 }
 
+function runQuietCommand(command: string, args: string[]): Promise<CommandResult> {
+  const startedAt = Date.now();
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", () => {
+      resolve({ command, args, stdout, stderr, durationMs: Date.now() - startedAt });
+    });
+  });
+}
+
+async function gitStatusCheck(): Promise<CheckResult> {
+  const startedAt = Date.now();
+  const cwd = process.cwd();
+  try {
+    const cwdReal = await fs.realpath(cwd);
+    const root = await runQuietCommand("git", ["rev-parse", "--show-toplevel"]);
+    const gitRoot = root.stdout.trim();
+    const gitRootReal = gitRoot ? await fs.realpath(gitRoot) : "";
+    if (!gitRootReal || gitRootReal !== cwdReal) {
+      return {
+        name: "git-status",
+        ok: true,
+        skipped: true,
+        durationMs: Date.now() - startedAt,
+        summary: {
+          reason: "cwd is not the git toplevel; refusing to report parent git state",
+          cwd,
+          gitRoot: gitRoot || null,
+        },
+      };
+    }
+  } catch (error) {
+    return {
+      name: "git-status",
+      ok: true,
+      skipped: true,
+      durationMs: Date.now() - startedAt,
+      summary: {
+        reason: "cwd is not a git worktree",
+        detail: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+
+  return runCommand({
+    name: "git-status",
+    command: "git",
+    args: ["status", "--short", "--branch"],
+  });
+}
+
 function summarizeText(name: string, stdout: string): Record<string, unknown> {
   if (name === "git-status") {
     return summarizeGitStatus(stdout);
@@ -221,6 +294,252 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
   return payload;
 }
 
+async function readJsonlTail(
+  filePath: string,
+  maxLines: number,
+): Promise<Array<Record<string, unknown>>> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return raw
+      .split(/\r?\n/u)
+      .filter((line) => line.trim())
+      .slice(-maxLines)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  } catch {
+    return [];
+  }
+}
+
+function eventTime(payload: Record<string, unknown> | undefined): string {
+  return typeof payload?.at === "string" ? payload.at : "";
+}
+
+function summarizeUnknownError(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Error) {
+    return value.message;
+  }
+  if (value && typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "object_error";
+    }
+  }
+  return "unknown";
+}
+
+function latestEvent(
+  events: Array<Record<string, unknown>>,
+  predicate: (payload: Record<string, unknown>) => boolean,
+): Record<string, unknown> | undefined {
+  return events.toReversed().find(predicate);
+}
+
+function summarizeEvalEvent(payload: Record<string, unknown> | undefined): Record<string, unknown> {
+  const result =
+    payload?.result && typeof payload.result === "object"
+      ? (payload.result as Record<string, unknown>)
+      : {};
+  const summary =
+    result.summary && typeof result.summary === "object"
+      ? (result.summary as Record<string, unknown>)
+      : undefined;
+  return {
+    at: eventTime(payload),
+    model: result.model,
+    adapterPath: result.adapterPath,
+    summary,
+  };
+}
+
+function summarizeDatasetEvent(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const result =
+    payload?.result && typeof payload.result === "object"
+      ? (payload.result as Record<string, unknown>)
+      : {};
+  return {
+    at: eventTime(payload),
+    counts: result.counts,
+    sourceKinds: result.sourceKinds,
+    notTouched: result.notTouched,
+  };
+}
+
+function summarizeTeacherEvent(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const result =
+    payload?.result && typeof payload.result === "object"
+      ? (payload.result as Record<string, unknown>)
+      : {};
+  const failures = Array.isArray(result.failures) ? result.failures : [];
+  return {
+    at: eventTime(payload),
+    attempted: result.attempted,
+    acceptedCandidates: result.acceptedCandidates ?? payload?.acceptedCandidates,
+    failures: failures.length,
+    failureKinds: failures
+      .map((failure) =>
+        failure && typeof failure === "object"
+          ? summarizeUnknownError((failure as Record<string, unknown>).error)
+          : "unknown",
+      )
+      .map((error) =>
+        error.includes("missing text content")
+          ? "missing_text_content"
+          : error.startsWith("SyntaxError")
+            ? "json_syntax"
+            : error.startsWith("TypeError")
+              ? "provider_or_network"
+              : "other",
+      )
+      .slice(0, 8),
+  };
+}
+
+function isTrainingCommand(command: string): boolean {
+  return (
+    /^(?:\S*\/)?node\s+--import(?:=tsx|\s+tsx)\s+scripts\/dev\/minimax-brain-training-guard\.ts(?:\s|$)/u.test(
+      command.trim(),
+    ) ||
+    command.includes("scripts/dev/minimax-quota-brain-saturator.ts") ||
+    command.includes("scripts/dev/minimax-brain-teacher-batch.ts") ||
+    command.includes("scripts/dev/local-brain-distill-eval.ts") ||
+    command.includes(" -m mlx_lm ")
+  );
+}
+
+async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
+  const startedAt = Date.now();
+  try {
+    const [psResult, guardEvents, quotaEvents] = await Promise.all([
+      runQuietCommand("ps", ["-axo", "pid=,ppid=,command="]),
+      readJsonlTail(MINIMAX_GUARD_LOG, 120),
+      readJsonlTail(MINIMAX_QUOTA_LOG, 120),
+    ]);
+    const activeProcesses = psResult.stdout
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const match = /^(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
+        return match
+          ? { pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }
+          : undefined;
+      })
+      .filter((entry): entry is { pid: number; ppid: number; command: string } =>
+        Boolean(entry && entry.pid !== process.pid && isTrainingCommand(entry.command)),
+      )
+      .map((entry) => ({
+        pid: entry.pid,
+        ppid: entry.ppid,
+        role: entry.command.includes("minimax-brain-training-guard")
+          ? "guard"
+          : entry.command.includes("minimax-quota-brain-saturator")
+            ? "saturator"
+            : entry.command.includes("minimax-brain-teacher-batch")
+              ? "teacher_batch"
+              : entry.command.includes("local-brain-distill-eval")
+                ? "local_brain_eval"
+                : entry.command.includes("mlx_lm")
+                  ? "mlx"
+                  : "other",
+      }));
+
+    const latestGuardStart = latestEvent(guardEvents, (event) => event.event === "guard_start");
+    const latestGuardFailure = latestEvent(guardEvents, (event) => event.event === "guard_failed");
+    const latestDataset = latestEvent(guardEvents, (event) => event.name === "dataset");
+    const latestSmoke = latestEvent(guardEvents, (event) => event.name === "smoke");
+    const latestStableEval = latestEvent(
+      guardEvents,
+      (event) => event.name === "stable_hardened_eval",
+    );
+    const latestCandidateEval = latestEvent(
+      guardEvents,
+      (event) => event.name === "candidate_hardened_eval",
+    );
+    const latestPromotion = latestEvent(
+      guardEvents,
+      (event) => event.event === "adapter_promoted_for_guard_session",
+    );
+    const latestTeacher =
+      latestEvent(quotaEvents, (event) => event.name === "minimax_teacher_batch") ??
+      latestEvent(quotaEvents, (event) => event.event === "teacher_batch_partial_ok");
+
+    const failedAfterStart =
+      eventTime(latestGuardFailure) > eventTime(latestGuardStart) &&
+      eventTime(latestGuardFailure) !== "";
+    const guardActive = activeProcesses.some((process) => process.role === "guard");
+    const guardPids = new Set(
+      activeProcesses.filter((process) => process.role === "guard").map((process) => process.pid),
+    );
+    const localBrainEvalCount = activeProcesses.filter(
+      (process) => process.role === "local_brain_eval",
+    ).length;
+    const externalLocalBrainEvalCount = activeProcesses.filter(
+      (process) => process.role === "local_brain_eval" && !guardPids.has(process.ppid),
+    ).length;
+    const mlxCount = activeProcesses.filter((process) => process.role === "mlx").length;
+    const overlappingHeavyEval =
+      guardActive && (localBrainEvalCount > 1 || mlxCount > 1 || externalLocalBrainEvalCount > 0);
+    const errorReasons = [
+      failedAfterStart ? "latest guard_failed is newer than latest guard_start" : undefined,
+      overlappingHeavyEval
+        ? `overlapping heavy local-brain eval while guard is active: local_brain_eval=${localBrainEvalCount}, external_local_brain_eval=${externalLocalBrainEvalCount}, mlx=${mlxCount}`
+        : undefined,
+    ].filter((reason): reason is string => Boolean(reason));
+    return {
+      name: "minimax-brain-training-guard",
+      ok: errorReasons.length === 0,
+      durationMs: Date.now() - startedAt,
+      summary: {
+        active: activeProcesses.length > 0,
+        activeProcesses,
+        activeHeavyEvalCounts: {
+          localBrainEval: localBrainEvalCount,
+          externalLocalBrainEval: externalLocalBrainEvalCount,
+          mlx: mlxCount,
+        },
+        overlappingHeavyEval,
+        latestGuardStart: eventTime(latestGuardStart),
+        latestGuardFailure: failedAfterStart ? eventTime(latestGuardFailure) : undefined,
+        latestDataset: summarizeDatasetEvent(latestDataset),
+        latestSmokeAt: eventTime(latestSmoke),
+        latestStableEval: summarizeEvalEvent(latestStableEval),
+        latestCandidateEval: summarizeEvalEvent(latestCandidateEval),
+        latestPromotionAt: eventTime(latestPromotion),
+        latestPromotedAdapter: latestPromotion?.adapterPath,
+        latestTeacher: summarizeTeacherEvent(latestTeacher),
+        logPaths: {
+          guard: MINIMAX_GUARD_LOG,
+          quota: MINIMAX_QUOTA_LOG,
+        },
+        liveTouched: false,
+        providerConfigTouched: false,
+      },
+      error: errorReasons.length > 0 ? errorReasons.join("; ") : undefined,
+    };
+  } catch (error) {
+    return {
+      name: "minimax-brain-training-guard",
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      summary: {
+        logPaths: {
+          guard: MINIMAX_GUARD_LOG,
+          quota: MINIMAX_QUOTA_LOG,
+        },
+      },
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function fileExists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath);
@@ -281,14 +600,9 @@ function actionableFailures(checks: CheckResult[]): string[] {
 const options = parseArgs(process.argv.slice(2));
 const checks: CheckResult[] = [];
 
-checks.push(
-  await runCommand({
-    name: "git-status",
-    command: "git",
-    args: ["status", "--short", "--branch"],
-  }),
-);
+checks.push(await gitStatusCheck());
 checks.push(await entrypointCheck());
+checks.push(await minimaxTrainingGuardStatusCheck());
 checks.push(
   await runCommand({
     name: "brain-distillation-candidate-smoke",

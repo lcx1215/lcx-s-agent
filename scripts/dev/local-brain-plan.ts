@@ -221,14 +221,21 @@ function looksLikeExternalCoveragePlanningAsk(text: string): boolean {
 }
 
 function looksLikeExternalMissingSourceAsk(text: string): boolean {
-  return (
+  const asksToLearnSource =
     /(学习|learn|读|吸收|沉淀|论文|paper|网页|article|source|url|链接|本地文件|local file)/iu.test(
       text,
-    ) &&
-    /(没给|没有给|还没给|未提供|缺|missing|without|no link|no url|no source|no local file)/iu.test(
-      text,
-    )
+    );
+  const namesSourceObject = /(论文|paper|网页|article|source|url|链接|本地文件|local file)/iu.test(
+    text,
   );
+  const sourceIsAbsent =
+    /(没给|没有给|还没给|未提供|缺少|missing|without|no)\s*(?:url|link|source|local file|paper|article)/iu.test(
+      text,
+    ) ||
+    /(没给|没有给|还没给|未提供|缺少).{0,12}(链接|网址|来源|源文件|本地文件|论文|文章)/iu.test(
+      text,
+    );
+  return asksToLearnSource && namesSourceObject && sourceIsAbsent;
 }
 
 function looksLikeAmbiguousRepeatOnlyPlanningAsk(text: string): boolean {
