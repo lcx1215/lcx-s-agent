@@ -36,53 +36,53 @@
   <g transform="translate(1118 72)">
     <rect x="0" y="0" width="378" height="116" rx="30" fill="#263238"/>
     <text x="28" y="34" fill="#d8e6ec" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="950">LAST 7 DAYS</text>
-    <text x="28" y="88" fill="#ffcf5c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="54" font-weight="950">116</text>
+    <text x="28" y="88" fill="#ffcf5c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="54" font-weight="950">115</text>
     <text x="146" y="67" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="950">6/7 active days</text>
-    <text x="146" y="91" fill="#b7c9d0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">updated 2026-05-04 · peak Sun 39</text>
+    <text x="146" y="91" fill="#b7c9d0" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">updated 2026-05-05 · peak Sun 39</text>
   </g>
 
 
       <g>
         <rect x="103.1" y="172" width="124" height="82" rx="24" fill="#ffffff" stroke="#dfe9ef" stroke-width="2"/>
-        <text x="121.1" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Tue</text>
-        <text x="121.1" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">4</text>
-        <text x="209.1" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">04-28</text>
+        <text x="121.1" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Wed</text>
+        <text x="121.1" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">33</text>
+        <text x="209.1" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">04-29</text>
       </g>
       <g>
         <rect x="241.4" y="172" width="124" height="82" rx="24" fill="#ffffff" stroke="#dfe9ef" stroke-width="2"/>
-        <text x="259.4" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Wed</text>
-        <text x="259.4" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">33</text>
-        <text x="347.4" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">04-29</text>
+        <text x="259.4" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Thu</text>
+        <text x="259.4" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">6</text>
+        <text x="347.4" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">04-30</text>
       </g>
       <g>
         <rect x="379.7" y="172" width="124" height="82" rx="24" fill="#ffffff" stroke="#dfe9ef" stroke-width="2"/>
-        <text x="397.7" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Thu</text>
-        <text x="397.7" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">6</text>
-        <text x="485.7" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">04-30</text>
+        <text x="397.7" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Fri</text>
+        <text x="397.7" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">1</text>
+        <text x="485.7" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-01</text>
       </g>
       <g>
         <rect x="518.0" y="172" width="124" height="82" rx="24" fill="#ffffff" stroke="#dfe9ef" stroke-width="2"/>
-        <text x="536.0" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Fri</text>
-        <text x="536.0" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">1</text>
-        <text x="624.0" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-01</text>
+        <text x="536.0" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Sat</text>
+        <text x="536.0" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">33</text>
+        <text x="624.0" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-02</text>
       </g>
       <g>
-        <rect x="656.3" y="172" width="124" height="82" rx="24" fill="#ffffff" stroke="#dfe9ef" stroke-width="2"/>
-        <text x="674.3" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Sat</text>
-        <text x="674.3" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">33</text>
-        <text x="762.3" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-02</text>
+        <rect x="656.3" y="172" width="124" height="82" rx="24" fill="#263238" stroke="#263238" stroke-width="2"/>
+        <text x="674.3" y="202" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Sun</text>
+        <text x="674.3" y="232" fill="#ffcf5c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">39</text>
+        <text x="762.3" y="232" text-anchor="end" fill="#c9d6dc" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-03</text>
       </g>
       <g>
-        <rect x="794.6" y="172" width="124" height="82" rx="24" fill="#263238" stroke="#263238" stroke-width="2"/>
-        <text x="812.6" y="202" fill="#ffffff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Sun</text>
-        <text x="812.6" y="232" fill="#ffcf5c" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">39</text>
-        <text x="900.6" y="232" text-anchor="end" fill="#c9d6dc" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-03</text>
+        <rect x="794.6" y="172" width="124" height="82" rx="24" fill="#ffffff" stroke="#dfe9ef" stroke-width="2"/>
+        <text x="812.6" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Mon</text>
+        <text x="812.6" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">3</text>
+        <text x="900.6" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-04</text>
       </g>
       <g>
         <rect x="932.9" y="172" width="124" height="82" rx="24" fill="#ffffff" stroke="#dfe9ef" stroke-width="2"/>
-        <text x="950.9" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Mon</text>
+        <text x="950.9" y="202" fill="#51626b" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Tue</text>
         <text x="950.9" y="232" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="31" font-weight="950">0</text>
-        <text x="1038.9" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-04</text>
+        <text x="1038.9" y="232" text-anchor="end" fill="#8a9aa3" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">05-05</text>
       </g>
 
   <g>
@@ -93,31 +93,31 @@
     <line x1="96" y1="484" x2="1064" y2="484" stroke="#edf3f6" stroke-width="2"/>
     <line x1="96" y1="414" x2="1064" y2="414" stroke="#edf3f6" stroke-width="2"/>
     <line x1="96" y1="344" x2="1064" y2="344" stroke="#edf3f6" stroke-width="2"/>
-    <path d="M 165.1 510.5 C 234.3 510.5, 234.3 354.3, 303.4 354.3 C 372.6 354.3, 372.6 499.7, 441.7 499.7 C 510.9 499.7, 510.9 526.6, 580.0 526.6 C 649.1 526.6, 649.1 354.3, 718.3 354.3 C 787.4 354.3, 787.4 322.0, 856.6 322.0 C 925.7 322.0, 925.7 532.0, 994.9 532.0 L 994.9 554 L 165.1 554 Z" fill="url(#area)"/>
+    <path d="M 165.1 354.3 C 234.3 354.3, 234.3 499.7, 303.4 499.7 C 372.6 499.7, 372.6 526.6, 441.7 526.6 C 510.9 526.6, 510.9 354.3, 580.0 354.3 C 649.1 354.3, 649.1 322.0, 718.3 322.0 C 787.4 322.0, 787.4 515.8, 856.6 515.8 C 925.7 515.8, 925.7 532.0, 994.9 532.0 L 994.9 554 L 165.1 554 Z" fill="url(#area)"/>
 
-      <rect x="122.1" y="510.5" width="86" height="43.5" rx="26" fill="#ffd9cf" stroke="#ffffff" stroke-width="4"/>
-      <circle cx="165.1" cy="510.5" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
-      <text x="165.1" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Tue</text>
-      <rect x="260.4" y="354.3" width="86" height="199.7" rx="26" fill="#def1ff" stroke="#ffffff" stroke-width="4"/>
-      <circle cx="303.4" cy="354.3" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
-      <text x="303.4" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Wed</text>
-      <rect x="398.7" y="499.7" width="86" height="54.3" rx="26" fill="#dff7e8" stroke="#ffffff" stroke-width="4"/>
-      <circle cx="441.7" cy="499.7" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
-      <text x="441.7" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Thu</text>
-      <rect x="537.0" y="526.6" width="86" height="27.4" rx="26" fill="#fff0c2" stroke="#ffffff" stroke-width="4"/>
-      <circle cx="580.0" cy="526.6" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
-      <text x="580.0" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Fri</text>
-      <rect x="675.3" y="354.3" width="86" height="199.7" rx="26" fill="#ece7ff" stroke="#ffffff" stroke-width="4"/>
-      <circle cx="718.3" cy="354.3" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
-      <text x="718.3" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Sat</text>
-      <rect x="813.6" y="322.0" width="86" height="232.0" rx="26" fill="#d8f7ec" stroke="#ffffff" stroke-width="4"/>
-      <circle cx="856.6" cy="322.0" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
-      <text x="856.6" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Sun</text>
+      <rect x="122.1" y="354.3" width="86" height="199.7" rx="26" fill="#ffd9cf" stroke="#ffffff" stroke-width="4"/>
+      <circle cx="165.1" cy="354.3" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
+      <text x="165.1" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Wed</text>
+      <rect x="260.4" y="499.7" width="86" height="54.3" rx="26" fill="#def1ff" stroke="#ffffff" stroke-width="4"/>
+      <circle cx="303.4" cy="499.7" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
+      <text x="303.4" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Thu</text>
+      <rect x="398.7" y="526.6" width="86" height="27.4" rx="26" fill="#dff7e8" stroke="#ffffff" stroke-width="4"/>
+      <circle cx="441.7" cy="526.6" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
+      <text x="441.7" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Fri</text>
+      <rect x="537.0" y="354.3" width="86" height="199.7" rx="26" fill="#fff0c2" stroke="#ffffff" stroke-width="4"/>
+      <circle cx="580.0" cy="354.3" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
+      <text x="580.0" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Sat</text>
+      <rect x="675.3" y="322.0" width="86" height="232.0" rx="26" fill="#ece7ff" stroke="#ffffff" stroke-width="4"/>
+      <circle cx="718.3" cy="322.0" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
+      <text x="718.3" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Sun</text>
+      <rect x="813.6" y="515.8" width="86" height="38.2" rx="26" fill="#d8f7ec" stroke="#ffffff" stroke-width="4"/>
+      <circle cx="856.6" cy="515.8" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
+      <text x="856.6" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Mon</text>
       <rect x="951.9" y="532.0" width="86" height="22.0" rx="26" fill="#ffddeb" stroke="#ffffff" stroke-width="4"/>
       <circle cx="994.9" cy="532.0" r="14" fill="#ffffff" stroke="#263238" stroke-width="3"/>
-      <text x="994.9" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Mon</text>
-    <path d="M 165.1 510.5 C 234.3 510.5, 234.3 354.3, 303.4 354.3 C 372.6 354.3, 372.6 499.7, 441.7 499.7 C 510.9 499.7, 510.9 526.6, 580.0 526.6 C 649.1 526.6, 649.1 354.3, 718.3 354.3 C 787.4 354.3, 787.4 322.0, 856.6 322.0 C 925.7 322.0, 925.7 532.0, 994.9 532.0" fill="none" stroke="url(#wave)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M 165.1 510.5 C 234.3 510.5, 234.3 354.3, 303.4 354.3 C 372.6 354.3, 372.6 499.7, 441.7 499.7 C 510.9 499.7, 510.9 526.6, 580.0 526.6 C 649.1 526.6, 649.1 354.3, 718.3 354.3 C 787.4 354.3, 787.4 322.0, 856.6 322.0 C 925.7 322.0, 925.7 532.0, 994.9 532.0" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.78"/>
+      <text x="994.9" y="590.0" text-anchor="middle" fill="#52666f" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="900">Tue</text>
+    <path d="M 165.1 354.3 C 234.3 354.3, 234.3 499.7, 303.4 499.7 C 372.6 499.7, 372.6 526.6, 441.7 526.6 C 510.9 526.6, 510.9 354.3, 580.0 354.3 C 649.1 354.3, 649.1 322.0, 718.3 322.0 C 787.4 322.0, 787.4 515.8, 856.6 515.8 C 925.7 515.8, 925.7 532.0, 994.9 532.0" fill="none" stroke="url(#wave)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 165.1 354.3 C 234.3 354.3, 234.3 499.7, 303.4 499.7 C 372.6 499.7, 372.6 526.6, 441.7 526.6 C 510.9 526.6, 510.9 354.3, 580.0 354.3 C 649.1 354.3, 649.1 322.0, 718.3 322.0 C 787.4 322.0, 787.4 515.8, 856.6 515.8 C 925.7 515.8, 925.7 532.0, 994.9 532.0" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.78"/>
   </g>
 
   <g>
@@ -128,7 +128,7 @@
       <g>
         <rect x="1118" y="286" width="168" height="82" rx="24" fill="#fff1ed" stroke="#f06449" stroke-opacity="0.28" stroke-width="2"/>
         <text x="1140" y="316" fill="#f06449" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="950">Lark</text>
-        <text x="1140" y="344" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="950">32</text>
+        <text x="1140" y="344" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="950">33</text>
         <text x="1188" y="342" fill="#667780" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="800">Language interface</text>
       </g>
       <g>
@@ -140,13 +140,13 @@
       <g>
         <rect x="1118" y="390" width="168" height="82" rx="24" fill="#eef7ff" stroke="#238be6" stroke-opacity="0.28" stroke-width="2"/>
         <text x="1140" y="420" fill="#238be6" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="950">Docs</text>
-        <text x="1140" y="448" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="950">51</text>
+        <text x="1140" y="448" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="950">49</text>
         <text x="1188" y="446" fill="#667780" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="800">README + runbooks</text>
       </g>
       <g>
         <rect x="1302" y="390" width="168" height="82" rx="24" fill="#fff7dd" stroke="#d78a16" stroke-opacity="0.28" stroke-width="2"/>
         <text x="1324" y="420" fill="#d78a16" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="950">Live</text>
-        <text x="1324" y="448" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="950">3</text>
+        <text x="1324" y="448" fill="#263238" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="950">4</text>
         <text x="1372" y="446" fill="#667780" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="800">Runtime proof</text>
       </g>
       <g>
