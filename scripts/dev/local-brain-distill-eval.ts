@@ -52,6 +52,7 @@ const CONTRACT_HINTS = [
   "If source URL or local file is missing, include source_registry and missing_data source_url_or_local_source_path.",
   "If portfolio math inputs are missing, include missing_data position_weights_and_return_series exactly.",
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
+  "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
 ];
 
 type EvalCase = {
@@ -215,6 +216,27 @@ const EVAL_CASES: EvalCase[] = [
     requiredModules: ["ops_audit"],
     forbiddenModules: REQUIRED_FINANCE_MODULES,
     minModuleMatches: 1,
+  },
+  {
+    id: "local_memory_knowledge_activation",
+    userAsk:
+      "这是一个复杂研究任务：我持有 QQQ、TLT、NVDA，还担心利率、美元流动性和 AI capex。先动用本地记忆、已学规则和历史沉淀，拆成可执行的内部分析步骤，再交给大模型审阅；不要直接给交易建议。",
+    sourceSummary:
+      "complex local-brain task requiring memory recall, learned-rule activation, finance module fanout, and model review handoff.",
+    requiredModules: [
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "etf_regime",
+      "company_fundamentals_value",
+      "finance_learning_memory",
+      "source_registry",
+      "causal_map",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 8,
+    requiredMissingData: ["memory_recall_scope_or_relevant_receipts"],
   },
 ];
 

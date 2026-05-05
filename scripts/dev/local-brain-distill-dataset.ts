@@ -53,6 +53,7 @@ const CONTRACT_HINTS = [
   "If source URL or local file is missing, include source_registry and missing_data source_url_or_local_source_path.",
   "If portfolio math inputs are missing, include missing_data position_weights_and_return_series exactly.",
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
+  "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
 ];
 
 function usage(): never {
@@ -860,6 +861,45 @@ function buildSeedExamples(): DistillExample[] {
         "latest_macro_inputs",
       ],
       nextStep: "collect_position_inputs_then_run_multi_module_risk_decomposition",
+    },
+    {
+      userAsk:
+        "这是一个复杂研究任务：我持有 QQQ、TLT、NVDA，还担心利率、美元流动性和 AI capex。先动用本地记忆、已学规则和历史沉淀，拆成可执行的内部分析步骤，再交给大模型审阅；不要直接给交易建议。",
+      sourceSummary:
+        "complex local-brain task requiring memory recall, learned-rule activation, finance module fanout, and model review handoff.",
+      taskFamily: "local_memory_knowledge_activated_research_planning",
+      primaryModules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "etf_regime",
+        "company_fundamentals_value",
+        "finance_learning_memory",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+      ],
+      supportingModules: ["review_panel", "control_room_summary"],
+      requiredTools: [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_etf_regime_producer",
+        "finance_framework_company_fundamentals_value_producer",
+        "finance_framework_causal_map_producer",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missingData: [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_task_inputs",
+        "position_weights_and_return_series",
+        "current_rates_and_inflation_inputs",
+        "current_credit_and_liquidity_inputs",
+        "latest_company_fundamental_inputs",
+      ],
+      nextStep: "recall_relevant_local_memory_and_rules_then_decompose_modules_before_model_review",
     },
     {
       userAsk: "重新来一遍。",

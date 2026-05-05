@@ -162,6 +162,15 @@ function looksLikeOpsContextAudit(text: string): boolean {
   );
 }
 
+function looksLikeLocalKnowledgeActivation(text: string): boolean {
+  return (
+    /(复杂|拆解|分析|研究|任务|framework|plan|planning|decompose|reason)/iu.test(text) &&
+    /(本地|local|记忆|memory|知识|knowledge|已学|learned|规则|lessons?|沉淀|artifact|receipt|历史|复盘)/iu.test(
+      text,
+    )
+  );
+}
+
 export function hardenLocalBrainPlanForAsk(
   plan: Record<string, unknown>,
   input: LocalBrainContractInput,
@@ -282,6 +291,42 @@ export function hardenLocalBrainPlanForAsk(
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ]),
+    };
+  }
+
+  if (looksLikeLocalKnowledgeActivation(text)) {
+    return {
+      ...safe,
+      task_family: "local_memory_knowledge_activated_research_planning",
+      primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
+        ...inferFinanceModulesFromLocalKnowledgeText(text),
+        "finance_learning_memory",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+      ]),
+      supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
+        "review_panel",
+        "control_room_summary",
+      ]),
+      required_tools: mergeUnique(arrayValue(safe.required_tools), [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "review_panel",
+      ]),
+      missing_data: mergeUnique(arrayValue(safe.missing_data), [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_task_inputs",
+      ]),
+      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "do_not_promote_unverified_memory_claims",
+      ]),
+      next_step:
+        "recall_relevant_local_memory_and_rules_then_decompose_modules_before_model_review",
     };
   }
 
@@ -414,4 +459,24 @@ export function hardenLocalBrainPlanForAsk(
   }
 
   return safe;
+}
+
+function inferFinanceModulesFromLocalKnowledgeText(text: string): string[] {
+  const modules: string[] = [];
+  if (/(利率|通胀|real yield|yield|fed|tlt|duration|macro)/iu.test(text)) {
+    modules.push("macro_rates_inflation");
+  }
+  if (/(流动性|美元|dollar|liquidity|credit|信用)/iu.test(text)) {
+    modules.push("credit_liquidity");
+  }
+  if (/(etf|qqq|spy|tlt|iwm|择时|timing|regime)/iu.test(text)) {
+    modules.push("etf_regime");
+  }
+  if (/(nvda|公司|基本面|fundamental|capex|估值|revenue|earnings|ai capex)/iu.test(text)) {
+    modules.push("company_fundamentals_value");
+  }
+  if (/(数学|量化|波动|相关|回撤|correlation|volatility|drawdown)/iu.test(text)) {
+    modules.push("quant_math");
+  }
+  return modules;
 }
