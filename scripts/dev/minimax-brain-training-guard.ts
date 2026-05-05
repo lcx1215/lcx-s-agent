@@ -22,6 +22,8 @@ type CliOptions = {
   currentAdapter: string;
   adapterPrefix: string;
   logPath: string;
+  lockPath: string;
+  lockEnabled: boolean;
 };
 
 type CommandResult = {
@@ -30,6 +32,11 @@ type CommandResult = {
   stdout: string;
   stderr: string;
   durationMs: number;
+};
+
+type ActiveProcess = {
+  pid: number;
+  command: string;
 };
 
 const HOME = process.env.HOME ?? os.homedir();
@@ -53,6 +60,13 @@ const DEFAULT_LOG = path.join(
   "minimax-brain-training-guard.jsonl",
 );
 const DEFAULT_GUARD_LOG_DIR = path.dirname(DEFAULT_LOG);
+const DEFAULT_LOCK = path.join(
+  HOME,
+  ".openclaw",
+  "workspace",
+  "run",
+  "minimax-brain-training-guard.lock",
+);
 
 function usage(): never {
   throw new Error(
@@ -74,6 +88,8 @@ function usage(): never {
       "  --current-adapter DIR   stable adapter, latest-passing, or latest directory match",
       "  --adapter-prefix DIR    new adapter prefix",
       "  --log PATH              JSONL guard log",
+      "  --lock PATH             lock file path",
+      "  --no-lock               disable lock file, but still checks active guard process",
     ].join("\n"),
   );
 }
@@ -114,6 +130,8 @@ function parseArgs(args: string[]): CliOptions {
     currentAdapter: "latest-passing",
     adapterPrefix: DEFAULT_ADAPTER_PREFIX,
     logPath: DEFAULT_LOG,
+    lockPath: DEFAULT_LOCK,
+    lockEnabled: true,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -174,6 +192,11 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--log") {
       options.logPath = path.resolve(readValue(args, index));
       index += 1;
+    } else if (arg === "--lock") {
+      options.lockPath = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--no-lock") {
+      options.lockEnabled = false;
     } else if (arg === "--help" || arg === "-h") {
       usage();
     } else {
@@ -259,6 +282,143 @@ function parseJsonFromStdout(stdout: string): unknown {
     }
   }
   return null;
+}
+
+function runQuietCommand(command: string, args: string[]): Promise<CommandResult> {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", () => {
+      resolve({ command, args, stdout, stderr, durationMs: Date.now() - started });
+    });
+  });
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isGuardRuntimeCommand(command: string): boolean {
+  return (
+    command.includes("node --import tsx scripts/dev/minimax-brain-training-guard.ts") ||
+    command.includes("node --import=tsx scripts/dev/minimax-brain-training-guard.ts")
+  );
+}
+
+async function activeGuardProcesses(): Promise<ActiveProcess[]> {
+  const result = await runQuietCommand("ps", ["-axo", "pid=,command="]);
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => isGuardRuntimeCommand(line))
+    .map((line) => {
+      const match = /^(\d+)\s+(.+)$/u.exec(line);
+      if (!match) {
+        return undefined;
+      }
+      return { pid: Number(match[1]), command: match[2] };
+    })
+    .filter(
+      (entry): entry is ActiveProcess =>
+        Boolean(entry) &&
+        entry.pid !== process.pid &&
+        !entry.command.includes("--resolve-current-adapter"),
+    );
+}
+
+async function reportAlreadyRunning(params: {
+  reason: string;
+  activeProcesses: ActiveProcess[];
+  lockPath?: string;
+}): Promise<never> {
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        ok: true,
+        status: "already_running",
+        boundary: "local_auxiliary_thought_flow_only",
+        reason: params.reason,
+        activeProcesses: params.activeProcesses,
+        lockPath: params.lockPath,
+        liveTouched: false,
+        providerConfigTouched: false,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  process.exit(0);
+}
+
+async function acquireRunLock(options: CliOptions): Promise<() => Promise<void>> {
+  const active = await activeGuardProcesses();
+  if (active.length > 0) {
+    await reportAlreadyRunning({ reason: "active_guard_process", activeProcesses: active });
+  }
+  if (!options.lockEnabled) {
+    return async () => {};
+  }
+  await fs.mkdir(path.dirname(options.lockPath), { recursive: true });
+  try {
+    const handle = await fs.open(options.lockPath, "wx");
+    await handle.writeFile(
+      `${JSON.stringify(
+        {
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+          command: process.argv.join(" "),
+          logPath: options.logPath,
+          cwd: process.cwd(),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await handle.close();
+  } catch {
+    const raw = await fs.readFile(options.lockPath, "utf8").catch(() => "");
+    const parsed = raw ? (JSON.parse(raw) as { pid?: unknown }) : {};
+    const pid = typeof parsed.pid === "number" ? parsed.pid : undefined;
+    if (pid && isProcessAlive(pid)) {
+      await reportAlreadyRunning({
+        reason: "active_lock",
+        activeProcesses: [{ pid, command: "recorded in lock file" }],
+        lockPath: options.lockPath,
+      });
+    }
+    await fs.rm(options.lockPath, { force: true });
+    return acquireRunLock(options);
+  }
+  return async () => {
+    const raw = await fs.readFile(options.lockPath, "utf8").catch(() => "");
+    const parsed = raw ? (JSON.parse(raw) as { pid?: unknown }) : {};
+    if (parsed.pid === process.pid) {
+      await fs.rm(options.lockPath, { force: true });
+    }
+  };
 }
 
 async function hasAdapterConfig(adapterPath: string): Promise<boolean> {
@@ -520,18 +680,14 @@ function adapterPathForRound(options: CliOptions, round: number): string {
 }
 
 const options = parseArgs(process.argv.slice(2));
-const startedAt = Date.now();
-const deadline = startedAt + options.durationMinutes * 60_000;
-let round = 0;
-let currentAdapter = await resolveCurrentAdapter(options);
-
 if (options.resolveCurrentAdapterOnly) {
+  const selectedAdapter = await resolveCurrentAdapter(options);
   process.stdout.write(
     `${JSON.stringify(
       {
         ok: true,
         boundary: "local_auxiliary_thought_flow_only",
-        selectedAdapter: currentAdapter,
+        selectedAdapter,
         selectionMode: options.currentAdapter,
         liveTouched: false,
         providerConfigTouched: false,
@@ -542,6 +698,12 @@ if (options.resolveCurrentAdapterOnly) {
   );
   process.exit(0);
 }
+
+const releaseRunLock = await acquireRunLock(options);
+const startedAt = Date.now();
+const deadline = startedAt + options.durationMinutes * 60_000;
+let round = 0;
+let currentAdapter = await resolveCurrentAdapter(options);
 
 await appendLog(options.logPath, {
   event: "guard_start",
@@ -654,4 +816,6 @@ try {
   });
   process.stderr.write(`\n[minimax-guard] failed round=${round}: ${String(error)}\n`);
   process.exitCode = 1;
+} finally {
+  await releaseRunLock();
 }
