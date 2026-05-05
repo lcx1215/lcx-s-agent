@@ -38,6 +38,13 @@ describe("languageBrainLoopSmokeCommand", () => {
         rollingBetaWindows: number;
         noModelMathGuessing: boolean;
       };
+      visibleReply: {
+        text: string;
+        startsWithPlainSummary: boolean;
+        hidesInternalLabels: boolean;
+        includesResearchBoundary: boolean;
+        includesProofPath: boolean;
+      };
       review: {
         tier: string;
         reviewers: string[];
@@ -104,6 +111,15 @@ describe("languageBrainLoopSmokeCommand", () => {
     ]);
     expect(payload.math.rollingBetaWindows).toBe(4);
     expect(payload.math.noModelMathGuessing).toBe(true);
+    expect(payload.visibleReply.startsWithPlainSummary).toBe(true);
+    expect(payload.visibleReply.hidesInternalLabels).toBe(true);
+    expect(payload.visibleReply.includesResearchBoundary).toBe(true);
+    expect(payload.visibleReply.includesProofPath).toBe(true);
+    expect(payload.visibleReply.text).toMatch(/^当前判断：/u);
+    expect(payload.visibleReply.text).toContain("research-only");
+    expect(payload.visibleReply.text).not.toContain("primaryModules");
+    expect(payload.visibleReply.text).not.toContain("backendTool");
+    expect(payload.visibleReply.text).not.toContain("{");
     expect(payload.review.tier).toBe("three_model_review");
     expect(payload.review.reviewers).toEqual([
       "logic_and_expression",
