@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="760" viewBox="0 0 1600 760" role="img" aria-labelledby="title desc">
   <title id="title">LCX Agent 能力看板</title>
-  <desc id="desc">LCX Agent 的核心能力、验证边界和当前工程重点。</desc>
+  <desc id="desc">LCX Agent 的 Harness、Hermes、控制室、本地大脑、研究工作流和底层 runtime。</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#f7fbff"/>
@@ -14,35 +14,35 @@
   <rect width="1600" height="760" rx="44" fill="url(#background)"/>
   <rect x="48" y="42" width="1504" height="674" rx="38" fill="#ffffff" opacity="0.96" filter="url(#shadow)"/>
   <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif">
-    <text x="96" y="112" fill="#071225" font-size="54" font-weight="950">LCX Agent 能力看板</text>
-    <text x="98" y="152" fill="#51606f" font-size="22" font-weight="760">飞书控制室、Agent 路由、持久记忆、证据审计、金融研究工作流。</text>
+    <text x="96" y="112" fill="#071225" font-size="54" font-weight="950">LCX Agent 架构哲学</text>
+    <text x="98" y="152" fill="#51606f" font-size="22" font-weight="760">Harness 约束验收，Hermes 传递证据，本地大脑沉淀长期经验。</text>
     <rect x="1100" y="78" width="356" height="96" rx="26" fill="#071225"/>
     <text x="1128" y="114" fill="#cfe3ff" font-size="15" font-weight="900">CURRENT MODE</text>
     <text x="1128" y="154" fill="#ffffff" font-size="31" font-weight="950">Baseline Hardening</text>
     <g>
         <rect x="96" y="224" width="430" height="136" rx="24" fill="#edf4ff" stroke="#1557c0" stroke-opacity="0.28" stroke-width="2"/>
         <circle cx="134" cy="266" r="18" fill="#1557c0"/>
-        <text x="164" y="271" fill="#1557c0" font-size="25" font-weight="950">飞书控制室</text>
-        <text x="124" y="308" fill="#071225" font-size="21" font-weight="900">自然语言入口</text>
-        <text x="124" y="338" fill="#51606f" font-size="16" font-weight="760">一个主入口承接研究、学习、运维和审计请求</text>
+        <text x="164" y="271" fill="#1557c0" font-size="25" font-weight="950">Harness</text>
+        <text x="124" y="308" fill="#071225" font-size="21" font-weight="900">约束与验收</text>
+        <text x="124" y="338" fill="#51606f" font-size="16" font-weight="760">权限、风险、测试、eval、live 验收</text>
       </g><g>
         <rect x="582" y="224" width="430" height="136" rx="24" fill="#ecfbff" stroke="#0f8a9d" stroke-opacity="0.28" stroke-width="2"/>
         <circle cx="620" cy="266" r="18" fill="#0f8a9d"/>
-        <text x="650" y="271" fill="#0f8a9d" font-size="25" font-weight="950">任务路由</text>
-        <text x="610" y="308" fill="#071225" font-size="21" font-weight="900">模块化拆解</text>
-        <text x="610" y="338" fill="#51606f" font-size="16" font-weight="760">大模型先拆任务，本地规则守边界</text>
+        <text x="650" y="271" fill="#0f8a9d" font-size="25" font-weight="950">Hermes</text>
+        <text x="610" y="308" fill="#071225" font-size="21" font-weight="900">消息与证据流</text>
+        <text x="610" y="338" fill="#51606f" font-size="16" font-weight="760">上下文、handoff、receipt、review artifact</text>
       </g><g>
-        <rect x="1068" y="224" width="430" height="136" rx="24" fill="#effbf2" stroke="#15803d" stroke-opacity="0.28" stroke-width="2"/>
-        <circle cx="1106" cy="266" r="18" fill="#15803d"/>
-        <text x="1136" y="271" fill="#15803d" font-size="25" font-weight="950">本地大脑</text>
-        <text x="1096" y="308" fill="#071225" font-size="21" font-weight="900">学习沉淀</text>
-        <text x="1096" y="338" fill="#51606f" font-size="16" font-weight="760">吸收蒸馏样本和 review artifact</text>
+        <rect x="1068" y="224" width="430" height="136" rx="24" fill="#f4f0ff" stroke="#6a45c9" stroke-opacity="0.28" stroke-width="2"/>
+        <circle cx="1106" cy="266" r="18" fill="#6a45c9"/>
+        <text x="1136" y="271" fill="#6a45c9" font-size="25" font-weight="950">飞书控制室</text>
+        <text x="1096" y="308" fill="#071225" font-size="21" font-weight="900">自然语言入口</text>
+        <text x="1096" y="338" fill="#51606f" font-size="16" font-weight="760">一个主入口承接研究、学习、运维和审计</text>
       </g><g>
-        <rect x="96" y="402" width="430" height="136" rx="24" fill="#f4f0ff" stroke="#6a45c9" stroke-opacity="0.28" stroke-width="2"/>
-        <circle cx="134" cy="444" r="18" fill="#6a45c9"/>
-        <text x="164" y="449" fill="#6a45c9" font-size="25" font-weight="950">证据审计</text>
-        <text x="124" y="486" fill="#071225" font-size="21" font-weight="900">truth surface</text>
-        <text x="124" y="516" fill="#51606f" font-size="16" font-weight="760">区分 searched、learned、written、dev/live</text>
+        <rect x="96" y="402" width="430" height="136" rx="24" fill="#effbf2" stroke="#15803d" stroke-opacity="0.28" stroke-width="2"/>
+        <circle cx="134" cy="444" r="18" fill="#15803d"/>
+        <text x="164" y="449" fill="#15803d" font-size="25" font-weight="950">本地大脑</text>
+        <text x="124" y="486" fill="#071225" font-size="21" font-weight="900">学习沉淀</text>
+        <text x="124" y="516" fill="#51606f" font-size="16" font-weight="760">吸收蒸馏样本、能力卡和修正笔记</text>
       </g><g>
         <rect x="582" y="402" width="430" height="136" rx="24" fill="#fff8e8" stroke="#b66a00" stroke-opacity="0.28" stroke-width="2"/>
         <circle cx="620" cy="444" r="18" fill="#b66a00"/>
@@ -52,12 +52,12 @@
       </g><g>
         <rect x="1068" y="402" width="430" height="136" rx="24" fill="#fff1f2" stroke="#be123c" stroke-opacity="0.28" stroke-width="2"/>
         <circle cx="1106" cy="444" r="18" fill="#be123c"/>
-        <text x="1136" y="449" fill="#be123c" font-size="25" font-weight="950">live 回路</text>
-        <text x="1096" y="486" fill="#071225" font-size="21" font-weight="900">真实验收</text>
-        <text x="1096" y="516" fill="#51606f" font-size="16" font-weight="760">build、restart、probe、真实 Lark 消息</text>
+        <text x="1136" y="449" fill="#be123c" font-size="25" font-weight="950">Runtime</text>
+        <text x="1096" y="486" fill="#071225" font-size="21" font-weight="900">底层执行</text>
+        <text x="1096" y="516" fill="#51606f" font-size="16" font-weight="760">gateway、channel、session、CLI、工具调用</text>
       </g>
     <rect x="96" y="602" width="1408" height="72" rx="24" fill="#f8fbff" stroke="#d5e4f7" stroke-width="2"/>
     <text x="128" y="647" fill="#0b3b86" font-size="24" font-weight="950">验证边界：</text>
-    <text x="260" y="647" fill="#273445" font-size="23" font-weight="850">dev-fixed 只代表开发证明；live-fixed 必须经过 build / restart / probe / 真实 Lark 可见回复。</text>
+    <text x="260" y="647" fill="#273445" font-size="23" font-weight="850">底层 runtime 支撑通道和工具；产品主线是 Harness、Hermes、记忆和研究闭环。</text>
   </g>
 </svg>
