@@ -47,11 +47,14 @@ describe("languageBrainLoopSmokeCommand", () => {
       };
       adjacentApplication: {
         userAsk: string;
+        text: string;
         primaryModules: string[];
         supportingModules: string[];
         requiredTools: string[];
         boundaries: string[];
         reviewTools: string[];
+        missingFreshInputs: string[];
+        blocksNumericGuessingWithoutInputs: boolean;
         startsWithPlainSummary: boolean;
         hidesInternalLabels: boolean;
         includesResearchBoundary: boolean;
@@ -132,6 +135,12 @@ describe("languageBrainLoopSmokeCommand", () => {
     expect(payload.visibleReply.text).not.toContain("backendTool");
     expect(payload.visibleReply.text).not.toContain("{");
     expect(payload.adjacentApplication.userAsk).toContain("QQQ");
+    expect(payload.adjacentApplication.text).toMatch(/^当前判断：/u);
+    expect(payload.adjacentApplication.text).toContain("缺失输入：");
+    expect(payload.adjacentApplication.text).toContain("不能靠模型补数字");
+    expect(payload.adjacentApplication.text).not.toContain("primaryModules");
+    expect(payload.adjacentApplication.text).not.toContain("backendTool");
+    expect(payload.adjacentApplication.text).not.toContain("{");
     expect(payload.adjacentApplication.primaryModules).toEqual(
       expect.arrayContaining([
         "macro_rates_inflation",
@@ -160,6 +169,18 @@ describe("languageBrainLoopSmokeCommand", () => {
       expect.arrayContaining(["research_only", "no_execution_authority", "no_model_math_guessing"]),
     );
     expect(payload.adjacentApplication.reviewTools).toEqual(["review_tier", "review_panel"]);
+    expect(payload.adjacentApplication.missingFreshInputs).toEqual(
+      expect.arrayContaining([
+        "current_rates_and_inflation_inputs",
+        "current_credit_and_liquidity_inputs",
+        "current_usd_liquidity_or_dxy_inputs",
+        "qqq_tlt_nvda_current_prices_and_trend_inputs",
+        "nvda_latest_fundamental_and_ai_capex_inputs",
+        "position_weights_and_return_series",
+        "portfolio_risk_limits",
+      ]),
+    );
+    expect(payload.adjacentApplication.blocksNumericGuessingWithoutInputs).toBe(true);
     expect(payload.adjacentApplication.startsWithPlainSummary).toBe(true);
     expect(payload.adjacentApplication.hidesInternalLabels).toBe(true);
     expect(payload.adjacentApplication.includesResearchBoundary).toBe(true);

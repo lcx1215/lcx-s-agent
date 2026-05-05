@@ -68,11 +68,14 @@ export type LanguageBrainLoopSmokePayload = {
   };
   adjacentApplication: {
     userAsk: string;
+    text: string;
     primaryModules: string[];
     supportingModules: string[];
     requiredTools: string[];
     boundaries: string[];
     reviewTools: string[];
+    missingFreshInputs: string[];
+    blocksNumericGuessingWithoutInputs: boolean;
     startsWithPlainSummary: boolean;
     hidesInternalLabels: boolean;
     includesResearchBoundary: boolean;
@@ -432,6 +435,15 @@ function buildControlRoomVisibleReply(params: {
 function buildAdjacentApplicationProbe() {
   const userAsk =
     "我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex 和美元流动性，先拆内部模块，给我 research-only 判断，不要交易建议。";
+  const missingFreshInputs = [
+    "current_rates_and_inflation_inputs",
+    "current_credit_and_liquidity_inputs",
+    "current_usd_liquidity_or_dxy_inputs",
+    "qqq_tlt_nvda_current_prices_and_trend_inputs",
+    "nvda_latest_fundamental_and_ai_capex_inputs",
+    "position_weights_and_return_series",
+    "portfolio_risk_limits",
+  ];
   const plan = planFinanceBrainOrchestration({
     text: [
       userAsk,
@@ -444,7 +456,8 @@ function buildAdjacentApplicationProbe() {
   const text = [
     "当前判断：这应该先作为复杂持仓研究任务拆开，不应该直接给买卖动作。",
     "内部顺序：先看利率和通胀，再看美元/信用流动性，再看 QQQ/TLT 的 ETF regime，再看 NVDA 的 AI capex 和基本面传导，最后用组合风险门和本地数学检查缺失输入。",
-    "边界：research-only，没有交易授权；缺少权重、价格序列、风险限额和最新数据时，不能靠模型补数字。",
+    `缺失输入：${missingFreshInputs.join(", ")}。`,
+    "边界：research-only，没有交易授权；缺少权重、价格序列、风险限额和最新数据时，不能靠模型补数字，也不能输出确定性仓位结论。",
   ].join("\n");
   const forbiddenInternalLabels = [
     "task_family",
@@ -458,11 +471,16 @@ function buildAdjacentApplicationProbe() {
   ];
   return {
     userAsk,
+    text,
     primaryModules: plan.primaryModules,
     supportingModules: plan.supportingModules,
     requiredTools: plan.requiredTools,
     boundaries: plan.boundaries,
     reviewTools: plan.reviewTools,
+    missingFreshInputs,
+    blocksNumericGuessingWithoutInputs:
+      missingFreshInputs.includes("position_weights_and_return_series") &&
+      text.includes("不能靠模型补数字"),
     startsWithPlainSummary: text.startsWith("当前判断："),
     hidesInternalLabels: !forbiddenInternalLabels.some((label) => text.includes(label)),
     includesResearchBoundary: /research-only|没有交易授权/u.test(text),
@@ -598,6 +616,15 @@ export async function runLanguageBrainLoopSmoke(
   assert(
     adjacentApplication.boundaries.includes("no_execution_authority"),
     "adjacent holdings probe should keep no-execution boundary",
+  );
+  assert(
+    adjacentApplication.missingFreshInputs.includes("position_weights_and_return_series") &&
+      adjacentApplication.missingFreshInputs.includes("portfolio_risk_limits"),
+    "adjacent holdings probe should name missing portfolio inputs",
+  );
+  assert(
+    adjacentApplication.blocksNumericGuessingWithoutInputs,
+    "adjacent holdings probe should block numeric guessing without inputs",
   );
   assert(
     adjacentApplication.startsWithPlainSummary && adjacentApplication.hidesInternalLabels,
