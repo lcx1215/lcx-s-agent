@@ -6,11 +6,16 @@ import path from "node:path";
 type CliOptions = {
   durationMinutes: number;
   batchLimit: number;
+  teacherProfile: "batch" | "minimax-plus-brain";
+  teacherDurationMinutes: number;
+  teacherConcurrency: number;
   trainEvery: number;
   evalEvery: number;
   trainIters: number;
   model: string;
   noTrain: boolean;
+  mock: boolean;
+  resolveCurrentAdapterOnly: boolean;
   workspaceDir: string;
   dataDir: string;
   pythonBin: string;
@@ -35,6 +40,11 @@ const DEFAULT_ADAPTER = path.join(
   "adapters",
   "thought-flow-v1-qwen3-0.6b-teacher-v7",
 );
+const DEFAULT_ADAPTER_PREFIX = path.join(
+  TRAINER_ROOT,
+  "adapters",
+  "thought-flow-v1-qwen3-0.6b-minimax-guard",
+);
 const DEFAULT_LOG = path.join(
   HOME,
   ".openclaw",
@@ -42,6 +52,7 @@ const DEFAULT_LOG = path.join(
   "logs",
   "minimax-brain-training-guard.jsonl",
 );
+const DEFAULT_GUARD_LOG_DIR = path.dirname(DEFAULT_LOG);
 
 function usage(): never {
   throw new Error(
@@ -50,12 +61,17 @@ function usage(): never {
       "",
       "Options:",
       "  --duration-minutes N   default 180",
-      "  --batch-limit N         MiniMax teacher samples per round, default 12",
+      "  --batch-limit N         MiniMax teacher samples per round, default 36 for Plus profile",
+      "  --teacher-profile NAME  batch|minimax-plus-brain, default minimax-plus-brain",
+      "  --teacher-duration-minutes N  per-round teacher budget, default 20",
+      "  --teacher-concurrency N       per-round teacher concurrency, default 12",
       "  --train-every N         train every N rounds, default 2",
       "  --eval-every N          eval current/new adapter every N rounds, default 1",
       "  --train-iters N         MLX LoRA iters, default 80",
       "  --no-train              only generate/rebuild/smoke/eval",
-      "  --current-adapter DIR   stable adapter to evaluate and use until a new one passes",
+      "  --mock                  use mock MiniMax teacher for mechanism smoke",
+      "  --resolve-current-adapter  print selected stable adapter and exit without writes",
+      "  --current-adapter DIR   stable adapter, latest-passing, or latest directory match",
       "  --adapter-prefix DIR    new adapter prefix",
       "  --log PATH              JSONL guard log",
     ].join("\n"),
@@ -81,17 +97,22 @@ function readPositiveInteger(value: string): number {
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     durationMinutes: 180,
-    batchLimit: 12,
+    batchLimit: 36,
+    teacherProfile: "minimax-plus-brain",
+    teacherDurationMinutes: 20,
+    teacherConcurrency: 12,
     trainEvery: 2,
     evalEvery: 1,
     trainIters: 80,
     model: "Qwen/Qwen3-0.6B",
     noTrain: false,
+    mock: false,
+    resolveCurrentAdapterOnly: false,
     workspaceDir: path.join(HOME, ".openclaw", "workspace"),
     dataDir: DEFAULT_DATA_DIR,
     pythonBin: path.join(TRAINER_ROOT, ".venv", "bin", "python"),
-    currentAdapter: DEFAULT_ADAPTER,
-    adapterPrefix: path.join(TRAINER_ROOT, "adapters", "thought-flow-v1-qwen3-0.6b-minimax-guard"),
+    currentAdapter: "latest-passing",
+    adapterPrefix: DEFAULT_ADAPTER_PREFIX,
     logPath: DEFAULT_LOG,
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -101,6 +122,19 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--batch-limit") {
       options.batchLimit = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--teacher-profile") {
+      const value = readValue(args, index);
+      if (value !== "batch" && value !== "minimax-plus-brain") {
+        usage();
+      }
+      options.teacherProfile = value;
+      index += 1;
+    } else if (arg === "--teacher-duration-minutes") {
+      options.teacherDurationMinutes = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--teacher-concurrency") {
+      options.teacherConcurrency = readPositiveInteger(readValue(args, index));
       index += 1;
     } else if (arg === "--train-every") {
       options.trainEvery = readPositiveInteger(readValue(args, index));
@@ -116,6 +150,10 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--no-train") {
       options.noTrain = true;
+    } else if (arg === "--mock") {
+      options.mock = true;
+    } else if (arg === "--resolve-current-adapter") {
+      options.resolveCurrentAdapterOnly = true;
     } else if (arg === "--workspace") {
       options.workspaceDir = path.resolve(readValue(args, index));
       index += 1;
@@ -126,7 +164,9 @@ function parseArgs(args: string[]): CliOptions {
       options.pythonBin = path.resolve(readValue(args, index));
       index += 1;
     } else if (arg === "--current-adapter") {
-      options.currentAdapter = path.resolve(readValue(args, index));
+      const value = readValue(args, index);
+      options.currentAdapter =
+        value === "latest" || value === "latest-passing" ? value : path.resolve(value);
       index += 1;
     } else if (arg === "--adapter-prefix") {
       options.adapterPrefix = path.resolve(readValue(args, index));
@@ -185,12 +225,183 @@ function runCommand(
 }
 
 function parseJsonFromStdout(stdout: string): unknown {
-  const start = stdout.indexOf("{");
   const end = stdout.lastIndexOf("}");
-  if (start < 0 || end <= start) {
+  if (end < 0) {
     return null;
   }
-  return JSON.parse(stdout.slice(start, end + 1));
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = end; index >= 0; index -= 1) {
+    const char = stdout[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = inString;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (char === "}") {
+      depth += 1;
+    } else if (char === "{") {
+      depth -= 1;
+      if (depth === 0) {
+        return JSON.parse(stdout.slice(index, end + 1));
+      }
+    }
+  }
+  return null;
+}
+
+async function hasAdapterConfig(adapterPath: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(path.join(adapterPath, "adapter_config.json"));
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function resolveLatestAdapter(adapterPrefix: string): Promise<string | undefined> {
+  const adapterRoot = path.dirname(adapterPrefix);
+  const adapterNamePrefix = `${path.basename(adapterPrefix)}-`;
+  let entries: string[];
+  try {
+    entries = await fs.readdir(adapterRoot);
+  } catch {
+    return undefined;
+  }
+  const candidates = (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.startsWith(adapterNamePrefix))
+        .toSorted()
+        .toReversed()
+        .map(async (entry) => {
+          const adapterPath = path.join(adapterRoot, entry);
+          return (await hasAdapterConfig(adapterPath)) ? adapterPath : undefined;
+        }),
+    )
+  ).filter((entry): entry is string => Boolean(entry));
+  return candidates[0];
+}
+
+function isPassingEvalEvent(payload: Record<string, unknown>): boolean {
+  if (payload.event !== "step_ok") {
+    return false;
+  }
+  if (payload.name !== "stable_hardened_eval" && payload.name !== "candidate_hardened_eval") {
+    return false;
+  }
+  const result = payload.result;
+  if (!result || typeof result !== "object") {
+    return false;
+  }
+  const summary = (result as { summary?: unknown }).summary;
+  return (
+    typeof summary === "object" &&
+    summary !== null &&
+    (summary as { promotionReady?: unknown }).promotionReady === true
+  );
+}
+
+function adapterPathFromEvalEvent(payload: Record<string, unknown>): string | undefined {
+  const result = payload.result;
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const adapterPath = (result as { adapterPath?: unknown }).adapterPath;
+  return typeof adapterPath === "string" && adapterPath ? adapterPath : undefined;
+}
+
+async function resolveLatestPassingAdapter(): Promise<string | undefined> {
+  let logFiles: string[];
+  try {
+    logFiles = (await fs.readdir(DEFAULT_GUARD_LOG_DIR))
+      .filter((entry) => /^minimax-brain-training-guard.*\.jsonl$/u.test(entry))
+      .map((entry) => path.join(DEFAULT_GUARD_LOG_DIR, entry));
+  } catch {
+    return undefined;
+  }
+  const rejected = new Set<string>();
+  const passing: Array<{ at: string; adapterPath: string }> = [];
+  for (const logFile of logFiles.toSorted()) {
+    const raw = await fs.readFile(logFile, "utf8");
+    for (const line of raw.split(/\r?\n/u)) {
+      if (!line.trim()) {
+        continue;
+      }
+      const payload = JSON.parse(line) as Record<string, unknown>;
+      const at = typeof payload.at === "string" ? payload.at : "";
+      if (payload.event === "adapter_rejected_for_guard_session") {
+        const adapterPath = payload.adapterPath;
+        if (typeof adapterPath === "string" && adapterPath) {
+          rejected.add(adapterPath);
+        }
+      } else if (payload.event === "adapter_promoted_for_guard_session") {
+        const adapterPath = payload.adapterPath;
+        if (typeof adapterPath === "string" && adapterPath) {
+          passing.push({ at, adapterPath });
+        }
+      } else if (payload.event === "guard_complete") {
+        const adapterPath = payload.currentAdapter;
+        if (typeof adapterPath === "string" && adapterPath) {
+          passing.push({ at, adapterPath });
+        }
+      } else if (isPassingEvalEvent(payload)) {
+        const adapterPath = adapterPathFromEvalEvent(payload);
+        if (adapterPath) {
+          passing.push({ at, adapterPath });
+        }
+      }
+    }
+  }
+  const candidates = passing
+    .filter((entry) => !rejected.has(entry.adapterPath))
+    .toSorted((left, right) => right.at.localeCompare(left.at));
+  for (const candidate of candidates) {
+    if (await hasAdapterConfig(candidate.adapterPath)) {
+      return candidate.adapterPath;
+    }
+  }
+  return undefined;
+}
+
+async function resolveCurrentAdapter(options: CliOptions): Promise<string> {
+  if (options.currentAdapter !== "latest") {
+    if (options.currentAdapter === "latest-passing") {
+      const latestPassing = await resolveLatestPassingAdapter();
+      if (latestPassing) {
+        return latestPassing;
+      }
+      if (await hasAdapterConfig(DEFAULT_ADAPTER)) {
+        return DEFAULT_ADAPTER;
+      }
+      throw new Error("no promotion-ready adapter found in guard logs");
+    }
+    if (!(await hasAdapterConfig(options.currentAdapter))) {
+      throw new Error(`current adapter is missing adapter_config.json: ${options.currentAdapter}`);
+    }
+    return options.currentAdapter;
+  }
+  const latest = await resolveLatestAdapter(options.adapterPrefix);
+  if (latest) {
+    return latest;
+  }
+  if (await hasAdapterConfig(DEFAULT_ADAPTER)) {
+    return DEFAULT_ADAPTER;
+  }
+  throw new Error(
+    `no usable adapter found for latest prefix ${options.adapterPrefix}; pass --current-adapter DIR`,
+  );
 }
 
 async function runJsonStep(
@@ -214,6 +425,40 @@ async function runJsonStep(
     result: parsed,
   });
   return parsed;
+}
+
+async function runTeacherStep(options: CliOptions, round: number): Promise<unknown> {
+  if (options.teacherProfile === "minimax-plus-brain") {
+    return runJsonStep(options, round, "minimax_plus_brain_saturator", "node", [
+      "--import",
+      "tsx",
+      "scripts/dev/minimax-quota-brain-saturator.ts",
+      "--profile",
+      "minimax-plus-brain",
+      "--max-calls",
+      String(options.batchLimit),
+      "--duration-minutes",
+      String(options.teacherDurationMinutes),
+      "--concurrency",
+      String(options.teacherConcurrency),
+      "--min-concurrency",
+      String(Math.min(4, options.teacherConcurrency)),
+      "--write",
+      ...(options.mock ? ["--mock"] : []),
+    ]);
+  }
+  return runJsonStep(options, round, "minimax_teacher_batch", "node", [
+    "--import",
+    "tsx",
+    "scripts/dev/minimax-brain-teacher-batch.ts",
+    "--limit",
+    String(options.batchLimit),
+    "--write",
+    "--json",
+    "--concurrency",
+    String(options.teacherConcurrency),
+    ...(options.mock ? ["--mock"] : []),
+  ]);
 }
 
 async function runTrain(options: CliOptions, round: number, adapterPath: string): Promise<void> {
@@ -278,11 +523,30 @@ const options = parseArgs(process.argv.slice(2));
 const startedAt = Date.now();
 const deadline = startedAt + options.durationMinutes * 60_000;
 let round = 0;
-let currentAdapter = options.currentAdapter;
+let currentAdapter = await resolveCurrentAdapter(options);
+
+if (options.resolveCurrentAdapterOnly) {
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        ok: true,
+        boundary: "local_auxiliary_thought_flow_only",
+        selectedAdapter: currentAdapter,
+        selectionMode: options.currentAdapter,
+        liveTouched: false,
+        providerConfigTouched: false,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  process.exit(0);
+}
 
 await appendLog(options.logPath, {
   event: "guard_start",
   mode: "minimax_teacher_additive_only",
+  teacherProfile: options.teacherProfile,
   originalPipelineReplaced: false,
   liveTouched: false,
   providerConfigTouched: false,
@@ -292,15 +556,7 @@ await appendLog(options.logPath, {
 try {
   while (Date.now() < deadline) {
     round += 1;
-    await runJsonStep(options, round, "minimax_teacher_batch", "node", [
-      "--import",
-      "tsx",
-      "scripts/dev/minimax-brain-teacher-batch.ts",
-      "--limit",
-      String(options.batchLimit),
-      "--write",
-      "--json",
-    ]);
+    await runTeacherStep(options, round);
     await runJsonStep(options, round, "dataset", "node", [
       "--import",
       "tsx",
