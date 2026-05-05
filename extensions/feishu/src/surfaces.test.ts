@@ -263,6 +263,22 @@ describe("resolveFeishuSurfaceRouting", () => {
     expect(routing.targetChatId).toBe("oc-learning");
   });
 
+  it("routes investment philosophy skill-internalization asks to learning_command", () => {
+    const routing = resolveFeishuSurfaceRouting({
+      cfg: {
+        surfaces: {
+          learning_command: { chatId: "oc-learning" },
+          knowledge_maintenance: { chatId: "oc-knowledge" },
+        },
+      } as FeishuConfig,
+      chatId: "oc-random",
+      content: "去将大师的投资理念浓缩成skills，学习进你自己脑子",
+    });
+
+    expect(routing.targetSurface).toBe("learning_command");
+    expect(routing.targetChatId).toBe("oc-learning");
+  });
+
   it("routes external-source learning ask families to learning_command", () => {
     const cases = [
       "去 Google 上学最近 agent 记忆怎么做，只留下会改你以后做法的三条",
@@ -365,6 +381,23 @@ describe("resolveFeishuSurfaceRouting", () => {
     }
   });
 
+  it("keeps position-risk validation prompts on the technical surface", () => {
+    const routing = resolveFeishuSurfaceRouting({
+      cfg: {
+        surfaces: {
+          technical_daily: { chatId: "oc-tech" },
+          ops_audit: { chatId: "oc-ops" },
+        },
+      } as FeishuConfig,
+      chatId: "oc-random",
+      content:
+        "重启后持仓风险复验：我持有QQQ浮亏8%，想加仓摊平，但担心估值高、10Y利率反弹、美元流动性收紧。请只做research-only，不要教我下单。请回答：任务家族、ETF regime/technical timing/portfolio risk gates/quant_math怎么分工；没有实时行情时本地数学能算什么；什么情况下必须给failedReason；最后给检查清单。验收码 lark-live-position-risk-20260503-3。",
+    });
+
+    expect(routing.targetSurface).toBe("technical_daily");
+    expect(routing.targetChatId).toBe("oc-tech");
+  });
+
   it("routes self-learning correction asks to learning_command", () => {
     const routing = resolveFeishuSurfaceRouting({
       cfg: {
@@ -424,6 +457,26 @@ describe("resolveFeishuSurfaceRouting", () => {
 
     expect(routing.targetSurface).toBe("learning_command");
     expect(routing.targetChatId).toBe("oc-learning");
+  });
+
+  it("routes broad options and derivatives learning asks to learning_command", () => {
+    const examples = ["去学期权全知识", "去学波动率、Greeks 和衍生品知识体系，沉淀成可复用规则"];
+
+    for (const content of examples) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg: {
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+            technical_daily: { chatId: "oc-tech" },
+          },
+        } as FeishuConfig,
+        chatId: "oc-random",
+        content,
+      });
+
+      expect(routing.targetSurface, content).toBe("learning_command");
+      expect(routing.targetChatId, content).toBe("oc-learning");
+    }
   });
 
   it("routes explicit 'start learning now' asks to learning_command", () => {
@@ -545,6 +598,23 @@ describe("resolveFeishuSurfaceRouting", () => {
       } as FeishuConfig,
       chatId: "oc-random",
       content: "把 AI capex 这条线给我讲清楚",
+    });
+
+    expect(routing.targetSurface).toBe("fundamental_research");
+    expect(routing.targetChatId).toBe("oc-fundamental");
+  });
+
+  it("routes fundamental-risk validation prompts to fundamental_research", () => {
+    const routing = resolveFeishuSurfaceRouting({
+      cfg: {
+        surfaces: {
+          fundamental_research: { chatId: "oc-fundamental" },
+          learning_command: { chatId: "oc-learning" },
+        },
+      } as FeishuConfig,
+      chatId: "oc-control",
+      content:
+        "真实基本面风险验收：我想研究 NVDA 不是要买卖，只想判断它现在最大的基本面风险是不是估值、毛利率、capex 回报、客户集中度和 AI 需求可持续性。请用 research-only 控制室模式回答：任务家族、模块分工、没有最新财报和实时估值时哪些结论必须 failedReason、可复用研究规则、检查清单。验收码 lark-live-fundamental-risk-20260503-1。",
     });
 
     expect(routing.targetSurface).toBe("fundamental_research");
@@ -2085,5 +2155,24 @@ confidence: low
     ]);
     expect(classified.distributionSummary).toContain("published technical slice");
     expect(classified.distributionSummary).toContain("held as draft fundamental slice");
+  });
+
+  it("routes English bond ETF holding-risk checks to technical_daily, not learning_command", () => {
+    const routing = resolveFeishuSurfaceRouting({
+      cfg: {
+        surfaces: {
+          control_room: { chatId: "oc-control" },
+          technical_daily: { chatId: "oc-tech" },
+          learning_command: { chatId: "oc-learning" },
+        },
+      } as FeishuConfig,
+      chatId: "oc-control",
+      content:
+        "Real bond ETF risk check I hold TLT and it is down 12 percent. I am tempted to average down because I think rates will fall later but I worry duration inflation re-acceleration Treasury supply and liquidity risk may make this a bad regime. Research-only no trading advice. Please answer task family how ETF regime creditliquidity macroratesinflation quantmath portfolioriskgates and causalmap should work in order what local math can calculate without live yields when missing live 10Y/real yield/curve/flow data must return failedReason give a reusable checklist. Acceptance code lark-live-bond-etf-risk-20260504-1.",
+    });
+
+    expect(routing.targetSurface).toBe("technical_daily");
+    expect(routing.targetChatId).toBe("oc-tech");
+    expect(routing.suppressedIntentSurface).not.toBe("learning_command");
   });
 });

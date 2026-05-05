@@ -18,6 +18,8 @@ import { resolveAgentWorkspaceDir } from "../../../src/agents/agent-scope.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../../src/agents/tools/finance-learning-pipeline-orchestrator-tool.js";
 import { resolveProtocolInfoQuestionKind } from "../../../src/auto-reply/reply/commands-protocol-families.js";
 import { buildProtocolInfoReply } from "../../../src/auto-reply/reply/commands-protocol-info.js";
+import type { FinalizedMsgContext } from "../../../src/auto-reply/templating.js";
+import type { GetReplyOptions } from "../../../src/auto-reply/types.js";
 import type { OpenClawConfig } from "../../../src/config/config.js";
 import { isCorrectionLoopInput } from "../../../src/hooks/bundled/correction-loop/detection.js";
 import {
@@ -83,16 +85,24 @@ import {
 } from "./intent-matchers.js";
 import { createGatewayLarkApiRouteProvider } from "./lark-api-route-provider.js";
 import {
+  buildLarkBrainDistillationCandidate,
+  buildLarkBrainDistillationCandidateArtifact,
+  LARK_BRAIN_DISTILLATION_CANDIDATE_DIR,
+  type LarkBrainDistillationCandidateArtifact,
+} from "./lark-brain-distillation-candidates.js";
+import {
+  looksLikeAmbiguousRepeatOnlyRequest,
+  renderLarkContextPacketNotice,
+  writeLarkContextPacket,
+  type LarkContextPacketArtifact,
+} from "./lark-context-packet.js";
+import {
+  renderLarkAnswerComposerNotice,
   renderLarkFinanceBrainOrchestrationNotice,
   writeLarkLanguageHandoffReceipt,
   type LarkLanguageHandoffReceiptArtifact,
 } from "./lark-language-handoff-receipts.js";
-import {
-  writeLarkLanguageRoutingCandidateCapture,
-  writeLarkRoutingCandidatePromotionReview,
-  type LarkLanguageRoutingCandidateCaptureResult,
-} from "./lark-routing-candidate-corpus.js";
-import { LARK_ROUTING_CORPUS, resolveLarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
+import { resolveLarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
 import { runFeishuLearningCouncil } from "./learning-council.js";
 import {
   findLatestFeishuLearningTimeboxSession,
@@ -124,12 +134,7 @@ import {
   type FeishuChatSurfaceName,
   type ResolvedFeishuSurfaceRouting,
 } from "./surfaces.js";
-import type {
-  FeishuConfig,
-  FeishuMessageContext,
-  FeishuMediaInfo,
-  ResolvedFeishuAccount,
-} from "./types.js";
+import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
 import type { DynamicAgentCreationConfig } from "./types.js";
 
 // --- Permission error extraction ---
@@ -1075,6 +1080,17 @@ export function resolveFeishuEffectiveStateSurface(params: {
   return surfaceRouting.targetSurface;
 }
 
+function resolveFeishuHandoffStateSurface(params: {
+  handoff: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
+  fallback?: FeishuChatSurfaceName;
+}): FeishuChatSurfaceName | undefined {
+  const targetSurface = params.handoff.targetSurface;
+  if (!targetSurface || targetSurface === "protocol_truth_surface") {
+    return params.fallback;
+  }
+  return targetSurface;
+}
+
 type FeishuReplyDispatcherShape = {
   sendToolResult: (payload: ReplyPayload) => boolean;
   sendBlockReply: (payload: ReplyPayload) => boolean;
@@ -1207,6 +1223,96 @@ async function sendFeishuFinalTextReply(params: {
       const queuedFinal = params.dispatcher.sendFinalReply({ text: params.text });
       return { queuedFinal, counts: { final: queuedFinal ? 1 : 0 } };
     },
+  });
+}
+
+function buildFeishuBackendFactAnswerComposerBody(params: {
+  userMessage: string;
+  factPack: string;
+}): string {
+  return [
+    "[System: Lark final answer composer]",
+    "You are writing the final visible Lark reply for the operator.",
+    "Use the factual pack below as hard truth. Do not invent completed work, sources, receipts, or application_ready status.",
+    "Before the visible reply, apply the review_tier/review_panel discipline implied by the facts: check missing evidence, unsupported status, math/risk claims, and research-only boundaries.",
+    "If the factual pack says failedReason, preserve it. If it says application_ready, keep the proof paths and risk boundary visible.",
+    "Write in natural Chinese, like a competent assistant. Answer the user's real request first.",
+    "Do not lead with route family, backend labels, JSON, or receipt jargon.",
+    "Keep it short: 3-6 bullets. Put failedReason/proof only near the end when useful.",
+    "",
+    "User message:",
+    params.userMessage,
+    "",
+    "Factual pack:",
+    params.factPack,
+  ].join("\n");
+}
+
+async function sendFeishuBackendFactAnswerComposerReply(params: {
+  core: ReturnType<typeof getFeishuRuntime>;
+  ctxPayload: Record<string, unknown>;
+  cfg: ClawdbotConfig;
+  dispatcher: FeishuReplyDispatcherShape;
+  replyOptions?: Omit<GetReplyOptions, "onBlockReply" | "onToolResult">;
+  markDispatchIdle: () => void;
+  sessionKey: string;
+  messageId: string;
+  userMessage: string;
+  factPack: string;
+  fallbackText: string;
+  replyRuntime: ReturnType<typeof getFeishuRuntime>["channel"]["reply"];
+  log: (message: string) => void;
+  accountId: string;
+  label: string;
+}): Promise<FeishuFinalTextSendResult> {
+  try {
+    const composerBody = buildFeishuBackendFactAnswerComposerBody({
+      userMessage: params.userMessage,
+      factPack: params.factPack,
+    });
+    const composerCtxPayload: FinalizedMsgContext = {
+      ...(params.ctxPayload as FinalizedMsgContext),
+      Body: composerBody,
+      BodyForAgent: composerBody,
+      RawBody: params.userMessage,
+      CommandBody: params.userMessage,
+      SessionKey: `${params.sessionKey}:answer-composer:${params.messageId}`,
+      CommandAuthorized: Boolean(
+        (params.ctxPayload as Partial<FinalizedMsgContext>).CommandAuthorized,
+      ),
+    };
+    const composerResult = await params.core.channel.reply.withReplyDispatcher({
+      dispatcher: params.dispatcher,
+      onSettled: () => params.markDispatchIdle(),
+      run: () =>
+        params.core.channel.reply.dispatchReplyFromConfig({
+          ctx: composerCtxPayload,
+          cfg: params.cfg,
+          dispatcher: params.dispatcher,
+          replyOptions: params.replyOptions,
+        }),
+    });
+    const queuedFinal = Boolean(composerResult?.queuedFinal);
+    const finalCount = Number(composerResult?.counts?.final ?? 0);
+    if (queuedFinal && finalCount > 0) {
+      return { queuedFinal, counts: { final: finalCount } };
+    }
+    params.log(
+      `feishu[${params.accountId}]: Lark answer composer queued no final for ${params.label}; falling back to factual template`,
+    );
+  } catch (error) {
+    params.log(
+      `feishu[${params.accountId}]: Lark answer composer failed for ${params.label}; falling back to factual template: ${String(
+        error,
+      )}`,
+    );
+  }
+
+  return sendFeishuFinalTextReply({
+    replyRuntime: params.replyRuntime,
+    dispatcher: params.dispatcher,
+    markDispatchIdle: params.markDispatchIdle,
+    text: params.fallbackText,
   });
 }
 
@@ -1401,18 +1507,47 @@ async function validateFeishuFinanceLearningLocalSource(params: {
   }
 }
 
-function renderFeishuFinanceLearningPipelineMissingSourceReply(): string {
+function renderFeishuFinanceLearningPipelineMissingSourceReply(params?: {
+  handoff?: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
+}): string {
+  const family = params?.handoff?.family ?? "market_capability_learning_intake";
+  const objective = params?.handoff?.workOrder?.objective;
+  const isExternalSourceLearning = family === "learning_external_source";
+  const intro = isExternalSourceLearning
+    ? "我识别到这是外部材料提炼成 skills 的学习任务，但还缺安全 source，所以没有假装已经学完。"
+    : "我识别到这是金融能力学习入口，但还缺安全 source，所以没有假装已经学完。";
+  const missingSourceLine = isExternalSourceLearning
+    ? "- 还缺: 明确的大师清单 + 可核验来源，或 workspace-relative `.md` / `.txt` / `.html` source 文件，或直接粘贴/引用完整原文材料"
+    : "- 还缺: workspace-relative `.md` / `.txt` / `.html` 文件路径，或直接粘贴/引用一段完整金融研究材料";
+  const nextStep = isExternalSourceLearning
+    ? "下一步给出大师名单和本地 source 文件/原文摘录；我再走 source intake、extract、attach、inspect 和 retrieval review，把它们变成待审的 skill 能力卡。"
+    : "下一步把本地材料路径发来，例如 `memory/articles/example.md`，或回复/引用一段完整文章，我再走 source intake、extract、attach、inspect 和 retrieval review。";
   return [
-    "我识别到这是金融能力学习入口，但还缺安全 source，所以没有假装已经学完。",
+    intro,
     "",
-    "- 已识别: market_capability_learning_intake",
+    `- 已识别: ${family}`,
     "- 后端: finance_learning_pipeline_orchestrator",
     "- learningInternalizationStatus: not_started",
     "- failedReason: safe_local_or_manual_source_required",
-    "- 还缺: workspace-relative `.md` / `.txt` / `.html` 文件路径，或直接粘贴/引用一段完整金融研究材料",
+    ...(objective ? [`- 目标: ${objective}`] : []),
+    missingSourceLine,
     "- 未产生: retrievalReceiptPath / retrievalReviewPath",
     "",
-    "下一步把本地材料路径发来，例如 `memory/articles/example.md`，或回复/引用一段完整文章，我再走 source intake、extract、attach、inspect 和 retrieval review。",
+    nextStep,
+  ].join("\n");
+}
+
+function renderFeishuAmbiguousRepeatClarificationReply(params: {
+  handoffReceiptPath?: string;
+}): string {
+  return [
+    "我不能直接“重新来一遍”，因为这句话没有说明要重来哪个任务。",
+    "",
+    "为了避免串到旧上下文，我没有继续执行，也没有沿用之前的期权学习线。",
+    "",
+    "- failedReason: ambiguous_repeat_without_current_subject",
+    "- next step: 请补一句具体对象，比如“重新学习刚才那篇论文”或“重新跑大师语录提炼成 skills”",
+    `- proof: ${params.handoffReceiptPath ?? "handoff_receipt_unavailable"}`,
   ].join("\n");
 }
 
@@ -1481,9 +1616,35 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
         (line): line is string => typeof line === "string" && line.trim().length > 0,
       )
     : [];
+  const conclusionStatus = String(
+    retrievalFirstLearning.learningInternalizationStatus ?? "missing",
+  );
+  const failedReason = String(retrievalFirstLearning.failedReason ?? "none");
+  const conciseUsableLines =
+    usableAnswerLines.length > 0
+      ? usableAnswerLines.slice(0, 6)
+      : [
+          "把新材料转成可检索能力后，再用一个相邻问题做应用验证。",
+          "如果缺 source、实时数据或 review receipt，必须返回 failedReason，不把 started 说成 learned。",
+          "研究输出只给筛选、证据缺口、风险边界和下一步检查清单，不给交易执行。",
+        ];
   return [
-    "金融能力学习流水线已完成 dev 验收。",
+    "这次学习可以进入研究使用（金融能力学习流水线已完成 dev 验收），但仍按 research-only 边界处理。",
     "",
+    `结论: learningInternalizationStatus=${conclusionStatus}; failedReason=${failedReason}.`,
+    "可复用规则:",
+    ...conciseUsableLines.map((line) => `- ${line}`),
+    "",
+    "怎么用到下次问题:",
+    "- 先检索已保留能力，再要求它给出可证伪条件、缺失数据和风险边界。",
+    "- 如果只是缺实时行情/收益率/资金流，允许给研究框架，但必须明确不能给 application_ready。",
+    "- 如果本地数学可算，就用 quant_math；不能让模型口算替代。",
+    "",
+    "Proof:",
+    "- 金融能力学习流水线已完成 dev 验收",
+    ...(usableAnswerLines.length > 0
+      ? ["- usable answer lines:", ...usableAnswerLines.slice(0, 6).map((line) => `  - ${line}`)]
+      : []),
     `- learningInternalizationStatus: ${String(
       retrievalFirstLearning.learningInternalizationStatus ?? "missing",
     )}`,
@@ -1504,9 +1665,6 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     `- apply mode: ${String(applicationValidation.applicationMode ?? "missing")}`,
     `- applied candidates: ${String(applicationValidation.candidateCount ?? "unknown")}`,
     `- usable answer contract: ${String(usableAnswerContract.status ?? "missing")}`,
-    ...(usableAnswerLines.length > 0
-      ? ["- usable answer lines:", ...usableAnswerLines.slice(0, 6).map((line) => `  - ${line}`)]
-      : []),
     `- apply boundary: ${String(answerSkeleton.noActionBoundary ?? "missing")}`,
     "",
     "边界: 这是 research-only 学习，不是交易执行；语言 corpus 没有混入金融学习 artifact。",
@@ -3134,7 +3292,7 @@ async function recordFeishuSurfacePersistFailure(params: {
   });
 }
 
-async function persistLarkLanguageRoutingCandidateCapture(params: {
+async function persistLarkBrainDistillationCandidateCapture(params: {
   cfg: ClawdbotConfig;
   agentId: string;
   targetSurface?: FeishuChatSurfaceName;
@@ -3145,24 +3303,45 @@ async function persistLarkLanguageRoutingCandidateCapture(params: {
   userMessage: string;
   finalReplyText: string;
   apiReplyPayloads?: readonly unknown[];
-}): Promise<LarkLanguageRoutingCandidateCaptureResult | undefined> {
+}): Promise<
+  | {
+      relativePath: string;
+      artifact: LarkBrainDistillationCandidateArtifact;
+    }
+  | undefined
+> {
   const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
-  return await writeLarkLanguageRoutingCandidateCapture({
-    workspaceDir,
-    cfg: (params.cfg.channels?.feishu ?? {}) as FeishuConfig,
-    agentId: params.agentId,
-    targetSurface: params.targetSurface,
-    effectiveSurface: params.effectiveSurface,
-    chatId: params.chatId,
-    sessionKey: params.sessionKey,
-    messageId: params.messageId,
-    userMessage: params.userMessage,
-    finalReplyText: params.finalReplyText,
-    apiReplyPayloads: params.apiReplyPayloads,
-  });
+  const candidates = [
+    buildLarkBrainDistillationCandidate({
+      source: "lark_visible_reply",
+      payload: params.finalReplyText,
+      userMessage: params.userMessage,
+    }),
+    ...(params.apiReplyPayloads ?? []).map((payload) =>
+      buildLarkBrainDistillationCandidate({
+        source: "api_reply",
+        payload,
+        userMessage: params.userMessage,
+      }),
+    ),
+  ];
+  if (candidates.length === 0) {
+    return undefined;
+  }
+  const artifact = buildLarkBrainDistillationCandidateArtifact({ candidates });
+  const dateKey = artifact.generatedAt.slice(0, 10);
+  const stem = sanitizeSurfaceLedgerSegment(params.messageId) || "message";
+  const relativePath = path.join(LARK_BRAIN_DISTILLATION_CANDIDATE_DIR, dateKey, `${stem}.json`);
+  const filePath = path.join(workspaceDir, relativePath);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(artifact, null, 2)}\n`, "utf-8");
+  return {
+    relativePath: relativePath.split(path.sep).join("/"),
+    artifact,
+  };
 }
 
-async function persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt(params: {
+async function persistLarkBrainDistillationCandidateCaptureWithFailureReceipt(params: {
   cfg: ClawdbotConfig;
   agentId: string;
   targetSurface?: FeishuChatSurfaceName;
@@ -3174,20 +3353,26 @@ async function persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt(para
   finalReplyText: string;
   apiReplyPayloads?: readonly unknown[];
 }) {
-  let capture: LarkLanguageRoutingCandidateCaptureResult | undefined;
+  let capture:
+    | {
+        relativePath: string;
+        artifact: LarkBrainDistillationCandidateArtifact;
+      }
+    | undefined;
   try {
-    capture = await persistLarkLanguageRoutingCandidateCapture(params);
+    capture = await persistLarkBrainDistillationCandidateCapture(params);
   } catch (error) {
     await recordOperationalAnomaly({
       cfg: params.cfg,
       category: "write_edit_failure",
       severity: "medium",
-      source: "feishu.lark_language_routing_candidates",
-      problem: "failed to persist lark language-routing candidate capture",
+      source: "feishu.lark_brain_distillation_candidates",
+      problem: "failed to persist lark brain-distillation candidate capture",
       evidence: [
-        "failure_stage=language_routing_candidate_capture",
-        "boundary=language_routing_only",
-        "finance_learning_artifact=false",
+        "failure_stage=brain_distillation_candidate_capture",
+        "boundary=brain_distillation_candidate",
+        "language_routing_promotion=false",
+        "finance_learning_artifact=false_until_reviewed",
         `surface=${params.targetSurface ?? "none"}`,
         `effective_surface=${params.effectiveSurface ?? params.targetSurface ?? "none"}`,
         `chat_id=${params.chatId}`,
@@ -3195,44 +3380,16 @@ async function persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt(para
         `error=${String(error)}`,
       ],
       impact:
-        "the Feishu reply was still delivered, but this turn did not enter the pending language-routing review queue",
+        "the Feishu reply was still delivered, but this turn did not enter the pending brain-distillation review queue",
       suggestedScope:
-        "repair the independent lark-language-routing-candidates artifact path before promoting new routing corpus cases",
+        "repair the independent lark-brain-distillation-candidates artifact path before using new turns for local auxiliary model training",
     });
     return;
   }
   if (!capture) {
     return;
   }
-  try {
-    await writeLarkRoutingCandidatePromotionReview({
-      workspaceDir: capture.workspaceDir,
-      dateKey: capture.dateKey,
-      existingCorpus: LARK_ROUTING_CORPUS,
-    });
-  } catch (error) {
-    await recordOperationalAnomaly({
-      cfg: params.cfg,
-      category: "write_edit_failure",
-      severity: "medium",
-      source: "feishu.lark_language_routing_review",
-      problem: "failed to refresh lark language-routing daily review",
-      evidence: [
-        "failure_stage=language_routing_daily_review",
-        "boundary=language_routing_only",
-        "finance_learning_artifact=false",
-        `candidate_path=${capture.relativePath}`,
-        `date_key=${capture.dateKey}`,
-        `chat_id=${params.chatId}`,
-        `message_id=${params.messageId}`,
-        `error=${String(error)}`,
-      ],
-      impact:
-        "the pending language-routing candidate was captured, but the same-day review and patch artifacts were not refreshed",
-      suggestedScope:
-        "rerun lark_language_corpus_review for the date before promoting new routing corpus cases",
-    });
-  }
+  void capture;
 }
 
 async function persistLarkLanguageHandoffReceiptWithFailureReceipt(params: {
@@ -3289,6 +3446,67 @@ async function persistLarkLanguageHandoffReceiptWithFailureReceipt(params: {
         "the Feishu turn can still continue, but this language-routing decision did not leave an audit receipt",
       suggestedScope:
         "repair the independent lark-language-handoff-receipts artifact path before relying on handoff receipts for routing eval",
+    });
+    return undefined;
+  }
+}
+
+async function persistLarkContextPacketWithFailureReceipt(params: {
+  cfg: ClawdbotConfig;
+  agentId: string;
+  chatId: string;
+  messageId: string;
+  sessionKey: string;
+  userMessage: string;
+  targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
+  effectiveSurface?: FeishuChatSurfaceName;
+  handoff: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
+  financeBrainOrchestration?: LarkLanguageHandoffReceiptArtifact["financeBrainOrchestration"];
+  handoffReceiptPath?: string;
+}): Promise<
+  | {
+      relativePath: string;
+      artifact: LarkContextPacketArtifact;
+    }
+  | undefined
+> {
+  try {
+    const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
+    return await writeLarkContextPacket({
+      workspaceDir,
+      agentId: params.agentId,
+      chatId: params.chatId,
+      messageId: params.messageId,
+      sessionKey: params.sessionKey,
+      userMessage: params.userMessage,
+      targetSurface: params.targetSurface,
+      effectiveSurface: params.effectiveSurface,
+      handoff: params.handoff,
+      financeBrainOrchestration: params.financeBrainOrchestration,
+      handoffReceiptPath: params.handoffReceiptPath,
+    });
+  } catch (error) {
+    await recordOperationalAnomaly({
+      cfg: params.cfg,
+      category: "write_edit_failure",
+      severity: "medium",
+      source: "feishu.lark_context_packet",
+      problem: "failed to persist lark context packet",
+      evidence: [
+        "failure_stage=lark_context_packet",
+        "boundary=context_link_only",
+        `surface=${params.targetSurface ?? "none"}`,
+        `effective_surface=${params.effectiveSurface ?? params.targetSurface ?? "none"}`,
+        `chat_id=${params.chatId}`,
+        `message_id=${params.messageId}`,
+        `family=${params.handoff.family}`,
+        `source=${params.handoff.source}`,
+        `error=${String(error)}`,
+      ],
+      impact:
+        "the Feishu turn can still continue, but this message did not leave a context-inheritance receipt",
+      suggestedScope:
+        "repair the independent lark-context-packets artifact path before relying on context inheritance audits",
     });
     return undefined;
   }
@@ -3668,7 +3886,7 @@ async function persistCapturedFeishuSurfaceLine(params: {
     userMessage: params.userMessage,
     finalReplyText,
   });
-  await persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt({
+  await persistLarkBrainDistillationCandidateCaptureWithFailureReceipt({
     cfg: params.cfg,
     agentId: params.agentId,
     targetSurface: params.targetSurface,
@@ -5331,27 +5549,66 @@ export async function handleFeishuMessage(params: {
         messageId: ctx.messageId,
       }),
     });
+    const larkEffectiveStateSurface = resolveFeishuHandoffStateSurface({
+      handoff: larkInstructionHandoff,
+      fallback: effectiveStateSurface,
+    });
+    const larkEffectiveSessionKey = buildSurfaceScopedSessionKey(
+      route.sessionKey,
+      larkEffectiveStateSurface,
+    );
+    const larkSurfaceRouting: ResolvedFeishuSurfaceRouting = larkEffectiveStateSurface
+      ? {
+          ...surfaceRouting,
+          targetSurface: larkEffectiveStateSurface,
+          suppressedIntentSurface:
+            surfaceRouting.suppressedIntentSurface === larkEffectiveStateSurface
+              ? undefined
+              : surfaceRouting.suppressedIntentSurface,
+        }
+      : surfaceRouting;
     const larkApiReplyPayloads = larkInstructionHandoff.apiCandidate
       ? [larkInstructionHandoff.apiCandidate]
       : undefined;
     const larkHandoffReceipt = await persistLarkLanguageHandoffReceiptWithFailureReceipt({
       cfg,
       agentId: route.agentId,
-      targetSurface: surfaceRouting.targetSurface,
-      effectiveSurface: effectiveStateSurface,
+      targetSurface:
+        larkInstructionHandoff.targetSurface === "protocol_truth_surface"
+          ? surfaceRouting.targetSurface
+          : (larkInstructionHandoff.targetSurface ?? larkEffectiveStateSurface ?? "control_room"),
+      effectiveSurface: larkEffectiveStateSurface,
       chatId: ctx.chatId,
-      sessionKey: effectiveSessionKey,
+      sessionKey: larkEffectiveSessionKey,
       messageId: ctx.messageId,
       userMessage: ctx.content,
       handoff: larkInstructionHandoff,
     });
+    const larkContextPacket = await persistLarkContextPacketWithFailureReceipt({
+      cfg,
+      agentId: route.agentId,
+      targetSurface:
+        larkInstructionHandoff.targetSurface === "protocol_truth_surface"
+          ? "protocol_truth_surface"
+          : (larkInstructionHandoff.targetSurface ?? larkEffectiveStateSurface ?? "control_room"),
+      effectiveSurface: larkEffectiveStateSurface,
+      chatId: ctx.chatId,
+      sessionKey: larkEffectiveSessionKey,
+      messageId: ctx.messageId,
+      userMessage: ctx.content,
+      handoff: larkInstructionHandoff,
+      financeBrainOrchestration: larkHandoffReceipt?.artifact.financeBrainOrchestration,
+      handoffReceiptPath: larkHandoffReceipt?.relativePath,
+    });
     const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
     const surfaceNotice = [
       buildFeishuPromptSurfaceNotice({
-        surfaceRouting,
+        surfaceRouting: larkSurfaceRouting,
         controlRoomOrchestration,
       }),
       larkInstructionHandoff.notice,
+      renderLarkContextPacketNotice(larkContextPacket?.artifact),
+      renderLarkAnswerComposerNotice(larkInstructionHandoff.workOrder),
       renderLarkFinanceBrainOrchestrationNotice(
         larkHandoffReceipt?.artifact.financeBrainOrchestration,
       ),
@@ -5693,7 +5950,7 @@ export async function handleFeishuMessage(params: {
     } else {
       // --- Single-agent dispatch (existing behavior) ---
       const ctxPayload = buildCtxPayloadForAgent(
-        effectiveSessionKey,
+        larkEffectiveSessionKey,
         route.accountId,
         ctx.mentionedBot,
       );
@@ -5736,10 +5993,7 @@ export async function handleFeishuMessage(params: {
       });
 
       const shouldUseLearningCommandBackend =
-        surfaceRouting.targetSurface === "learning_command" ||
-        (larkInstructionHandoff.targetSurface === "learning_command" &&
-          larkInstructionHandoff.backendToolContract?.toolName ===
-            "finance_learning_pipeline_orchestrator");
+        larkInstructionHandoff.targetSurface === "learning_command";
 
       if (
         !shouldUseLearningCommandBackend &&
@@ -5829,6 +6083,46 @@ export async function handleFeishuMessage(params: {
             : undefined,
           dispatchQueuedFinal: sourceRequiredTruthSendResult.queuedFinal,
           dispatchFinalCount: sourceRequiredTruthSendResult.counts.final,
+        });
+        return;
+      }
+
+      if (
+        larkInstructionHandoff.family === "unknown" &&
+        looksLikeAmbiguousRepeatOnlyRequest(ctx.content)
+      ) {
+        const ambiguousRepeatText = renderFeishuAmbiguousRepeatClarificationReply({
+          handoffReceiptPath: larkHandoffReceipt?.relativePath,
+        });
+        const ambiguousRepeatSendResult = await sendFeishuFinalTextReply({
+          replyRuntime: core.channel.reply,
+          dispatcher: effectiveDispatcher,
+          markDispatchIdle,
+          text: ambiguousRepeatText,
+        });
+
+        clearFeishuGroupHistoryAfterDispatch({
+          isGroup,
+          chatHistories,
+          historyKey,
+          historyLimit,
+        });
+
+        await persistCapturedFeishuSurfaceLine({
+          ...buildFeishuSurfaceLinePersistContext({
+            cfg,
+            agentId: route.agentId,
+            effectiveStateSurface: larkEffectiveStateSurface,
+            replyContract: controlRoomOrchestration?.replyContract,
+            chatId: ctx.chatId,
+            sessionKey: larkEffectiveSessionKey,
+            messageId: ctx.messageId,
+            userMessage: ctx.content,
+            apiReplyPayloads: larkApiReplyPayloads,
+          }),
+          finalReplyText: ambiguousRepeatSendResult.queuedFinal ? ambiguousRepeatText : undefined,
+          dispatchQueuedFinal: ambiguousRepeatSendResult.queuedFinal,
+          dispatchFinalCount: ambiguousRepeatSendResult.counts.final,
         });
         return;
       }
@@ -6004,10 +6298,10 @@ export async function handleFeishuMessage(params: {
             ...buildFeishuSurfaceLinePersistContext({
               cfg,
               agentId: route.agentId,
-              effectiveStateSurface,
+              effectiveStateSurface: larkEffectiveStateSurface,
               replyContract: controlRoomOrchestration?.replyContract,
               chatId: ctx.chatId,
-              sessionKey: effectiveSessionKey,
+              sessionKey: larkEffectiveSessionKey,
               messageId: ctx.messageId,
               userMessage: ctx.content,
               apiReplyPayloads: larkApiReplyPayloads,
@@ -6021,7 +6315,7 @@ export async function handleFeishuMessage(params: {
         const shouldRunFinanceLearningPipelineBackend =
           (larkInstructionHandoff.backendToolContract?.toolName ===
             "finance_learning_pipeline_orchestrator" ||
-            looksLikeFinanceLearningPipelineAsk(ctx.content)) &&
+            larkInstructionHandoff.family === "market_capability_learning_intake") &&
           !looksLikeLearningTimeboxStartRequest(ctx.content);
         if (shouldRunFinanceLearningPipelineBackend) {
           const learningWorkspaceDir = resolveAgentWorkspaceDir(
@@ -6033,12 +6327,25 @@ export async function handleFeishuMessage(params: {
             quotedContent,
           });
           if (!pipelineSource) {
-            const missingSourceText = renderFeishuFinanceLearningPipelineMissingSourceReply();
-            const missingSourceSendResult = await sendFeishuFinalTextReply({
-              replyRuntime: core.channel.reply,
+            const missingSourceText = renderFeishuFinanceLearningPipelineMissingSourceReply({
+              handoff: larkInstructionHandoff,
+            });
+            const missingSourceSendResult = await sendFeishuBackendFactAnswerComposerReply({
+              core,
+              ctxPayload: ctxPayload as Record<string, unknown>,
+              cfg,
               dispatcher: effectiveDispatcher,
+              replyOptions,
               markDispatchIdle,
-              text: missingSourceText,
+              sessionKey: larkEffectiveSessionKey,
+              messageId: ctx.messageId,
+              userMessage: ctx.content,
+              factPack: missingSourceText,
+              fallbackText: missingSourceText,
+              replyRuntime: core.channel.reply,
+              log,
+              accountId: account.accountId,
+              label: "missing source",
             });
 
             clearFeishuGroupHistoryAfterDispatch({
@@ -6052,15 +6359,15 @@ export async function handleFeishuMessage(params: {
               ...buildFeishuSurfaceLinePersistContext({
                 cfg,
                 agentId: route.agentId,
-                effectiveStateSurface,
+                effectiveStateSurface: larkEffectiveStateSurface,
                 replyContract: controlRoomOrchestration?.replyContract,
                 chatId: ctx.chatId,
-                sessionKey: effectiveSessionKey,
+                sessionKey: larkEffectiveSessionKey,
                 messageId: ctx.messageId,
                 userMessage: ctx.content,
                 apiReplyPayloads: larkApiReplyPayloads,
               }),
-              finalReplyText: missingSourceSendResult.queuedFinal ? missingSourceText : undefined,
+              finalReplyText: surfaceLineCapture.getLastFinalReplyText(),
               dispatchQueuedFinal: missingSourceSendResult.queuedFinal,
               dispatchFinalCount: missingSourceSendResult.counts.final,
             });
@@ -6080,11 +6387,22 @@ export async function handleFeishuMessage(params: {
                 retrievalReceiptPath: "not_created",
                 retrievalReviewPath: "not_created",
               });
-              const invalidSourceSendResult = await sendFeishuFinalTextReply({
-                replyRuntime: core.channel.reply,
+              const invalidSourceSendResult = await sendFeishuBackendFactAnswerComposerReply({
+                core,
+                ctxPayload: ctxPayload as Record<string, unknown>,
+                cfg,
                 dispatcher: effectiveDispatcher,
+                replyOptions,
                 markDispatchIdle,
-                text: invalidSourceText,
+                sessionKey: larkEffectiveSessionKey,
+                messageId: ctx.messageId,
+                userMessage: ctx.content,
+                factPack: invalidSourceText,
+                fallbackText: invalidSourceText,
+                replyRuntime: core.channel.reply,
+                log,
+                accountId: account.accountId,
+                label: "invalid local source",
               });
 
               clearFeishuGroupHistoryAfterDispatch({
@@ -6098,10 +6416,10 @@ export async function handleFeishuMessage(params: {
                 ...buildFeishuSurfaceLinePersistContext({
                   cfg,
                   agentId: route.agentId,
-                  effectiveStateSurface,
+                  effectiveStateSurface: larkEffectiveStateSurface,
                   replyContract: controlRoomOrchestration?.replyContract,
                   chatId: ctx.chatId,
-                  sessionKey: effectiveSessionKey,
+                  sessionKey: larkEffectiveSessionKey,
                   messageId: ctx.messageId,
                   userMessage: ctx.content,
                   apiReplyPayloads: larkApiReplyPayloads,
@@ -6139,11 +6457,22 @@ export async function handleFeishuMessage(params: {
           const pipelineReplyText = renderFeishuFinanceLearningPipelineReply({
             ...(pipelineResult.details as Record<string, unknown>),
           });
-          const pipelineSendResult = await sendFeishuFinalTextReply({
-            replyRuntime: core.channel.reply,
+          const pipelineSendResult = await sendFeishuBackendFactAnswerComposerReply({
+            core,
+            ctxPayload: ctxPayload as Record<string, unknown>,
+            cfg,
             dispatcher: effectiveDispatcher,
+            replyOptions,
             markDispatchIdle,
-            text: pipelineReplyText,
+            sessionKey: larkEffectiveSessionKey,
+            messageId: ctx.messageId,
+            userMessage: ctx.content,
+            factPack: pipelineReplyText,
+            fallbackText: pipelineReplyText,
+            replyRuntime: core.channel.reply,
+            log,
+            accountId: account.accountId,
+            label: "finance learning pipeline result",
           });
 
           clearFeishuGroupHistoryAfterDispatch({
@@ -6157,10 +6486,10 @@ export async function handleFeishuMessage(params: {
             ...buildFeishuSurfaceLinePersistContext({
               cfg,
               agentId: route.agentId,
-              effectiveStateSurface,
+              effectiveStateSurface: larkEffectiveStateSurface,
               replyContract: controlRoomOrchestration?.replyContract,
               chatId: ctx.chatId,
-              sessionKey: effectiveSessionKey,
+              sessionKey: larkEffectiveSessionKey,
               messageId: ctx.messageId,
               userMessage: ctx.content,
               apiReplyPayloads: larkApiReplyPayloads,

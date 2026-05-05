@@ -7,11 +7,15 @@ import {
   looksLikeCompletionProofScopeAsk,
   looksLikeEvidenceShapeScopeAsk,
   looksLikeExecutionAuthorityScopeAsk,
+  looksLikeExternalSkillInternalizationAsk,
   looksLikeFailureReportScopeAsk,
+  looksLikeFinanceLearningMaintenanceAsk,
   looksLikeFinanceLearningPipelineAsk,
+  looksLikeFundamentalRiskApplicationAsk,
   looksLikeGitHubProjectCapabilityIntakeAsk,
   looksLikeHighStakesRiskScopeAsk,
   looksLikeOutOfScopeBoundaryAsk,
+  looksLikePositionRiskApplicationAsk,
   looksLikeProgressStatusScopeAsk,
   looksLikeResultShapeScopeAsk,
   looksLikeSourceCoverageScopeAsk,
@@ -87,6 +91,7 @@ export type LarkApiRouteCandidate = {
   family: LarkRoutingFamily | "unknown";
   confidence: number;
   rationale?: string;
+  workOrder?: LarkApiPlannerWorkOrder;
 };
 
 export type LarkApiRouteProvider = (params: {
@@ -95,17 +100,46 @@ export type LarkApiRouteProvider = (params: {
   contracts: typeof LARK_ROUTING_FAMILY_CONTRACTS;
 }) => Promise<LarkApiRouteCandidate>;
 
+export type LarkApiPlannerWorkOrder = {
+  objective?: string;
+  requiredModules?: readonly string[];
+  backendTool?: string;
+  evidenceRequired?: readonly string[];
+  safetyBoundaries?: readonly string[];
+  outputContract?: readonly string[];
+};
+
+export type LarkValidatedAgentWorkOrder = {
+  schemaVersion: 1;
+  family: LarkRoutingFamily;
+  targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
+  objective: string;
+  source: "api_planner_audited";
+  plannerFamily?: LarkRoutingFamily | "unknown";
+  requiredModules: readonly string[];
+  backendTool?: string;
+  evidenceRequired: readonly string[];
+  safetyBoundaries: readonly string[];
+  outputContract: readonly string[];
+  validation: {
+    apiFamilyAccepted: boolean;
+    familyContractMatched: true;
+    deterministicSurface?: FeishuChatSurfaceName;
+    notes: readonly string[];
+  };
+};
+
 export type LarkHybridRouteCandidate = {
   deterministicPassed: boolean;
   semantic: SemanticRouteCandidate;
   api?: LarkApiRouteCandidate;
   acceptedFamily: LarkRoutingFamily | "unknown";
-  source: "deterministic" | "semantic" | "api" | "unknown";
+  source: "deterministic" | "api" | "unknown";
 };
 
 export type LarkAgentInstructionHandoff = {
   family: LarkRoutingFamily | "unknown";
-  source: "semantic" | "api" | "unknown";
+  source: "api" | "unknown";
   confidence: number;
   apiCandidate?: LarkApiRouteCandidate;
   targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
@@ -118,6 +152,7 @@ export type LarkAgentInstructionHandoff = {
       | "repo_url_or_readme_summary_required";
     expectedProof: readonly string[];
   };
+  workOrder?: LarkValidatedAgentWorkOrder;
   notice: string;
 };
 
@@ -162,6 +197,7 @@ export type LarkRoutingCorpusScoreSummary = {
 
 export const LARK_ROUTING_SEMANTIC_THRESHOLD = 0.28;
 export const LARK_ROUTING_API_CONFIDENCE_THRESHOLD = 0.72;
+export const LARK_ROUTING_API_WORK_ORDER_CONFIDENCE_THRESHOLD = 0.6;
 
 function looksLikeTradingLanguageScopeAsk(text: string): boolean {
   return /(买|买入|卖|卖出|减仓|加仓|仓位|持仓|下单|发单|成交|市价单|限价单|止损|止盈|止损腿|止盈腿|开盘|收盘|order|market order|limit order|stop(?:-limit)?|trailing stop|bracket|take[- ]?profit|profit taker|stop[- ]?loss|aapl|qqq|spy|tlt)/iu.test(
@@ -178,7 +214,12 @@ function looksLikeApiReplyArtifactScopeAsk(text: string): boolean {
 function resolveBackendToolContract(params: {
   family: LarkRoutingFamily;
   utterance: string;
+  workOrder?: LarkApiPlannerWorkOrder;
 }): LarkAgentInstructionHandoff["backendToolContract"] {
+  const plannerBackendTool = params.workOrder?.backendTool?.trim().toLowerCase();
+  const plannerRequestsFinancePipeline =
+    plannerBackendTool === "finance_learning_pipeline_orchestrator" ||
+    /\bfinance_learning_pipeline_orchestrator\b/u.test(plannerBackendTool ?? "");
   if (
     params.family === "learning_external_source" &&
     looksLikeGitHubProjectCapabilityIntakeAsk(params.utterance)
@@ -191,8 +232,27 @@ function resolveBackendToolContract(params: {
     };
   }
   if (
-    params.family !== "market_capability_learning_intake" &&
-    !looksLikeFinanceLearningPipelineAsk(params.utterance)
+    params.family === "learning_external_source" &&
+    (looksLikeExternalSkillInternalizationAsk(params.utterance) || plannerRequestsFinancePipeline)
+  ) {
+    return {
+      toolName: "finance_learning_pipeline_orchestrator",
+      learningIntent: params.utterance,
+      sourceRequirement: "safe_local_or_manual_source_required",
+      expectedProof: [
+        "source intake receipt",
+        "extracted reusable rules",
+        "learningInternalizationStatus",
+        "retrieval review",
+      ],
+    };
+  }
+  if (
+    params.family !== "market_capability_learning_intake" ||
+    (!looksLikeFinanceLearningPipelineAsk(params.utterance) && !plannerRequestsFinancePipeline) ||
+    (plannerRequestsFinancePipeline &&
+      looksLikeTradingLanguageScopeAsk(params.utterance) &&
+      !looksLikeFinanceLearningPipelineAsk(params.utterance))
   ) {
     return undefined;
   }
@@ -266,6 +326,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "给我一个基本面总览",
       "把 AI capex 这条线给我讲清楚",
       "今天最该看的公司研究是什么",
+      "研究 NVDA 的估值、毛利率、capex 回报、客户集中度和 AI 需求可持续性风险",
     ],
     nearMisses: ["QQQ 现在还能拿吗", "现在网络搜索可以用吗"],
     fallback: "deterministic_first_then_unknown",
@@ -278,6 +339,9 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "去github上学习开源的值得你学的，并把值得内化的内化",
       "查一下 arxiv 上 agent workflow 的新文章，筛出以后会复用的规则",
       "网上搜一下最近金融智能体文章，别复述文章，只说哪些值得内化",
+      "去将大师的投资理念浓缩成skills，学习进你自己脑子",
+      "从 Google Scholar 和公开课程里找金融研究工作流做法，只沉淀可复用规则",
+      "读几篇 SSRN working paper 和大学课程材料，提炼能改你以后判断的规则",
     ],
     nearMisses: ["最近学的 openclaw 更新到底有没有内化", "刚才那个结论有来源吗"],
     fallback: "deterministic_first_then_unknown",
@@ -332,6 +396,9 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "刚才那个结论有来源吗",
       "这条判断是你确认过的还是猜的",
       "没源没证据就说不知道，别编",
+      "你刚才纳斯达克那句话哪来的，给我出处，别用泛泛框架糊弄我",
+      "这段回答引用了哪些 artifact 和 source，没有就标 unverified",
+      "show the receipt or citation for that claim, otherwise say unknown",
     ],
     nearMisses: ["给我一个基本面总览", "去 Google 上学最近 agent 记忆怎么做"],
     fallback: "deterministic_first_then_unknown",
@@ -410,6 +477,9 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "去读顶级高校公开课程和论文里的资产配置方法，说明只读了哪些材料。",
       "study competitor docs and public finance-agent repos, but label sample limits",
       "从公开网页系统性学习 ETF risk control，别把 partial web sample 说成 exhaustive",
+      "从 Google Scholar、SSRN 和 NBER 找前沿量化论文，但列出实际读过的 paper，不要说全覆盖",
+      "做一个 literature review 风格的学习，但必须标 sample limits 和未覆盖范围",
+      "去看顶级大学公开课 syllabus 和论文，说明 what was actually read",
     ],
     nearMisses: [
       "去 Google 上学最近 agent 记忆怎么做，只留下会改你以后做法的三条",
@@ -446,6 +516,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "把 QQQ 仓位减半，但先检查风险，不要真的下单。",
       "如果 TLT 跌破关键位，我是不是应该降低仓位，只做研究不要执行。",
       "现在持仓太集中，先给我一个减仓风险检查，不许下单。",
+      "我持有 QQQ 已经亏了 8%，想加仓摊平但担心高估值、利率上行和流动性收紧；只做研究，先给风险检查清单。",
     ],
     nearMisses: ["买 100 股 AAPL 市价单，收盘前必须成交。", "给我一个基本面总览"],
     fallback: "deterministic_first_then_unknown",
@@ -578,6 +649,31 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     expectedGuardMatchers: ["sourceCoverage"],
     truthBoundary: "live_required",
   },
+  {
+    id: "external-language-batch-010",
+    utterance:
+      "从 Google Scholar、SSRN 和 NBER 找前沿量化论文，但列出实际读过的 paper，不要说全覆盖",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-011",
+    utterance: "做一个 literature review 风格的学习，但必须标 sample limits 和未覆盖范围",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
+  {
+    id: "external-language-batch-012",
+    utterance: "去看顶级大学公开课 syllabus 和论文，说明 what was actually read",
+    family: "external_source_coverage_honesty",
+    expectedSurface: "learning_command",
+    expectedGuardMatchers: ["sourceCoverage"],
+    truthBoundary: "live_required",
+  },
 ] as const;
 
 export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
@@ -668,6 +764,29 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     truthBoundary: "live_required",
   },
   {
+    id: "learning-external-004",
+    utterance: "去将大师的投资理念浓缩成skills，学习进你自己脑子",
+    family: "learning_external_source",
+    expectedSurface: "learning_command",
+    truthBoundary: "evidence_required",
+    notes:
+      "External authority/philosophy skill-internalization asks need source proof before any claimed learning.",
+  },
+  {
+    id: "learning-external-005",
+    utterance: "从 Google Scholar 和公开课程里找金融研究工作流做法，只沉淀可复用规则",
+    family: "learning_external_source",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
+    id: "learning-external-006",
+    utterance: "读几篇 SSRN working paper 和大学课程材料，提炼能改你以后判断的规则",
+    family: "learning_external_source",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
     id: "finance-learning-pipeline-001",
     utterance: "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略",
     family: "market_capability_learning_intake",
@@ -749,6 +868,27 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
   {
     id: "ops-grounding-003",
     utterance: "这条判断是你确认过的还是猜的",
+    family: "ops_source_grounding",
+    expectedSurface: "ops_audit",
+    truthBoundary: "evidence_required",
+  },
+  {
+    id: "ops-grounding-004",
+    utterance: "你刚才纳斯达克那句话哪来的，给我出处，别用泛泛框架糊弄我",
+    family: "ops_source_grounding",
+    expectedSurface: "ops_audit",
+    truthBoundary: "evidence_required",
+  },
+  {
+    id: "ops-grounding-005",
+    utterance: "这段回答引用了哪些 artifact 和 source，没有就标 unverified",
+    family: "ops_source_grounding",
+    expectedSurface: "ops_audit",
+    truthBoundary: "evidence_required",
+  },
+  {
+    id: "ops-grounding-006",
+    utterance: "show the receipt or citation for that claim, otherwise say unknown",
     family: "ops_source_grounding",
     expectedSurface: "ops_audit",
     truthBoundary: "evidence_required",
@@ -966,6 +1106,17 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     family: "position_risk_adjustment",
     expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
     truthBoundary: "research_only",
+  },
+  {
+    id: "position-risk-004",
+    utterance:
+      "Real bond ETF risk check I hold TLT and it is down 12 percent. I am tempted to average down because I think rates will fall later but I worry duration inflation re-acceleration Treasury supply and liquidity risk may make this a bad regime. Research-only no trading advice. Please answer task family how ETF regime creditliquidity macroratesinflation quantmath portfolioriskgates and causalmap should work in order what local math can calculate without live yields when missing live 10Y/real yield/curve/flow data must return failedReason give a reusable checklist. Acceptance code lark-live-bond-etf-risk-20260504-1.",
+    family: "position_risk_adjustment",
+    expectedSurface: "technical_daily",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+    notes:
+      "English bond ETF holding-risk wording must not be stolen by learning pipeline just because it asks for failedReason/checklist.",
   },
   {
     id: "bracket-exit-001",
@@ -1209,6 +1360,27 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
     );
   }
 
+  if (
+    /(google scholar|scholar|ssrn|nber|working paper|公开课程|课程材料|syllabus).{0,100}(可复用规则|沉淀|提炼|内化|改你以后|以后判断|研究工作流|做法)|(?:可复用规则|沉淀|提炼|内化|改你以后|以后判断|研究工作流|做法).{0,100}(google scholar|scholar|ssrn|nber|working paper|公开课程|课程材料|syllabus)/iu.test(
+      normalized,
+    ) &&
+    !/(覆盖范围|全覆盖|完整覆盖|sample limits?|coverage|实际读过|what was actually read|不要说全覆盖|别说全覆盖|未覆盖范围)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "learning_external_source",
+      "scholarly_external_learning_family",
+    );
+  }
+
+  if (looksLikeFinanceLearningMaintenanceAsk(normalized)) {
+    return buildHighSignalSemanticCandidate(
+      "learning_capability_maintenance",
+      "finance_learning_maintenance_family",
+    );
+  }
+
   const hasFinanceLearningPipelineResult =
     /(financelearningpipelineorchestrator|financelearningpipeline|learninginternalizationstatus|retrievalreceiptpath|retrievalreviewpath|finance-learning-retrieval|usable answer contract|usable answer lines|local_source_not_found)/iu.test(
       normalized,
@@ -1217,18 +1389,74 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
       normalized,
     );
   const hasConcreteFinanceLearningIntent =
-    /(学习|learn|study|internalize|source|pipeline|orchestrator|本地安全|valid source|验收码|论文|paper|arxiv).{0,80}(金融|finance|etf|量化|quant|因子|factor|择时|timing|策略|strategy|portfolio|资产配置)/iu.test(
+    /(学习|learn|study|internalize|source|pipeline|orchestrator|本地安全|valid source|验收码|论文|paper|arxiv).{0,80}(金融|finance|etf|量化|quant|因子|factor|择时|timing|策略|strategy|portfolio|资产配置|期权|options?|波动率|volatility|greeks?|希腊字母|衍生品|derivatives?)/iu.test(
       normalized,
     ) ||
-    /(金融|finance|etf|量化|quant|因子|factor|择时|timing|策略|strategy|portfolio|资产配置).{0,80}(学习|learn|study|internalize|source|pipeline|orchestrator|本地安全|valid source|验收码|论文|paper|arxiv)/iu.test(
+    /(金融|finance|etf|量化|quant|因子|factor|择时|timing|策略|strategy|portfolio|资产配置|期权|options?|波动率|volatility|greeks?|希腊字母|衍生品|derivatives?).{0,80}(学习|learn|study|internalize|source|pipeline|orchestrator|本地安全|valid source|验收码|论文|paper|arxiv|全知识|知识体系|完整体系|系统学|系统学习)/iu.test(
       normalized,
     );
   const requiresApplicationReadyProof =
     /(application[_\s-]?ready|failedreason|失败原因|明确失败原因|retrieval receipt|retrieval review|receipt\/review)/iu.test(
       normalized,
     );
+  const hasFundamentalFrameworkReceipt =
+    (/(company_fundamentals_value|companyfundamentalsvalue|causal_map|causalmap|fundamental_research)/iu.test(
+      normalized,
+    ) ||
+      /(companyfundamentalsvalue|causalmap|fundamentalresearch)/iu.test(compact)) &&
+    /(company_fundamentals_value|companyfundamentalsvalue|fundamental_research|fundamentalresearch|fundamental|基本面|company|公司|nvda|msft|aapl|googl|meta|amzn|tsla)/iu.test(
+      normalized,
+    ) &&
+    /(nvda|framework core|框架核心|框架骨架|research-only|failedreason|财报|实时估值|方向性参考|硬数字|基本面风险)/iu.test(
+      normalized,
+    );
+  if (
+    looksLikeFundamentalRiskApplicationAsk(normalized) &&
+    !/(学习|learn|study|internalize|source|pipeline|orchestrator|本地安全|valid source|论文|paper|arxiv)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "fundamental_research",
+      "fundamental_risk_application_family",
+    );
+  }
+  if (hasFundamentalFrameworkReceipt) {
+    return buildHighSignalSemanticCandidate(
+      "fundamental_research",
+      "fundamental_framework_receipt_family",
+    );
+  }
+  if (
+    looksLikePositionRiskApplicationAsk(normalized) &&
+    !/(学习|learn|study|internalize|source|pipeline|orchestrator|本地安全|valid source|论文|paper|arxiv)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "position_risk_adjustment",
+      "position_risk_application_family",
+    );
+  }
+  if (
+    /(qqq|spy|tlt|etf|纳指|标普|债券).{0,80}(持仓|仓位|加仓|减仓|补仓|摊平|平均加仓|average down|position|sizing)|(?:持仓|仓位|加仓|减仓|补仓|摊平|平均加仓|average down|position|sizing).{0,80}(qqq|spy|tlt|etf|纳指|标普|债券)/iu.test(
+      normalized,
+    ) &&
+    /(technical slice|portfolio-sizing|risk-transmission|路由终检|结构化终件|研究边界|research-only|只做研究|风险|risk)/iu.test(
+      normalized,
+    ) &&
+    !/(学习入口|learning pipeline|learninginternalizationstatus|retrievalreceiptpath|retrievalreviewpath|source_required)/iu.test(
+      normalized,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "position_risk_adjustment",
+      "position_risk_visible_reply_family",
+    );
+  }
   if (
     hasFinanceLearningPipelineResult ||
+    looksLikeFinanceLearningPipelineAsk(normalized) ||
     (hasConcreteFinanceLearningIntent && requiresApplicationReadyProof)
   ) {
     return buildHighSignalSemanticCandidate(
@@ -1259,6 +1487,13 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
     return buildHighSignalSemanticCandidate(
       "market_capability_learning_intake",
       "finance_math_learning_family",
+    );
+  }
+
+  if (looksLikeExternalSkillInternalizationAsk(normalized)) {
+    return buildHighSignalSemanticCandidate(
+      "learning_external_source",
+      "external_skill_internalization_family",
     );
   }
 
@@ -1382,21 +1617,243 @@ export function sanitizeLarkApiRouteCandidate(
   candidate: LarkApiRouteCandidate,
   threshold = LARK_ROUTING_API_CONFIDENCE_THRESHOLD,
 ): LarkApiRouteCandidate {
+  const hasActionableWorkOrder = Boolean(
+    candidate.workOrder &&
+    (candidate.workOrder.objective ||
+      candidate.workOrder.requiredModules?.length ||
+      candidate.workOrder.backendTool),
+  );
+  const effectiveThreshold = hasActionableWorkOrder
+    ? Math.min(threshold, LARK_ROUTING_API_WORK_ORDER_CONFIDENCE_THRESHOLD)
+    : threshold;
+  const inferredFamily = inferApiPlannerFamilyFromWorkOrder(candidate.workOrder);
+  const family =
+    candidate.family === "unknown" && inferredFamily ? inferredFamily : candidate.family;
   if (
-    candidate.confidence < threshold ||
-    candidate.family === "unknown" ||
-    !(candidate.family in LARK_ROUTING_FAMILY_CONTRACTS)
+    candidate.confidence < effectiveThreshold ||
+    family === "unknown" ||
+    !(family in LARK_ROUTING_FAMILY_CONTRACTS)
   ) {
     return {
       family: "unknown",
       confidence: Math.max(0, Math.min(1, candidate.confidence)),
       rationale: candidate.rationale,
+      workOrder: candidate.workOrder,
     };
   }
   return {
-    family: candidate.family,
+    family,
     confidence: Math.max(0, Math.min(1, candidate.confidence)),
-    rationale: candidate.rationale,
+    rationale:
+      family !== candidate.family
+        ? `${candidate.rationale ?? ""} inferred_family_from_api_work_order`.trim()
+        : candidate.rationale,
+    workOrder: candidate.workOrder,
+  };
+}
+
+function inferApiPlannerFamilyFromWorkOrder(
+  workOrder: LarkApiPlannerWorkOrder | undefined,
+): LarkRoutingFamily | undefined {
+  if (!workOrder) {
+    return undefined;
+  }
+  const backendTool = workOrder.backendTool?.trim().toLowerCase();
+  if (backendTool === "finance_learning_pipeline_orchestrator") {
+    return "market_capability_learning_intake";
+  }
+  if (
+    backendTool === "learning_external_source" ||
+    backendTool === "github_project_capability_intake" ||
+    (backendTool?.includes("web_search") &&
+      backendTool.includes("finance_learning_pipeline_orchestrator"))
+  ) {
+    return "learning_external_source";
+  }
+  const moduleText = (workOrder.requiredModules ?? []).join(" ").toLowerCase();
+  if (
+    /\bfinance_learning_pipeline_orchestrator\b|\bfinance_learning_retrieval_review\b/u.test(
+      moduleText,
+    )
+  ) {
+    return "market_capability_learning_intake";
+  }
+  if (/\bsource_grounding\b|\bweb_search\b|\bexisting_embryo_scan\b/u.test(moduleText)) {
+    return "learning_external_source";
+  }
+  return undefined;
+}
+
+function mergeUniqueWorkOrderItems(
+  preferred: readonly string[] | undefined,
+  ...fallbacks: readonly (readonly string[] | undefined)[]
+): readonly string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const item of [...(preferred ?? []), ...fallbacks.flatMap((items) => items ?? [])]) {
+    const normalized = item.trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(normalized.slice(0, 120));
+  }
+  return merged.slice(0, 12);
+}
+
+function sanitizePositionRiskOutputContract(items: readonly string[]): readonly string[] {
+  const tradeTriggerPattern =
+    /(买|买入|卖|卖出|加仓|减仓|持有|等待|下单|发单|\b(?:buy|sell|add|reduce|hold|wait|entry|exit)\b)/iu;
+  const safeItems = items.filter((item) => !tradeTriggerPattern.test(item));
+  return mergeUniqueWorkOrderItems(safeItems, [
+    "plain-language research-only risk judgment",
+    "risk observation points, not trade triggers",
+    "explicit missing-data or failedReason gates",
+    "research checklist with no execution instruction",
+  ]);
+}
+
+function defaultWorkOrderModules(family: LarkRoutingFamily): readonly string[] {
+  switch (family) {
+    case "position_risk_adjustment":
+      return [
+        "macro_rates_inflation",
+        "etf_regime",
+        "quant_math",
+        "credit_liquidity",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+      ];
+    case "fundamental_research":
+      return [
+        "fundamental_research",
+        "company_fundamentals_value",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+      ];
+    case "market_capability_learning_intake":
+      return [
+        "finance_learning_pipeline_orchestrator",
+        "finance_learning_retrieval_review",
+        "review_panel",
+      ];
+    case "learning_external_source":
+      return ["source_grounding", "capability_intake", "existing_embryo_scan", "review_panel"];
+    case "api_reply_distillation":
+      return [
+        "api_reply_normalizer",
+        "semantic_family_candidate",
+        "routing_eval",
+        "review_promotion",
+      ];
+    case "control_room_aggregate":
+      return ["control_room", "ops_audit", "learning_review", "finance_summary"];
+    default:
+      return [family];
+  }
+}
+
+function defaultWorkOrderEvidence(
+  family: LarkRoutingFamily,
+  backendToolContract: LarkAgentInstructionHandoff["backendToolContract"],
+): readonly string[] {
+  if (backendToolContract) {
+    return backendToolContract.expectedProof;
+  }
+  switch (family) {
+    case "position_risk_adjustment":
+    case "fundamental_research":
+      return ["explicit missing-data list", "research-only checklist", "risk boundary"];
+    case "api_reply_distillation":
+      return ["normalized sample", "candidate corpus entry", "routing eval result"];
+    default:
+      return ["handoff receipt", "family contract"];
+  }
+}
+
+function buildValidatedAgentWorkOrder(params: {
+  family: LarkRoutingFamily;
+  utterance: string;
+  source: "api";
+  api?: LarkApiRouteCandidate;
+  targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
+  deterministicSurface?: FeishuChatSurfaceName;
+  backendToolContract?: LarkAgentInstructionHandoff["backendToolContract"];
+}): LarkValidatedAgentWorkOrder {
+  const apiFamilyAccepted = params.source === "api" && params.api?.family === params.family;
+  const planner =
+    params.source === "api" && params.api?.family !== "unknown" && params.api?.workOrder
+      ? params.api.workOrder
+      : undefined;
+  const apiRouteOnly = params.source === "api" && params.api?.family === params.family && !planner;
+  const objective =
+    planner?.objective ??
+    (params.backendToolContract
+      ? `Run ${params.backendToolContract.toolName} for the user request.`
+      : `Ask the model planner to clarify or answer the user request as ${params.family}.`);
+  const plannerBackendTool =
+    planner?.backendTool === "finance_learning_pipeline_orchestrator" &&
+    !looksLikeFinanceLearningPipelineAsk(params.utterance)
+      ? undefined
+      : planner?.backendTool;
+  const backendTool = params.backendToolContract?.toolName ?? plannerBackendTool;
+  const notes = [
+    planner
+      ? "api_planner_is_primary_task_decomposer"
+      : apiRouteOnly
+        ? "api_planner_route_only_no_work_order"
+        : "api_planner_missing_work_order",
+    apiFamilyAccepted ? "api_planner_family_accepted" : "api_planner_family_not_primary_or_absent",
+    "no_local_semantic_live_decomposition",
+  ].filter((note): note is string => Boolean(note));
+  const requiredModules = planner
+    ? mergeUniqueWorkOrderItems(planner.requiredModules)
+    : params.family === "market_capability_learning_intake" && !params.backendToolContract
+      ? ["model_planner_review", "finance_learning_intent_gate"]
+      : defaultWorkOrderModules(params.family);
+  const evidenceRequired = planner
+    ? mergeUniqueWorkOrderItems(
+        planner.evidenceRequired,
+        params.backendToolContract?.expectedProof,
+        ["model planner audit receipt"],
+      )
+    : defaultWorkOrderEvidence(params.family, params.backendToolContract);
+  const outputContract = planner
+    ? mergeUniqueWorkOrderItems(planner.outputContract, [
+        "model-review-ready draft",
+        "explicit failedReason when required inputs are missing",
+      ])
+    : ["ask for clarification or provide bounded failedReason", "do not invent backend execution"];
+  const safeOutputContract =
+    params.family === "position_risk_adjustment"
+      ? sanitizePositionRiskOutputContract(outputContract)
+      : outputContract;
+  return {
+    schemaVersion: 1,
+    family: params.family,
+    targetSurface: params.targetSurface,
+    objective,
+    source: "api_planner_audited",
+    plannerFamily: params.api?.family,
+    requiredModules,
+    backendTool,
+    evidenceRequired,
+    safetyBoundaries: mergeUniqueWorkOrderItems(planner?.safetyBoundaries, [
+      "research_only",
+      "no_execution_authority",
+      "evidence_required",
+      "do_not_promote_unreviewed_language_samples",
+    ]),
+    outputContract: safeOutputContract,
+    validation: {
+      apiFamilyAccepted,
+      familyContractMatched: true,
+      deterministicSurface: params.deterministicSurface,
+      notes,
+    },
   };
 }
 
@@ -1411,7 +1868,6 @@ export async function resolveLarkAgentInstructionHandoff(params: {
     chatId: params.chatId,
     content: params.utterance,
   });
-  const semantic = resolveLarkSemanticRouteCandidate(params.utterance);
   let api: LarkApiRouteCandidate | undefined;
   if (params.apiProvider) {
     try {
@@ -1430,22 +1886,15 @@ export async function resolveLarkAgentInstructionHandoff(params: {
       };
     }
   }
-  const forcedFinancePipelineFamily =
-    looksLikeFinanceLearningPipelineAsk(params.utterance) &&
-    api?.family !== "market_capability_learning_intake"
-      ? {
-          family: "market_capability_learning_intake" as const,
-          source: "semantic" as const,
-          confidence: Math.max(semantic.score, LARK_ROUTING_SEMANTIC_THRESHOLD),
-        }
-      : undefined;
   const selected =
-    forcedFinancePipelineFamily ??
-    (api && api.family !== "unknown"
+    api && api.family !== "unknown" && api.confidence >= LARK_ROUTING_API_CONFIDENCE_THRESHOLD
       ? { family: api.family, source: "api" as const, confidence: api.confidence }
-      : semantic.family !== "unknown"
-        ? { family: semantic.family, source: "semantic" as const, confidence: semantic.score }
-        : { family: "unknown" as const, source: "unknown" as const, confidence: 0 });
+      : api &&
+          api.family !== "unknown" &&
+          api.workOrder &&
+          api.confidence >= LARK_ROUTING_API_WORK_ORDER_CONFIDENCE_THRESHOLD
+        ? { family: api.family, source: "api" as const, confidence: api.confidence }
+        : { family: "unknown" as const, source: "unknown" as const, confidence: 0 };
   const contract =
     selected.family === "unknown" ? undefined : LARK_ROUTING_FAMILY_CONTRACTS[selected.family];
   const targetSurface = contract?.target;
@@ -1471,12 +1920,27 @@ export async function resolveLarkAgentInstructionHandoff(params: {
   const backendToolContract = resolveBackendToolContract({
     family: selected.family,
     utterance: params.utterance,
+    workOrder: api?.workOrder,
   });
   const backendLine = backendToolContract
     ? `Backend tool contract: tool=${backendToolContract.toolName}; learningIntent=raw_user_utterance; sourceRequirement=${backendToolContract.sourceRequirement}; expectedProof=${backendToolContract.expectedProof.join(
         ",",
       )}.`
     : undefined;
+  const workOrder = buildValidatedAgentWorkOrder({
+    family: selected.family,
+    utterance: params.utterance,
+    source: selected.source,
+    api,
+    targetSurface,
+    deterministicSurface,
+    backendToolContract,
+  });
+  const workOrderLine = `Validated work order: source=${workOrder.source}; modules=${workOrder.requiredModules.join(
+    ",",
+  )}; evidence=${workOrder.evidenceRequired.join(",")}; validation=${workOrder.validation.notes.join(
+    ",",
+  )}.`;
 
   return {
     family: selected.family,
@@ -1486,11 +1950,13 @@ export async function resolveLarkAgentInstructionHandoff(params: {
     targetSurface,
     deterministicSurface,
     backendToolContract,
+    workOrder,
     notice: [
       `[Lark instruction-understanding envelope]`,
       targetLine,
       deterministicLine,
       backendLine,
+      workOrderLine,
       boundaryLine,
     ]
       .filter(Boolean)
@@ -1576,16 +2042,6 @@ export async function resolveLarkHybridRouteCandidate(params: {
       api,
       acceptedFamily: params.entry.family,
       source: "deterministic",
-    };
-  }
-
-  if (semantic.family !== "unknown") {
-    return {
-      deterministicPassed: false,
-      semantic,
-      api,
-      acceptedFamily: semantic.family,
-      source: "semantic",
     };
   }
 

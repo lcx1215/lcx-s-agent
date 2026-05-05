@@ -26,10 +26,44 @@ export function looksLikeVerticalFinanceLearningAsk(text: string): boolean {
       normalized,
     );
   const hasFinanceDomain =
-    /(股市|股票|美股|a股|港股|市场|金融|finance|etf|指数|index|大类资产|major asset|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|daily[-\s]?frequency|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation)/u.test(
+    /(股市|股票|美股|a股|港股|市场|金融|finance|etf|指数|index|大类资产|major asset|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|daily[-\s]?frequency|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation|期权|options?|波动率|volatility|greeks?|希腊字母|衍生品|derivatives?)/iu.test(
       normalized,
     );
   return hasLearningIntent && hasVerticalCue && hasFinanceDomain;
+}
+
+export function looksLikePositionRiskApplicationAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasPositionRiskCue =
+    /(持有|持仓|仓位|加仓|减仓|补仓|摊平|亏了?|回撤|position|position sizing|add to position|reduce position|drawdown|hold(?:ing|s)?|held|average down|averaging down|down\s+\d+(?:\.\d+)?\s*percent|loss|losing)/u.test(
+      normalized,
+    );
+  const hasMarketRiskCue =
+    /(qqq|spy|tlt|nasdaq|纳指|纳斯达克|etf|估值|valuation|利率|10y|收益率|yield|real yield|curve|duration|treasury supply|inflation|流动性|liquidity|creditliquidity|macro(?:rates)?inflation|regime|技术择时|technical|timing|风控|风险|risk|quant_math|quantmath|portfolioriskgates|causalmap|本地数学)/iu.test(
+      normalized,
+    );
+  const hasApplicationCue =
+    /(研究-only|research-only|no trading advice|不要.*下单|不许下单|不准.*下单|不允许交易执行|不要教我下单|只做研究|本地数学|local math|模块|先后工作|work in order|检查清单|checklist|application[_\s-]?ready|failedreason|明确失败原因)/iu.test(
+      normalized,
+    );
+  return hasPositionRiskCue && hasMarketRiskCue && hasApplicationCue;
+}
+
+export function looksLikeFundamentalRiskApplicationAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasCompanyCue =
+    /(nvda|msft|aapl|googl|meta|amzn|tsla|公司|企业|issuer|company|股票|个股|基本面|fundamental|财报|年报|季报|电话会|guidance|指引)/iu.test(
+      normalized,
+    );
+  const hasFundamentalRiskCue =
+    /(估值|valuation|毛利率|gross margin|margin|capex|资本开支|客户集中|customer concentration|需求|demand|可持续|sustainability|回报|roi|现金流|free cash flow|fcf|护城河|竞争|商业质量|fundamental risk|基本面风险)/iu.test(
+      normalized,
+    );
+  const hasApplicationCue =
+    /(研究-only|research-only|不是要买卖|不要.*买卖|不许.*买卖|不准.*买卖|不允许交易执行|只想判断|判断.*风险|任务家族|模块|分工|检查清单|application[_\s-]?ready|failedreason|明确失败原因|可复用研究规则)/iu.test(
+      normalized,
+    );
+  return hasCompanyCue && hasFundamentalRiskCue && hasApplicationCue;
 }
 
 export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
@@ -38,16 +72,20 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
     /(finance[_\s-]?learning[_\s-]?pipeline[_\s-]?orchestrator|source intake|extract|attach|retrieval review|retrieval receipt|learninginternalizationstatus|application[_\s-]?ready|failedreason|usable answer contract|usable answer lines)/iu.test(
       normalized,
     );
+  const hasConcreteSourceOrPipelineCue =
+    /(finance[_\s-]?learning[_\s-]?pipeline[_\s-]?orchestrator|source intake|extract|attach|retrieval review|retrieval receipt|usable answer contract|usable answer lines|本地安全\s*source|valid source|source\s+\S+\.(?:md|txt|html)|\.md|\.txt|\.html)/iu.test(
+      normalized,
+    );
   const hasLearningIntent =
     /(开始学|开始学习|去学|学一下|学学|学习|学会|学成|训练|练出|练好|补一下|补齐|补强|提升|强化|加强|研究一下|研究明白|搞懂|内化|做成能力|能力做好|能力补齐|接下来学|让它学|让你学|你去学|你自己学|自己学|learn|study|internalize)/u.test(
       normalized,
     );
   const hasFinanceDomain =
-    /(股市|股票|美股|a股|港股|市场|金融|finance|etf|指数|index|大类资产|major asset|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|daily[-\s]?frequency|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation|量化|quant|因子|factor|策略|strategy|regime|宏观|利率|信用|credit|流动性|liquidity)/u.test(
+    /(股市|股票|美股|a股|港股|市场|金融|finance|etf|指数|index|大类资产|major asset|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|daily[-\s]?frequency|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation|量化|quant|因子|factor|策略|strategy|regime|宏观|利率|信用|credit|流动性|liquidity|期权|options?|波动率|volatility|greeks?|希腊字母|衍生品|derivatives?)/iu.test(
       normalized,
     );
   const hasPipelineCue =
-    /(能力|能力卡|capability|capability card|pipeline|管线|receipt|review|日结|检索|retrieval|内化|可检索|学成|做成|沉淀|attach|extract|source intake|学习流程|完整学习流程|一套|方法|框架|策略|workflow|checklist|规则|rule)/u.test(
+    /(能力|能力卡|capability|capability card|pipeline|管线|receipt|review|日结|检索|retrieval|内化|可检索|学成|做成|沉淀|attach|extract|source intake|学习流程|完整学习流程|一套|全知识|知识体系|完整知识|完整体系|系统学|系统学习|方法|框架|策略|workflow|checklist|规则|rule)/u.test(
       normalized,
     );
   const hasFinanceMethodKnowledgeCue =
@@ -63,10 +101,24 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
       normalized,
     );
   const hasConcreteFinanceMethod =
-    /(etf|指数|index|大类资产|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation|量化|quant|因子|factor|策略|strategy|regime|宏观|利率|信用|credit|流动性|liquidity|金融文章|finance article)/u.test(
+    /(etf|指数|index|大类资产|资产配置|持仓|组合|portfolio|基本面|fundamental|技术面|technical|日频|择时|timing|风控|risk control|风险控制|回撤|drawdown|仓位|position sizing|筛股|选股|行业|板块|财报|估值|valuation|量化|quant|因子|factor|策略|strategy|regime|宏观|利率|信用|credit|流动性|liquidity|期权|options?|波动率|volatility|greeks?|希腊字母|衍生品|derivatives?|金融文章|finance article)/iu.test(
       normalized,
     );
   if (isAgentOrPlatformLearning && !hasConcreteFinanceMethod) {
+    return false;
+  }
+  if (
+    looksLikePositionRiskApplicationAsk(normalized) &&
+    !hasLearningIntent &&
+    !hasConcreteSourceOrPipelineCue
+  ) {
+    return false;
+  }
+  if (
+    looksLikeFundamentalRiskApplicationAsk(normalized) &&
+    !hasLearningIntent &&
+    !hasConcreteSourceOrPipelineCue
+  ) {
     return false;
   }
   if (hasExplicitPipelineExecutionCue && hasFinanceDomain) {
@@ -78,6 +130,27 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
     (hasPipelineCue || hasFinanceMethodKnowledgeCue) &&
     !asksAuditOnly
   );
+}
+
+export function looksLikeExternalSkillInternalizationAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasLearningIntent =
+    /(去学|去学习|学习|学一下|学学|读|阅读|研究|提炼|浓缩|总结|抽取|内化|吸收|写进|学进|变成|做成)/u.test(
+      normalized,
+    );
+  const hasSkillOrCapabilityCue =
+    /(skill|skills|能力|能力卡|规则|规矩|方法论|理念|框架|原则|decision rule|playbook|可复用|复用|以后.*做法|以后.*判断|脑子|大脑)/iu.test(
+      normalized,
+    );
+  const hasExternalAuthorityCue =
+    /(大师|投资大师|巴菲特|芒格|达利欧|dalio|buffett|munger|索罗斯|soros|西蒙斯|simons|彼得林奇|lynch|格雷厄姆|graham|桥水|berkshire|公开理念|著作|书|访谈|shareholder letter|letters?)/iu.test(
+      normalized,
+    );
+  const asksAuditOnly =
+    /(有没有|到底|是不是真的|状态|卡住|完成了吗|学会了吗|内化了吗|证据在哪|receipt|review)/u.test(
+      normalized,
+    );
+  return hasLearningIntent && hasSkillOrCapabilityCue && hasExternalAuthorityCue && !asksAuditOnly;
 }
 
 export function looksLikeGitHubProjectCapabilityIntakeAsk(text: string): boolean {
@@ -255,11 +328,11 @@ export function looksLikeCorrectionCarryoverAsk(text: string): boolean {
 export function looksLikeSourceGroundingAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasCurrentClaimCue =
-    /(这话|这句话|这句|这条|这个结论|那个结论|这个判断|那个判断|刚才|刚刚|上面|上一条|你刚才|你刚刚|你上面|你说的|你这个说法|你那个说法|你这判断|你那判断|your claim|that claim|this claim)/u.test(
+    /(这话|这句话|这句|这条|这段|这段回答|这个回答|这次回答|这个结论|那个结论|这个判断|那个判断|刚才|刚刚|上面|上一条|你刚才|你刚刚|你上面|你说的|你这个说法|你那个说法|你这判断|你那判断|your claim|that claim|this claim|this answer|that answer)/u.test(
       normalized,
     );
   const hasSourceCue =
-    /(来源|出处|源|source|sources|citation|cite|引用|链接|link|依据|根据|证据|evidence|凭什么|哪来的|哪里来的|从哪来|从哪里来|确认过|核过|验证过|查过|verified|confirmed|grounded)/u.test(
+    /(来源|出处|源|source|sources|citation|cite|引用|链接|link|依据|根据|证据|evidence|artifact|artifacts|receipt|receipts|凭什么|哪来的|哪里来的|从哪来|从哪里来|确认过|核过|验证过|查过|verified|confirmed|grounded|unverified)/u.test(
       normalized,
     );
   const hasFabricationCue =
@@ -267,7 +340,7 @@ export function looksLikeSourceGroundingAsk(text: string): boolean {
       normalized,
     );
   const asksAudit =
-    /(吗|么|是不是|有没有|还是|哪|哪里|从哪|凭什么|给我|说清楚|标出来|说不知道|标未知|别编|不要编|show|where|what|is it|did you|prove|proof|source)/u.test(
+    /(吗|么|是不是|有没有|还是|哪|哪些|哪里|从哪|凭什么|给我|说清楚|标出来|说不知道|标未知|别编|不要编|没有就标|show|where|what|which|is it|did you|prove|proof|source)/u.test(
       normalized,
     );
   return (
@@ -407,7 +480,7 @@ export function looksLikeExecutionAuthorityScopeAsk(text: string): boolean {
 export function looksLikeSourceCoverageScopeAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasExternalSourceCue =
-    /(google|web|网上|互联网|搜索|检索|search|github|repo|开源|open source|paper|论文|arxiv|前沿|顶级大学|世界顶级大学|大学|高校|academic|university|college|博客|blog|文档|docs|资料|材料|source|sources|外部来源|外部材料|同类|同行|竞品|peer|peers|competitor|benchmark)/u.test(
+    /(google|scholar|google scholar|web|网上|互联网|搜索|检索|search|github|repo|开源|open source|paper|论文|arxiv|ssrn|nber|working paper|preprint|前沿|顶级大学|世界顶级大学|大学|高校|academic|university|college|课程|公开课|lecture|syllabus|literature review|博客|blog|文档|docs|资料|材料|source|sources|外部来源|外部材料|同类|同行|竞品|peer|peers|competitor|benchmark)/u.test(
       normalized,
     );
   const hasLearningOrResearchCue =
@@ -415,11 +488,11 @@ export function looksLikeSourceCoverageScopeAsk(text: string): boolean {
       normalized,
     );
   const hasCompletenessCue =
-    /(查全|搜全|看全|读完|学完|覆盖全|全覆盖|完整覆盖|完整学习|完整检索|所有|全部|尽可能全|足够全|系统性|全面|世界顶级|顶级大学|前沿|frontier|top university|top universities|leading university|leading universities|coverage|complete|full coverage|exhaustive|comprehensive|all sources|everything)/u.test(
+    /(查全|搜全|看全|读完|学完|覆盖全|全覆盖|完整覆盖|完整学习|完整检索|所有|全部|尽可能全|足够全|系统性|系统学习|全面|世界顶级|顶级大学|前沿|frontier|top university|top universities|leading university|leading universities|coverage|complete|full coverage|exhaustive|comprehensive|all sources|everything|survey|literature review|state of the art)/u.test(
       normalized,
     );
   const hasCoverageHonestyCue =
-    /(别把|不要把|别说成|不要说成|别假装|不要假装|只能说|说清楚|标出来|标明|说明只读了|只读了|覆盖范围|覆盖面|抽样|样本|只看了|没搜到|搜不到|搜索不可用|检索不可用|能力|capability|limited|sample|sampled|partial|unknown|not exhaustive|not complete|source coverage)/u.test(
+    /(别把|不要把|别说成|不要说成|别假装|不要假装|只能说|说清楚|标出来|标明|说明只读了|只读了|覆盖范围|覆盖面|抽样|样本|只看了|看过哪些|读了哪些|没搜到|搜不到|搜索不可用|检索不可用|能力|capability|limited|sample|sampled|partial|unknown|not exhaustive|not complete|not comprehensive|source coverage|coverage limits?|sampling limits?|what was actually read)/u.test(
       normalized,
     );
   return (

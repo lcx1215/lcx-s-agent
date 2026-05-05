@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeTempWorkspace } from "../../../src/test-helpers/workspace.js";
 import {
+  renderLarkAnswerComposerNotice,
   renderLarkFinanceBrainOrchestrationNotice,
   writeLarkLanguageHandoffReceipt,
 } from "./lark-language-handoff-receipts.js";
@@ -36,6 +37,25 @@ describe("lark language handoff receipts", () => {
         confidence: 0.91,
         targetSurface: "learning_command",
         deterministicSurface: "learning_command",
+        workOrder: {
+          schemaVersion: 1,
+          family: "learning_external_source",
+          targetSurface: "learning_command",
+          objective: "inspect an external source before learning",
+          source: "api_planner_audited",
+          plannerFamily: "learning_external_source",
+          requiredModules: ["source_grounding"],
+          backendTool: "github_project_capability_intake",
+          evidenceRequired: ["source URL or local path"],
+          safetyBoundaries: ["research_only"],
+          outputContract: ["failedReason if source missing"],
+          validation: {
+            apiFamilyAccepted: true,
+            familyContractMatched: true,
+            deterministicSurface: "learning_command",
+            notes: ["no_local_semantic_live_decomposition"],
+          },
+        },
         backendToolContract: {
           toolName: "github_project_capability_intake",
           learningIntent: "看看 GitHub 热榜项目哪些功能能加进来，我们内部有没有雏形",
@@ -59,6 +79,13 @@ describe("lark language handoff receipts", () => {
         source: "api",
         backendToolContract: {
           toolName: "github_project_capability_intake",
+        },
+        workOrder: {
+          family: "learning_external_source",
+          source: "api_planner_audited",
+          validation: {
+            familyContractMatched: true,
+          },
         },
         expectedProof: ["capabilityFamily", "existingEmbryos", "adoptionDecision"],
         missingBeforeExecution: ["repo URL, README/docs summary, or selected feature summary"],
@@ -175,6 +202,33 @@ describe("lark language handoff receipts", () => {
     expect(notice).toContain("primaryModules=etf_regime,quant_math,causal_map");
     expect(notice).toContain("requiredTools=");
     expect(notice).toContain("do not replace quant_math with model guesses");
+  });
+
+  it("renders an answer composer contract that keeps backend labels out of the visible lead", () => {
+    const notice = renderLarkAnswerComposerNotice({
+      schemaVersion: 1,
+      family: "position_risk_adjustment",
+      targetSurface: "technical_daily",
+      objective: "Answer a TLT position-risk question with research-only boundaries.",
+      source: "api_planner_audited",
+      plannerFamily: "market_capability_learning_intake",
+      requiredModules: ["macro_rates_inflation", "etf_regime", "quant_math"],
+      evidenceRequired: ["explicit missing-data list", "risk boundary"],
+      safetyBoundaries: ["research_only", "no_execution_authority"],
+      outputContract: ["concise judgment", "failedReason when live rates are missing"],
+      validation: {
+        apiFamilyAccepted: false,
+        familyContractMatched: true,
+        deterministicSurface: "technical_daily",
+        notes: ["no_local_semantic_live_decomposition"],
+      },
+    });
+
+    expect(notice).toContain("Lark answer composer contract");
+    expect(notice).toContain("answer the user's real question first in plain language");
+    expect(notice).toContain("do not lead with family, route, modules, receipts");
+    expect(notice).toContain("concise judgment");
+    expect(notice).toContain("failedReason");
   });
 
   it("does not add finance orchestration for non-finance handoff wording", async () => {

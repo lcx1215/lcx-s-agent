@@ -91,7 +91,7 @@ const {
     matchedBy: "default",
   })),
   mockCreateGatewayLarkApiRouteProvider: vi.fn(
-    () => async () =>
+    () => async (_params: { utterance: string }) =>
       ({
         family: "unknown" as const,
         confidence: 0,
@@ -276,7 +276,7 @@ beforeEach(() => {
   mockRunFeishuLearningCouncil.mockReset();
   mockRunFeishuMarketIntelligencePacket.mockReset();
   mockCreateGatewayLarkApiRouteProvider.mockReset();
-  mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+  mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async (_params: { utterance: string }) => ({
     family: "unknown",
     confidence: 0,
     rationale: "test default skips live API routing",
@@ -301,6 +301,14 @@ beforeEach(() => {
     matchedBy: "default",
   });
 });
+
+function mockLearningCommandApiRoute(rationale = "test API planner selected learning backend") {
+  mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+    family: "learning_external_source",
+    confidence: 0.92,
+    rationale,
+  }));
+}
 
 describe("ensureFeishuWorkReceiptArtifacts", () => {
   it("materializes honest empty-state receipt index and repair queue", async () => {
@@ -360,6 +368,27 @@ describe("buildFeishuAgentBody", () => {
       "When freshness is weak, stale, cached, or provider-limited, do not present high-specificity market figures, exact levels, exact percentages, or exact point estimates as if they were freshly verified in this turn",
     );
     expect(body).toContain("查一下最近美国非农、通胀预期和 QQQ / TLT 的关系");
+  });
+
+  it("keeps the Lark answer composer notice in the model-facing body", () => {
+    const body = buildFeishuAgentBody({
+      ctx: {
+        content: "我持有 TLT 亏了 12%，现在怎么判断还能不能拿？",
+        senderName: "Sender Name",
+        senderOpenId: "ou-sender",
+        messageId: "msg-answer-composer-42",
+      },
+      surfaceNotice: [
+        "[Lark answer composer contract]",
+        "Visible reply rule: answer the user's real question first in plain language; do not lead with family, route, modules, receipts, JSON, or backend labels unless the user explicitly asks for protocol proof.",
+        "Required visible shape for finance/research tasks: concise judgment, key reasons, missing inputs or failedReason, research-only next checklist, and proof path only at the end if useful.",
+      ].join("\n"),
+    });
+
+    expect(body).toContain("Lark answer composer contract");
+    expect(body).toContain("answer the user's real question first in plain language");
+    expect(body).toContain("do not lead with family, route, modules, receipts");
+    expect(body).toContain("concise judgment, key reasons, missing inputs or failedReason");
   });
 
   it("adds a frontier intent notice for leakage and overfitting prompts", () => {
@@ -2616,7 +2645,7 @@ confidence: high
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("captures real Lark turns into a pending language-routing corpus artifact", async () => {
+  it("does not auto-capture real Lark turns into pending language-routing candidates", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
       sendBlockReply: vi.fn(() => false),
@@ -2726,52 +2755,38 @@ confidence: high
       },
     });
 
-    const candidateRoot = path.join(tempDir, "memory", "lark-language-routing-candidates");
-    const [dateDir] = await fs.readdir(candidateRoot);
-    const artifactText = await fs.readFile(
-      path.join(candidateRoot, dateDir, "msg-language-capture.json"),
+    await expect(
+      fs.access(path.join(tempDir, "memory", "lark-language-routing-candidates")),
+    ).rejects.toThrow();
+    await expect(
+      fs.access(path.join(tempDir, "memory", "lark-language-routing-reviews")),
+    ).rejects.toThrow();
+    const brainCandidateRoot = path.join(tempDir, "memory", "lark-brain-distillation-candidates");
+    const [brainCandidateDateDir] = await fs.readdir(brainCandidateRoot);
+    const brainCandidateText = await fs.readFile(
+      path.join(brainCandidateRoot, brainCandidateDateDir, "msg-language-capture.json"),
       "utf-8",
     );
-    const artifact = JSON.parse(artifactText) as {
+    const brainCandidate = JSON.parse(brainCandidateText) as {
       boundary: string;
-      noFinanceLearningArtifact: boolean;
-      candidates: Array<{ source: string; boundary: string }>;
-      evaluation: {
-        counts: { total: number; accepted: number };
-        acceptedCases: Array<{ family: string; expectedSurface: string }>;
-      };
+      noLanguageRoutingPromotion: boolean;
+      noLiveSenderTouched: boolean;
+      candidates: Array<{
+        boundary: string;
+        status: string;
+        source: string;
+      }>;
     };
-
-    expect(artifact).toMatchObject({
-      boundary: "language_routing_only",
-      noFinanceLearningArtifact: true,
-      candidates: expect.arrayContaining([
-        expect.objectContaining({
-          source: "api_reply",
-          boundary: "language_routing_only",
-        }),
-        expect.objectContaining({
-          source: "lark_user_utterance",
-          boundary: "language_routing_only",
-        }),
-        expect.objectContaining({
-          source: "lark_visible_reply",
-          boundary: "language_routing_only",
-        }),
-      ]),
-      evaluation: expect.objectContaining({
-        counts: expect.objectContaining({ total: 3, accepted: 1 }),
-        acceptedCases: [
-          expect.objectContaining({
-            family: "external_source_coverage_honesty",
-            expectedSurface: "learning_command",
-          }),
-        ],
-      }),
+    expect(brainCandidate).toMatchObject({
+      boundary: "brain_distillation_candidate",
+      noLanguageRoutingPromotion: true,
+      noLiveSenderTouched: true,
     });
-    expect(artifactText).not.toMatch(
-      /finance_learning|finance-learning|memory\/local-memory|capability card/u,
-    );
+    expect(brainCandidate.candidates[0]).toMatchObject({
+      boundary: "brain_distillation_candidate",
+      status: "pending_brain_review",
+      source: "lark_visible_reply",
+    });
 
     const handoffRoot = path.join(tempDir, "memory", "lark-language-handoff-receipts");
     const [handoffDateDir] = await fs.readdir(handoffRoot);
@@ -2810,27 +2825,6 @@ confidence: high
     await expect(
       fs.access(path.join(tempDir, "memory", "local-memory", "msg-language-capture.json")),
     ).rejects.toThrow();
-
-    const reviewText = await fs.readFile(
-      path.join(tempDir, "memory", "lark-language-routing-reviews", `${dateDir}.json`),
-      "utf-8",
-    );
-    const review = JSON.parse(reviewText) as {
-      boundary: string;
-      counts: { sourceArtifacts: number; acceptedCases: number; promotedCases: number };
-      corpusPatch: string;
-    };
-    expect(review).toMatchObject({
-      boundary: "language_routing_only",
-      counts: expect.objectContaining({
-        sourceArtifacts: 1,
-        acceptedCases: 1,
-      }),
-    });
-    expect(review.corpusPatch).toContain("language-routing");
-    expect(reviewText).not.toMatch(
-      /finance_learning|finance-learning|memory\/local-memory|capability card/u,
-    );
 
     await fs.rm(tempDir, { recursive: true, force: true });
   });
@@ -3586,6 +3580,7 @@ confidence: high
       replyOptions: {},
       markDispatchIdle: vi.fn(),
     });
+    mockLearningCommandApiRoute("API planner selected external-source adoption learning");
 
     mockRunFeishuLearningCouncil.mockImplementation(
       async (params: { workspaceDir: string; messageId: string; userMessage: string }) => {
@@ -5321,7 +5316,17 @@ describe("learning council routing", () => {
       receiptsPath: "memory/feishu-learning-timeboxes/timebox-running-control-1.receipts.jsonl",
     });
 
-    const mockDispatchReplyFromConfig = vi.fn();
+    const mockDispatchReplyFromConfig = vi.fn(async () => {
+      (baseDispatcher.sendFinalReply as (payload: { text: string }) => boolean)({
+        text: [
+          "learningInternalizationStatus: not_started",
+          "failedReason: safe_local_or_manual_source_required",
+          "未产生: retrievalReceiptPath / retrievalReviewPath",
+          "还缺安全 source，不能假装已经开始学习。",
+        ].join("\n"),
+      });
+      return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+    });
     const mockWithReplyDispatcher = vi.fn(
       async ({
         dispatcher,
@@ -6575,9 +6580,9 @@ describe("learning council routing", () => {
       "Learning council run: full three-model execution completed.\n\n## Kimi synthesis\n- one point",
     );
     mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
-      family: "protocol_truth_surface",
-      confidence: 0.82,
-      rationale: "model-routing status wording should not override a deterministic learning lane",
+      family: "learning_external_source",
+      confidence: 0.92,
+      rationale: "API planner selected learning backend for model-assisted study",
     }));
 
     const mockDispatchReplyFromConfig = vi.fn();
@@ -6687,6 +6692,7 @@ describe("learning council routing", () => {
       replyOptions: {},
       markDispatchIdle: vi.fn(),
     });
+    mockLearningCommandApiRoute("API planner selected learning council timeout path");
     mockRunFeishuLearningCouncil.mockReturnValue(new Promise(() => {}));
 
     const mockDispatchReplyFromConfig = vi.fn();
@@ -6878,7 +6884,21 @@ describe("learning council routing", () => {
     await dispatchMessage({ cfg, event });
 
     expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
-    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ctx: expect.objectContaining({
+          SessionKey: expect.stringContaining(":answer-composer:msg-finance-pipeline-live"),
+          BodyForAgent: expect.stringContaining("Lark final answer composer"),
+          Body: expect.stringContaining("Use the factual pack below as hard truth"),
+        }),
+      }),
+    );
+    const composerCtx = mockDispatchReplyFromConfig.mock.calls[0]?.[0]?.ctx as
+      | { BodyForAgent?: string }
+      | undefined;
+    expect(composerCtx?.BodyForAgent).toContain("Before the visible reply, apply the review_tier");
+    expect(composerCtx?.BodyForAgent).toContain("learningInternalizationStatus=application_ready");
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: expect.stringContaining("金融能力学习流水线已完成 dev 验收"),
     });
@@ -6945,31 +6965,18 @@ describe("learning council routing", () => {
     expect(applyUsageReviewText).toContain('"usageReceipts": 1');
     expect(applyUsageReviewText).toContain('"successfulApplications": 1');
 
-    const languageCandidateDirs = await fs.readdir(
-      path.join(tempDir, "memory", "lark-language-routing-candidates"),
-    );
-    expect(languageCandidateDirs).toHaveLength(1);
     await expect(
-      fs.access(
-        path.join(
-          tempDir,
-          "memory",
-          "lark-language-routing-candidates",
-          languageCandidateDirs[0],
-          "msg-finance-pipeline-live.json",
-        ),
-      ),
-    ).resolves.toBeUndefined();
-    const languageReviewText = await fs.readFile(
-      path.join(
-        tempDir,
-        "memory",
-        "lark-language-routing-reviews",
-        `${languageCandidateDirs[0]}.json`,
-      ),
-      "utf-8",
+      fs.access(path.join(tempDir, "memory", "lark-language-routing-candidates")),
+    ).rejects.toThrow();
+    await expect(
+      fs.access(path.join(tempDir, "memory", "lark-language-routing-reviews")),
+    ).rejects.toThrow();
+    const brainCandidateRoot = path.join(tempDir, "memory", "lark-brain-distillation-candidates");
+    const [brainCandidateDateDir] = await fs.readdir(brainCandidateRoot);
+    const brainCandidateFiles = await fs.readdir(
+      path.join(brainCandidateRoot, brainCandidateDateDir),
     );
-    expect(languageReviewText).toContain('"boundary": "language_routing_only"');
+    expect(brainCandidateFiles).toContain("msg-finance-pipeline-live.json");
 
     const surfaceLineText = await fs.readFile(
       path.join(tempDir, "memory", "feishu-surface-lines", "learning_command-oc-learning.md"),
@@ -7821,7 +7828,7 @@ describe("learning council routing", () => {
     }
   });
 
-  it("runs the finance learning pipeline for Lark-stripped live validation wording even when API calls it a probe", async () => {
+  it("does not let local stripped wording run the finance learning pipeline when API calls it a probe", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
       sendBlockReply: vi.fn(() => false),
@@ -7934,19 +7941,16 @@ describe("learning council routing", () => {
     });
 
     expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
-    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
-    const replyText = ((
-      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
-    )[0]?.[0]).text;
-    expect(replyText).toContain("金融能力学习流水线已完成 dev 验收");
-    expect(replyText).toContain("learningInternalizationStatus: application_ready");
-    expect(replyText).toContain("failedReason: none");
-    expect(replyText).toContain("usable answer lines:");
-    expect(replyText).toContain("Final status: application_ready");
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    expect(baseDispatcher.sendFinalReply).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("金融能力学习流水线已完成 dev 验收"),
+      }),
+    );
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("does not run the finance learning pipeline when concrete market capability learning lacks a safe source", async () => {
+  it("does not run the finance learning pipeline when external skill learning lacks a safe source", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
       sendBlockReply: vi.fn(() => false),
@@ -7961,10 +7965,33 @@ describe("learning council routing", () => {
       markDispatchIdle: vi.fn(),
     });
     mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
-      family: "market_capability_learning_intake",
+      family: "learning_external_source",
       confidence: 0.9,
-      rationale: "market capability learning intake",
+      rationale: "extract external source material into reusable skills",
+      workOrder: {
+        objective: "extract master public talks and books into reusable skills",
+        requiredModules: ["finance_research_source_workbench"],
+        backendTool: "finance_learning_pipeline_orchestrator",
+        evidenceRequired: ["source intake receipt"],
+        safetyBoundaries: ["research_only", "evidence_required"],
+        outputContract: ["skill cards", "failedReason"],
+      },
     }));
+    const mockDispatchReplyFromConfig = vi.fn(
+      async ({
+        dispatcher,
+        ctx,
+      }: {
+        dispatcher: typeof baseDispatcher;
+        ctx: { BodyForAgent?: string };
+      }) => {
+        (dispatcher.sendFinalReply as (payload: { text: string }) => boolean)({
+          text: "可以做，但我现在还不能说已经学完：你还没给大师清单和可核验原文/source。failedReason: safe_local_or_manual_source_required",
+        });
+        void ctx;
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+      },
+    );
 
     setFeishuRuntime(
       createPluginRuntimeMock({
@@ -7979,7 +8006,8 @@ describe("learning council routing", () => {
             ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
             formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
             finalizeInboundContext,
-            dispatchReplyFromConfig: vi.fn(),
+            dispatchReplyFromConfig:
+              mockDispatchReplyFromConfig as unknown as PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"],
             withReplyDispatcher: vi.fn(
               async ({
                 dispatcher,
@@ -8035,22 +8063,27 @@ describe("learning council routing", () => {
           chat_type: "p2p",
           message_type: "text",
           content: JSON.stringify({
-            text: "学习一套很好的量化因子择时策略，最后要有 retrieval receipt 和 review",
+            text: "所有的这几个大师，将他们公开场合说的话，书籍里的话，提炼浓缩成skills",
           }),
         },
       },
     });
 
     expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("还缺安全 source"),
-    });
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    const composerCtx = mockDispatchReplyFromConfig.mock.calls[0]?.[0]?.ctx as
+      | { BodyForAgent?: string }
+      | undefined;
+    expect(composerCtx?.BodyForAgent).toContain("Lark final answer composer");
+    expect(composerCtx?.BodyForAgent).toContain("Factual pack:");
+    expect(composerCtx?.BodyForAgent).toContain("已识别: learning_external_source");
+    expect(composerCtx?.BodyForAgent).toContain("大师清单");
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("learningInternalizationStatus: not_started");
+    expect(replyText).toContain("大师清单");
+    expect(replyText).not.toContain("已识别: market_capability_learning_intake");
     expect(replyText).toContain("failedReason: safe_local_or_manual_source_required");
-    expect(replyText).toContain("未产生: retrievalReceiptPath / retrievalReviewPath");
     await expect(
       fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
     ).rejects.toThrow();
@@ -8190,7 +8223,17 @@ describe("learning council routing", () => {
       rationale: "operator clarified the agent should learn for itself",
     }));
 
-    const mockDispatchReplyFromConfig = vi.fn();
+    const mockDispatchReplyFromConfig = vi.fn(async () => {
+      (baseDispatcher.sendFinalReply as (payload: { text: string }) => boolean)({
+        text: [
+          "learningInternalizationStatus: not_started",
+          "failedReason: safe_local_or_manual_source_required",
+          "未产生: retrievalReceiptPath / retrievalReviewPath",
+          "还缺安全 source，不能假装已经开始学习。",
+        ].join("\n"),
+      });
+      return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+    });
     setFeishuRuntime(
       createPluginRuntimeMock({
         channel: {
@@ -8270,10 +8313,20 @@ describe("learning council routing", () => {
     });
 
     expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
-    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("还缺安全 source"),
-    });
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ctx: expect.objectContaining({
+          SessionKey: expect.stringContaining(
+            ":answer-composer:msg-control-room-learning-missing-source",
+          ),
+          Body: expect.stringContaining("Use the factual pack below as hard truth"),
+          BodyForAgent: expect.stringContaining(
+            "failedReason: safe_local_or_manual_source_required",
+          ),
+        }),
+      }),
+    );
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
@@ -8427,6 +8480,7 @@ describe("learning council routing", () => {
       replyOptions: {},
       markDispatchIdle: vi.fn(),
     });
+    mockLearningCommandApiRoute("API planner selected bounded market-intelligence packet path");
     mockRunFeishuMarketIntelligencePacket.mockResolvedValue(
       "## Market Intelligence Packet\n- task: same-day ETF / index / macro intelligence packet",
     );
@@ -8540,6 +8594,7 @@ describe("learning council routing", () => {
       replyOptions: {},
       markDispatchIdle: vi.fn(),
     });
+    mockLearningCommandApiRoute("API planner selected bounded background learning path");
     mockRunFeishuLearningCouncil.mockResolvedValue(
       "Learning council run: full three-model execution completed.",
     );
@@ -8671,6 +8726,7 @@ describe("learning council routing", () => {
       replyOptions: {},
       markDispatchIdle: vi.fn(),
     });
+    mockLearningCommandApiRoute("API planner selected duplicate learning timebox guard");
     mockPeekFeishuLearningTimeboxSession.mockReturnValue({
       status: "already_running",
       sessionId: "timebox-running-1",
@@ -8795,6 +8851,7 @@ describe("learning council routing", () => {
       replyOptions: {},
       markDispatchIdle: vi.fn(),
     });
+    mockLearningCommandApiRoute("API planner selected active learning timebox guard");
     mockFindRunningFeishuLearningTimeboxSession.mockReturnValue({
       sessionId: "timebox-running-2",
       deadlineAt: "2026-04-08T22:40:00.000Z",
@@ -8906,6 +8963,7 @@ describe("learning council routing", () => {
       replyOptions: {},
       markDispatchIdle: vi.fn(),
     });
+    mockLearningCommandApiRoute("API planner selected persisted learning timebox guard");
     mockFindLatestFeishuLearningTimeboxSession.mockResolvedValue({
       sessionId: "timebox-persisted-running-1",
       status: "running",
@@ -9005,6 +9063,140 @@ describe("learning council routing", () => {
     });
   });
 
+  it("fails closed for ambiguous repeat-only Lark messages instead of resuming an old session topic", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-ambiguous-repeat-"));
+    await fs.mkdir(path.join(tempDir, "memory"), { recursive: true });
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockResolveAgentRoute.mockReturnValue({
+      agentId: "main",
+      channel: "feishu",
+      accountId: "default",
+      sessionKey: "agent:main:feishu:group:oc-main",
+      mainSessionKey: "agent:main:main",
+      matchedBy: "default",
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "unknown",
+      confidence: 0.2,
+      rationale: "Utterance is context-dependent and no prior task context is safe to assume.",
+      workOrder: {
+        objective: "UNDEFINED — no prior task context available in session",
+        backendTool: "none",
+        evidenceRequired: ["session history or explicit user context"],
+        safetyBoundaries: ["do not fabricate prior task state"],
+        outputContract: ["require user to specify which prior task to replay"],
+      },
+    }));
+    const mockDispatchReplyFromConfig = vi.fn();
+    const mockWithReplyDispatcher = vi.fn(
+      async ({
+        dispatcher,
+        run,
+        onSettled,
+      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+        try {
+          return await run();
+        } finally {
+          dispatcher.markComplete();
+          try {
+            await dispatcher.waitForIdle();
+          } finally {
+            await onSettled?.();
+          }
+        }
+      },
+    );
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig:
+              mockDispatchReplyFromConfig as unknown as PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"],
+            withReplyDispatcher:
+              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const cfg: ClawdbotConfig = {
+      agents: {
+        defaults: {
+          workspace: tempDir,
+        },
+      },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            control_room: { chatId: "oc-main" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-ambiguous-repeat",
+          chat_id: "oc-main",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "重新来一遍" }),
+        },
+      },
+    });
+
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).toContain("没有说明要重来哪个任务");
+    expect(replyText).toContain("ambiguous_repeat_without_current_subject");
+    expect(replyText).toContain("没有沿用之前的期权学习线");
+    expect(replyText).not.toContain("模块①");
+    const surfaceLine = await fs.readFile(
+      path.join(tempDir, "memory", "feishu-surface-lines", "control_room-oc-main.md"),
+      "utf8",
+    );
+    expect(surfaceLine).toContain("msg-ambiguous-repeat");
+    expect(surfaceLine).toContain("ambiguous_repeat_without_current_subject");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("scopes sessions by specialist surface when different intents share the same control-room chat", async () => {
     const finalizeInboundContext = vi.fn((ctx: unknown) => ctx);
     const mockDispatchReplyFromConfig = vi.fn(async ({ ctx }: { ctx: { SessionKey: string } }) => ({
@@ -9031,6 +9223,19 @@ describe("learning council routing", () => {
     );
 
     mockRunFeishuLearningCouncil.mockResolvedValue("learning ok");
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async ({ utterance }) =>
+      utterance.includes("财报")
+        ? {
+            family: "fundamental_research",
+            confidence: 0.9,
+            rationale: "API planner selected fundamental research",
+          }
+        : {
+            family: "learning_external_source",
+            confidence: 0.92,
+            rationale: "API planner selected learning backend",
+          },
+    );
     setFeishuRuntime(
       createPluginRuntimeMock({
         channel: {
@@ -9178,6 +9383,19 @@ describe("learning council routing", () => {
 
     mockRunFeishuLearningCouncil.mockResolvedValue(
       "先说人话：最近值得学的是更稳的仓位纪律和回测卫生。\n\n## Kimi synthesis\n- one point",
+    );
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async ({ utterance }) =>
+      utterance.includes("财报")
+        ? {
+            family: "fundamental_research",
+            confidence: 0.9,
+            rationale: "API planner selected fundamental research",
+          }
+        : {
+            family: "learning_external_source",
+            confidence: 0.92,
+            rationale: "API planner selected learning backend",
+          },
     );
     setFeishuRuntime(
       createPluginRuntimeMock({

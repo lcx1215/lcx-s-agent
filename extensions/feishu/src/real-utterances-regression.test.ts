@@ -7,11 +7,14 @@ import {
   looksLikeCompletionProofScopeAsk,
   looksLikeEvidenceShapeScopeAsk,
   looksLikeExecutionAuthorityScopeAsk,
+  looksLikeExternalSkillInternalizationAsk,
   looksLikeFailureReportScopeAsk,
   looksLikeFinanceLearningMaintenanceAsk,
   looksLikeFinanceLearningPipelineAsk,
+  looksLikeFundamentalRiskApplicationAsk,
   looksLikeGitHubProjectCapabilityIntakeAsk,
   looksLikeOutOfScopeBoundaryAsk,
+  looksLikePositionRiskApplicationAsk,
   looksLikeProgressStatusScopeAsk,
   looksLikeResultShapeScopeAsk,
   looksLikeSourceCoverageScopeAsk,
@@ -36,6 +39,7 @@ import {
   looksLikeLarkWorkRoleManagementAsk,
   resolveFeishuControlRoomOrchestration,
   resolveFeishuSurfaceRouting,
+  type FeishuChatSurfaceName,
 } from "./surfaces.js";
 import type { FeishuConfig } from "./types.js";
 
@@ -807,6 +811,13 @@ describe("real daily utterance regression", () => {
         family: "api_reply_distillation",
         confidence: 0.93,
         rationale: "API router understood the request as reply distillation",
+        workOrder: {
+          objective: "distill every API reply into a candidate language sample",
+          requiredModules: ["api_reply_normalizer"],
+          evidenceRequired: ["candidate corpus entry"],
+          safetyBoundaries: ["language_routing_only"],
+          outputContract: ["routing eval result"],
+        },
       }),
     });
 
@@ -814,9 +825,115 @@ describe("real daily utterance regression", () => {
       family: "api_reply_distillation",
       source: "api",
       targetSurface: "learning_command",
+      workOrder: {
+        family: "api_reply_distillation",
+        source: "api_planner_audited",
+        plannerFamily: "api_reply_distillation",
+        requiredModules: expect.arrayContaining(["api_reply_normalizer"]),
+        evidenceRequired: expect.arrayContaining(["candidate corpus entry"]),
+        safetyBoundaries: expect.arrayContaining([
+          "language_routing_only",
+          "do_not_promote_unreviewed_language_samples",
+        ]),
+        validation: expect.objectContaining({
+          apiFamilyAccepted: true,
+          familyContractMatched: true,
+        }),
+      },
     });
     expect(handoff.notice).toContain("Lark instruction-understanding envelope");
+    expect(handoff.notice).toContain("Validated work order");
     expect(handoff.notice).toContain("not execution approval");
+  });
+
+  it("lets the API planner remain primary with no local semantic live decomposition", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance:
+        "I hold TLT and it is down 12 percent. Research-only: break this into ETF regime, rates, quant math, liquidity, causal map, and risk gates. If live 10Y and real yield data are missing, return failedReason instead of pretending.",
+      apiProvider: async () => ({
+        family: "market_capability_learning_intake",
+        confidence: 0.9,
+        rationale: "wrongly treated module names as a learning task",
+        workOrder: {
+          objective: "learn a new bond ETF capability",
+          requiredModules: ["finance_learning_pipeline_orchestrator"],
+          backendTool: "finance_learning_pipeline_orchestrator",
+          evidenceRequired: ["retrievalReceiptPath"],
+          safetyBoundaries: ["research_only"],
+          outputContract: ["application_ready"],
+        },
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "market_capability_learning_intake",
+      source: "api",
+      targetSurface: "learning_command",
+      backendToolContract: undefined,
+      workOrder: {
+        family: "market_capability_learning_intake",
+        source: "api_planner_audited",
+        plannerFamily: "market_capability_learning_intake",
+        requiredModules: expect.arrayContaining(["finance_learning_pipeline_orchestrator"]),
+        evidenceRequired: expect.arrayContaining(["retrievalReceiptPath"]),
+        validation: expect.objectContaining({
+          apiFamilyAccepted: true,
+          familyContractMatched: true,
+          notes: expect.arrayContaining([
+            "api_planner_is_primary_task_decomposer",
+            "no_local_semantic_live_decomposition",
+          ]),
+        }),
+      },
+    });
+    expect(handoff.workOrder?.backendTool).toBeUndefined();
+    expect(handoff.notice).toContain("no_local_semantic_live_decomposition");
+  });
+
+  it("filters trade-trigger output contracts from research-only position-risk work orders", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance:
+        "我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex 和美元流动性，先拆内部模块，给我 research-only 判断，不要交易建议。",
+      apiProvider: async () => ({
+        family: "position_risk_adjustment",
+        confidence: 0.88,
+        rationale: "portfolio risk decomposition request",
+        workOrder: {
+          objective: "research-only portfolio risk decomposition",
+          requiredModules: ["macro_rates_inflation", "credit_liquidity", "portfolio_risk_gates"],
+          evidenceRequired: ["risk exposure map"],
+          safetyBoundaries: ["research_only", "no_execution_authority"],
+          outputContract: [
+            "一句话立场",
+            "三条核心风险传导逻辑",
+            "wait/add/reduce 条件触发器",
+            "置信度标注",
+          ],
+        },
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "position_risk_adjustment",
+      source: "api",
+      workOrder: {
+        outputContract: expect.arrayContaining([
+          "一句话立场",
+          "三条核心风险传导逻辑",
+          "plain-language research-only risk judgment",
+          "risk observation points, not trade triggers",
+          "explicit missing-data or failedReason gates",
+          "research checklist with no execution instruction",
+        ]),
+      },
+    });
+    expect(handoff.workOrder?.outputContract.join("\n")).not.toMatch(
+      /wait\/add\/reduce|买入|卖出|加仓|减仓|\b(?:buy|sell|add|reduce|hold|wait|entry|exit)\b/iu,
+    );
   });
 
   it("hands concrete finance learning asks to the finance pipeline backend contract", async () => {
@@ -848,7 +965,7 @@ describe("real daily utterance regression", () => {
     expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
   });
 
-  it("keeps explicit finance pipeline validation ahead of a wrong open-source API route", async () => {
+  it("does not let local semantics override a wrong open-source API route", async () => {
     const handoff = await resolveLarkAgentInstructionHandoff({
       cfg,
       chatId: "oc-control",
@@ -862,19 +979,16 @@ describe("real daily utterance regression", () => {
     });
 
     expect(handoff).toMatchObject({
-      family: "market_capability_learning_intake",
-      source: "semantic",
+      family: "learning_external_source",
+      source: "api",
       targetSurface: "learning_command",
-      backendToolContract: {
-        toolName: "finance_learning_pipeline_orchestrator",
-        sourceRequirement: "safe_local_or_manual_source_required",
-      },
+      backendToolContract: undefined,
     });
-    expect(handoff.notice).toContain("finance_learning_pipeline_orchestrator");
-    expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
+    expect(handoff.notice).toContain("no_local_semantic_live_decomposition");
+    expect(handoff.notice).not.toContain("finance_learning_pipeline_orchestrator");
   });
 
-  it("keeps Lark-stripped finance pipeline validation ahead of a wrong live-probe API route", async () => {
+  it("does not let local semantics override a wrong live-probe API route", async () => {
     const handoff = await resolveLarkAgentInstructionHandoff({
       cfg,
       chatId: "oc-control",
@@ -888,16 +1002,65 @@ describe("real daily utterance regression", () => {
     });
 
     expect(handoff).toMatchObject({
-      family: "market_capability_learning_intake",
-      source: "semantic",
-      targetSurface: "learning_command",
-      backendToolContract: {
-        toolName: "finance_learning_pipeline_orchestrator",
-        sourceRequirement: "safe_local_or_manual_source_required",
-      },
+      family: "live_probe_failure",
+      source: "api",
+      targetSurface: "control_room",
+      backendToolContract: undefined,
     });
-    expect(handoff.notice).toContain("finance_learning_pipeline_orchestrator");
-    expect(handoff.notice).toContain("retrievalReceiptPath,retrievalReviewPath");
+    expect(handoff.notice).toContain("no_local_semantic_live_decomposition");
+    expect(handoff.notice).not.toContain("finance_learning_pipeline_orchestrator");
+  });
+
+  it("keeps position-risk application asks out of the finance learning pipeline", async () => {
+    const utterance =
+      "真实持仓风险验收：我假设自己持有QQQ已经亏了8%，现在想加仓摊平，但又担心这是高估值+利率上行+流动性收紧的风险 regime。请不要教我下单，也不要泛泛安慰。请调用你已有的ETF/风控/技术择时/quant_math能力，回答：1）这属于哪类任务；2）哪些模块应该先后工作；3）如果没有实时行情，本地数学仍然能算什么；4）什么条件下只能给failedReason而不是application_ready；5）最后给一个研究-only的可执行检查清单。验收码 lark-live-position-risk-20260503-1。";
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance,
+      apiProvider: async () => ({
+        family: "control_room_aggregate",
+        confidence: 0.82,
+        rationale: "API router understood the request as a multi-module control-room task",
+      }),
+    });
+
+    expect(looksLikePositionRiskApplicationAsk(utterance)).toBe(true);
+    expect(looksLikeFinanceLearningPipelineAsk(utterance)).toBe(false);
+    expect(handoff).toMatchObject({
+      family: "control_room_aggregate",
+      source: "api",
+      targetSurface: "control_room",
+      backendToolContract: undefined,
+    });
+    expect(handoff.notice).toContain("no_local_semantic_live_decomposition");
+    expect(handoff.notice).not.toContain("finance_learning_pipeline_orchestrator");
+  });
+
+  it("keeps fundamental-risk application asks out of the finance learning pipeline", async () => {
+    const utterance =
+      "真实基本面风险验收：我想研究 NVDA 不是要买卖，只想判断它现在最大的基本面风险是不是估值、毛利率、capex 回报、客户集中度和 AI 需求可持续性。请用 research-only 控制室模式回答：1）这属于哪类任务家族；2）fundamental_research、company_fundamentals_value、causal_map、portfolio_risk_gates、review_panel 应该怎么分工；3）没有最新财报和实时估值时哪些结论必须 failedReason；4）哪些只是可复用研究规则；5）最后给检查清单。验收码 lark-live-fundamental-risk-20260503-1。";
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance,
+      apiProvider: async () => ({
+        family: "market_capability_learning_intake",
+        confidence: 0.88,
+        rationale: "API router over-weighted output contract terms like failedReason",
+      }),
+    });
+
+    expect(looksLikeFundamentalRiskApplicationAsk(utterance)).toBe(true);
+    expect(looksLikeFinanceLearningPipelineAsk(utterance)).toBe(false);
+    expect(handoff).toMatchObject({
+      family: "market_capability_learning_intake",
+      source: "api",
+      targetSurface: "learning_command",
+      backendToolContract: undefined,
+    });
+    expect(handoff.notice).toContain("no_local_semantic_live_decomposition");
+    expect(handoff.notice).not.toContain("finance_learning_pipeline_orchestrator");
   });
 
   it("hands GitHub project feature adoption asks to the capability intake backend contract", async () => {
@@ -926,6 +1089,234 @@ describe("real daily utterance regression", () => {
     });
     expect(handoff.notice).toContain("github_project_capability_intake");
     expect(handoff.notice).toContain("capabilityFamily,existingEmbryos,adoptionDecision");
+  });
+
+  it("routes external investment-philosophy skill internalization to learning_command", async () => {
+    const utterance = "去将大师的投资理念浓缩成skills，学习进你自己脑子";
+    const routing = resolveFeishuSurfaceRouting({
+      cfg,
+      chatId: "oc-control",
+      content: utterance,
+    });
+    const semantic = resolveLarkSemanticRouteCandidate(utterance);
+
+    expect(looksLikeExternalSkillInternalizationAsk(utterance)).toBe(true);
+    expect(routing.targetSurface).toBe("learning_command");
+    expect(routing.targetChatId).toBe("oc-learning");
+    expect(semantic).toMatchObject({
+      family: "learning_external_source",
+      matchedUtterance: "external_skill_internalization_family",
+    });
+  });
+
+  it("does not promote local semantics into a live work order when the API planner fails", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance: "去将大师的投资理念浓缩成skills，学习进你自己脑子",
+      apiProvider: async () => {
+        throw new Error("gateway timeout after 35000ms");
+      },
+    });
+
+    expect(handoff).toMatchObject({
+      family: "unknown",
+      source: "unknown",
+      confidence: 0,
+      deterministicSurface: "learning_command",
+      apiCandidate: expect.objectContaining({
+        family: "unknown",
+        rationale: expect.stringContaining("api route provider failed"),
+      }),
+    });
+    expect(handoff.targetSurface).toBeUndefined();
+    expect(handoff.backendToolContract).toBeUndefined();
+    expect(handoff.workOrder).toBeUndefined();
+    expect(handoff.notice).toBe("");
+  });
+
+  it("requires source proof when external philosophy skills select finance pipeline via API work order", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance: "去将大师的投资理念浓缩成skills，学习进你自己脑子",
+      apiProvider: async () => ({
+        family: "learning_external_source",
+        confidence: 0.85,
+        rationale: "extract investment master philosophy into reusable skills",
+        workOrder: {
+          objective: "extract investment master philosophy into reusable research-only skills",
+          requiredModules: [
+            "learning_external_source",
+            "finance_learning_capability_attach",
+            "local_memory_record",
+          ],
+          backendTool: "web_search + finance_learning_pipeline_orchestrator",
+          evidenceRequired: ["source list", "skill candidates", "internalization proof"],
+          safetyBoundaries: ["research_only", "no_execution_authority"],
+          outputContract: ["skill candidates", "failedReason"],
+        },
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "learning_external_source",
+      source: "api",
+      targetSurface: "learning_command",
+      backendToolContract: {
+        toolName: "finance_learning_pipeline_orchestrator",
+        sourceRequirement: "safe_local_or_manual_source_required",
+        expectedProof: expect.arrayContaining([
+          "source intake receipt",
+          "learningInternalizationStatus",
+        ]),
+      },
+      workOrder: {
+        source: "api_planner_audited",
+        backendTool: "finance_learning_pipeline_orchestrator",
+        evidenceRequired: expect.arrayContaining([
+          "source list",
+          "source intake receipt",
+          "learningInternalizationStatus",
+        ]),
+      },
+    });
+    expect(handoff.notice).toContain("sourceRequirement=safe_local_or_manual_source_required");
+    expect(handoff.notice).toContain("finance_learning_pipeline_orchestrator");
+  });
+
+  it("keeps a broad external learning work order from falling back to generic chat", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance: "去学期权全知识",
+      apiProvider: async () => ({
+        family: "learning_external_source",
+        confidence: 0.68,
+        rationale: "broad external learning request with weak source coverage",
+        workOrder: {
+          objective:
+            "learn options knowledge with explicit source coverage limits and reusable rules",
+          requiredModules: ["source_grounding", "finance_learning_memory", "review_panel"],
+          evidenceRequired: ["searched sources", "retained rules", "failedReason"],
+          safetyBoundaries: ["research_only", "no_execution_authority"],
+          outputContract: ["learningInternalizationStatus", "failedReason"],
+        },
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "learning_external_source",
+      source: "api",
+      confidence: 0.68,
+      targetSurface: "learning_command",
+      backendToolContract: undefined,
+      workOrder: {
+        source: "api_planner_audited",
+        requiredModules: ["source_grounding", "finance_learning_memory", "review_panel"],
+        validation: expect.objectContaining({
+          notes: expect.arrayContaining([
+            "api_planner_is_primary_task_decomposer",
+            "no_local_semantic_live_decomposition",
+          ]),
+        }),
+      },
+    });
+    expect(handoff.notice).toContain("Validated work order");
+    expect(handoff.notice).not.toContain("source=unknown");
+  });
+
+  it("requires source proof when the API work order selects the finance learning pipeline", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-knowledge",
+      utterance: "继续学习期权知识并学会应用",
+      apiProvider: async () => ({
+        family: "market_capability_learning_intake",
+        confidence: 0.82,
+        rationale: "options learning should become a reusable capability card",
+        workOrder: {
+          objective: "learn options knowledge and make it application-ready",
+          requiredModules: [
+            "finance_learning_pipeline_orchestrator",
+            "finance_learning_capability_attach",
+            "finance_learning_capability_apply",
+          ],
+          backendTool: "finance_learning_pipeline_orchestrator",
+          evidenceRequired: ["capability card", "apply test"],
+          safetyBoundaries: ["research_only"],
+          outputContract: ["learningInternalizationStatus or failedReason"],
+        },
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "market_capability_learning_intake",
+      source: "api",
+      targetSurface: "learning_command",
+      backendToolContract: {
+        toolName: "finance_learning_pipeline_orchestrator",
+        sourceRequirement: "safe_local_or_manual_source_required",
+        expectedProof: ["retrievalReceiptPath", "retrievalReviewPath"],
+      },
+      workOrder: {
+        source: "api_planner_audited",
+        backendTool: "finance_learning_pipeline_orchestrator",
+        evidenceRequired: expect.arrayContaining([
+          "capability card",
+          "retrievalReceiptPath",
+          "retrievalReviewPath",
+        ]),
+      },
+    });
+    expect(handoff.notice).toContain("sourceRequirement=safe_local_or_manual_source_required");
+    expect(handoff.notice).toContain("no_local_semantic_live_decomposition");
+  });
+
+  it("recovers a planner family from an actionable API work order when the label is malformed", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance: "去学期权全知识",
+      apiProvider: async () => ({
+        family: "unknown",
+        confidence: 0.68,
+        rationale: "planner label was malformed but work order stayed actionable",
+        workOrder: {
+          objective:
+            "learn options knowledge with explicit source coverage limits and reusable rules",
+          requiredModules: ["web_search", "source_grounding", "finance_learning_memory"],
+          backendTool: "learning_external_source",
+          evidenceRequired: ["searched sources", "retained rules", "failedReason"],
+          safetyBoundaries: ["research_only", "no_execution_authority"],
+          outputContract: ["learningInternalizationStatus", "failedReason"],
+        },
+      }),
+    });
+
+    expect(handoff).toMatchObject({
+      family: "learning_external_source",
+      source: "api",
+      confidence: 0.68,
+      targetSurface: "learning_command",
+      apiCandidate: expect.objectContaining({
+        family: "learning_external_source",
+        rationale: expect.stringContaining("inferred_family_from_api_work_order"),
+      }),
+      workOrder: {
+        source: "api_planner_audited",
+        plannerFamily: "learning_external_source",
+        backendTool: "learning_external_source",
+        validation: expect.objectContaining({
+          notes: expect.arrayContaining([
+            "api_planner_is_primary_task_decomposer",
+            "api_planner_family_accepted",
+          ]),
+        }),
+      },
+    });
+    expect(handoff.notice).toContain("source=api_planner_audited");
+    expect(handoff.notice).not.toContain("source=unknown");
   });
 
   it("sanitizes low-confidence API candidates and keeps deterministic routing authoritative", async () => {
@@ -1004,7 +1395,7 @@ describe("real daily utterance regression", () => {
       label: string;
       utterance: string;
       family: LarkRoutingFamily;
-      expectedSurface?: "control_room" | "learning_command" | "knowledge_maintenance";
+      expectedSurface?: FeishuChatSurfaceName;
     }> = [
       {
         label: "live sync receipt",
@@ -1088,6 +1479,27 @@ describe("real daily utterance regression", () => {
           "Runtime model Selected: unknown Active: unknown Lobster: control_room_main_lane · openclaw_embedded_agent · plugin optional · dm=main · anchors 0/3 Use /status for the full runtime snapshot.",
         family: "live_probe_failure",
         expectedSurface: "control_room",
+      },
+      {
+        label: "position-risk application ask",
+        utterance:
+          "真实持仓风险验收：我假设自己持有QQQ已经亏了8%，现在想加仓摊平，但又担心这是高估值+利率上行+流动性收紧的风险 regime。请不要教我下单，也不要泛泛安慰。请调用你已有的ETF/风控/技术择时/quant_math能力，回答：如果没有实时行情，本地数学仍然能算什么；什么条件下只能给failedReason而不是application_ready；最后给一个研究-only的可执行检查清单。",
+        family: "position_risk_adjustment",
+        expectedSurface: "technical_daily",
+      },
+      {
+        label: "fundamental risk visible reply with risk-gate mention",
+        utterance:
+          "架构检查结果 research-only：company_fundamentals_value 负责估值、毛利率、ROI、AI capex回报；causal_map 负责客户集中度与需求可持续性的因果链；portfolio_risk_gates 只是间接风险门控。没有最新财报和实时估值时必须 failedReason，最后输出 NVDA 基本面检查清单。",
+        family: "fundamental_research",
+        expectedSurface: "fundamental_research",
+      },
+      {
+        label: "fundamental framework visible receipt with validation code",
+        utterance:
+          "**任务验收码**: `lark-live-fundamental-risk-20260504-1` **框架核心**: ✅ `company_fundamentals_value` + ✅ `causal_map` 均已写入并验证通过 **研究边界**: research-only，禁止任何买卖建议 NVDA基本面风险研究分5条线扫描。无实时财报和实时估值时，所有结论降级为[I]级方向性参考，拒绝上浮为[F]硬数字。",
+        family: "fundamental_research",
+        expectedSurface: "fundamental_research",
       },
     ];
 

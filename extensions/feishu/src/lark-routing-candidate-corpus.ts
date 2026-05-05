@@ -210,6 +210,20 @@ function expectedGuardMatchersForUtterance(
   return matchers.length > 0 ? matchers : undefined;
 }
 
+function expectedSurfaceForCandidate(params: {
+  family: LarkRoutingFamily;
+  utterance: string;
+}): LarkRoutingCorpusCase["expectedSurface"] {
+  if (
+    params.family === "position_risk_adjustment" &&
+    /(控制室模式|control room|control_room)/iu.test(params.utterance)
+  ) {
+    return "control_room";
+  }
+  const target = LARK_ROUTING_FAMILY_CONTRACTS[params.family].target;
+  return target === "protocol_truth_surface" ? undefined : target;
+}
+
 function parseApiRouteFamilyHint(payload: unknown): SemanticRouteCandidate | undefined {
   const parsed =
     typeof payload === "string"
@@ -265,8 +279,45 @@ function looksLikeApiRouteJsonLabelArtifact(candidate: LarkPendingRoutingCandida
   );
 }
 
+function looksLikeClarificationBoundaryVisibleReply(
+  candidate: LarkPendingRoutingCandidate,
+): boolean {
+  if (candidate.source !== "lark_visible_reply" || !candidate.utterance) {
+    return false;
+  }
+  const normalized = candidate.utterance.toLowerCase();
+  return (
+    normalized.includes("ambiguous_repeat_without_current_subject") ||
+    (/没有说明要重来哪个任务/u.test(candidate.utterance) &&
+      /没有沿用之前的期权学习线/u.test(candidate.utterance))
+  );
+}
+
+function looksLikeAmbiguousRepeatUserUtterance(candidate: LarkPendingRoutingCandidate): boolean {
+  if (candidate.source !== "lark_user_utterance" || !candidate.utterance) {
+    return false;
+  }
+  return /^(重新来|重新|重来|再来|再跑|重跑)(一遍|一次)?[。.!！?？\s]*$/u.test(candidate.utterance);
+}
+
+function looksLikeDomainAnswerVisibleReply(candidate: LarkPendingRoutingCandidate): boolean {
+  if (candidate.source !== "lark_visible_reply" || !candidate.utterance) {
+    return false;
+  }
+  return (
+    candidate.utterance.length >= 120 &&
+    /(模块[①一1]|##\s*\d+[.、]\s*期权|期权是什么|权利金|希腊字母)/u.test(candidate.utterance)
+  );
+}
+
 function looksLikeApiRouteProviderFailureArtifact(text: string): boolean {
   return /api route provider failed|gateway timeout|failovererror|llm request timed out|request timed out|provider failed|model timeout|upstream timeout/iu.test(
+    text,
+  );
+}
+
+function looksLikeFinanceSourceIntakeArtifact(text: string): boolean {
+  return /(wechat_public_account_source|微信公众号|公众号文章|finance_article_extract_capability_input|finance_article_extract|sourceType=wechat)/iu.test(
     text,
   );
 }
@@ -278,7 +329,13 @@ function looksLikePlainRouteLabelReferenceArtifact(text: string): boolean {
         text,
       )) ||
     (/(family\s*[:=]|targetsurface\s*[:=]|effectivesurface\s*[:=])/iu.test(text) &&
-      /handoff receipt|memory\/lark-language-handoff-receipts/iu.test(text))
+      /handoff receipt|memory\/lark-language-handoff-receipts/iu.test(text)) ||
+    (/(任务家族|模块分工|架构检查结果|框架核心|framework core|learning council run|runtime provider|验收结果|learninginternalizationstatus|retrievalreceiptpath|retrievalreviewpath|金融能力学习流水线已完成)/iu.test(
+      text,
+    ) &&
+      /(distribution:|publish:|receipt|review|failedreason|application[_\s-]?ready|company_fundamentals_value|portfolio_risk_gates|quant_math|etf regime|causal_map|live-council-model|allowlist|framework core)/iu.test(
+        text,
+      ))
   );
 }
 
@@ -373,6 +430,36 @@ export function evaluateLarkPendingRoutingCandidate(params: {
   if (!candidate.utterance) {
     return { candidate, reason: "missing_distillable_text" };
   }
+  if (looksLikeClarificationBoundaryVisibleReply(candidate)) {
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        discardReason: "clarification_boundary_visible_reply",
+      },
+      reason: "discarded_by_distillation",
+    };
+  }
+  if (looksLikeAmbiguousRepeatUserUtterance(candidate)) {
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        discardReason: "ambiguous_repeat_user_utterance",
+      },
+      reason: "discarded_by_distillation",
+    };
+  }
+  if (looksLikeDomainAnswerVisibleReply(candidate)) {
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        discardReason: "domain_answer_visible_reply",
+      },
+      reason: "discarded_by_distillation",
+    };
+  }
   if (
     candidate.source === "api_reply" &&
     looksLikeApiRouteProviderFailureArtifact(candidate.utterance)
@@ -384,6 +471,21 @@ export function evaluateLarkPendingRoutingCandidate(params: {
         discardReason: "api_route_provider_failure",
       },
       reason: "discarded_by_distillation",
+    };
+  }
+  if (
+    candidate.source === "api_reply" &&
+    candidate.sample.outputKind === "json" &&
+    looksLikeApiRouteJsonLabelArtifact(candidate)
+  ) {
+    const candidateSemantic = resolveCandidateSemantic(candidate);
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        semantic: candidateSemantic ?? { family: "unknown", score: 0 },
+      },
+      reason: "api_route_label_reference",
     };
   }
   if (
@@ -399,19 +501,17 @@ export function evaluateLarkPendingRoutingCandidate(params: {
       reason: "api_route_label_reference",
     };
   }
-  const candidateSemantic = resolveCandidateSemantic(candidate);
   if (
     candidate.source === "api_reply" &&
-    candidate.sample.outputKind === "json" &&
-    looksLikeApiRouteJsonLabelArtifact(candidate)
+    looksLikeFinanceSourceIntakeArtifact(candidate.utterance)
   ) {
     return {
       candidate: {
         ...candidate,
         status: "discarded",
-        semantic: candidateSemantic ?? { family: "unknown", score: 0 },
+        discardReason: "finance_source_intake_artifact",
       },
-      reason: "api_route_label_reference",
+      reason: "discarded_by_distillation",
     };
   }
   const directSemantic = resolveLarkSemanticRouteCandidate(candidate.utterance);
@@ -433,10 +533,10 @@ export function evaluateLarkPendingRoutingCandidate(params: {
     id: candidate.id,
     utterance: candidate.utterance,
     family: semantic.family as LarkRoutingFamily,
-    expectedSurface: (() => {
-      const target = LARK_ROUTING_FAMILY_CONTRACTS[semantic.family as LarkRoutingFamily].target;
-      return target === "protocol_truth_surface" ? undefined : target;
-    })(),
+    expectedSurface: expectedSurfaceForCandidate({
+      family: semantic.family as LarkRoutingFamily,
+      utterance: candidate.utterance,
+    }),
     expectedGuardMatchers: expectedGuardMatchersForUtterance(candidate.utterance),
     truthBoundary: "evidence_required",
     notes: "Auto-normalized language-routing candidate; not a finance learning artifact.",
@@ -445,6 +545,23 @@ export function evaluateLarkPendingRoutingCandidate(params: {
     cfg: params.cfg,
     entry: acceptedCase,
   });
+  if (
+    !deterministic.passed &&
+    candidate.source === "lark_user_utterance" &&
+    params.familyHint?.family &&
+    params.familyHint.family !== "unknown"
+  ) {
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        semantic,
+        discardReason: "api_planner_live_handoff_label_only",
+      },
+      acceptedCase,
+      reason: "api_route_label_reference",
+    };
+  }
   if (!deterministic.passed) {
     return {
       candidate: { ...candidate, status: "rejected_language_case", semantic },

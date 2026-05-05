@@ -6,8 +6,10 @@ import {
   looksLikeLearningInternalizationAuditAsk,
   looksLikeLearningWorkflowAuditAsk,
   looksLikeMethodLearningTopic,
+  looksLikeExternalSkillInternalizationAsk,
   looksLikeFinanceLearningMaintenanceAsk,
   looksLikeLearningCapabilityLarkCommandAsk,
+  looksLikePositionRiskApplicationAsk,
   looksLikeSourceGroundingAsk,
   looksLikeStrategicLearningAsk,
   looksLikeVerticalFinanceLearningAsk,
@@ -206,6 +208,23 @@ function inferIntentSurfaces(params: {
   addIntentSurfaceIf(
     surfaces,
     "control_room",
+    looksLikePositionRiskApplicationAsk(normalized) &&
+      /(控制室模式|control room|control_room)/u.test(normalized),
+  );
+  addIntentSurfaceIf(surfaces, "technical_daily", looksLikePositionRiskApplicationAsk(normalized));
+  addIntentSurfaceIf(
+    surfaces,
+    "fundamental_research",
+    /(company_?fundamentals_?value|companyfundamentalsvalue|causal_?map|causalmap|fundamental_research)/u.test(
+      normalized,
+    ) &&
+      /(nvda|framework core|框架核心|框架骨架|基本面|估值|毛利率|capex|客户集中度|需求可持续性|实时估值|财报)/u.test(
+        normalized,
+      ),
+  );
+  addIntentSurfaceIf(
+    surfaces,
+    "control_room",
     /(live[-\s]?(?:probe|sync|council)|lark.*status|status audit|前台.*(?:超时|验收)|可见回复|visible reply|dev[- ]?fixed|live[- ]?fixed|gateway.*指向)/u.test(
       normalized,
     ) &&
@@ -235,6 +254,11 @@ function inferIntentSurfaces(params: {
     /不是教我学|你自己学|自己去学/u.test(normalized),
   );
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeStrategicLearningAsk(normalized));
+  addIntentSurfaceIf(
+    surfaces,
+    "learning_command",
+    looksLikeExternalSkillInternalizationAsk(normalized),
+  );
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeMethodLearningTopic(normalized));
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeVerticalFinanceLearningAsk(normalized));
   addIntentSurfaceIf(surfaces, "learning_command", looksLikeFinanceLearningPipelineAsk(normalized));
@@ -274,9 +298,10 @@ function inferIntentSurfaces(params: {
   addIntentSurfaceIf(
     surfaces,
     "ops_audit",
-    /(状态|健康|探针|probe|audit|审计|日志|log|degraded|故障|异常|重启|restart|超时|timeout|blocked|artifact error|ops|系统怎么样|系统还好吗|哪里坏了|哪里不对劲|运行情况|网络搜索可以用吗|网络搜索能用吗|搜索可以用吗|搜索能用吗|web search available|is web search available|search health|search status|hard block|高报|低报)/u.test(
-      normalized,
-    ),
+    !looksLikePositionRiskApplicationAsk(normalized) &&
+      /(状态|健康|探针|probe|audit|审计|日志|log|degraded|故障|异常|重启|restart|超时|timeout|blocked|artifact error|ops|系统怎么样|系统还好吗|哪里坏了|哪里不对劲|运行情况|网络搜索可以用吗|网络搜索能用吗|搜索可以用吗|搜索能用吗|web search available|is web search available|search health|search status|hard block|高报|低报)/u.test(
+        normalized,
+      ),
   );
   addIntentSurfaceIf(
     surfaces,

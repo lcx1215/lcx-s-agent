@@ -96,6 +96,50 @@ describe("lark routing candidate corpus", () => {
     expect(candidate.boundary).toBe("language_routing_only");
   });
 
+  it("accepts broad options knowledge learning as finance capability intake", () => {
+    const candidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload: "去学期权全知识",
+      createdAt: "2026-05-04T00:00:00.000Z",
+    });
+    const evaluation = evaluateLarkPendingRoutingCandidate({ cfg, candidate });
+
+    expect(evaluation).toMatchObject({
+      reason: "accepted_language_case",
+      candidate: expect.objectContaining({
+        semantic: expect.objectContaining({
+          family: "market_capability_learning_intake",
+        }),
+      }),
+      acceptedCase: expect.objectContaining({
+        family: "market_capability_learning_intake",
+        expectedSurface: "learning_command",
+      }),
+    });
+  });
+
+  it("accepts investment philosophy skill-internalization utterances as external learning", () => {
+    const candidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload: "去将大师的投资理念浓缩成skills，学习进你自己脑子",
+      createdAt: "2026-05-04T00:00:00.000Z",
+    });
+    const evaluation = evaluateLarkPendingRoutingCandidate({ cfg, candidate });
+
+    expect(evaluation).toMatchObject({
+      reason: "accepted_language_case",
+      candidate: expect.objectContaining({
+        semantic: expect.objectContaining({
+          family: "learning_external_source",
+        }),
+      }),
+      acceptedCase: expect.objectContaining({
+        family: "learning_external_source",
+        expectedSurface: "learning_command",
+      }),
+    });
+  });
+
   it("discards secrets and binary payloads before pending corpus review", () => {
     const secret = createLarkPendingRoutingCandidate({
       source: "api_reply",
@@ -215,6 +259,63 @@ describe("lark routing candidate corpus", () => {
       accepted: 1,
       rejected: 0,
       discarded: 1,
+    });
+  });
+
+  it("discards API-labeled user text when local replay cannot route it deterministically", () => {
+    const apiCandidate = createLarkPendingRoutingCandidate({
+      source: "api_reply",
+      payload: {
+        family: "market_capability_learning_intake",
+        confidence: 0.82,
+        rationale: "options learning should become a reusable capability",
+        workOrder: {
+          objective: "learn options knowledge and make it application-ready",
+          requiredModules: [
+            "finance_learning_pipeline_orchestrator",
+            "finance_article_extract_capability_input",
+          ],
+          backendTool: "finance_learning_pipeline_orchestrator",
+        },
+      },
+      createdAt: "2026-05-04T00:00:00.000Z",
+    });
+    const userCandidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload: "继续学习期权知识并学会应用",
+      createdAt: "2026-05-04T00:00:01.000Z",
+    });
+    const evaluation = evaluateLarkRoutingCandidateCorpus({
+      cfg,
+      corpus: {
+        schemaVersion: 1,
+        boundary: "language_routing_only",
+        generatedAt: "2026-05-04T00:00:00.000Z",
+        candidates: [apiCandidate, userCandidate],
+      },
+      evaluatedAt: "2026-05-04T00:01:00.000Z",
+    });
+
+    expect(evaluation.evaluations).toEqual([
+      expect.objectContaining({ reason: "api_route_label_reference" }),
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          status: "discarded",
+          discardReason: "api_planner_live_handoff_label_only",
+        }),
+        acceptedCase: expect.objectContaining({
+          utterance: "继续学习期权知识并学会应用",
+          family: "market_capability_learning_intake",
+          expectedSurface: "learning_command",
+        }),
+      }),
+    ]);
+    expect(evaluation.counts).toEqual({
+      total: 2,
+      accepted: 0,
+      rejected: 0,
+      discarded: 2,
     });
   });
 
@@ -392,10 +493,43 @@ describe("lark routing candidate corpus", () => {
     });
   });
 
+  it("keeps control-room position-risk orchestration candidates promotable", () => {
+    const evaluation = evaluateLarkPendingRoutingCandidate({
+      cfg,
+      candidate: createLarkPendingRoutingCandidate({
+        source: "lark_user_utterance",
+        payload:
+          "L5真实金融回路验收：如果我长期持有纳指100 ETF，但担心未来三个月出现“高估值 + 利率反弹 + 流动性变差”的组合风险，请用控制室模式处理这个研究任务。要求：判断任务家族，说明内部会调用ETF regime、technical timing、portfolio risk gates、quant_math、causal_map，本地数学不准瞎算，最后给 application_ready 或 failedReason。",
+      }),
+    });
+
+    expect(evaluation).toMatchObject({
+      reason: "accepted_language_case",
+      acceptedCase: expect.objectContaining({
+        family: "position_risk_adjustment",
+        expectedSurface: "control_room",
+      }),
+    });
+  });
+
   it("accepts real Lark replay families and discards API provider failure chatter", () => {
     const evaluations = evaluateLarkPendingRoutingCandidates({
       cfg,
       candidates: [
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "我不能直接“重新来一遍”，因为这句话没有说明要重来哪个任务。为了避免串到旧上下文，我没有继续执行，也没有沿用之前的期权学习线。- failedReason: ambiguous_repeat_without_current_subject",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_user_utterance",
+          payload: "重新来一遍",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "🦐 **模块①：期权基础概念** --- ## 1. 期权是什么？ **期权 = 花钱买一个未来可以按约定价格买卖的权利**。你付出权利金，锁定未来价格，到期可以选择执行或放弃。## 2. 两种基本类型 | 类型 | 通俗解释 | 什么时候赚钱 | Call | 买入权 | 标的上涨 | Put | 卖出权 | 标的下跌 | 后续还包括权利金、到期日、行权价和希腊字母。",
+        }),
         createLarkPendingRoutingCandidate({
           source: "lark_visible_reply",
           payload: "live-sync-ok gateway 已指向 lcx-s-openclaw",
@@ -428,13 +562,55 @@ describe("lark routing candidate corpus", () => {
           payload:
             "family: learning_external_source source_required: true failedReason: no_url_or_local_source_provided next step: ask for URL boundary: do not pretend learned proof: no source",
         }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "架构检查结果 research-only：company_fundamentals_value 负责估值、毛利率、ROI、AI capex回报；causal_map 负责客户集中度与需求可持续性的因果链；portfolio_risk_gates 只是间接风险门控。没有最新财报和实时估值时必须 failedReason，最后输出 NVDA 基本面检查清单。",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "**任务验收码**: `lark-live-fundamental-risk-20260504-1` **框架核心**: ✅ `company_fundamentals_value` + ✅ `causal_map` 均已写入并验证通过 **研究边界**: research-only，禁止任何买卖建议 NVDA基本面风险研究分5条线扫描。无实时财报和实时估值时，所有结论降级为[I]级方向性参考，拒绝上浮为[F]硬数字。",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "**TLT 平均加仓命题——路由终检。** 上一轮已输出完整工作框架（acceptance code `lark-live-bond-etf-risk-20260504-2`），本轮输入无变化，无新数据，无新修正项，结论无变化。本轮仅补发带新验收码的结构化终件，避免重复冗余。 publish: yes | confidence: medium | foundations: portfolio-sizing-discipline, risk-transmission, behavior-error-correction Distribution: held as draft technical slice.",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "Learning council run: full three-model execution completed. Kimi synthesis Lane receipt: runtime provider=moonshot runtime model=moonshot/kimi-k2.6 验收结果 验收码 `live-council-model-allowlist-1` allowlist ok.",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "**验收码**: `lark-live-fundamental-risk-20260504-2` **Framework Core 检查结果**: `company_fundamentals_value` 激活，`causal_map` 激活。实时数据缺失状态 confirmed，以下触发 failedReason 边界。",
+        }),
       ],
     });
 
     expect(evaluations).toEqual([
       expect.objectContaining({
-        reason: "accepted_language_case",
-        acceptedCase: expect.objectContaining({ family: "live_probe_failure" }),
+        reason: "discarded_by_distillation",
+        candidate: expect.objectContaining({
+          status: "discarded",
+          discardReason: "clarification_boundary_visible_reply",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "discarded_by_distillation",
+        candidate: expect.objectContaining({
+          status: "discarded",
+          discardReason: "ambiguous_repeat_user_utterance",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "discarded_by_distillation",
+        candidate: expect.objectContaining({
+          status: "discarded",
+          discardReason: "domain_answer_visible_reply",
+        }),
       }),
       expect.objectContaining({
         reason: "accepted_language_case",
@@ -442,7 +618,13 @@ describe("lark routing candidate corpus", () => {
       }),
       expect.objectContaining({
         reason: "accepted_language_case",
-        acceptedCase: expect.objectContaining({ family: "market_capability_learning_intake" }),
+        acceptedCase: expect.objectContaining({ family: "live_probe_failure" }),
+      }),
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          status: "discarded",
+        }),
       }),
       expect.objectContaining({
         reason: "accepted_language_case",
@@ -453,6 +635,34 @@ describe("lark routing candidate corpus", () => {
         candidate: expect.objectContaining({
           status: "discarded",
           discardReason: "api_route_provider_failure",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          status: "discarded",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          status: "discarded",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          status: "discarded",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({ family: "position_risk_adjustment" }),
+      }),
+      expect.objectContaining({
+        reason: "api_route_label_reference",
+        candidate: expect.objectContaining({
+          status: "discarded",
         }),
       }),
       expect.objectContaining({

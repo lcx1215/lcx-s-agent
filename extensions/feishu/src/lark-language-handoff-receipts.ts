@@ -35,6 +35,7 @@ export type LarkLanguageHandoffReceiptArtifact = {
     targetSurface?: LarkAgentInstructionHandoff["targetSurface"];
     deterministicSurface?: LarkAgentInstructionHandoff["deterministicSurface"];
     backendToolContract?: LarkAgentInstructionHandoff["backendToolContract"];
+    workOrder?: LarkAgentInstructionHandoff["workOrder"];
     apiCandidate?: LarkAgentInstructionHandoff["apiCandidate"];
     expectedProof: readonly string[];
     missingBeforeExecution: readonly string[];
@@ -55,6 +56,27 @@ export function renderLarkFinanceBrainOrchestrationNotice(
     `reviewTools=${plan.reviewTools.join(",") || "none"}`,
     `boundaries=${plan.boundaries.join(",") || "none"}`,
     "Use this as an execution expectation for finance/math market tasks: prefer local deterministic tools for calculations, do not replace quant_math with model guesses, keep research_only/no_execution_authority, and if fresh inputs are unavailable state the missing inputs instead of giving pseudo-precise results.",
+  ].join("\n");
+}
+
+export function renderLarkAnswerComposerNotice(
+  workOrder: LarkAgentInstructionHandoff["workOrder"] | undefined,
+): string | undefined {
+  if (!workOrder) {
+    return undefined;
+  }
+  const modules = workOrder.requiredModules.join(",") || "none";
+  const evidence = workOrder.evidenceRequired.join(",") || "none";
+  const outputContract = workOrder.outputContract.join(",") || "concise usable answer";
+  return [
+    "[Lark answer composer contract]",
+    `objective=${workOrder.objective}`,
+    `modules=${modules}`,
+    `evidenceRequired=${evidence}`,
+    `outputContract=${outputContract}`,
+    "Visible reply rule: answer the user's real question first in plain language; do not lead with family, route, modules, receipts, JSON, or backend labels unless the user explicitly asks for protocol proof.",
+    "Required visible shape for finance/research tasks: concise judgment, key reasons, missing inputs or failedReason, research-only next checklist, and proof path only at the end if useful.",
+    "If evidence is missing, say what cannot be concluded and what data would change the answer; do not fill gaps with model guesses.",
   ].join("\n");
 }
 
@@ -166,6 +188,7 @@ export function buildLarkLanguageHandoffReceiptArtifact(params: {
       targetSurface: params.handoff.targetSurface,
       deterministicSurface: params.handoff.deterministicSurface,
       backendToolContract: params.handoff.backendToolContract,
+      workOrder: params.handoff.workOrder,
       apiCandidate: params.handoff.apiCandidate,
       expectedProof: resolveExpectedProof(params.handoff),
       missingBeforeExecution: resolveMissingBeforeExecution(params.handoff),

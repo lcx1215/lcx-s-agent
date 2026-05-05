@@ -10,10 +10,12 @@ import {
   looksLikeDurableMemoryScopeAsk,
   looksLikeEvidenceShapeScopeAsk,
   looksLikeExecutionAuthorityScopeAsk,
+  looksLikeExternalSkillInternalizationAsk,
   looksLikeExplicitResearchLineContinuationAsk,
   looksLikeFailureReportScopeAsk,
   looksLikeFinanceLearningMaintenanceAsk,
   looksLikeFinanceLearningPipelineAsk,
+  looksLikeFundamentalRiskApplicationAsk,
   looksLikeHoldingsRevalidationAsk,
   looksLikeHighStakesRiskScopeAsk,
   looksLikeInstructionConflictScopeAsk,
@@ -24,6 +26,7 @@ import {
   looksLikeMarketIntelligencePacketAsk,
   looksLikeNegatedScopeCorrectionAsk,
   looksLikeOutOfScopeBoundaryAsk,
+  looksLikePositionRiskApplicationAsk,
   looksLikeProgressStatusScopeAsk,
   looksLikeResultShapeScopeAsk,
   looksLikeRoleExpansionScopeAsk,
@@ -89,6 +92,8 @@ describe("feishu intent matchers", () => {
       "你自己学理解股市需要的概率统计、时间序列、随机过程和优化",
       "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
       "让它学习 credit liquidity regime 框架，留下 receipt 和 retrieval review",
+      "去学期权全知识",
+      "去学波动率、Greeks 和衍生品知识体系，沉淀成可复用规则",
       "真实学习任务端到端验收：请用本地安全 source test/fixtures/finance-learning-pipeline/valid-finance-article.md 跑 finance_learning_pipeline_orchestrator，learningIntent=学习 ETF event triage workflow，必须在回复里明确显示 learningInternalizationStatus=application_ready 或 failedReason；不要说后台已完成，除非 receipt/review 真的证明。",
       "live valid source check source test/fixtures/finance-learning-pipeline/valid-finance-article.md run financelearningpipelineorchestrator learningIntent ETF event triage workflow. Must show learningInternalizationStatus applicationready or failedReason usable answer contract usable answer lines.",
     ];
@@ -101,6 +106,56 @@ describe("feishu intent matchers", () => {
       false,
     );
     expect(looksLikeFinanceLearningPipelineAsk("QQQ 现在还能拿吗")).toBe(false);
+    expect(
+      looksLikeFinanceLearningPipelineAsk(
+        "真实持仓风险验收：我假设自己持有QQQ已经亏了8%，现在想加仓摊平，但担心高估值、利率上行和流动性收紧。请调用ETF/风控/技术择时/quant_math能力，最后给application_ready或failedReason，研究-only，不要教我下单。",
+      ),
+    ).toBe(false);
+    expect(
+      looksLikeFinanceLearningPipelineAsk(
+        "Real bond ETF risk check I hold TLT and it is down 12 percent. I am tempted to average down because I think rates will fall later but I worry duration inflation re-acceleration Treasury supply and liquidity risk may make this a bad regime. Research-only no trading advice. Please answer task family how ETF regime creditliquidity macroratesinflation quantmath portfolioriskgates and causalmap should work in order what local math can calculate without live yields when missing live 10Y/real yield/curve/flow data must return failedReason give a reusable checklist.",
+      ),
+    ).toBe(false);
+    expect(
+      looksLikeFinanceLearningPipelineAsk(
+        "真实基本面风险验收：我想研究 NVDA 不是要买卖，只想判断它现在最大的基本面风险是不是估值、毛利率、capex 回报、客户集中度和 AI 需求可持续性。请用 research-only 控制室模式回答任务家族、模块分工、failedReason 和检查清单。",
+      ),
+    ).toBe(false);
+  });
+
+  it("detects external authority skill-internalization asks without catching audits", () => {
+    const positiveCases = [
+      "去将大师的投资理念浓缩成skills，学习进你自己脑子",
+      "把巴菲特和芒格的投资原则提炼成可复用规则，内化到大脑",
+      "研究 Dalio 的公开理念，做成 research-only skill 候选",
+    ];
+
+    for (const phrase of positiveCases) {
+      expect(looksLikeExternalSkillInternalizationAsk(phrase), phrase).toBe(true);
+    }
+
+    expect(looksLikeExternalSkillInternalizationAsk("刚才大师理念学会了吗，证据在哪")).toBe(false);
+    expect(looksLikeExternalSkillInternalizationAsk("给我讲讲巴菲特是谁")).toBe(false);
+  });
+
+  it("detects position-risk application asks without treating output contract words as learning", () => {
+    const phrases = [
+      "真实持仓风险验收：我假设自己持有QQQ已经亏了8%，现在想加仓摊平，但担心高估值、利率上行和流动性收紧。请调用ETF/风控/技术择时/quant_math能力，最后给application_ready或failedReason，研究-only，不要教我下单。",
+      "Real bond ETF risk check I hold TLT and it is down 12 percent. I am tempted to average down because I think rates will fall later but I worry duration inflation re-acceleration Treasury supply and liquidity risk may make this a bad regime. Research-only no trading advice. Please answer task family how ETF regime creditliquidity macroratesinflation quantmath portfolioriskgates and causalmap should work in order what local math can calculate without live yields when missing live 10Y/real yield/curve/flow data must return failedReason give a reusable checklist.",
+    ];
+
+    for (const phrase of phrases) {
+      expect(looksLikePositionRiskApplicationAsk(phrase), phrase).toBe(true);
+    }
+    expect(looksLikePositionRiskApplicationAsk("去学一套 ETF 风控和仓位管理方法")).toBe(false);
+  });
+
+  it("detects fundamental-risk application asks without treating output contract words as learning", () => {
+    const phrase =
+      "真实基本面风险验收：我想研究 NVDA 不是要买卖，只想判断它现在最大的基本面风险是不是估值、毛利率、capex 回报、客户集中度和 AI 需求可持续性。请用 research-only 控制室模式回答任务家族、fundamental_research 怎么分工、failedReason 和检查清单。";
+
+    expect(looksLikeFundamentalRiskApplicationAsk(phrase)).toBe(true);
+    expect(looksLikeFundamentalRiskApplicationAsk("去学一套公司基本面研究框架")).toBe(false);
   });
 
   it("detects learning-capability Lark command hardening asks", () => {
@@ -283,6 +338,9 @@ describe("feishu intent matchers", () => {
       "去看公开网页和文档里所有 ETF 风控资料，但标清楚覆盖范围",
       "study competitor docs, but label sample limits and unknowns",
       "do a web search survey and say whether it is full coverage or partial",
+      "从 Google Scholar、SSRN 和 NBER 找前沿量化论文，但列出实际读过的 paper，不要说全覆盖",
+      "做一个 literature review 风格的学习，但必须标 sample limits 和未覆盖范围",
+      "去看顶级大学公开课 syllabus 和论文，说明 what was actually read",
     ];
 
     for (const phrase of positiveCases) {
@@ -577,6 +635,8 @@ describe("feishu intent matchers", () => {
       "从网上找资料持续学30分钟，主题是 finance agent workflow",
       "看看同类 agent 怎么做长期记忆，筛出能改你工作流的规则",
       "找几个竞品智能体的做法参考一下，别做综述，只留下可复用的",
+      "从 Google Scholar 和公开课程里找金融研究工作流做法，只沉淀可复用规则",
+      "读几篇 SSRN working paper 和大学课程材料，提炼能改你以后判断的规则",
     ];
 
     for (const phrase of positiveCases) {
