@@ -45,6 +45,17 @@ describe("languageBrainLoopSmokeCommand", () => {
         includesResearchBoundary: boolean;
         includesProofPath: boolean;
       };
+      adjacentApplication: {
+        userAsk: string;
+        primaryModules: string[];
+        supportingModules: string[];
+        requiredTools: string[];
+        boundaries: string[];
+        reviewTools: string[];
+        startsWithPlainSummary: boolean;
+        hidesInternalLabels: boolean;
+        includesResearchBoundary: boolean;
+      };
       review: {
         tier: string;
         reviewers: string[];
@@ -120,6 +131,38 @@ describe("languageBrainLoopSmokeCommand", () => {
     expect(payload.visibleReply.text).not.toContain("primaryModules");
     expect(payload.visibleReply.text).not.toContain("backendTool");
     expect(payload.visibleReply.text).not.toContain("{");
+    expect(payload.adjacentApplication.userAsk).toContain("QQQ");
+    expect(payload.adjacentApplication.primaryModules).toEqual(
+      expect.arrayContaining([
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "fx_dollar",
+        "etf_regime",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "quant_math",
+        "causal_map",
+      ]),
+    );
+    expect(payload.adjacentApplication.supportingModules).toContain("finance_learning_memory");
+    expect(payload.adjacentApplication.requiredTools).toEqual(
+      expect.arrayContaining([
+        "finance_learning_capability_apply",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_fx_dollar_producer",
+        "finance_framework_company_fundamentals_value_producer",
+        "quant_math",
+        "review_panel",
+      ]),
+    );
+    expect(payload.adjacentApplication.boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_execution_authority", "no_model_math_guessing"]),
+    );
+    expect(payload.adjacentApplication.reviewTools).toEqual(["review_tier", "review_panel"]);
+    expect(payload.adjacentApplication.startsWithPlainSummary).toBe(true);
+    expect(payload.adjacentApplication.hidesInternalLabels).toBe(true);
+    expect(payload.adjacentApplication.includesResearchBoundary).toBe(true);
     expect(payload.review.tier).toBe("three_model_review");
     expect(payload.review.reviewers).toEqual([
       "logic_and_expression",

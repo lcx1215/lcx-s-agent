@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { planFinanceBrainOrchestration } from "../../agents/finance-brain-orchestration.js";
+import {
+  planFinanceBrainOrchestration,
+  type FinanceBrainModuleId,
+} from "../../agents/finance-brain-orchestration.js";
 import { resolveReviewTier } from "../../agents/review-tier-policy.js";
 import { createFinanceLearningCapabilityApplyTool } from "../../agents/tools/finance-learning-capability-apply-tool.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../agents/tools/finance-learning-pipeline-orchestrator-tool.js";
@@ -62,6 +65,17 @@ export type LanguageBrainLoopSmokePayload = {
     hidesInternalLabels: boolean;
     includesResearchBoundary: boolean;
     includesProofPath: boolean;
+  };
+  adjacentApplication: {
+    userAsk: string;
+    primaryModules: string[];
+    supportingModules: string[];
+    requiredTools: string[];
+    boundaries: string[];
+    reviewTools: string[];
+    startsWithPlainSummary: boolean;
+    hidesInternalLabels: boolean;
+    includesResearchBoundary: boolean;
   };
   review: Record<string, unknown>;
   reviewPanel: Record<string, unknown>;
@@ -283,6 +297,7 @@ async function writeLoopReceipt(params: {
   analysis: Record<string, unknown>;
   math: Record<string, unknown>;
   visibleReply: Record<string, unknown>;
+  adjacentApplication: Record<string, unknown>;
   review: Record<string, unknown>;
   reviewPanel: Record<string, unknown>;
 }) {
@@ -299,6 +314,7 @@ async function writeLoopReceipt(params: {
       analysis: params.analysis,
       math: params.math,
       visibleReply: params.visibleReply,
+      adjacentApplication: params.adjacentApplication,
       review: params.review,
       reviewPanel: params.reviewPanel,
       memory: {
@@ -338,6 +354,7 @@ function formatText(payload: Record<string, unknown>): string {
   const analysis = asRecord(payload.analysis, "analysis");
   const math = asRecord(payload.math, "math");
   const visibleReply = asRecord(payload.visibleReply, "visibleReply");
+  const adjacentApplication = asRecord(payload.adjacentApplication, "adjacentApplication");
   const review = asRecord(payload.review, "review");
   const reviewPanel = asRecord(payload.reviewPanel, "reviewPanel");
   const memory = asRecord(payload.memory, "memory");
@@ -355,6 +372,7 @@ function formatText(payload: Record<string, unknown>): string {
     `math tool: ${String(math.localTool)}`,
     `math checks: ${stringArray(math.checks).join(", ")}`,
     `visible reply: ${String(visibleReply.startsWithPlainSummary)}`,
+    `adjacent application modules: ${stringArray(adjacentApplication.primaryModules).join(", ")}`,
     `review tier: ${String(review.tier)}`,
     `review token policy: ${String(review.tokenPolicy)}`,
     `review panel status: ${String(reviewPanel.status)}`,
@@ -409,6 +427,46 @@ function buildControlRoomVisibleReply(params: {
     includesResearchBoundary: /research-only|没有交易授权/u.test(text),
     includesProofPath: text.includes(params.receiptPath),
   } as const;
+}
+
+function buildAdjacentApplicationProbe() {
+  const userAsk =
+    "我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex 和美元流动性，先拆内部模块，给我 research-only 判断，不要交易建议。";
+  const plan = planFinanceBrainOrchestration({
+    text: [
+      userAsk,
+      "Use retained finance learning, local memory, macro rates, credit liquidity, ETF regime, NVDA fundamentals, portfolio risk gates, deterministic quant math, and red-team review.",
+    ].join("\n"),
+    hasHoldingsOrPortfolioContext: true,
+    hasLocalMathInputs: false,
+    highStakesConclusion: true,
+  });
+  const text = [
+    "当前判断：这应该先作为复杂持仓研究任务拆开，不应该直接给买卖动作。",
+    "内部顺序：先看利率和通胀，再看美元/信用流动性，再看 QQQ/TLT 的 ETF regime，再看 NVDA 的 AI capex 和基本面传导，最后用组合风险门和本地数学检查缺失输入。",
+    "边界：research-only，没有交易授权；缺少权重、价格序列、风险限额和最新数据时，不能靠模型补数字。",
+  ].join("\n");
+  const forbiddenInternalLabels = [
+    "task_family",
+    "primaryModules",
+    "supportingModules",
+    "requiredTools",
+    "backendTool",
+    "targetSurface",
+    "{",
+    "}",
+  ];
+  return {
+    userAsk,
+    primaryModules: plan.primaryModules,
+    supportingModules: plan.supportingModules,
+    requiredTools: plan.requiredTools,
+    boundaries: plan.boundaries,
+    reviewTools: plan.reviewTools,
+    startsWithPlainSummary: text.startsWith("当前判断："),
+    hidesInternalLabels: !forbiddenInternalLabels.some((label) => text.includes(label)),
+    includesResearchBoundary: /research-only|没有交易授权/u.test(text),
+  };
 }
 
 export async function languageBrainLoopSmokeCommand(
@@ -509,6 +567,46 @@ export async function runLanguageBrainLoopSmoke(
   assert(visibleReply.hidesInternalLabels, "visible reply should not expose internal labels");
   assert(visibleReply.includesResearchBoundary, "visible reply should include research boundary");
   assert(visibleReply.includesProofPath, "visible reply should include proof path");
+  const adjacentApplication = buildAdjacentApplicationProbe();
+  assert(
+    (
+      [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "fx_dollar",
+        "etf_regime",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "quant_math",
+        "causal_map",
+      ] satisfies FinanceBrainModuleId[]
+    ).every((moduleId) => adjacentApplication.primaryModules.includes(moduleId)),
+    "adjacent holdings probe should select the required finance modules",
+  );
+  assert(
+    adjacentApplication.supportingModules.includes("finance_learning_memory"),
+    "adjacent holdings probe should use retained finance learning memory",
+  );
+  assert(
+    adjacentApplication.requiredTools.includes("quant_math"),
+    "adjacent holdings probe should require local quant math",
+  );
+  assert(
+    adjacentApplication.reviewTools.includes("review_panel"),
+    "adjacent holdings probe should require review panel",
+  );
+  assert(
+    adjacentApplication.boundaries.includes("no_execution_authority"),
+    "adjacent holdings probe should keep no-execution boundary",
+  );
+  assert(
+    adjacentApplication.startsWithPlainSummary && adjacentApplication.hidesInternalLabels,
+    "adjacent holdings probe should keep the visible answer readable",
+  );
+  assert(
+    adjacentApplication.includesResearchBoundary,
+    "adjacent holdings probe should keep research-only boundary",
+  );
   const reviewPanelResult = await reviewPanelTool.execute("cli-loop-review-panel", {
     taskKind: "finance_learning",
     outputText: [
@@ -537,6 +635,7 @@ export async function runLanguageBrainLoopSmoke(
     analysis,
     math,
     visibleReply,
+    adjacentApplication,
     review,
     reviewPanel,
   });
@@ -550,6 +649,7 @@ export async function runLanguageBrainLoopSmoke(
     analysis,
     math,
     visibleReply,
+    adjacentApplication,
     review,
     reviewPanel,
     memory: {
