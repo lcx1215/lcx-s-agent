@@ -56,7 +56,13 @@ const DEFAULT_BASE_URL =
 const MODULE_TAXONOMY = [
   "macro_rates_inflation",
   "credit_liquidity",
+  "cross_asset_liquidity",
+  "fx_currency_liquidity",
   "etf_regime",
+  "global_index_regime",
+  "us_equity_market_structure",
+  "china_a_share_policy_flow",
+  "crypto_market_structure",
   "company_fundamentals_value",
   "quant_math",
   "portfolio_risk_gates",
@@ -136,6 +142,13 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "教本地大脑像正常人类分析师一样拆分复杂金融任务：先理解目标，再调本地记忆和已学规则，再按宏观、流动性、基本面、数学、风险门和审阅拆步骤，不要直接给交易建议。",
     sourceSummary:
       "teach local brain human-like complex finance task decomposition with memory activation and review handoff.",
+  },
+  {
+    id: "cross_market_us_a_index_crypto",
+    userMessage:
+      "未来我会同时看美股、A股、指数和加密币。请训练本地大脑做连贯分析：先动用本地记忆和已学规则，再拆宏观利率、美元/人民币流动性、美股市场结构、A股政策资金面、指数权重和趋势、加密币流动性和风险门；research-only，不要交易建议。",
+    sourceSummary:
+      "cross-market finance planning across US equities, China A-shares, global indices, crypto, FX/liquidity, quant checks, memory recall, and review handoff.",
   },
   {
     id: "daily_learning_automation",
@@ -263,6 +276,8 @@ function buildPrompt(input: TeacherPrompt): string {
     "- ambiguous repeat must ask for current_subject_or_original_request and reject old_lark_conversation_history",
     "- ops audit must not become finance analysis",
     "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
+    "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
+    "- crypto work is research-only; include no_high_leverage_crypto and never imply execution approval",
     "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
     "",
     `user_message: ${input.userMessage}`,
@@ -454,6 +469,70 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       risk_boundaries: ["no_execution_authority", "evidence_required"],
       next_step: "inspect_lark_session_store_and_candidate_replay_before_claiming_live_fixed",
       rejected_context: ["old_lark_conversation_history"],
+    };
+  }
+  if (/美股|A股|a股|指数|加密|crypto|cross-market|跨市场/u.test(text)) {
+    return {
+      task_family: "cross_market_finance_research_planning",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "crypto_market_structure",
+        "quant_math",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_cross_asset_liquidity_producer",
+        "finance_framework_fx_currency_liquidity_producer",
+        "finance_framework_us_equity_market_structure_producer",
+        "finance_framework_china_a_share_policy_flow_producer",
+        "finance_framework_global_index_regime_producer",
+        "finance_framework_crypto_market_structure_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_market_data_snapshot",
+        "us_equity_breadth_earnings_and_valuation_inputs",
+        "china_a_share_policy_liquidity_and_northbound_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "fx_dollar_yuan_and_global_liquidity_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_high_leverage_crypto",
+        "no_unverified_cross_market_claims",
+      ],
+      next_step:
+        "recall_local_finance_rules_then_build_cross_market_causal_map_collect_fresh_inputs_run_quant_and_review_before_control_room_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "execution_or_high_leverage_crypto_instruction",
+      ],
     };
   }
   return {

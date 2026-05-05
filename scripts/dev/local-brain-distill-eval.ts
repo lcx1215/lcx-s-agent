@@ -36,7 +36,13 @@ const REQUIRED_FINANCE_MODULES = [
 const MODULE_TAXONOMY = [
   "macro_rates_inflation",
   "credit_liquidity",
+  "cross_asset_liquidity",
+  "fx_currency_liquidity",
   "etf_regime",
+  "global_index_regime",
+  "us_equity_market_structure",
+  "china_a_share_policy_flow",
+  "crypto_market_structure",
   "company_fundamentals_value",
   "quant_math",
   "portfolio_risk_gates",
@@ -54,6 +60,7 @@ const CONTRACT_HINTS = [
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
   "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
   "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
+  "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
 ];
 
 type EvalCase = {
@@ -64,6 +71,7 @@ type EvalCase = {
   forbiddenModules?: string[];
   minModuleMatches: number;
   requiredMissingData?: string[];
+  requiredRiskBoundaries?: string[];
 };
 
 const DEFAULT_PYTHON = path.join(
@@ -261,6 +269,43 @@ const EVAL_CASES: EvalCase[] = [
     minModuleMatches: 9,
     requiredMissingData: ["memory_recall_scope_or_relevant_receipts", "fresh_task_inputs"],
   },
+  {
+    id: "cross_market_us_a_index_crypto_analysis",
+    userAsk:
+      "未来我会同时看美股、A股、指数和加密币。请训练本地大脑做连贯分析：先动用本地记忆和已学规则，再拆宏观利率、美元/人民币流动性、美股市场结构、A股政策资金面、指数权重和趋势、加密币流动性和风险门；research-only，不要交易建议。",
+    sourceSummary:
+      "cross-market finance planning request spanning US equities, China A-shares, global indices, crypto, liquidity, quant checks, memory recall, and review handoff.",
+    requiredModules: [
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "cross_asset_liquidity",
+      "fx_currency_liquidity",
+      "us_equity_market_structure",
+      "china_a_share_policy_flow",
+      "global_index_regime",
+      "crypto_market_structure",
+      "quant_math",
+      "finance_learning_memory",
+      "source_registry",
+      "causal_map",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 12,
+    requiredMissingData: [
+      "memory_recall_scope_or_relevant_receipts",
+      "fresh_market_data_snapshot",
+      "us_equity_breadth_earnings_and_valuation_inputs",
+      "china_a_share_policy_liquidity_and_northbound_inputs",
+      "index_constituents_weights_and_technical_regime_inputs",
+      "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+      "fx_dollar_yuan_and_global_liquidity_inputs",
+      "position_weights_and_return_series",
+      "portfolio_weights_and_risk_limits",
+    ],
+    requiredRiskBoundaries: ["no_high_leverage_crypto", "no_unverified_cross_market_claims"],
+  },
 ];
 
 function buildPrompt(evalCase: EvalCase): string {
@@ -355,6 +400,7 @@ function evaluate(
   missingFinanceModules: string[];
   forbiddenModuleMatches: string[];
   missingRequiredData: string[];
+  missingRequiredRiskBoundaries: string[];
   boundaryOk: boolean;
   oldContextRejected: boolean;
 } {
@@ -376,6 +422,9 @@ function evaluate(
     (entry) => !missingData.includes(entry),
   );
   const riskBoundaries = asStringArray(output.risk_boundaries);
+  const missingRequiredRiskBoundaries = (evalCase.requiredRiskBoundaries ?? []).filter(
+    (entry) => !riskBoundaries.includes(entry),
+  );
   const rejectedContext = asStringArray(output.rejected_context);
   const boundaryOk =
     riskBoundaries.includes("research_only") || riskBoundaries.includes("no_execution_authority");
@@ -387,12 +436,14 @@ function evaluate(
       oldContextRejected &&
       matchedFinanceModules.length >= evalCase.minModuleMatches &&
       forbiddenModuleMatches.length === 0 &&
-      missingRequiredData.length === 0,
+      missingRequiredData.length === 0 &&
+      missingRequiredRiskBoundaries.length === 0,
     missingKeys,
     matchedFinanceModules,
     missingFinanceModules,
     forbiddenModuleMatches,
     missingRequiredData,
+    missingRequiredRiskBoundaries,
     boundaryOk,
     oldContextRejected,
   };
@@ -406,6 +457,7 @@ function parseFailureAcceptance(error: unknown): ReturnType<typeof evaluate> {
     missingFinanceModules: [],
     forbiddenModuleMatches: [],
     missingRequiredData: [],
+    missingRequiredRiskBoundaries: [],
     boundaryOk: false,
     oldContextRejected: false,
     parseError: String(error),

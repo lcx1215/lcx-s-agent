@@ -110,6 +110,13 @@ const TASK_TEMPLATES = [
     summary:
       "human-like finance task decomposition with local memory, learned rules, causal layers, evidence gates, and review handoff.",
   },
+  {
+    family: "cross_market_us_a_index_crypto",
+    message:
+      "未来我要同时看 {assetA}、{assetB}、{assetC}，覆盖美股、A股、指数和加密币。训练本地大脑做连贯分析：先调本地记忆和已学规则，再拆宏观利率、美元/人民币流动性、市场结构、指数权重、加密币流动性、量化验证和风险门；research-only，不要交易建议。",
+    summary:
+      "cross-market finance planning across US equities, China A-shares, global indices, crypto, FX/liquidity, quant checks, memory recall, and review handoff.",
+  },
 ] as const;
 
 const ASSETS = [
@@ -118,6 +125,9 @@ const ASSETS = [
   ["IWM", "HYG", "AAPL"],
   ["XLK", "XLF", "GOOGL"],
   ["GLD", "UUP", "AMD"],
+  ["SPY", "沪深300", "BTC"],
+  ["NASDAQ 100", "中证500", "ETH"],
+  ["AAPL", "创业板指", "USDT liquidity"],
 ] as const;
 
 const THEMES = [
@@ -131,6 +141,12 @@ const THEMES = [
   "macro inflation re-acceleration",
   "portfolio drawdown control",
   "factor crowding",
+  "US equity market breadth",
+  "China A-share policy and northbound flow",
+  "global index constituent concentration",
+  "crypto liquidity and custody risk",
+  "FX dollar yuan liquidity transmission",
+  "cross-asset risk appetite regime",
 ] as const;
 
 const HORIZONS = ["一周", "两周", "一个月", "一个季度"] as const;

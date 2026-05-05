@@ -32,12 +32,20 @@ const BOUNDARIES = [
   "evidence_required",
   "no_model_math_guessing",
   "risk_gate_before_action_language",
+  "no_high_leverage_crypto",
+  "no_unverified_cross_market_claims",
 ];
 
 const MODULE_TAXONOMY = [
   "macro_rates_inflation",
   "credit_liquidity",
+  "cross_asset_liquidity",
+  "fx_currency_liquidity",
   "etf_regime",
+  "global_index_regime",
+  "us_equity_market_structure",
+  "china_a_share_policy_flow",
+  "crypto_market_structure",
   "company_fundamentals_value",
   "quant_math",
   "portfolio_risk_gates",
@@ -55,6 +63,7 @@ const CONTRACT_HINTS = [
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
   "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
   "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
+  "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
 ];
 
 function usage(): never {
@@ -194,8 +203,26 @@ function inferFinanceModules(text: string): string[] {
   if (/流动性|美元|dollar|liquidity|credit|信用|spread|融资|资金/u.test(lower)) {
     modules.push("credit_liquidity");
   }
+  if (/跨资产|cross-asset|risk appetite|风险偏好|stablecoin|美元流动性|全球流动性/u.test(lower)) {
+    modules.push("cross_asset_liquidity");
+  }
+  if (/汇率|人民币|美元指数|fx|dxy|uup|usd|cnh|cny|yen|日元|套息|carry/u.test(lower)) {
+    modules.push("fx_currency_liquidity");
+  }
   if (/etf|qqq|spy|tlt|iwm|择时|timing|regime|技术|趋势|均线/u.test(lower)) {
     modules.push("etf_regime");
+  }
+  if (/指数|indices|index|沪深300|中证|纳指|道指|标普|恒生|msci|russell/u.test(lower)) {
+    modules.push("global_index_regime");
+  }
+  if (/美股|us equities|us stocks?|nasdaq|s&p|spx|spy|qqq|iwm|nvda|msft|aapl/u.test(lower)) {
+    modules.push("us_equity_market_structure");
+  }
+  if (/a股|a-share|沪深|上证|深证|创业板|科创|北向|人民币资产|中国权益/u.test(lower)) {
+    modules.push("china_a_share_policy_flow");
+  }
+  if (/加密|crypto|bitcoin|btc|ethereum|eth|stablecoin|usdt|链上|交易所储备/u.test(lower)) {
+    modules.push("crypto_market_structure");
   }
   if (/nvda|公司|基本面|fundamental|capex|估值|revenue|margin|earnings|ai capex/u.test(lower)) {
     modules.push("company_fundamentals_value");
@@ -233,8 +260,26 @@ function missingDataForModules(modules: string[]): string[] {
   if (modules.includes("credit_liquidity")) {
     missing.push("current_credit_and_liquidity_inputs");
   }
+  if (modules.includes("cross_asset_liquidity")) {
+    missing.push("fresh_market_data_snapshot", "cross_asset_liquidity_inputs");
+  }
+  if (modules.includes("fx_currency_liquidity")) {
+    missing.push("fx_dollar_yuan_and_global_liquidity_inputs");
+  }
   if (modules.includes("etf_regime")) {
     missing.push("target_etf_price_and_regime_inputs");
+  }
+  if (modules.includes("global_index_regime")) {
+    missing.push("index_constituents_weights_and_technical_regime_inputs");
+  }
+  if (modules.includes("us_equity_market_structure")) {
+    missing.push("us_equity_breadth_earnings_and_valuation_inputs");
+  }
+  if (modules.includes("china_a_share_policy_flow")) {
+    missing.push("china_a_share_policy_liquidity_and_northbound_inputs");
+  }
+  if (modules.includes("crypto_market_structure")) {
+    missing.push("crypto_liquidity_volatility_custody_and_regulatory_inputs");
   }
   if (modules.includes("company_fundamentals_value")) {
     missing.push("latest_company_fundamental_inputs");
@@ -270,6 +315,24 @@ function normalizeMissingDataEntries(values: string[]): string[] {
     }
     if (lower.includes("portfolio_weights_and_risk_limits")) {
       exact.push("portfolio_weights_and_risk_limits");
+    }
+    if (lower.includes("fresh_market_data_snapshot")) {
+      exact.push("fresh_market_data_snapshot");
+    }
+    if (lower.includes("us_equity_breadth_earnings_and_valuation_inputs")) {
+      exact.push("us_equity_breadth_earnings_and_valuation_inputs");
+    }
+    if (lower.includes("china_a_share_policy_liquidity_and_northbound_inputs")) {
+      exact.push("china_a_share_policy_liquidity_and_northbound_inputs");
+    }
+    if (lower.includes("index_constituents_weights_and_technical_regime_inputs")) {
+      exact.push("index_constituents_weights_and_technical_regime_inputs");
+    }
+    if (lower.includes("crypto_liquidity_volatility_custody_and_regulatory_inputs")) {
+      exact.push("crypto_liquidity_volatility_custody_and_regulatory_inputs");
+    }
+    if (lower.includes("fx_dollar_yuan_and_global_liquidity_inputs")) {
+      exact.push("fx_dollar_yuan_and_global_liquidity_inputs");
     }
   }
   return uniq([...exact, ...normalized]);
@@ -943,6 +1006,61 @@ function buildSeedExamples(): DistillExample[] {
         "latest_company_fundamental_inputs",
       ],
       nextStep: "clarify_objective_recall_memory_split_causal_layers_check_evidence_then_review",
+    },
+    {
+      userAsk:
+        "未来我会同时看美股、A股、指数和加密币。请训练本地大脑做连贯分析：先动用本地记忆和已学规则，再拆宏观利率、美元/人民币流动性、美股市场结构、A股政策资金面、指数权重和趋势、加密币流动性和风险门；research-only，不要交易建议。",
+      sourceSummary:
+        "cross-market finance planning request spanning US equities, China A-shares, global indices, crypto, liquidity, quant checks, memory recall, and review handoff.",
+      taskFamily: "cross_market_finance_research_planning",
+      primaryModules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "crypto_market_structure",
+        "quant_math",
+        "portfolio_risk_gates",
+      ],
+      supportingModules: [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      requiredTools: [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_cross_asset_liquidity_producer",
+        "finance_framework_fx_currency_liquidity_producer",
+        "finance_framework_us_equity_market_structure_producer",
+        "finance_framework_china_a_share_policy_flow_producer",
+        "finance_framework_global_index_regime_producer",
+        "finance_framework_crypto_market_structure_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missingData: [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_market_data_snapshot",
+        "us_equity_breadth_earnings_and_valuation_inputs",
+        "china_a_share_policy_liquidity_and_northbound_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "fx_dollar_yuan_and_global_liquidity_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ],
+      nextStep:
+        "recall_local_finance_rules_then_build_cross_market_causal_map_collect_fresh_inputs_run_quant_and_review_before_control_room_summary",
     },
     {
       userAsk: "重新来一遍。",

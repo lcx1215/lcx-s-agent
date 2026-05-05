@@ -6,7 +6,13 @@ export type LocalBrainContractInput = {
 const MODULE_IDS = [
   "macro_rates_inflation",
   "credit_liquidity",
+  "cross_asset_liquidity",
+  "fx_currency_liquidity",
   "etf_regime",
+  "global_index_regime",
+  "us_equity_market_structure",
+  "china_a_share_policy_flow",
+  "crypto_market_structure",
   "company_fundamentals_value",
   "quant_math",
   "portfolio_risk_gates",
@@ -173,6 +179,21 @@ function looksLikeLocalKnowledgeActivation(text: string): boolean {
   );
 }
 
+function looksLikeCrossMarketFinance(text: string): boolean {
+  const groups = [
+    /(美股|us equities|us stocks?|nasdaq|s&p|spx|spy|qqq|iwm|nvda|msft|aapl)/iu.test(text),
+    /(a股|a-share|沪深|上证|深证|创业板|科创|北向|人民币资产|中国权益)/iu.test(text),
+    /(指数|indices|index|沪深300|中证|纳指|道指|标普|恒生|msci|russell)/iu.test(text),
+    /(加密|crypto|bitcoin|btc|ethereum|eth|stablecoin|usdt|链上|交易所储备)/iu.test(text),
+  ].filter(Boolean).length;
+  return (
+    groups >= 2 &&
+    /(连贯|跨市场|一起|全局|整体|框架|拆解|分析|研究|风险|未来|portfolio|asset allocation|资产)/iu.test(
+      text,
+    )
+  );
+}
+
 export function hardenLocalBrainPlanForAsk(
   plan: Record<string, unknown>,
   input: LocalBrainContractInput,
@@ -259,6 +280,7 @@ export function hardenLocalBrainPlanForAsk(
   if (looksLikeExternalCoverage(text)) {
     return {
       ...safe,
+      task_family: "external_source_coverage_honesty",
       primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
         "source_registry",
         "finance_learning_memory",
@@ -292,6 +314,73 @@ export function hardenLocalBrainPlanForAsk(
         "old_lark_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
+      ]),
+    };
+  }
+
+  if (looksLikeCrossMarketFinance(text)) {
+    return {
+      ...safe,
+      task_family: "cross_market_finance_research_planning",
+      primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        ...inferCrossMarketFinanceModules(text),
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+      supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+      required_tools: mergeUnique(arrayValue(safe.required_tools), [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_cross_asset_liquidity_producer",
+        "finance_framework_fx_currency_liquidity_producer",
+        "finance_framework_us_equity_market_structure_producer",
+        "finance_framework_china_a_share_policy_flow_producer",
+        "finance_framework_global_index_regime_producer",
+        "finance_framework_crypto_market_structure_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ]),
+      missing_data: mergeUnique(arrayValue(safe.missing_data), [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_market_data_snapshot",
+        "us_equity_breadth_earnings_and_valuation_inputs",
+        "china_a_share_policy_liquidity_and_northbound_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "fx_dollar_yuan_and_global_liquidity_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ]),
+      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_model_math_guessing",
+        "no_high_leverage_crypto",
+        "no_unverified_cross_market_claims",
+        "risk_gate_before_action_language",
+      ]),
+      next_step:
+        "recall_local_finance_rules_then_build_cross_market_causal_map_collect_fresh_inputs_run_quant_and_review_before_control_room_summary",
+      rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
+        "old_lark_conversation_history",
+        "language_routing_candidate_artifacts",
+        "unsupported_execution_language",
+        "execution_or_high_leverage_crypto_instruction",
       ]),
     };
   }
@@ -335,6 +424,7 @@ export function hardenLocalBrainPlanForAsk(
   if (looksLikeCompanyToPortfolioRisk(text)) {
     return {
       ...safe,
+      task_family: "company_fundamental_portfolio_risk_planning",
       primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
         "company_fundamentals_value",
         "causal_map",
@@ -393,6 +483,7 @@ export function hardenLocalBrainPlanForAsk(
   if (looksLikePortfolioMacroRisk(text)) {
     return {
       ...safe,
+      task_family: "portfolio_macro_risk_research_planning",
       primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
         "macro_rates_inflation",
         "credit_liquidity",
@@ -474,6 +565,18 @@ function inferFinanceModulesFromLocalKnowledgeText(text: string): string[] {
   if (/(etf|qqq|spy|tlt|iwm|择时|timing|regime)/iu.test(text)) {
     modules.push("etf_regime");
   }
+  if (/(美股|us equities|us stocks?|nasdaq|s&p|spx|spy|qqq|iwm|nvda|msft|aapl)/iu.test(text)) {
+    modules.push("us_equity_market_structure");
+  }
+  if (/(a股|a-share|沪深|上证|深证|创业板|科创|北向|人民币资产|中国权益)/iu.test(text)) {
+    modules.push("china_a_share_policy_flow");
+  }
+  if (/(指数|indices|index|沪深300|中证|纳指|道指|标普|恒生|msci|russell)/iu.test(text)) {
+    modules.push("global_index_regime");
+  }
+  if (/(加密|crypto|bitcoin|btc|ethereum|eth|stablecoin|usdt|链上|交易所储备)/iu.test(text)) {
+    modules.push("crypto_market_structure");
+  }
   if (/(nvda|公司|基本面|fundamental|capex|估值|revenue|earnings|ai capex)/iu.test(text)) {
     modules.push("company_fundamentals_value");
   }
@@ -481,4 +584,15 @@ function inferFinanceModulesFromLocalKnowledgeText(text: string): string[] {
     modules.push("quant_math");
   }
   return modules;
+}
+
+function inferCrossMarketFinanceModules(text: string): string[] {
+  const modules = inferFinanceModulesFromLocalKnowledgeText(text);
+  if (/(美元|人民币|汇率|fx|dxy|uup|usd|cnh|cny|yen|日元|套息|carry)/iu.test(text)) {
+    modules.push("fx_currency_liquidity");
+  }
+  if (/(流动性|liquidity|credit|美元|stablecoin|资金|risk appetite|风险偏好|跨资产)/iu.test(text)) {
+    modules.push("cross_asset_liquidity");
+  }
+  return mergeUnique(modules);
 }
