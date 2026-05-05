@@ -70,8 +70,8 @@ const DEFAULT_LOCK = path.join(
   "minimax-brain-training-guard.lock",
 );
 const CPU_COUNT = Math.max(1, os.cpus().length);
-const DEFAULT_LOAD_MAX = 6;
-const DEFAULT_TRAIN_LOAD_MAX = 4;
+const DEFAULT_LOAD_MAX = 100;
+const DEFAULT_TRAIN_LOAD_MAX = 100;
 
 function usage(): never {
   throw new Error(
@@ -79,16 +79,16 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/minimax-brain-training-guard.ts [options]",
       "",
       "Options:",
-      "  --duration-minutes N   default 60",
-      "  --batch-limit N         MiniMax teacher samples per round, default 12",
+      "  --duration-minutes N   default 120",
+      "  --batch-limit N         MiniMax teacher samples per round, default 20",
       "  --teacher-profile NAME  batch|minimax-plus-brain, default minimax-plus-brain",
-      "  --teacher-duration-minutes N  per-round teacher budget, default 10",
-      "  --teacher-concurrency N       per-round teacher concurrency, default 4",
-      "  --train-every N         train every N rounds, default 6",
-      "  --eval-every N          eval current/new adapter every N rounds, default 2",
-      "  --train-iters N         MLX LoRA iters, default 24",
-      "  --load-max N            skip the guard when 1m system load is above N",
-      "  --train-load-max N      skip local MLX LoRA train when 1m system load is above N",
+      "  --teacher-duration-minutes N  per-round teacher budget, default 12",
+      "  --teacher-concurrency N       per-round teacher concurrency, default 6",
+      "  --train-every N         train every N rounds, default 3",
+      "  --eval-every N          eval current/new adapter every N rounds, default 1",
+      "  --train-iters N         MLX LoRA iters, default 40",
+      "  --load-max N            skip the guard when 1m system load is above N, default 100",
+      "  --train-load-max N      skip local MLX LoRA train when 1m system load is above N, default 100",
       "  --no-train              only generate/rebuild/smoke/eval",
       "  --mock                  use mock MiniMax teacher for mechanism smoke",
       "  --resolve-current-adapter  print selected stable adapter and exit without writes",
@@ -119,14 +119,14 @@ function readPositiveInteger(value: string): number {
 
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
-    durationMinutes: 60,
-    batchLimit: 12,
+    durationMinutes: 120,
+    batchLimit: 20,
     teacherProfile: "minimax-plus-brain",
-    teacherDurationMinutes: 10,
-    teacherConcurrency: 4,
-    trainEvery: 6,
-    evalEvery: 2,
-    trainIters: 24,
+    teacherDurationMinutes: 12,
+    teacherConcurrency: 6,
+    trainEvery: 3,
+    evalEvery: 1,
+    trainIters: 40,
     loadMax: DEFAULT_LOAD_MAX,
     trainLoadMax: DEFAULT_TRAIN_LOAD_MAX,
     model: "Qwen/Qwen3-0.6B",
@@ -682,7 +682,7 @@ async function runTrain(options: CliOptions, round: number, adapterPath: string)
   await fs.mkdir(path.dirname(adapterPath), { recursive: true });
   const result = await runCommand("nice", [
     "-n",
-    "15",
+    "10",
     options.pythonBin,
     "-m",
     "mlx_lm",
@@ -703,7 +703,7 @@ async function runTrain(options: CliOptions, round: number, adapterPath: string)
     "--learning-rate",
     "1e-5",
     "--max-seq-length",
-    "1024",
+    "1536",
     "--mask-prompt",
     "--grad-checkpoint",
   ]);
