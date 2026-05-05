@@ -164,8 +164,10 @@ function looksLikeOpsContextAudit(text: string): boolean {
 
 function looksLikeLocalKnowledgeActivation(text: string): boolean {
   return (
-    /(复杂|拆解|分析|研究|任务|framework|plan|planning|decompose|reason)/iu.test(text) &&
-    /(本地|local|记忆|memory|知识|knowledge|已学|learned|规则|lessons?|沉淀|artifact|receipt|历史|复盘)/iu.test(
+    /(复杂|拆解|拆分|分析|研究|任务|人类|human|analyst|framework|plan|planning|decompose|reason)/iu.test(
+      text,
+    ) &&
+    /(本地|local|大脑|brain|记忆|memory|知识|knowledge|已学|learned|规则|lessons?|沉淀|artifact|receipt|历史|复盘)/iu.test(
       text,
     )
   );

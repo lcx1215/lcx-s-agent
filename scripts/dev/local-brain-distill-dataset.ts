@@ -54,6 +54,7 @@ const CONTRACT_HINTS = [
   "If portfolio math inputs are missing, include missing_data position_weights_and_return_series exactly.",
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
   "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
+  "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
 ];
 
 function usage(): never {
@@ -290,6 +291,7 @@ function buildPrompt(params: {
     "You are the LCX Agent local auxiliary thought-flow model.",
     "Task: produce a concise control-room planning packet for the main agent.",
     "Do not answer the user's finance question directly.",
+    "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${MODULE_TAXONOMY.join(", ")}.`,
     "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
@@ -900,6 +902,47 @@ function buildSeedExamples(): DistillExample[] {
         "latest_company_fundamental_inputs",
       ],
       nextStep: "recall_relevant_local_memory_and_rules_then_decompose_modules_before_model_review",
+    },
+    {
+      userAsk:
+        "训练本地大脑像正常人类分析师一样拆复杂金融任务：我持有 QQQ、TLT、NVDA，担心利率、美元流动性和 AI capex。先理解目标，再调本地记忆和已学规则，再按宏观、流动性、基本面、数学、风险门和审阅拆步骤。",
+      sourceSummary:
+        "human-like complex finance decomposition requiring objective clarification, local memory activation, causal finance layers, evidence gates, and model review handoff.",
+      taskFamily: "human_brain_finance_decomposition",
+      primaryModules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "etf_regime",
+        "company_fundamentals_value",
+        "quant_math",
+        "finance_learning_memory",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+      ],
+      supportingModules: ["review_panel", "control_room_summary"],
+      requiredTools: [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_etf_regime_producer",
+        "finance_framework_company_fundamentals_value_producer",
+        "quant_math",
+        "finance_framework_causal_map_producer",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missingData: [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_task_inputs",
+        "position_weights_and_return_series",
+        "current_rates_and_inflation_inputs",
+        "current_credit_and_liquidity_inputs",
+        "latest_company_fundamental_inputs",
+      ],
+      nextStep: "clarify_objective_recall_memory_split_causal_layers_check_evidence_then_review",
     },
     {
       userAsk: "重新来一遍。",

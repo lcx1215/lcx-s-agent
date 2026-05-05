@@ -103,6 +103,13 @@ const TASK_TEMPLATES = [
     message: "本地大脑先做 {theme} 分析，再让三个大模型审阅，最后给我一个可用的中文控制室总结。",
     summary: "local planning plus multi-model review handoff with final user-facing answer.",
   },
+  {
+    family: "human_brain_finance_decomposition",
+    message:
+      "训练本地大脑像正常人类分析师一样拆复杂金融任务：先理解 {theme} 的目标，再调本地记忆和已学规则，再按宏观、流动性、基本面、数学、风险门和审阅拆步骤。",
+    summary:
+      "human-like finance task decomposition with local memory, learned rules, causal layers, evidence gates, and review handoff.",
+  },
 ] as const;
 
 const ASSETS = [

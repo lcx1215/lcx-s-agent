@@ -53,6 +53,7 @@ const CONTRACT_HINTS = [
   "If portfolio math inputs are missing, include missing_data position_weights_and_return_series exactly.",
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
   "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
+  "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
 ];
 
 type EvalCase = {
@@ -238,6 +239,28 @@ const EVAL_CASES: EvalCase[] = [
     minModuleMatches: 8,
     requiredMissingData: ["memory_recall_scope_or_relevant_receipts"],
   },
+  {
+    id: "human_brain_finance_decomposition",
+    userAsk:
+      "训练本地大脑像正常人类分析师一样拆复杂金融任务：我持有 QQQ、TLT、NVDA，担心利率、美元流动性和 AI capex。先理解目标，再调本地记忆和已学规则，再按宏观、流动性、基本面、数学、风险门和审阅拆步骤。",
+    sourceSummary:
+      "human-like complex finance decomposition requiring objective clarification, local memory activation, causal finance layers, evidence gates, and model review handoff.",
+    requiredModules: [
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "etf_regime",
+      "company_fundamentals_value",
+      "quant_math",
+      "finance_learning_memory",
+      "source_registry",
+      "causal_map",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 9,
+    requiredMissingData: ["memory_recall_scope_or_relevant_receipts", "fresh_task_inputs"],
+  },
 ];
 
 function buildPrompt(evalCase: EvalCase): string {
@@ -245,6 +268,7 @@ function buildPrompt(evalCase: EvalCase): string {
     "You are the LCX Agent local auxiliary thought-flow model.",
     "Task: produce a concise control-room planning packet for the main agent.",
     "Do not answer the user's finance question directly.",
+    "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${MODULE_TAXONOMY.join(", ")}.`,
     "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",

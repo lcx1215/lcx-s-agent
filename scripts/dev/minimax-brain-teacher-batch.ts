@@ -131,6 +131,13 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
     sourceSummary: "local calculation plus model review orchestration request.",
   },
   {
+    id: "human_brain_finance_decomposition",
+    userMessage:
+      "教本地大脑像正常人类分析师一样拆分复杂金融任务：先理解目标，再调本地记忆和已学规则，再按宏观、流动性、基本面、数学、风险门和审阅拆步骤，不要直接给交易建议。",
+    sourceSummary:
+      "teach local brain human-like complex finance task decomposition with memory activation and review handoff.",
+  },
+  {
     id: "daily_learning_automation",
     userMessage: "这些学习和复盘应该每次对话都自动发生，不要等我每天手动下命令。",
     sourceSummary: "automation loop planning without live sender changes.",
@@ -245,6 +252,7 @@ function buildPrompt(input: TeacherPrompt): string {
     "You are MiniMax M2.7 acting as LCX Agent's teacher for local brain distillation.",
     "Return one strict JSON object and no prose.",
     "Do not answer the finance question. Produce a planning packet for the local agent brain.",
+    "The local brain should behave like a careful human analyst: clarify the objective, recall local memory and learned rules, split the problem into causal finance layers, identify missing evidence, then hand hard reasoning to review models.",
     "Use only these module ids:",
     MODULE_TAXONOMY.join(", "),
     "Required JSON keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
@@ -254,6 +262,8 @@ function buildPrompt(input: TeacherPrompt): string {
     "- missing portfolio math inputs must include position_weights_and_return_series",
     "- ambiguous repeat must ask for current_subject_or_original_request and reject old_lark_conversation_history",
     "- ops audit must not become finance analysis",
+    "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
+    "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
     "",
     `user_message: ${input.userMessage}`,
     `source_summary: ${input.sourceSummary}`,
