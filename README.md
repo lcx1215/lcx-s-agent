@@ -1,286 +1,175 @@
 # LCX Agent
 
-![LCX Agent architecture](docs/assets/lcx-agent-architecture.png)
+![LCX Agent 架构图](docs/assets/lcx-agent-architecture.png)
 
-[![LCX Agent daily progress wave](docs/assets/lcx-agent-daily-progress-wave.svg)](docs/assets/lcx-agent-daily-progress-wave.svg)
+[![LCX Agent 能力看板](docs/assets/lcx-agent-daily-progress-wave.svg)](docs/assets/lcx-agent-daily-progress-wave.svg)
 
-LCX Agent is a personal research operating system built on top of OpenClaw.
-Its job is to turn one Lark/Feishu control room into a practical daily loop:
-understand the operator's language, route the work, learn useful material,
-preserve evidence, and answer with honest status.
+LCX Agent 是一个基于 OpenClaw 改造的个人 AI 研究操作系统。
 
-This is not the upstream OpenClaw product README. This repository is the
-`lcx1215/lcx-s-openclaw` development fork where LCX Agent behavior is designed,
-tested, and hardened before any live rollout.
+它把飞书 / Lark 作为主控制室入口，把自然语言请求路由到研究、学习、运维和审计链路；同时把学习结果、证据、错误修正和运行状态保存成本地 artifact。它不是自动交易机器人，而是低频金融研究、筛选和风控辅助系统。
 
-## At A Glance
+这个仓库不是 upstream OpenClaw 的原始 README，而是 `lcx1215/lcx-s-openclaw` 开发分支，用来设计、验证和迁移 LCX Agent 的长期运行能力。
 
-| Layer                   | Responsibility                                                                                                |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Lark language interface | Classify natural-language requests into work families instead of matching one sentence at a time.             |
-| Control room            | Return one readable summary first, with specialist detail available only when needed.                         |
-| Learning brain          | Convert approved material into retrievable lessons, capability cards, correction notes, and review artifacts. |
-| Finance research lane   | Support low-frequency ETF, major-asset, and leading-company research with risk gates.                         |
-| Truth surface           | Separate searched, learned, written, inferred, dev-fixed, and live-fixed states.                              |
-| Live bridge             | Keep Lark/Feishu runtime proof separate from local development proof.                                         |
+## 30 秒版本
 
-## What This Project Is
+如果只用一句话介绍：
 
-LCX Agent turns OpenClaw into a low-frequency research and operating loop:
+> LCX Agent = 飞书控制室 + Agent 路由 + 持久记忆 + 证据审计 + 金融研究工作流。
 
-- one main Lark/Feishu control room for natural-language requests
-- internal routing across research, learning, operations, and audit lanes
-- summary-first answers, with specialist detail only when needed
-- explicit truth surfaces for what was searched, learned, written, routed, or
-  merely inferred
-- durable correction and learning artifacts instead of relying on chat memory
-- long-running autonomous improvement for safe development, documentation,
-  tests, memory hygiene, evidence cleanup, and bounded system hardening without
-  asking the operator to approve every small step
-- hard separation between development fixes and live Feishu/Lark verification
+它解决的问题不是“让大模型多说一点”，而是让一个长期运行的个人研究系统能稳定做到：
 
-The main use case is daily-frequency research and screening around ETFs, major
-assets, and leading companies. Fundamentals are used for filtering and
-conviction; technicals are used for timing; risk gates are used for survival.
+- 听懂自然语言请求，不要求用户记住复杂命令。
+- 把任务拆到研究、学习、运维、审计等内部模块。
+- 用 MiniMax、Kimi、DeepSeek 等大模型做任务拆解、审阅和生成。
+- 用本地大脑沉淀记忆、模块化思考和可复用经验。
+- 把 dev-fixed 和 live-fixed 分清楚，避免把本地通过误报成线上可见。
+- 对金融研究保持低频、研究型、风险优先，不做自动交易。
 
-## What This Project Is Not
+## 核心能力
 
-- not an autonomous trading agent
-- not a high-frequency execution system
-- not a generic "learn anything about making money" bot
-- not a claim that every commit in this repo is already live in Lark/Feishu
-- not a system that must pause for operator approval before every safe,
-  reversible development improvement
-- not a replacement for upstream OpenClaw; it is a stricter operating layer on
-  top of the OpenClaw runtime
+| 能力                 | 说明                                                                     |
+| -------------------- | ------------------------------------------------------------------------ |
+| 飞书 / Lark 控制室   | 用户在一个主群或主对话里说自然语言，系统内部完成分类、路由和回复。       |
+| Agent 任务路由       | 把请求分到语言理解、研究、学习、运维、审计、finance review 等链路。      |
+| 本地学习大脑         | 把有价值的材料蒸馏成样本、能力卡、修正笔记、review artifact 和评估记录。 |
+| 证据与 truth surface | 区分已搜索、已学习、已写入、仅推断、dev-fixed、live-fixed 等状态。       |
+| 金融研究工作流       | 面向 ETF、主要资产和头部公司，强调基本面筛选、技术面择时和硬风险门控。   |
+| live 验证回路        | live 变更必须 build、restart、probe，并最好通过真实 Lark 消息验收。      |
 
-Nothing in this repository should be read as financial advice.
+## 一个真实链路
 
-## Core Ideas
+用户可以在飞书里问：
 
-### Control Room First
+```text
+我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex 和美元流动性。
+先拆内部模块，给我 research-only 判断，不要交易建议。
+```
 
-The expected user experience is one main control room. The user should be able
-to ask broad questions like:
+系统期望做的事：
 
-- "What matters today?"
-- "What is most likely wrong?"
-- "Continue the current research line."
-- "Did the learning session actually finish?"
-- "Is this live-fixed or only dev-fixed?"
+1. 大模型先做任务拆解，识别这是宏观、ETF、个股、风险和 review 混合问题。
+2. 本地大脑给出模块计划，调用已有记忆、历史经验和相关能力卡。
+3. finance、math、memory、review 等模块分别参与，但不把内部 JSON 直接甩给用户。
+4. 最终回复先给人能读懂的摘要，再给必要的风险边界和后续检查点。
+5. 留下 handoff、receipt、review、distillation candidate 等证据，方便之后复盘和学习。
 
-The system should classify the request, route internally, and return a readable
-answer without making the user manually remember multiple specialist chats.
+## 这个项目不是什么
 
-### Bounded Autonomy
+- 不是自动交易系统。
+- 不是高频策略或执行引擎。
+- 不是“学一切赚钱知识”的泛化机器人。
+- 不是把本地测试通过就宣称线上修好了的 demo。
+- 不是 upstream OpenClaw 的替代品，而是在 OpenClaw runtime 上加了一层个人研究操作系统。
 
-LCX Agent is expected to keep improving without making the operator say
-"continue" after every small safe step. Within the local development fork, it
-can run long, staged work sessions that inspect, patch, verify, clean up, and
-commit a coherent improvement slice before handing back control. It can
-autonomously harden tests, clean review artifacts, improve documentation,
-tighten routing boundaries, refresh generated README visuals, remove obsolete
-confusion, and make failure states more explicit when the work stays
-reversible, evidence-backed, and verifiable.
+所有金融输出都应视为 research-only，不构成投资建议。
 
-This autonomy does not grant authority to trade, move money, delete important
-data, publish releases, change credentials, transmit sensitive data, or claim a
-live rollout without the required proof chain.
+## 为什么强调 dev-fixed 和 live-fixed
 
-### Truth Surfaces
+LCX Agent 长期运行在真实飞书 / Lark 回路里，所以“本地修了”和“用户真的看到了”必须分开。
 
-LCX Agent prefers honest degraded output over polished fake certainty. Important
-reply surfaces distinguish:
+| 状态       | 含义                                                                   |
+| ---------- | ---------------------------------------------------------------------- |
+| dev-fixed  | 开发仓里代码、测试或 smoke 已经通过。                                  |
+| migrated   | 改动已同步到 live sidecar。                                            |
+| probe-ok   | live gateway 已 build / restart，并且 `channels status --probe` 通过。 |
+| live-fixed | 真实 Lark/Feishu 入站、路由、回复和可见输出都被验证。                  |
 
-- live verification vs local development proof
-- started vs completed work
-- search available vs search assumed
-- written artifact vs failed write
-- active learning session vs stale session
-- anomaly evidence vs fresh live probe
-- generic plan vs bounded next action
+这套边界能防止 silent failure：系统不能因为“生成过回复”就假装“用户已经收到回复”。
 
-This matters because the system is meant to be operated over weeks and months,
-not just demoed once.
+## 当前工程重点
 
-### Learning That Compounds
+当前默认方向是 baseline hardening，而不是继续扩功能：
 
-Learning is only useful when it changes future judgment. LCX Agent tries to turn
-learning runs into:
+1. 消除静默失败。
+2. 收紧飞书 / Lark 回复回路。
+3. 保持语言 corpus、学习大脑 artifact、finance doctrine 互不污染。
+4. 让本地 Qwen / local brain 吃进大模型审阅和蒸馏结果。
+5. 用 MiniMax 等大模型额度做持续高质量任务拆解、审阅和训练样本沉淀。
+6. 对 live migration 留下可追踪证据，不把 dev-ready 说成 live-fixed。
 
-- concise keeper lessons
-- reusable decision rules
-- correction notes
-- stale/downrank decisions
-- follow-up items
-- operating-loop improvements
+## 关键目录
 
-The goal is not more text. The goal is better future decisions.
+| 路径                         | 作用                                                            |
+| ---------------------------- | --------------------------------------------------------------- |
+| `extensions/feishu/src/`     | 飞书 / Lark 控制室、路由、回复、语言 family 和 live channel。   |
+| `scripts/dev/`               | 本地大脑蒸馏、MiniMax quota 使用、system doctor、smoke/eval。   |
+| `src/agents/`                | agent runtime、工具目录、模型路由和系统提示组装。               |
+| `src/agents/tools/finance-*` | 金融学习、能力卡、source intake、review 和治理工具。            |
+| `src/hooks/bundled/`         | 定时学习、修正、记忆卫生、operating loop 和 workface artifact。 |
+| `src/auto-reply/`            | 用户可见的命令回复、状态回复和 truth surface。                  |
+| `docs/tools/`                | 开发工具和本地大脑训练说明。                                    |
+| `docs/assets/`               | README 图和项目展示素材。                                       |
 
-### Dev-Fixed Is Not Live-Fixed
+受保护的工作记忆文件，例如 `memory/current-research-line.md`，不应被随手改写。它们是系统状态，不是草稿纸。
 
-This repository is the development fork. A change is only live-fixed after it
-has been migrated into the live runtime, built, restarted, probed, and verified
-through the real Lark/Feishu entry path.
+## 开发与验证
 
-Local tests and synthetic probes can make a change dev-fixed. They do not make
-it live-fixed by themselves.
-
-## Module Responsibilities
-
-These short labels are the intended meaning of the main project files and
-directories. They replace generic import-history labels with the actual LCX
-Agent responsibilities.
-
-| Path                         | Owns                                                                                              |
-| ---------------------------- | ------------------------------------------------------------------------------------------------- |
-| `README.md`                  | Project identity, operating model, and contributor orientation.                                   |
-| `AGENTS.md`                  | Local doctrine, safety rules, and day-to-day engineering contract.                                |
-| `extensions/feishu/src/`     | Lark/Feishu control-room routing, language families, visible replies, and live channel behavior.  |
-| `src/agents/`                | Tool catalog, model/provider routing, system prompt assembly, and agent runtime integration.      |
-| `src/agents/tools/finance-*` | Finance learning, source intake, capability cards, retrieval review, and governance tools.        |
-| `src/hooks/bundled/`         | Scheduled learning, correction, memory hygiene, operating-loop, and workface artifact production. |
-| `src/auto-reply/`            | Command replies, status/context surfaces, and user-visible control-room protocol answers.         |
-| `src/gateway/`               | Gateway protocol, server methods, channel transport, and runtime health boundaries.               |
-| `src/infra/`                 | Shared receipts, anomaly records, filesystem/runtime utilities, and operational plumbing.         |
-| `apps/`                      | macOS, iOS, Android, and shared app surfaces around the OpenClaw runtime.                         |
-| `docs/`                      | Operator docs, runbooks, concepts, and public-facing explanations.                                |
-| `docs/assets/`               | README visuals and generated project-progress artifacts.                                          |
-| `scripts/`                   | Development, release, smoke-test, and maintenance automation.                                     |
-| `test/fixtures/`             | Stable sample inputs for routing, learning, finance, and regression tests.                        |
-
-Protected memory files such as `memory/current-research-line.md` should not be
-casually edited. They are treated as working state, not scratch notes.
-
-## Current Engineering Bias
-
-The default mode is baseline hardening:
-
-1. eliminate silent failure
-2. preserve stable Feishu/Lark, queue, nightly batch, and operating-loop paths
-3. make degraded states explicit
-4. keep shared memory clean
-5. improve routing clarity
-6. avoid expanding surface area without evidence
-
-Coherent, bounded improvement batches are preferred over tiny artificial steps
-or broad rewrites. If a feature cannot prove what it did, it should not pretend
-to be complete.
-
-When the operator has given broad improvement authority, safe local
-development work should proceed end to end: inspect, patch, test, commit, and
-push when appropriate. Stop for explicit confirmation only when the action is
-destructive, externally publishes or transmits sensitive data, changes access
-or credentials, executes financial behavior, or changes the live runtime
-without a bounded verification plan.
-
-For long-running work, the expected pattern is staged autonomy: choose the next
-highest-value failure family, work through related files together, verify the
-batch, leave receipts or tests, and continue into the next safe family until the
-goal is genuinely handled or a real blocker appears.
-
-## Getting Started For Development
-
-Runtime baseline: Node 22 or newer.
+基础环境：Node 22+，pnpm。
 
 ```bash
 pnpm install
-pnpm build
+pnpm tsgo
 pnpm test
 ```
 
-Run targeted tests while working:
+常用的 Lark/Feishu 回归测试：
 
 ```bash
 pnpm vitest run extensions/feishu/src/bot.test.ts
-pnpm vitest run extensions/feishu/src/intent-matchers.test.ts extensions/feishu/src/surfaces.test.ts
-pnpm vitest run src/infra/operational-anomalies.test.ts
+pnpm vitest run extensions/feishu/src/lark-api-route-provider.test.ts
+pnpm vitest run extensions/feishu/src/real-utterances-regression.test.ts
+pnpm vitest run extensions/feishu/src/intent-matchers.test.ts
+pnpm vitest run extensions/feishu/src/lark-language-handoff-receipts.test.ts
+pnpm vitest run extensions/feishu/src/surfaces.test.ts
 ```
 
-Useful checks:
+本地大脑 smoke / eval：
 
 ```bash
-pnpm check
-pnpm exec oxfmt --check <files>
-pnpm exec oxlint <files>
-git diff --check -- <files>
+node --import tsx scripts/dev/local-brain-distill-smoke.ts --json
+node --import tsx scripts/dev/local-brain-distill-eval.ts --summary-only --json
 ```
 
-If `pnpm` is not available in the shell, use Corepack:
+MiniMax quota 持续消耗和训练样本沉淀：
 
 ```bash
-corepack enable --install-directory /tmp/corepack-bin
-PATH="/tmp/corepack-bin:$PATH" pnpm test
+node --import tsx scripts/dev/minimax-quota-brain-saturator.ts --write
+node --import tsx scripts/dev/minimax-provider-quota-saturator.ts --lane coding-plan-search --write
 ```
 
-## Live Lark/Feishu Verification
+## live 迁移验证
 
-For live work, keep the proof chain explicit:
-
-1. build the live runtime
-2. restart the live gateway/app path
-3. run channel status with probe
-4. send or replay a real Lark/Feishu message
-5. inspect reply-flow logs and the user-visible reply
-
-A useful local command for channel health is:
+live sidecar 默认在：
 
 ```bash
-openclaw channels status --probe
+~/.openclaw/live-sidecars/lcx-s-openclaw
 ```
 
-For Feishu/Lark reply-flow debugging, inspect:
+典型验证链路：
+
+```bash
+pnpm build
+node openclaw.mjs daemon restart
+pnpm --silent openclaw channels status --probe
+```
+
+然后发送真实 Lark/Feishu 消息，并检查：
 
 ```bash
 ~/.openclaw/logs/feishu-reply-flow.jsonl
 ~/.openclaw/logs/gateway.log
+~/.openclaw/workspace/memory/
 ```
 
-`feishu-reply-flow.jsonl` is the stronger delivery-level artifact when it is
-fresh. If it is missing or stale, use `gateway.log` only as weaker gateway
-dispatch evidence and pair it with the visible Lark/Feishu reply before calling
-the path live-fixed.
+只有看到真实入站、路由、回复和用户可见结果，才能说 live-fixed。
 
-Do not call a dev-only patch live-fixed until the real visible Lark/Feishu path
-has been checked.
+## 和 OpenClaw 的关系
 
-## Relationship To OpenClaw
+OpenClaw 提供底座：gateway、多渠道接入、CLI、agent runtime、工具、session 和桌面 / 移动端基础能力。
 
-OpenClaw provides the execution substrate: gateway, channel integrations,
-agent runtime, CLI, tools, sessions, and platform apps.
+LCX Agent 在这个底座上增加个人研究操作层：飞书控制室语义、任务路由、金融研究纪律、本地学习大脑、证据留痕、记忆卫生、错误修正和 dev/live 验证边界。
 
-LCX Agent adds the operating layer: research discipline, control-room semantics,
-learning carryover, memory hygiene, correction loops, truth surfaces, and daily
-workface behavior.
-
-Upstream project:
+Upstream OpenClaw：
 
 - https://github.com/openclaw/openclaw
 - https://docs.openclaw.ai
-
-This fork keeps upstream compatibility where practical, but the README and
-default operating doctrine describe the LCX Agent use case rather than the
-general OpenClaw product.
-
-Some internal files and scripts still use `lobster_*` names. Treat those as
-legacy compatibility handles for the existing local runtime, not as the public
-project identity. They should be migrated gradually only when the live path and
-artifact history stay compatible.
-
-## Status
-
-This is an active personal development fork. Expect a dirty worktree, local
-experiments, and a strict distinction between:
-
-- `dev-fixed`: implemented and verified in this checkout
-- `live-fixed`: migrated, built, restarted, probed, and verified through the
-  real Lark/Feishu path
-
-The default operating expectation is continuous staged improvement: the agent
-should keep tightening the language interface, learning brain, memory hygiene,
-truth surfaces, and verification receipts without waiting for a new instruction
-after each small safe patch. A single work session may contain multiple related
-patches when they share one goal and can be verified together.
-
-The system is intentionally optimized for long-horizon usefulness over
-impressive demos.
