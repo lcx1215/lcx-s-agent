@@ -1,0 +1,57 @@
+description: LCX local brain open-source eval bridge
+
+prompts:
+  - "{{ask}}"
+
+providers:
+  - id: "exec: node --import tsx scripts/dev/local-brain-open-eval-provider.ts"
+    label: "lcx-local-brain-contract-provider"
+
+defaultTest:
+  assert:
+    - type: contains
+      value: "research_only"
+    - type: contains
+      value: "no_execution_authority"
+    - type: contains
+      value: "old_lark_conversation_history"
+
+tests:
+  - description: Cross-market US/A-share/index/crypto planning
+    vars:
+      ask: "未来我会同时看美股、A股、指数和加密币。请训练本地大脑做连贯分析：先动用本地记忆和已学规则，再拆宏观利率、美元/人民币流动性、美股市场结构、A股政策资金面、指数权重和趋势、加密币流动性和风险门；research-only，不要交易建议。"
+    assert:
+      - type: contains
+        value: "us_equity_market_structure"
+      - type: contains
+        value: "china_a_share_policy_flow"
+      - type: contains
+        value: "global_index_regime"
+      - type: contains
+        value: "crypto_market_structure"
+      - type: contains
+        value: "no_high_leverage_crypto"
+  - description: Source gate prevents fake learning
+    vars:
+      ask: "去学习这篇金融论文并沉淀成规则，但我还没给链接或本地文件。"
+    assert:
+      - type: contains
+        value: "source_registry"
+      - type: contains
+        value: "source_url_or_local_source_path"
+  - description: Quant math refuses missing inputs
+    vars:
+      ask: "我有 QQQ、TLT、NVDA 三个仓位，想算波动、相关性、回撤和利率敏感性，但我还没给权重和价格序列。先拆模块，不要靠模型胡算。"
+    assert:
+      - type: contains
+        value: "quant_math"
+      - type: contains
+        value: "position_weights_and_return_series"
+  - description: Ops audit does not become finance analysis
+    vars:
+      ask: "它刚才又像串到旧任务了，先审计是不是 Lark 上下文污染，不要继续金融分析。"
+    assert:
+      - type: contains
+        value: "ops_audit"
+      - type: contains
+        value: "fresh_lark_message_id_or_visible_reply_text"
