@@ -32,6 +32,7 @@ type Args = {
   skipProbe: boolean;
   json: boolean;
   status: boolean;
+  statusProbe: boolean;
   autoSnapshot: boolean;
   port: number;
   acceptancePhrase: string | undefined;
@@ -166,6 +167,7 @@ function parseArgs(argv: string[]): Args {
     skipProbe: argsSet.has("--skip-probe"),
     json: argsSet.has("--json"),
     status: argsSet.has("--status"),
+    statusProbe: argsSet.has("--with-probe"),
     autoSnapshot: !argsSet.has("--no-auto-snapshot"),
     port: Number.isFinite(port) ? port : DEFAULT_PORT,
     acceptancePhrase: readValue("--acceptance-phrase"),
@@ -691,7 +693,7 @@ export function main(argv = process.argv.slice(2)): number {
       path.join(initialArgs.targetRoot, PROMOTION_STATE_PATH),
     );
     const probe =
-      initialArgs.skipProbe || !state
+      !initialArgs.statusProbe || initialArgs.skipProbe || !state
         ? null
         : runCommand(
             "pnpm",
