@@ -1368,7 +1368,9 @@ async function sendFeishuFinalTextReply(params: {
     dispatcher: params.dispatcher,
     onSettled: params.markDispatchIdle,
     run: async () => {
-      const queuedFinal = params.dispatcher.sendFinalReply({ text: params.text });
+      const queuedFinal = params.dispatcher.sendFinalReply({
+        text: normalizeFeishuDisplayText(params.text),
+      });
       return { queuedFinal, counts: { final: queuedFinal ? 1 : 0 } };
     },
   });
@@ -2209,8 +2211,12 @@ function summarizeSurfaceLineReply(text: string): string {
   const preservedLines = lines.filter(
     (line) =>
       line.startsWith("Learning loop:") ||
+      line.startsWith("- Learning loop:") ||
       line.startsWith("Improvement pulse:") ||
+      line.startsWith("- Improvement pulse:") ||
       line.startsWith("Daily artifacts:") ||
+      line.startsWith("- Daily artifacts:") ||
+      line === "- unavailable." ||
       line.startsWith("- 最近落账:") ||
       line.startsWith("- Protected anchors:"),
   );
@@ -2228,14 +2234,18 @@ function summarizeSurfaceLineReply(text: string): string {
       .slice(0, 2)
       .join(" "),
   );
-  const regularBudget = Math.max(0, 420 - preservedSummary.length - (regularSummary ? 1 : 0));
+  const summaryBudget = 900;
+  const regularBudget = Math.max(
+    regularSummary ? 160 : 0,
+    summaryBudget - preservedSummary.length - (regularSummary ? 1 : 0),
+  );
   const trimmedRegularSummary = regularSummary.slice(0, regularBudget).trim();
 
   // Reserve space for workflow truth so long front-matter cannot crowd it out
   // of the shared surface ledger summary.
   return normalizeSummaryText(
     [trimmedRegularSummary, preservedSummary].filter(Boolean).join(" "),
-  ).slice(0, 420);
+  ).slice(0, summaryBudget);
 }
 
 function inferFeishuWorkReceiptRepairDisposition(
@@ -4058,8 +4068,11 @@ function createSurfaceLineCaptureDispatcher(params: { dispatcher: FeishuReplyDis
     dispatcher: {
       ...params.dispatcher,
       sendFinalReply: (payload: ReplyPayload) => {
-        const text = payload.text?.trim();
-        const queued = params.dispatcher.sendFinalReply(payload);
+        const visiblePayload = payload.text
+          ? { ...payload, text: normalizeFeishuDisplayText(payload.text) }
+          : payload;
+        const text = visiblePayload.text?.trim();
+        const queued = params.dispatcher.sendFinalReply(visiblePayload);
         if (queued && text) {
           lastFinalReplyText = text;
         }

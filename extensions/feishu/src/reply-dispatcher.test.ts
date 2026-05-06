@@ -624,4 +624,48 @@ describe("normalizeFeishuDisplayText", () => {
       ),
     ).toBe(["标题", "", "- 项目: 学习; 状态: 正常", "", "const x = 1;"].join("\n"));
   });
+
+  it("turns internal learning status lines into readable Lark text", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        [
+          "Learning council run: delayed / no visible completion yet.",
+          "Status -",
+          "failedReason: learning_council_reply_timeout_after_5000ms",
+          "foregroundStatus: timeout_already_reported",
+          "targetSurface: learning_command",
+          "Boundary: do not treat this turn as application_ready or durable learning.",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "学习流程已经开始，但前台等待时间内还没形成最终答案。",
+        "当前状态",
+        "- 失败原因: 学习审阅超过前台等待时间 (learning_council_reply_timeout_after_5000ms)",
+        "- 前台状态: 前台已经先告诉你超时，后台还会补发结果",
+        "- 目标工作面: learning_command",
+        "- 边界: do not treat this turn as 已通过验证，可作为研究能力使用 or durable learning.",
+      ].join("\n"),
+    );
+  });
+
+  it("makes queue receipts readable before they reach Lark", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        [
+          "done - family=live_scheduling_queue; targetSurface=learning_command; effectiveSurface=learning_command;",
+          "queued - requested work items remain pending in order; do not treat queued work as completed until a later receipt proves the specific item ran.",
+          "next step - run the first queued item only, then return with its receipt/proof before starting the next item.",
+          "proof - handoff receipt: memory/example.json; dispatch=direct_queue_guard;",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "已收到：这是排队/调度请求；本次只完成队列识别，没有把排队任务说成已经完成。",
+        "队列状态：requested work items remain pending in order; do not treat queued work as completed until a later receipt proves the specific item ran.",
+        "下一步：run the first queued item only, then return with its receipt/proof before starting the next item.",
+        "证据：交接回执: memory/example.json; dispatch=direct_queue_guard;",
+      ].join("\n"),
+    );
+  });
 });
