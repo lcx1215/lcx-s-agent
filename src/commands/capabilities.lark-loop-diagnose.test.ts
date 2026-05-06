@@ -157,6 +157,66 @@ describe("larkLoopDiagnoseCommand", () => {
     });
   });
 
+  it("derives current language replay from handoff receipts when candidate artifacts are missing", async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-lark-diagnose-derived-"));
+    const receiptDir = path.join(
+      workspace,
+      "memory",
+      "lark-language-handoff-receipts",
+      "2026-05-06",
+    );
+    await fs.promises.mkdir(receiptDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(receiptDir, "om_commodity_learning.json"),
+      JSON.stringify({
+        generatedAt: "2026-05-06T00:29:36.322Z",
+        boundary: "language_handoff_only",
+        userMessage: "今天学习大宗商品的知识",
+        handoff: {
+          family: "learning_external_source",
+          source: "api",
+          apiCandidate: {
+            family: "learning_external_source",
+            confidence: 0.62,
+            rationale: "User wants to learn about commodities today.",
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    await larkLoopDiagnoseCommand({ workspaceDir: workspace, json: true }, runtime);
+
+    const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0])) as {
+      languageCandidates: {
+        candidateArtifactCount: number;
+        candidateCount: number;
+        currentReplay: {
+          source: string;
+          candidateCount: number;
+          acceptedCaseCount: number;
+          rejectedCount: number;
+          discardedCount: number;
+          rejectedReasonCounts: Record<string, number>;
+        };
+        autodataLoop: {
+          status: string;
+        };
+      };
+    };
+    expect(payload.languageCandidates.candidateArtifactCount).toBe(0);
+    expect(payload.languageCandidates.candidateCount).toBe(0);
+    expect(payload.languageCandidates.currentReplay).toMatchObject({
+      source: "handoff_receipt_derived",
+      candidateCount: 2,
+      acceptedCaseCount: 0,
+      rejectedCount: 0,
+      discardedCount: 2,
+      rejectedReasonCounts: {},
+    });
+    expect(payload.languageCandidates.autodataLoop.status).toBe("needs_candidate_capture");
+  });
+
   it("reports language candidate capture and review artifacts separately from brain receipts", async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-lark-diagnose-language-"));
     const candidateDir = path.join(

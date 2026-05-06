@@ -535,6 +535,10 @@ describe("lark routing candidate corpus", () => {
           payload: "live-sync-ok gateway 已指向 lcx-s-openclaw",
         }),
         createLarkPendingRoutingCandidate({
+          source: "lark_user_utterance",
+          payload: "live 迁移验收：请只回复 migration-live-ok",
+        }),
+        createLarkPendingRoutingCandidate({
           source: "lark_visible_reply",
           payload:
             "**数据新鲜度：弱** 搜索未能获取到2026年4月纳斯达克最近一个月真实日线，因此不能声称已完成 live technical check。SMA(50) vs SMA(200), RSI。",
@@ -611,6 +615,10 @@ describe("lark routing candidate corpus", () => {
           status: "discarded",
           discardReason: "domain_answer_visible_reply",
         }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({ family: "live_probe_failure" }),
       }),
       expect.objectContaining({
         reason: "accepted_language_case",

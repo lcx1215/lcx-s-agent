@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { evaluateLarkRoutingCandidateCorpus } from "../../../extensions/feishu/src/lark-routing-candidate-corpus.js";
+import {
+  createLarkPendingRoutingCandidate,
+  evaluateLarkRoutingCandidateCorpus,
+} from "../../../extensions/feishu/src/lark-routing-candidate-corpus.js";
 import type { FeishuConfig } from "../../../extensions/feishu/src/types.js";
 import {
   listAgentIds,
@@ -66,6 +69,7 @@ type LanguageCandidateCaptureStats = {
   rejectedSemanticFamilyCounts: Record<string, number>;
   rejectedExamples: LanguageRejectedCandidateExample[];
   currentReplay: {
+    source: "candidate_artifacts" | "handoff_receipt_derived" | "none";
     candidateCount: number;
     acceptedCaseCount: number;
     rejectedCount: number;
@@ -447,6 +451,7 @@ async function readLanguageCandidateCaptureStats(
   const rejectedSemanticFamilyCounts: Record<string, number> = {};
   const rejectedExamples: LanguageRejectedCandidateExample[] = [];
   const currentReplay = {
+    source: "none" as "candidate_artifacts" | "handoff_receipt_derived" | "none",
     candidateCount: 0,
     acceptedCaseCount: 0,
     rejectedCount: 0,
@@ -493,6 +498,7 @@ async function readLanguageCandidateCaptureStats(
         artifactPath: path.relative(workspaceDir, filePath).replaceAll(path.sep, "/"),
       });
       if (candidates.length > 0) {
+        currentReplay.source = "candidate_artifacts";
         const replay = evaluateLarkRoutingCandidateCorpus({
           cfg,
           corpus: {
@@ -527,6 +533,101 @@ async function readLanguageCandidateCaptureStats(
       }
     } catch {
       continue;
+    }
+  }
+
+  if (currentReplay.candidateCount === 0) {
+    const handoffRoot = path.join(workspaceDir, "memory", "lark-language-handoff-receipts");
+    const handoffFiles = await walkJsonFiles(handoffRoot);
+    for (const filePath of handoffFiles) {
+      try {
+        const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+        if (parsed.boundary !== "language_handoff_only") {
+          continue;
+        }
+        const userMessage =
+          typeof parsed.userMessage === "string" && parsed.userMessage.trim()
+            ? parsed.userMessage.trim()
+            : "";
+        if (!userMessage) {
+          continue;
+        }
+        const generatedAt =
+          typeof parsed.generatedAt === "string" && parsed.generatedAt.trim()
+            ? parsed.generatedAt
+            : new Date().toISOString();
+        const handoff =
+          parsed.handoff && typeof parsed.handoff === "object" && !Array.isArray(parsed.handoff)
+            ? (parsed.handoff as Record<string, unknown>)
+            : {};
+        const apiCandidate =
+          handoff.apiCandidate &&
+          typeof handoff.apiCandidate === "object" &&
+          !Array.isArray(handoff.apiCandidate)
+            ? (handoff.apiCandidate as Record<string, unknown>)
+            : null;
+        const apiFamily =
+          typeof apiCandidate?.family === "string" && apiCandidate.family.trim()
+            ? apiCandidate.family.trim()
+            : typeof handoff.family === "string" && handoff.family.trim()
+              ? handoff.family.trim()
+              : null;
+        const apiRouteLabelCandidate =
+          apiFamily === null
+            ? []
+            : [
+                createLarkPendingRoutingCandidate({
+                  source: "api_reply",
+                  payload: {
+                    family: apiFamily,
+                    confidence:
+                      typeof apiCandidate?.confidence === "number" &&
+                      Number.isFinite(apiCandidate.confidence)
+                        ? apiCandidate.confidence
+                        : 0.75,
+                    rationale:
+                      typeof apiCandidate?.rationale === "string" && apiCandidate.rationale.trim()
+                        ? apiCandidate.rationale.trim()
+                        : "handoff_receipt_family_label",
+                  },
+                  createdAt: generatedAt,
+                }),
+              ];
+        const candidates = [
+          ...apiRouteLabelCandidate,
+          createLarkPendingRoutingCandidate({
+            source: "lark_user_utterance",
+            payload: userMessage,
+            createdAt: generatedAt,
+          }),
+        ];
+        const replay = evaluateLarkRoutingCandidateCorpus({
+          cfg,
+          corpus: {
+            schemaVersion: 1,
+            boundary: "language_routing_only",
+            generatedAt,
+            candidates,
+          },
+          evaluatedAt: generatedAt,
+        });
+        currentReplay.source = "handoff_receipt_derived";
+        currentReplay.candidateCount += candidates.length;
+        currentReplay.acceptedCaseCount += replay.counts.accepted;
+        currentReplay.rejectedCount += replay.counts.rejected;
+        currentReplay.discardedCount += replay.counts.discarded;
+        accumulateLanguageEvaluationStats({
+          evaluation: replay as unknown as Record<string, unknown>,
+          reasonCounts: currentReplay.reasonCounts,
+          semanticFamilyCounts: currentReplay.semanticFamilyCounts,
+          rejectedReasonCounts: currentReplay.rejectedReasonCounts,
+          rejectedSemanticFamilyCounts: currentReplay.rejectedSemanticFamilyCounts,
+          rejectedExamples: currentReplay.rejectedExamples,
+          artifactPath: path.relative(workspaceDir, filePath).replaceAll(path.sep, "/"),
+        });
+      } catch {
+        continue;
+      }
     }
   }
 
@@ -750,6 +851,7 @@ function formatDiagnosisText(payload: Record<string, unknown>): string {
     `languageRejectedByReason: ${JSON.stringify(languageCandidates.rejectedReasonCounts)}`,
     `languageRejectedBySemanticFamily: ${JSON.stringify(languageCandidates.rejectedSemanticFamilyCounts)}`,
     `languageRejectedExamples: ${languageCandidates.rejectedExamples.length}`,
+    `languageCurrentReplaySource: ${languageCandidates.currentReplay.source}`,
     `languageCurrentReplayAcceptedCases: ${languageCandidates.currentReplay.acceptedCaseCount}`,
     `languageCurrentReplayRejectedByReason: ${JSON.stringify(languageCandidates.currentReplay.rejectedReasonCounts)}`,
     `languageCurrentReplayRejectedBySemanticFamily: ${JSON.stringify(languageCandidates.currentReplay.rejectedSemanticFamilyCounts)}`,

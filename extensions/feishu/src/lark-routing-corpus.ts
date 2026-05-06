@@ -1526,7 +1526,7 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
   }
 
   const hasLiveReceipt =
-    /(live-sync-ok|gateway\s*(?:已指向|points? to)|验收码|lark-live-|feishu-live-|可见回复|visible reply|probe|探针|only sent|no reply|无回复|错线程|错 chat|blocked|not_started|started|completed|pass|failed)/iu.test(
+    /(live-sync-ok|migration-live-ok|migration[-\s]*live|live\s*迁移|gateway\s*(?:已指向|points? to)|验收码|lark-live-|feishu-live-|可见回复|visible reply|probe|探针|only sent|no reply|无回复|错线程|错 chat|blocked|not_started|started|completed|pass|failed)/iu.test(
       normalized,
     );
   const hasLiveTruthBoundary =
