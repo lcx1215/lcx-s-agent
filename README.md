@@ -156,7 +156,24 @@ node --import tsx scripts/dev/minimax-quota-brain-saturator.ts --write
 node --import tsx scripts/dev/minimax-provider-quota-saturator.ts --lane coding-plan-search --write
 ```
 
-## live 迁移验证
+## live promotion
+
+LCX Agent 不再推荐手动记忆“dev 仓同步 live 仓”的细碎步骤。默认用一条 promotion 命令把当前 git commit 推成 live runtime：
+
+```bash
+pnpm lcx:promote-live --apply
+```
+
+这条命令会做：
+
+1. 检查当前 dev 仓 tracked 文件是否干净。
+2. 跑 `pnpm tsgo` 和 `pnpm build`。
+3. 把 git-tracked 快照复制到 live sidecar。
+4. 在 live sidecar 里安装依赖、build。
+5. 把 LaunchAgent 重装到 live sidecar。
+6. restart gateway。
+7. 跑 `channels status --probe`。
+8. 写入 promotion receipt 和下一条 Lark 验收短语。
 
 live sidecar 默认在：
 
@@ -164,15 +181,19 @@ live sidecar 默认在：
 ~/.openclaw/live-sidecars/lcx-s-openclaw
 ```
 
-典型验证链路：
+默认 dry-run 不改 live：
 
 ```bash
-pnpm build
-node openclaw.mjs daemon restart
-pnpm --silent openclaw channels status --probe
+pnpm lcx:promote-live
 ```
 
-然后发送真实 Lark/Feishu 消息，并检查：
+receipt 默认写入：
+
+```bash
+ops/live-handoff/promotions/
+```
+
+promotion 只代表 live runtime 已经切到某个 git 快照并完成探测。然后还必须发送真实 Lark/Feishu 消息，并检查：
 
 ```bash
 ~/.openclaw/logs/feishu-reply-flow.jsonl
@@ -181,6 +202,15 @@ pnpm --silent openclaw channels status --probe
 ```
 
 只有看到真实入站、路由、回复和用户可见结果，才能说 live-fixed。
+
+状态含义：
+
+| 状态               | 含义                                                        |
+| ------------------ | ----------------------------------------------------------- |
+| dev-fixed          | dev 仓代码和本地验证通过。                                  |
+| live-promoted      | live sidecar 已切到 promotion 对应的 git 快照。             |
+| probe-ok           | gateway 和 channel 探测通过。                               |
+| live-visible-fixed | 重启后的真实 Lark/Feishu 入站、路由、回复、可见输出都通过。 |
 
 ## 底层 runtime
 
