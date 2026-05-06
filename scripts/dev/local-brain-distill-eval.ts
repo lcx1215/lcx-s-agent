@@ -1551,6 +1551,108 @@ const EVAL_CASES: EvalCase[] = [
 
 const EVAL_CASE_BY_ID = new Map(EVAL_CASES.map((evalCase) => [evalCase.id, evalCase]));
 
+function mergeUniqueStrings(...groups: readonly string[][]): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const item of groups.flat()) {
+    const normalized = item.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    merged.push(normalized);
+  }
+  return merged;
+}
+
+const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
+  ["local_memory_knowledge_activation", ["portfolio_mixed_q_t_nvda"]],
+  [
+    "human_brain_finance_decomposition",
+    ["portfolio_mixed_q_t_nvda", "portfolio_math_without_guessing"],
+  ],
+  ["cross_market_us_a_index_crypto_analysis", ["portfolio_mixed_q_t_nvda"]],
+  [
+    "full_stack_finance_stress_with_red_team",
+    [
+      "portfolio_mixed_q_t_nvda",
+      "portfolio_math_without_guessing",
+      "single_company_fundamental_risk",
+    ],
+  ],
+  ["paper_learning_internalization_absorption", ["external_source_missing_url"]],
+  ["unverified_live_market_data_boundary", ["portfolio_mixed_q_t_nvda"]],
+  ["factor_backtest_overfit_guard", ["external_source_missing_url"]],
+  ["sentiment_market_external_module_learning", ["external_source_missing_url"]],
+  ["company_filing_missing_evidence_gate", ["single_company_fundamental_risk"]],
+  ["technical_timing_not_standalone_alpha", ["unseen_etf_timing_framework"]],
+  [
+    "rate_shock_duration_equity_chain",
+    ["portfolio_mixed_q_t_nvda", "portfolio_math_without_guessing"],
+  ],
+  ["nvda_capex_supplier_second_order_risk", ["single_company_fundamental_risk"]],
+  ["a_share_policy_flow_us_tech_spillover", ["cross_market_us_a_index_crypto_analysis"]],
+  ["dollar_yuan_liquidity_cross_asset_loop", ["cross_market_us_a_index_crypto_analysis"]],
+  ["btc_risk_appetite_to_qqq_spillover", ["cross_market_us_a_index_crypto_analysis"]],
+  [
+    "recession_soft_landing_scenario_tree",
+    ["portfolio_mixed_q_t_nvda", "portfolio_math_without_guessing"],
+  ],
+  ["earnings_gap_position_risk_no_filing", ["single_company_fundamental_risk"]],
+  ["index_concentration_mag7_portfolio_risk", ["portfolio_mixed_q_t_nvda"]],
+  ["stablecoin_liquidity_crypto_equity_bridge", ["cross_market_us_a_index_crypto_analysis"]],
+  ["news_sentiment_validation_not_alpha", ["sentiment_market_external_module_learning"]],
+  ["breadth_divergence_timing_context_only", ["technical_timing_not_standalone_alpha"]],
+  ["paper_factor_replication_sample_out", ["paper_learning_internalization_absorption"]],
+  ["strategy_note_missing_methodology", ["external_source_missing_url"]],
+  ["model_review_disagreement_resolution", ["portfolio_mixed_q_t_nvda"]],
+  ["stale_memory_rule_downrank", ["local_memory_knowledge_activation"]],
+  [
+    "earnings_macro_technical_red_team_combo",
+    [
+      "portfolio_mixed_q_t_nvda",
+      "single_company_fundamental_risk",
+      "technical_timing_not_standalone_alpha",
+    ],
+  ],
+  ["drawdown_budget_without_weights", ["portfolio_math_without_guessing"]],
+  ["factor_turnover_cost_capacity_guard", ["factor_backtest_overfit_guard"]],
+  ["ai_capex_supply_chain_fundamental_map", ["single_company_fundamental_risk"]],
+  ["us_china_policy_fx_risk_loop", ["cross_market_us_a_index_crypto_analysis"]],
+  ["fomc_cpi_event_risk_preflight", ["portfolio_mixed_q_t_nvda"]],
+  ["crypto_regulatory_shock_equity_risk", ["cross_market_us_a_index_crypto_analysis"]],
+  ["source_coverage_actual_reading_scope", ["external_source_missing_url"]],
+  ["portfolio_rebalance_no_execution_authority", ["portfolio_mixed_q_t_nvda"]],
+  ["tax_loss_wash_sale_research_boundary", ["portfolio_rebalance_no_execution_authority"]],
+  ["valuation_multiple_compression_chain", ["single_company_fundamental_risk"]],
+  ["liquidity_regime_memory_rule_apply", ["cross_market_us_a_index_crypto_analysis"]],
+  [
+    "analyst_report_learning_source_quality",
+    ["single_company_fundamental_risk", "external_source_missing_url"],
+  ],
+  ["post_mortem_wrong_market_call_learning", ["stale_memory_rule_downrank"]],
+  ["conflicting_memory_live_model_review_governance", ["model_review_disagreement_resolution"]],
+  [
+    "options_iv_event_risk_no_trade",
+    ["single_company_fundamental_risk", "portfolio_math_without_guessing"],
+  ],
+  ["commodity_fx_inflation_inventory_portfolio_loop", ["short_lark_commodity_learning_intake"]],
+  ["china_property_credit_a_share_us_tech_spillover", ["cross_market_us_a_index_crypto_analysis"]],
+  ["paper_claim_conflicts_with_local_memory_rule", ["paper_learning_internalization_absorption"]],
+  ["sentiment_vendor_conflict_validation_loop", ["sentiment_market_external_module_learning"]],
+  [
+    "scenario_probability_no_model_math_guessing",
+    ["recession_soft_landing_scenario_tree", "portfolio_math_without_guessing"],
+  ],
+]);
+
+function prerequisiteIdsFor(evalCase: EvalCase): string[] {
+  return mergeUniqueStrings(
+    evalCase.prerequisiteCaseIds ?? [],
+    EVAL_CASE_PREREQUISITES.get(evalCase.id) ?? [],
+  );
+}
+
 function expandEvalCasesWithPrerequisites(caseIds: string[]): {
   evalCases: EvalCase[];
   autoIncludedPrerequisiteCaseIds: string[];
@@ -1568,7 +1670,7 @@ function expandEvalCasesWithPrerequisites(caseIds: string[]): {
     if (!evalCase) {
       return;
     }
-    for (const prerequisiteCaseId of evalCase.prerequisiteCaseIds ?? []) {
+    for (const prerequisiteCaseId of prerequisiteIdsFor(evalCase)) {
       include(prerequisiteCaseId, true);
     }
     if (included.has(caseId)) {
@@ -1751,6 +1853,15 @@ const unknownCaseIds = options.caseIds.filter((caseId) => !EVAL_CASE_BY_ID.has(c
 if (unknownCaseIds.length > 0) {
   throw new Error(`unknown eval case id(s): ${unknownCaseIds.join(", ")}`);
 }
+const unknownPrerequisiteCaseIds = [...EVAL_CASE_PREREQUISITES.entries()].flatMap(
+  ([caseId, prerequisiteCaseIds]) =>
+    [caseId, ...prerequisiteCaseIds].filter((entry) => !EVAL_CASE_BY_ID.has(entry)),
+);
+if (unknownPrerequisiteCaseIds.length > 0) {
+  throw new Error(
+    `unknown prerequisite eval case id(s): ${[...new Set(unknownPrerequisiteCaseIds)].join(", ")}`,
+  );
+}
 const caseResults = [];
 for (const evalCase of evalCases) {
   if (options.progress) {
@@ -1815,6 +1926,7 @@ const result = {
   hierarchy: {
     requestedCaseIds: options.caseIds,
     autoIncludedPrerequisiteCaseIds,
+    registeredPrerequisiteRuleCount: EVAL_CASE_PREREQUISITES.size,
   },
   summary: {
     passed: passedCases.length,

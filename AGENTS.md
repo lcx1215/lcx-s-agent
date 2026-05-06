@@ -70,6 +70,8 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - Do not "learn anything about making money." That produces noise, scams, and shallow overfitting.
 - Only learn material that compounds decision quality in this order: market structure and regime understanding, ETF / major-asset behavior, high-quality fundamental reading and risk extraction, timing discipline and invalidation logic, hard risk-control lessons, reusable research patterns, and operational lessons from system failures.
 - Learning is only valuable if it improves future judgment.
+- Capability must be monotonic in normal difficulty order: if the local brain can handle a complex task, it must also handle the simpler prerequisite task. Do not allow a complex eval, promotion, or receipt to pass while the simple adjacent user ask fails.
+- For every new complex brain loop, add or reuse a simple prerequisite eval. Local-brain promotion must run the prerequisite together with the complex case, not as an optional separate check.
 - Convert learning into concise lessons, reusable decision rules, correction notes, follow-up items, and stale/downrank decisions.
 - Daily progress must be concrete, not theatrical.
 

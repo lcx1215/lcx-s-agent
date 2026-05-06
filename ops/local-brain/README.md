@@ -214,6 +214,33 @@ promotionReady=true
 failedCaseIds=[]
 ```
 
+### Capability Hierarchy Gate
+
+Local-brain evals must preserve a simple-to-complex hierarchy. A complex case may
+declare prerequisite cases, and `local-brain-distill-eval.ts` auto-includes them
+when a complex `--case-id` is selected. This prevents a false state where the
+brain passes a hard scenario but fails the simple Lark-style ask.
+
+Example:
+
+```bash
+node --import tsx scripts/dev/local-brain-distill-eval.ts \
+  --contract-only \
+  --case-id commodity_fx_inflation_inventory_portfolio_loop \
+  --summary-only \
+  --json
+```
+
+Expected hierarchy evidence includes:
+
+```text
+autoIncludedPrerequisiteCaseIds=["short_lark_commodity_learning_intake"]
+promotionReady=true
+```
+
+If a complex eval is added, add or reuse a simple prerequisite. The simple case
+must pass before the complex case can support promotion.
+
 ## Logs
 
 Main logs:
