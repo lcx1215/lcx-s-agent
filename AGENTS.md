@@ -78,7 +78,8 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - Work in baseline-hardening mode.
 - Goal: keep the system clean, stable, auditable, and free of silent failure.
 - Baseline first, expansion later.
-- Prefer hardening patches over new architecture.
+- Prefer failure-family hardening over one-off symptom patches.
+- A visible bug is often evidence of a shared contract problem. Before stopping, inspect adjacent entrypoints, exits, templates, receipts, and tests that could leak the same failure.
 - Clean failure is better than silent empty output.
 - Do not decorate immature paths.
 - Do not hide failure behind empty output.
@@ -97,12 +98,12 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 
 ### Baseline-Hardening Priority
 
-1. close a verified hole
+1. close the verified failure family, not only the first observed symptom
 2. preserve continuity
 3. make failure explicit
 4. protect shared state
 5. keep memory clean
-6. avoid unnecessary surface-area growth
+6. avoid unnecessary surface-area growth while still repairing all affected sibling paths
 
 ## Memory And Shared-State Discipline
 
@@ -127,9 +128,11 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - When fixing a problem, identify the exact failure mode.
 - Explain why the failure mode is dangerous.
 - Make the failure explicit.
-- Apply a direct bounded patch that closes the verified failure family.
+- Decide whether the issue is a single local bug or a shared interface / workflow contract failure.
+- If it is a contract failure, repair the class of failures across sibling routes, visible outputs, artifacts, receipts, tests, and live proof surfaces.
+- Apply a bounded failure-family repair. Bounded means no unrelated expansion; it does not mean stopping at the first touched line or the first passing example.
 - Add proof tests.
-- Avoid broad rewrites unless necessary.
+- Avoid unrelated rewrites. Use broader repair only when the verified failure family crosses multiple shared paths.
 - No fake success on empty topics, blocked artifacts, or degraded provider paths.
 
 ## Self-Correction Doctrine
@@ -180,15 +183,16 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 
 ## Default Work Pattern
 
-- Before coding, state: exact failure mode, why it is dangerous, direct bounded patch, and proof test.
-- After coding, state: files changed, behavior change, what is now prevented, and what remains intentionally out of scope.
-- Every day, do at least one of: close one real failure mode, improve one core output pattern, compress one useful lesson into reusable form, remove one source of noise or ambiguity, improve one routing/summary/memory contract, or produce one better piece of research than yesterday.
+- Before coding, state: exact failure mode, why it is dangerous, whether it is a one-off bug or a failure family, the bounded repair surface, and proof tests.
+- When the issue touches an interface or visible workflow, enumerate adjacent paths that could fail the same way before declaring scope complete.
+- After coding, state: files changed, behavior change, sibling paths covered, what is now prevented, and what remains intentionally out of scope.
+- Every day, do at least one of: close one real failure family, improve one core output pattern, compress one useful lesson into reusable form, remove one source of noise or ambiguity, improve one routing/summary/memory contract, or produce one better piece of research than yesterday.
 
 ## Codex Delivery Discipline
 
 - Use plan-first for non-trivial tasks, especially when a task touches multiple subsystems or changes status/output semantics.
-- Default to coherent bounded batches rather than tiny artificial steps. When the user gives broad improvement authority, continue through related failure families end to end instead of stopping after the first small patch.
-- Do not perform unrelated cleanup or opportunistic refactors; cleanup is in scope only when it directly reduces confusion, dead code, or verification risk for the active goal.
+- Default to coherent bounded batches rather than tiny artificial steps. When a bug implies a shared contract failure, continue through related failure families end to end instead of stopping after the first small patch.
+- Do not perform unrelated cleanup or opportunistic refactors; cleanup is in scope when it directly reduces confusion, dead code, repeated leakage, or verification risk for the active failure family.
 - Treat verification as mandatory: run targeted tests, lint touched files, and name a fixed Feishu/live acceptance phrase for later real verification.
 - Do not confuse `dev-fixed` with `live-fixed`.
 - A change is only `live-fixed` after explicit migration, build, restart, probe, and real-entry verification.
@@ -198,6 +202,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 
 - When the user asks for a broad goal, convert it into a staged execution loop and keep working until the goal is handled, a real blocker appears, or the available session must hand off.
 - Each stage should close a concrete failure family, improve a core workflow, remove a verified source of confusion, or strengthen a reusable eval/receipt.
+- Do not treat a single passing repro as enough when sibling flows share the same prompt, formatter, receipt, state machine, sender, or live-visible surface.
 - Stage boundaries should be based on verification value, not on arbitrary file counts or one-file edits.
 - It is acceptable for one session to modify multiple related files across language, brain, CLI, tests, docs, and receipts when they serve the same verified goal and can be checked together.
 - Keep brief progress updates for long work, but do not ask for confirmation between routine safe steps.
@@ -223,7 +228,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - For long-running, scheduled, or background work, require explicit receipts for start, iteration or milestone, finish, and fail. Do not treat “started” as “completed”.
 - Add reusable workflows as skills, bounded tools, or hooks instead of letting prompt text grow into hidden process logic.
 - For autonomous improvement loops, prefer an autoresearch-style bounded eval loop over vague self-improvement.
-- Keep the writable surface purposeful. Prefer one coherent implementation slice or failure family at a time, but allow multi-file batches when the files are tightly related and the verification plan covers them together.
+- Keep the writable surface purposeful. Prefer one coherent implementation slice or failure family at a time; use multi-file batches when shared contracts, sibling routes, visible replies, receipts, or evals need to move together.
 - Use a fixed runtime or step budget for each experiment so attempts stay comparable.
 - Compare changes on one explicit metric that actually matters; keep or discard based on that metric, not on vibes or eloquence.
 - Human doctrine/spec edits belong in instruction files; agent edit authority should stay on the active staged goal and its bounded verification surface.
