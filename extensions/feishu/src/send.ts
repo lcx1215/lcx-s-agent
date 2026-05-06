@@ -470,9 +470,9 @@ export async function sendMarkdownCardFeishu(params: {
   accountId?: string;
 }): Promise<FeishuSendResult> {
   const { cfg, to, text, replyToMessageId, replyInThread, mentions, accountId } = params;
-  let cardText = text;
+  let cardText = normalizeFeishuDisplayText(text ?? "");
   if (mentions && mentions.length > 0) {
-    cardText = buildMentionedCardContent(mentions, text);
+    cardText = buildMentionedCardContent(mentions, cardText);
   }
   const card = buildMarkdownCard(cardText);
   return sendCardFeishu({ cfg, to, card, replyToMessageId, replyInThread, accountId });
@@ -499,7 +499,11 @@ export async function editMessageFeishu(params: {
     cfg,
     channel: "feishu",
   });
-  const messageText = getFeishuRuntime().channel.text.convertMarkdownTables(text ?? "", tableMode);
+  const normalizedText = normalizeFeishuDisplayText(text ?? "");
+  const messageText = getFeishuRuntime().channel.text.convertMarkdownTables(
+    normalizedText,
+    tableMode,
+  );
 
   const { content, msgType } = buildFeishuPostMessagePayload({ messageText });
 
