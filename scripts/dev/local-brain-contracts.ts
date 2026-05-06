@@ -743,8 +743,7 @@ export function hardenLocalBrainPlanForAsk(
         "source_registry_lookup",
         "finance_learning_capability_apply",
         "finance_framework_macro_rates_inflation_producer",
-        "finance_framework_cross_asset_liquidity_producer",
-        "finance_framework_fx_currency_liquidity_producer",
+        "finance_framework_core_inspect",
         "finance_framework_fx_dollar_producer",
         "finance_framework_commodities_oil_gold_producer",
         "finance_framework_etf_regime_producer",
@@ -1199,8 +1198,8 @@ export function hardenLocalBrainPlanForAsk(
       ],
       supporting_modules: ["finance_learning_memory", "source_registry", "control_room_summary"],
       required_tools: [
-        "finance_framework_crypto_market_structure_producer",
-        "finance_framework_cross_asset_liquidity_producer",
+        "finance_learning_capability_apply",
+        "finance_framework_core_inspect",
         "finance_framework_portfolio_risk_gates_producer",
         "review_panel",
       ],
@@ -1477,7 +1476,7 @@ export function hardenLocalBrainPlanForAsk(
       ],
       required_tools: [
         "finance_framework_etf_regime_producer",
-        "finance_framework_us_equity_market_structure_producer",
+        "finance_learning_capability_apply",
         "quant_math",
         "finance_framework_portfolio_risk_gates_producer",
         "review_panel",
@@ -1539,11 +1538,8 @@ export function hardenLocalBrainPlanForAsk(
         "finance_framework_company_fundamentals_value_producer",
         "finance_framework_macro_rates_inflation_producer",
         "finance_framework_credit_liquidity_producer",
-        "finance_framework_cross_asset_liquidity_producer",
-        "finance_framework_fx_currency_liquidity_producer",
+        "finance_framework_core_inspect",
         "finance_framework_fx_dollar_producer",
-        "finance_framework_us_equity_market_structure_producer",
-        "finance_framework_global_index_regime_producer",
         "finance_framework_etf_regime_producer",
         "quant_math",
         "finance_framework_portfolio_risk_gates_producer",
@@ -1605,7 +1601,7 @@ export function hardenLocalBrainPlanForAsk(
         "finance_framework_macro_rates_inflation_producer",
         "finance_framework_fx_dollar_producer",
         "finance_framework_commodities_oil_gold_producer",
-        "finance_framework_cross_asset_liquidity_producer",
+        "finance_framework_core_inspect",
         "finance_framework_portfolio_risk_gates_producer",
         "review_panel",
       ],
@@ -1742,23 +1738,15 @@ export function hardenLocalBrainPlanForAsk(
       required_tools: mergeUnique(
         mentionsCryptoMarket(input.ask)
           ? arrayValue(safe.required_tools)
-          : withoutValues(arrayValue(safe.required_tools), [
-              "finance_framework_crypto_market_structure_producer",
-            ]),
+          : withoutValues(arrayValue(safe.required_tools), ["finance_learning_capability_apply"]),
         [
           "artifact_memory_recall",
           "finance_learning_capability_apply",
           "source_registry_lookup",
           "finance_framework_macro_rates_inflation_producer",
           "finance_framework_credit_liquidity_producer",
-          "finance_framework_cross_asset_liquidity_producer",
-          "finance_framework_fx_currency_liquidity_producer",
-          "finance_framework_us_equity_market_structure_producer",
-          "finance_framework_china_a_share_policy_flow_producer",
-          "finance_framework_global_index_regime_producer",
-          ...(mentionsCryptoMarket(input.ask)
-            ? ["finance_framework_crypto_market_structure_producer"]
-            : []),
+          "finance_framework_core_inspect",
+          "finance_framework_fx_dollar_producer",
           "quant_math",
           "finance_framework_portfolio_risk_gates_producer",
           "review_panel",

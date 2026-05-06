@@ -274,8 +274,8 @@ describe("hardenLocalBrainPlanForAsk", () => {
         ],
         supporting_modules: ["finance_learning_memory", "source_registry", "control_room_summary"],
         required_tools: [
-          "finance_framework_crypto_market_structure_producer",
-          "finance_framework_cross_asset_liquidity_producer",
+          "finance_learning_capability_apply",
+          "finance_framework_core_inspect",
           "finance_framework_portfolio_risk_gates_producer",
           "review_panel",
         ],
@@ -452,6 +452,8 @@ describe("hardenLocalBrainPlanForAsk", () => {
       ]),
     );
     expect(plan.primary_modules).not.toContain("crypto_market_structure");
+    expect(plan.required_tools).toContain("finance_learning_capability_apply");
+    expect(plan.required_tools).not.toContain("finance_framework_cross_asset_liquidity_producer");
     expect(plan.required_tools).not.toContain("finance_framework_crypto_market_structure_producer");
     expect(plan.missing_data).toEqual(
       expect.arrayContaining(["fresh_market_data_snapshot", "position_weights_and_return_series"]),

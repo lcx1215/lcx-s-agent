@@ -51,6 +51,39 @@ describe("planFinanceBrainOrchestration", () => {
     expect(plan.boundaries).toContain("no_execution_authority");
   });
 
+  it("keeps cross-market modules available at runtime without fake producer tools", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "美元流动性和人民币汇率变化时，我想同时看美股、A股、全球指数、BTC、稳定币、QQQ 和高 beta 科技股的跨资产风险偏好外溢，research-only。",
+      hasHoldingsOrPortfolioContext: true,
+      highStakesConclusion: true,
+    });
+
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining([
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "crypto_market_structure",
+        "portfolio_risk_gates",
+        "quant_math",
+        "causal_map",
+      ]),
+    );
+    expect(plan.supportingModules).toContain("finance_learning_memory");
+    expect(plan.requiredTools).toEqual(
+      expect.arrayContaining([
+        "finance_framework_core_inspect",
+        "finance_framework_fx_dollar_producer",
+        "finance_learning_capability_apply",
+        "review_panel",
+      ]),
+    );
+    expect(plan.requiredTools).not.toContain("finance_framework_crypto_market_structure_producer");
+    expect(plan.requiredTools).not.toContain("finance_framework_cross_asset_liquidity_producer");
+  });
+
   it("does not invent a heavy finance plan for non-finance text", () => {
     const plan = planFinanceBrainOrchestration({
       text: "帮我整理一下今天的 marketing meeting 标题和 security risk 待办。",

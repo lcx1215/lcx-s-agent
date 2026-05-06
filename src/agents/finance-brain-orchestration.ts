@@ -3,6 +3,12 @@ import type { FinanceFrameworkCoreDomain } from "../hooks/bundled/lobster-brain-
 export type FinanceBrainModuleId =
   | FinanceFrameworkCoreDomain
   | "technical_timing"
+  | "cross_asset_liquidity"
+  | "fx_currency_liquidity"
+  | "global_index_regime"
+  | "us_equity_market_structure"
+  | "china_a_share_policy_flow"
+  | "crypto_market_structure"
   | "quant_math"
   | "finance_learning_memory";
 
@@ -50,6 +56,64 @@ export const FINANCE_BRAIN_MODULES = [
     triggerPatterns: [
       /\b(?:etf|index|sector|breadth|flow|rotation|spy|qqq|tlt|iwm)\b/u,
       /指数|板块|轮动|宽基|行业/u,
+    ],
+  },
+  {
+    id: "cross_asset_liquidity",
+    role: "Connect liquidity and risk appetite across equities, rates, FX, commodities, and crypto without treating one market as a standalone signal.",
+    requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
+    triggerPatterns: [
+      /\b(?:cross[- ]asset|risk appetite|liquidity transmission|spillover|correlation regime|global liquidity)\b/u,
+      /跨资产|风险偏好|流动性传导|外溢|相关性 regime|全球流动性/u,
+    ],
+  },
+  {
+    id: "fx_currency_liquidity",
+    role: "Track USD, CNY, DXY, currency funding, and FX liquidity as cross-market transmission inputs.",
+    requiredTools: [
+      "finance_framework_core_inspect",
+      "finance_framework_fx_dollar_producer",
+      "finance_learning_capability_apply",
+    ],
+    triggerPatterns: [
+      /\b(?:usd|dxy|cny|cnh|fx|currency|dollar liquidity|yuan|yen carry)\b/u,
+      /美元|人民币|汇率|外汇|美元流动性|离岸人民币|套息/u,
+    ],
+  },
+  {
+    id: "global_index_regime",
+    role: "Read index concentration, breadth, constituents, weights, and major-index regime context.",
+    requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
+    triggerPatterns: [
+      /\b(?:index concentration|mag7|mega[- ]cap|breadth|nasdaq|s&p|spx|global index|constituents?|weights?)\b/u,
+      /全球指数|指数集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
+    ],
+  },
+  {
+    id: "us_equity_market_structure",
+    role: "Separate US equity market structure, sector leadership, breadth, positioning, and risk appetite from single-company fundamentals.",
+    requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
+    triggerPatterns: [
+      /\b(?:us equities|us stocks|nasdaq|s&p|spx|qqq|spy|iwm|sector leadership|market breadth)\b/u,
+      /美股|纳斯达克|标普|罗素|行业领导|市场宽度|高 beta 科技/u,
+    ],
+  },
+  {
+    id: "china_a_share_policy_flow",
+    role: "Handle China A-share policy, liquidity, northbound flow, RMB pressure, and policy-market transmission.",
+    requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
+    triggerPatterns: [
+      /\b(?:a[- ]shares?|china policy|northbound|csi300|shanghai composite|rmb assets?)\b/u,
+      /A股|a股|沪深|上证|深证|北向|政策资金|人民币资产|中国权益/u,
+    ],
+  },
+  {
+    id: "crypto_market_structure",
+    role: "Treat BTC, ETH, stablecoins, exchange reserves, custody, and crypto liquidity as research-only market-structure inputs.",
+    requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
+    triggerPatterns: [
+      /\b(?:crypto|bitcoin|btc|ethereum|eth|stablecoin|usdt|exchange reserves?|on[- ]chain)\b/u,
+      /加密|比特币|BTC|以太坊|ETH|稳定币|链上|交易所储备/u,
     ],
   },
   {
