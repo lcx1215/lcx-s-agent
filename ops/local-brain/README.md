@@ -132,15 +132,21 @@ The guard now filters `latest-passing` by model-specific adapter prefix, so a fu
 
 ## Continue Normal 0.6B Training
 
-Use this for the normal medium-intensity local loop:
+Use this for the normal medium-intensity local loop. The MiniMax teacher now runs as a
+continuous sidecar, so slow local Qwen eval/train steps do not leave the 5-hour MiniMax
+window idle.
 
 ```bash
 node --import tsx scripts/dev/minimax-brain-training-guard.ts \
-  --duration-minutes 120 \
+  --duration-minutes 285 \
   --batch-limit 20 \
   --teacher-profile minimax-plus-brain \
   --teacher-duration-minutes 12 \
   --teacher-concurrency 6 \
+  --teacher-sidecar \
+  --teacher-sidecar-max-calls 900 \
+  --teacher-sidecar-batch-limit 36 \
+  --teacher-sidecar-concurrency 8 \
   --train-every 3 \
   --eval-every 1 \
   --train-iters 40 \

@@ -9,6 +9,11 @@ type CliOptions = {
   teacherProfile: "batch" | "minimax-plus-brain";
   teacherDurationMinutes: number;
   teacherConcurrency: number;
+  teacherSidecar: boolean;
+  teacherSidecarMaxCalls: number;
+  teacherSidecarDurationMinutes: number;
+  teacherSidecarBatchLimit: number;
+  teacherSidecarConcurrency: number;
   trainEvery: number;
   evalEvery: number;
   trainIters: number;
@@ -82,6 +87,12 @@ function usage(): never {
       "  --teacher-profile NAME  batch|minimax-plus-brain, default minimax-plus-brain",
       "  --teacher-duration-minutes N  per-round teacher budget, default 12",
       "  --teacher-concurrency N       per-round teacher concurrency, default 6",
+      "  --teacher-sidecar       run MiniMax teacher as a continuous sidecar, default on for minimax-plus-brain",
+      "  --no-teacher-sidecar    keep old serial per-round MiniMax teacher behavior",
+      "  --teacher-sidecar-max-calls N  sidecar attempt cap, default 900",
+      "  --teacher-sidecar-duration-minutes N  sidecar budget, default matches guard duration",
+      "  --teacher-sidecar-batch-limit N       sidecar batch size, default 36",
+      "  --teacher-sidecar-concurrency N       sidecar concurrency, default 8",
       "  --train-every N         train every N rounds, default 3",
       "  --eval-every N          eval current/new adapter every N rounds, default 1",
       "  --train-iters N         MLX LoRA iters, default 40",
@@ -140,6 +151,11 @@ function parseArgs(args: string[]): CliOptions {
     teacherProfile: "minimax-plus-brain",
     teacherDurationMinutes: 12,
     teacherConcurrency: 6,
+    teacherSidecar: true,
+    teacherSidecarMaxCalls: 900,
+    teacherSidecarDurationMinutes: 0,
+    teacherSidecarBatchLimit: 36,
+    teacherSidecarConcurrency: 8,
     trainEvery: 3,
     evalEvery: 1,
     trainIters: 40,
@@ -179,6 +195,22 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--teacher-concurrency") {
       options.teacherConcurrency = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--teacher-sidecar") {
+      options.teacherSidecar = true;
+    } else if (arg === "--no-teacher-sidecar") {
+      options.teacherSidecar = false;
+    } else if (arg === "--teacher-sidecar-max-calls") {
+      options.teacherSidecarMaxCalls = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--teacher-sidecar-duration-minutes") {
+      options.teacherSidecarDurationMinutes = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--teacher-sidecar-batch-limit") {
+      options.teacherSidecarBatchLimit = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--teacher-sidecar-concurrency") {
+      options.teacherSidecarConcurrency = readPositiveInteger(readValue(args, index));
       index += 1;
     } else if (arg === "--train-every") {
       options.trainEvery = readPositiveInteger(readValue(args, index));
@@ -738,7 +770,8 @@ async function runJsonStep(
   const result = await runCommand(command, args, stepOptions);
   const parsed = parseJsonFromStdout(result.stdout);
   await appendLog(options.logPath, {
-    event: stepOptions.allowFailure && !evalPassed(parsed) ? "step_non_passing" : "step_ok",
+    event:
+      stepOptions.allowFailure && !promotionEvalPassed(parsed) ? "step_non_passing" : "step_ok",
     round,
     name,
     command,
@@ -795,6 +828,10 @@ async function runTeacherStep(options: CliOptions, round: number): Promise<unkno
       String(options.teacherConcurrency),
       "--min-concurrency",
       String(Math.min(4, options.teacherConcurrency)),
+      "--workspace",
+      options.workspaceDir,
+      "--data-dir",
+      options.dataDir,
       "--write",
       ...(options.mock ? ["--mock"] : []),
     ]);
@@ -864,20 +901,127 @@ async function runTrain(options: CliOptions, round: number, adapterPath: string)
   return true;
 }
 
-function evalPassed(result: unknown): boolean {
+function promotionEvalPassed(result: unknown): boolean {
   if (!result || typeof result !== "object") {
     return false;
   }
-  const payload = result as {
-    ok?: unknown;
-    promotionReady?: unknown;
-    summary?: { promotionReady?: unknown };
-  };
+  const payload = result as { summary?: { promotionReady?: unknown; total?: unknown } };
+  const total = payload.summary?.total;
   return (
-    payload.ok === true ||
-    payload.promotionReady === true ||
-    payload.summary?.promotionReady === true
+    payload.summary?.promotionReady === true &&
+    typeof total === "number" &&
+    total >= MIN_PROMOTION_EVAL_CASES
   );
+}
+
+type TeacherSidecar = {
+  pid?: number;
+  exitCode?: number | null;
+  stop: () => Promise<void>;
+};
+
+function shouldRunTeacherSidecar(options: CliOptions): boolean {
+  return options.teacherSidecar && options.teacherProfile === "minimax-plus-brain";
+}
+
+async function startTeacherSidecar(options: CliOptions): Promise<TeacherSidecar | undefined> {
+  if (!shouldRunTeacherSidecar(options)) {
+    return undefined;
+  }
+  const durationMinutes =
+    options.teacherSidecarDurationMinutes > 0
+      ? options.teacherSidecarDurationMinutes
+      : options.durationMinutes;
+  const args = [
+    "--import",
+    "tsx",
+    "scripts/dev/minimax-quota-brain-saturator.ts",
+    "--profile",
+    "minimax-plus-brain",
+    "--max-calls",
+    String(options.teacherSidecarMaxCalls),
+    "--duration-minutes",
+    String(durationMinutes),
+    "--batch-limit",
+    String(options.teacherSidecarBatchLimit),
+    "--concurrency",
+    String(options.teacherSidecarConcurrency),
+    "--min-concurrency",
+    String(Math.min(4, options.teacherSidecarConcurrency)),
+    "--workspace",
+    options.workspaceDir,
+    "--data-dir",
+    options.dataDir,
+    "--dataset-every",
+    "5",
+    "--smoke-every",
+    "10",
+    "--adaptive",
+    "--allow-partial-write",
+    "--write",
+    ...(options.mock ? ["--mock"] : []),
+  ];
+  const child = spawn("node", args, {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let settled = false;
+  const exitPromise = new Promise<void>((resolve) => {
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      process.stdout.write(`[minimax-sidecar] ${chunk}`);
+    });
+    child.stderr.on("data", (chunk) => {
+      process.stderr.write(`[minimax-sidecar] ${chunk}`);
+    });
+    child.on("error", async (error) => {
+      settled = true;
+      await appendLog(options.logPath, {
+        event: "teacher_sidecar_error",
+        error: String(error),
+        liveTouched: false,
+        providerConfigTouched: false,
+      });
+      resolve();
+    });
+    child.on("close", async (code) => {
+      settled = true;
+      await appendLog(options.logPath, {
+        event: "teacher_sidecar_exit",
+        pid: child.pid,
+        exitCode: code,
+        liveTouched: false,
+        providerConfigTouched: false,
+      });
+      resolve();
+    });
+  });
+  await appendLog(options.logPath, {
+    event: "teacher_sidecar_started",
+    pid: child.pid,
+    command: "node",
+    args,
+    liveTouched: false,
+    providerConfigTouched: false,
+  });
+  return {
+    pid: child.pid,
+    get exitCode() {
+      return child.exitCode;
+    },
+    stop: async () => {
+      if (!settled) {
+        child.kill("SIGTERM");
+        await Promise.race([exitPromise, new Promise((resolve) => setTimeout(resolve, 5_000))]);
+      }
+      if (!settled) {
+        child.kill("SIGKILL");
+        await exitPromise;
+      }
+    },
+  };
 }
 
 function adapterPathForRound(options: CliOptions, round: number): string {
@@ -923,6 +1067,7 @@ const startedAt = Date.now();
 const deadline = startedAt + options.durationMinutes * 60_000;
 let round = 0;
 let currentAdapter = await resolveCurrentAdapter(options);
+let teacherSidecar: TeacherSidecar | undefined;
 
 await appendLog(options.logPath, {
   event: "guard_start",
@@ -935,6 +1080,7 @@ await appendLog(options.logPath, {
 });
 
 try {
+  teacherSidecar = await startTeacherSidecar(options);
   while (Date.now() < deadline) {
     round += 1;
     if (
@@ -947,7 +1093,19 @@ try {
     ) {
       break;
     }
-    await runTeacherStep(options, round);
+    if (teacherSidecar) {
+      await appendLog(options.logPath, {
+        event: "step_skipped",
+        round,
+        name: "minimax_plus_brain_saturator",
+        reason: "teacher_sidecar_active",
+        sidecarPid: teacherSidecar.pid,
+        liveTouched: false,
+        providerConfigTouched: false,
+      });
+    } else {
+      await runTeacherStep(options, round);
+    }
     await runJsonStep(options, round, "dataset", "node", [
       "--import",
       "tsx",
@@ -978,7 +1136,7 @@ try {
           "--summary-only",
           "--json",
         ]);
-        if (!evalPassed(stableEval)) {
+        if (!promotionEvalPassed(stableEval)) {
           throw new Error(`stable adapter failed hardened eval: ${currentAdapter}`);
         }
       } else {
@@ -1022,7 +1180,7 @@ try {
         ],
         { allowFailure: true },
       );
-      if (evalPassed(candidateEval)) {
+      if (promotionEvalPassed(candidateEval)) {
         currentAdapter = candidateAdapter;
         await appendLog(options.logPath, {
           event: "adapter_promoted_for_guard_session",
@@ -1061,5 +1219,6 @@ try {
   process.stderr.write(`\n[minimax-guard] failed round=${round}: ${String(error)}\n`);
   process.exitCode = 1;
 } finally {
+  await teacherSidecar?.stop();
   await releaseRunLock();
 }

@@ -72,6 +72,20 @@ async function resolveCurrentAdapter(fixture: Awaited<ReturnType<typeof makeGuar
 }
 
 describe("minimax brain training guard adapter resolution", () => {
+  it("keeps MiniMax teacher generation decoupled from slow Qwen eval/train work", async () => {
+    const source = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("teacherSidecar: true");
+    expect(source).toContain('event: "teacher_sidecar_started"');
+    expect(source).toContain('reason: "teacher_sidecar_active"');
+    expect(source).toContain("scripts/dev/minimax-quota-brain-saturator.ts");
+    expect(source).toContain("--adaptive");
+    expect(source).toContain("--allow-partial-write");
+  });
+
   it("does not select an adapter after a newer failed hardened eval", async () => {
     const fixture = await makeGuardFixture((adapterPrefix) => {
       const adapter = `${adapterPrefix}-2026-05-05T16-27-05-938Z-r6`;
