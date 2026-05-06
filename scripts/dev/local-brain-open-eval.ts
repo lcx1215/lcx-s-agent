@@ -17,6 +17,11 @@ type CliOptions = {
   json: boolean;
 };
 
+type ProviderInvocation = {
+  command: string;
+  args: string[];
+};
+
 const REQUIRED_KEYS = [
   "task_family",
   "primary_modules",
@@ -161,18 +166,65 @@ function parseArgs(args: string[]): CliOptions {
   return options;
 }
 
+function tokenizeProviderCommand(raw: string): ProviderInvocation {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error("provider command cannot be empty");
+  }
+  if (/[;&|<>`$()\n\r]/u.test(trimmed)) {
+    throw new Error("provider command contains unsupported shell metacharacters");
+  }
+
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  for (const char of trimmed) {
+    if (quote) {
+      if (char === quote) {
+        quote = undefined;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (/\s/u.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (quote) {
+    throw new Error("provider command contains unterminated quote");
+  }
+  if (current) {
+    tokens.push(current);
+  }
+  const [command, ...args] = tokens;
+  if (!command) {
+    throw new Error("provider command cannot be empty");
+  }
+  return { command, args };
+}
+
 function runProvider(
   options: CliOptions,
   evalCase: OpenEvalCase,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const child = spawn(`${options.providerCommand} ${JSON.stringify(evalCase.ask)}`, {
+    const provider = tokenizeProviderCommand(options.providerCommand);
+    const child = spawn(provider.command, [...provider.args, evalCase.ask], {
       cwd: path.resolve("."),
       env: {
         ...process.env,
         LCX_OPEN_EVAL_SOURCE_SUMMARY: evalCase.sourceSummary,
       },
-      shell: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

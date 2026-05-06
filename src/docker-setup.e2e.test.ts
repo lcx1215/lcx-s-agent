@@ -109,7 +109,7 @@ function runDockerSetup(
     cwd: sandbox.rootDir,
     env: createEnv(sandbox, overrides),
     encoding: "utf8",
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
@@ -248,6 +248,20 @@ describe("docker-setup.sh", () => {
     expect(result.status).toBe(0);
     const envFile = await readFile(join(activeSandbox.rootDir, ".env"), "utf8");
     expect(envFile).toContain("OPENCLAW_GATEWAY_TOKEN=config-token-123");
+  });
+
+  it("does not print the gateway token in setup output", async () => {
+    const activeSandbox = requireSandbox(sandbox);
+
+    const result = runDockerSetup(activeSandbox, {
+      OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Gateway token: configured (redacted");
+    expect(result.stdout).toContain("Token: configured (redacted)");
+    expect(result.stdout).toContain('--token "$OPENCLAW_GATEWAY_TOKEN"');
+    expect(result.stdout).not.toContain("super-secret-gateway-token");
   });
 
   it("treats OPENCLAW_SANDBOX=0 as disabled", async () => {
