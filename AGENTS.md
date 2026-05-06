@@ -77,7 +77,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 
 - Work in baseline-hardening mode.
 - Goal: keep the system clean, stable, auditable, and free of silent failure.
-- Baseline first, expansion later.
+- Baseline first means reliability comes before novelty; it does not mean postponing architecture, module, eval, memory, or workflow upgrades that are required to close a real failure family or raise the L5 baseline.
 - Prefer failure-family hardening over one-off symptom patches.
 - A visible bug is often evidence of a shared contract problem. Before stopping, inspect adjacent entrypoints, exits, templates, receipts, and tests that could leak the same failure.
 - Clean failure is better than silent empty output.
@@ -103,7 +103,18 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 3. make failure explicit
 4. protect shared state
 5. keep memory clean
-6. avoid unnecessary surface-area growth while still repairing all affected sibling paths
+6. upgrade shared interfaces, evals, receipts, and modules when that is the cleanest way to prevent the failure family from recurring
+
+## System Improvement Authority
+
+- When the active goal is system improvement, do not treat "smallest patch" as the default target.
+- The target is the smallest coherent system upgrade that closes the failure family, improves a core workflow, or raises a measured L5 capability without creating unrelated drift.
+- A coding agent may add or reshape modules, CLIs, docs, evals, receipts, skills, prompts, or workflow glue when the change directly supports the verified improvement goal.
+- Do not wait for a second human confirmation for routine implementation steps inside an already approved improvement goal.
+- If a weakness spans language intake, local brain planning, memory retrieval, visible reply formatting, eval, and receipts, repair the whole loop instead of fixing only the first failing file.
+- Prefer reusable contracts and regression surfaces over one-off prompt patches.
+- Every system-improvement change must still leave proof: targeted tests, smoke/eval output, receipt, CLI diagnosis, or a named live acceptance path.
+- Keep hard safety boundaries intact: research-only finance behavior, no hidden trading authority, no fake live-fixed claims, no protected-memory overwrite, no provider/config expansion unless the user explicitly asks for that class of change.
 
 ## Memory And Shared-State Discipline
 
@@ -165,14 +176,13 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - Do not treat pure technical-pattern storytelling as strategy.
 - Do not invent fake execution approval.
 - Research-only means no invented approval authority.
-- Do not reopen broad architecture refactors unless explicitly requested.
 - Do not introduce new providers unless explicitly requested and clearly justified.
 - Do not introduce Tavily unless explicitly requested and clearly justified.
 - Do not introduce new branches unless explicitly requested and clearly justified.
-- Do not introduce new memory architecture unless explicitly requested and clearly justified.
 - Do not introduce execution-layer expansion unless explicitly requested and clearly justified.
-- Do not introduce speculative feature growth unless explicitly requested and clearly justified.
-- Prefer bounded improvements with real end-user value over new intermediate layers.
+- Architecture, memory, module, eval, and orchestration changes are allowed when they are part of a verified L5 improvement goal and have a concrete proof path.
+- Do not introduce speculative feature growth that is disconnected from current user value, measured capability, or a verified failure family.
+- Prefer coherent improvements with real end-user value over new intermediate layers that only make the system look more complex.
 
 ## Implementation Hygiene
 
@@ -192,7 +202,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 
 - Use plan-first for non-trivial tasks, especially when a task touches multiple subsystems or changes status/output semantics.
 - Default to coherent bounded batches rather than tiny artificial steps. When a bug implies a shared contract failure, continue through related failure families end to end instead of stopping after the first small patch.
-- Do not perform unrelated cleanup or opportunistic refactors; cleanup is in scope when it directly reduces confusion, dead code, repeated leakage, or verification risk for the active failure family.
+- Do not perform unrelated cleanup or opportunistic refactors. Cleanup, refactor, module extraction, or interface reshaping is in scope when it directly improves the active system goal, removes repeated leakage, reduces verification risk, or prevents the failure family from reappearing through sibling paths.
 - Treat verification as mandatory: run targeted tests, lint touched files, and name a fixed Feishu/live acceptance phrase for later real verification.
 - Do not confuse `dev-fixed` with `live-fixed`.
 - A change is only `live-fixed` after explicit migration, build, restart, probe, and real-entry verification.
@@ -231,7 +241,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - Keep the writable surface purposeful. Prefer one coherent implementation slice or failure family at a time; use multi-file batches when shared contracts, sibling routes, visible replies, receipts, or evals need to move together.
 - Use a fixed runtime or step budget for each experiment so attempts stay comparable.
 - Compare changes on one explicit metric that actually matters; keep or discard based on that metric, not on vibes or eloquence.
-- Human doctrine/spec edits belong in instruction files; agent edit authority should stay on the active staged goal and its bounded verification surface.
+- Human doctrine/spec edits belong in instruction files; agent edit authority should stay on the active staged goal and its verified system-improvement surface.
 - Every experiment loop should leave a receipt with objective, writable scope, budget, metric, result, and keep/discard decision.
 - If OpenSpace is configured, treat it as an optional skill engine, not as the primary brain or control plane.
 - Default OpenSpace to local-only skill evolution; do not enable cloud skill sharing unless the operator explicitly asks.
