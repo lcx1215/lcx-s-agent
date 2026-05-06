@@ -144,6 +144,8 @@
     "ios:gen": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate'",
     "ios:open": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && open OpenClaw.xcodeproj'",
     "ios:run": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && xcodebuild -project OpenClaw.xcodeproj -scheme OpenClaw -destination \"${IOS_DEST:-platform=iOS Simulator,name=iPhone 17}\" -configuration Debug build && xcrun simctl boot \"${IOS_SIM:-iPhone 17}\" || true && xcrun simctl launch booted ai.openclaw.ios'",
+    "lcx:live": "pnpm lcx:promote-live --apply",
+    "lcx:live:status": "pnpm lcx:promote-live --status",
     "lcx:promote-live": "node --import tsx scripts/dev/lcx-promote-live.ts",
     "lint": "oxlint --type-aware",
     "lint:agent:ingress-owner": "node scripts/check-ingress-agent-owner-context.mjs",

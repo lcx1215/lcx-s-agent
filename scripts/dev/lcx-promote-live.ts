@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./live-sidecar-runtime-bundle.ts";
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
-const DEFAULT_RECEIPT_DIR = "ops/live-handoff/promotions";
+const DEFAULT_RECEIPT_SUBDIR = "branches/_system/promotions";
 const MANIFEST_PATH = "branches/_system/live-promotion-manifest.json";
 const PROMOTION_STATE_PATH = "branches/_system/live-promotion-state.json";
 const DEFAULT_PORT = 18789;
@@ -25,9 +26,12 @@ type Args = {
   skipInstall: boolean;
   skipSourceChecks: boolean;
   skipTargetBuild: boolean;
+  skipGatewayInstall: boolean;
   skipRestart: boolean;
   skipProbe: boolean;
   json: boolean;
+  status: boolean;
+  autoSnapshot: boolean;
   port: number;
   acceptancePhrase: string | undefined;
 };
@@ -76,6 +80,11 @@ type PromotionReceipt = {
     | "probe_failed"
     | "waiting_for_real_lark";
   git: GitState;
+  sourceSnapshot: {
+    mode: "working_tree" | "auto_clean_head";
+    originalSourceRoot: string | null;
+    trackedDirty: string[];
+  };
   blockedReasons: string[];
   managedFileCount: number;
   changedFileCount: number;
@@ -110,18 +119,24 @@ function parseArgs(argv: string[]): Args {
   };
   const portRaw = readValue("--port");
   const port = portRaw ? Number.parseInt(portRaw, 10) : DEFAULT_PORT;
+  const targetRoot = path.resolve(readValue("--target-root") ?? DEFAULT_TARGET_ROOT);
   return {
     sourceRoot: path.resolve(readValue("--source-root") ?? DEFAULT_SOURCE_ROOT),
-    targetRoot: path.resolve(readValue("--target-root") ?? DEFAULT_TARGET_ROOT),
-    receiptDir: path.resolve(readValue("--receipt-dir") ?? DEFAULT_RECEIPT_DIR),
+    targetRoot,
+    receiptDir: path.resolve(
+      readValue("--receipt-dir") ?? path.join(targetRoot, DEFAULT_RECEIPT_SUBDIR),
+    ),
     apply: argv.includes("--apply"),
     allowDirty: argv.includes("--allow-dirty"),
     skipInstall: argv.includes("--skip-install"),
     skipSourceChecks: argv.includes("--skip-source-checks"),
     skipTargetBuild: argv.includes("--skip-target-build"),
+    skipGatewayInstall: argv.includes("--skip-gateway-install"),
     skipRestart: argv.includes("--skip-restart"),
     skipProbe: argv.includes("--skip-probe"),
     json: argv.includes("--json"),
+    status: argv.includes("--status"),
+    autoSnapshot: !argv.includes("--no-auto-snapshot"),
     port: Number.isFinite(port) ? port : DEFAULT_PORT,
     acceptancePhrase: readValue("--acceptance-phrase"),
   };
@@ -203,6 +218,69 @@ function readGitState(sourceRoot: string): GitState {
       .filter(Boolean),
     ahead,
     behind,
+  };
+}
+
+function prepareSourceSnapshot(args: Args): {
+  args: Args;
+  cleanup: () => void;
+  sourceSnapshot: PromotionReceipt["sourceSnapshot"];
+  snapshotError: string | null;
+} {
+  const initialGit = readGitState(args.sourceRoot);
+  const sourceSnapshot: PromotionReceipt["sourceSnapshot"] = {
+    mode: "working_tree",
+    originalSourceRoot: null,
+    trackedDirty: initialGit.trackedDirty,
+  };
+  if (
+    !args.apply ||
+    args.allowDirty ||
+    !args.autoSnapshot ||
+    initialGit.trackedDirty.length === 0
+  ) {
+    return { args, cleanup: () => {}, sourceSnapshot, snapshotError: null };
+  }
+
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-promote-live-"));
+  const result = spawnSync(
+    "git",
+    ["-C", args.sourceRoot, "worktree", "add", "--detach", tempRoot, "HEAD"],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: DEFAULT_COMMAND_TIMEOUT_MS,
+    },
+  );
+  if (result.status !== 0) {
+    fs.rmSync(tempRoot, { force: true, recursive: true });
+    return {
+      args,
+      cleanup: () => {},
+      sourceSnapshot,
+      snapshotError: `auto clean HEAD snapshot failed: ${result.stderr || result.stdout || "unknown error"}`,
+    };
+  }
+
+  return {
+    args: {
+      ...args,
+      sourceRoot: tempRoot,
+      skipSourceChecks: true,
+    },
+    cleanup: () => {
+      spawnSync("git", ["-C", args.sourceRoot, "worktree", "remove", "--force", tempRoot], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: PROBE_COMMAND_TIMEOUT_MS,
+      });
+    },
+    sourceSnapshot: {
+      mode: "auto_clean_head",
+      originalSourceRoot: args.sourceRoot,
+      trackedDirty: initialGit.trackedDirty,
+    },
+    snapshotError: null,
   };
 }
 
@@ -342,6 +420,7 @@ function buildReceipt(params: {
   generatedAt: string;
   receiptPath: string;
   git: GitState;
+  sourceSnapshot: PromotionReceipt["sourceSnapshot"];
   files: string[];
   fileActions: FileAction[];
   blockedReasons: string[];
@@ -387,6 +466,7 @@ function buildReceipt(params: {
     status,
     liveStatus: liveStatus === "probe_ok" ? "waiting_for_real_lark" : liveStatus,
     git: params.git,
+    sourceSnapshot: params.sourceSnapshot,
     blockedReasons: params.blockedReasons,
     managedFileCount: params.files.length,
     changedFileCount,
@@ -401,6 +481,7 @@ function buildReceipt(params: {
     ],
     boundary: [
       "Promotes a git-tracked source snapshot into the live sidecar runtime.",
+      "If the source working tree is dirty, defaults to a temporary clean HEAD snapshot instead of copying dirty WIP.",
       "Excludes protected memory, dist, apps, node_modules, and live-handoff receipts from source copying.",
       "Does not modify provider config, live sender credentials, protected memory, or trading/execution authority.",
       "Probe-ok is not live-visible-fixed; a fresh real Lark/Feishu inbound and reply are still required.",
@@ -413,6 +494,7 @@ function renderText(receipt: PromotionReceipt): string {
     `promoteLive=${receipt.status}`,
     `mode=${receipt.mode}`,
     `sourceCommit=${receipt.git.commit}`,
+    `sourceSnapshot=${receipt.sourceSnapshot.mode}`,
     `targetRoot=${receipt.targetRoot}`,
     `liveStatus=${receipt.liveStatus}`,
     `changedFileCount=${receipt.changedFileCount}`,
@@ -438,8 +520,54 @@ function renderText(receipt: PromotionReceipt): string {
   return `${lines.join("\n")}\n`;
 }
 
+function renderStatus(params: {
+  args: Args;
+  state: PromotionReceipt | null;
+  probe: CommandResult | null;
+}): string {
+  if (!params.state) {
+    return `livePromotionStatus=missing\ntargetRoot=${params.args.targetRoot}\nstatePath=${path.join(params.args.targetRoot, PROMOTION_STATE_PATH)}\n`;
+  }
+  const lines = [
+    `livePromotionStatus=${params.state.status}`,
+    `liveStatus=${params.state.liveStatus}`,
+    `sourceCommit=${params.state.git.commit}`,
+    `sourceSnapshot=${params.state.sourceSnapshot?.mode ?? "unknown"}`,
+    `generatedAt=${params.state.generatedAt}`,
+    `acceptancePhrase=${params.state.acceptancePhrase}`,
+    `receiptPath=${params.state.receiptPath}`,
+  ];
+  if (params.probe) {
+    lines.push(`${params.probe.command}.status=${params.probe.status}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export function main(argv = process.argv.slice(2)): number {
-  const args = parseArgs(argv);
+  const initialArgs = parseArgs(argv);
+  if (initialArgs.status) {
+    const state = readJsonIfExists<PromotionReceipt>(
+      path.join(initialArgs.targetRoot, PROMOTION_STATE_PATH),
+    );
+    const probe =
+      initialArgs.skipProbe || !state
+        ? null
+        : runCommand(
+            "pnpm",
+            ["--silent", "openclaw", "channels", "status", "--probe"],
+            initialArgs.targetRoot,
+            PROBE_COMMAND_TIMEOUT_MS,
+          );
+    process.stdout.write(
+      initialArgs.json
+        ? `${JSON.stringify({ state, probe }, null, 2)}\n`
+        : renderStatus({ args: initialArgs, state, probe }),
+    );
+    return probe?.status === "failed" ? 1 : 0;
+  }
+
+  const prepared = prepareSourceSnapshot(initialArgs);
+  const args = prepared.args;
   const generatedAt = new Date().toISOString();
   const git = readGitState(args.sourceRoot);
   const files = listPromotableFiles(args.sourceRoot);
@@ -467,6 +595,9 @@ export function main(argv = process.argv.slice(2)): number {
     blockedReasons.push(
       `tracked source tree is dirty; commit first or rerun with --allow-dirty: ${git.trackedDirty.join("; ")}`,
     );
+  }
+  if (prepared.snapshotError) {
+    blockedReasons.push(prepared.snapshotError);
   }
 
   const commands: PromotionReceipt["commands"] = {
@@ -537,21 +668,26 @@ export function main(argv = process.argv.slice(2)): number {
   }
 
   if (blockedReasons.length === 0 && args.apply) {
-    commands.gatewayInstall = runCommand(
-      "pnpm",
-      [
-        "--silent",
-        "openclaw",
-        "gateway",
-        "install",
-        "--force",
-        "--runtime",
-        "node",
-        "--port",
-        String(args.port),
-      ],
-      args.targetRoot,
-    );
+    commands.gatewayInstall = args.skipGatewayInstall
+      ? skippedCommand(
+          "pnpm --silent openclaw gateway install --force --runtime node",
+          args.targetRoot,
+        )
+      : runCommand(
+          "pnpm",
+          [
+            "--silent",
+            "openclaw",
+            "gateway",
+            "install",
+            "--force",
+            "--runtime",
+            "node",
+            "--port",
+            String(args.port),
+          ],
+          args.targetRoot,
+        );
     if (commands.gatewayInstall.status === "failed") {
       applyFailed = true;
       blockedReasons.push("gateway install failed");
@@ -599,6 +735,7 @@ export function main(argv = process.argv.slice(2)): number {
     generatedAt,
     receiptPath,
     git,
+    sourceSnapshot: prepared.sourceSnapshot,
     files,
     fileActions,
     blockedReasons,
@@ -609,6 +746,7 @@ export function main(argv = process.argv.slice(2)): number {
   if (args.apply && blockedReasons.length === 0) {
     writeJson(receipt.statePath, receipt);
   }
+  prepared.cleanup();
   process.stdout.write(args.json ? `${JSON.stringify(receipt, null, 2)}\n` : renderText(receipt));
   return receipt.status === "blocked" || receipt.status === "failed" ? 1 : 0;
 }

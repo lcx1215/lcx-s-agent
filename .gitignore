@@ -115,6 +115,7 @@ dist/protocol.schema.json
 
 # Generated extension declaration output
 extensions/feishu/src/*.d.ts
+ops/live-handoff/promotions/
 
 # Eclipse
 **/.project

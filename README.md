@@ -158,22 +158,21 @@ node --import tsx scripts/dev/minimax-provider-quota-saturator.ts --lane coding-
 
 ## live promotion
 
-LCX Agent 不再推荐手动记忆“dev 仓同步 live 仓”的细碎步骤。默认用一条 promotion 命令把当前 git commit 推成 live runtime：
+LCX Agent 不再推荐手动记忆“dev 仓同步 live 仓”的细碎步骤。常规只用一条命令：
 
 ```bash
-pnpm lcx:promote-live --apply
+pnpm lcx:live
 ```
 
 这条命令会做：
 
-1. 检查当前 dev 仓 tracked 文件是否干净。
-2. 跑 `pnpm tsgo` 和 `pnpm build`。
-3. 把 git-tracked 快照复制到 live sidecar。
-4. 在 live sidecar 里安装依赖、build。
-5. 把 LaunchAgent 重装到 live sidecar。
-6. restart gateway。
-7. 跑 `channels status --probe`。
-8. 写入 promotion receipt 和下一条 Lark 验收短语。
+1. 如果 dev 工作树有未提交 WIP，自动创建当前 `HEAD` 的临时干净快照。
+2. 从干净 git 快照复制到 live sidecar，不把脏 WIP、protected memory、`dist` 或 receipt 混进去。
+3. 在 live sidecar 里安装依赖、build。
+4. 把 LaunchAgent 重装到 live sidecar。
+5. restart gateway。
+6. 跑 `channels status --probe`。
+7. 写入 promotion state、receipt 和下一条 Lark 验收短语。
 
 live sidecar 默认在：
 
@@ -187,11 +186,13 @@ live sidecar 默认在：
 pnpm lcx:promote-live
 ```
 
-receipt 默认写入：
+查看当前 promotion 状态：
 
 ```bash
-ops/live-handoff/promotions/
+pnpm lcx:live:status
 ```
+
+receipt 默认写到 live sidecar 的 `branches/_system/promotions/`，当前状态写到 `branches/_system/live-promotion-state.json`。repo 里的 `ops/live-handoff/promotions/` 是本地生成物，不进入 git。
 
 promotion 只代表 live runtime 已经切到某个 git 快照并完成探测。然后还必须发送真实 Lark/Feishu 消息，并检查：
 
