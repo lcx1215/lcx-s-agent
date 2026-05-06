@@ -159,7 +159,11 @@ describe("minimax brain teacher batch parsing", () => {
       ]),
     );
     expect(plan.missing_data).toEqual(
-      expect.arrayContaining(["fresh_market_data_snapshot", "cross_asset_liquidity_inputs"]),
+      expect.arrayContaining([
+        "fresh_market_data_snapshot",
+        "cross_asset_liquidity_inputs",
+        "position_weights_and_return_series",
+      ]),
     );
     expect(plan.risk_boundaries).toEqual(
       expect.arrayContaining([
@@ -169,5 +173,164 @@ describe("minimax brain teacher batch parsing", () => {
         "no_unverified_cross_market_claims",
       ]),
     );
+  });
+
+  it("adds exact position and return series gap for split quant input labels", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "quota_missing_quant_inputs_00000",
+        userMessage:
+          "我有 QQQ、TLT、NVDA 三个仓位，想算波动、相关性、回撤，但只提了权重和价格序列，先拆模块不要胡算。",
+        sourceSummary: "quant math planning with missing weights and return series.",
+      },
+      normalizeTeacherPlan({
+        task_family: "portfolio_math",
+        primary_modules: ["quant_math"],
+        supporting_modules: [],
+        required_tools: ["review_panel"],
+        missing_data: ["position_weights", "return_series_or_price_history"],
+        risk_boundaries: ["research_only"],
+        next_step: "review",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "position_weights_and_return_series",
+        "position_weights",
+        "return_series_or_price_history",
+      ]),
+    );
+    expect(plan.risk_boundaries).toContain("no_model_fabricated_portfolio_math");
+  });
+
+  it("rewrites live market data collection overclaims in teacher next steps", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "quota_portfolio_regime_risk_00000",
+        userMessage:
+          "未来一个月担心利率、美元流动性、ETH 和美股风险偏好，先拆研究模块，不要给交易建议。",
+        sourceSummary: "live-style macro and liquidity request with no supplied data.",
+      },
+      normalizeTeacherPlan({
+        task_family: "portfolio_regime",
+        primary_modules: ["macro_rates_inflation", "portfolio_risk_gates"],
+        supporting_modules: ["review_panel"],
+        required_tools: ["review_panel"],
+        missing_data: ["fresh_market_data_snapshot"],
+        risk_boundaries: ["research_only"],
+        next_step:
+          "Pull latest Fed rate expectations, USD liquidity indicators, ETF flow data, and ETH market structure metrics, then summarize without buy/sell recommendations.",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.next_step).not.toMatch(/pull latest|ETF flow data|ETH market structure metrics/i);
+    expect(plan.next_step).toContain("list missing source and data gaps");
+    expect(plan.rejected_context).toContain("unsupported_data_fetch_or_memory_write_instruction");
+  });
+
+  it("canonicalizes risk boundaries and drops overclaimed external tools", () => {
+    const plan = normalizeTeacherPlan({
+      task_family: "portfolio_regime",
+      primary_modules: ["portfolio_risk_gates"],
+      supporting_modules: ["review_panel"],
+      required_tools: ["Bloomberg Terminal data feed", "pandas", "source_registry", "review_panel"],
+      missing_data: [],
+      risk_boundaries: [
+        "Research only; no execution authority",
+        "No high-leverage crypto positions",
+        "No live market claims",
+      ],
+      next_step: "review",
+      rejected_context: [],
+    });
+
+    expect(plan.required_tools).toEqual(["source_registry", "review_panel"]);
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "research_only",
+        "no_execution_authority",
+        "no_high_leverage_crypto",
+        "no_unverified_live_market_data_claims",
+      ]),
+    );
+  });
+
+  it("converts ETF-as-company bad samples into fund-structure research plans", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "quota_single_company_transmission_00000",
+        userMessage:
+          "研究 GLD 的基本面风险：收入质量、估值、客户集中度和宏观传导，只输出 research-only 风险图。",
+        sourceSummary:
+          "single company fundamentals with portfolio transmission, no trade recommendation.",
+      },
+      normalizeTeacherPlan({
+        task_family: "fundamental_risk_research",
+        primary_modules: ["company_fundamentals_value"],
+        supporting_modules: ["review_panel"],
+        required_tools: ["SEC EDGAR API", "Bloomberg data feed", "financial_statement_parser"],
+        missing_data: [],
+        risk_boundaries: ["research_only"],
+        next_step:
+          "Parse revenue streams, compute NAV and EV/EBITDA, and extract client concentration.",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.primary_modules).toEqual([
+      "etf_regime",
+      "macro_rates_inflation",
+      "fx_currency_liquidity",
+      "cross_asset_liquidity",
+      "portfolio_risk_gates",
+      "source_registry",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    expect(plan.required_tools).toEqual(["source_registry", "review_panel"]);
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "fund_or_etf_prospectus_or_fact_sheet",
+        "fresh_market_data_snapshot",
+        "current_position_weights",
+      ]),
+    );
+    expect(plan.rejected_context).toContain("single_company_fundamental_labels_for_etf");
+    expect(plan.next_step).toContain("do not infer company revenue quality");
+  });
+
+  it("sanitizes accepted source-gated plans that overclaim search and durable writes", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "quota_source_gated_learning_00022",
+        userMessage:
+          "去学习一篇关于 FX dollar yuan liquidity transmission 的高质量金融论文，沉淀成可复用规则，但我没有给 URL 或本地文件。",
+        sourceSummary: "finance learning intake without safe local source path or URL.",
+      },
+      normalizeTeacherPlan({
+        task_family: "paper_learning",
+        primary_modules: ["finance_learning_memory", "source_registry", "review_panel"],
+        supporting_modules: [],
+        required_tools: ["internet_search_engine", "source_registry", "review_panel"],
+        missing_data: [],
+        risk_boundaries: ["research_only"],
+        next_step:
+          "Invoke internet_search_engine to find papers, update finance_learning_memory, update source_registry, and store in agent_workflow_memory.",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.required_tools).toEqual(["source_registry", "review_panel"]);
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining(["source_url_or_local_source_path", "actual_reading_scope_receipt"]),
+    );
+    expect(plan.rejected_context).toContain("unsupported_data_fetch_or_memory_write_instruction");
+    expect(plan.next_step).not.toMatch(
+      /internet_search_engine|update finance_learning_memory|store in agent_workflow_memory/i,
+    );
+    expect(plan.next_step).toContain("require a source URL or local source path");
   });
 });

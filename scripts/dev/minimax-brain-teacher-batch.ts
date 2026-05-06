@@ -1116,12 +1116,90 @@ function cleanModuleArray(value: unknown): string[] {
   return cleanStringArray(value).filter((entry) => allowed.has(entry));
 }
 
+const SAFE_REQUIRED_TOOLS = new Set([
+  ...MODULE_TAXONOMY,
+  "local_memory_retrieval",
+  "source_registry_query",
+  "actual_source_receipt",
+  "review_panel",
+  "local_quant_math",
+  "control_room_summary",
+]);
+
+const OVERCLAIMED_TOOL_PATTERN =
+  /api|feed|terminal|bloomberg|reuters|refinitiv|broker|scrap|yfinance|quandl|fred|fedwatch|cftc|finra|barra|riskmetrics|jupyter|notebook|pandas|numpy|sklearn|tensorflow|mlflow|weights|market_data|data_fetch|dashboard|parser|calculator|engine|generator|visualizer|monitor|http|www\.|\.com|internal/iu;
+
+function cleanRequiredToolArray(value: unknown): string[] {
+  return cleanStringArray(value).filter(
+    (entry) => SAFE_REQUIRED_TOOLS.has(entry) && !OVERCLAIMED_TOOL_PATTERN.test(entry),
+  );
+}
+
+const OVERCLAIMED_NEXT_STEP_PATTERN =
+  /internet_search_engine|bloomberg|yahoo finance|fred|authenticated data feeds?|public data source|pull (?:latest|current|historical)|gather (?:latest|current|fresh)|fetch\b|retrieve .*data|obtain .*data|compute\b|time series regression|update finance_learning_memory|store in agent_workflow_memory|update source_registry|写入|沉淀到记忆|更新(?:finance_learning_memory|source_registry|causal_map)/iu;
+
+function nextStepOverclaims(nextStep: string): boolean {
+  return OVERCLAIMED_NEXT_STEP_PATTERN.test(nextStep);
+}
+
+function safeEvidenceFirstNextStep(reason: "source" | "quant" | "generic"): string {
+  if (reason === "source") {
+    return "Clarify the learning objective, check local memory for prior retained rules, require a source URL or local source path plus an actual reading receipt, then hand the source-gated plan to review_panel and summarize only verified reusable research rules.";
+  }
+  if (reason === "quant") {
+    return "Clarify the requested metrics, check local memory for prior templates, require position weights, return series or price history, a fresh market-data snapshot, and a review receipt, then summarize the research-only math plan without producing portfolio numbers.";
+  }
+  return "Clarify the objective, check local memory for prior retained rules, list missing source and data gaps, build the causal module checklist, hand the plan to review_panel, then summarize only verified research boundaries.";
+}
+
+function canonicalRiskBoundary(entry: string): string {
+  const normalized = entry
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (
+    normalized === "research_only_no_execution_authority" ||
+    normalized === "research_only_no_execution" ||
+    normalized === "research_only_no_trade_execution" ||
+    normalized === "research_only"
+  ) {
+    return "research_only";
+  }
+  if (
+    normalized === "no_execution_authority" ||
+    normalized === "no_live_trading_recommendations" ||
+    normalized === "no_live_trading_or_real_money_instructions" ||
+    normalized === "no_live_trading_commands" ||
+    normalized === "no_trade_execution" ||
+    normalized === "no_financial_advice"
+  ) {
+    return "no_execution_authority";
+  }
+  if (
+    normalized === "no_high_leverage_crypto_positions" ||
+    normalized === "no_high_leverage_crypto_position" ||
+    normalized === "no_high_leverage_crypto"
+  ) {
+    return "no_high_leverage_crypto";
+  }
+  if (
+    normalized === "no_live_market_claims" ||
+    normalized === "no_unverified_live_market_data_claims"
+  ) {
+    return "no_unverified_live_market_data_claims";
+  }
+  return normalized || entry.trim();
+}
+
 export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
   const primaryModules = cleanModuleArray(plan.primary_modules);
   const supportingModules = cleanModuleArray(plan.supporting_modules).filter(
     (entry) => !primaryModules.includes(entry),
   );
-  const riskBoundaries = cleanStringArray(plan.risk_boundaries);
+  const riskBoundaries = [
+    ...new Set(cleanStringArray(plan.risk_boundaries).map(canonicalRiskBoundary)),
+  ];
   for (const boundary of REQUIRED_RISK_BOUNDARIES) {
     if (!riskBoundaries.includes(boundary)) {
       riskBoundaries.unshift(boundary);
@@ -1134,7 +1212,7 @@ export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
         : "teacher_plan_unclassified",
     primary_modules: primaryModules,
     supporting_modules: supportingModules,
-    required_tools: cleanStringArray(plan.required_tools),
+    required_tools: cleanRequiredToolArray(plan.required_tools),
     missing_data: cleanStringArray(plan.missing_data),
     risk_boundaries: riskBoundaries,
     next_step:
@@ -1190,6 +1268,19 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     /context_reset|ambiguous_repeat|lark_context_pollution|重新来一遍|别串|旧任务|没说清楚|上下文污染|清除上下文/u.test(
       ask,
     );
+  const isEtfAsCompanyFundamentals =
+    /\b(GLD|QQQ|SPY|TLT|IEF|IWM|XLK|XLF|HYG|UUP)\b/iu.test(ask) &&
+    /收入质量|客户集中度|revenue quality|customer concentration|client concentration|13f holder|ev\/ebitda/iu.test(
+      ask,
+    );
+  const isQuantInputMissing =
+    /相关性|波动|回撤|收益率序列|仓位权重|权重|correlation|volatility|drawdown|return series|position weight/iu.test(
+      ask,
+    );
+  const isSourceGated =
+    /没有给 URL|没有给链接|没有给 10-Q|没有给 10-K|没有给实时行情源|source|artifact|receipt|filing/iu.test(
+      ask,
+    );
 
   if (isContextReset) {
     replacePrimary(["ops_audit", "agent_workflow_memory", "control_room_summary"]);
@@ -1200,12 +1291,29 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "Ask for the current subject or audit context pollution before doing any finance analysis.";
   }
 
-  if (
-    !isContextReset &&
-    /相关性|波动|回撤|收益率序列|仓位权重|权重|correlation|volatility|drawdown|return series|position weight/iu.test(
-      ask,
-    )
-  ) {
+  if (!isContextReset && isEtfAsCompanyFundamentals) {
+    replacePrimary([
+      "etf_regime",
+      "macro_rates_inflation",
+      "fx_currency_liquidity",
+      "cross_asset_liquidity",
+      "portfolio_risk_gates",
+      "source_registry",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    ensureMissing([
+      "fund_or_etf_prospectus_or_fact_sheet",
+      "fresh_market_data_snapshot",
+      "current_position_weights",
+    ]);
+    ensureRisk(["evidence_required", "no_unverified_live_market_data_claims"]);
+    ensureRejected(["single_company_fundamental_labels_for_etf"]);
+    nextStep =
+      "Treat the ETF/fund as a fund-structure and macro/liquidity research task: require prospectus or fact sheet evidence, NAV or holdings context, fresh market data, and position weights before any risk map; do not infer company revenue quality, customer concentration, filings, or valuation multiples.";
+  }
+
+  if (!isContextReset && isQuantInputMissing) {
     ensurePrimary([
       "quant_math",
       "portfolio_risk_gates",
@@ -1213,6 +1321,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "control_room_summary",
     ]);
     ensureMissing([
+      "position_weights_and_return_series",
       "position_weights",
       "return_series_or_price_history",
       "fresh_market_data_snapshot",
@@ -1244,15 +1353,15 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "cross_asset_liquidity",
       "portfolio_risk_gates",
     ]);
-    ensureMissing(["fresh_market_data_snapshot", "cross_asset_liquidity_inputs"]);
+    ensureMissing([
+      "fresh_market_data_snapshot",
+      "cross_asset_liquidity_inputs",
+      "position_weights_and_return_series",
+    ]);
     ensureRisk(["no_high_leverage_crypto", "no_unverified_cross_market_claims"]);
   }
 
-  if (
-    /没有给 URL|没有给链接|没有给 10-Q|没有给 10-K|没有给实时行情源|source|artifact|receipt|filing/iu.test(
-      ask,
-    )
-  ) {
+  if (isSourceGated) {
     ensurePrimary(["source_registry", "review_panel"]);
     ensureMissing(["source_url_or_local_source_path", "actual_reading_scope_receipt"]);
     ensureRisk(["evidence_required"]);
@@ -1260,6 +1369,19 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
 
   if (primaryModules.length === 0) {
     ensurePrimary(["control_room_summary", "source_registry", "review_panel"]);
+  }
+  if (plan.required_tools.length === 0) {
+    plan.required_tools.push("source_registry", "review_panel");
+  }
+  if (!isContextReset && nextStepOverclaims(nextStep)) {
+    ensureRejected(["unsupported_data_fetch_or_memory_write_instruction"]);
+    if (isSourceGated) {
+      nextStep = safeEvidenceFirstNextStep("source");
+    } else if (isQuantInputMissing) {
+      nextStep = safeEvidenceFirstNextStep("quant");
+    } else {
+      nextStep = safeEvidenceFirstNextStep("generic");
+    }
   }
 
   return {

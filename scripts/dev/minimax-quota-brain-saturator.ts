@@ -20,6 +20,7 @@ type CliOptions = {
   timeoutSeconds: number;
   concurrency: number;
   workspaceDir: string;
+  dataDir: string;
   logPath: string;
   promptDir: string;
   datasetEvery: number;
@@ -50,6 +51,13 @@ type StepResult = CommandResult & {
 
 const HOME = process.env.HOME ?? os.homedir();
 const DEFAULT_WORKSPACE = path.join(HOME, ".openclaw", "workspace");
+const DEFAULT_DATA_DIR = path.join(
+  HOME,
+  ".openclaw",
+  "local-brain-trainer",
+  "datasets",
+  "thought-flow-v1",
+);
 const DEFAULT_PROMPT_DIR = path.join(DEFAULT_WORKSPACE, "tmp", "minimax-quota-prompts");
 const DEFAULT_LOG = path.join(
   DEFAULT_WORKSPACE,
@@ -151,6 +159,17 @@ const THEMES = [
 
 const HORIZONS = ["一周", "两周", "一个月", "一个季度"] as const;
 
+const SINGLE_COMPANY_ASSETS = [
+  "NVDA",
+  "MSFT",
+  "AAPL",
+  "GOOGL",
+  "AMD",
+  "TSM",
+  "ASML",
+  "AMZN",
+] as const;
+
 function usage(): never {
   throw new Error(
     [
@@ -180,6 +199,7 @@ function usage(): never {
       "  --allow-partial-write write accepted teacher samples even when some calls fail",
       "  --openclaw-agent ID   default research-minimax",
       "  --concurrency N       parallel MiniMax teacher calls per batch, default 8",
+      "  --data-dir DIR        dataset output/smoke directory, default ~/.openclaw/local-brain-trainer/datasets/thought-flow-v1",
       "  --dataset-every N     rebuild dataset every N rounds, default 5",
       "  --smoke-every N       run local smoke every N rounds, default 10",
     ].join("\n"),
@@ -227,6 +247,7 @@ function parseArgs(args: string[]): CliOptions {
     timeoutSeconds: 600,
     concurrency: 8,
     workspaceDir: DEFAULT_WORKSPACE,
+    dataDir: DEFAULT_DATA_DIR,
     logPath: DEFAULT_LOG,
     promptDir: DEFAULT_PROMPT_DIR,
     datasetEvery: 5,
@@ -309,6 +330,9 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--workspace") {
       options.workspaceDir = path.resolve(readValue(args, index));
       index += 1;
+    } else if (arg === "--data-dir") {
+      options.dataDir = path.resolve(readValue(args, index));
+      index += 1;
     } else if (arg === "--log") {
       options.logPath = path.resolve(readValue(args, index));
       index += 1;
@@ -353,6 +377,7 @@ function parseArgs(args: string[]): CliOptions {
     throw new Error("used quota is already greater than or equal to the window limit");
   }
   options.workspaceDir = path.resolve(options.workspaceDir);
+  options.dataDir = path.resolve(options.dataDir);
   return options;
 }
 
@@ -381,9 +406,22 @@ function fillTemplate(template: string, index: number): string {
 function buildPrompt(index: number): TeacherPrompt {
   const template = TASK_TEMPLATES[index % TASK_TEMPLATES.length];
   const variant = Math.floor(index / TASK_TEMPLATES.length);
+  const assetA =
+    template.family === "single_company_transmission"
+      ? SINGLE_COMPANY_ASSETS[variant % SINGLE_COMPANY_ASSETS.length]
+      : ASSETS[index % ASSETS.length][0];
+  const userMessage =
+    template.family === "single_company_transmission"
+      ? template.message
+          .replaceAll("{assetA}", assetA)
+          .replaceAll("{assetB}", ASSETS[index % ASSETS.length][1])
+          .replaceAll("{assetC}", ASSETS[index % ASSETS.length][2])
+          .replaceAll("{theme}", THEMES[index % THEMES.length])
+          .replaceAll("{horizon}", HORIZONS[index % HORIZONS.length])
+      : fillTemplate(template.message, index);
   return {
     id: `quota_${template.family}_${String(variant).padStart(5, "0")}`,
-    userMessage: `${fillTemplate(template.message, index)} 验收码 minimax-quota-${String(index).padStart(5, "0")}`,
+    userMessage: `${userMessage} 验收码 minimax-quota-${String(index).padStart(5, "0")}`,
     sourceSummary: `${template.summary} Synthetic quota-training prompt; no private user data or live market claim supplied.`,
   };
 }
@@ -509,6 +547,7 @@ const plan = {
   directApi: options.directApi,
   allowPartialWrite: options.allowPartialWrite,
   workspaceDir: options.workspaceDir,
+  dataDir: options.dataDir,
   logPath: options.logPath,
   promptDir: options.promptDir,
   notTouched: [
@@ -569,6 +608,10 @@ async function runIntegrityChecks(round: number, force: boolean): Promise<void> 
       "--import",
       "tsx",
       "scripts/dev/local-brain-distill-dataset.ts",
+      "--workspace",
+      options.workspaceDir,
+      "--out",
+      options.dataDir,
       "--json",
     ]);
   }
@@ -577,6 +620,8 @@ async function runIntegrityChecks(round: number, force: boolean): Promise<void> 
       "--import",
       "tsx",
       "scripts/dev/local-brain-distill-smoke.ts",
+      "--data",
+      options.dataDir,
       "--json",
     ]);
   }
@@ -625,6 +670,8 @@ try {
         "scripts/dev/minimax-brain-teacher-batch.ts",
         "--prompt-file",
         promptPath,
+        "--workspace",
+        options.workspaceDir,
         "--limit",
         String(batchSize),
         "--write",
