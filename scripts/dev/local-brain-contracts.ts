@@ -232,12 +232,44 @@ function looksLikeSourceGroundingAudit(text: string): boolean {
 function looksLikeDataConflictReconciliation(text: string): boolean {
   return (
     !looksLikeUnverifiedLiveMarketData(text) &&
+    !looksLikePaperLearningWithSource(text) &&
     /(不同数据源|数据源.*不一致|vendor|data source|conflict|冲突|口径|时间戳|timestamp)/iu.test(
       text,
     ) &&
     /(etf|成分|权重|成交量|情绪|sentiment|行情|market data|source registry|审阅|review)/iu.test(
       text,
     )
+  );
+}
+
+function looksLikeConflictingMemoryLiveModelReview(text: string): boolean {
+  const hasMemoryLayer =
+    /(本地记忆|旧规则|过期记忆|memory|learned rule|已学规则|历史沉淀|旧结论)/iu.test(text);
+  const hasLiveOrFreshLayer =
+    /(今天|最新|实时|当前|fresh|latest|right now|市场快照|行情源|数据源)/iu.test(text);
+  const hasModelOrSourceConflict =
+    /(minimax|kimi|deepseek|多模型|模型.{0,12}(分歧|不一致)|分歧|不一致|不同数据源|vendor|口径|source conflict|数据冲突)/iu.test(
+      text,
+    );
+  const hasFinanceScope =
+    /(qqq|spy|tlt|nvda|btc|a股|美股|指数|仓位|组合|portfolio|风险|宏观|流动性|技术面|财报)/iu.test(
+      text,
+    );
+  return hasMemoryLayer && hasLiveOrFreshLayer && hasModelOrSourceConflict && hasFinanceScope;
+}
+
+function looksLikeOptionsIvEventRisk(text: string): boolean {
+  return (
+    /(期权|\boptions?\b|\biv\b|implied vol|隐含波动|gamma|delta|skew|波动率曲面)/iu.test(text) &&
+    /(财报|earnings|fomc|cpi|事件|event|qqq|spy|nvda|tlt|仓位|portfolio|组合)/iu.test(text)
+  );
+}
+
+function looksLikeScenarioProbabilityMissingInputs(text: string): boolean {
+  return (
+    /(场景|scenario|软着陆|再通胀|衰退|概率|probability|probabilities)/iu.test(text) &&
+    /(qqq|spy|tlt|nvda|仓位|组合|portfolio|风险)/iu.test(text) &&
+    /(没给|没有给|还没给|未提供|缺少|缺乏|不要.*编|不要.*猜|no model math|随便编概率)/iu.test(text)
   );
 }
 
@@ -508,6 +540,114 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
+  if (looksLikeConflictingMemoryLiveModelReview(text)) {
+    return {
+      ...safe,
+      task_family: "conflicting_memory_live_model_review_governance",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "etf_regime",
+        "company_fundamentals_value",
+        "quant_math",
+        "portfolio_risk_gates",
+        "causal_map",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["cross_asset_liquidity", "us_equity_market_structure", "ops_audit"],
+      required_tools: [
+        "artifact_memory_recall",
+        "source_registry_lookup",
+        "data_timestamp_and_vendor_compare",
+        "finance_learning_capability_apply",
+        "quant_math",
+        "review_panel",
+      ],
+      missing_data: [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "model_review_claims_and_assumptions",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_live_data",
+        "do_not_pick_model_answer_without_evidence",
+        "do_not_promote_unverified_memory_claims",
+        "no_model_math_guessing",
+        "no_trade_advice",
+      ],
+      next_step:
+        "separate_memory_claims_live_data_and_model_opinions_then_resolve_by_source_timestamp_assumptions_quant_checks_and_review_before_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "stale_memory_rule_as_current_fact",
+        "single_model_authority_claim",
+        "single_vendor_unverified_claim",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeScenarioProbabilityMissingInputs(text)) {
+    return {
+      ...safe,
+      task_family: "scenario_probability_missing_inputs_research_preflight",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "etf_regime",
+        "company_fundamentals_value",
+        "quant_math",
+        "portfolio_risk_gates",
+        "finance_learning_memory",
+        "source_registry",
+        "causal_map",
+        "review_panel",
+      ],
+      supporting_modules: ["control_room_summary"],
+      required_tools: [
+        "artifact_memory_recall",
+        "source_registry_lookup",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_etf_regime_producer",
+        "finance_framework_company_fundamentals_value_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+        "current_rates_and_inflation_inputs",
+        "scenario_base_rates_and_sample_window",
+        "fresh_market_data_snapshot",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_model_math_guessing",
+        "no_trade_advice",
+      ],
+      next_step:
+        "request_scenario_base_rates_sample_window_macro_inputs_and_portfolio_series_before_assigning_probabilities",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "model_invented_scenario_probability",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
   if (looksLikeCommodityFrameworkLearning(text)) {
     return {
       ...safe,
@@ -654,6 +794,54 @@ export function hardenLocalBrainPlanForAsk(
       rejected_context: [
         "old_lark_conversation_history",
         "tax_advice_claim",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeOptionsIvEventRisk(text)) {
+    return {
+      ...safe,
+      task_family: "options_iv_event_risk_research_boundary",
+      primary_modules: [
+        "source_registry",
+        "company_fundamentals_value",
+        "macro_rates_inflation",
+        "etf_regime",
+        "quant_math",
+        "portfolio_risk_gates",
+        "review_panel",
+      ],
+      supporting_modules: ["finance_learning_memory", "causal_map", "control_room_summary"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_framework_company_fundamentals_value_producer",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_etf_regime_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "options_iv_skew_gamma_and_event_calendar",
+        "latest_filing_or_event_source",
+        "target_etf_price_and_regime_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_options_trade_advice",
+        "no_model_math_guessing",
+        "risk_gate_before_action_language",
+      ],
+      next_step:
+        "treat_options_iv_as_event_risk_context_require_event_source_iv_inputs_position_exposure_and_review_not_trade_instruction",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "options_strategy_recommendation",
         "trade_recommendation_without_evidence",
       ],
     };
@@ -812,6 +1000,7 @@ export function hardenLocalBrainPlanForAsk(
         "no_trade_advice",
         "no_doctrine_mutation",
         "no_model_internal_learning_claim_without_eval",
+        "do_not_promote_unverified_memory_claims",
         "backtest_overfit_check_required",
         "sample_out_validation_required",
       ]),

@@ -9,6 +9,7 @@ type CliOptions = {
   json: boolean;
   noAdapter: boolean;
   hardened: boolean;
+  contractOnly: boolean;
   progress: boolean;
   summaryOnly: boolean;
   timeoutMs: number;
@@ -92,8 +93,10 @@ function usage(): never {
   throw new Error(
     [
       "Usage: node --import tsx scripts/dev/local-brain-distill-eval.ts (--adapter PATH | --no-adapter) [--model MODEL] [--python BIN] [--json] [--summary-only] [--progress] [--timeout-ms N] [--case-id ID[,ID...]]",
+      "       node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only [--json] [--summary-only] [--case-id ID[,ID...]]",
       "",
       "Runs one local inference acceptance check for the auxiliary thought-flow adapter.",
+      "Use --contract-only for a fast hardened contract check that does not start MLX.",
     ].join("\n"),
   );
 }
@@ -113,6 +116,7 @@ function parseArgs(args: string[]): CliOptions {
     json: false,
     noAdapter: false,
     hardened: false,
+    contractOnly: false,
     progress: false,
     summaryOnly: false,
     timeoutMs: 180_000,
@@ -134,6 +138,9 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--hardened") {
+      options.hardened = true;
+    } else if (arg === "--contract-only") {
+      options.contractOnly = true;
       options.hardened = true;
     } else if (arg === "--progress") {
       options.progress = true;
@@ -161,10 +168,10 @@ function parseArgs(args: string[]): CliOptions {
       usage();
     }
   }
-  if (!options.noAdapter && !options.adapterPath) {
+  if (!options.contractOnly && !options.noAdapter && !options.adapterPath) {
     usage();
   }
-  if (options.noAdapter && options.adapterPath) {
+  if (!options.contractOnly && options.noAdapter && options.adapterPath) {
     usage();
   }
   if (options.adapterPath) {
@@ -1319,6 +1326,225 @@ const EVAL_CASES: EvalCase[] = [
     requiredMissingData: ["memory_recall_scope_or_relevant_receipts", "fresh_task_inputs"],
     requiredRiskBoundaries: ["do_not_promote_unverified_memory_claims"],
   },
+  {
+    id: "short_lark_commodity_learning_intake",
+    userAsk: "学习大宗商品。",
+    sourceSummary:
+      "short realistic Lark utterance; must expand into commodity framework learning instead of a vague reply.",
+    requiredModules: [
+      "finance_learning_memory",
+      "source_registry",
+      "macro_rates_inflation",
+      "cross_asset_liquidity",
+      "fx_currency_liquidity",
+      "etf_regime",
+      "portfolio_risk_gates",
+      "causal_map",
+      "review_panel",
+    ],
+    minModuleMatches: 8,
+    requiredMissingData: [
+      "source_url_or_local_source_path",
+      "actual_reading_scope_receipt",
+      "commodity_curve_roll_yield_and_inventory_inputs",
+      "regime_specificity_and_invalidation_evidence",
+    ],
+    requiredRiskBoundaries: ["commodity_framework_not_trade_signal", "no_trade_advice"],
+  },
+  {
+    id: "conflicting_memory_live_model_review_governance",
+    userAsk:
+      "本地记忆里旧规则说美元流动性改善利好 QQQ，但今天最新数据源口径不一致，MiniMax、Kimi、DeepSeek 对 QQQ/TLT/NVDA 也有分歧。先拆证据治理、旧记忆降权、实时数据缺口、模型分歧和组合风险，不要直接给交易建议。",
+    sourceSummary:
+      "multi-constraint governance case combining stale memory, live-data gap, vendor conflict, model disagreement, and portfolio risk.",
+    requiredModules: [
+      "finance_learning_memory",
+      "source_registry",
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "etf_regime",
+      "company_fundamentals_value",
+      "quant_math",
+      "portfolio_risk_gates",
+      "causal_map",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 10,
+    requiredMissingData: [
+      "memory_recall_scope_or_relevant_receipts",
+      "fresh_market_data_snapshot",
+      "source_timestamp_and_vendor",
+      "model_review_claims_and_assumptions",
+      "position_weights_and_return_series",
+      "portfolio_weights_and_risk_limits",
+    ],
+    requiredRiskBoundaries: [
+      "no_unverified_live_data",
+      "do_not_pick_model_answer_without_evidence",
+      "do_not_promote_unverified_memory_claims",
+      "no_trade_advice",
+    ],
+  },
+  {
+    id: "options_iv_event_risk_no_trade",
+    userAsk:
+      "NVDA 财报前期权 IV、skew 和 gamma 都在变，我又有 QQQ/NVDA 仓位。本地大脑怎么把期权波动、财报事件、ETF regime、仓位风险和数据缺口拆开？不要给期权策略或交易建议。",
+    sourceSummary:
+      "options IV and earnings-event risk should be treated as research context, not an options trade recommendation.",
+    requiredModules: [
+      "source_registry",
+      "company_fundamentals_value",
+      "macro_rates_inflation",
+      "etf_regime",
+      "quant_math",
+      "portfolio_risk_gates",
+      "review_panel",
+    ],
+    minModuleMatches: 7,
+    requiredMissingData: [
+      "options_iv_skew_gamma_and_event_calendar",
+      "latest_filing_or_event_source",
+      "target_etf_price_and_regime_inputs",
+      "position_weights_and_return_series",
+      "portfolio_weights_and_risk_limits",
+    ],
+    requiredRiskBoundaries: ["no_options_trade_advice", "risk_gate_before_action_language"],
+  },
+  {
+    id: "commodity_fx_inflation_inventory_portfolio_loop",
+    userAsk:
+      "我想把原油、黄金、铜和 DBC 放进未来美股组合研究里，先学习大宗商品框架：美元、实际利率、库存、期限结构、roll yield、通胀和组合风险怎么连贯拆？",
+    sourceSummary:
+      "commodity macro loop across USD, real rates, inventory, term structure, roll yield, inflation, and portfolio risk.",
+    requiredModules: [
+      "finance_learning_memory",
+      "source_registry",
+      "macro_rates_inflation",
+      "cross_asset_liquidity",
+      "fx_currency_liquidity",
+      "etf_regime",
+      "portfolio_risk_gates",
+      "causal_map",
+      "review_panel",
+    ],
+    minModuleMatches: 8,
+    requiredMissingData: [
+      "source_url_or_local_source_path",
+      "fresh_market_data_snapshot",
+      "commodity_curve_roll_yield_and_inventory_inputs",
+      "position_weights_and_return_series",
+    ],
+    requiredRiskBoundaries: ["commodity_framework_not_trade_signal", "no_trade_advice"],
+  },
+  {
+    id: "china_property_credit_a_share_us_tech_spillover",
+    userAsk:
+      "中国地产信用压力、政策刺激、人民币汇率、A股资金面和美股科技估值如果同时变化，我要怎么拆 A股、美元/人民币流动性、QQQ/NVDA 和组合风险？",
+    sourceSummary:
+      "China property-credit and policy-flow spillover into A-shares, FX liquidity, US tech valuation, and portfolio risk.",
+    requiredModules: [
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "cross_asset_liquidity",
+      "fx_currency_liquidity",
+      "us_equity_market_structure",
+      "china_a_share_policy_flow",
+      "global_index_regime",
+      "company_fundamentals_value",
+      "quant_math",
+      "portfolio_risk_gates",
+      "finance_learning_memory",
+      "source_registry",
+      "review_panel",
+    ],
+    minModuleMatches: 11,
+    requiredMissingData: [
+      "memory_recall_scope_or_relevant_receipts",
+      "fresh_market_data_snapshot",
+      "china_a_share_policy_liquidity_and_northbound_inputs",
+      "fx_dollar_yuan_and_global_liquidity_inputs",
+      "portfolio_weights_and_risk_limits",
+    ],
+    requiredRiskBoundaries: ["no_unverified_cross_market_claims", "no_trade_advice"],
+  },
+  {
+    id: "paper_claim_conflicts_with_local_memory_rule",
+    userAsk:
+      "学习 arxiv.org/abs/2601.17021 时，如果论文结论和本地旧规则冲突，本地大脑要怎么拆 actual reading scope、source registry、能力卡、apply validation、旧记忆降权和新的 eval？",
+    sourceSummary:
+      "paper-learning absorption where a source claim may conflict with local memory and requires validation before internalization.",
+    requiredModules: [
+      "finance_learning_memory",
+      "source_registry",
+      "causal_map",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+      "eval_harness_design",
+    ],
+    minModuleMatches: 7,
+    requiredMissingData: [
+      "actual_reading_scope",
+      "source_artifact_path",
+      "capability_card_or_retrieval_receipt",
+      "application_validation_receipt",
+      "training_or_eval_absorption_evidence",
+      "replication_or_sample_out_evidence",
+    ],
+    requiredRiskBoundaries: [
+      "no_model_internal_learning_claim_without_eval",
+      "sample_out_validation_required",
+      "do_not_promote_unverified_memory_claims",
+    ],
+  },
+  {
+    id: "sentiment_vendor_conflict_validation_loop",
+    userAsk:
+      "如果新闻情绪、社媒情绪和不同 vendor 对 QQQ/BTC 风险偏好的信号互相冲突，本地大脑要怎么拆 source registry、时间戳、样本外验证、情绪不能当 standalone alpha 和审阅？",
+    sourceSummary:
+      "sentiment-vendor conflict case requiring source registry, timestamp comparison, sample-out validation, and anti-standalone-alpha boundary.",
+    requiredModules: [
+      "source_registry",
+      "quant_math",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 5,
+    requiredMissingData: [
+      "source_timestamp_and_vendor",
+      "index_constituents_weights_and_technical_regime_inputs",
+      "validation_dataset_and_sample_out_plan",
+    ],
+    requiredRiskBoundaries: ["no_unverified_live_data"],
+  },
+  {
+    id: "scenario_probability_no_model_math_guessing",
+    userAsk:
+      "我想给软着陆、再通胀、衰退三个场景分概率，再看 QQQ、TLT、NVDA 仓位风险。但我没有给历史样本、权重、价格序列或宏观数据，先拆模块和缺口，不要让模型随便编概率。",
+    sourceSummary:
+      "scenario probability and portfolio-risk planning must fail closed on missing sample, weights, returns, and macro inputs.",
+    requiredModules: [
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "etf_regime",
+      "company_fundamentals_value",
+      "quant_math",
+      "portfolio_risk_gates",
+      "finance_learning_memory",
+      "source_registry",
+      "causal_map",
+      "review_panel",
+    ],
+    minModuleMatches: 8,
+    requiredMissingData: [
+      "position_weights_and_return_series",
+      "portfolio_weights_and_risk_limits",
+      "current_rates_and_inflation_inputs",
+    ],
+    requiredRiskBoundaries: ["no_model_math_guessing", "no_trade_advice"],
+  },
 ];
 
 function buildPrompt(evalCase: EvalCase): string {
@@ -1494,8 +1720,8 @@ for (const evalCase of evalCases) {
     process.stderr.write(`[local-brain-eval] start ${evalCase.id}\n`);
   }
   try {
-    const rawOutput = await runGenerate(options, evalCase);
-    const rawParsed = extractJson(rawOutput);
+    const rawOutput = options.contractOnly ? "" : await runGenerate(options, evalCase);
+    const rawParsed = options.contractOnly ? {} : extractJson(rawOutput);
     const parsed = options.hardened
       ? hardenLocalBrainPlanForAsk(rawParsed, {
           ask: evalCase.userAsk,
@@ -1549,6 +1775,7 @@ const result = {
   adapterPath: options.adapterPath ?? null,
   noAdapter: options.noAdapter,
   hardened: options.hardened,
+  contractOnly: options.contractOnly,
   summary: {
     passed: passedCases.length,
     total: caseResults.length,
