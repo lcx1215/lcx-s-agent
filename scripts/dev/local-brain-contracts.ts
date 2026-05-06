@@ -363,6 +363,7 @@ function looksLikeBacktestOverfitStrategyLearning(text: string): boolean {
 
 function looksLikeCryptoLeverageBoundary(text: string): boolean {
   return (
+    !looksLikeFullStackFinanceStressTest(text) &&
     /(加密|crypto|btc|bitcoin|eth|ethereum|永续|perp|perpetual|杠杆|leverage|合约|期货)/iu.test(
       text,
     ) &&

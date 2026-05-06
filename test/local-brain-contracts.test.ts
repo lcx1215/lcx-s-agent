@@ -204,6 +204,89 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("does not let crypto boundary fallback override a full-stack finance stress ask", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {
+        task_family: "crypto_leverage_research_boundary",
+        primary_modules: [
+          "crypto_market_structure",
+          "cross_asset_liquidity",
+          "portfolio_risk_gates",
+          "review_panel",
+        ],
+        supporting_modules: ["finance_learning_memory", "source_registry", "control_room_summary"],
+        required_tools: [
+          "finance_framework_crypto_market_structure_producer",
+          "finance_framework_cross_asset_liquidity_producer",
+          "finance_framework_portfolio_risk_gates_producer",
+          "review_panel",
+        ],
+        missing_data: [
+          "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+          "position_weights_and_risk_limits",
+          "liquidation_and_leverage_exposure_map",
+        ],
+        risk_boundaries: [
+          "research_only",
+          "no_execution_authority",
+          "evidence_required",
+          "no_high_leverage_crypto",
+          "no_trade_advice",
+          "risk_gate_before_action_language",
+        ],
+        next_step:
+          "reject_execution_or_high_leverage_language_then_analyze_crypto_as_risk_sentiment_and_liquidity_input_only",
+        rejected_context: [
+          "old_lark_conversation_history",
+          "execution_or_high_leverage_crypto_instruction",
+          "trade_recommendation_without_evidence",
+        ],
+      },
+      {
+        ask: "我要做完整金融研究拆解：组合有 QQQ、NVDA、现金和一点 BTC，同时看 NVDA 财报、AI capex 指引、Fed 利率路径、美元流动性、A股政策资金面、全球指数权重、仓位权重、技术面趋势和成交量，还要反方论证和数据缺口，research-only，不要交易建议。",
+        sourceSummary:
+          "dev acceptance actual adapter probe for full-stack finance stress; no live data available; require gaps, review, and no execution authority",
+      },
+    );
+
+    expect(plan.task_family).toBe("full_stack_finance_stress_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "company_fundamentals_value",
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "crypto_market_structure",
+        "etf_regime",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "latest_10q_10k_or_earnings_release",
+        "current_rates_inflation_fed_path_and_liquidity_inputs",
+        "position_weights_cost_basis_and_risk_limits",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "red_team_invalidation_evidence",
+        "fresh_market_data_snapshot",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "research_only",
+        "no_execution_authority",
+        "no_unverified_live_data",
+        "red_team_invalidation_required",
+        "no_trade_advice",
+      ]),
+    );
+  });
+
   it("keeps crypto to QQQ spillover tied to index regime and risk gates", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
