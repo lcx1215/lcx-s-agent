@@ -241,6 +241,11 @@ promotionReady=true
 If a complex eval is added, add or reuse a simple prerequisite. The simple case
 must pass before the complex case can support promotion.
 
+When a user provides one concrete example, treat it as a seed for a generic
+capability contract, not as the whole repair scope. The fix should cover the
+original example, a simpler prerequisite entry, and at least one adjacent
+non-identical scenario so the brain cannot pass by memorizing one phrase.
+
 ## Logs
 
 Main logs:

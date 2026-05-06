@@ -113,6 +113,8 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - The target is the smallest coherent system upgrade that closes the failure family, improves a core workflow, or raises a measured L5 capability without creating unrelated drift.
 - A coding agent may add or reshape modules, CLIs, docs, evals, receipts, skills, prompts, or workflow glue when the change directly supports the verified improvement goal.
 - Do not wait for a second human confirmation for routine implementation steps inside an already approved improvement goal.
+- Treat user examples as failure-family seeds, not as the full scope. If the user names one instance, such as commodities, Lark wording, a model disagreement, a paper, or a visible reply flaw, infer the shared contract and repair the generic class unless the user explicitly asks for a one-off patch.
+- When turning an example into a generic rule, cover at least one adjacent non-identical scenario in tests or evals so the repair cannot pass by memorizing the original example.
 - If a weakness spans language intake, local brain planning, memory retrieval, visible reply formatting, eval, and receipts, repair the whole loop instead of fixing only the first failing file.
 - Prefer reusable contracts and regression surfaces over one-off prompt patches.
 - Every system-improvement change must still leave proof: targeted tests, smoke/eval output, receipt, CLI diagnosis, or a named live acceptance path.
