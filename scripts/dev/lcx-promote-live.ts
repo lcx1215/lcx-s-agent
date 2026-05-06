@@ -10,6 +10,9 @@ const DEFAULT_RECEIPT_DIR = "ops/live-handoff/promotions";
 const MANIFEST_PATH = "branches/_system/live-promotion-manifest.json";
 const PROMOTION_STATE_PATH = "branches/_system/live-promotion-state.json";
 const DEFAULT_PORT = 18789;
+const DEFAULT_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
+const RESTART_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
+const PROBE_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 
 type StepStatus = "skipped" | "passed" | "failed";
 
@@ -124,19 +127,29 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
-function runCommand(command: string, args: string[], cwd: string): CommandResult {
+function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+): CommandResult {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: timeoutMs,
+    killSignal: "SIGTERM",
   });
+  const errorText = result.error
+    ? `\n[spawn error] ${result.error.name}: ${result.error.message}`
+    : "";
   return {
     command: [command, ...args].join(" "),
     cwd,
     status: result.status === 0 ? "passed" : "failed",
     code: result.status,
     stdout: (result.stdout || "").slice(-4000),
-    stderr: (result.stderr || "").slice(-4000),
+    stderr: `${result.stderr || ""}${errorText}`.slice(-4000),
   };
 }
 
@@ -548,7 +561,12 @@ export function main(argv = process.argv.slice(2)): number {
   if (blockedReasons.length === 0 && args.apply) {
     commands.restart = args.skipRestart
       ? skippedCommand("pnpm --silent openclaw daemon restart", args.targetRoot)
-      : runCommand("pnpm", ["--silent", "openclaw", "daemon", "restart"], args.targetRoot);
+      : runCommand(
+          "pnpm",
+          ["--silent", "openclaw", "daemon", "restart"],
+          args.targetRoot,
+          RESTART_COMMAND_TIMEOUT_MS,
+        );
     if (commands.restart.status === "failed") {
       restartFailed = true;
     }
@@ -561,6 +579,7 @@ export function main(argv = process.argv.slice(2)): number {
           "pnpm",
           ["--silent", "openclaw", "channels", "status", "--probe"],
           args.targetRoot,
+          PROBE_COMMAND_TIMEOUT_MS,
         );
     if (commands.probe.status === "failed") {
       applyFailed = true;
