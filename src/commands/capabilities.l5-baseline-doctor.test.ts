@@ -3,16 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLarkPendingRoutingCandidate } from "../../extensions/feishu/src/lark-routing-candidate-corpus.js";
-import { l4SystemDoctorCommand } from "./capabilities/l4-system-doctor.js";
+import { l5BaselineDoctorCommand } from "./capabilities/l5-baseline-doctor.js";
 import { createTestRuntime } from "./test-runtime-config-helpers.js";
 
 const runtime = createTestRuntime();
 
-async function seedL4ReadyWorkspace(workspace: string) {
+async function seedL5BaselineReadyWorkspace(workspace: string) {
   const receiptDir = path.join(workspace, "memory", "lark-language-handoff-receipts", "2026-05-03");
   await fs.mkdir(receiptDir, { recursive: true });
   await fs.writeFile(
-    path.join(receiptDir, "l4_ready.json"),
+    path.join(receiptDir, "l5_baseline_ready.json"),
     JSON.stringify({
       generatedAt: "2026-05-03T12:00:00.000Z",
       boundary: "language_handoff_only",
@@ -51,7 +51,7 @@ async function seedL4ReadyWorkspace(workspace: string) {
     createdAt: "2026-05-03T12:01:00.000Z",
   });
   await fs.writeFile(
-    path.join(candidateDir, "l4_language.json"),
+    path.join(candidateDir, "l5_baseline_language.json"),
     JSON.stringify({
       schemaVersion: 1,
       boundary: "language_routing_only",
@@ -80,12 +80,12 @@ async function seedL4ReadyWorkspace(workspace: string) {
   );
 }
 
-describe("l4SystemDoctorCommand", () => {
-  it("reports L4 contract ready when language, brain, finance, math, safety, and Lark receipts pass", async () => {
-    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-l4-doctor-"));
-    await seedL4ReadyWorkspace(workspace);
+describe("l5BaselineDoctorCommand", () => {
+  it("reports L5 baseline ready when language, brain, finance, math, safety, and Lark receipts pass", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-l5-baseline-doctor-"));
+    await seedL5BaselineReadyWorkspace(workspace);
 
-    await l4SystemDoctorCommand({ workspaceDir: workspace, json: true }, runtime);
+    await l5BaselineDoctorCommand({ workspaceDir: workspace, json: true }, runtime);
 
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0])) as {
       ok: boolean;
@@ -109,7 +109,7 @@ describe("l4SystemDoctorCommand", () => {
       nextBlocker: string;
     };
     expect(payload.ok).toBe(true);
-    expect(payload.level).toBe("l4_contract_ready");
+    expect(payload.level).toBe("l5_baseline_ready");
     expect(payload.nextBlocker).toBe("none");
     expect(payload.gates).toEqual(
       expect.arrayContaining([

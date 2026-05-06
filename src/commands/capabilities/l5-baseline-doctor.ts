@@ -5,21 +5,21 @@ import {
   type LarkLoopDiagnosePayload,
 } from "./lark-loop-diagnose.js";
 
-export type L4SystemDoctorCommandOptions = LarkLoopDiagnoseCommandOptions;
+export type L5BaselineDoctorCommandOptions = LarkLoopDiagnoseCommandOptions;
 
-type L4GateStatus = "pass" | "fail";
+type L5BaselineGateStatus = "pass" | "fail";
 
-type L4Gate = {
+type L5BaselineGate = {
   id: string;
-  status: L4GateStatus;
+  status: L5BaselineGateStatus;
   evidence: string;
 };
 
-export type L4SystemDoctorPayload = {
+export type L5BaselineDoctorPayload = {
   ok: boolean;
-  level: "l4_contract_ready" | "l3_partial";
+  level: "l5_baseline_ready" | "l5_baseline_blocked";
   generatedAt: string;
-  gates: L4Gate[];
+  gates: L5BaselineGate[];
   lark: {
     liveReceiptCount: number;
     latestReceiptPath: string | null;
@@ -53,7 +53,7 @@ function hasAll(values: string[], required: string[]): boolean {
   return required.every((entry) => values.includes(entry));
 }
 
-function gate(id: string, pass: boolean, evidence: string): L4Gate {
+function gate(id: string, pass: boolean, evidence: string): L5BaselineGate {
   return {
     id,
     status: pass ? "pass" : "fail",
@@ -61,11 +61,11 @@ function gate(id: string, pass: boolean, evidence: string): L4Gate {
   };
 }
 
-function firstFailedGate(gates: L4Gate[]): string | null {
+function firstFailedGate(gates: L5BaselineGate[]): string | null {
   return gates.find((entry) => entry.status === "fail")?.id ?? null;
 }
 
-function buildPayload(diagnosis: LarkLoopDiagnosePayload): L4SystemDoctorPayload {
+function buildPayload(diagnosis: LarkLoopDiagnosePayload): L5BaselineDoctorPayload {
   const orchestration = diagnosis.localLoop.orchestration;
   const primaryModules = stringArray(orchestration.primaryModules);
   const requiredTools = stringArray(orchestration.requiredTools);
@@ -73,7 +73,7 @@ function buildPayload(diagnosis: LarkLoopDiagnosePayload): L4SystemDoctorPayload
   const replay = diagnosis.languageCandidates.currentReplay;
   const liveReceipts = diagnosis.liveHandoffReceipts;
   const requiredModules = ["etf_regime", "portfolio_risk_gates", "quant_math", "causal_map"];
-  const requiredToolsForL4 = [
+  const requiredToolsForBaseline = [
     "finance_learning_capability_apply",
     "quant_math",
     "review_tier",
@@ -89,7 +89,7 @@ function buildPayload(diagnosis: LarkLoopDiagnosePayload): L4SystemDoctorPayload
     ),
     gate(
       "finance_brain_orchestration",
-      hasAll(primaryModules, requiredModules) && hasAll(requiredTools, requiredToolsForL4),
+      hasAll(primaryModules, requiredModules) && hasAll(requiredTools, requiredToolsForBaseline),
       `modules=${primaryModules.join(",")} tools=${requiredTools.join(",")}`,
     ),
     gate(
@@ -129,7 +129,7 @@ function buildPayload(diagnosis: LarkLoopDiagnosePayload): L4SystemDoctorPayload
   const failed = firstFailedGate(gates);
   return {
     ok: failed === null,
-    level: failed === null ? "l4_contract_ready" : "l3_partial",
+    level: failed === null ? "l5_baseline_ready" : "l5_baseline_blocked",
     generatedAt: new Date().toISOString(),
     gates,
     lark: {
@@ -157,9 +157,9 @@ function buildPayload(diagnosis: LarkLoopDiagnosePayload): L4SystemDoctorPayload
   };
 }
 
-function formatText(payload: L4SystemDoctorPayload): string {
+function formatText(payload: L5BaselineDoctorPayload): string {
   return [
-    "LCX Agent L4 system doctor",
+    "LCX Agent L5 baseline doctor",
     "",
     `level: ${payload.level}`,
     `ok: ${String(payload.ok)}`,
@@ -184,16 +184,16 @@ function formatText(payload: L4SystemDoctorPayload): string {
   ].join("\n");
 }
 
-export async function runL4SystemDoctor(
-  opts: L4SystemDoctorCommandOptions,
-): Promise<L4SystemDoctorPayload> {
+export async function runL5BaselineDoctor(
+  opts: L5BaselineDoctorCommandOptions,
+): Promise<L5BaselineDoctorPayload> {
   return buildPayload(await runLarkLoopDiagnose(opts));
 }
 
-export async function l4SystemDoctorCommand(
-  opts: L4SystemDoctorCommandOptions,
+export async function l5BaselineDoctorCommand(
+  opts: L5BaselineDoctorCommandOptions,
   runtime: RuntimeEnv = defaultRuntime,
 ) {
-  const payload = await runL4SystemDoctor(opts);
+  const payload = await runL5BaselineDoctor(opts);
   runtime.log(opts.json ? JSON.stringify(payload, null, 2) : formatText(payload));
 }

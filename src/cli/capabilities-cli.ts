@@ -4,7 +4,7 @@ import {
   githubCapabilityIntakeCommand,
   languageBrainLoopSmokeCommand,
 } from "../commands/capabilities.js";
-import { l4SystemDoctorCommand } from "../commands/capabilities/l4-system-doctor.js";
+import { l5BaselineDoctorCommand } from "../commands/capabilities/l5-baseline-doctor.js";
 import { l5SystemEvalCommand } from "../commands/capabilities/l5-system-eval.js";
 import { larkLoopDiagnoseCommand } from "../commands/capabilities/lark-loop-diagnose.js";
 import { defaultRuntime } from "../runtime.js";
@@ -86,9 +86,9 @@ export function registerCapabilitiesCli(program: Command) {
     });
 
   capabilities
-    .command("l4-system-doctor")
+    .command("l5-baseline-doctor")
     .description(
-      "Run a read-only L4 contract doctor across Lark, language, brain, finance, math, and safety gates",
+      "Run a read-only L5 baseline doctor across Lark, language, brain, finance, math, and safety gates",
     )
     .option("--agent <id>", "Agent id whose workspace should be checked")
     .option("--workspace <dir>", "Workspace to inspect for live Lark handoff receipts")
@@ -99,18 +99,18 @@ export function registerCapabilitiesCli(program: Command) {
       () =>
         `\nExamples:\n${formatHelpExamples([
           [
-            "openclaw capabilities l4-system-doctor --json",
-            "Run the L4 readiness gate without changing live sender, providers, or protected memory.",
+            "openclaw capabilities l5-baseline-doctor --json",
+            "Run the L5 baseline gate without changing live sender, providers, or protected memory.",
           ],
           [
-            "openclaw capabilities l4-system-doctor --workspace ~/.openclaw/workspace",
+            "openclaw capabilities l5-baseline-doctor --workspace ~/.openclaw/workspace",
             "Check a specific agent workspace for Lark receipts and language replay artifacts.",
           ],
         ])}`,
     )
     .action(async (opts, command) => {
       await runCapabilitiesCli(async () => {
-        await l4SystemDoctorCommand(
+        await l5BaselineDoctorCommand(
           {
             agent: typeof opts.agent === "string" ? opts.agent : undefined,
             workspaceDir: typeof opts.workspace === "string" ? opts.workspace : undefined,

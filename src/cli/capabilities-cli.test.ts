@@ -4,7 +4,7 @@ import { runRegisteredCli } from "../test-utils/command-runner.js";
 
 const capabilitiesCommand = vi.fn().mockResolvedValue(undefined);
 const githubCapabilityIntakeCommand = vi.fn().mockResolvedValue(undefined);
-const l4SystemDoctorCommand = vi.fn().mockResolvedValue(undefined);
+const l5BaselineDoctorCommand = vi.fn().mockResolvedValue(undefined);
 const l5SystemEvalCommand = vi.fn().mockResolvedValue(undefined);
 const languageBrainLoopSmokeCommand = vi.fn().mockResolvedValue(undefined);
 const larkLoopDiagnoseCommand = vi.fn().mockResolvedValue(undefined);
@@ -15,8 +15,8 @@ vi.mock("../commands/capabilities.js", () => ({
   languageBrainLoopSmokeCommand,
 }));
 
-vi.mock("../commands/capabilities/l4-system-doctor.js", () => ({
-  l4SystemDoctorCommand,
+vi.mock("../commands/capabilities/l5-baseline-doctor.js", () => ({
+  l5BaselineDoctorCommand,
 }));
 
 vi.mock("../commands/capabilities/l5-system-eval.js", () => ({
@@ -37,7 +37,7 @@ describe("capabilities cli", () => {
   beforeEach(() => {
     capabilitiesCommand.mockClear();
     githubCapabilityIntakeCommand.mockClear();
-    l4SystemDoctorCommand.mockClear();
+    l5BaselineDoctorCommand.mockClear();
     l5SystemEvalCommand.mockClear();
     languageBrainLoopSmokeCommand.mockClear();
     larkLoopDiagnoseCommand.mockClear();
@@ -108,12 +108,12 @@ describe("capabilities cli", () => {
     );
   });
 
-  it("registers L4 system doctor as a CLI subcommand", async () => {
+  it("registers L5 baseline doctor as a CLI subcommand", async () => {
     await runRegisteredCli({
       register: registerCapabilitiesCli as (program: Command) => void,
-      argv: ["capabilities", "l4-system-doctor", "--workspace", "/tmp/lcx-live", "--json"],
+      argv: ["capabilities", "l5-baseline-doctor", "--workspace", "/tmp/lcx-live", "--json"],
     });
-    expect(l4SystemDoctorCommand).toHaveBeenCalledWith(
+    expect(l5BaselineDoctorCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceDir: "/tmp/lcx-live",
         json: true,

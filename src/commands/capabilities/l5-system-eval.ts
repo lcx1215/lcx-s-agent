@@ -3,16 +3,16 @@ import path from "node:path";
 import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
 import { resolveUserPath } from "../../utils.js";
 import {
-  runL4SystemDoctor,
-  type L4SystemDoctorCommandOptions,
-  type L4SystemDoctorPayload,
-} from "./l4-system-doctor.js";
+  runL5BaselineDoctor,
+  type L5BaselineDoctorCommandOptions,
+  type L5BaselineDoctorPayload,
+} from "./l5-baseline-doctor.js";
 import {
   runLanguageBrainLoopSmoke,
   type LanguageBrainLoopSmokePayload,
 } from "./language-brain-loop-smoke.js";
 
-export type L5SystemEvalCommandOptions = L4SystemDoctorCommandOptions & {
+export type L5SystemEvalCommandOptions = L5BaselineDoctorCommandOptions & {
   writeReceipt?: boolean;
 };
 
@@ -27,16 +27,16 @@ type L5Gate = {
 
 export type L5SystemEvalPayload = {
   ok: boolean;
-  level: "l5_ready" | "l4_hardened_l5_blocked" | "below_l4";
+  level: "l5_ready" | "l5_baseline_blocked" | "below_l5_baseline";
   score: {
     passed: number;
     total: number;
   };
   generatedAt: string;
   gates: L5Gate[];
-  l4: {
+  baseline: {
     ok: boolean;
-    level: L4SystemDoctorPayload["level"];
+    level: L5BaselineDoctorPayload["level"];
     nextBlocker: string;
   };
   loop: {
@@ -127,10 +127,10 @@ async function readWorkspaceJsonRecord(params: {
 }
 
 async function buildPayload(params: {
-  l4: L4SystemDoctorPayload;
+  baseline: L5BaselineDoctorPayload;
   loop: LanguageBrainLoopSmokePayload;
 }): Promise<L5SystemEvalPayload> {
-  const l4Failed = params.l4.gates
+  const baselineFailed = params.baseline.gates
     .filter((entry) => entry.status === "fail")
     .map((entry) => entry.id);
   const orchestrationModules = stringArray(params.loop.orchestration.primaryModules);
@@ -168,20 +168,20 @@ async function buildPayload(params: {
 
   const gates = [
     gate(
-      "l4_baseline_clean",
-      params.l4.ok,
-      `l4=${params.l4.level} failed=${l4Failed.join(",") || "none"}`,
-      "Keep l4-system-doctor green before promoting any L5 claim.",
+      "l5_baseline_doctor_clean",
+      params.baseline.ok,
+      `baseline=${params.baseline.level} failed=${baselineFailed.join(",") || "none"}`,
+      "Keep the L5 baseline doctor green before promoting any broader L5 claim.",
     ),
     gate(
       "eval_scope_isolation",
       params.loop.temporaryWorkspace &&
-        params.l4.boundaries.doctorIsReadOnly &&
-        params.l4.boundaries.liveProbeNotPerformed &&
-        params.l4.boundaries.noRemoteFetchOccurred &&
-        params.l4.boundaries.noExecutionAuthority &&
-        params.l4.boundaries.protectedMemoryUntouched,
-      `tempLoop=${String(params.loop.temporaryWorkspace)} doctorReadOnly=${String(params.l4.boundaries.doctorIsReadOnly)} liveProbeNotPerformed=${String(params.l4.boundaries.liveProbeNotPerformed)} remoteFetch=${String(!params.l4.boundaries.noRemoteFetchOccurred)} execution=${String(!params.l4.boundaries.noExecutionAuthority)} protectedMemoryUntouched=${String(params.l4.boundaries.protectedMemoryUntouched)}`,
+        params.baseline.boundaries.doctorIsReadOnly &&
+        params.baseline.boundaries.liveProbeNotPerformed &&
+        params.baseline.boundaries.noRemoteFetchOccurred &&
+        params.baseline.boundaries.noExecutionAuthority &&
+        params.baseline.boundaries.protectedMemoryUntouched,
+      `tempLoop=${String(params.loop.temporaryWorkspace)} doctorReadOnly=${String(params.baseline.boundaries.doctorIsReadOnly)} liveProbeNotPerformed=${String(params.baseline.boundaries.liveProbeNotPerformed)} remoteFetch=${String(!params.baseline.boundaries.noRemoteFetchOccurred)} execution=${String(!params.baseline.boundaries.noExecutionAuthority)} protectedMemoryUntouched=${String(params.baseline.boundaries.protectedMemoryUntouched)}`,
       "Keep L5 eval scoped to a temporary local loop and read-only doctor; live rollout must be verified by a separate live path.",
     ),
     gate(
@@ -235,10 +235,10 @@ async function buildPayload(params: {
     ),
     gate(
       "lark_operability_receipts",
-      params.l4.lark.liveReceiptCount > 0 &&
-        params.l4.lark.currentReplayCandidateCount > 0 &&
-        params.l4.lark.currentReplayRejectedCount === 0,
-      `receipts=${params.l4.lark.liveReceiptCount} replay=${params.l4.lark.currentReplayCandidateCount}/${params.l4.lark.currentReplayRejectedCount}`,
+      params.baseline.lark.liveReceiptCount > 0 &&
+        params.baseline.lark.currentReplayCandidateCount > 0 &&
+        params.baseline.lark.currentReplayRejectedCount === 0,
+      `receipts=${params.baseline.lark.liveReceiptCount} replay=${params.baseline.lark.currentReplayCandidateCount}/${params.baseline.lark.currentReplayRejectedCount}`,
       "A true live-fixed claim still needs build, restart, probe, and a real Lark entry.",
     ),
     gate(
@@ -275,7 +275,11 @@ async function buildPayload(params: {
   const blocked = firstBlockedGate(gates);
   const passed = gates.filter((entry) => entry.status === "pass").length;
   const level =
-    blocked === null ? "l5_ready" : params.l4.ok ? "l4_hardened_l5_blocked" : "below_l4";
+    blocked === null
+      ? "l5_ready"
+      : params.baseline.ok
+        ? "l5_baseline_blocked"
+        : "below_l5_baseline";
   return {
     ok: blocked === null,
     level,
@@ -285,10 +289,10 @@ async function buildPayload(params: {
     },
     generatedAt: new Date().toISOString(),
     gates,
-    l4: {
-      ok: params.l4.ok,
-      level: params.l4.level,
-      nextBlocker: params.l4.nextBlocker,
+    baseline: {
+      ok: params.baseline.ok,
+      level: params.baseline.level,
+      nextBlocker: params.baseline.nextBlocker,
     },
     loop: {
       ok: params.loop.ok,
@@ -364,7 +368,7 @@ function formatText(payload: L5SystemEvalPayload): string {
       (entry) => `- ${entry.status} ${entry.id}: ${entry.evidence}; next=${entry.nextPatch}`,
     ),
     "",
-    `l4: ${payload.l4.level} ok=${String(payload.l4.ok)}`,
+    `baseline: ${payload.baseline.level} ok=${String(payload.baseline.ok)}`,
     `loop receipt: ${payload.loop.receiptPath}`,
     `l5 receipt: ${payload.receipt.path ?? "not_written"}`,
     "",
@@ -380,12 +384,12 @@ function formatText(payload: L5SystemEvalPayload): string {
 export async function runL5SystemEval(
   opts: L5SystemEvalCommandOptions,
 ): Promise<L5SystemEvalPayload> {
-  const l4 = await runL4SystemDoctor(opts);
+  const baseline = await runL5BaselineDoctor(opts);
   const loop = await runLanguageBrainLoopSmoke({
     fixtureDir: opts.fixtureDir,
     json: true,
   });
-  return buildPayload({ l4, loop });
+  return buildPayload({ baseline, loop });
 }
 
 export async function l5SystemEvalCommand(

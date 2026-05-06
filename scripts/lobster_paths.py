@@ -77,18 +77,18 @@ def normalize_control_panel_state(obj: Any) -> dict[str, Any]:
     legacy_current = str(data.get("current_phase") or data.get("current_milestone") or "").strip()
     legacy_next = str(data.get("next_phase") or data.get("next_milestone") or "").strip()
     current_phase = (
-        "L4 baseline hardening and shared-brain runtime"
+        "L5 baseline hardening and shared-brain runtime"
         if not legacy_current or "L3" in legacy_current
         else legacy_current
     )
     next_phase = (
-        "Complete branch-wide brain-aware state consumption and remove remaining legacy L3 surfaces"
-        if not legacy_next or legacy_next == "L4 branch operations and deeper execution integration"
+        "Complete branch-wide brain-aware state consumption and remove remaining legacy milestone surfaces"
+        if not legacy_next or legacy_next.endswith("branch operations and deeper execution integration")
         else legacy_next
     )
     normalized = dict(data)
-    normalized["system_stage"] = data.get("system_stage") or "L4"
-    normalized["control_panel_status"] = data.get("control_panel_status") or "l4_brain_hardened"
+    normalized["system_stage"] = data.get("system_stage") or "L5 baseline"
+    normalized["control_panel_status"] = data.get("control_panel_status") or "l5_baseline_hardened"
     normalized["current_phase"] = current_phase
     normalized["next_phase"] = next_phase
     normalized["l3_completed"] = True

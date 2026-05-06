@@ -2,10 +2,10 @@
 
 This directory contains hooks that ship with OpenClaw. These hooks are automatically discovered and can be enabled/disabled via CLI or configuration.
 
-## LCX Agent L4 Active Hook Map
+## LCX Agent L5 Baseline Active Hook Map
 
 If you are working on LCX Agent overlays, do not treat this directory as a flat hook catalog.
-The active L4 system has four major hook families, and future work should extend an
+The active L5 baseline system has four major hook families, and future work should extend an
 existing family before adding a new sibling seam.
 
 ### 1. Learning And Correction Family

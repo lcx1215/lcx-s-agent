@@ -57,7 +57,7 @@ Use them like this:
 - `lark-live-loop-debugger`: Feishu/Lark live message, reply flow, routing, and visible reply diagnosis.
 - `lark-post-migration-probe`: prove post-migration real Lark inbound plus visible reply.
 - `agent-runtime-drift-auditor`: compare dev repo, live sidecar, daemon/runtime, and receipts for drift.
-- `l4-regression-batterer`: legacy skill name; use it for L5 pressure tests with realistic Chinese finance/control-room prompts.
+- `l4-regression-batterer`: legacy path name; use it for L5 baseline pressure tests with realistic Chinese finance/control-room prompts.
 - `skill-harvester`: evaluate and isolate new external or local skills before letting them affect the agent.
 
 The skills are operator guidance, not durable market memory. Do not copy their text into protected repo memory.
