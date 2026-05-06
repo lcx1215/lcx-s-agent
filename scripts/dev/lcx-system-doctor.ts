@@ -29,10 +29,7 @@ const DEFAULT_ADAPTER = path.join(
 const HOME = process.env.HOME ?? ".";
 const WORKSPACE_LOG_DIR = path.join(HOME, ".openclaw", "workspace", "logs");
 const MINIMAX_GUARD_LOG = path.join(WORKSPACE_LOG_DIR, "minimax-brain-training-guard-medium.jsonl");
-const MINIMAX_QUOTA_LOG = path.join(
-  WORKSPACE_LOG_DIR,
-  "minimax-quota-brain-saturator-2026-05-05.jsonl",
-);
+const MINIMAX_QUOTA_LOG_PATTERN = /^minimax-quota-brain-saturator-\d{4}-\d{2}-\d{2}\.jsonl$/u;
 
 function usage(): never {
   throw new Error(
@@ -310,6 +307,25 @@ async function readJsonlTail(
   }
 }
 
+async function latestMinimaxQuotaLogPath(): Promise<string | undefined> {
+  try {
+    const entries = await fs.readdir(WORKSPACE_LOG_DIR, { withFileTypes: true });
+    const candidates = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && MINIMAX_QUOTA_LOG_PATTERN.test(entry.name))
+        .map(async (entry) => {
+          const filePath = path.join(WORKSPACE_LOG_DIR, entry.name);
+          const stats = await fs.stat(filePath);
+          return { filePath, mtimeMs: stats.mtimeMs };
+        }),
+    );
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs || b.filePath.localeCompare(a.filePath));
+    return candidates[0]?.filePath;
+  } catch {
+    return undefined;
+  }
+}
+
 function eventTime(payload: Record<string, unknown> | undefined): string {
   return typeof payload?.at === "string" ? payload.at : "";
 }
@@ -416,11 +432,12 @@ function isTrainingCommand(command: string): boolean {
 
 async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
   const startedAt = Date.now();
+  const quotaLogPath = await latestMinimaxQuotaLogPath();
   try {
     const [psResult, guardEvents, quotaEvents] = await Promise.all([
       runQuietCommand("ps", ["-axo", "pid=,ppid=,command="]),
       readJsonlTail(MINIMAX_GUARD_LOG, 120),
-      readJsonlTail(MINIMAX_QUOTA_LOG, 120),
+      quotaLogPath ? readJsonlTail(quotaLogPath, 120) : Promise.resolve([]),
     ]);
     const activeProcesses = psResult.stdout
       .split(/\r?\n/u)
@@ -517,7 +534,7 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
         latestTeacher: summarizeTeacherEvent(latestTeacher),
         logPaths: {
           guard: MINIMAX_GUARD_LOG,
-          quota: MINIMAX_QUOTA_LOG,
+          quota: quotaLogPath,
         },
         liveTouched: false,
         providerConfigTouched: false,
@@ -532,7 +549,7 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
       summary: {
         logPaths: {
           guard: MINIMAX_GUARD_LOG,
-          quota: MINIMAX_QUOTA_LOG,
+          quota: quotaLogPath,
         },
       },
       error: error instanceof Error ? error.message : String(error),
