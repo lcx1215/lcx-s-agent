@@ -6778,7 +6778,13 @@ describe("learning council routing", () => {
       text: expect.stringContaining("failedReason: learning_council_reply_timeout_after_5ms"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("不会把未完成的学习包装成结论"),
+      text: expect.stringContaining("不能说已经学完，也不会写入 application_ready"),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("大模型拆解: learning_external_source"),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("本地大脑模块计划:"),
     });
   });
 
@@ -6876,10 +6882,24 @@ describe("learning council routing", () => {
     });
 
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("收到，已进入学习流程：大宗商品的知识。"),
+      text: expect.stringContaining("收到，已开始学：大宗商品的知识。"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("后台如果完成，会再补发一条完成版"),
+      text: expect.stringContaining("大模型拆解: learning_external_source"),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining(
+        "本地大脑模块计划: commodities_oil_gold, causal_map, finance_learning_memory",
+      ),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("本地大脑会先拆商品供需"),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("回交大模型审阅: review_tier"),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("后台如果完成，会再补发完成版"),
     });
     expect(baseDispatcher.sendFinalReply).not.toHaveBeenCalledWith({
       text: expect.stringContaining("Learning council run: delayed"),
@@ -6998,7 +7018,7 @@ describe("learning council routing", () => {
     expect(mockSendMessageFeishu).toHaveBeenCalledWith({
       cfg,
       to: "chat:oc-learning",
-      text: expect.stringContaining("Learning council delayed completion arrived."),
+      text: expect.stringContaining("后台学习审阅完成，补发完成版。"),
       replyToMessageId: "msg-learning-delayed",
       accountId: "default",
     });

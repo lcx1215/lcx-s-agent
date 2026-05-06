@@ -1135,14 +1135,20 @@ function renderFeishuLearningCouncilVisibleTimeoutReply(params: {
   timeoutMs: number;
   messageId: string;
   userMessage?: string;
+  handoffReceiptArtifact?: LarkLanguageHandoffReceiptArtifact;
 }): string {
   const topic = summarizeFeishuLearningVisibleTopic(params.userMessage);
+  const chain = renderFeishuLearningBrainChainSummary({
+    handoffReceiptArtifact: params.handoffReceiptArtifact,
+  });
   return [
-    `收到，已进入学习流程：${topic}。`,
+    `收到，已开始学：${topic}。`,
     "",
-    "现在还不能说已经学完：后台学习和审阅还没在前台等待时间内完成。",
-    "我不会把未完成的学习包装成结论，也不会写入 application_ready。",
-    "后台如果完成，会再补发一条完成版；如果失败，会留下失败原因。",
+    "这次前台回复必须按链路交代清楚，不再甩内部状态：",
+    ...chain,
+    "",
+    "当前结果：拆解和本地大脑计划入口已经形成，但大模型审阅还没在前台等待时间内完成。",
+    "所以我不能说已经学完，也不会写入 application_ready。后台如果完成，会再补发完成版；如果失败，会留下失败原因。",
     "",
     "## 证据",
     `- failedReason: learning_council_reply_timeout_after_${params.timeoutMs}ms`,
@@ -1150,6 +1156,29 @@ function renderFeishuLearningCouncilVisibleTimeoutReply(params: {
     "",
     "边界：这是 research-only 学习任务，没有交易建议，也没有执行权限。",
   ].join("\n");
+}
+
+function renderFeishuLearningBrainChainSummary(params: {
+  handoffReceiptArtifact?: LarkLanguageHandoffReceiptArtifact;
+}): string[] {
+  const handoff = params.handoffReceiptArtifact?.handoff;
+  const workOrder = handoff?.workOrder;
+  const orchestration = params.handoffReceiptArtifact?.financeBrainOrchestration;
+  const objective = workOrder?.objective?.trim();
+  const primaryModules = orchestration?.primaryModules ?? [];
+  const supportingModules = orchestration?.supportingModules ?? [];
+  const reviewTools = orchestration?.reviewTools ?? [];
+  const boundaries = orchestration?.boundaries ?? [];
+  const domainPlan = primaryModules.includes("commodities_oil_gold")
+    ? "本地大脑会先拆商品供需、库存/期限结构、原油/黄金/铜、美元利率、通胀、地缘风险，再接组合风险门。"
+    : "本地大脑会先拆任务目标、已有记忆、因果链、缺失证据、风险边界，再交给审阅。";
+  return [
+    `- 大模型拆解: ${handoff?.family ?? "learning_command"}${objective ? `；目标=${objective}` : ""}`,
+    `- 本地大脑模块计划: ${[...primaryModules, ...supportingModules].join(", ") || "pending"}`,
+    `- 本地大脑处理方式: ${domainPlan}`,
+    `- 回交大模型审阅: ${reviewTools.join(", ") || "review_tier"}`,
+    `- 边界: ${boundaries.join(", ") || "research_only, no_execution_authority"}`,
+  ];
 }
 
 function summarizeFeishuLearningVisibleTopic(userMessage: string | undefined): string {
@@ -1175,7 +1204,9 @@ function summarizeFeishuLearningVisibleTopic(userMessage: string | undefined): s
 }
 
 async function runFeishuLearningCouncilWithVisibleTimeout(
-  params: Parameters<typeof runFeishuLearningCouncil>[0],
+  params: Parameters<typeof runFeishuLearningCouncil>[0] & {
+    handoffReceiptArtifact?: LarkLanguageHandoffReceiptArtifact;
+  },
 ): Promise<FeishuLearningCouncilVisibleRun> {
   const timeoutMs = resolveFeishuLearningCouncilVisibleTimeoutMs();
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -1213,6 +1244,7 @@ async function runFeishuLearningCouncilWithVisibleTimeout(
           timeoutMs,
           messageId: params.messageId,
           userMessage: params.userMessage,
+          handoffReceiptArtifact: params.handoffReceiptArtifact,
         }),
         completion: councilRun,
       });
@@ -1228,8 +1260,8 @@ function renderFeishuLearningCouncilDelayedCompletionReply(params: {
 }): string {
   const header =
     params.run.status === "completed"
-      ? "Learning council delayed completion arrived."
-      : "Learning council delayed completion failed.";
+      ? "后台学习审阅完成，补发完成版。"
+      : "后台学习审阅失败，补发失败原因。";
   return [
     header,
     "",
@@ -6738,6 +6770,7 @@ export async function handleFeishuMessage(params: {
           sessionKey: effectiveSessionKey,
           messageId: ctx.messageId,
           workspaceDir: learningWorkspaceDir,
+          handoffReceiptArtifact: larkHandoffReceipt?.artifact,
         });
         const councilText = councilRun.text;
         const timeboxStart =
