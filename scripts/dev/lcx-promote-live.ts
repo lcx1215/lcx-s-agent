@@ -465,6 +465,7 @@ export function main(argv = process.argv.slice(2)): number {
     probe: null,
   };
   let applyFailed = false;
+  let restartFailed = false;
 
   if (blockedReasons.length === 0 && !args.skipSourceChecks) {
     commands.sourceChecks.push(runCommand("pnpm", ["tsgo"], args.sourceRoot));
@@ -549,8 +550,7 @@ export function main(argv = process.argv.slice(2)): number {
       ? skippedCommand("pnpm --silent openclaw daemon restart", args.targetRoot)
       : runCommand("pnpm", ["--silent", "openclaw", "daemon", "restart"], args.targetRoot);
     if (commands.restart.status === "failed") {
-      applyFailed = true;
-      blockedReasons.push("daemon restart failed");
+      restartFailed = true;
     }
   }
 
@@ -564,7 +564,14 @@ export function main(argv = process.argv.slice(2)): number {
         );
     if (commands.probe.status === "failed") {
       applyFailed = true;
-      blockedReasons.push("channel probe failed");
+      blockedReasons.push(
+        restartFailed ? "daemon restart failed and channel probe failed" : "channel probe failed",
+      );
+    } else if (commands.probe.status === "skipped" && restartFailed) {
+      applyFailed = true;
+      blockedReasons.push("daemon restart failed and channel probe was skipped");
+    } else if (restartFailed) {
+      applyFailed = false;
     }
   }
 
