@@ -7,6 +7,9 @@ type CliOptions = {
   json: boolean;
 };
 
+const JSONL_READ_ATTEMPTS = 5;
+const JSONL_RETRY_DELAY_MS = 75;
+
 const REQUIRED_COMPLETION_KEYS = [
   "task_family",
   "primary_modules",
@@ -68,12 +71,41 @@ function parseArgs(args: string[]): CliOptions {
   return options;
 }
 
-async function readJsonl(filePath: string): Promise<Array<Record<string, unknown>>> {
-  const raw = await fs.readFile(filePath, "utf8");
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseJsonl(raw: string, filePath: string): Array<Record<string, unknown>> {
   return raw
     .split(/\r?\n/u)
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+    .map((line, index) => ({ line, lineNumber: index + 1 }))
+    .filter(({ line }) => line.trim())
+    .map(({ line, lineNumber }) => {
+      try {
+        return JSON.parse(line) as Record<string, unknown>;
+      } catch (error) {
+        throw new Error(
+          `invalid JSONL in ${filePath}:${lineNumber}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
+    });
+}
+
+async function readJsonl(filePath: string): Promise<Array<Record<string, unknown>>> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= JSONL_READ_ATTEMPTS; attempt += 1) {
+    const raw = await fs.readFile(filePath, "utf8");
+    try {
+      return parseJsonl(raw, filePath);
+    } catch (error) {
+      lastError = error;
+      if (attempt < JSONL_READ_ATTEMPTS) {
+        await sleep(JSONL_RETRY_DELAY_MS);
+      }
+    }
+  }
+  throw lastError;
 }
 
 function assert(condition: unknown, message: string): asserts condition {

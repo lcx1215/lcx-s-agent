@@ -198,6 +198,28 @@ function readBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+const OVERCLAIMED_NEXT_STEP_PATTERN =
+  /internet_search_engine|bloomberg|yahoo finance|fred|authenticated data feeds?|public data source|pull (?:latest|current|historical)|gather (?:latest|current|fresh)|fetch\b|retrieve .*data|obtain .*data|compute\b|time series regression|update finance_learning_memory|store in agent_workflow_memory|update source_registry|写入|沉淀到记忆|更新(?:finance_learning_memory|source_registry|causal_map)/iu;
+
+function sanitizeNextStep(nextStep: string, missingData: string[]): string {
+  if (!OVERCLAIMED_NEXT_STEP_PATTERN.test(nextStep)) {
+    return nextStep;
+  }
+  if (
+    missingData.includes("source_url_or_local_source_path") ||
+    missingData.includes("actual_reading_scope_receipt")
+  ) {
+    return "Require a source URL or local source path plus an actual reading receipt before source-gated learning or reusable-rule extraction.";
+  }
+  if (
+    missingData.includes("position_weights_and_return_series") ||
+    missingData.includes("fresh_market_data_snapshot")
+  ) {
+    return "List missing data gaps, require timestamped source evidence and portfolio inputs, then route to review before any research-only summary.";
+  }
+  return "Clarify the objective, list missing evidence, route to review, and summarize only verified research boundaries.";
+}
+
 function inferFinanceModules(text: string): string[] {
   const lower = text.toLowerCase();
   const modules: string[] = [];
@@ -300,6 +322,16 @@ function missingDataForModules(modules: string[]): string[] {
 function normalizeMissingDataEntries(values: string[]): string[] {
   const normalized = values.map((entry) => entry.trim()).filter(Boolean);
   const exact: string[] = [];
+  const lowerEntries = normalized.map((entry) => entry.toLowerCase());
+  const hasPositionWeights = lowerEntries.some((entry) =>
+    /(^|_)position_weights($|_)|current_position_weights|portfolio_weights|仓位|权重/u.test(entry),
+  );
+  const hasReturnSeries = lowerEntries.some((entry) =>
+    /return_series|price_history|recent_returns|收益率序列|价格序列/u.test(entry),
+  );
+  if (hasPositionWeights && hasReturnSeries) {
+    exact.push("position_weights_and_return_series");
+  }
   for (const entry of normalized) {
     const lower = entry.toLowerCase();
     if (lower.includes("position_weights_and_return_series")) {
@@ -562,9 +594,11 @@ function exampleFromAcceptedBrainCandidate(
   const missingData = readStringArray(accepted.proposedMissingData);
   const riskBoundaries = normalizeRiskBoundaries(readStringArray(accepted.proposedRiskBoundaries));
   const taskFamily = readString(accepted.proposedTaskFamily) ?? "brain_distillation_candidate";
-  const nextStep =
+  const rawNextStep =
     readString(accepted.proposedNextStep) ??
     "route_to_concrete_modules_then_review_before_visible_reply";
+  const normalizedMissingData = normalizeMissingDataEntries(missingData);
+  const nextStep = sanitizeNextStep(rawNextStep, normalizedMissingData);
   if (primaryModules.length === 0 || requiredTools.length === 0) {
     return undefined;
   }
@@ -575,7 +609,7 @@ function exampleFromAcceptedBrainCandidate(
       primaryModules,
       supportingModules,
       requiredTools,
-      missingData: normalizeMissingDataEntries(missingData),
+      missingData: normalizedMissingData,
       review: accepted.review,
       noLanguageRoutingPromotion,
     }),
@@ -592,7 +626,7 @@ function exampleFromAcceptedBrainCandidate(
       primaryModules,
       supportingModules,
       requiredTools,
-      missingData: normalizeMissingDataEntries(missingData),
+      missingData: normalizedMissingData,
       riskBoundaries,
       nextStep,
     }),
@@ -1320,6 +1354,15 @@ function buildSeedExamples(): DistillExample[] {
   ).flat();
 }
 
+async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  await fs.writeFile(tempPath, content, "utf8");
+  await fs.rename(tempPath, filePath);
+}
+
 async function writeJsonl(filePath: string, examples: DistillExample[]): Promise<void> {
   const lines = examples.map((example) =>
     JSON.stringify({
@@ -1328,7 +1371,7 @@ async function writeJsonl(filePath: string, examples: DistillExample[]): Promise
       meta: example.meta,
     }),
   );
-  await fs.writeFile(filePath, `${lines.join("\n")}\n`, "utf8");
+  await writeFileAtomic(filePath, `${lines.join("\n")}\n`);
 }
 
 const options = parseArgs(process.argv.slice(2));
@@ -1381,7 +1424,7 @@ const manifest = {
     "finance_doctrine",
   ],
 };
-await fs.writeFile(path.join(options.outDir, "manifest.json"), `${compactJson(manifest)}\n`);
+await writeFileAtomic(path.join(options.outDir, "manifest.json"), `${compactJson(manifest)}\n`);
 
 if (options.json) {
   process.stdout.write(`${compactJson(manifest)}\n`);
