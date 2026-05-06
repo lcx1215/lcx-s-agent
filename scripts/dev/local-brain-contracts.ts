@@ -13,6 +13,11 @@ const MODULE_IDS = [
   "us_equity_market_structure",
   "china_a_share_policy_flow",
   "crypto_market_structure",
+  "technical_timing",
+  "options_volatility",
+  "commodities_oil_gold",
+  "fx_dollar",
+  "event_driven",
   "company_fundamentals_value",
   "quant_math",
   "portfolio_risk_gates",
@@ -165,6 +170,28 @@ function looksLikeCommodityFrameworkLearning(text: string): boolean {
     ) &&
     /(学习|学会|框架|模块|证据|缺口|research framework|应用|内化|沉淀)/iu.test(text)
   );
+}
+
+function looksLikeBroadFinanceModuleCoverage(text: string): boolean {
+  const asksForModuleMap =
+    /(金融模块|金融能力|模块地图|模块体系|能力层|module taxonomy|finance module|模块还不够|还不够.{0,12}模块|全部.{0,12}模块|所有.{0,12}模块|扩充.{0,12}模块)/iu.test(
+      text,
+    );
+  const hasFinanceScope =
+    /(金融|finance|market|市场|美股|a股|指数|etf|股票|组合|宏观|利率|美元|流动性|商品|期权|波动率|技术面|事件|财报|crypto|btc|量化|风控)/iu.test(
+      text,
+    );
+  const namesMultipleLayers = [
+    /(宏观|利率|通胀|macro|rates?|inflation)/iu.test(text),
+    /(美元|外汇|fx|dxy|currency|liquidity|流动性)/iu.test(text),
+    /(商品|原油|黄金|铜|commodit|oil|gold|copper)/iu.test(text),
+    /(期权|iv|volatility|gamma|skew|波动率)/iu.test(text),
+    /(技术面|technical|timing|择时|趋势|breadth|momentum)/iu.test(text),
+    /(事件|财报|fomc|cpi|event|earnings|catalyst)/iu.test(text),
+    /(基本面|fundamental|valuation|估值|现金流|利润率)/iu.test(text),
+    /(组合|仓位|portfolio|risk|风险|quant|量化)/iu.test(text),
+  ].filter(Boolean).length;
+  return asksForModuleMap && hasFinanceScope && namesMultipleLayers >= 2;
 }
 
 function looksLikeEtfAsCompanyFundamentalTrap(text: string): boolean {
@@ -596,6 +623,76 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
+  if (looksLikeBroadFinanceModuleCoverage(text)) {
+    return {
+      ...safe,
+      task_family: "broad_finance_module_taxonomy_planning",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "fx_dollar",
+        "etf_regime",
+        "global_index_regime",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "crypto_market_structure",
+        "commodities_oil_gold",
+        "options_volatility",
+        "event_driven",
+        "technical_timing",
+        "company_fundamentals_value",
+        "quant_math",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "finance_framework_core_inspect",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "quant_math",
+        "review_panel",
+      ],
+      missing_data: [
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+        "macro_rates_inflation_credit_fx_inputs",
+        "commodity_curve_roll_yield_and_inventory_inputs",
+        "options_iv_skew_gamma_and_event_calendar",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "latest_company_fundamental_inputs",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_model_math_guessing",
+        "no_unverified_live_data",
+        "technical_timing_not_standalone_alpha",
+        "sentiment_signal_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step:
+        "build_a_layered_finance_module_map_then_select_only_relevant_modules_per_user_task_before_review_and_control_room_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "single_bucket_finance_routing",
+        "module_name_dump_without_task_selection",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
   if (looksLikeScenarioProbabilityMissingInputs(text)) {
     return {
       ...safe,
@@ -658,6 +755,8 @@ export function hardenLocalBrainPlanForAsk(
         "macro_rates_inflation",
         "cross_asset_liquidity",
         "fx_currency_liquidity",
+        "fx_dollar",
+        "commodities_oil_gold",
         "etf_regime",
         "portfolio_risk_gates",
         "causal_map",
@@ -671,6 +770,8 @@ export function hardenLocalBrainPlanForAsk(
         "finance_framework_macro_rates_inflation_producer",
         "finance_framework_cross_asset_liquidity_producer",
         "finance_framework_fx_currency_liquidity_producer",
+        "finance_framework_fx_dollar_producer",
+        "finance_framework_commodities_oil_gold_producer",
         "finance_framework_etf_regime_producer",
         "finance_framework_portfolio_risk_gates_producer",
         "review_panel",
@@ -805,6 +906,8 @@ export function hardenLocalBrainPlanForAsk(
       task_family: "options_iv_event_risk_research_boundary",
       primary_modules: [
         "source_registry",
+        "options_volatility",
+        "event_driven",
         "company_fundamentals_value",
         "macro_rates_inflation",
         "etf_regime",
@@ -815,6 +918,8 @@ export function hardenLocalBrainPlanForAsk(
       supporting_modules: ["finance_learning_memory", "causal_map", "control_room_summary"],
       required_tools: [
         "source_registry_lookup",
+        "finance_framework_options_volatility_producer",
+        "finance_framework_event_driven_producer",
         "finance_framework_company_fundamentals_value_producer",
         "finance_framework_macro_rates_inflation_producer",
         "finance_framework_etf_regime_producer",
@@ -1437,9 +1542,11 @@ export function hardenLocalBrainPlanForAsk(
         "credit_liquidity",
         "cross_asset_liquidity",
         "fx_currency_liquidity",
+        "fx_dollar",
         "us_equity_market_structure",
         "global_index_regime",
         "etf_regime",
+        "technical_timing",
         "quant_math",
         "portfolio_risk_gates",
       ]),
@@ -1459,6 +1566,7 @@ export function hardenLocalBrainPlanForAsk(
         "finance_framework_credit_liquidity_producer",
         "finance_framework_cross_asset_liquidity_producer",
         "finance_framework_fx_currency_liquidity_producer",
+        "finance_framework_fx_dollar_producer",
         "finance_framework_us_equity_market_structure_producer",
         "finance_framework_global_index_regime_producer",
         "finance_framework_etf_regime_producer",
@@ -1506,7 +1614,9 @@ export function hardenLocalBrainPlanForAsk(
       primary_modules: [
         "etf_regime",
         "macro_rates_inflation",
+        "fx_dollar",
         "fx_currency_liquidity",
+        "commodities_oil_gold",
         "cross_asset_liquidity",
         "portfolio_risk_gates",
         "source_registry",
@@ -1518,6 +1628,8 @@ export function hardenLocalBrainPlanForAsk(
         "source_registry_lookup",
         "finance_framework_etf_regime_producer",
         "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_fx_dollar_producer",
+        "finance_framework_commodities_oil_gold_producer",
         "finance_framework_cross_asset_liquidity_producer",
         "finance_framework_portfolio_risk_gates_producer",
         "review_panel",
@@ -1916,6 +2028,27 @@ function inferFinanceModulesFromLocalKnowledgeText(text: string): string[] {
   }
   if (/(etf|qqq|spy|tlt|iwm|择时|timing|regime)/iu.test(text)) {
     modules.push("etf_regime");
+  }
+  if (
+    /(技术面|technical|均线|rsi|macd|趋势|trend|动量|momentum|breadth|择时|timing)/iu.test(text)
+  ) {
+    modules.push("technical_timing");
+  }
+  if (/(期权|options?|iv\b|implied vol|隐含波动|gamma|skew|vega|波动率曲面)/iu.test(text)) {
+    modules.push("options_volatility");
+  }
+  if (
+    /(大宗商品|commodity|commodities|原油|石油|crude|oil|黄金|gold|铜|copper|gld|dbc|uso|dba)/iu.test(
+      text,
+    )
+  ) {
+    modules.push("commodities_oil_gold");
+  }
+  if (/(美元|外汇|汇率|fx|dxy|uup|usd|cnh|cny|yen|日元|euro|欧元)/iu.test(text)) {
+    modules.push("fx_dollar");
+  }
+  if (/(事件|催化|财报日|fomc|cpi|ppi|earnings|event|catalyst|policy|地缘|突发)/iu.test(text)) {
+    modules.push("event_driven");
   }
   if (/(美股|us equities|us stocks?|nasdaq|s&p|spx|spy|qqq|iwm|nvda|msft|aapl)/iu.test(text)) {
     modules.push("us_equity_market_structure");

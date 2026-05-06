@@ -2,6 +2,64 @@ import { describe, expect, it } from "vitest";
 import { hardenLocalBrainPlanForAsk } from "../scripts/dev/local-brain-contracts.js";
 
 describe("hardenLocalBrainPlanForAsk", () => {
+  it("expands broad finance asks into dedicated module coverage", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "金融模块还不够。以后我要看美股、A股、指数、ETF、加密币、原油、黄金、美元、期权波动率、事件风险、技术择时、公司基本面、组合风险和量化。请先做完整模块地图，别把所有东西塞进宏观/ETF/组合三个桶。",
+      },
+    );
+
+    expect(plan.task_family).toBe("broad_finance_module_taxonomy_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "fx_dollar",
+        "etf_regime",
+        "global_index_regime",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "crypto_market_structure",
+        "commodities_oil_gold",
+        "options_volatility",
+        "event_driven",
+        "technical_timing",
+        "company_fundamentals_value",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.supporting_modules).toEqual(
+      expect.arrayContaining([
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "commodity_curve_roll_yield_and_inventory_inputs",
+        "options_iv_skew_gamma_and_event_calendar",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "latest_company_fundamental_inputs",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "technical_timing_not_standalone_alpha",
+        "sentiment_signal_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ]),
+    );
+    expect(plan.rejected_context).toContain("single_bucket_finance_routing");
+  });
+
   it("keeps learned-rule cross-market prompts out of the missing-source gate", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

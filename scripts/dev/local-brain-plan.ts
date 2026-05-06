@@ -21,6 +21,11 @@ const MODULE_TAXONOMY = [
   "us_equity_market_structure",
   "china_a_share_policy_flow",
   "crypto_market_structure",
+  "technical_timing",
+  "options_volatility",
+  "commodities_oil_gold",
+  "fx_dollar",
+  "event_driven",
   "company_fundamentals_value",
   "quant_math",
   "portfolio_risk_gates",
@@ -40,6 +45,7 @@ const CONTRACT_HINTS = [
   "If portfolio math inputs are missing, include missing_data position_weights_and_return_series exactly.",
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
   "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
+  "Options, commodities, FX, event risk, and technical timing must use their dedicated modules when mentioned; do not collapse them into generic macro or ETF labels.",
   "If the user asks to learn or install agent skills, include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
 ];
 

@@ -45,6 +45,11 @@ const MODULE_TAXONOMY = [
   "us_equity_market_structure",
   "china_a_share_policy_flow",
   "crypto_market_structure",
+  "technical_timing",
+  "options_volatility",
+  "commodities_oil_gold",
+  "fx_dollar",
+  "event_driven",
   "company_fundamentals_value",
   "quant_math",
   "portfolio_risk_gates",
@@ -66,6 +71,7 @@ const CONTRACT_HINTS = [
   "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
   "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
   "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
+  "Options, commodities, FX, event risk, and technical timing must use their dedicated modules when mentioned; do not collapse them into generic macro or ETF labels.",
   "Agent skill learning tasks must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
 ];
 
@@ -182,6 +188,49 @@ function parseArgs(args: string[]): CliOptions {
 }
 
 const EVAL_CASES: EvalCase[] = [
+  {
+    id: "broad_finance_module_taxonomy_coverage",
+    userAsk:
+      "现在金融模块还不够，我以后会看美股、A股、指数、ETF、加密币、原油、黄金、美元、期权波动率、事件风险、技术择时、公司基本面、组合风险和量化。请先做完整模块地图，别把所有东西都塞进宏观/ETF/组合三个桶。",
+    sourceSummary:
+      "broad module taxonomy request requiring the local brain to expose dedicated finance modules without turning the answer into trade advice.",
+    requiredModules: [
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "cross_asset_liquidity",
+      "fx_currency_liquidity",
+      "fx_dollar",
+      "etf_regime",
+      "global_index_regime",
+      "us_equity_market_structure",
+      "china_a_share_policy_flow",
+      "crypto_market_structure",
+      "commodities_oil_gold",
+      "options_volatility",
+      "event_driven",
+      "technical_timing",
+      "company_fundamentals_value",
+      "quant_math",
+      "portfolio_risk_gates",
+      "source_registry",
+      "review_panel",
+    ],
+    minModuleMatches: 17,
+    requiredMissingData: [
+      "fresh_market_data_snapshot",
+      "source_timestamp_and_vendor",
+      "position_weights_and_return_series",
+      "commodity_curve_roll_yield_and_inventory_inputs",
+      "options_iv_skew_gamma_and_event_calendar",
+      "price_volume_breadth_and_technical_regime_inputs",
+      "latest_company_fundamental_inputs",
+    ],
+    requiredRiskBoundaries: [
+      "technical_timing_not_standalone_alpha",
+      "risk_gate_before_action_language",
+      "no_trade_advice",
+    ],
+  },
   {
     id: "portfolio_mixed_q_t_nvda",
     userAsk:
@@ -1395,6 +1444,8 @@ const EVAL_CASES: EvalCase[] = [
       "options IV and earnings-event risk should be treated as research context, not an options trade recommendation.",
     requiredModules: [
       "source_registry",
+      "options_volatility",
+      "event_driven",
       "company_fundamentals_value",
       "macro_rates_inflation",
       "etf_regime",
@@ -1425,6 +1476,8 @@ const EVAL_CASES: EvalCase[] = [
       "macro_rates_inflation",
       "cross_asset_liquidity",
       "fx_currency_liquidity",
+      "fx_dollar",
+      "commodities_oil_gold",
       "etf_regime",
       "portfolio_risk_gates",
       "causal_map",
@@ -1566,6 +1619,7 @@ function mergeUniqueStrings(...groups: readonly string[][]): string[] {
 }
 
 const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
+  ["broad_finance_module_taxonomy_coverage", ["portfolio_mixed_q_t_nvda"]],
   ["local_memory_knowledge_activation", ["portfolio_mixed_q_t_nvda"]],
   [
     "human_brain_finance_decomposition",

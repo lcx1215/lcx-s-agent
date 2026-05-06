@@ -5,6 +5,42 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("local-brain-distill-eval", () => {
+  it("covers broad finance module taxonomy beyond the old core buckets", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "broad_finance_module_taxonomy_coverage",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary).toMatchObject({ passed: 2, total: 2, promotionReady: true });
+    expect(payload.hierarchy).toMatchObject({
+      requestedCaseIds: ["broad_finance_module_taxonomy_coverage"],
+      autoIncludedPrerequisiteCaseIds: ["portfolio_mixed_q_t_nvda"],
+    });
+  });
+
   it("runs simple prerequisite cases before complex commodity evals", () => {
     const result = spawnSync(
       process.execPath,

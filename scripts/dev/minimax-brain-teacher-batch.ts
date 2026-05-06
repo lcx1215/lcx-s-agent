@@ -71,6 +71,11 @@ const MODULE_TAXONOMY = [
   "us_equity_market_structure",
   "china_a_share_policy_flow",
   "crypto_market_structure",
+  "technical_timing",
+  "options_volatility",
+  "commodities_oil_gold",
+  "fx_dollar",
+  "event_driven",
   "company_fundamentals_value",
   "quant_math",
   "portfolio_risk_gates",
@@ -86,6 +91,13 @@ const MODULE_TAXONOMY = [
 ];
 
 const TEACHER_PROMPTS: TeacherPrompt[] = [
+  {
+    id: "broad_finance_module_taxonomy",
+    userMessage:
+      "以后我要看美股、A股、指数、ETF、加密币、原油、黄金、美元、期权波动率、事件风险、技术择时、公司基本面、组合风险和量化。先做完整金融模块地图，别把所有东西都塞进宏观/ETF/组合三个桶。",
+    sourceSummary:
+      "broad finance module taxonomy request; research-only; require dedicated modules and risk boundaries.",
+  },
   {
     id: "multi_asset_macro_portfolio_risk",
     userMessage:
