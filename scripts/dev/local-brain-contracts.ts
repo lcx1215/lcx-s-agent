@@ -102,7 +102,7 @@ function textOf(input: LocalBrainContractInput): string {
 
 function looksLikeAmbiguousRepeatOnly(text: string): boolean {
   const normalized = text.replace(/\s+/gu, " ").trim();
-  return /^(重新来一遍|重来一遍|再来一遍|从头来|从头开始|redo|restart|again)[。.!！?？\s]*$/iu.test(
+  return /^(重新来一遍|重来一遍|再来一遍|从头来|从头开始|继续刚才那个|继续上次那个|接着刚才那个|接着上次那个|刚才那个|上面那个|上一条|继续|接着|redo|restart|again)(?:，?别啰嗦|，?简单点|，?快点)?[。.!！?？\s]*$/iu.test(
     normalized,
   );
 }
@@ -110,6 +110,20 @@ function looksLikeAmbiguousRepeatOnly(text: string): boolean {
 function looksLikeContextReset(text: string): boolean {
   return /(清除上下文|清空上下文|别接上个任务|不要接上个任务|换个题|fresh start|reset context|new task)/iu.test(
     text,
+  );
+}
+
+function looksLikeContextResetWithNewSubject(text: string): boolean {
+  const match =
+    /(清除上下文|清空上下文|别接上个任务|不要接上个任务|别接上文|换个题|fresh start|reset context|new task)[：:，,。\s-]*(.+)$/iu.exec(
+      text.trim(),
+    );
+  const subject = match?.[2]?.trim() ?? "";
+  return (
+    subject.length >= 8 &&
+    /(qqq|spy|tlt|nvda|mchi|gld|dbc|美股|a股|沪深|指数|人民币|汇率|美元|利率|黄金|现金|仓位|组合|portfolio|risk|风险|宏观|流动性)/iu.test(
+      subject,
+    )
   );
 }
 
@@ -137,6 +151,26 @@ function looksLikeExternalCoverage(text: string): boolean {
       text,
     ) &&
     /(覆盖|coverage|sample limits?|sampling limits?|实际读过|读过哪些|what was actually read|不要说全覆盖|别说全覆盖|未覆盖范围|source limits?|全覆盖|完整覆盖|exhaustive|comprehensive)/iu.test(
+      text,
+    )
+  );
+}
+
+function looksLikeCommodityFrameworkLearning(text: string): boolean {
+  return (
+    !looksLikeEtfAsCompanyFundamentalTrap(text) &&
+    !looksLikePaperLearningWithSource(text) &&
+    /(大宗商品|commodity|commodities|原油|石油|crude|oil|黄金|gold|铜|copper|gld|dbc|uso|dba)/iu.test(
+      text,
+    ) &&
+    /(学习|学会|框架|模块|证据|缺口|research framework|应用|内化|沉淀)/iu.test(text)
+  );
+}
+
+function looksLikeEtfAsCompanyFundamentalTrap(text: string): boolean {
+  return (
+    /\b(GLD|QQQ|SPY|TLT|IEF|IWM|XLK|XLF|HYG|UUP|MCHI|DBC|USO|DBA)\b/iu.test(text) &&
+    /(收入质量|客户集中度|revenue quality|customer concentration|client concentration|ev\/ebitda|毛利率|利润率|13f holder|filing|10-q|10-k)/iu.test(
       text,
     )
   );
@@ -272,7 +306,7 @@ function looksLikeCrossMarketFinance(text: string): boolean {
   ].filter(Boolean).length;
   return (
     groups >= 2 &&
-    /(连贯|跨市场|一起|全局|整体|框架|拆解|decompose|analysis|research|分析|研究|风险|未来|portfolio|asset allocation|资产)/iu.test(
+    /(连贯|跨市场|一起|全局|整体|框架|拆解|怎么拆|decompose|analysis|research|分析|研究|风险|未来|仓位|portfolio|asset allocation|资产|谁更该冲|哪个更该冲|直接告诉|买哪个|卖哪个|该买|该卖|冲不冲)/iu.test(
       text,
     )
   );
@@ -373,6 +407,10 @@ function looksLikeCryptoLeverageBoundary(text: string): boolean {
   );
 }
 
+function mentionsCryptoMarket(text: string): boolean {
+  return /(加密|crypto|bitcoin|btc|ethereum|eth|stablecoin|usdt|链上|交易所储备)/iu.test(text);
+}
+
 function looksLikeSentimentMarketModuleLearning(text: string): boolean {
   return (
     /(情绪|sentiment|news sentiment|social sentiment|舆情|twitter|x.com|reddit|新闻情绪)/iu.test(
@@ -420,8 +458,8 @@ export function hardenLocalBrainPlanForAsk(
     return {
       ...safe,
       task_family: "ambiguous_repeat_without_current_subject",
-      primary_modules: ["control_room_summary"],
-      supporting_modules: ["ops_audit"],
+      primary_modules: ["ops_audit", "agent_workflow_memory", "control_room_summary"],
+      supporting_modules: ["review_panel"],
       required_tools: ["review_panel"],
       missing_data: ["current_subject_or_original_request"],
       risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
@@ -434,7 +472,7 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
-  if (looksLikeContextReset(text)) {
+  if (looksLikeContextReset(text) && !looksLikeContextResetWithNewSubject(input.ask)) {
     return {
       ...safe,
       task_family: "context_reset_new_subject_required",
@@ -466,6 +504,60 @@ export function hardenLocalBrainPlanForAsk(
         "old_lark_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
+      ],
+    };
+  }
+
+  if (looksLikeCommodityFrameworkLearning(text)) {
+    return {
+      ...safe,
+      task_family: "commodity_macro_framework_learning_planning",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "macro_rates_inflation",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "etf_regime",
+        "portfolio_risk_gates",
+        "causal_map",
+        "review_panel",
+      ],
+      supporting_modules: ["quant_math", "control_room_summary"],
+      required_tools: [
+        "artifact_memory_recall",
+        "source_registry_lookup",
+        "finance_learning_capability_apply",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_cross_asset_liquidity_producer",
+        "finance_framework_fx_currency_liquidity_producer",
+        "finance_framework_etf_regime_producer",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "source_url_or_local_source_path",
+        "actual_reading_scope_receipt",
+        "fresh_market_data_snapshot",
+        "position_weights_and_return_series",
+        "commodity_curve_roll_yield_and_inventory_inputs",
+        "regime_specificity_and_invalidation_evidence",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_live_data",
+        "commodity_framework_not_trade_signal",
+        "no_trade_advice",
+      ],
+      next_step:
+        "treat_commodities_as_macro_supply_demand_curve_and_portfolio_risk_framework_require_sources_fresh_inputs_roll_yield_and_review_before_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "language_routing_candidate_artifacts",
+        "commodity_term_dump_without_application_path",
+        "trade_recommendation_without_evidence",
       ],
     };
   }
@@ -1218,6 +1310,53 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
+  if (looksLikeEtfAsCompanyFundamentalTrap(text)) {
+    return {
+      ...safe,
+      task_family: "etf_fund_structure_research_planning",
+      primary_modules: [
+        "etf_regime",
+        "macro_rates_inflation",
+        "fx_currency_liquidity",
+        "cross_asset_liquidity",
+        "portfolio_risk_gates",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["finance_learning_memory", "causal_map", "quant_math"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_framework_etf_regime_producer",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_cross_asset_liquidity_producer",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "fund_or_etf_prospectus_or_fact_sheet",
+        "fund_holdings_nav_or_index_methodology_context",
+        "fresh_market_data_snapshot",
+        "current_position_weights",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_live_data",
+        "no_trade_advice",
+      ],
+      next_step:
+        "treat_the_symbol_as_fund_or_etf_structure_research_require_fact_sheet_holdings_nav_or_methodology_context_and_reject_company_fundamental_labels",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "single_company_fundamental_labels_for_etf",
+        "company_revenue_quality_for_fund",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
   if (looksLikePostMortemCorrection(text)) {
     return {
       ...safe,
@@ -1303,15 +1442,20 @@ export function hardenLocalBrainPlanForAsk(
     return {
       ...safe,
       task_family: "cross_market_finance_research_planning",
-      primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
-        "macro_rates_inflation",
-        "credit_liquidity",
-        "cross_asset_liquidity",
-        "fx_currency_liquidity",
-        ...inferCrossMarketFinanceModules(text),
-        "quant_math",
-        "portfolio_risk_gates",
-      ]),
+      primary_modules: mergeUnique(
+        mentionsCryptoMarket(input.ask)
+          ? arrayValue(safe.primary_modules)
+          : withoutValues(arrayValue(safe.primary_modules), ["crypto_market_structure"]),
+        [
+          "macro_rates_inflation",
+          "credit_liquidity",
+          "cross_asset_liquidity",
+          "fx_currency_liquidity",
+          ...inferCrossMarketFinanceModules(input.ask),
+          "quant_math",
+          "portfolio_risk_gates",
+        ],
+      ),
       supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
         "causal_map",
         "finance_learning_memory",
@@ -1319,51 +1463,87 @@ export function hardenLocalBrainPlanForAsk(
         "review_panel",
         "control_room_summary",
       ]),
-      required_tools: mergeUnique(arrayValue(safe.required_tools), [
-        "artifact_memory_recall",
-        "finance_learning_capability_apply",
-        "source_registry_lookup",
-        "finance_framework_macro_rates_inflation_producer",
-        "finance_framework_credit_liquidity_producer",
-        "finance_framework_cross_asset_liquidity_producer",
-        "finance_framework_fx_currency_liquidity_producer",
-        "finance_framework_us_equity_market_structure_producer",
-        "finance_framework_china_a_share_policy_flow_producer",
-        "finance_framework_global_index_regime_producer",
-        "finance_framework_crypto_market_structure_producer",
-        "quant_math",
-        "finance_framework_portfolio_risk_gates_producer",
-        "review_panel",
-      ]),
-      missing_data: mergeUnique(arrayValue(safe.missing_data), [
-        "memory_recall_scope_or_relevant_receipts",
-        "fresh_market_data_snapshot",
-        "us_equity_breadth_earnings_and_valuation_inputs",
-        "china_a_share_policy_liquidity_and_northbound_inputs",
-        "index_constituents_weights_and_technical_regime_inputs",
-        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
-        "fx_dollar_yuan_and_global_liquidity_inputs",
-        "position_weights_and_return_series",
-        "portfolio_weights_and_risk_limits",
-      ]),
-      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
-        "research_only",
-        "no_execution_authority",
-        "evidence_required",
-        "no_model_math_guessing",
-        "no_high_leverage_crypto",
-        "no_unverified_cross_market_claims",
-        "do_not_promote_unverified_memory_claims",
-        "risk_gate_before_action_language",
-      ]),
+      required_tools: mergeUnique(
+        mentionsCryptoMarket(input.ask)
+          ? arrayValue(safe.required_tools)
+          : withoutValues(arrayValue(safe.required_tools), [
+              "finance_framework_crypto_market_structure_producer",
+            ]),
+        [
+          "artifact_memory_recall",
+          "finance_learning_capability_apply",
+          "source_registry_lookup",
+          "finance_framework_macro_rates_inflation_producer",
+          "finance_framework_credit_liquidity_producer",
+          "finance_framework_cross_asset_liquidity_producer",
+          "finance_framework_fx_currency_liquidity_producer",
+          "finance_framework_us_equity_market_structure_producer",
+          "finance_framework_china_a_share_policy_flow_producer",
+          "finance_framework_global_index_regime_producer",
+          ...(mentionsCryptoMarket(input.ask)
+            ? ["finance_framework_crypto_market_structure_producer"]
+            : []),
+          "quant_math",
+          "finance_framework_portfolio_risk_gates_producer",
+          "review_panel",
+        ],
+      ),
+      missing_data: mergeUnique(
+        withoutValues(arrayValue(safe.missing_data), [
+          "new_subject_or_original_request",
+          "current_subject_or_original_request",
+          ...(mentionsCryptoMarket(input.ask)
+            ? []
+            : ["crypto_liquidity_volatility_custody_and_regulatory_inputs"]),
+        ]),
+        [
+          "memory_recall_scope_or_relevant_receipts",
+          "fresh_market_data_snapshot",
+          "us_equity_breadth_earnings_and_valuation_inputs",
+          "china_a_share_policy_liquidity_and_northbound_inputs",
+          "index_constituents_weights_and_technical_regime_inputs",
+          ...(mentionsCryptoMarket(input.ask)
+            ? ["crypto_liquidity_volatility_custody_and_regulatory_inputs"]
+            : []),
+          "fx_dollar_yuan_and_global_liquidity_inputs",
+          "position_weights_and_return_series",
+          "portfolio_weights_and_risk_limits",
+        ],
+      ),
+      risk_boundaries: mergeUnique(
+        mentionsCryptoMarket(input.ask)
+          ? cleanRiskBoundaries(safe.risk_boundaries)
+          : withoutValues(cleanRiskBoundaries(safe.risk_boundaries), ["no_high_leverage_crypto"]),
+        [
+          "research_only",
+          "no_execution_authority",
+          "evidence_required",
+          "no_model_math_guessing",
+          ...(mentionsCryptoMarket(input.ask) ? ["no_high_leverage_crypto"] : []),
+          "no_unverified_cross_market_claims",
+          "do_not_promote_unverified_memory_claims",
+          "risk_gate_before_action_language",
+          "no_trade_advice",
+        ],
+      ),
       next_step:
         "recall_local_finance_rules_then_build_cross_market_causal_map_collect_fresh_inputs_run_quant_and_review_before_control_room_summary",
-      rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
-        "old_lark_conversation_history",
-        "language_routing_candidate_artifacts",
-        "unsupported_execution_language",
-        "execution_or_high_leverage_crypto_instruction",
-      ]),
+      rejected_context: mergeUnique(
+        mentionsCryptoMarket(input.ask)
+          ? arrayValue(safe.rejected_context)
+          : withoutValues(arrayValue(safe.rejected_context), [
+              "execution_or_high_leverage_crypto_instruction",
+            ]),
+        [
+          "old_lark_conversation_history",
+          "language_routing_candidate_artifacts",
+          "unsupported_execution_language",
+          ...(mentionsCryptoMarket(input.ask)
+            ? ["execution_or_high_leverage_crypto_instruction"]
+            : []),
+          "trade_recommendation_without_evidence",
+        ],
+      ),
     };
   }
 
@@ -1561,7 +1741,7 @@ function inferFinanceModulesFromLocalKnowledgeText(text: string): string[] {
   ) {
     modules.push("global_index_regime");
   }
-  if (/(加密|crypto|bitcoin|btc|ethereum|eth|stablecoin|usdt|链上|交易所储备)/iu.test(text)) {
+  if (mentionsCryptoMarket(text)) {
     modules.push("crypto_market_structure");
   }
   if (/(nvda|公司|基本面|fundamental|capex|估值|revenue|earnings|ai capex)/iu.test(text)) {

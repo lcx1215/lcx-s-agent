@@ -310,6 +310,142 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("routes terse commodity learning into a usable macro portfolio framework", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "学习大宗商品。别给我甩一堆术语，先拆脑内模块，告诉我需要哪些证据和缺口，后面要能用于 QQQ/TLT/GLD/DBC 组合。",
+        sourceSummary:
+          "fresh torture test; no live market data supplied; research-only; require missing data and review before visible reply",
+      },
+    );
+
+    expect(plan.task_family).toBe("commodity_macro_framework_learning_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "finance_learning_memory",
+        "source_registry",
+        "macro_rates_inflation",
+        "cross_asset_liquidity",
+        "etf_regime",
+        "portfolio_risk_gates",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "source_url_or_local_source_path",
+        "fresh_market_data_snapshot",
+        "position_weights_and_return_series",
+        "commodity_curve_roll_yield_and_inventory_inputs",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_execution_authority", "no_trade_advice"]),
+    );
+  });
+
+  it("treats ETF company-metric traps as fund-structure research", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "你给我研究一下 GLD 的收入质量、客户集中度、EV/EBITDA，还有它怎么影响我 QQQ/TLT 组合，research only。",
+      },
+    );
+
+    expect(plan.task_family).toBe("etf_fund_structure_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "etf_regime",
+        "macro_rates_inflation",
+        "cross_asset_liquidity",
+        "portfolio_risk_gates",
+        "source_registry",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "fund_or_etf_prospectus_or_fact_sheet",
+        "fund_holdings_nav_or_index_methodology_context",
+        "fresh_market_data_snapshot",
+      ]),
+    );
+    expect(plan.rejected_context).toContain("single_company_fundamental_labels_for_etf");
+  });
+
+  it("does not ask for a new task when reset wording includes a concrete finance subject", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "换个题，别接上文：人民币突然走弱、A股政策资金很强、美债利率又上去，这对 QQQ、MCHI、沪深300、黄金和现金仓位怎么拆？别给交易建议。",
+      },
+    );
+
+    expect(plan.task_family).toBe("cross_market_finance_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "fx_currency_liquidity",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "cross_asset_liquidity",
+        "portfolio_risk_gates",
+        "etf_regime",
+      ]),
+    );
+    expect(plan.primary_modules).not.toContain("crypto_market_structure");
+    expect(plan.required_tools).not.toContain("finance_framework_crypto_market_structure_producer");
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining(["fresh_market_data_snapshot", "position_weights_and_return_series"]),
+    );
+    expect(plan.missing_data).not.toContain("new_subject_or_original_request");
+    expect(plan.missing_data).not.toContain(
+      "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["no_trade_advice", "no_unverified_cross_market_claims"]),
+    );
+    expect(plan.risk_boundaries).not.toContain("no_high_leverage_crypto");
+  });
+
+  it("turns repeat-only Lark fragments into context-pollution clarification", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "继续刚才那个，别啰嗦。",
+      },
+    );
+
+    expect(plan.task_family).toBe("ambiguous_repeat_without_current_subject");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining(["ops_audit", "agent_workflow_memory", "control_room_summary"]),
+    );
+    expect(plan.missing_data).toContain("current_subject_or_original_request");
+    expect(plan.next_step).toBe("ask_user_for_current_subject_before_reusing_prior_context");
+  });
+
+  it("adds no-trade boundary to direct cross-market trade-pressure wording", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "BTC 和 NVDA 这两个谁更该冲？你别装，直接告诉我，但不要违法。",
+      },
+    );
+
+    expect(plan.task_family).toBe("cross_market_finance_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "crypto_market_structure",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["no_execution_authority", "no_trade_advice"]),
+    );
+    expect(plan.rejected_context).toContain("trade_recommendation_without_evidence");
+  });
+
   it("keeps valuation compression linked to macro and ETF regime", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
