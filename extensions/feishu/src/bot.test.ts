@@ -7916,7 +7916,7 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("任务类型: protocol_truth_surface");
+    expect(replyText).toContain("任务类型: 协议真相检查入口 (protocol_truth_surface)");
     expect(replyText).toContain("还缺来源: 是");
     expect(replyText).toContain("失败原因: 没有提供链接、本地文件或完整来源");
     expect(replyText).toContain("下一步:");

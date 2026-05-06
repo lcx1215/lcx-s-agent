@@ -643,8 +643,32 @@ describe("normalizeFeishuDisplayText", () => {
         "当前状态",
         "- 失败原因: 学习审阅超过前台等待时间 (learning_council_reply_timeout_after_5000ms)",
         "- 前台状态: 前台已经先告诉你超时，后台还会补发结果",
-        "- 目标工作面: learning_command",
+        "- 目标工作面: 学习任务入口 (learning_command)",
         "- 边界: do not treat this turn as 已通过验证，可作为研究能力使用 or durable learning.",
+      ].join("\n"),
+    );
+  });
+
+  it("turns degraded learning council receipts into readable Lark text", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        [
+          "Learning council run: partial / degraded execution.",
+          "## MiniMax challenge",
+          "Lane receipt: contract=challenge (configured role: minimax); runtime provider=minimax-portal; runtime model=MiniMax-M2.7",
+          "- primary_run_failed: provider timeout",
+          "- rescue_coverage: kimi supplied a fallback contribution for minimax.",
+          "- status: low-fidelity for this role in this turn.",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "学习审阅只部分完成：有通道降级或失败，结论只能低可信度使用。",
+        "MiniMax 反方审阅",
+        "- 审阅通道：能力=challenge；角色=minimax；运行=minimax-portal/MiniMax-M2.7",
+        "- 主通道失败: provider timeout",
+        "- 救援覆盖: kimi 已为 minimax 提供兜底内容。",
+        "- 状态: 低可信度 本轮这个通道.",
       ].join("\n"),
     );
   });

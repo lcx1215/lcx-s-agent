@@ -53,8 +53,19 @@ function humanizeFeishuStatusValue(value: string): string {
     no_application_ready_learning_receipt: "没有找到可证明已经学会的回执",
     missing_internalized_rule_evidence: "没有找到可证明规则已内化的证据",
     no_finance_learning_retrieval_receipts: "没有找到金融学习检索回执",
+    learning_command: "学习任务入口 (learning_command)",
+    control_room: "控制室 (control_room)",
+    knowledge_maintenance: "知识维护入口 (knowledge_maintenance)",
+    ops_audit: "运维审计入口 (ops_audit)",
+    technical_daily: "技术面工作面 (technical_daily)",
+    fundamental_research: "基本面研究工作面 (fundamental_research)",
+    watchtower: "系统观察工作面 (watchtower)",
+    protocol_truth_surface: "协议真相检查入口 (protocol_truth_surface)",
   };
   if (known[trimmed]) {
+    if (known[trimmed].includes(`(${trimmed})`)) {
+      return known[trimmed];
+    }
     if (
       trimmed === "application_ready" ||
       trimmed === "not_application_ready" ||
@@ -74,7 +85,27 @@ function humanizeFeishuStatusValue(value: string): string {
 
 function humanizeFeishuInlineText(text: string): string {
   return text
+    .replace(
+      /\b([a-z]+)\s+supplied a fallback contribution for\s+([a-z]+)\.?/giu,
+      (_match, helper: string, target: string) => `${helper} 已为 ${target} 提供兜底内容。`,
+    )
     .replace(/Learning council run:/giu, "学习流程:")
+    .replace(/\bLane receipt:\s*/giu, "审阅通道回执：")
+    .replace(/\bprimary_run_failed\b/giu, "主通道失败")
+    .replace(/\brun_failed\b/giu, "运行失败")
+    .replace(/\brescue_coverage\b/giu, "救援覆盖")
+    .replace(/\blow-fidelity\b/giu, "低可信度")
+    .replace(/\bpartial \/ degraded execution\b/giu, "部分完成/降级执行")
+    .replace(
+      /\bfull three-model execution completed with low-fidelity fact warnings\b/giu,
+      "三模型审阅已完成，但事实证据可信度偏低",
+    )
+    .replace(/\bfull three-model execution completed\b/giu, "三模型审阅已完成")
+    .replace(/\bconfigured role\b/giu, "配置角色")
+    .replace(/\bruntime provider\b/giu, "运行供应商")
+    .replace(/\bruntime model\b/giu, "运行模型")
+    .replace(/\bcontract=/giu, "能力契约=")
+    .replace(/\bfor this role in this turn\b/giu, "本轮这个通道")
     .replace(/\bapplication_ready\b/giu, "已通过验证，可作为研究能力使用")
     .replace(/\bnot_application_ready\b/giu, "还没证明学进去了")
     .replace(/\bfailedReason\b/gu, "失败原因")
@@ -94,6 +125,9 @@ function humanizeFeishuVisibleLine(line: string): string {
     "Timebox status": "限时学习状态",
     "Market Intelligence Packet": "市场情报包",
     "Kimi synthesis": "Kimi 综合判断",
+    "MiniMax audit": "MiniMax 审阅",
+    "MiniMax challenge": "MiniMax 反方审阅",
+    "DeepSeek extraction": "DeepSeek 信息抽取",
     Keep: "保留结论",
   };
   if (headingLabels[heading]) {
@@ -124,12 +158,33 @@ function humanizeFeishuVisibleLine(line: string): string {
   if (/^Learning council run:\s*full three-model execution completed\.?$/iu.test(trimmed)) {
     return "学习审阅已完成。";
   }
+  if (
+    /^Learning council run:\s*full three-model execution completed with low-fidelity fact warnings\.?$/iu.test(
+      trimmed,
+    )
+  ) {
+    return "学习审阅已完成，但其中有事实证据可信度偏低的提醒。";
+  }
+  if (/^Learning council run:\s*partial \/ degraded execution\.?$/iu.test(trimmed)) {
+    return "学习审阅只部分完成：有通道降级或失败，结论只能低可信度使用。";
+  }
   if (/^Status\s*-?$/iu.test(trimmed)) {
     return "当前状态";
   }
+  const laneReceiptMatch = trimmed.match(
+    /^Lane receipt:\s*contract=([^;]+?)(?:\s*\(configured role:\s*([^)]+)\))?;\s*runtime provider=([^;]+);\s*runtime model=(.+)$/iu,
+  );
+  if (laneReceiptMatch) {
+    const capability = laneReceiptMatch[1]!.trim();
+    const role = laneReceiptMatch[2]?.trim();
+    const provider = laneReceiptMatch[3]!.trim();
+    const model = laneReceiptMatch[4]!.trim();
+    const rolePart = role ? `；角色=${role}` : "";
+    return `- 审阅通道：能力=${capability}${rolePart}；运行=${provider}/${model}`;
+  }
 
   const keyValueMatch = trimmed.match(
-    /^(?:-\s*)?(failedReason|foregroundStatus|originalMessageId|messageId|family|targetSurface|effectiveSurface|source_required|learningInternalizationStatus|handoff receipt|proof|next step|boundary|Boundary)\s*[:=]\s*(.+)$/iu,
+    /^(?:-\s*)?(failedReason|foregroundStatus|originalMessageId|messageId|family|targetSurface|effectiveSurface|source_required|learningInternalizationStatus|handoff receipt|proof|next step|boundary|Boundary|primary_run_failed|run_failed|rescue_coverage|status)\s*[:=]\s*(.+)$/iu,
   );
   if (keyValueMatch) {
     const rawKey = keyValueMatch[1]!.toLowerCase();
@@ -148,6 +203,10 @@ function humanizeFeishuVisibleLine(line: string): string {
       proof: "证据",
       "next step": "下一步",
       boundary: "边界",
+      primary_run_failed: "主通道失败",
+      run_failed: "运行失败",
+      rescue_coverage: "救援覆盖",
+      status: "状态",
     };
     const value =
       rawKey === "source_required"
