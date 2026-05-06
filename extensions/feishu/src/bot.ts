@@ -1134,23 +1134,44 @@ function resolveFeishuLearningCouncilVisibleTimeoutMs(): number {
 function renderFeishuLearningCouncilVisibleTimeoutReply(params: {
   timeoutMs: number;
   messageId: string;
+  userMessage?: string;
 }): string {
+  const topic = summarizeFeishuLearningVisibleTopic(params.userMessage);
   return [
-    "Learning council run: delayed / no visible completion yet.",
+    `收到，已进入学习流程：${topic}。`,
     "",
-    "## Status",
-    "- The Lark learning-council lane was entered, but the council did not produce a final visible reply before the foreground timeout.",
+    "现在还不能说已经学完：后台学习和审阅还没在前台等待时间内完成。",
+    "我不会把未完成的学习包装成结论，也不会写入 application_ready。",
+    "后台如果完成，会再补发一条完成版；如果失败，会留下失败原因。",
+    "",
+    "## 证据",
     `- failedReason: learning_council_reply_timeout_after_${params.timeoutMs}ms`,
     `- messageId: ${params.messageId}`,
     "",
-    "## Boundary",
-    "- Do not treat this turn as application_ready.",
-    "- Do not promote lessons from this turn until a later receipt proves the council completed and the output was reviewed.",
-    "- This is a foreground reliability failure, not trading advice and not execution approval.",
-    "",
-    "## Next step",
-    "- Inspect provider/lane logs and rerun the same request after the slow or stuck lane is fixed.",
+    "边界：这是 research-only 学习任务，没有交易建议，也没有执行权限。",
   ].join("\n");
+}
+
+function summarizeFeishuLearningVisibleTopic(userMessage: string | undefined): string {
+  const normalized = (userMessage ?? "")
+    .replace(/<at\s+[^>]*>.*?<\/at>/giu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!normalized) {
+    return "这个主题";
+  }
+  const topicPatterns = [
+    /(?:今天|现在|接下来)?\s*(?:学习|研究|补|看|读)\s*([^，。；;,.!?！？]{1,36})/iu,
+    /([^，。；;,.!?！？]{1,36})\s*(?:的知识|知识|框架|资料|论文)/iu,
+  ];
+  for (const pattern of topicPatterns) {
+    const match = normalized.match(pattern);
+    const topic = match?.[1]?.trim();
+    if (topic) {
+      return topic;
+    }
+  }
+  return normalized.length > 36 ? `${normalized.slice(0, 36)}...` : normalized;
 }
 
 async function runFeishuLearningCouncilWithVisibleTimeout(
@@ -1191,6 +1212,7 @@ async function runFeishuLearningCouncilWithVisibleTimeout(
         text: renderFeishuLearningCouncilVisibleTimeoutReply({
           timeoutMs,
           messageId: params.messageId,
+          userMessage: params.userMessage,
         }),
         completion: councilRun,
       });

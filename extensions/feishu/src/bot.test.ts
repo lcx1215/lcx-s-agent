@@ -6778,7 +6778,111 @@ describe("learning council routing", () => {
       text: expect.stringContaining("failedReason: learning_council_reply_timeout_after_5ms"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("Do not treat this turn as application_ready."),
+      text: expect.stringContaining("不会把未完成的学习包装成结论"),
+    });
+  });
+
+  it("keeps short learning timeout replies readable for commodity learning requests", async () => {
+    process.env.OPENCLAW_FEISHU_LEARNING_COUNCIL_REPLY_TIMEOUT_MS = "5";
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockLearningCommandApiRoute("API planner selected commodities learning council timeout path");
+    mockRunFeishuLearningCouncil.mockReturnValue(new Promise(() => {}));
+
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: vi.fn(),
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-learning-readable-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-commodity-learning-timeout",
+          chat_id: "oc-learning",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "今天学习大宗商品的知识",
+          }),
+        },
+      },
+    });
+
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("收到，已进入学习流程：大宗商品的知识。"),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("后台如果完成，会再补发一条完成版"),
+    });
+    expect(baseDispatcher.sendFinalReply).not.toHaveBeenCalledWith({
+      text: expect.stringContaining("Learning council run: delayed"),
     });
   });
 
