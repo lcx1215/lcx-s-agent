@@ -6782,6 +6782,131 @@ describe("learning council routing", () => {
     });
   });
 
+  it("sends a delayed completion reply when learning council finishes after the visible timeout", async () => {
+    process.env.OPENCLAW_FEISHU_LEARNING_COUNCIL_REPLY_TIMEOUT_MS = "5";
+    let resolveCouncil: (value: string) => void = () => {};
+    const delayedCouncil = new Promise<string>((resolve) => {
+      resolveCouncil = resolve;
+    });
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockLearningCommandApiRoute("API planner selected delayed learning council completion path");
+    mockRunFeishuLearningCouncil.mockReturnValue(delayedCouncil);
+
+    const mockDispatchReplyFromConfig = vi.fn();
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "openclaw-learning-lane-delayed-completion-"),
+    );
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-learning-delayed",
+          chat_id: "oc-learning",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "学习委员会验收：如果超时后完成，要补发完成版",
+          }),
+        },
+      },
+    });
+
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("learning_council_reply_timeout_after_5ms"),
+    });
+
+    resolveCouncil(
+      "Learning council run: full three-model execution completed.\n\n## Keep\n- delayed insight",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockSendMessageFeishu).toHaveBeenCalledWith({
+      cfg,
+      to: "chat:oc-learning",
+      text: expect.stringContaining("Learning council delayed completion arrived."),
+      replyToMessageId: "msg-learning-delayed",
+      accountId: "default",
+    });
+    expect(mockSendMessageFeishu).toHaveBeenCalledWith({
+      cfg,
+      to: "chat:oc-learning",
+      text: expect.stringContaining("delayed insight"),
+      replyToMessageId: "msg-learning-delayed",
+      accountId: "default",
+    });
+  });
+
   it("runs the finance learning pipeline directly for concrete market capability learning with a local source", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),

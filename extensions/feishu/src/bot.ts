@@ -1105,10 +1105,17 @@ type FeishuFinalTextSendResult = {
   counts: { final: number };
 };
 
-type FeishuLearningCouncilVisibleRun =
+type FeishuLearningCouncilCompletedVisibleRun =
   | { status: "completed"; text: string }
-  | { status: "failed"; text: string }
-  | { status: "timed_out"; text: string };
+  | { status: "failed"; text: string };
+
+type FeishuLearningCouncilVisibleRun =
+  | FeishuLearningCouncilCompletedVisibleRun
+  | {
+      status: "timed_out";
+      text: string;
+      completion: Promise<FeishuLearningCouncilCompletedVisibleRun>;
+    };
 
 const DEFAULT_FEISHU_LEARNING_COUNCIL_VISIBLE_TIMEOUT_MS = 90_000;
 
@@ -1153,13 +1160,13 @@ async function runFeishuLearningCouncilWithVisibleTimeout(
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const councilRun = runFeishuLearningCouncil(params)
     .then(
-      (text): FeishuLearningCouncilVisibleRun => ({
+      (text): FeishuLearningCouncilCompletedVisibleRun => ({
         status: "completed",
         text,
       }),
     )
     .catch(
-      (error): FeishuLearningCouncilVisibleRun => ({
+      (error): FeishuLearningCouncilCompletedVisibleRun => ({
         status: "failed",
         text: [
           "Learning council run: failed before a final council reply was available.",
@@ -1185,11 +1192,98 @@ async function runFeishuLearningCouncilWithVisibleTimeout(
           timeoutMs,
           messageId: params.messageId,
         }),
+        completion: councilRun,
       });
     }, timeoutMs);
   });
 
   return Promise.race([councilRun, visibleTimeout]);
+}
+
+function renderFeishuLearningCouncilDelayedCompletionReply(params: {
+  run: FeishuLearningCouncilCompletedVisibleRun;
+  originalMessageId: string;
+}): string {
+  const header =
+    params.run.status === "completed"
+      ? "Learning council delayed completion arrived."
+      : "Learning council delayed completion failed.";
+  return [
+    header,
+    "",
+    `originalMessageId: ${params.originalMessageId}`,
+    "foregroundStatus: timeout_already_reported",
+    "",
+    params.run.text,
+  ].join("\n");
+}
+
+function scheduleFeishuLearningCouncilDelayedCompletionReply(params: {
+  cfg: ClawdbotConfig;
+  agentId: string;
+  accountId: string;
+  chatId: string;
+  sessionKey: string;
+  messageId: string;
+  userMessage: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+  replyContract?: FeishuControlRoomOrchestrationPlan["replyContract"];
+  apiReplyPayloads?: readonly unknown[];
+  completion: Promise<FeishuLearningCouncilCompletedVisibleRun>;
+  log: (message: string) => void;
+}): void {
+  void params.completion
+    .then(async (run) => {
+      const text = renderFeishuLearningCouncilDelayedCompletionReply({
+        run,
+        originalMessageId: params.messageId,
+      });
+      const result = await sendMessageFeishu({
+        cfg: params.cfg,
+        to: `chat:${params.chatId}`,
+        text,
+        replyToMessageId: params.messageId,
+        accountId: params.accountId,
+      });
+      await persistCapturedFeishuSurfaceLine({
+        cfg: params.cfg,
+        agentId: params.agentId,
+        targetSurface: params.targetSurface,
+        effectiveSurface: params.effectiveSurface,
+        replyContract: params.replyContract,
+        chatId: params.chatId,
+        sessionKey: params.sessionKey,
+        messageId: params.messageId,
+        userMessage: params.userMessage,
+        finalReplyText: text,
+        dispatchQueuedFinal: true,
+        dispatchFinalCount: 1,
+        apiReplyPayloads: params.apiReplyPayloads,
+      });
+      params.log(
+        `feishu[${params.accountId}]: learning council delayed completion sent message=${params.messageId} delivery=${result.messageId}`,
+      );
+    })
+    .catch(async (error) => {
+      await recordOperationalAnomaly({
+        cfg: params.cfg as OpenClawConfig,
+        category: "provider_degradation",
+        severity: "medium",
+        source: "feishu.learning_command",
+        foundationTemplate: "outcome-review",
+        problem: "failed to send delayed learning council completion after foreground timeout",
+        evidence: [
+          `chat_id=${params.chatId}`,
+          `message_id=${params.messageId}`,
+          `error=${String(error)}`,
+        ],
+        impact:
+          "the operator received the timeout notice, but did not receive the later completion or failure follow-up",
+        suggestedScope:
+          "smallest-safe-patch only; inspect delayed completion delivery for learning_command without changing provider config",
+      });
+    });
 }
 
 function logFeishuNonLedgerEarlyReturn(params: {
@@ -6650,6 +6744,23 @@ export async function handleFeishuMessage(params: {
           markDispatchIdle,
           text: councilReplyText,
         });
+        if (councilRun.status === "timed_out") {
+          scheduleFeishuLearningCouncilDelayedCompletionReply({
+            cfg,
+            agentId: route.agentId,
+            accountId: account.accountId,
+            chatId: ctx.chatId,
+            sessionKey: effectiveSessionKey,
+            messageId: ctx.messageId,
+            userMessage: ctx.content,
+            effectiveSurface: effectiveStateSurface,
+            targetSurface: effectiveStateSurface,
+            replyContract: controlRoomOrchestration?.replyContract,
+            apiReplyPayloads: larkApiReplyPayloads,
+            completion: councilRun.completion,
+            log,
+          });
+        }
 
         clearFeishuGroupHistoryAfterDispatch({
           isGroup,
