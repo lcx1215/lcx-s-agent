@@ -84,6 +84,8 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("scripts/dev/minimax-quota-brain-saturator.ts");
     expect(source).toContain("--adaptive");
     expect(source).toContain("--allow-partial-write");
+    expect(source).toContain("MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES = 285");
+    expect(source).toContain("shouldUpgradeToMediumMiniMaxWindow");
   });
 
   it("does not select an adapter after a newer failed hardened eval", async () => {

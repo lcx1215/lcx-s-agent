@@ -14,6 +14,8 @@ type CliOptions = {
   teacherSidecarDurationMinutes: number;
   teacherSidecarBatchLimit: number;
   teacherSidecarConcurrency: number;
+  requestedDurationMinutes: number;
+  durationAutoUpgraded: boolean;
   trainEvery: number;
   evalEvery: number;
   trainIters: number;
@@ -75,6 +77,7 @@ const CPU_COUNT = Math.max(1, os.cpus().length);
 const DEFAULT_LOAD_MAX = 100;
 const DEFAULT_TRAIN_LOAD_MAX = 12;
 const MIN_PROMOTION_EVAL_CASES = 50;
+const MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES = 285;
 
 function usage(): never {
   throw new Error(
@@ -82,7 +85,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/minimax-brain-training-guard.ts [options]",
       "",
       "Options:",
-      "  --duration-minutes N   default 120",
+      "  --duration-minutes N   default 285 for real MiniMax sidecar training",
       "  --batch-limit N         MiniMax teacher samples per round, default 20",
       "  --teacher-profile NAME  batch|minimax-plus-brain, default minimax-plus-brain",
       "  --teacher-duration-minutes N  per-round teacher budget, default 12",
@@ -146,7 +149,7 @@ function readPositiveInteger(value: string): number {
 function parseArgs(args: string[]): CliOptions {
   let adapterPrefixProvided = false;
   const options: CliOptions = {
-    durationMinutes: 120,
+    durationMinutes: MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES,
     batchLimit: 20,
     teacherProfile: "minimax-plus-brain",
     teacherDurationMinutes: 12,
@@ -156,6 +159,8 @@ function parseArgs(args: string[]): CliOptions {
     teacherSidecarDurationMinutes: 0,
     teacherSidecarBatchLimit: 36,
     teacherSidecarConcurrency: 8,
+    requestedDurationMinutes: MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES,
+    durationAutoUpgraded: false,
     trainEvery: 3,
     evalEvery: 1,
     trainIters: 40,
@@ -273,7 +278,23 @@ function parseArgs(args: string[]): CliOptions {
   if (!adapterPrefixProvided) {
     options.adapterPrefix = defaultAdapterPrefixForModel(options.model);
   }
+  options.requestedDurationMinutes = options.durationMinutes;
+  if (shouldUpgradeToMediumMiniMaxWindow(options)) {
+    options.durationMinutes = MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES;
+    options.durationAutoUpgraded = true;
+  }
   return options;
+}
+
+function shouldUpgradeToMediumMiniMaxWindow(options: CliOptions): boolean {
+  return (
+    options.teacherProfile === "minimax-plus-brain" &&
+    options.teacherSidecar &&
+    !options.mock &&
+    !options.noTrain &&
+    !options.resolveCurrentAdapterOnly &&
+    options.durationMinutes < MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES
+  );
 }
 
 async function appendLog(logPath: string, payload: Record<string, unknown>): Promise<void> {
