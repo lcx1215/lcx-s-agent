@@ -11,6 +11,7 @@ import {
 import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
 import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
 import { loadConfig } from "../../src/config/config.js";
+import { LOCAL_BRAIN_MODULE_TAXONOMY } from "./local-brain-taxonomy.js";
 
 type CliOptions = {
   workspaceDir: string;
@@ -61,34 +62,7 @@ const DEFAULT_MODEL = process.env.MINIMAX_TEACHER_MODEL?.trim() || "MiniMax-M2.7
 const DEFAULT_BASE_URL =
   process.env.MINIMAX_ANTHROPIC_BASE_URL?.trim() || "https://api.minimax.io/anthropic";
 
-const MODULE_TAXONOMY = [
-  "macro_rates_inflation",
-  "credit_liquidity",
-  "cross_asset_liquidity",
-  "fx_currency_liquidity",
-  "etf_regime",
-  "global_index_regime",
-  "us_equity_market_structure",
-  "china_a_share_policy_flow",
-  "crypto_market_structure",
-  "technical_timing",
-  "options_volatility",
-  "commodities_oil_gold",
-  "fx_dollar",
-  "event_driven",
-  "company_fundamentals_value",
-  "quant_math",
-  "portfolio_risk_gates",
-  "causal_map",
-  "finance_learning_memory",
-  "source_registry",
-  "skill_pattern_distillation",
-  "agent_workflow_memory",
-  "eval_harness_design",
-  "review_panel",
-  "control_room_summary",
-  "ops_audit",
-];
+const MODULE_TAXONOMY = LOCAL_BRAIN_MODULE_TAXONOMY;
 
 const TEACHER_PROMPTS: TeacherPrompt[] = [
   {

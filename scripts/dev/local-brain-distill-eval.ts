@@ -1,6 +1,11 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
+import {
+  LOCAL_BRAIN_CONTRACT_HINTS,
+  LOCAL_BRAIN_MODULE_TAXONOMY,
+  LOCAL_BRAIN_REQUIRED_FINANCE_MODULES,
+} from "./local-brain-taxonomy.js";
 
 type CliOptions = {
   model: string;
@@ -27,53 +32,7 @@ const REQUIRED_KEYS = [
   "rejected_context",
 ] as const;
 
-const REQUIRED_FINANCE_MODULES = [
-  "macro_rates_inflation",
-  "credit_liquidity",
-  "etf_regime",
-  "company_fundamentals_value",
-  "portfolio_risk_gates",
-];
-
-const MODULE_TAXONOMY = [
-  "macro_rates_inflation",
-  "credit_liquidity",
-  "cross_asset_liquidity",
-  "fx_currency_liquidity",
-  "etf_regime",
-  "global_index_regime",
-  "us_equity_market_structure",
-  "china_a_share_policy_flow",
-  "crypto_market_structure",
-  "technical_timing",
-  "options_volatility",
-  "commodities_oil_gold",
-  "fx_dollar",
-  "event_driven",
-  "company_fundamentals_value",
-  "quant_math",
-  "portfolio_risk_gates",
-  "causal_map",
-  "finance_learning_memory",
-  "source_registry",
-  "skill_pattern_distillation",
-  "agent_workflow_memory",
-  "eval_harness_design",
-  "review_panel",
-  "control_room_summary",
-  "ops_audit",
-];
-
-const CONTRACT_HINTS = [
-  "If source URL or local file is missing, include source_registry and missing_data source_url_or_local_source_path.",
-  "If portfolio math inputs are missing, include missing_data position_weights_and_return_series exactly.",
-  "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
-  "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
-  "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
-  "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
-  "Options, commodities, FX, event risk, and technical timing must use their dedicated modules when mentioned; do not collapse them into generic macro or ETF labels.",
-  "Agent skill learning tasks must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
-];
+const REQUIRED_FINANCE_MODULES = [...LOCAL_BRAIN_REQUIRED_FINANCE_MODULES];
 
 type EvalCase = {
   id: string;
@@ -1750,9 +1709,9 @@ function buildPrompt(evalCase: EvalCase): string {
     "Do not answer the user's finance question directly.",
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent live data, execution approval, or durable memory writes.",
-    `Allowed module ids: ${MODULE_TAXONOMY.join(", ")}.`,
+    `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
     "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
-    `Planning contract hints: ${CONTRACT_HINTS.join(" ")}`,
+    `Planning contract hints: ${LOCAL_BRAIN_CONTRACT_HINTS.join(" ")}`,
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
     "",
     "source_kind: clean_eval",
