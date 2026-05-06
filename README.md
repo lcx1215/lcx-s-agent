@@ -192,6 +192,12 @@ pnpm lcx:promote-live
 pnpm lcx:live:status
 ```
 
+`pnpm lcx:live:status` 会同时读 promotion state、跑 channel probe，并扫描 `~/.openclaw/logs/feishu-reply-flow.jsonl`。它会直接输出：
+
+- `liveStatus`: runtime promotion 和 probe 层状态。
+- `liveVisibleStatus`: 真实 Lark/Feishu 入站和回复证据状态。
+- `acceptanceMatched`: 最新验收短语是否已经在真实回复里出现。
+
 receipt 默认写到 live sidecar 的 `branches/_system/promotions/`，当前状态写到 `branches/_system/live-promotion-state.json`。repo 里的 `ops/live-handoff/promotions/` 是本地生成物，不进入 git。
 
 promotion 只代表 live runtime 已经切到某个 git 快照并完成探测。然后还必须发送真实 Lark/Feishu 消息，并检查：

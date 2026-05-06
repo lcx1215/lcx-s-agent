@@ -14,6 +14,7 @@ const DEFAULT_PORT = 18789;
 const DEFAULT_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const RESTART_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 const PROBE_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
+const DEFAULT_REPLY_FLOW_LOG = path.join(os.homedir(), ".openclaw/logs/feishu-reply-flow.jsonl");
 
 type StepStatus = "skipped" | "passed" | "failed";
 
@@ -43,6 +44,32 @@ type CommandResult = {
   code: number | null;
   stdout: string;
   stderr: string;
+};
+
+type LiveVisibleProof = {
+  status:
+    | "not_checked"
+    | "reply_flow_missing"
+    | "waiting_for_real_lark"
+    | "post_migration_reply_seen"
+    | "live_visible_fixed"
+    | "reply_failed";
+  logPath: string;
+  since: string;
+  freshInboundCount: number;
+  freshOutboundResultCount: number;
+  acceptanceMatched: boolean;
+  latestInbound: ReplyFlowSummary | null;
+  latestOutboundResult: ReplyFlowSummary | null;
+};
+
+type ReplyFlowSummary = {
+  recordedAt: string | null;
+  messageId: string | null;
+  correlationId: string | null;
+  chatId: string | null;
+  textPreview: string | null;
+  deliveryStatus: string | null;
 };
 
 type FileAction = {
@@ -85,6 +112,7 @@ type PromotionReceipt = {
     originalSourceRoot: string | null;
     trackedDirty: string[];
   };
+  visibleProof?: LiveVisibleProof;
   blockedReasons: string[];
   managedFileCount: number;
   changedFileCount: number;
@@ -113,9 +141,11 @@ type PromotionManifest = {
 };
 
 function parseArgs(argv: string[]): Args {
+  const argsList = argv.filter((value) => value !== "--");
+  const argsSet = new Set(argsList);
   const readValue = (name: string): string | undefined => {
-    const index = argv.indexOf(name);
-    return index === -1 ? undefined : argv[index + 1];
+    const index = argsList.indexOf(name);
+    return index === -1 ? undefined : argsList[index + 1];
   };
   const portRaw = readValue("--port");
   const port = portRaw ? Number.parseInt(portRaw, 10) : DEFAULT_PORT;
@@ -126,17 +156,17 @@ function parseArgs(argv: string[]): Args {
     receiptDir: path.resolve(
       readValue("--receipt-dir") ?? path.join(targetRoot, DEFAULT_RECEIPT_SUBDIR),
     ),
-    apply: argv.includes("--apply"),
-    allowDirty: argv.includes("--allow-dirty"),
-    skipInstall: argv.includes("--skip-install"),
-    skipSourceChecks: argv.includes("--skip-source-checks"),
-    skipTargetBuild: argv.includes("--skip-target-build"),
-    skipGatewayInstall: argv.includes("--skip-gateway-install"),
-    skipRestart: argv.includes("--skip-restart"),
-    skipProbe: argv.includes("--skip-probe"),
-    json: argv.includes("--json"),
-    status: argv.includes("--status"),
-    autoSnapshot: !argv.includes("--no-auto-snapshot"),
+    apply: argsSet.has("--apply"),
+    allowDirty: argsSet.has("--allow-dirty"),
+    skipInstall: argsSet.has("--skip-install"),
+    skipSourceChecks: argsSet.has("--skip-source-checks"),
+    skipTargetBuild: argsSet.has("--skip-target-build"),
+    skipGatewayInstall: argsSet.has("--skip-gateway-install"),
+    skipRestart: argsSet.has("--skip-restart"),
+    skipProbe: argsSet.has("--skip-probe"),
+    json: argsSet.has("--json"),
+    status: argsSet.has("--status"),
+    autoSnapshot: !argsSet.has("--no-auto-snapshot"),
     port: Number.isFinite(port) ? port : DEFAULT_PORT,
     acceptancePhrase: readValue("--acceptance-phrase"),
   };
@@ -415,6 +445,89 @@ function makeAcceptancePhrase(commit: string): string {
   return `lark-live-fixed-${shortSha}`;
 }
 
+function summarizeReplyFlowRecord(record: Record<string, unknown>): ReplyFlowSummary {
+  return {
+    recordedAt: typeof record.recordedAt === "string" ? record.recordedAt : null,
+    messageId: typeof record.messageId === "string" ? record.messageId : null,
+    correlationId: typeof record.correlationId === "string" ? record.correlationId : null,
+    chatId: typeof record.chatId === "string" ? record.chatId : null,
+    textPreview: typeof record.textPreview === "string" ? record.textPreview : null,
+    deliveryStatus: typeof record.deliveryStatus === "string" ? record.deliveryStatus : null,
+  };
+}
+
+function readLiveVisibleProof(params: {
+  since: string;
+  acceptancePhrase: string;
+  logPath?: string;
+}): LiveVisibleProof {
+  const logPath = params.logPath ?? DEFAULT_REPLY_FLOW_LOG;
+  const sinceMs = Date.parse(params.since);
+  if (!fs.existsSync(logPath)) {
+    return {
+      status: "reply_flow_missing",
+      logPath,
+      since: params.since,
+      freshInboundCount: 0,
+      freshOutboundResultCount: 0,
+      acceptanceMatched: false,
+      latestInbound: null,
+      latestOutboundResult: null,
+    };
+  }
+  const records = fs
+    .readFileSync(logPath, "utf8")
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .slice(-5000)
+    .flatMap((line) => {
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const recordedAtMs =
+          typeof parsed.recordedAtMs === "number"
+            ? parsed.recordedAtMs
+            : typeof parsed.recordedAt === "string"
+              ? Date.parse(parsed.recordedAt)
+              : Number.NaN;
+        return Number.isFinite(recordedAtMs) && recordedAtMs >= sinceMs
+          ? [{ ...parsed, recordedAtMs }]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+  const inbound = records.filter((record) => record.stage === "inbound");
+  const outboundResult = records.filter((record) => record.stage === "outbound_result");
+  const failedOutbound = outboundResult.filter((record) => record.deliveryStatus !== "success");
+  const acceptanceMatched = outboundResult.some(
+    (record) =>
+      typeof record.textPreview === "string" &&
+      record.textPreview.includes(params.acceptancePhrase),
+  );
+  const latestInbound = inbound.at(-1);
+  const latestOutboundResult = outboundResult.at(-1);
+  const status =
+    acceptanceMatched && latestInbound
+      ? "live_visible_fixed"
+      : failedOutbound.length > 0 && outboundResult.length > 0
+        ? "reply_failed"
+        : latestInbound && latestOutboundResult
+          ? "post_migration_reply_seen"
+          : "waiting_for_real_lark";
+  return {
+    status,
+    logPath,
+    since: params.since,
+    freshInboundCount: inbound.length,
+    freshOutboundResultCount: outboundResult.length,
+    acceptanceMatched,
+    latestInbound: latestInbound ? summarizeReplyFlowRecord(latestInbound) : null,
+    latestOutboundResult: latestOutboundResult
+      ? summarizeReplyFlowRecord(latestOutboundResult)
+      : null,
+  };
+}
+
 function buildReceipt(params: {
   args: Args;
   generatedAt: string;
@@ -467,6 +580,21 @@ function buildReceipt(params: {
     liveStatus: liveStatus === "probe_ok" ? "waiting_for_real_lark" : liveStatus,
     git: params.git,
     sourceSnapshot: params.sourceSnapshot,
+    visibleProof: params.args.apply
+      ? readLiveVisibleProof({
+          since: params.generatedAt,
+          acceptancePhrase,
+        })
+      : {
+          status: "not_checked",
+          logPath: DEFAULT_REPLY_FLOW_LOG,
+          since: params.generatedAt,
+          freshInboundCount: 0,
+          freshOutboundResultCount: 0,
+          acceptanceMatched: false,
+          latestInbound: null,
+          latestOutboundResult: null,
+        },
     blockedReasons: params.blockedReasons,
     managedFileCount: params.files.length,
     changedFileCount,
@@ -524,6 +652,7 @@ function renderStatus(params: {
   args: Args;
   state: PromotionReceipt | null;
   probe: CommandResult | null;
+  visibleProof: LiveVisibleProof | null;
 }): string {
   if (!params.state) {
     return `livePromotionStatus=missing\ntargetRoot=${params.args.targetRoot}\nstatePath=${path.join(params.args.targetRoot, PROMOTION_STATE_PATH)}\n`;
@@ -539,6 +668,18 @@ function renderStatus(params: {
   ];
   if (params.probe) {
     lines.push(`${params.probe.command}.status=${params.probe.status}`);
+  }
+  if (params.visibleProof) {
+    lines.push(`liveVisibleStatus=${params.visibleProof.status}`);
+    lines.push(`freshInboundCount=${params.visibleProof.freshInboundCount}`);
+    lines.push(`freshOutboundResultCount=${params.visibleProof.freshOutboundResultCount}`);
+    lines.push(`acceptanceMatched=${params.visibleProof.acceptanceMatched}`);
+    if (params.visibleProof.latestInbound?.recordedAt) {
+      lines.push(`latestInboundAt=${params.visibleProof.latestInbound.recordedAt}`);
+    }
+    if (params.visibleProof.latestOutboundResult?.recordedAt) {
+      lines.push(`latestOutboundResultAt=${params.visibleProof.latestOutboundResult.recordedAt}`);
+    }
   }
   return `${lines.join("\n")}\n`;
 }
@@ -558,10 +699,16 @@ export function main(argv = process.argv.slice(2)): number {
             initialArgs.targetRoot,
             PROBE_COMMAND_TIMEOUT_MS,
           );
+    const visibleProof = state
+      ? readLiveVisibleProof({
+          since: state.generatedAt,
+          acceptancePhrase: state.acceptancePhrase,
+        })
+      : null;
     process.stdout.write(
       initialArgs.json
-        ? `${JSON.stringify({ state, probe }, null, 2)}\n`
-        : renderStatus({ args: initialArgs, state, probe }),
+        ? `${JSON.stringify({ state, probe, visibleProof }, null, 2)}\n`
+        : renderStatus({ args: initialArgs, state, probe, visibleProof }),
     );
     return probe?.status === "failed" ? 1 : 0;
   }
