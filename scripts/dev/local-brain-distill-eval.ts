@@ -73,6 +73,7 @@ type EvalCase = {
   id: string;
   userAsk: string;
   sourceSummary: string;
+  prerequisiteCaseIds?: string[];
   requiredModules: string[];
   forbiddenModules?: string[];
   minModuleMatches: number;
@@ -1417,6 +1418,7 @@ const EVAL_CASES: EvalCase[] = [
       "我想把原油、黄金、铜和 DBC 放进未来美股组合研究里，先学习大宗商品框架：美元、实际利率、库存、期限结构、roll yield、通胀和组合风险怎么连贯拆？",
     sourceSummary:
       "commodity macro loop across USD, real rates, inventory, term structure, roll yield, inflation, and portfolio risk.",
+    prerequisiteCaseIds: ["short_lark_commodity_learning_intake"],
     requiredModules: [
       "finance_learning_memory",
       "source_registry",
@@ -1546,6 +1548,44 @@ const EVAL_CASES: EvalCase[] = [
     requiredRiskBoundaries: ["no_model_math_guessing", "no_trade_advice"],
   },
 ];
+
+const EVAL_CASE_BY_ID = new Map(EVAL_CASES.map((evalCase) => [evalCase.id, evalCase]));
+
+function expandEvalCasesWithPrerequisites(caseIds: string[]): {
+  evalCases: EvalCase[];
+  autoIncludedPrerequisiteCaseIds: string[];
+} {
+  if (caseIds.length === 0) {
+    return { evalCases: EVAL_CASES, autoIncludedPrerequisiteCaseIds: [] };
+  }
+  const included = new Set<string>();
+  const expanded: EvalCase[] = [];
+  const autoIncludedPrerequisiteCaseIds: string[] = [];
+  const requested = new Set(caseIds);
+
+  function include(caseId: string, asPrerequisite: boolean): void {
+    const evalCase = EVAL_CASE_BY_ID.get(caseId);
+    if (!evalCase) {
+      return;
+    }
+    for (const prerequisiteCaseId of evalCase.prerequisiteCaseIds ?? []) {
+      include(prerequisiteCaseId, true);
+    }
+    if (included.has(caseId)) {
+      return;
+    }
+    included.add(caseId);
+    if (asPrerequisite && !requested.has(caseId)) {
+      autoIncludedPrerequisiteCaseIds.push(caseId);
+    }
+    expanded.push(evalCase);
+  }
+
+  for (const caseId of caseIds) {
+    include(caseId, false);
+  }
+  return { evalCases: expanded, autoIncludedPrerequisiteCaseIds };
+}
 
 function buildPrompt(evalCase: EvalCase): string {
   return [
@@ -1704,13 +1744,10 @@ function parseFailureAcceptance(error: unknown): ReturnType<typeof evaluate> {
 }
 
 const options = parseArgs(process.argv.slice(2));
-const evalCases =
-  options.caseIds.length > 0
-    ? EVAL_CASES.filter((evalCase) => options.caseIds.includes(evalCase.id))
-    : EVAL_CASES;
-const unknownCaseIds = options.caseIds.filter(
-  (caseId) => !EVAL_CASES.some((evalCase) => evalCase.id === caseId),
+const { evalCases, autoIncludedPrerequisiteCaseIds } = expandEvalCasesWithPrerequisites(
+  options.caseIds,
 );
+const unknownCaseIds = options.caseIds.filter((caseId) => !EVAL_CASE_BY_ID.has(caseId));
 if (unknownCaseIds.length > 0) {
   throw new Error(`unknown eval case id(s): ${unknownCaseIds.join(", ")}`);
 }
@@ -1753,10 +1790,9 @@ for (const evalCase of evalCases) {
     caseResults.push({
       id: evalCase.id,
       rawOutput,
-      parsed: fallbackParsed,
-      acceptance: fallbackParsed
-        ? evaluate(fallbackParsed, evalCase)
-        : parseFailureAcceptance(error),
+      parsed: null,
+      diagnosticFallbackParsed: fallbackParsed,
+      acceptance: parseFailureAcceptance(error),
       parseError: String(error),
     });
     if (options.progress) {
@@ -1776,6 +1812,10 @@ const result = {
   noAdapter: options.noAdapter,
   hardened: options.hardened,
   contractOnly: options.contractOnly,
+  hierarchy: {
+    requestedCaseIds: options.caseIds,
+    autoIncludedPrerequisiteCaseIds,
+  },
   summary: {
     passed: passedCases.length,
     total: caseResults.length,
