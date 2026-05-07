@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildPrompt,
   extractJson,
   extractMiniMaxTeacherTextFromResponse,
   hardenTeacherPlanForPrompt,
@@ -7,6 +8,20 @@ import {
 } from "../scripts/dev/minimax-brain-teacher-batch.js";
 
 describe("minimax brain teacher batch parsing", () => {
+  it("asks MiniMax for compact machine-parseable teacher JSON", () => {
+    const prompt = buildPrompt({
+      id: "compact_json_contract",
+      userMessage: "学习大宗商品，但不要输出给用户，先给本地大脑做任务拆解。",
+      sourceSummary: "short commodity learning request.",
+    });
+
+    expect(prompt).toContain("compact machine-parseable JSON only");
+    expect(prompt).toContain("no markdown fences");
+    expect(prompt).toContain("no trailing commas");
+    expect(prompt).toContain("never copy the full user prompt into JSON values");
+    expect(prompt).toContain("prefer 3-8 items per array");
+  });
+
   it("uses JSON-bearing MiniMax thinking content when text content is missing", () => {
     const response = JSON.stringify({
       content: [

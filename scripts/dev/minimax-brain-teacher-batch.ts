@@ -332,10 +332,14 @@ function parseArgs(args: string[]): CliOptions {
   return options;
 }
 
-function buildPrompt(input: TeacherPrompt): string {
+export function buildPrompt(input: TeacherPrompt): string {
   return [
     "You are MiniMax M2.7 acting as LCX Agent's teacher for local brain distillation.",
     "Return one strict JSON object and no prose.",
+    "Return compact machine-parseable JSON only: no markdown fences, no comments, no trailing commas, no ellipses, no placeholders.",
+    "Use double-quoted JSON strings and put a comma between every object property and every array item.",
+    "Keep task_family as concise snake_case, keep next_step under 160 characters, and never copy the full user prompt into JSON values.",
+    "Keep primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, and rejected_context to the smallest useful arrays; prefer 3-8 items per array.",
     "Do not answer the finance question. Produce a planning packet for the local agent brain.",
     "The local brain should behave like a careful human analyst: clarify the objective, recall local memory and learned rules, split the problem into causal finance layers, identify missing evidence, then hand hard reasoning to review models.",
     "Use only these module ids:",
