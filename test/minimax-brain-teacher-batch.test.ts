@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPrompt,
+  buildTeacherSystemPrompt,
   extractJson,
   extractMiniMaxTeacherTextFromResponse,
   hardenTeacherPlanForPrompt,
@@ -20,6 +21,15 @@ describe("minimax brain teacher batch parsing", () => {
     expect(prompt).toContain("no trailing commas");
     expect(prompt).toContain("never copy the full user prompt into JSON values");
     expect(prompt).toContain("prefer 3-8 items per array");
+  });
+
+  it("keeps MiniMax direct API instructions in system prompt form", () => {
+    const systemPrompt = buildTeacherSystemPrompt();
+
+    expect(systemPrompt).toContain("Return one strict JSON object and no prose");
+    expect(systemPrompt).toContain("Required JSON keys");
+    expect(systemPrompt).not.toContain("user_message:");
+    expect(systemPrompt).not.toContain("source_summary:");
   });
 
   it("uses JSON-bearing MiniMax thinking content when text content is missing", () => {

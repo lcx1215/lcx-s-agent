@@ -332,7 +332,7 @@ function parseArgs(args: string[]): CliOptions {
   return options;
 }
 
-export function buildPrompt(input: TeacherPrompt): string {
+export function buildTeacherSystemPrompt(): string {
   return [
     "You are MiniMax M2.7 acting as LCX Agent's teacher for local brain distillation.",
     "Return one strict JSON object and no prose.",
@@ -357,10 +357,20 @@ export function buildPrompt(input: TeacherPrompt): string {
     "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
     "- crypto work is research-only; include no_high_leverage_crypto and never imply execution approval",
     "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
+  ].join("\n");
+}
+
+function buildTeacherUserPayload(input: TeacherPrompt): string {
+  return [
+    "Produce the teacher JSON for this local-brain distillation input.",
     "",
     `user_message: ${input.userMessage}`,
     `source_summary: ${input.sourceSummary}`,
   ].join("\n");
+}
+
+export function buildPrompt(input: TeacherPrompt): string {
+  return [buildTeacherSystemPrompt(), buildTeacherUserPayload(input)].join("\n");
 }
 
 function isTeacherPrompt(value: unknown): value is TeacherPrompt {
@@ -588,7 +598,8 @@ async function callMinimaxDirectApi(options: CliOptions, input: TeacherPrompt): 
       model: options.model,
       max_tokens: 4096,
       thinking: { type: "disabled" },
-      messages: [{ role: "user", content: buildPrompt(input) }],
+      system: buildTeacherSystemPrompt(),
+      messages: [{ role: "user", content: buildTeacherUserPayload(input) }],
     }),
   });
   const text = await response.text();
