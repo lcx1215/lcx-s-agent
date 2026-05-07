@@ -30,6 +30,30 @@ describe("minimax brain teacher batch parsing", () => {
     expect(extractJson(text).task_family).toBe("cross_market_finance_research_planning");
   });
 
+  it("uses OpenAI-shaped response content when MiniMax returns choices", () => {
+    const response = JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              task_family: "openai_shaped_teacher_response",
+              primary_modules: ["finance_learning_memory"],
+              supporting_modules: ["review_panel"],
+              required_tools: ["review_panel"],
+              missing_data: ["fresh_market_data_snapshot"],
+              risk_boundaries: ["research_only"],
+              next_step: "review_then_summarize",
+              rejected_context: ["old_lark_conversation_history"],
+            }),
+          },
+        },
+      ],
+    });
+
+    const text = extractMiniMaxTeacherTextFromResponse(response);
+    expect(extractJson(text).task_family).toBe("openai_shaped_teacher_response");
+  });
+
   it("extracts the first balanced JSON object from fenced or noisy output", () => {
     const plan = extractJson(`
       extra prose
@@ -53,6 +77,25 @@ describe("minimax brain teacher batch parsing", () => {
     expect(normalized.risk_boundaries).toEqual(
       expect.arrayContaining(["research_only", "no_execution_authority", "evidence_required"]),
     );
+  });
+
+  it("repairs missing commas in otherwise valid teacher JSON", () => {
+    const plan = extractJson(`{
+      "task_family": "missing_comma_repair"
+      "primary_modules": [
+        "macro_rates_inflation"
+        "portfolio_risk_gates"
+      ],
+      "supporting_modules": ["review_panel"],
+      "required_tools": ["review_panel"],
+      "missing_data": ["fresh_market_data_snapshot"],
+      "risk_boundaries": ["research_only"],
+      "next_step": "review",
+      "rejected_context": ["old_lark_conversation_history"]
+    }`);
+
+    expect(plan.task_family).toBe("missing_comma_repair");
+    expect(plan.primary_modules).toEqual(["macro_rates_inflation", "portfolio_risk_gates"]);
   });
 
   it("repairs MiniMax placeholder arrays before teacher-plan hardening", () => {

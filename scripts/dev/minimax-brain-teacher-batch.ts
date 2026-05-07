@@ -57,6 +57,18 @@ type DirectApiContentEntry = {
   content?: unknown;
 };
 
+type DirectApiPayload = {
+  content?: unknown;
+  text?: unknown;
+  output_text?: unknown;
+  message?: { content?: unknown };
+  choices?: Array<{
+    text?: unknown;
+    message?: { content?: unknown };
+    delta?: { content?: unknown };
+  }>;
+};
+
 const DEFAULT_WORKSPACE = path.join(process.env.HOME ?? ".", ".openclaw", "workspace");
 const DEFAULT_MODEL = process.env.MINIMAX_TEACHER_MODEL?.trim() || "MiniMax-M2.7";
 const DEFAULT_BASE_URL =
@@ -480,9 +492,20 @@ function collectStringLeaves(value: unknown, output: string[] = [], depth = 0): 
   return output;
 }
 
+function containsTeacherJsonHint(value: string): boolean {
+  return (
+    value.includes("{") &&
+    /"?(task_family|primary_modules|required_tools|missing_data|risk_boundaries|next_step)"?\s*:/u.test(
+      value,
+    )
+  );
+}
+
 export function extractMiniMaxTeacherTextFromResponse(responseText: string): string {
-  const payload = JSON.parse(responseText) as { content?: DirectApiContentEntry[] };
-  const content = payload.content ?? [];
+  const payload = JSON.parse(responseText) as DirectApiPayload;
+  const content = Array.isArray(payload.content)
+    ? (payload.content as DirectApiContentEntry[])
+    : [];
   const preferredText = content
     .map((entry) => entry.text?.trim())
     .filter((entry): entry is string => Boolean(entry))
@@ -492,12 +515,31 @@ export function extractMiniMaxTeacherTextFromResponse(responseText: string): str
     return preferredText;
   }
 
+  const choiceContent = (payload.choices ?? []).flatMap((choice) => [
+    choice.text,
+    choice.message?.content,
+    choice.delta?.content,
+  ]);
+  const responseShapeFallback = [
+    payload.text,
+    payload.output_text,
+    payload.message?.content,
+    ...choiceContent,
+  ]
+    .flatMap((entry) => collectStringLeaves(entry))
+    .filter(containsTeacherJsonHint)
+    .join("\n")
+    .trim();
+  if (responseShapeFallback) {
+    return responseShapeFallback;
+  }
+
   const jsonBearingFallback = content
     .flatMap((entry) => [
       entry.thinking,
       ...(Array.isArray(entry.content) ? collectStringLeaves(entry.content) : []),
     ])
-    .filter((entry): entry is string => typeof entry === "string" && entry.includes("{"))
+    .filter((entry): entry is string => typeof entry === "string" && containsTeacherJsonHint(entry))
     .join("\n")
     .trim();
   if (jsonBearingFallback) {
@@ -1058,8 +1100,16 @@ function findBalancedJsonObject(raw: string): string | null {
   return null;
 }
 
+function repairMissingCommas(candidate: string): string {
+  return candidate
+    .replace(/([}\]"])\s*\n\s*("[A-Za-z0-9_$ -]+"\s*:)/gu, "$1,\n$2")
+    .replace(/"\s*\n\s*"/gu, '",\n"');
+}
+
 function parseTeacherPlanCandidate(candidate: string): TeacherPlan {
-  const repaired = candidate.replace(/\[\s*\.\.\.\s*\]/gu, "[]").replace(/,\s*([}\]])/gu, "$1");
+  const repaired = repairMissingCommas(candidate)
+    .replace(/\[\s*\.\.\.\s*\]/gu, "[]")
+    .replace(/,\s*([}\]])/gu, "$1");
   return JSON.parse(repaired) as TeacherPlan;
 }
 
