@@ -581,7 +581,11 @@ function evalSummaryFromPayload(payload: Record<string, unknown>):
   if (payload.event !== "step_ok") {
     return undefined;
   }
-  if (payload.name !== "stable_hardened_eval" && payload.name !== "candidate_hardened_eval") {
+  if (
+    payload.name !== "stable_hardened_eval" &&
+    payload.name !== "training_seed_hardened_eval" &&
+    payload.name !== "candidate_hardened_eval"
+  ) {
     return undefined;
   }
   const result = payload.result;
@@ -614,7 +618,11 @@ function evalVerdictFromPayload(payload: Record<string, unknown>): EvalVerdict |
   if (payload.event !== "step_ok" && payload.event !== "step_non_passing") {
     return undefined;
   }
-  if (payload.name !== "stable_hardened_eval" && payload.name !== "candidate_hardened_eval") {
+  if (
+    payload.name !== "stable_hardened_eval" &&
+    payload.name !== "training_seed_hardened_eval" &&
+    payload.name !== "candidate_hardened_eval"
+  ) {
     return undefined;
   }
   const adapterPath = adapterPathFromEvalEvent(payload);
@@ -1354,23 +1362,32 @@ try {
     ]);
 
     if (round % options.evalEvery === 0) {
-      if (currentAdapter) {
-        const stableEval = await runJsonStep(options, round, "stable_hardened_eval", "node", [
-          "--import",
-          "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
-          "--model",
-          options.model,
-          "--adapter",
-          currentAdapter,
-          "--hardened",
-          "--progress",
-          "--timeout-ms",
-          "180000",
-          "--summary-only",
-          "--json",
-        ]);
-        if (!promotionEvalPassed(stableEval)) {
+      const evalAdapter = currentAdapter ?? trainingSeedAdapter;
+      if (evalAdapter) {
+        const evalName = currentAdapter ? "stable_hardened_eval" : "training_seed_hardened_eval";
+        const stableEval = await runJsonStep(
+          options,
+          round,
+          evalName,
+          "node",
+          [
+            "--import",
+            "tsx",
+            "scripts/dev/local-brain-distill-eval.ts",
+            "--model",
+            options.model,
+            "--adapter",
+            evalAdapter,
+            "--hardened",
+            "--progress",
+            "--timeout-ms",
+            "180000",
+            "--summary-only",
+            "--json",
+          ],
+          currentAdapter ? {} : { allowFailure: true },
+        );
+        if (currentAdapter && !promotionEvalPassed(stableEval)) {
           throw new Error(`stable adapter failed hardened eval: ${currentAdapter}`);
         }
       } else {

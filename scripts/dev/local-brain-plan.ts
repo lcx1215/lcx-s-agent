@@ -235,6 +235,14 @@ function looksLikeCompanyToPortfolioRiskAsk(text: string): boolean {
   );
 }
 
+function looksLikePortfolioMacroRiskAsk(text: string): boolean {
+  return (
+    /(qqq|tlt|nvda|持仓|组合|portfolio)/iu.test(text) &&
+    /(利率|ai capex|美元流动性|流动性|通胀|credit|macro|未来两周|风险)/iu.test(text) &&
+    /(tlt|美元流动性|流动性|credit|duration|久期|fed|通胀)/iu.test(text)
+  );
+}
+
 function hardenPlanForKnownContracts(
   plan: Record<string, unknown>,
   options: CliOptions,
@@ -309,7 +317,7 @@ function hardenPlanForKnownContracts(
       ],
     };
   }
-  if (looksLikeCompanyToPortfolioRiskAsk(text)) {
+  if (looksLikeCompanyToPortfolioRiskAsk(text) && !looksLikePortfolioMacroRiskAsk(text)) {
     return {
       ...basePlan,
       primary_modules: mergeUnique(arrayValue(basePlan.primary_modules), [

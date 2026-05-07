@@ -610,6 +610,43 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("does not let no-live-data source wording hide portfolio macro risk routing", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "我想低频研究 QQQ、TLT、NVDA 的组合风险：如果未来一个月利率上行、美元流动性收紧、AI capex 预期降温，我应该让智能体怎么拆任务、找哪些证据、哪些结论不能直接下？research-only，不要交易建议。",
+        sourceSummary:
+          "dev-only real finance planning probe; no live market data provided; require missing data and no_execution_authority",
+      },
+    );
+
+    expect(plan.task_family).toBe("portfolio_macro_risk_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "etf_regime",
+        "company_fundamentals_value",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "current_rates_and_inflation_inputs",
+        "current_credit_and_liquidity_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_execution_authority", "evidence_required"]),
+    );
+    expect(plan.required_tools).not.toContain("research_only");
+    expect(plan.missing_data).not.toContain("research_only");
+    expect(plan.rejected_context).not.toContain("research_only");
+  });
+
   it("turns factor backtest learning into overfit-resistant research", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

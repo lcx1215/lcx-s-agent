@@ -157,6 +157,8 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain('event: "candidate_retained_as_training_seed"');
     expect(source).toContain('event: "candidate_not_retained_as_training_seed"');
     expect(source).toContain("resolveBestTrainingSeedAdapter");
+    expect(source).toContain('"training_seed_hardened_eval"');
+    expect(source).toContain("currentAdapter ? {} : { allowFailure: true }");
   });
 
   it("uses the highest scoring non-promotion candidate as the next training seed", async () => {

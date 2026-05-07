@@ -540,6 +540,10 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
       guardEvents,
       (event) => event.name === "stable_hardened_eval",
     );
+    const latestTrainingSeedEval = latestEvent(
+      guardEvents,
+      (event) => event.name === "training_seed_hardened_eval",
+    );
     const latestCandidateEval = latestEvent(
       guardEvents,
       (event) => event.name === "candidate_hardened_eval",
@@ -592,6 +596,7 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
         latestDataset: summarizeDatasetEvent(latestDataset),
         latestSmokeAt: eventTime(latestSmoke),
         latestStableEval: summarizeEvalEvent(latestStableEval),
+        latestTrainingSeedEval: summarizeEvalEvent(latestTrainingSeedEval),
         latestCandidateEval: summarizeEvalEvent(latestCandidateEval),
         latestPromotionAt: eventTime(latestPromotion),
         latestPromotedAdapter: latestPromotion?.adapterPath,

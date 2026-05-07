@@ -8,6 +8,19 @@ export type LocalBrainContractInput = {
 const MODULE_IDS = LOCAL_BRAIN_MODULE_TAXONOMY;
 
 const MODULE_ID_SET = new Set<string>(MODULE_IDS);
+const CONTRACT_FIELD_TOKENS = [
+  "research_only",
+  "no_execution_authority",
+  "evidence_required",
+  "no_model_math_guessing",
+  "no_unverified_live_data",
+  "no_trade_advice",
+  "missing_data",
+  "risk_boundaries",
+  "next_step",
+  "rejected_context",
+  "required_tools",
+] as const;
 
 function arrayValue(value: unknown): string[] {
   return Array.isArray(value)
@@ -52,7 +65,17 @@ function cleanModuleList(value: unknown): string[] {
 }
 
 function cleanMissingData(value: unknown): string[] {
-  const blocked = new Set([...MODULE_IDS, "missing_data", "risk_boundaries", "next_step"]);
+  const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS]);
+  return arrayValue(value).filter((entry) => !blocked.has(entry));
+}
+
+function cleanRequiredTools(value: unknown): string[] {
+  const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS]);
+  return arrayValue(value).filter((entry) => !blocked.has(entry));
+}
+
+function cleanRejectedContext(value: unknown): string[] {
+  const blocked = new Set(CONTRACT_FIELD_TOKENS);
   return arrayValue(value).filter((entry) => !blocked.has(entry));
 }
 
@@ -61,6 +84,7 @@ function basePlan(plan: Record<string, unknown>): Record<string, unknown> {
     ...plan,
     primary_modules: cleanModuleList(plan.primary_modules),
     supporting_modules: cleanModuleList(plan.supporting_modules),
+    required_tools: cleanRequiredTools(plan.required_tools),
     missing_data: cleanMissingData(plan.missing_data),
     risk_boundaries: mergeUnique(cleanRiskBoundaries(plan.risk_boundaries), [
       "research_only",
@@ -68,7 +92,7 @@ function basePlan(plan: Record<string, unknown>): Record<string, unknown> {
       "evidence_required",
       "no_model_math_guessing",
     ]),
-    rejected_context: mergeUnique(arrayValue(plan.rejected_context), [
+    rejected_context: mergeUnique(cleanRejectedContext(plan.rejected_context), [
       "old_lark_conversation_history",
       "language_routing_candidate_artifacts",
       "unsupported_execution_language",
@@ -200,7 +224,8 @@ function looksLikePortfolioMathMissingInputs(text: string): boolean {
 function looksLikePortfolioMacroRisk(text: string): boolean {
   return (
     /(qqq|tlt|nvda|持仓|组合|portfolio)/iu.test(text) &&
-    /(利率|ai capex|美元流动性|流动性|通胀|credit|macro|未来两周|风险)/iu.test(text)
+    /(利率|ai capex|美元流动性|流动性|通胀|credit|macro|未来两周|风险)/iu.test(text) &&
+    /(tlt|美元流动性|流动性|credit|duration|久期|fed|通胀)/iu.test(text)
   );
 }
 
@@ -218,6 +243,8 @@ function looksLikeSourceGroundingAudit(text: string): boolean {
   return (
     !looksLikeCrossMarketFinance(text) &&
     !looksLikeFullStackFinanceStressTest(text) &&
+    !looksLikePortfolioMacroRisk(text) &&
+    !looksLikeCompanyToPortfolioRisk(text) &&
     !looksLikeExternalCoverage(text) &&
     !looksLikeFilingResearchMissingEvidence(text) &&
     !looksLikeSentimentMarketModuleLearning(text) &&
@@ -1847,7 +1874,7 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
-  if (looksLikeCompanyToPortfolioRisk(text)) {
+  if (looksLikeCompanyToPortfolioRisk(text) && !looksLikePortfolioMacroRisk(text)) {
     return {
       ...safe,
       task_family: "company_fundamental_portfolio_risk_planning",
