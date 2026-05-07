@@ -1483,13 +1483,20 @@ function renderFeishuProtocolTruthSurfaceReply(params: {
 }): string {
   if (isFeishuSourceRequiredTruthFamilyAsk(params.userMessage)) {
     return [
-      `family: ${params.family}`,
-      "source_required: true",
-      "failedReason: no_url_or_local_source_provided",
-      "next step: ask the user for an explicit URL, local file path, or pasted source before running any learning pipeline.",
-      "boundary: do not search, fetch, learn, retain, or claim application_ready from a vague external-source reference.",
-      `proof: ${params.rationale ?? "the utterance asks for source_required handling and provides no concrete URL or local source."}`,
-      `original: ${params.userMessage}`,
+      "不能直接学：这条消息没有给可核验来源，所以我不会假装已经读取、学习或内化。",
+      "",
+      "任务类型: 协议真相检查入口 (protocol_truth_surface)",
+      "还缺来源: 是",
+      "失败原因: 没有提供链接、本地文件或完整来源",
+      "下一步: 先给出明确 URL、本地文件路径、论文编号/DOI、仓库名，或直接粘贴完整原文；之后再运行学习流水线。",
+      "边界: 不搜索、不抓取、不学习、不保留，也不声称 application_ready。",
+      `证据: ${params.rationale ?? "the utterance asks for source_required handling and provides no concrete URL or local source."}`,
+      "",
+      "## 调试字段",
+      `- family: ${params.family}`,
+      "- source_required: true",
+      "- failedReason: no_url_or_local_source_provided",
+      `- original: ${params.userMessage}`,
     ].join("\n");
   }
 
@@ -1510,10 +1517,11 @@ function renderFeishuProtocolTruthSurfaceReply(params: {
     "- 对每条真实 Lark 消息先分类，再走对应工作面；如果缺 source、权限、证据或 receipt，就直接说失败原因。",
     "- 继续用真实简单问题打入口，优先修静默失败、错路由、假成功和 artifact 不落账。",
     "",
-    `本次识别: family=${params.family}, confidence=${params.confidence.toFixed(2)}`,
+    "## 证据",
+    `- 本次识别: family=${params.family}, confidence=${params.confidence.toFixed(2)}`,
     params.rationale ? `识别理由: ${params.rationale}` : undefined,
-    `原始问题: ${params.userMessage}`,
-    "边界: 这是 protocol truth surface 的确定性回复，不是普通自由聊天生成。",
+    `- 原始问题: ${params.userMessage}`,
+    "- 边界: 这是 protocol truth surface 的确定性回复，不是普通自由聊天生成。",
   ]
     .filter(Boolean)
     .join("\n");
@@ -3841,27 +3849,39 @@ function renderFeishuKnowledgeInternalizationAuditHandoffReply(params: {
   effectiveSurface?: FeishuChatSurfaceName;
   proof: FeishuInternalizedLearningProof;
 }): string {
+  const statusLine =
+    params.proof.status === "found"
+      ? "学习内化状态: 已通过验证，可作为研究能力使用"
+      : "学习内化状态: 还没证明学进去了";
+  const failedReason =
+    params.proof.status === "found"
+      ? "none"
+      : params.proof.failedReason === "no_finance_learning_retrieval_receipts"
+        ? "没有找到金融学习检索回执 (no_finance_learning_retrieval_receipts)"
+        : params.proof.failedReason;
   const lines = [
-    "已识别为学习结果复盘/内化审计请求，没有重新学习。",
+    "这是学习结果复盘/内化审计：我只检查有没有证据证明“已经学会”，不会重新学习，也不会把看过材料说成内化完成。",
+    "",
+    statusLine,
+    `失败原因: ${failedReason}`,
+    ...(params.proof.status === "found"
+      ? [
+          `已内化规则: ${params.proof.rule}`,
+          `证据文件: ${params.proof.evidencePath}`,
+          `learning receipt: ${params.proof.receiptPath}`,
+          `review: ${params.proof.reviewPath}`,
+          `以后怎么用: ${params.proof.futureUse}`,
+          `风险边界: ${params.proof.boundary}`,
+        ]
+      : [`searched: ${params.proof.searchedPath}`]),
+    "",
+    "## 证据",
     `- family: ${params.handoff.family}`,
     `- confidence: ${params.handoff.confidence.toFixed(2)}`,
     `- targetSurface: ${params.targetSurface ?? params.handoff.targetSurface ?? "unknown"}`,
     `- effectiveSurface: ${params.effectiveSurface ?? params.targetSurface ?? "unknown"}`,
     `- handoff receipt: ${params.handoffReceiptPath ?? "write_failed_or_unavailable"}`,
-    params.proof.status === "found"
-      ? "- learningInternalizationStatus: application_ready"
-      : "- learningInternalizationStatus: not_application_ready",
-    `- failedReason: ${params.proof.status === "found" ? "none" : params.proof.failedReason}`,
-    ...(params.proof.status === "found"
-      ? [
-          `- 已内化规则: ${params.proof.rule}`,
-          `- 证据文件: ${params.proof.evidencePath}`,
-          `- learning receipt: ${params.proof.receiptPath}`,
-          `- review: ${params.proof.reviewPath}`,
-          `- 以后怎么用: ${params.proof.futureUse}`,
-          `- 风险边界: ${params.proof.boundary}`,
-        ]
-      : [`- searched: ${params.proof.searchedPath}`]),
+    `- learningInternalizationStatus: ${params.proof.status === "found" ? "application_ready" : "not_application_ready"}`,
     "- boundary: this reply is a language/knowledge audit handoff only; it did not create a new finance learning artifact and did not approve trades.",
   ];
   if (params.handoff.apiCandidate?.rationale) {
@@ -3877,10 +3897,18 @@ function renderFeishuLiveSchedulingQueueReply(params: {
   effectiveSurface?: FeishuChatSurfaceName;
 }): string {
   return [
-    `done — family=live_scheduling_queue; targetSurface=${params.targetSurface ?? params.handoff.targetSurface ?? "unknown"}; effectiveSurface=${params.effectiveSurface ?? params.targetSurface ?? "unknown"}; only the queue contract was classified, no queued work was executed in this reply.`,
-    "queued — requested work items remain pending in order; do not treat queued work as completed until a later receipt proves the specific item ran.",
-    "next step — run the first queued item only, then return with its receipt/proof before starting the next item.",
-    `proof — handoff receipt: ${params.handoffReceiptPath ?? "write_failed_or_unavailable"}; dispatch=direct_queue_guard; model_worker=not_called; boundary=state_report_only_no_trade_no_file_mutation.`,
+    "已收到：这是排队/调度请求。我这里只确认队列合同，不把后面的工作说成已经完成。",
+    "",
+    "完成状态：只完成了语义分类和队列边界判断；没有执行 queued work。",
+    "队列状态：requested work items remain pending in order；后续任务必须逐个执行，有 receipt 才能说完成。",
+    "下一步：run the first queued item only，然后带着它的 receipt/proof 回来，再决定第二个。",
+    "",
+    "## 证据",
+    `- 交接回执: ${params.handoffReceiptPath ?? "write_failed_or_unavailable"}`,
+    "- dispatch=direct_queue_guard",
+    "- model_worker=not_called",
+    "- boundary=state_report_only_no_trade_no_file_mutation",
+    `- family=live_scheduling_queue; targetSurface=${params.targetSurface ?? params.handoff.targetSurface ?? "unknown"}; effectiveSurface=${params.effectiveSurface ?? params.targetSurface ?? "unknown"}`,
   ].join("\n");
 }
 

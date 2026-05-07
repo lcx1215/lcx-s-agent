@@ -282,7 +282,7 @@ describe("lark routing candidate corpus", () => {
     });
     const userCandidate = createLarkPendingRoutingCandidate({
       source: "lark_user_utterance",
-      payload: "继续学习期权知识并学会应用",
+      payload: "继续把这个学会应用",
       createdAt: "2026-05-04T00:00:01.000Z",
     });
     const evaluation = evaluateLarkRoutingCandidateCorpus({
@@ -305,7 +305,7 @@ describe("lark routing candidate corpus", () => {
           discardReason: "api_planner_live_handoff_label_only",
         }),
         acceptedCase: expect.objectContaining({
-          utterance: "继续学习期权知识并学会应用",
+          utterance: "继续把这个学会应用",
           family: "market_capability_learning_intake",
           expectedSurface: "learning_command",
         }),

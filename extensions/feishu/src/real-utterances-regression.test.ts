@@ -1538,7 +1538,7 @@ describe("real daily utterance regression", () => {
       {
         label: "visible internalization audit receipt",
         utterance:
-          "已识别为学习结果复盘/内化审计请求，没有重新学习。 - family: knowledge_internalization_audit - confidence: 0.95 - targetSurface: ops_audit - effectiveSurface: ops_audit - handoff receipt: memory/lark-language-handoff-receipts/2026-05-03/example.json",
+          "这是学习结果复盘/内化审计：我只检查有没有证据证明已经学会，不会重新学习。 学习内化状态: 已通过验证，可作为研究能力使用。 ## 证据 - family: knowledge_internalization_audit - targetSurface: ops_audit - handoff receipt: memory/lark-language-handoff-receipts/2026-05-03/example.json",
         family: "knowledge_internalization_audit",
         expectedSurface: "knowledge_maintenance",
       },

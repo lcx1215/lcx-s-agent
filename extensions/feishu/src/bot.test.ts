@@ -7511,6 +7511,9 @@ describe("learning council routing", () => {
     expect(replyText).toContain(
       "以后怎么用: Use for ETF event triage only after checking public headlines",
     );
+    expect(replyText).not.toMatch(
+      /^(family|targetSurface|effectiveSurface|done\s*[—-]\s*family|\{)/iu,
+    );
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -7615,6 +7618,9 @@ describe("learning council routing", () => {
     );
     expect(replyText).toContain("searched: memory/finance-learning-retrieval-receipts");
     expect(replyText).not.toContain("失败原因: none");
+    expect(replyText).not.toMatch(
+      /^(family|targetSurface|effectiveSurface|done\s*[—-]\s*family|\{)/iu,
+    );
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -7716,8 +7722,11 @@ describe("learning council routing", () => {
     expect(replyText).toContain("已收到：这是排队/调度请求");
     expect(replyText).toContain("队列状态：requested work items remain pending in order");
     expect(replyText).toContain("下一步：run the first queued item only");
-    expect(replyText).toContain("证据：交接回执:");
+    expect(replyText).toContain("交接回执:");
     expect(replyText).toContain("model_worker=not_called");
+    expect(replyText).not.toMatch(
+      /^(family|targetSurface|effectiveSurface|done\s*[—-]\s*family|\{)/iu,
+    );
     expect(replyText).not.toContain("recent user-triggered ingress");
     expect(replyText).not.toContain("2026-03-27");
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -8045,6 +8054,7 @@ describe("learning council routing", () => {
     expect(replyText).toContain("source-required source honesty test with no URL");
     expect(replyText).toContain("lark-source-required-test");
     expect(replyText).not.toContain("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。");
+    expect(replyText).not.toMatch(/^(family|source_required|failedReason|targetSurface|\{)/iu);
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -8183,6 +8193,7 @@ describe("learning council routing", () => {
       expect(replyText).toContain("证据:");
       expect(replyText).toContain(sourceRequiredCase.code);
       expect(replyText).not.toContain("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。");
+      expect(replyText).not.toMatch(/^(family|source_required|failedReason|targetSurface|\{)/iu);
     }
     await fs.rm(tempDir, { recursive: true, force: true });
   });
