@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { buildFailureCurriculumPrompts } from "./minimax-brain-failure-curriculum.js";
 
 type CliOptions = {
   profile: "manual" | "minimax-plus-brain";
@@ -32,6 +33,8 @@ type CliOptions = {
   maxRateLimitRounds: number;
   providerCooldownSeconds: number;
   maxProviderInstabilityRounds: number;
+  failureFocus: boolean;
+  guardLogPath: string;
 };
 
 type TeacherPrompt = {
@@ -65,6 +68,11 @@ const DEFAULT_LOG = path.join(
   DEFAULT_WORKSPACE,
   "logs",
   `minimax-quota-brain-saturator-${new Date().toISOString().slice(0, 10)}.jsonl`,
+);
+const DEFAULT_GUARD_LOG = path.join(
+  DEFAULT_WORKSPACE,
+  "logs",
+  "minimax-brain-training-guard-medium.jsonl",
 );
 
 const TASK_TEMPLATES = [
@@ -197,6 +205,9 @@ function usage(): never {
       "  --max-rate-limit-rounds N        stop after this many limit rounds, default 4",
       "  --provider-cooldown-seconds N    wait after fetch/timeout instability, default 90",
       "  --max-provider-instability-rounds N  stop after this many unstable provider rounds, default 3",
+      "  --failure-focus      mix eval-failure targeted prompts into each MiniMax teacher batch",
+      "  --no-failure-focus   disable eval-failure targeted prompt mixing",
+      "  --guard-log PATH     guard JSONL for failure-focus prompts, default medium guard log",
       "  --write               actually call MiniMax and write review artifacts; default is dry-run",
       "  --mock                use mock teacher for smoke without provider quota",
       "  --direct-api          call MiniMax directly with auth profile fallback instead of openclaw agent",
@@ -263,6 +274,8 @@ function parseArgs(args: string[]): CliOptions {
     maxRateLimitRounds: 4,
     providerCooldownSeconds: 90,
     maxProviderInstabilityRounds: 3,
+    failureFocus: false,
+    guardLogPath: DEFAULT_GUARD_LOG,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -282,6 +295,7 @@ function parseArgs(args: string[]): CliOptions {
       options.minConcurrency = 2;
       options.minBatchLimit = 8;
       options.reserve = 100;
+      options.failureFocus = true;
       index += 1;
     } else if (arg === "--used") {
       options.used = readNonNegativeInteger(readValue(args, index));
@@ -320,6 +334,13 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--max-provider-instability-rounds") {
       options.maxProviderInstabilityRounds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--failure-focus") {
+      options.failureFocus = true;
+    } else if (arg === "--no-failure-focus") {
+      options.failureFocus = false;
+    } else if (arg === "--guard-log") {
+      options.guardLogPath = path.resolve(readValue(args, index));
       index += 1;
     } else if (arg === "--duration-minutes") {
       options.durationMinutes = readPositiveInteger(readValue(args, index));
@@ -392,6 +413,7 @@ function parseArgs(args: string[]): CliOptions {
   }
   options.workspaceDir = path.resolve(options.workspaceDir);
   options.dataDir = path.resolve(options.dataDir);
+  options.guardLogPath = path.resolve(options.guardLogPath);
   return options;
 }
 
@@ -442,6 +464,27 @@ function buildPrompt(index: number): TeacherPrompt {
 
 function buildPrompts(start: number, count: number): TeacherPrompt[] {
   return Array.from({ length: count }, (_unused, offset) => buildPrompt(start + offset));
+}
+
+async function buildBatchPrompts(
+  options: CliOptions,
+  start: number,
+  count: number,
+): Promise<{ prompts: TeacherPrompt[]; failureFocusPrompts: number }> {
+  if (!options.failureFocus) {
+    return { prompts: buildPrompts(start, count), failureFocusPrompts: 0 };
+  }
+  const maxFailurePrompts = Math.min(Math.ceil(count / 2), 12);
+  const failurePrompts = await buildFailureCurriculumPrompts({
+    guardLogPath: options.guardLogPath,
+    maxPrompts: maxFailurePrompts,
+    startIndex: start,
+  });
+  const genericPrompts = buildPrompts(start + failurePrompts.length, count - failurePrompts.length);
+  return {
+    prompts: [...failurePrompts, ...genericPrompts],
+    failureFocusPrompts: failurePrompts.length,
+  };
 }
 
 async function appendLog(logPath: string, payload: Record<string, unknown>): Promise<void> {
@@ -559,6 +602,8 @@ const plan = {
   maxRateLimitRounds: options.maxRateLimitRounds,
   providerCooldownSeconds: options.providerCooldownSeconds,
   maxProviderInstabilityRounds: options.maxProviderInstabilityRounds,
+  failureFocus: options.failureFocus,
+  guardLogPath: options.guardLogPath,
   mock: options.mock,
   directApi: options.directApi,
   allowPartialWrite: options.allowPartialWrite,
@@ -747,7 +792,19 @@ try {
   for (let round = 1; attempted < calls && Date.now() < deadline; round += 1) {
     const remaining = calls - attempted;
     const batchSize = Math.min(currentBatchLimit, remaining);
-    const prompts = buildPrompts(attempted, batchSize);
+    const { prompts, failureFocusPrompts } = await buildBatchPrompts(options, attempted, batchSize);
+    if (failureFocusPrompts > 0) {
+      await appendLog(options.logPath, {
+        event: "failure_curriculum_prompts_selected",
+        round,
+        failureFocusPrompts,
+        totalPrompts: prompts.length,
+        guardLogPath: options.guardLogPath,
+        promptIds: prompts.slice(0, failureFocusPrompts).map((prompt) => prompt.id),
+        liveTouched: false,
+        providerConfigTouched: false,
+      });
+    }
     const promptPath = await writePromptFile(options, round, prompts);
     const teacherResult = await runJsonStep(
       options,

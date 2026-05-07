@@ -116,6 +116,7 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("--provider-cooldown-seconds");
     expect(source).toContain("--max-provider-instability-rounds");
     expect(source).toContain("--min-batch-limit");
+    expect(source).toContain("--failure-focus");
     expect(source).toContain("MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES = 285");
     expect(source).toContain("shouldUpgradeToMediumMiniMaxWindow");
   });

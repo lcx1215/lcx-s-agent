@@ -165,6 +165,11 @@ node --import tsx scripts/dev/minimax-brain-training-guard.ts \
 
 The `--train-load-max 12` guard is intentional. It allows MiniMax sample generation and eval to continue while skipping local MLX LoRA training when the machine is already under pressure.
 
+The guard passes `--failure-focus` to the MiniMax sidecar. Each teacher batch can
+mix in targeted prompts generated from the latest failed hardened eval cases, so
+MiniMax spends part of the quota on Qwen's current weak spots instead of only
+generic synthetic prompts.
+
 ## MiniMax Sample Generation Only
 
 Use this when you only want MiniMax to create more reviewed teacher samples:
