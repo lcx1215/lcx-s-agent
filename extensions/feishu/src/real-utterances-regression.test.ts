@@ -20,6 +20,7 @@ import {
   looksLikeSourceCoverageScopeAsk,
   looksLikeStrategicLearningAsk,
 } from "./intent-matchers.js";
+import { buildLarkLanguageHandoffReceiptArtifact } from "./lark-language-handoff-receipts.js";
 import {
   LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH,
   LARK_ROUTING_CORPUS,
@@ -1377,7 +1378,7 @@ describe("real daily utterance regression", () => {
     }
   });
 
-  it("routes simple finance learning asks to learning_command before generic knowledge maintenance", () => {
+  it("routes simple finance learning asks to learning_command before generic knowledge maintenance", async () => {
     const utterances = [
       "学习股市分析知识",
       "学习美股分析知识",
@@ -1405,6 +1406,57 @@ describe("real daily utterance regression", () => {
         specialistSurfaces: ["learning_command"],
       });
       expect(looksLikeFinanceLearningPipelineAsk(utterance), utterance).toBe(true);
+
+      const handoff = await resolveLarkAgentInstructionHandoff({
+        cfg,
+        chatId: "oc-control",
+        utterance,
+        apiProvider: async () => {
+          throw new Error("gateway timeout after 35000ms");
+        },
+      });
+      expect(handoff.family, utterance).toBe("market_capability_learning_intake");
+      expect(handoff.source, utterance).toBe("deterministic_fallback");
+      expect(handoff.targetSurface, utterance).toBe("learning_command");
+      expect(handoff.backendToolContract?.toolName, utterance).toBe(
+        "finance_learning_pipeline_orchestrator",
+      );
+      expect(handoff.workOrder?.source, utterance).toBe("deterministic_fallback_audited");
+      expect(handoff.workOrder?.outputContract, utterance).toContain(
+        "plain-language learning intake status first",
+      );
+      expect(handoff.workOrder?.outputContract, utterance).toContain(
+        "name missing source requirement when source is absent",
+      );
+      expect(handoff.workOrder?.outputContract, utterance).toContain(
+        "do not claim internalized or application_ready before retrieval review",
+      );
+      expect(handoff.notice, utterance).toContain("API planner was unavailable");
+
+      const receipt = buildLarkLanguageHandoffReceiptArtifact({
+        generatedAt: "2026-05-07T00:00:00.000Z",
+        agentId: "main",
+        targetSurface: routing.targetSurface,
+        effectiveSurface: routing.targetSurface,
+        chatId: "oc-control",
+        sessionKey: "agent:main:feishu:group:oc-control:surface:learning_command",
+        messageId: `msg-${utterance}`,
+        userMessage: utterance,
+        handoff,
+      });
+      expect(receipt.targetSurface, utterance).toBe("learning_command");
+      expect(receipt.effectiveSurface, utterance).toBe("learning_command");
+      expect(receipt.handoff.family, utterance).toBe("market_capability_learning_intake");
+      expect(receipt.handoff.expectedProof, utterance).toEqual([
+        "retrievalReceiptPath",
+        "retrievalReviewPath",
+      ]);
+      expect(receipt.financeBrainOrchestration?.primaryModules.length, utterance).toBeGreaterThan(
+        0,
+      );
+      expect(receipt.financeBrainOrchestration?.supportingModules, utterance).toContain(
+        "finance_learning_memory",
+      );
     }
   });
 

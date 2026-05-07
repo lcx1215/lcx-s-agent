@@ -86,7 +86,7 @@ export const FINANCE_BRAIN_MODULES = [
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
       /\b(?:index concentration|mag7|mega[- ]cap|breadth|nasdaq|s&p|spx|global index|constituents?|weights?)\b/u,
-      /全球指数|指数集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
+      /股市|股票市场|权益市场|大盘|全球指数|指数集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
     ],
   },
   {
@@ -245,7 +245,7 @@ function moduleMatches(module: FinanceBrainModuleDefinition, text: string): bool
 }
 
 function hasFinanceTaskSignal(text: string): boolean {
-  return /\b(finance|market|stock|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment)\b|金融|市场|股票|基金|组合|持仓|宏观|财报|估值|量化|投资/u.test(
+  return /\b(finance|market|stock|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资/u.test(
     text,
   );
 }

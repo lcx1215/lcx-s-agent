@@ -15,6 +15,7 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
 } from "openclaw/plugin-sdk";
 import { resolveAgentWorkspaceDir } from "../../../src/agents/agent-scope.js";
+import { planFinanceBrainOrchestration } from "../../../src/agents/finance-brain-orchestration.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../../src/agents/tools/finance-learning-pipeline-orchestrator-tool.js";
 import { resolveProtocolInfoQuestionKind } from "../../../src/auto-reply/reply/commands-protocol-families.js";
 import { buildProtocolInfoReply } from "../../../src/auto-reply/reply/commands-protocol-info.js";
@@ -1169,16 +1170,24 @@ function renderFeishuLearningBrainChainSummary(params: {
   const supportingModules = orchestration?.supportingModules ?? [];
   const reviewTools = orchestration?.reviewTools ?? [];
   const boundaries = orchestration?.boundaries ?? [];
+  const sourceRequirement = handoff?.backendToolContract?.sourceRequirement;
+  const expectedProof = handoff?.expectedProof ?? [];
   const domainPlan = primaryModules.includes("commodities_oil_gold")
     ? "本地大脑会先拆商品供需、库存/期限结构、原油/黄金/铜、美元利率、通胀、地缘风险，再接组合风险门。"
     : "本地大脑会先拆任务目标、已有记忆、因果链、缺失证据、风险边界，再交给审阅。";
-  return [
+  const lines = [
     `- 大模型拆解: ${handoff?.family ?? "learning_command"}${objective ? `；目标=${objective}` : ""}`,
     `- 本地大脑模块计划: ${[...primaryModules, ...supportingModules].join(", ") || "pending"}`,
     `- 本地大脑处理方式: ${domainPlan}`,
     `- 回交大模型审阅: ${reviewTools.join(", ") || "review_tier"}`,
     `- 边界: ${boundaries.join(", ") || "research_only, no_execution_authority"}`,
   ];
+  if (sourceRequirement || expectedProof.length > 0) {
+    lines.push(
+      `- 学习证据门: ${sourceRequirement ?? "source_required"}；proof=${expectedProof.join(", ") || "receipt/review required"}`,
+    );
+  }
+  return lines;
 }
 
 function summarizeFeishuLearningVisibleTopic(userMessage: string | undefined): string {
@@ -1660,10 +1669,20 @@ async function validateFeishuFinanceLearningLocalSource(params: {
 
 function renderFeishuFinanceLearningPipelineMissingSourceReply(params?: {
   handoff?: Awaited<ReturnType<typeof resolveLarkAgentInstructionHandoff>>;
+  userMessage?: string;
 }): string {
   const family = params?.handoff?.family ?? "market_capability_learning_intake";
   const objective = params?.handoff?.workOrder?.objective;
   const isExternalSourceLearning = family === "learning_external_source";
+  const plan = params?.userMessage
+    ? planFinanceBrainOrchestration({
+        text: params.userMessage,
+        writesDurableMemory: true,
+      })
+    : undefined;
+  const plannedModules = plan
+    ? [...plan.primaryModules, ...plan.supportingModules].join(", ")
+    : undefined;
   const intro = isExternalSourceLearning
     ? "我识别到这是外部材料提炼成 skills 的学习任务，但还缺安全 source，所以没有假装已经学完。"
     : "我识别到这是金融能力学习入口，但还缺安全 source，所以没有假装已经学完。";
@@ -1678,6 +1697,8 @@ function renderFeishuFinanceLearningPipelineMissingSourceReply(params?: {
     "",
     `- 已识别: ${family}`,
     "- 后端: finance_learning_pipeline_orchestrator",
+    ...(plannedModules ? [`- 本地大脑模块计划: ${plannedModules}`] : []),
+    ...(plan ? [`- 回交大模型审阅: ${plan.reviewTools.join(", ")}`] : []),
     "- learningInternalizationStatus: not_started",
     "- failedReason: safe_local_or_manual_source_required",
     ...(objective ? [`- 目标: ${objective}`] : []),
@@ -6493,6 +6514,7 @@ export async function handleFeishuMessage(params: {
           if (!pipelineSource) {
             const missingSourceText = renderFeishuFinanceLearningPipelineMissingSourceReply({
               handoff: larkInstructionHandoff,
+              userMessage: ctx.content,
             });
             const missingSourceSendResult = await sendFeishuBackendFactAnswerComposerReply({
               core,

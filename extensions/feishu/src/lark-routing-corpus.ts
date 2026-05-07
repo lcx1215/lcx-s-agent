@@ -114,7 +114,7 @@ export type LarkValidatedAgentWorkOrder = {
   family: LarkRoutingFamily;
   targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
   objective: string;
-  source: "api_planner_audited";
+  source: "api_planner_audited" | "deterministic_fallback_audited";
   plannerFamily?: LarkRoutingFamily | "unknown";
   requiredModules: readonly string[];
   backendTool?: string;
@@ -139,7 +139,7 @@ export type LarkHybridRouteCandidate = {
 
 export type LarkAgentInstructionHandoff = {
   family: LarkRoutingFamily | "unknown";
-  source: "api" | "unknown";
+  source: "api" | "deterministic_fallback" | "unknown";
   confidence: number;
   apiCandidate?: LarkApiRouteCandidate;
   targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
@@ -198,6 +198,7 @@ export type LarkRoutingCorpusScoreSummary = {
 export const LARK_ROUTING_SEMANTIC_THRESHOLD = 0.28;
 export const LARK_ROUTING_API_CONFIDENCE_THRESHOLD = 0.72;
 export const LARK_ROUTING_API_WORK_ORDER_CONFIDENCE_THRESHOLD = 0.6;
+export const LARK_ROUTING_DETERMINISTIC_FALLBACK_THRESHOLD = 0.85;
 
 function looksLikeTradingLanguageScopeAsk(text: string): boolean {
   return /(买|买入|卖|卖出|减仓|加仓|仓位|持仓|下单|发单|成交|市价单|限价单|止损|止盈|止损腿|止盈腿|开盘|收盘|order|market order|limit order|stop(?:-limit)?|trailing stop|bracket|take[- ]?profit|profit taker|stop[- ]?loss|aapl|qqq|spy|tlt)/iu.test(
@@ -350,6 +351,12 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
   market_capability_learning_intake: {
     target: "learning_command",
     canonicalUtterances: [
+      "学习股市分析知识",
+      "学习美股分析知识",
+      "学一下 A 股指数分析框架",
+      "补强 ETF 风控知识",
+      "学习期权波动率分析框架",
+      "学习加密币市场结构知识",
       "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略",
       "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
       "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
@@ -805,6 +812,50 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
   {
     id: "finance-learning-pipeline-003",
     utterance: "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
+    family: "market_capability_learning_intake",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
+    id: "finance-learning-pipeline-004",
+    utterance: "学习股市分析知识",
+    family: "market_capability_learning_intake",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+    notes:
+      "Language route only: a simple broad stock-market learning ask still needs source intake/retrieval review before claimed learning.",
+  },
+  {
+    id: "finance-learning-pipeline-005",
+    utterance: "学习美股分析知识",
+    family: "market_capability_learning_intake",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
+    id: "finance-learning-pipeline-006",
+    utterance: "学一下 A 股指数分析框架",
+    family: "market_capability_learning_intake",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
+    id: "finance-learning-pipeline-007",
+    utterance: "学习加密币市场结构知识",
+    family: "market_capability_learning_intake",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
+    id: "finance-learning-pipeline-008",
+    utterance: "补强 ETF 风控知识",
+    family: "market_capability_learning_intake",
+    expectedSurface: "learning_command",
+    truthBoundary: "live_required",
+  },
+  {
+    id: "finance-learning-pipeline-009",
+    utterance: "学习期权波动率分析框架",
     family: "market_capability_learning_intake",
     expectedSurface: "learning_command",
     truthBoundary: "live_required",
@@ -1714,6 +1765,33 @@ function sanitizePositionRiskOutputContract(items: readonly string[]): readonly 
   ]);
 }
 
+function resolveDeterministicFallbackFamily(params: {
+  utterance: string;
+  deterministicSurface?: FeishuChatSurfaceName;
+}): { family: LarkRoutingFamily; confidence: number } | undefined {
+  if (!params.deterministicSurface) {
+    return undefined;
+  }
+  const semantic = resolveLarkSemanticRouteCandidate(params.utterance);
+  if (
+    semantic.family === "unknown" ||
+    semantic.score < LARK_ROUTING_DETERMINISTIC_FALLBACK_THRESHOLD
+  ) {
+    return undefined;
+  }
+  const contract = LARK_ROUTING_FAMILY_CONTRACTS[semantic.family];
+  if (contract.target !== params.deterministicSurface) {
+    return undefined;
+  }
+  if (semantic.family !== "market_capability_learning_intake") {
+    return undefined;
+  }
+  return {
+    family: semantic.family,
+    confidence: Math.min(semantic.score, LARK_ROUTING_API_CONFIDENCE_THRESHOLD - 0.01),
+  };
+}
+
 function defaultWorkOrderModules(family: LarkRoutingFamily): readonly string[] {
   switch (family) {
     case "position_risk_adjustment":
@@ -1777,7 +1855,7 @@ function defaultWorkOrderEvidence(
 function buildValidatedAgentWorkOrder(params: {
   family: LarkRoutingFamily;
   utterance: string;
-  source: "api";
+  source: "api" | "deterministic_fallback";
   api?: LarkApiRouteCandidate;
   targetSurface?: FeishuChatSurfaceName | "protocol_truth_surface";
   deterministicSurface?: FeishuChatSurfaceName;
@@ -1805,9 +1883,13 @@ function buildValidatedAgentWorkOrder(params: {
       ? "api_planner_is_primary_task_decomposer"
       : apiRouteOnly
         ? "api_planner_route_only_no_work_order"
-        : "api_planner_missing_work_order",
+        : params.source === "deterministic_fallback"
+          ? "api_planner_unavailable_deterministic_fallback"
+          : "api_planner_missing_work_order",
     apiFamilyAccepted ? "api_planner_family_accepted" : "api_planner_family_not_primary_or_absent",
-    "no_local_semantic_live_decomposition",
+    params.source === "deterministic_fallback"
+      ? "local_semantic_fallback_not_primary_decomposer"
+      : "no_local_semantic_live_decomposition",
   ].filter((note): note is string => Boolean(note));
   const requiredModules = planner
     ? mergeUniqueWorkOrderItems(planner.requiredModules)
@@ -1826,7 +1908,16 @@ function buildValidatedAgentWorkOrder(params: {
         "model-review-ready draft",
         "explicit failedReason when required inputs are missing",
       ])
-    : ["ask for clarification or provide bounded failedReason", "do not invent backend execution"];
+    : params.backendToolContract
+      ? [
+          "plain-language learning intake status first",
+          "name missing source requirement when source is absent",
+          "do not claim internalized or application_ready before retrieval review",
+        ]
+      : [
+          "ask for clarification or provide bounded failedReason",
+          "do not invent backend execution",
+        ];
   const safeOutputContract =
     params.family === "position_risk_adjustment"
       ? sanitizePositionRiskOutputContract(outputContract)
@@ -1836,7 +1927,10 @@ function buildValidatedAgentWorkOrder(params: {
     family: params.family,
     targetSurface: params.targetSurface,
     objective,
-    source: "api_planner_audited",
+    source:
+      params.source === "deterministic_fallback"
+        ? "deterministic_fallback_audited"
+        : "api_planner_audited",
     plannerFamily: params.api?.family,
     requiredModules,
     backendTool,
@@ -1886,7 +1980,8 @@ export async function resolveLarkAgentInstructionHandoff(params: {
       };
     }
   }
-  const selected =
+  const deterministicSurface = deterministicRouting.targetSurface;
+  const apiSelected =
     api && api.family !== "unknown" && api.confidence >= LARK_ROUTING_API_CONFIDENCE_THRESHOLD
       ? { family: api.family, source: "api" as const, confidence: api.confidence }
       : api &&
@@ -1894,11 +1989,25 @@ export async function resolveLarkAgentInstructionHandoff(params: {
           api.workOrder &&
           api.confidence >= LARK_ROUTING_API_WORK_ORDER_CONFIDENCE_THRESHOLD
         ? { family: api.family, source: "api" as const, confidence: api.confidence }
-        : { family: "unknown" as const, source: "unknown" as const, confidence: 0 };
+        : undefined;
+  const deterministicFallback = apiSelected
+    ? undefined
+    : resolveDeterministicFallbackFamily({
+        utterance: params.utterance,
+        deterministicSurface,
+      });
+  const selected =
+    apiSelected ??
+    (deterministicFallback
+      ? {
+          family: deterministicFallback.family,
+          source: "deterministic_fallback" as const,
+          confidence: deterministicFallback.confidence,
+        }
+      : { family: "unknown" as const, source: "unknown" as const, confidence: 0 });
   const contract =
     selected.family === "unknown" ? undefined : LARK_ROUTING_FAMILY_CONTRACTS[selected.family];
   const targetSurface = contract?.target;
-  const deterministicSurface = deterministicRouting.targetSurface;
   if (selected.family === "unknown") {
     return {
       family: "unknown",
@@ -1910,7 +2019,9 @@ export async function resolveLarkAgentInstructionHandoff(params: {
     };
   }
   const boundaryLine =
-    "Safety boundary: this envelope is a routing hint for the agent, not execution approval; deterministic guards and surface policy remain authoritative.";
+    selected.source === "deterministic_fallback"
+      ? "Safety boundary: API planner was unavailable or below threshold, so this is a deterministic fallback routing hint, not primary local decomposition and not execution approval; deterministic guards and surface policy remain authoritative."
+      : "Safety boundary: this envelope is a routing hint for the agent, not execution approval; deterministic guards and surface policy remain authoritative.";
   const targetLine = `Suggested family=${selected.family}; target=${
     targetSurface ?? "deterministic_surface"
   }; source=${selected.source}; confidence=${selected.confidence.toFixed(2)}.`;
