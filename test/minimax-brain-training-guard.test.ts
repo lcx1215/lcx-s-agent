@@ -31,6 +31,7 @@ async function makeGuardFixture(logLinesForPrefix: (adapterPrefix: string) => un
   for (const adapterPath of adapterPaths) {
     await fs.mkdir(adapterPath, { recursive: true });
     await fs.writeFile(path.join(adapterPath, "adapter_config.json"), "{}\n");
+    await fs.writeFile(path.join(adapterPath, "adapters.safetensors"), "mock weights\n");
   }
   const logPath = path.join(logDir, "minimax-brain-training-guard-test.jsonl");
   await fs.writeFile(logPath, `${logLines.map((line) => JSON.stringify(line)).join("\n")}\n`);
@@ -49,7 +50,34 @@ function passingEval(at: string, name: string, adapterPath: string, total = 50) 
   };
 }
 
-async function resolveCurrentAdapter(fixture: Awaited<ReturnType<typeof makeGuardFixture>>) {
+function nonPassingEval(
+  at: string,
+  name: string,
+  adapterPath: string,
+  passed: number,
+  total: number,
+) {
+  return {
+    at,
+    event: "step_non_passing",
+    name,
+    result: {
+      adapterPath,
+      summary: {
+        passed,
+        total,
+        passRate: passed / total,
+        failedCaseIds: Array.from({ length: total - passed }, (_, index) => `case_${index}`),
+        promotionReady: false,
+      },
+    },
+  };
+}
+
+async function resolveCurrentAdapter(
+  fixture: Awaited<ReturnType<typeof makeGuardFixture>>,
+  extraArgs: string[] = [],
+) {
   return execFileAsync(
     process.execPath,
     [
@@ -61,6 +89,7 @@ async function resolveCurrentAdapter(fixture: Awaited<ReturnType<typeof makeGuar
       "Qwen/Qwen3-0.6B",
       "--adapter-prefix",
       fixture.adapterPrefix,
+      ...extraArgs,
       "--log",
       fixture.logPath,
     ],
@@ -114,6 +143,47 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("trainingSeedAdapter");
     expect(source).toContain('event: "best_effort_training_seed_selected"');
     expect(source).toContain('event: "candidate_retained_as_training_seed"');
+    expect(source).toContain('event: "candidate_not_retained_as_training_seed"');
+    expect(source).toContain("resolveBestTrainingSeedAdapter");
+  });
+
+  it("uses the highest scoring non-promotion candidate as the next training seed", async () => {
+    let strongAdapter = "";
+    let weakAdapter = "";
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      strongAdapter = `${adapterPrefix}-2026-05-07T12-04-09-522Z-r18`;
+      weakAdapter = `${adapterPrefix}-2026-05-07T12-32-22-742Z-r20`;
+      return [
+        nonPassingEval(
+          "2026-05-06T17:07:14.388Z",
+          "candidate_hardened_eval",
+          `${adapterPrefix}-2026-05-06T16-44-28-657Z-r3`,
+          50,
+          50,
+        ),
+        nonPassingEval(
+          "2026-05-07T12:16:10.000Z",
+          "candidate_hardened_eval",
+          strongAdapter,
+          53,
+          59,
+        ),
+        nonPassingEval("2026-05-07T12:40:10.000Z", "candidate_hardened_eval", weakAdapter, 14, 59),
+      ];
+    });
+
+    const { stdout } = await resolveCurrentAdapter(fixture, ["--bootstrap-if-missing"]);
+    const parsed = JSON.parse(stdout) as {
+      selectedAdapter?: string;
+      trainingSeedAdapter?: string;
+      trainingSeed?: { passed?: number; total?: number; passRate?: number };
+    };
+
+    expect(parsed.selectedAdapter).toBeUndefined();
+    expect(parsed.trainingSeedAdapter).toBe(strongAdapter);
+    expect(parsed.trainingSeed?.passed).toBe(53);
+    expect(parsed.trainingSeed?.total).toBe(59);
+    expect(parsed.trainingSeed?.passRate).toBeCloseTo(53 / 59);
   });
 
   it("does not select an adapter after a newer failed hardened eval", async () => {

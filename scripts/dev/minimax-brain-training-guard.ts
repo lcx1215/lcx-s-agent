@@ -553,46 +553,24 @@ async function resolveLatestAdapter(adapterPrefix: string): Promise<string | und
   return candidates[0];
 }
 
-async function resolveLatestTrainingSeedAdapter(
-  adapterPrefix: string,
-): Promise<string | undefined> {
-  const adapterRoot = path.dirname(adapterPrefix);
-  const adapterNamePrefix = `${path.basename(adapterPrefix)}-`;
-  let entries: string[];
-  try {
-    entries = await fs.readdir(adapterRoot);
-  } catch {
-    return undefined;
-  }
-  const candidates = (
-    await Promise.all(
-      entries
-        .filter((entry) => entry.startsWith(adapterNamePrefix))
-        .toSorted()
-        .toReversed()
-        .map(async (entry) => {
-          const adapterPath = path.join(adapterRoot, entry);
-          return (await hasAdapterConfig(adapterPath)) && (await hasAdapterWeights(adapterPath))
-            ? adapterPath
-            : undefined;
-        }),
-    )
-  ).filter((entry): entry is string => Boolean(entry));
-  return candidates[0];
-}
-
 type EvalVerdict = {
   at: string;
   adapterPath: string;
   promotionReady: boolean;
+  passed: number;
   total: number;
+  passRate: number;
+  failedCount: number;
   source: string;
 };
 
 function evalSummaryFromPayload(payload: Record<string, unknown>):
   | {
       promotionReady: boolean;
+      passed: number;
       total: number;
+      passRate: number;
+      failedCount: number;
     }
   | undefined {
   if (payload.event !== "step_ok") {
@@ -610,8 +588,21 @@ function evalSummaryFromPayload(payload: Record<string, unknown>):
     return undefined;
   }
   const promotionReady = (summary as { promotionReady?: unknown }).promotionReady === true;
+  const passed = (summary as { passed?: unknown }).passed;
   const total = (summary as { total?: unknown }).total;
-  return { promotionReady, total: typeof total === "number" ? total : 0 };
+  const passRate = (summary as { passRate?: unknown }).passRate;
+  const failedCaseIds = (summary as { failedCaseIds?: unknown }).failedCaseIds;
+  const safePassed = typeof passed === "number" ? passed : 0;
+  const safeTotal = typeof total === "number" ? total : 0;
+  return {
+    promotionReady,
+    passed: safePassed,
+    total: safeTotal,
+    passRate: typeof passRate === "number" ? passRate : safeTotal > 0 ? safePassed / safeTotal : 0,
+    failedCount: Array.isArray(failedCaseIds)
+      ? failedCaseIds.length
+      : Math.max(0, safeTotal - safePassed),
+  };
 }
 
 function evalVerdictFromPayload(payload: Record<string, unknown>): EvalVerdict | undefined {
@@ -637,7 +628,10 @@ function evalVerdictFromPayload(payload: Record<string, unknown>): EvalVerdict |
       payload.event === "step_ok" &&
       summary.promotionReady &&
       summary.total >= MIN_PROMOTION_EVAL_CASES,
+    passed: summary.passed,
     total: summary.total,
+    passRate: summary.passRate,
+    failedCount: summary.failedCount,
     source: String(payload.name),
   };
 }
@@ -667,7 +661,10 @@ function failedStableEvalVerdictFromGuardFailure(
     at,
     adapterPath,
     promotionReady: false,
+    passed: 0,
     total: totalMatch ? Number(totalMatch[1]) : 0,
+    passRate: 0,
+    failedCount: totalMatch ? Number(totalMatch[1]) : 0,
     source: "guard_failed_stable_hardened_eval",
   };
 }
@@ -692,6 +689,135 @@ function adapterMatchesPrefix(adapterPath: string, adapterPrefix: string): boole
     path.dirname(adapterPath) === adapterRoot &&
     path.basename(adapterPath).startsWith(adapterNamePrefix)
   );
+}
+
+type TrainingSeedSelection = {
+  adapterPath: string;
+  at: string;
+  passed: number;
+  total: number;
+  passRate: number;
+  failedCount: number;
+  source: string;
+};
+
+function trainingSeedFromVerdict(verdict: EvalVerdict): TrainingSeedSelection | undefined {
+  if (verdict.source !== "candidate_hardened_eval") {
+    return undefined;
+  }
+  if (verdict.total <= 0) {
+    return undefined;
+  }
+  return {
+    adapterPath: verdict.adapterPath,
+    at: verdict.at,
+    passed: verdict.passed,
+    total: verdict.total,
+    passRate: verdict.passRate,
+    failedCount: verdict.failedCount,
+    source: verdict.source,
+  };
+}
+
+function compareTrainingSeedSelection(
+  left: TrainingSeedSelection,
+  right: TrainingSeedSelection,
+): number {
+  const passedDelta = right.passed - left.passed;
+  if (passedDelta !== 0) {
+    return passedDelta;
+  }
+  const coverageDelta = right.total - left.total;
+  if (coverageDelta !== 0) {
+    return coverageDelta;
+  }
+  const passRateDelta = right.passRate - left.passRate;
+  if (passRateDelta !== 0) {
+    return passRateDelta;
+  }
+  const failureDelta = left.failedCount - right.failedCount;
+  if (failureDelta !== 0) {
+    return failureDelta;
+  }
+  return right.at.localeCompare(left.at);
+}
+
+function trainingSeedFromEvalResult(
+  adapterPath: string,
+  result: unknown,
+): TrainingSeedSelection | undefined {
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const summary = (result as { summary?: unknown }).summary;
+  if (!summary || typeof summary !== "object") {
+    return undefined;
+  }
+  const passed = (summary as { passed?: unknown }).passed;
+  const total = (summary as { total?: unknown }).total;
+  const passRate = (summary as { passRate?: unknown }).passRate;
+  const failedCaseIds = (summary as { failedCaseIds?: unknown }).failedCaseIds;
+  const safePassed = typeof passed === "number" ? passed : 0;
+  const safeTotal = typeof total === "number" ? total : 0;
+  if (safeTotal <= 0) {
+    return undefined;
+  }
+  return {
+    adapterPath,
+    at: new Date().toISOString(),
+    passed: safePassed,
+    total: safeTotal,
+    passRate: typeof passRate === "number" ? passRate : safeTotal > 0 ? safePassed / safeTotal : 0,
+    failedCount: Array.isArray(failedCaseIds)
+      ? failedCaseIds.length
+      : Math.max(0, safeTotal - safePassed),
+    source: "candidate_hardened_eval",
+  };
+}
+
+async function resolveBestTrainingSeedAdapter(
+  adapterPrefix: string,
+): Promise<TrainingSeedSelection | undefined> {
+  let logFiles: string[];
+  try {
+    logFiles = (await fs.readdir(DEFAULT_GUARD_LOG_DIR))
+      .filter((entry) => /^minimax-brain-training-guard.*\.jsonl$/u.test(entry))
+      .map((entry) => path.join(DEFAULT_GUARD_LOG_DIR, entry));
+  } catch {
+    return undefined;
+  }
+  const candidates = new Map<string, TrainingSeedSelection>();
+  for (const logFile of logFiles.toSorted()) {
+    const raw = await fs.readFile(logFile, "utf8");
+    for (const line of raw.split(/\r?\n/u)) {
+      if (!line.trim()) {
+        continue;
+      }
+      const payload = JSON.parse(line) as Record<string, unknown>;
+      const verdict = evalVerdictFromPayload(payload);
+      if (!verdict || !adapterMatchesPrefix(verdict.adapterPath, adapterPrefix)) {
+        continue;
+      }
+      const seed = trainingSeedFromVerdict(verdict);
+      if (!seed) {
+        continue;
+      }
+      const current = candidates.get(seed.adapterPath);
+      if (!current || current.at.localeCompare(seed.at) <= 0) {
+        candidates.set(seed.adapterPath, seed);
+      }
+    }
+  }
+  const ranked = [...candidates.values()].toSorted(compareTrainingSeedSelection);
+  for (const candidate of ranked) {
+    if (
+      (await hasAdapterConfig(candidate.adapterPath)) &&
+      (await hasAdapterWeights(candidate.adapterPath))
+    ) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 async function resolveLatestPassingAdapter(adapterPrefix: string): Promise<string | undefined> {
@@ -1104,12 +1230,18 @@ function adapterPathForRound(options: CliOptions, round: number): string {
 const options = parseArgs(process.argv.slice(2));
 if (options.resolveCurrentAdapterOnly) {
   const selectedAdapter = await resolveCurrentAdapter(options);
+  const trainingSeed =
+    !selectedAdapter && !options.noTrain
+      ? await resolveBestTrainingSeedAdapter(options.adapterPrefix)
+      : undefined;
   process.stdout.write(
     `${JSON.stringify(
       {
         ok: true,
         boundary: "local_auxiliary_thought_flow_only",
         selectedAdapter,
+        trainingSeedAdapter: trainingSeed?.adapterPath,
+        trainingSeed,
         model: options.model,
         adapterPrefix: options.adapterPrefix,
         bootstrapIfMissing: options.bootstrapIfMissing,
@@ -1139,9 +1271,11 @@ const startedAt = Date.now();
 const deadline = startedAt + options.durationMinutes * 60_000;
 let round = 0;
 let currentAdapter = await resolveCurrentAdapter(options);
-let trainingSeedAdapter =
-  currentAdapter ??
-  (!options.noTrain ? await resolveLatestTrainingSeedAdapter(options.adapterPrefix) : undefined);
+let trainingSeed =
+  currentAdapter || options.noTrain
+    ? undefined
+    : await resolveBestTrainingSeedAdapter(options.adapterPrefix);
+let trainingSeedAdapter = currentAdapter ?? trainingSeed?.adapterPath;
 let teacherSidecar: TeacherSidecar | undefined;
 
 await appendLog(options.logPath, {
@@ -1157,6 +1291,14 @@ if (!currentAdapter && trainingSeedAdapter) {
   await appendLog(options.logPath, {
     event: "best_effort_training_seed_selected",
     adapterPath: trainingSeedAdapter,
+    score: trainingSeed
+      ? {
+          passed: trainingSeed.passed,
+          total: trainingSeed.total,
+          passRate: trainingSeed.passRate,
+          failedCount: trainingSeed.failedCount,
+        }
+      : undefined,
     reason: "no_promotion_ready_adapter_available",
     strictPromotionUnchanged: true,
     liveTouched: false,
@@ -1272,6 +1414,7 @@ try {
       if (promotionEvalPassed(candidateEval)) {
         currentAdapter = candidateAdapter;
         trainingSeedAdapter = candidateAdapter;
+        trainingSeed = trainingSeedFromEvalResult(candidateAdapter, candidateEval);
         await appendLog(options.logPath, {
           event: "adapter_promoted_for_guard_session",
           round,
@@ -1280,15 +1423,40 @@ try {
         });
       } else {
         if (!currentAdapter) {
-          trainingSeedAdapter = candidateAdapter;
-          await appendLog(options.logPath, {
-            event: "candidate_retained_as_training_seed",
-            round,
-            adapterPath: trainingSeedAdapter,
-            reason: "no_strict_promotion_ready_adapter_available",
-            strictPromotionUnchanged: true,
-            liveTouched: false,
-          });
+          const candidateSeed = trainingSeedFromEvalResult(candidateAdapter, candidateEval);
+          if (
+            candidateSeed &&
+            (!trainingSeed || compareTrainingSeedSelection(candidateSeed, trainingSeed) < 0)
+          ) {
+            trainingSeed = candidateSeed;
+            trainingSeedAdapter = candidateAdapter;
+            await appendLog(options.logPath, {
+              event: "candidate_retained_as_training_seed",
+              round,
+              adapterPath: trainingSeedAdapter,
+              score: {
+                passed: candidateSeed.passed,
+                total: candidateSeed.total,
+                passRate: candidateSeed.passRate,
+                failedCount: candidateSeed.failedCount,
+              },
+              reason: "best_available_non_promotion_eval_candidate",
+              strictPromotionUnchanged: true,
+              liveTouched: false,
+            });
+          } else {
+            await appendLog(options.logPath, {
+              event: "candidate_not_retained_as_training_seed",
+              round,
+              adapterPath: candidateAdapter,
+              currentTrainingSeedAdapter: trainingSeedAdapter,
+              reason: candidateSeed
+                ? "lower_score_than_current_training_seed"
+                : "missing_candidate_eval_score",
+              strictPromotionUnchanged: true,
+              liveTouched: false,
+            });
+          }
         }
         await appendLog(options.logPath, {
           event: "adapter_rejected_for_guard_session",

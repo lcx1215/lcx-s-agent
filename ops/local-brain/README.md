@@ -130,6 +130,14 @@ adapterPrefix=.../thought-flow-v1-qwen3-0.6b-minimax-guard
 
 The guard now filters `latest-passing` by model-specific adapter prefix, so a future Qwen3 1.7B bootstrap cannot accidentally reuse a Qwen3 0.6B adapter.
 
+When no strict `promotionReady=true` adapter exists, the guard may still choose a
+best-effort training seed so local Qwen does not restart from the base model. That
+seed must be chosen by eval evidence, not by newest timestamp. The current rule
+prefers the non-promotion candidate with the strongest eval shape: more passed
+cases first, then broader coverage, then pass rate, then fewer failures. This
+prevents a newer weak candidate from replacing an older stronger seed such as a
+`53/59` candidate.
+
 ## Continue Normal 0.6B Training
 
 Use this for the normal medium-intensity local loop. The MiniMax teacher now runs as a
@@ -274,6 +282,18 @@ lcx.minimax.brain.medium.2026-05-05T06-28-30Z
 ```
 
 If the launchd command contains an old explicit `--current-adapter ...T05-00-48...r2`, replace it with a command that omits `--current-adapter` so the guard uses `latest-passing`.
+
+If logs show `best_effort_training_seed_selected`, verify that the selected seed
+is the highest-scoring retained candidate, not merely the newest adapter
+directory:
+
+```bash
+node --import tsx scripts/dev/minimax-brain-training-guard.ts \
+  --resolve-current-adapter \
+  --bootstrap-if-missing \
+  --model Qwen/Qwen3-0.6B \
+  --log /Users/liuchengxu/.openclaw/workspace/logs/minimax-brain-training-guard-medium.jsonl
+```
 
 ## Status Interpretation
 
