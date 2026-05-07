@@ -5,6 +5,7 @@ import {
   extractJson,
   extractMiniMaxTeacherTextFromResponse,
   hardenTeacherPlanForPrompt,
+  isProviderPayloadMissingFailure,
   normalizeTeacherPlan,
 } from "../scripts/dev/minimax-brain-teacher-batch.js";
 
@@ -77,6 +78,24 @@ describe("minimax brain teacher batch parsing", () => {
 
     const text = extractMiniMaxTeacherTextFromResponse(response);
     expect(extractJson(text).task_family).toBe("openai_shaped_teacher_response");
+  });
+
+  it("treats missing MiniMax text content as provider payload instability", () => {
+    expect(
+      isProviderPayloadMissingFailure({
+        error: "Error: MiniMax teacher response missing text content: thinking-only payload",
+      }),
+    ).toBe(true);
+    expect(
+      isProviderPayloadMissingFailure({
+        error: "Error: OpenClaw agent output missing payload text: {}",
+      }),
+    ).toBe(true);
+    expect(
+      isProviderPayloadMissingFailure({
+        error: "SyntaxError: Expected ',' or ']' after array element in JSON",
+      }),
+    ).toBe(false);
   });
 
   it("extracts the first balanced JSON object from fenced or noisy output", () => {

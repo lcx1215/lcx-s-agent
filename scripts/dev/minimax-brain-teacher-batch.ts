@@ -1504,8 +1504,11 @@ async function callTeacherWithFallback(
   }
 }
 
-function isProviderPayloadMissingFailure(failure: { error: string }): boolean {
-  return failure.error.includes("OpenClaw agent output missing payload text");
+export function isProviderPayloadMissingFailure(failure: { error: string }): boolean {
+  return (
+    failure.error.includes("OpenClaw agent output missing payload text") ||
+    failure.error.includes("MiniMax teacher response missing text content")
+  );
 }
 
 async function main(): Promise<void> {
