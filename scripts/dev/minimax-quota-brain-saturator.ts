@@ -30,6 +30,8 @@ type CliOptions = {
   minBatchLimit: number;
   rateLimitCooldownSeconds: number;
   maxRateLimitRounds: number;
+  providerCooldownSeconds: number;
+  maxProviderInstabilityRounds: number;
 };
 
 type TeacherPrompt = {
@@ -193,6 +195,8 @@ function usage(): never {
       "  --min-batch-limit N   adaptive floor, default 12",
       "  --rate-limit-cooldown-seconds N  wait after 429/2062, default 120",
       "  --max-rate-limit-rounds N        stop after this many limit rounds, default 4",
+      "  --provider-cooldown-seconds N    wait after fetch/timeout instability, default 90",
+      "  --max-provider-instability-rounds N  stop after this many unstable provider rounds, default 3",
       "  --write               actually call MiniMax and write review artifacts; default is dry-run",
       "  --mock                use mock teacher for smoke without provider quota",
       "  --direct-api          call MiniMax directly with auth profile fallback instead of openclaw agent",
@@ -257,6 +261,8 @@ function parseArgs(args: string[]): CliOptions {
     minBatchLimit: 12,
     rateLimitCooldownSeconds: 120,
     maxRateLimitRounds: 4,
+    providerCooldownSeconds: 90,
+    maxProviderInstabilityRounds: 3,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -270,9 +276,11 @@ function parseArgs(args: string[]): CliOptions {
       options.allowPartialWrite = true;
       options.adaptive = true;
       options.batchLimit = 36;
-      options.concurrency = 12;
+      options.concurrency = 8;
       options.datasetEvery = 2;
       options.smokeEvery = 4;
+      options.minConcurrency = 2;
+      options.minBatchLimit = 8;
       options.reserve = 100;
       index += 1;
     } else if (arg === "--used") {
@@ -306,6 +314,12 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--max-rate-limit-rounds") {
       options.maxRateLimitRounds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--provider-cooldown-seconds") {
+      options.providerCooldownSeconds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--max-provider-instability-rounds") {
+      options.maxProviderInstabilityRounds = readPositiveInteger(readValue(args, index));
       index += 1;
     } else if (arg === "--duration-minutes") {
       options.durationMinutes = readPositiveInteger(readValue(args, index));
@@ -543,6 +557,8 @@ const plan = {
   minBatchLimit: options.minBatchLimit,
   rateLimitCooldownSeconds: options.rateLimitCooldownSeconds,
   maxRateLimitRounds: options.maxRateLimitRounds,
+  providerCooldownSeconds: options.providerCooldownSeconds,
+  maxProviderInstabilityRounds: options.maxProviderInstabilityRounds,
   mock: options.mock,
   directApi: options.directApi,
   allowPartialWrite: options.allowPartialWrite,
@@ -572,6 +588,7 @@ let stopReason = "target_calls_reached";
 let currentBatchLimit = options.batchLimit;
 let currentConcurrency = options.concurrency;
 let consecutiveRateLimitRounds = 0;
+let consecutiveProviderUnstableRounds = 0;
 
 function isProviderLimitSignal(result: StepResult): boolean {
   const haystack =
@@ -591,6 +608,30 @@ function isProviderLimitSignal(result: StepResult): boolean {
   ].some((needle) => haystack.includes(needle));
 }
 
+function isProviderTransportSignal(result: StepResult): boolean {
+  const haystack =
+    `${result.stdout}\n${result.stderr}\n${JSON.stringify(result.parsed)}`.toLowerCase();
+  return [
+    "typeerror: fetch failed",
+    "fetch failed",
+    "timeouterror",
+    "operation was aborted due to timeout",
+    "etimedout",
+    "econnreset",
+    "econnrefused",
+    "socket hang up",
+    "network error",
+    "upstream request timeout",
+    "gateway timeout",
+    "bad gateway",
+    "service unavailable",
+    " 500 ",
+    " 502 ",
+    " 503 ",
+    " 504 ",
+  ].some((needle) => haystack.includes(needle));
+}
+
 function acceptedCandidatesFromResult(result: StepResult): number {
   if (!result.parsed || typeof result.parsed !== "object") {
     return 0;
@@ -600,6 +641,44 @@ function acceptedCandidatesFromResult(result: StepResult): number {
     Number.isFinite(payload.acceptedCandidates)
     ? payload.acceptedCandidates
     : 0;
+}
+
+function failureErrorsFromResult(result: StepResult): string[] {
+  if (!result.parsed || typeof result.parsed !== "object") {
+    return [];
+  }
+  const payload = result.parsed as { failures?: unknown };
+  if (!Array.isArray(payload.failures)) {
+    return [];
+  }
+  return payload.failures
+    .map((failure) => {
+      if (!failure || typeof failure !== "object") {
+        return "";
+      }
+      const error = (failure as { error?: unknown }).error;
+      return typeof error === "string" ? error : "";
+    })
+    .filter(Boolean);
+}
+
+function providerTransportFailureCount(result: StepResult): number {
+  const unstablePatterns = [
+    /typeerror:\s*fetch failed/iu,
+    /fetch failed/iu,
+    /timeouterror/iu,
+    /operation was aborted due to timeout/iu,
+    /etimedout/iu,
+    /econnreset/iu,
+    /econnrefused/iu,
+    /socket hang up/iu,
+    /network error/iu,
+    /(?:bad gateway|gateway timeout|service unavailable)/iu,
+    /\b50[0234]\b/u,
+  ];
+  return failureErrorsFromResult(result).filter((error) =>
+    unstablePatterns.some((pattern) => pattern.test(error)),
+  ).length;
 }
 
 async function runIntegrityChecks(round: number, force: boolean): Promise<void> {
@@ -627,29 +706,40 @@ async function runIntegrityChecks(round: number, force: boolean): Promise<void> 
   }
 }
 
-async function backOffAfterRateLimit(round: number): Promise<boolean> {
+async function backOffAfterProviderPressure(
+  round: number,
+  reason: "rate_limit" | "transport_instability",
+): Promise<boolean> {
   const previousBatchLimit = currentBatchLimit;
   const previousConcurrency = currentConcurrency;
   currentBatchLimit = Math.max(options.minBatchLimit, Math.floor(currentBatchLimit / 2));
   currentConcurrency = Math.max(options.minConcurrency, Math.floor(currentConcurrency / 2));
+  const cooldownSeconds =
+    reason === "rate_limit" ? options.rateLimitCooldownSeconds : options.providerCooldownSeconds;
   await appendLog(options.logPath, {
-    event: "adaptive_rate_limit_backoff",
+    event:
+      reason === "rate_limit"
+        ? "adaptive_rate_limit_backoff"
+        : "adaptive_provider_instability_backoff",
     round,
+    reason,
     consecutiveRateLimitRounds,
+    consecutiveProviderUnstableRounds,
     previousBatchLimit,
     previousConcurrency,
     nextBatchLimit: currentBatchLimit,
     nextConcurrency: currentConcurrency,
-    cooldownSeconds: options.rateLimitCooldownSeconds,
+    cooldownSeconds,
   });
   process.stdout.write(
-    `[minimax-quota] adaptive_backoff round=${round} concurrency=${previousConcurrency}->${currentConcurrency} batch=${previousBatchLimit}->${currentBatchLimit} cooldown=${options.rateLimitCooldownSeconds}s\n`,
+    `[minimax-quota] adaptive_backoff reason=${reason} round=${round} concurrency=${previousConcurrency}->${currentConcurrency} batch=${previousBatchLimit}->${currentBatchLimit} cooldown=${cooldownSeconds}s\n`,
   );
-  if (Date.now() + options.rateLimitCooldownSeconds * 1_000 >= deadline) {
-    stopReason = "provider_quota_or_rate_limit";
+  if (Date.now() + cooldownSeconds * 1_000 >= deadline) {
+    stopReason =
+      reason === "rate_limit" ? "provider_quota_or_rate_limit" : "provider_transport_instability";
     return false;
   }
-  await sleep(options.rateLimitCooldownSeconds * 1_000);
+  await sleep(cooldownSeconds * 1_000);
   return true;
 }
 
@@ -687,6 +777,8 @@ try {
       { allowFailure: true },
     );
     const providerLimited = isProviderLimitSignal(teacherResult);
+    const providerTransportUnstable = isProviderTransportSignal(teacherResult);
+    const transportFailureCount = providerTransportFailureCount(teacherResult);
     if (teacherResult.exitCode !== 0) {
       const acceptedCandidates = acceptedCandidatesFromResult(teacherResult);
       if (options.allowPartialWrite && acceptedCandidates > 0) {
@@ -695,17 +787,35 @@ try {
           round,
           acceptedCandidates,
           exitCode: teacherResult.exitCode,
+          providerLimited,
+          providerTransportUnstable,
+          transportFailureCount,
         });
         attempted += batchSize;
         completedRounds = round;
         if (providerLimited) {
           stopReason = "provider_quota_or_rate_limit";
           consecutiveRateLimitRounds += 1;
+          consecutiveProviderUnstableRounds = 0;
           await runIntegrityChecks(round, true);
           if (
             !options.adaptive ||
             consecutiveRateLimitRounds >= options.maxRateLimitRounds ||
-            !(await backOffAfterRateLimit(round))
+            !(await backOffAfterProviderPressure(round, "rate_limit"))
+          ) {
+            break;
+          }
+          continue;
+        }
+        if (providerTransportUnstable) {
+          stopReason = "provider_transport_instability";
+          consecutiveProviderUnstableRounds += 1;
+          consecutiveRateLimitRounds = 0;
+          await runIntegrityChecks(round, true);
+          if (
+            !options.adaptive ||
+            consecutiveProviderUnstableRounds >= options.maxProviderInstabilityRounds ||
+            !(await backOffAfterProviderPressure(round, "transport_instability"))
           ) {
             break;
           }
@@ -714,10 +824,23 @@ try {
       } else if (providerLimited) {
         stopReason = "provider_quota_or_rate_limit";
         consecutiveRateLimitRounds += 1;
+        consecutiveProviderUnstableRounds = 0;
         if (
           !options.adaptive ||
           consecutiveRateLimitRounds >= options.maxRateLimitRounds ||
-          !(await backOffAfterRateLimit(round))
+          !(await backOffAfterProviderPressure(round, "rate_limit"))
+        ) {
+          break;
+        }
+        continue;
+      } else if (providerTransportUnstable) {
+        stopReason = "provider_transport_instability";
+        consecutiveProviderUnstableRounds += 1;
+        consecutiveRateLimitRounds = 0;
+        if (
+          !options.adaptive ||
+          consecutiveProviderUnstableRounds >= options.maxProviderInstabilityRounds ||
+          !(await backOffAfterProviderPressure(round, "transport_instability"))
         ) {
           break;
         }
@@ -727,6 +850,7 @@ try {
       }
     } else {
       consecutiveRateLimitRounds = 0;
+      consecutiveProviderUnstableRounds = 0;
       stopReason = "target_calls_reached";
       attempted += batchSize;
       completedRounds = round;
@@ -742,6 +866,7 @@ try {
     finalBatchLimit: currentBatchLimit,
     finalConcurrency: currentConcurrency,
     consecutiveRateLimitRounds,
+    consecutiveProviderUnstableRounds,
     liveTouched: false,
     providerConfigTouched: false,
   });
@@ -755,6 +880,7 @@ try {
         finalBatchLimit: currentBatchLimit,
         finalConcurrency: currentConcurrency,
         consecutiveRateLimitRounds,
+        consecutiveProviderUnstableRounds,
         logPath: options.logPath,
       },
       null,
@@ -769,6 +895,7 @@ try {
     finalBatchLimit: currentBatchLimit,
     finalConcurrency: currentConcurrency,
     consecutiveRateLimitRounds,
+    consecutiveProviderUnstableRounds,
     error: String(error),
     liveTouched: false,
     providerConfigTouched: false,

@@ -84,8 +84,24 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("scripts/dev/minimax-quota-brain-saturator.ts");
     expect(source).toContain("--adaptive");
     expect(source).toContain("--allow-partial-write");
+    expect(source).toContain("--provider-cooldown-seconds");
+    expect(source).toContain("--max-provider-instability-rounds");
+    expect(source).toContain("--min-batch-limit");
     expect(source).toContain("MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES = 285");
     expect(source).toContain("shouldUpgradeToMediumMiniMaxWindow");
+  });
+
+  it("backs off MiniMax sidecar pressure on transport instability, not only rate limits", async () => {
+    const source = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-quota-brain-saturator.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("provider_transport_instability");
+    expect(source).toContain("adaptive_provider_instability_backoff");
+    expect(source).toContain("TypeError: fetch failed".toLowerCase());
+    expect(source).toContain("TimeoutError".toLowerCase());
+    expect(source).toContain("consecutiveProviderUnstableRounds");
   });
 
   it("does not select an adapter after a newer failed hardened eval", async () => {
