@@ -27,9 +27,13 @@ const DEFAULT_ADAPTER = path.join(
   "thought-flow-v1-qwen3-0.6b-taxonomy-v3",
 );
 const HOME = process.env.HOME ?? ".";
+const WORKSPACE_DIR = path.join(HOME, ".openclaw", "workspace");
 const WORKSPACE_LOG_DIR = path.join(HOME, ".openclaw", "workspace", "logs");
 const MINIMAX_GUARD_LOG = path.join(WORKSPACE_LOG_DIR, "minimax-brain-training-guard-medium.jsonl");
 const MINIMAX_QUOTA_LOG_PATTERN = /^minimax-quota-brain-saturator-\d{4}-\d{2}-\d{2}\.jsonl$/u;
+const LEARNING_COUNCIL_DIR = path.join(WORKSPACE_DIR, "bank", "knowledge", "learning-councils");
+const REVIEW_PANEL_RECEIPT_DIR = path.join(WORKSPACE_DIR, "memory", "review-panel-receipts");
+const MODEL_COUNCIL_AUDIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 function usage(): never {
   throw new Error(
@@ -307,6 +311,66 @@ async function readJsonlTail(
   }
 }
 
+async function listRecentFiles(params: {
+  root: string;
+  suffix: string;
+  maxAgeMs: number;
+  maxFiles: number;
+}): Promise<Array<{ filePath: string; mtimeMs: number }>> {
+  const startedAfterMs = Date.now() - params.maxAgeMs;
+  const collected: Array<{ filePath: string; mtimeMs: number }> = [];
+
+  async function visit(dir: string): Promise<void> {
+    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(
+      entries.map(async (entry) => {
+        const filePath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await visit(filePath);
+          return;
+        }
+        if (!entry.isFile() || !entry.name.endsWith(params.suffix)) {
+          return;
+        }
+        try {
+          const stats = await fs.stat(filePath);
+          if (stats.mtimeMs >= startedAfterMs) {
+            collected.push({ filePath, mtimeMs: stats.mtimeMs });
+          }
+        } catch {
+          // Runtime artifacts can rotate while the doctor is scanning.
+        }
+      }),
+    );
+  }
+
+  await visit(params.root);
+  return collected
+    .toSorted((a, b) => b.mtimeMs - a.mtimeMs || b.filePath.localeCompare(a.filePath))
+    .slice(0, params.maxFiles);
+}
+
+async function readJsonFileObject(filePath: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function relativeRuntimePath(filePath: string): string {
+  return path.relative(WORKSPACE_DIR, filePath) || filePath;
+}
+
 async function latestMinimaxQuotaLogPath(): Promise<string | undefined> {
   try {
     const entries = await fs.readdir(WORKSPACE_LOG_DIR, { withFileTypes: true });
@@ -557,6 +621,153 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
   }
 }
 
+type CouncilRoleSummary = {
+  role: string;
+  model: string;
+  providerFamily: string;
+  success: boolean;
+  error?: string;
+};
+
+function summarizeCouncilRoles(payload: Record<string, unknown>): CouncilRoleSummary[] {
+  const roles = Array.isArray(payload.roles) ? payload.roles : [];
+  return roles
+    .map((role): CouncilRoleSummary | undefined => {
+      if (!role || typeof role !== "object") {
+        return undefined;
+      }
+      const record = role as Record<string, unknown>;
+      const roleName = typeof record.role === "string" ? record.role : "";
+      if (!roleName) {
+        return undefined;
+      }
+      return {
+        role: roleName,
+        model: typeof record.model === "string" ? record.model : "",
+        providerFamily:
+          typeof record.providerFamily === "string" ? record.providerFamily : "unknown",
+        success: record.success === true,
+        error: typeof record.error === "string" ? record.error : undefined,
+      };
+    })
+    .filter((role): role is CouncilRoleSummary => Boolean(role));
+}
+
+function incrementCounter(counter: Record<string, number>, key: string): void {
+  counter[key] = (counter[key] ?? 0) + 1;
+}
+
+async function modelCouncilProviderEvidenceCheck(): Promise<CheckResult> {
+  const startedAt = Date.now();
+  const [learningCouncilFiles, reviewPanelFiles] = await Promise.all([
+    listRecentFiles({
+      root: LEARNING_COUNCIL_DIR,
+      suffix: ".json",
+      maxAgeMs: MODEL_COUNCIL_AUDIT_WINDOW_MS,
+      maxFiles: 30,
+    }),
+    listRecentFiles({
+      root: REVIEW_PANEL_RECEIPT_DIR,
+      suffix: ".json",
+      maxAgeMs: MODEL_COUNCIL_AUDIT_WINDOW_MS,
+      maxFiles: 80,
+    }),
+  ]);
+
+  const learningCouncilArtifacts = (
+    await Promise.all(
+      learningCouncilFiles.map(async (entry) => {
+        const payload = await readJsonFileObject(entry.filePath);
+        if (!payload) {
+          return undefined;
+        }
+        return {
+          path: relativeRuntimePath(entry.filePath),
+          generatedAt: typeof payload.generatedAt === "string" ? payload.generatedAt : "",
+          userMessage: typeof payload.userMessage === "string" ? payload.userMessage : "",
+          status: typeof payload.status === "string" ? payload.status : "unknown",
+          roles: summarizeCouncilRoles(payload),
+        };
+      }),
+    )
+  ).filter(
+    (
+      entry,
+    ): entry is {
+      path: string;
+      generatedAt: string;
+      userMessage: string;
+      status: string;
+      roles: CouncilRoleSummary[];
+    } => Boolean(entry),
+  );
+
+  const roleSuccesses: Record<string, number> = {};
+  const roleFailures: Record<string, number> = {};
+  for (const artifact of learningCouncilArtifacts) {
+    for (const role of artifact.roles) {
+      incrementCounter(role.success ? roleSuccesses : roleFailures, role.role);
+    }
+  }
+
+  const reviewPanelReceipts = await Promise.all(
+    reviewPanelFiles.map(async (entry) => {
+      const payload = await readJsonFileObject(entry.filePath);
+      const result =
+        payload?.result && typeof payload.result === "object"
+          ? (payload.result as Record<string, unknown>)
+          : {};
+      const localArbitration =
+        result.localArbitration && typeof result.localArbitration === "object"
+          ? (result.localArbitration as Record<string, unknown>)
+          : {};
+      return {
+        path: relativeRuntimePath(entry.filePath),
+        providerCallsMade: localArbitration.providerCallsMade === true,
+      };
+    }),
+  );
+
+  const latestLearningCouncil = learningCouncilArtifacts[0];
+  const latestRoleFailures =
+    latestLearningCouncil?.roles.filter((role) => !role.success).map((role) => role.role) ?? [];
+  const latestLearningCouncilDegraded =
+    latestLearningCouncil?.status === "degraded" || latestRoleFailures.length > 0;
+  const reviewPanelProviderBacked = reviewPanelReceipts.filter(
+    (receipt) => receipt.providerCallsMade,
+  ).length;
+  const reviewPanelLocalOnly = reviewPanelReceipts.length - reviewPanelProviderBacked;
+
+  return {
+    name: "model-council-provider-evidence",
+    ok: !latestLearningCouncilDegraded,
+    durationMs: Date.now() - startedAt,
+    summary: {
+      windowDays: MODEL_COUNCIL_AUDIT_WINDOW_MS / (24 * 60 * 60 * 1000),
+      learningCouncilArtifacts: learningCouncilArtifacts.length,
+      latestLearningCouncil,
+      roleSuccesses,
+      roleFailures,
+      recentProviderEvidence: {
+        kimi: (roleSuccesses.kimi ?? 0) > 0,
+        minimax: (roleSuccesses.minimax ?? 0) > 0,
+        deepseek: (roleSuccesses.deepseek ?? 0) > 0,
+        deepseekAttemptedButFailed: (roleFailures.deepseek ?? 0) > 0,
+      },
+      reviewPanelReceipts: reviewPanelReceipts.length,
+      reviewPanelProviderBacked,
+      reviewPanelLocalOnly,
+      reviewPanelBoundary:
+        "providerCallsMade=false means local deterministic arbitration only, not external Kimi/DeepSeek/MiniMax review.",
+      liveTouched: false,
+      providerConfigTouched: false,
+    },
+    error: latestLearningCouncilDegraded
+      ? `latest learning council degraded: status=${latestLearningCouncil?.status}, failedRoles=${latestRoleFailures.join(",") || "unknown"}`
+      : undefined,
+  };
+}
+
 async function fileExists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath);
@@ -620,6 +831,7 @@ const checks: CheckResult[] = [];
 checks.push(await gitStatusCheck());
 checks.push(await entrypointCheck());
 checks.push(await minimaxTrainingGuardStatusCheck());
+checks.push(await modelCouncilProviderEvidenceCheck());
 checks.push(
   await runCommand({
     name: "brain-distillation-candidate-smoke",
