@@ -520,6 +520,15 @@ async function hasAdapterConfig(adapterPath: string): Promise<boolean> {
   }
 }
 
+async function hasAdapterWeights(adapterPath: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(path.join(adapterPath, "adapters.safetensors"));
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
 async function resolveLatestAdapter(adapterPrefix: string): Promise<string | undefined> {
   const adapterRoot = path.dirname(adapterPrefix);
   const adapterNamePrefix = `${path.basename(adapterPrefix)}-`;
@@ -538,6 +547,34 @@ async function resolveLatestAdapter(adapterPrefix: string): Promise<string | und
         .map(async (entry) => {
           const adapterPath = path.join(adapterRoot, entry);
           return (await hasAdapterConfig(adapterPath)) ? adapterPath : undefined;
+        }),
+    )
+  ).filter((entry): entry is string => Boolean(entry));
+  return candidates[0];
+}
+
+async function resolveLatestTrainingSeedAdapter(
+  adapterPrefix: string,
+): Promise<string | undefined> {
+  const adapterRoot = path.dirname(adapterPrefix);
+  const adapterNamePrefix = `${path.basename(adapterPrefix)}-`;
+  let entries: string[];
+  try {
+    entries = await fs.readdir(adapterRoot);
+  } catch {
+    return undefined;
+  }
+  const candidates = (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.startsWith(adapterNamePrefix))
+        .toSorted()
+        .toReversed()
+        .map(async (entry) => {
+          const adapterPath = path.join(adapterRoot, entry);
+          return (await hasAdapterConfig(adapterPath)) && (await hasAdapterWeights(adapterPath))
+            ? adapterPath
+            : undefined;
         }),
     )
   ).filter((entry): entry is string => Boolean(entry));
@@ -871,7 +908,12 @@ async function runTeacherStep(options: CliOptions, round: number): Promise<unkno
   ]);
 }
 
-async function runTrain(options: CliOptions, round: number, adapterPath: string): Promise<boolean> {
+async function runTrain(
+  options: CliOptions,
+  round: number,
+  adapterPath: string,
+  resumeAdapterPath?: string,
+): Promise<boolean> {
   if (
     await skipForHighLoad({
       options,
@@ -899,6 +941,9 @@ async function runTrain(options: CliOptions, round: number, adapterPath: string)
     options.dataDir,
     "--adapter-path",
     adapterPath,
+    ...(resumeAdapterPath
+      ? ["--resume-adapter-file", path.join(resumeAdapterPath, "adapters.safetensors")]
+      : []),
     "--fine-tune-type",
     "lora",
     "--batch-size",
@@ -1094,6 +1139,9 @@ const startedAt = Date.now();
 const deadline = startedAt + options.durationMinutes * 60_000;
 let round = 0;
 let currentAdapter = await resolveCurrentAdapter(options);
+let trainingSeedAdapter =
+  currentAdapter ??
+  (!options.noTrain ? await resolveLatestTrainingSeedAdapter(options.adapterPrefix) : undefined);
 let teacherSidecar: TeacherSidecar | undefined;
 
 await appendLog(options.logPath, {
@@ -1103,8 +1151,17 @@ await appendLog(options.logPath, {
   originalPipelineReplaced: false,
   liveTouched: false,
   providerConfigTouched: false,
-  options: { ...options, currentAdapter },
+  options: { ...options, currentAdapter, trainingSeedAdapter },
 });
+if (!currentAdapter && trainingSeedAdapter) {
+  await appendLog(options.logPath, {
+    event: "best_effort_training_seed_selected",
+    adapterPath: trainingSeedAdapter,
+    reason: "no_promotion_ready_adapter_available",
+    strictPromotionUnchanged: true,
+    liveTouched: false,
+  });
+}
 
 try {
   teacherSidecar = await startTeacherSidecar(options);
@@ -1181,7 +1238,12 @@ try {
 
     if (!options.noTrain && (!currentAdapter || round % options.trainEvery === 0)) {
       const candidateAdapter = adapterPathForRound(options, round);
-      const trained = await runTrain(options, round, candidateAdapter);
+      const trained = await runTrain(
+        options,
+        round,
+        candidateAdapter,
+        currentAdapter ?? trainingSeedAdapter,
+      );
       if (!trained) {
         continue;
       }
@@ -1209,6 +1271,7 @@ try {
       );
       if (promotionEvalPassed(candidateEval)) {
         currentAdapter = candidateAdapter;
+        trainingSeedAdapter = candidateAdapter;
         await appendLog(options.logPath, {
           event: "adapter_promoted_for_guard_session",
           round,
@@ -1216,6 +1279,17 @@ try {
           liveTouched: false,
         });
       } else {
+        if (!currentAdapter) {
+          trainingSeedAdapter = candidateAdapter;
+          await appendLog(options.logPath, {
+            event: "candidate_retained_as_training_seed",
+            round,
+            adapterPath: trainingSeedAdapter,
+            reason: "no_strict_promotion_ready_adapter_available",
+            strictPromotionUnchanged: true,
+            liveTouched: false,
+          });
+        }
         await appendLog(options.logPath, {
           event: "adapter_rejected_for_guard_session",
           round,
