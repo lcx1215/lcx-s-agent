@@ -1691,6 +1691,7 @@ function renderFeishuFinanceLearningPipelineMissingSourceReply(params?: {
   const plannedModules = plan
     ? [...plan.primaryModules, ...plan.supportingModules].join(", ")
     : undefined;
+  const visibleObjective = humanizeFeishuLearningObjectiveForVisibleReply(objective);
   const intro = isExternalSourceLearning
     ? "我识别到这是外部材料提炼成 skills 的学习任务，但还缺安全 source，所以没有假装已经学完。"
     : "我识别到这是金融能力学习入口，但还缺安全 source，所以没有假装已经学完。";
@@ -1698,23 +1699,47 @@ function renderFeishuFinanceLearningPipelineMissingSourceReply(params?: {
     ? "- 还缺: 明确的大师清单 + 可核验来源，或 workspace-relative `.md` / `.txt` / `.html` source 文件，或直接粘贴/引用完整原文材料"
     : "- 还缺: workspace-relative `.md` / `.txt` / `.html` 文件路径，或直接粘贴/引用一段完整金融研究材料";
   const nextStep = isExternalSourceLearning
-    ? "下一步给出大师名单和本地 source 文件/原文摘录；我再走 source intake、extract、attach、inspect 和 retrieval review，把它们变成待审的 skill 能力卡。"
-    : "下一步把本地材料路径发来，例如 `memory/articles/example.md`，或回复/引用一段完整文章，我再走 source intake、extract、attach、inspect 和 retrieval review。";
+    ? "下一步给出大师名单和本地材料文件/原文摘录；我会先读材料，再提炼成待审能力卡，最后给你一条可检查的学习回执。"
+    : "下一步把本地材料路径发来，例如 `memory/articles/example.md`，或直接粘贴一段完整文章；我会先读材料，再提炼成待审能力卡，最后给你一条可检查的学习回执。";
   return [
     intro,
     "",
-    `- 已识别: ${family}`,
-    "- 后端: finance_learning_pipeline_orchestrator",
+    `- 已识别: ${humanizeFeishuLearningFamilyForVisibleReply(family)}`,
     ...(plannedModules ? [`- 本地大脑模块计划: ${plannedModules}`] : []),
     ...(plan ? [`- 回交大模型审阅: ${plan.reviewTools.join(", ")}`] : []),
-    "- learningInternalizationStatus: not_started",
-    "- failedReason: safe_local_or_manual_source_required",
-    ...(objective ? [`- 目标: ${objective}`] : []),
+    "- 学习状态: 还没开始，因为缺少可核验材料",
+    "- 失败原因: 缺少安全的本地文件或完整原文",
+    ...(visibleObjective ? [`- 目标: ${visibleObjective}`] : []),
     missingSourceLine,
-    "- 未产生: retrievalReceiptPath / retrievalReviewPath",
+    "- 未产生学习回执；不会说成已经学会",
     "",
     nextStep,
   ].join("\n");
+}
+
+function humanizeFeishuLearningFamilyForVisibleReply(family: string): string {
+  const labels: Record<string, string> = {
+    market_capability_learning_intake: "金融能力学习入口",
+    learning_external_source: "外部材料学习入口",
+  };
+  return labels[family] ?? family;
+}
+
+function humanizeFeishuLearningObjectiveForVisibleReply(
+  objective: string | undefined,
+): string | undefined {
+  const trimmed = objective?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (
+    /(source intake|extract|attach|inspect|retrieval|capability card|artifact|schema)/iu.test(
+      trimmed,
+    )
+  ) {
+    return undefined;
+  }
+  return trimmed;
 }
 
 function renderFeishuAmbiguousRepeatClarificationReply(params: {
@@ -6544,22 +6569,11 @@ export async function handleFeishuMessage(params: {
               handoff: larkInstructionHandoff,
               userMessage: ctx.content,
             });
-            const missingSourceSendResult = await sendFeishuBackendFactAnswerComposerReply({
-              core,
-              ctxPayload: ctxPayload as Record<string, unknown>,
-              cfg,
-              dispatcher: effectiveDispatcher,
-              replyOptions,
-              markDispatchIdle,
-              sessionKey: larkEffectiveSessionKey,
-              messageId: ctx.messageId,
-              userMessage: ctx.content,
-              factPack: missingSourceText,
-              fallbackText: missingSourceText,
+            const missingSourceSendResult = await sendFeishuFinalTextReply({
               replyRuntime: core.channel.reply,
-              log,
-              accountId: account.accountId,
-              label: "missing source",
+              dispatcher: effectiveDispatcher,
+              markDispatchIdle,
+              text: missingSourceText,
             });
 
             clearFeishuGroupHistoryAfterDispatch({

@@ -7007,7 +7007,7 @@ describe("learning council routing", () => {
       text: expect.stringContaining("我识别到这是金融能力学习入口，但还缺安全 source"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("已识别: market_capability_learning_intake"),
+      text: expect.stringContaining("已识别: 金融能力学习入口"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: expect.stringContaining("本地大脑模块计划: global_index_regime, causal_map"),
@@ -7016,12 +7016,10 @@ describe("learning council routing", () => {
       text: expect.stringContaining("finance_learning_memory"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining(
-        "失败原因: 缺少安全的本地文件或完整原文 (safe_local_or_manual_source_required)",
-      ),
+      text: expect.stringContaining("失败原因: 缺少安全的本地文件或完整原文"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("未产生: retrievalReceiptPath / retrievalReviewPath"),
+      text: expect.stringContaining("未产生学习回执；不会说成已经学会"),
     });
     expect(baseDispatcher.sendFinalReply).not.toHaveBeenCalledWith({
       text: expect.stringContaining("当前大脑状态：已有"),
@@ -8454,20 +8452,16 @@ describe("learning council routing", () => {
     });
 
     expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
-    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
-    const composerCtx = mockDispatchReplyFromConfig.mock.calls[0]?.[0]?.ctx as
-      | { BodyForAgent?: string }
-      | undefined;
-    expect(composerCtx?.BodyForAgent).toContain("Lark final answer composer");
-    expect(composerCtx?.BodyForAgent).toContain("Factual pack:");
-    expect(composerCtx?.BodyForAgent).toContain("已识别: learning_external_source");
-    expect(composerCtx?.BodyForAgent).toContain("大师清单");
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
     expect(replyText).toContain("大师清单");
     expect(replyText).not.toContain("已识别: market_capability_learning_intake");
-    expect(replyText).toContain("失败原因: safe_local_or_manual_source_required");
+    expect(replyText).toContain("已识别: 外部材料学习入口");
+    expect(replyText).toContain("失败原因: 缺少安全的本地文件或完整原文");
+    expect(replyText).not.toContain("source intake");
+    expect(replyText).not.toContain("extract");
     await expect(
       fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
     ).rejects.toThrow();
@@ -8697,26 +8691,16 @@ describe("learning council routing", () => {
     });
 
     expect(mockRunFeishuLearningCouncil).not.toHaveBeenCalled();
-    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
-    expect(mockDispatchReplyFromConfig).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ctx: expect.objectContaining({
-          SessionKey: expect.stringContaining(
-            ":answer-composer:msg-control-room-learning-missing-source",
-          ),
-          Body: expect.stringContaining("Use the factual pack below as hard truth"),
-          BodyForAgent: expect.stringContaining(
-            "failedReason: safe_local_or_manual_source_required",
-          ),
-        }),
-      }),
-    );
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("learningInternalizationStatus: not_started");
-    expect(replyText).toContain("failedReason: safe_local_or_manual_source_required");
-    expect(replyText).toContain("未产生: retrievalReceiptPath / retrievalReviewPath");
+    expect(replyText).toContain("学习状态: 还没开始，因为缺少可核验材料");
+    expect(replyText).toContain("失败原因: 缺少安全的本地文件或完整原文");
+    expect(replyText).toContain("未产生学习回执；不会说成已经学会");
+    expect(replyText).not.toContain("🦐");
+    expect(replyText).not.toContain("source intake");
+    expect(replyText).not.toContain("retrieval review");
     await expect(
       fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
     ).rejects.toThrow();
