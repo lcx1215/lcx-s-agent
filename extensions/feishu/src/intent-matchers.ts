@@ -85,7 +85,7 @@ export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
       normalized,
     );
   const hasPipelineCue =
-    /(能力|能力卡|capability|capability card|pipeline|管线|receipt|review|日结|检索|retrieval|内化|可检索|学成|做成|沉淀|attach|extract|source intake|学习流程|完整学习流程|一套|全知识|知识体系|完整知识|完整体系|系统学|系统学习|方法|框架|策略|workflow|checklist|规则|rule)/u.test(
+    /(能力|能力卡|capability|capability card|pipeline|管线|receipt|review|日结|检索|retrieval|内化|可检索|学成|做成|沉淀|attach|extract|source intake|学习流程|完整学习流程|一套|知识|全知识|知识体系|完整知识|完整体系|分析|分析框架|系统学|系统学习|方法|框架|策略|workflow|checklist|规则|rule)/u.test(
       normalized,
     );
   const hasFinanceMethodKnowledgeCue =

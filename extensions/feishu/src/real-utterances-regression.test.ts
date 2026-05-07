@@ -1377,6 +1377,37 @@ describe("real daily utterance regression", () => {
     }
   });
 
+  it("routes simple finance learning asks to learning_command before generic knowledge maintenance", () => {
+    const utterances = [
+      "学习股市分析知识",
+      "学习美股分析知识",
+      "学一下 A 股指数分析框架",
+      "补强 ETF 风控知识",
+      "学习期权波动率分析框架",
+      "学习加密币市场结构知识",
+    ];
+
+    for (const utterance of utterances) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg,
+        chatId: "oc-control",
+        content: utterance,
+      });
+      const plan = resolveFeishuControlRoomOrchestration({
+        currentSurface: routing.currentSurface,
+        targetSurface: routing.targetSurface,
+        content: utterance,
+      });
+
+      expect(routing.targetSurface, utterance).toBe("learning_command");
+      expect(plan, utterance).toMatchObject({
+        mode: "aggregate",
+        specialistSurfaces: ["learning_command"],
+      });
+      expect(looksLikeFinanceLearningPipelineAsk(utterance), utterance).toBe(true);
+    }
+  });
+
   it("language-classifies broad external-source utterances without becoming brain learning artifacts", () => {
     for (const entry of LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH) {
       const deterministic = resolveLarkDeterministicCorpusCase({ cfg, entry });
