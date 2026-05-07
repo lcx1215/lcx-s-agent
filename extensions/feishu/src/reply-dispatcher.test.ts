@@ -692,4 +692,41 @@ describe("normalizeFeishuDisplayText", () => {
       ].join("\n"),
     );
   });
+
+  it("adds a readable lead when a visible reply would otherwise start with route fields", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        [
+          "family: protocol_truth_surface",
+          "targetSurface: learning_command",
+          "failedReason: no_url_or_local_source_provided",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "先说结论：这是一条系统状态或证据回复，我先把它转成人能读懂的版本；下面的条目是可核验细节。",
+        "",
+        "- 任务类型: 协议真相检查入口 (protocol_truth_surface)",
+        "- 目标工作面: 学习任务入口 (learning_command)",
+        "- 失败原因: 没有提供链接、本地文件或完整来源 (no_url_or_local_source_provided)",
+      ].join("\n"),
+    );
+  });
+
+  it("adds a readable lead when a visible reply would otherwise start with JSON", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        JSON.stringify({
+          family: "knowledge_internalization_audit",
+          targetSurface: "knowledge_maintenance",
+        }),
+      ),
+    ).toBe(
+      [
+        "先说结论：这是一条系统状态或证据回复，我先把它转成人能读懂的版本；下面的条目是可核验细节。",
+        "",
+        '{"family":"knowledge_internalization_audit","targetSurface":"knowledge_maintenance"}',
+      ].join("\n"),
+    );
+  });
 });

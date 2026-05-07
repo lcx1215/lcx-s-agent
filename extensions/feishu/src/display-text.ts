@@ -119,6 +119,9 @@ function humanizeFeishuVisibleLine(line: string): string {
   if (!trimmed) {
     return line;
   }
+  if (/^[{[]/u.test(trimmed)) {
+    return line;
+  }
   const heading = trimmed.replace(/^#{1,6}\s+/u, "");
   const headingLabels: Record<string, string> = {
     "Learning status": "学习状态",
@@ -238,6 +241,33 @@ function humanizeFeishuVisibleText(text: string): string {
   return text.split("\n").map(humanizeFeishuVisibleLine).join("\n");
 }
 
+function needsFeishuHumanReadableLead(text: string): boolean {
+  const firstLine = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) {
+    return false;
+  }
+  if (/^[{[]/u.test(firstLine)) {
+    return true;
+  }
+  return /^[-*]\s*(任务类型|目标工作面|实际工作面|还缺来源|学习内化状态|交接回执|证据|下一步|边界|失败原因|原消息|消息|前台状态|状态)\s*[:：]/u.test(
+    firstLine,
+  );
+}
+
+function ensureFeishuHumanReadableLead(text: string): string {
+  if (!needsFeishuHumanReadableLead(text)) {
+    return text;
+  }
+  return [
+    "先说结论：这是一条系统状态或证据回复，我先把它转成人能读懂的版本；下面的条目是可核验细节。",
+    "",
+    text,
+  ].join("\n");
+}
+
 export function normalizeFeishuDisplayText(text: string): string {
   const normalizedTables = text.replace(
     /(^|\n)(\|.+\|[\r\n]+\|[-:| ]+\|(?:[\r\n]+\|.*\|)+)/g,
@@ -256,9 +286,10 @@ export function normalizeFeishuDisplayText(text: string): string {
     },
   );
 
-  return humanizeFeishuVisibleText(withoutCodeFences)
+  const humanized = humanizeFeishuVisibleText(withoutCodeFences)
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^\s*---+\s*$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  return ensureFeishuHumanReadableLead(humanized);
 }
