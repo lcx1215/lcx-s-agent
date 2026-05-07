@@ -1456,6 +1456,77 @@ function renderRoleSection(
   return `## ${result.heading}\n${laneReceipt}\n- run_failed: ${result.error ?? "unknown error"}\n- status: low-fidelity for this role in this turn.`.trim();
 }
 
+function summarizeLearningCouncilVisibleTopic(userMessage: string): string {
+  const normalized = userMessage
+    .replace(/<at\s+[^>]*>.*?<\/at>/giu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!normalized) {
+    return "这个学习主题";
+  }
+  const stripped = normalized
+    .replace(/^(?:今天|现在|接下来)\s*/u, "")
+    .replace(/^(?:用|让)?(?:三|3|多)?个?模型(?:一起|同时)?\s*/u, "")
+    .replace(/^(?:一起|同时)?\s*(?:学习一下|学一下|学学|学习|研究|补|看|读)\s*/u, "")
+    .replace(/(?:的知识|知识|框架|资料|论文)$/u, "")
+    .trim();
+  if (stripped && stripped !== normalized) {
+    return stripped.length > 36 ? `${stripped.slice(0, 36)}...` : stripped;
+  }
+  const topicPatterns = [
+    /(?:今天|现在|接下来)?\s*(?:学习|研究|补|看|读)\s*([^，。；;,.!?！？]{1,36})/iu,
+    /([^，。；;,.!?！？]{1,36})\s*(?:的知识|知识|框架|资料|论文)/iu,
+  ];
+  for (const pattern of topicPatterns) {
+    const match = normalized.match(pattern);
+    const topic = match?.[1]?.trim();
+    if (topic) {
+      return topic;
+    }
+  }
+  return normalized.length > 36 ? `${normalized.slice(0, 36)}...` : normalized;
+}
+
+function renderLearningCouncilReadableLead(params: {
+  userMessage: string;
+  status: LearningCouncilArtifact["status"];
+  roles: readonly LearningCouncilRoleRun[];
+  rescues: readonly LearningCouncilRescueRun[];
+  mutableFactWarnings: readonly string[];
+  sourceCoverageWarnings: readonly string[];
+}): string {
+  const topic = summarizeLearningCouncilVisibleTopic(params.userMessage);
+  const succeeded = params.roles.filter((role) => role.success).map((role) => role.role);
+  const failed = params.roles.filter((role) => !role.success).map((role) => role.role);
+  const rescued = params.rescues
+    .filter((rescue) => rescue.success)
+    .map((rescue) => `${rescue.targetRole}<=${rescue.helperRole}`);
+  const statusLine =
+    params.status === "degraded"
+      ? `本轮没有三模型全绿：${succeeded.join("、") || "暂无模型"} 已产出，${failed.join("、") || "无"} 失败或超时。`
+      : params.status === "full_with_mutable_fact_warnings"
+        ? "三模型审阅已完成，但里面有可变事实或新鲜度提醒，不能直接当成最终事实。"
+        : "三模型审阅已完成，可以进入压缩、复核和后续内化检查。";
+  const reliability =
+    params.status === "degraded"
+      ? "结论只能当作临时学习材料：能用成功通道的高信号部分，但不能说已经完整内化。"
+      : "结论仍然要经过证据门和后续 receipt，才能升级成稳定规则或长期记忆。";
+  const warnings = [
+    ...(rescued.length > 0 ? [`兜底覆盖: ${rescued.join("; ")}`] : []),
+    ...(params.mutableFactWarnings.length > 0 ? ["存在可变事实新鲜度风险"] : []),
+    ...(params.sourceCoverageWarnings.length > 0 ? ["来源覆盖可能偏窄"] : []),
+  ];
+  return [
+    "## 先说结论",
+    `- 学习主题: ${topic}`,
+    `- 当前状态: ${statusLine}`,
+    `- 怎么使用: ${reliability}`,
+    ...(warnings.length > 0 ? [`- 剩余风险: ${warnings.join("；")}`] : []),
+  ]
+    .join("\n")
+    .trim();
+}
+
 function dedupeBullets(items: string[], maxItems: number): string[] {
   const seen = new Set<string>();
   const output: string[] = [];
@@ -2056,6 +2127,15 @@ export async function runFeishuLearningCouncil(params: {
           ? "full three-model execution completed with low-fidelity fact warnings"
           : "full three-model execution completed"
     }.`,
+    "",
+    renderLearningCouncilReadableLead({
+      userMessage: params.userMessage,
+      status,
+      roles: [kimi, minimax, deepseek],
+      rescues,
+      mutableFactWarnings,
+      sourceCoverageWarnings,
+    }),
     "",
     renderRoleSection(kimi),
     "",

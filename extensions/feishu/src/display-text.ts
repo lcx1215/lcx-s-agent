@@ -94,6 +94,24 @@ function humanizeFeishuInlineText(text: string): string {
     .replace(/\bprimary_run_failed\b/giu, "主通道失败")
     .replace(/\brun_failed\b/giu, "运行失败")
     .replace(/\brescue_coverage\b/giu, "救援覆盖")
+    .replace(/\bpartial council only\b/giu, "本轮只有部分模型完成")
+    .replace(/\bfallback rescue coverage\b/giu, "兜底覆盖")
+    .replace(
+      /\bmutable facts may still be under-verified in this turn\b/giu,
+      "本轮可变事实可能还没有充分验证",
+    )
+    .replace(
+      /\bsource coverage looked narrow or search-limited in this turn\b/giu,
+      "本轮来源覆盖可能偏窄或受搜索限制",
+    )
+    .replace(
+      /\bdo not promote candidate lessons from this turn into durable doctrine without another reviewed pass\b/giu,
+      "没有再次审阅前，不要把本轮候选经验升级成长期规则",
+    )
+    .replace(
+      /\blearning outputs are for audited study and follow-up only; they are not direct trading instructions or automatic doctrine updates\b/giu,
+      "学习输出只用于审阅和后续跟进，不是交易指令，也不会自动变成长期规则",
+    )
     .replace(/\blow-fidelity\b/giu, "低可信度")
     .replace(/\bpartial \/ degraded execution\b/giu, "部分完成/降级执行")
     .replace(
@@ -131,6 +149,23 @@ function humanizeFeishuVisibleLine(line: string): string {
     "MiniMax audit": "MiniMax 审阅",
     "MiniMax challenge": "MiniMax 反方审阅",
     "DeepSeek extraction": "DeepSeek 信息抽取",
+    "Council consensus": "三模型共识",
+    Agreements: "共识",
+    Disagreements: "分歧和反方",
+    "Evidence gaps": "证据缺口",
+    "Reliability note": "可靠性提醒",
+    Boundary: "边界",
+    "Follow-up checklist": "后续检查清单",
+    "Weak evidence to keep provisional": "需要保持临时状态的弱证据",
+    Synthesis: "综合判断",
+    "Freshness and caveats": "新鲜度和限制",
+    "Candidate lessons": "候选经验",
+    "Candidate follow-ups": "候选后续检查",
+    "What holds up": "能站住的部分",
+    Challenges: "反方挑战",
+    "What to discard": "应该丢弃的部分",
+    "Highest-information next checks": "最高信息量的下一步检查",
+    "Replay failure checks": "复盘失败检查",
     Keep: "保留结论",
   };
   if (headingLabels[heading]) {

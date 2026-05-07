@@ -673,6 +673,38 @@ describe("normalizeFeishuDisplayText", () => {
     );
   });
 
+  it("turns learning council consensus headings and reliability notes into readable Lark text", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        [
+          "## Council consensus",
+          "### Agreements",
+          "- rates matter",
+          "### Evidence gaps",
+          "- live yields missing",
+          "### Reliability note",
+          "- partial council only: deepseek=Error: timeout",
+          "- do not promote candidate lessons from this turn into durable doctrine without another reviewed pass.",
+          "### Boundary",
+          "- learning outputs are for audited study and follow-up only; they are not direct trading instructions or automatic doctrine updates.",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "三模型共识",
+        "共识",
+        "- rates matter",
+        "证据缺口",
+        "- live yields missing",
+        "可靠性提醒",
+        "- 本轮只有部分模型完成: deepseek=Error: timeout",
+        "- 没有再次审阅前，不要把本轮候选经验升级成长期规则.",
+        "边界",
+        "- 学习输出只用于审阅和后续跟进，不是交易指令，也不会自动变成长期规则.",
+      ].join("\n"),
+    );
+  });
+
   it("makes queue receipts readable before they reach Lark", () => {
     expect(
       normalizeFeishuDisplayText(

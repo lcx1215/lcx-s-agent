@@ -131,6 +131,9 @@ describe("runFeishuLearningCouncil", () => {
     );
 
     expect(result).toContain("Learning council run: full three-model execution completed.");
+    expect(result).toContain("## 先说结论");
+    expect(result).toContain("学习主题: 美债收益率、QQQ 和风险偏好的关系");
+    expect(result).toContain("三模型审阅已完成，可以进入压缩、复核和后续内化检查。");
     expect(result).toContain("## Kimi synthesis");
     expect(result).toContain(
       "Lane receipt: contract=synthesis (configured role: kimi); runtime provider=moonshot; runtime model=moonshot/kimi-k2.5",
@@ -444,6 +447,10 @@ describe("runFeishuLearningCouncil", () => {
     });
 
     expect(result).toContain("Learning council run: partial / degraded execution.");
+    expect(result).toContain("## 先说结论");
+    expect(result).toContain("学习主题: 新的 agent 平台和金融技术");
+    expect(result).toContain("本轮没有三模型全绿");
+    expect(result).toContain("结论只能当作临时学习材料");
     expect(result).toContain("## MiniMax challenge");
     expect(result).toContain("run_failed: Error: minimax unavailable");
     expect(result).toContain("partial council only");
