@@ -78,6 +78,7 @@ const DEFAULT_LOAD_MAX = 100;
 const DEFAULT_TRAIN_LOAD_MAX = 12;
 const MIN_PROMOTION_EVAL_CASES = 50;
 const MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES = 285;
+const TRAIN_SKIP_BACKOFF_MS = 5 * 60_000;
 
 function usage(): never {
   throw new Error(
@@ -300,6 +301,10 @@ function shouldUpgradeToMediumMiniMaxWindow(options: CliOptions): boolean {
 async function appendLog(logPath: string, payload: Record<string, unknown>): Promise<void> {
   await fs.mkdir(path.dirname(logPath), { recursive: true });
   await fs.appendFile(logPath, `${JSON.stringify({ at: new Date().toISOString(), ...payload })}\n`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function runCommand(
@@ -1387,6 +1392,17 @@ try {
         currentAdapter ?? trainingSeedAdapter,
       );
       if (!trained) {
+        await appendLog(options.logPath, {
+          event: "step_backoff",
+          round,
+          name: "train_skipped_resource_backoff",
+          durationMs: TRAIN_SKIP_BACKOFF_MS,
+          reason: "local_mlx_train_resource_guard_skip",
+          sidecarPid: teacherSidecar?.pid,
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+        await sleep(TRAIN_SKIP_BACKOFF_MS);
         continue;
       }
       const candidateEval = await runJsonStep(

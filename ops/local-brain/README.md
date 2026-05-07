@@ -281,6 +281,16 @@ Expected label pattern:
 lcx.minimax.brain.medium.2026-05-05T06-28-30Z
 ```
 
+Persistent LaunchAgent path:
+
+```text
+/Users/liuchengxu/Library/LaunchAgents/lcx.minimax.brain.medium.2026-05-05T06-28-30Z.plist
+```
+
+It uses `RunAtLoad` plus `KeepAlive`, so the medium guard restarts after a 285
+minute guard cycle or after a machine reboot. The guard lock still prevents
+overlapping local-brain training.
+
 If the launchd command contains an old explicit `--current-adapter ...T05-00-48...r2`, replace it with a command that omits `--current-adapter` so the guard uses `latest-passing`.
 
 If logs show `best_effort_training_seed_selected`, verify that the selected seed

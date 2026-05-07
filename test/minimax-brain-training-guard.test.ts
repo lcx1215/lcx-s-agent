@@ -133,6 +133,17 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("consecutiveProviderUnstableRounds");
   });
 
+  it("backs off the guard loop when local MLX training is resource-gated", async () => {
+    const source = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("TRAIN_SKIP_BACKOFF_MS");
+    expect(source).toContain('name: "train_skipped_resource_backoff"');
+    expect(source).toContain("local_mlx_train_resource_guard_skip");
+  });
+
   it("continues local Qwen training from an existing adapter instead of restarting from base", async () => {
     const source = await fs.readFile(
       path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
