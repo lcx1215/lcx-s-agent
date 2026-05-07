@@ -178,7 +178,7 @@ describe("runFeishuLearningCouncil", () => {
       params: expect.objectContaining({ model: "moonshot/kimi-k2.6" }),
     });
     expect(mockCallGateway.mock.calls[1]?.[0]).toMatchObject({
-      params: expect.objectContaining({ model: "custom-api-deepseek-com/deepseek-v4-pro" }),
+      params: expect.objectContaining({ model: "custom-api-deepseek-com/deepseek-v4-flash" }),
     });
     expect(mockCallGateway.mock.calls[2]?.[0]).toMatchObject({
       params: expect.objectContaining({ model: "minimax-portal/MiniMax-M2.7" }),
@@ -186,7 +186,7 @@ describe("runFeishuLearningCouncil", () => {
     expect(result).not.toContain("Model override");
     expect(result).toMatch(/runtime provider=moonshot; runtime model=moonshot\/kimi-k2\.6/u);
     expect(result).toMatch(
-      /runtime provider=custom-api-deepseek-com; runtime model=custom-api-deepseek-com\/deepseek-v4-pro/u,
+      /runtime provider=custom-api-deepseek-com; runtime model=custom-api-deepseek-com\/deepseek-v4-flash/u,
     );
     expect(result).toMatch(
       /runtime provider=minimax-portal; runtime model=minimax-portal\/MiniMax-M2\.7/u,

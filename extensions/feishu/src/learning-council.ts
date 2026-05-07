@@ -180,9 +180,11 @@ function resolveLearningCouncilModel(role: LearningCouncilRole, cfg: ClawdbotCon
       );
     case "deepseek":
       return (
+        // The extraction lane is latency-sensitive inside the Lark reply loop.
+        // Prefer Flash for bounded structured extraction; v4-pro remains an explicit override.
         findAllowedLearningCouncilModel(cfg, [
-          "custom-api-deepseek-com/deepseek-v4-pro",
           "custom-api-deepseek-com/deepseek-v4-flash",
+          "custom-api-deepseek-com/deepseek-v4-pro",
           "qianfan/deepseek-v3.2",
         ]) ?? "qianfan/deepseek-v3.2"
       );
