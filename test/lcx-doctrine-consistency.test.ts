@@ -33,6 +33,7 @@ describe("LCX doctrine consistency doctor", () => {
         "# LCX Baseline Hardening",
         "Repair the failure family with the smallest coherent system upgrade over a tiny symptom patch.",
         "Before creating anything new, check whether a similar mechanism exists. Reuse, merge, or extend.",
+        "Abstraction transfer evidence includes original example, abstracted failure family, adjacent non-identical scenario, shared contract, and regression proof.",
       ].join("\n"),
     );
     await fs.writeFile(
@@ -72,8 +73,11 @@ describe("LCX doctrine consistency doctor", () => {
 
     expect(payload.ok).toBe(true);
     expect(payload.summary.failed).toBe(0);
-    expect(payload.summary.total).toBeGreaterThanOrEqual(8);
+    expect(payload.summary.total).toBeGreaterThanOrEqual(10);
     expect(payload.checks.find((check) => check.id === "l5_skill_primary")?.ok).toBe(true);
+    expect(
+      payload.checks.find((check) => check.id === "abstraction_transfer_five_part_contract")?.ok,
+    ).toBe(true);
     expect(
       payload.checks.find((check) => check.id === "current_adapter_selector_required")?.ok,
     ).toBe(true);

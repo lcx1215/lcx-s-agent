@@ -298,6 +298,10 @@ capability contract, not as the whole repair scope. The fix should cover the
 original example, a simpler prerequisite entry, and at least one adjacent
 non-identical scenario so the brain cannot pass by memorizing one phrase.
 
+For abstraction-transfer repairs, leave five-part evidence in the patch summary,
+receipt, eval, or doctor output: `original example`, `abstracted failure family`,
+`adjacent non-identical scenario`, `shared contract`, and `regression proof`.
+
 ## Logs
 
 Main logs:

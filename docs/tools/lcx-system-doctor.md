@@ -7,7 +7,8 @@ restart daemons, change provider config, or write durable memory.
 The default run also includes a `doctrine-consistency` gate. That gate catches
 active-entrypoint drift such as stale stage language, tiny symptom-patch
 rules, static local-brain adapter paths, invalid eval commands, upstream package
-identity regressions, or missing L5 regression skill wiring.
+identity regressions, missing L5 regression skill wiring, or missing
+abstraction-transfer expectations.
 
 ## Fast Dev Check
 

@@ -160,6 +160,23 @@ async function main() {
 
   checks.push(
     checkTextContains({
+      id: "abstraction_transfer_five_part_contract",
+      text: [agents, readme, runbook, baselineSkill].filter(Boolean).join("\n"),
+      fileLabel: "abstraction transfer doctrine",
+      required: [
+        "original example",
+        "abstracted failure family",
+        "adjacent non-identical",
+        "shared contract",
+        "regression proof",
+      ],
+      summary:
+        "repairs should transfer from a concrete example to a family and prove adjacent reuse",
+    }),
+  );
+
+  checks.push(
+    checkTextContains({
       id: "prior_work_reuse_required",
       text: [agents, readme, runbook, baselineSkill].filter(Boolean).join("\n"),
       fileLabel: "reuse doctrine",
