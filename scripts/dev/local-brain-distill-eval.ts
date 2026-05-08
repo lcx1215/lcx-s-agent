@@ -332,6 +332,33 @@ const EVAL_CASES: EvalCase[] = [
     ],
   },
   {
+    id: "abstraction_transfer_repair_protocol",
+    userAsk:
+      "以后我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。请把它抽象成问题族，留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract 和 regression proof，再证明简单前置题和相邻非同类题都能过。",
+    sourceSummary:
+      "abstraction-transfer repair protocol requiring original example, failure family, adjacent transfer case, shared contract, and regression proof.",
+    requiredModules: [
+      "agent_workflow_memory",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 4,
+    requiredMissingData: [
+      "original_example",
+      "abstracted_failure_family",
+      "adjacent_non_identical_scenario",
+      "shared_contract",
+      "regression_proof",
+      "simple_prerequisite_case",
+    ],
+    requiredRiskBoundaries: [
+      "do_not_stop_at_original_example",
+      "no_one_off_phrase_patch",
+      "proof_required_before_claiming_transfer",
+    ],
+  },
+  {
     id: "single_company_fundamental_risk",
     userAsk:
       "只研究 NVDA 基本面风险：AI capex、收入质量、估值、客户集中度、对科技仓的传导，不要给买卖建议。",
@@ -1831,6 +1858,10 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
       "sentiment_market_external_module_learning",
       "factor_turnover_cost_capacity_guard",
     ],
+  ],
+  [
+    "abstraction_transfer_repair_protocol",
+    ["short_lark_commodity_learning_intake", "lark_context_pollution_audit"],
   ],
 ]);
 

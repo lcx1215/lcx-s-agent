@@ -272,6 +272,46 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary.promotionReady).toBe(true);
   });
 
+  it("requires abstraction-transfer evals to include adjacent prerequisites", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "abstraction_transfer_repair_protocol",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { promotionReady: boolean; total: number };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual(["abstraction_transfer_repair_protocol"]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "short_lark_commodity_learning_intake",
+        "lark_context_pollution_audit",
+      ]),
+    );
+    expect(payload.summary.total).toBeGreaterThanOrEqual(3);
+    expect(payload.summary.promotionReady).toBe(true);
+  });
+
   it("does not let hardened diagnostic fallback pass an empty generation", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-"));
     const fakePython = path.join(tempDir, "python");

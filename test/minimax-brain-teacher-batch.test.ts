@@ -596,4 +596,59 @@ describe("minimax brain teacher batch parsing", () => {
       expect.arrayContaining(["unverified_paper_summary", "untrusted_external_skill"]),
     );
   });
+
+  it("hardens abstraction-transfer samples beyond the original example", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "abstraction_transfer_repair_protocol",
+        userMessage:
+          "训练本地大脑具备人类抽象能力：我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。必须抽象成问题族，并留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof。",
+        sourceSummary: "abstraction-transfer repair protocol.",
+      },
+      normalizeTeacherPlan({
+        task_family: "example_patch",
+        primary_modules: [],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: [],
+        next_step: "fix this phrase",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.task_family).toBe("abstraction_transfer_repair_protocol");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "agent_workflow_memory",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "original_example",
+        "abstracted_failure_family",
+        "adjacent_non_identical_scenario",
+        "shared_contract",
+        "regression_proof",
+        "simple_prerequisite_case",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "do_not_stop_at_original_example",
+        "no_one_off_phrase_patch",
+        "proof_required_before_claiming_transfer",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining([
+        "single_phrase_patch_without_transfer",
+        "current_example_only_success",
+        "unverified_generalization_claim",
+      ]),
+    );
+  });
 });

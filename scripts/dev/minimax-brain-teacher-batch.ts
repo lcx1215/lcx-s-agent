@@ -193,6 +193,13 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "unified paper and open-source project internalization protocol requiring source, license, security, validation, capability, retrieval, application, eval absorption, and keep/downrank/discard decisions.",
   },
   {
+    id: "abstraction_transfer_repair_protocol",
+    userMessage:
+      "训练本地大脑具备人类抽象能力：我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。必须抽象成问题族，并留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof；还要证明简单前置题和相邻非同类题都能过。",
+    sourceSummary:
+      "abstraction-transfer repair protocol requiring original example, failure family, adjacent transfer case, shared contract, and regression proof.",
+  },
+  {
     id: "finance_skill_curriculum_bridge",
     userMessage:
       "把可学的 agent skills 转成金融研究大脑课程：美股、A股、指数、加密币都能用，但只教任务拆解、证据审计、风险门和审阅流程，不教交易执行。",
@@ -1515,6 +1522,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   const missingData = [...plan.missing_data];
   const riskBoundaries = [...plan.risk_boundaries];
   const rejectedContext = [...plan.rejected_context];
+  let taskFamily = plan.task_family;
   let nextStep = plan.next_step;
 
   const ensurePrimary = (modules: string[]) => {
@@ -1580,6 +1588,10 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       ask,
     ) &&
     /(内化|吸收|学进去|学习|沉淀|变成能力|可复用|协议|怎么思考|internali[sz]e|absorb|distill|learn)/iu.test(
+      ask,
+    );
+  const isAbstractionTransfer =
+    /(抽象能力|人类的抽象|抽象迁移|问题族|failure family|problem family|同类问题|同类接口|shared contract|共享契约|original example|regression proof|adjacent non-identical|相邻非同类)/iu.test(
       ask,
     );
 
@@ -1825,6 +1837,44 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "Check prior similar contracts/evals/skills/receipts, reuse or extend the existing path, verify license and safety, prove reading scope, validate application, add eval evidence, then keep or downrank.";
   }
 
+  if (!isContextReset && isAbstractionTransfer) {
+    taskFamily = "abstraction_transfer_repair_protocol";
+    replacePrimary([
+      "agent_workflow_memory",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of ["finance_learning_memory", "source_registry"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "original_example",
+      "abstracted_failure_family",
+      "adjacent_non_identical_scenario",
+      "shared_contract",
+      "regression_proof",
+      "simple_prerequisite_case",
+    ]);
+    ensureRisk([
+      "do_not_stop_at_original_example",
+      "no_one_off_phrase_patch",
+      "proof_required_before_claiming_transfer",
+      "no_protected_memory_write",
+      "no_provider_config_change",
+      "no_live_sender_change",
+    ]);
+    ensureRejected([
+      "single_phrase_patch_without_transfer",
+      "current_example_only_success",
+      "unverified_generalization_claim",
+    ]);
+    nextStep =
+      "Record original example, abstracted failure family, adjacent non-identical scenario, shared contract, and regression proof.";
+  }
+
   if (primaryModules.length === 0) {
     ensurePrimary(["control_room_summary", "source_registry", "review_panel"]);
   }
@@ -1844,6 +1894,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
 
   return {
     ...plan,
+    task_family: taskFamily,
     primary_modules: primaryModules,
     supporting_modules: supportingModules.filter((entry) => !primaryModules.includes(entry)),
     missing_data: missingData,

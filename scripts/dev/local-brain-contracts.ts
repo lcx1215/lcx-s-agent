@@ -456,6 +456,18 @@ function looksLikeExternalKnowledgeInternalizationProtocol(text: string): boolea
   return hasPaper && hasOpenSource && asksToInternalize;
 }
 
+function looksLikeAbstractionTransferProtocol(text: string): boolean {
+  const namesAbstraction =
+    /(抽象能力|人类的抽象|抽象迁移|问题族|failure family|problem family|同类问题|同类接口|shared contract|共享契约|original example|regression proof)/iu.test(
+      text,
+    );
+  const namesExampleTransfer =
+    /(例子|比如|例如|example|seed).{0,80}(通用|抽象|迁移|相邻|adjacent|非同类|non[- ]?identical|回归|regression|证明|proof)|(?:大宗商品|lark wording|visible reply|论文|开源项目).{0,80}(不是.*边界|问题族|通用规则|同类|相邻)/iu.test(
+      text,
+    );
+  return namesAbstraction || namesExampleTransfer;
+}
+
 function looksLikeUnverifiedLiveMarketData(text: string): boolean {
   const asksForLiveMarketData =
     /(今天|最新|实时|当前行情|当前市场|this morning|today|latest|real[- ]?time|right now)/iu.test(
@@ -648,6 +660,52 @@ export function hardenLocalBrainPlanForAsk(
         "single_model_authority_claim",
         "single_vendor_unverified_claim",
         "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeAbstractionTransferProtocol(text)) {
+    return {
+      ...safe,
+      task_family: "abstraction_transfer_repair_protocol",
+      primary_modules: [
+        "agent_workflow_memory",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["finance_learning_memory", "source_registry"],
+      required_tools: [
+        "doctrine_consistency_doctor",
+        "local_brain_eval",
+        "l5_regression_batterer",
+        "receipt_or_patch_summary",
+      ],
+      missing_data: [
+        "original_example",
+        "abstracted_failure_family",
+        "adjacent_non_identical_scenario",
+        "shared_contract",
+        "regression_proof",
+        "simple_prerequisite_case",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "do_not_stop_at_original_example",
+        "no_one_off_phrase_patch",
+        "proof_required_before_claiming_transfer",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+      ],
+      next_step:
+        "write_original_example_abstract_failure_family_adjacent_non_identical_scenario_shared_contract_and_regression_proof_before_claiming_fix",
+      rejected_context: [
+        "single_phrase_patch_without_transfer",
+        "current_example_only_success",
+        "unverified_generalization_claim",
+        "old_lark_conversation_history",
       ],
     };
   }
