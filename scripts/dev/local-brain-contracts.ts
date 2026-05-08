@@ -418,13 +418,28 @@ function looksLikeFullStackFinanceStressTest(text: string): boolean {
 
 function looksLikeAgentSkillLearning(text: string): boolean {
   return (
-    /(skill|skills|skill\.md|agent skill|microagent|openhands|hugging face|agent结构|本地agent|本地 agent|技能|工作流|workflow|harness|hermes)/iu.test(
+    /(skill|skills|skill\.md|agent skill|microagent|openhands|hugging face|agent结构|本地agent|本地 agent|金融agent|金融 agent|financial agent|agent plugins?|managed agents?|智能体插件|技能|工作流|workflow|harness|hermes)/iu.test(
       text,
     ) &&
     /(找|加上|安装|学习|学会|吸收|沉淀|训练|teach|learn|harvest|distill|convert|应用|接入)/iu.test(
       text,
     )
   );
+}
+
+function looksLikeExternalFinancialAgentPatternLearning(text: string): boolean {
+  const namesExternalAgent =
+    /(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository).{0,80}(金融|financial|finance|equity research|investment banking|wealth management|fund admin|market researcher|earnings reviewer).{0,80}(agent|agents|智能体|插件|plugins?|workflow|工作流)/iu.test(
+      text,
+    ) ||
+    /(金融|financial|finance).{0,40}(agent|agents|智能体|插件|plugins?|workflow|工作流).{0,80}(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository)/iu.test(
+      text,
+    );
+  const asksToLearnOrApply =
+    /(学习|学会|吸收|沉淀|内化|训练|帮助|应用|接入|借鉴|怎么帮|learn|distill|harvest|apply|adapt|internalize)/iu.test(
+      text,
+    );
+  return namesExternalAgent && asksToLearnOrApply;
 }
 
 function looksLikePaperLearningWithSource(text: string): boolean {
@@ -1169,6 +1184,70 @@ export function hardenLocalBrainPlanForAsk(
         "model_internal_learning_claim_without_training_eval_evidence",
         "cloud_skill_sharing_by_default",
         "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeExternalFinancialAgentPatternLearning(text)) {
+    return {
+      ...safe,
+      task_family: "external_financial_agent_pattern_distillation",
+      primary_modules: [
+        "finance_learning_memory",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: ["causal_map", "quant_math", "technical_timing"],
+      required_tools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "license_and_write_scope_review",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "source_repo_url_or_local_clone_path",
+        "source_commit_or_version",
+        "license_and_write_scope_review",
+        "actual_reading_scope",
+        "agent_pattern_inventory",
+        "orchestrator_leaf_tool_boundary_map",
+        "untrusted_source_isolation_rule",
+        "artifact_qc_gate_mapping",
+        "application_validation_receipt",
+        "fresh_adjacent_application_task",
+        "keep_downrank_or_discard_decision",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_source",
+        "evaluate_before_installing",
+        "no_enterprise_mcp_assumption",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_protected_memory_write",
+        "no_distribution_or_publication",
+        "cite_every_number_or_mark_unsourced",
+        "human_review_required_before_external_use",
+        "no_trade_advice",
+      ],
+      next_step:
+        "read_source_at_pinned_commit_then_distill_orchestrator_leaf_boundaries_untrusted_source_isolation_artifact_qc_and_research_only_finance_eval_before_claiming_helpful",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "install_enterprise_mcp_without_credentials",
+        "copy_external_agent_as_trade_recommendation_engine",
+        "publication_or_distribution_without_review",
+        "model_internal_learning_claim_without_training_eval_evidence",
       ],
     };
   }

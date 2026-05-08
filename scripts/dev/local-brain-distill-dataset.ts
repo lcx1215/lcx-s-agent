@@ -105,9 +105,6 @@ async function collectFiles(root: string, maxFiles: number): Promise<string[]> {
   }
   const result: Array<{ path: string; mtimeMs: number }> = [];
   async function walk(dir: string): Promise<void> {
-    if (result.length >= maxFiles) {
-      return;
-    }
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);

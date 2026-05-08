@@ -181,4 +181,110 @@ describe("local brain distill dataset", () => {
     expect(completion.next_step).not.toMatch(/pull latest|ETF flow data|ETH market/i);
     expect(completion.next_step).toContain("timestamped source evidence");
   });
+
+  it("collects newest review artifacts before applying max file limits", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-newest-"));
+    const workspaceDir = path.join(fixtureRoot, "workspace");
+    const outDir = path.join(fixtureRoot, "dataset");
+    const reviewDir = path.join(
+      workspaceDir,
+      "memory",
+      "lark-brain-distillation-reviews",
+      "2026-05-08",
+    );
+    await fs.mkdir(reviewDir, { recursive: true });
+
+    for (let index = 0; index < 5; index += 1) {
+      const oldPath = path.join(reviewDir, `old-${index}.json`);
+      await fs.writeFile(
+        oldPath,
+        JSON.stringify({
+          boundary: "brain_distillation_review",
+          reviewedAt: "2026-05-07T00:00:00.000Z",
+          noLanguageRoutingPromotion: true,
+          acceptedCandidates: [],
+        }),
+      );
+      await fs.utimes(
+        oldPath,
+        new Date("2026-05-07T00:00:00.000Z"),
+        new Date("2026-05-07T00:00:00.000Z"),
+      );
+    }
+
+    const newestPath = path.join(reviewDir, "z-anthropic-financial-agent.json");
+    await fs.writeFile(
+      newestPath,
+      JSON.stringify({
+        boundary: "brain_distillation_review",
+        reviewedAt: "2026-05-08T04:54:30.096Z",
+        noLanguageRoutingPromotion: true,
+        acceptedCandidates: [
+          {
+            boundary: "brain_distillation_candidate",
+            status: "accepted_brain_plan",
+            review: { accepted: true },
+            userMessage:
+              "Anthropic 上传了金融 agent，学习 market researcher 和 earnings reviewer 的 workflow pattern，不要改 live sender。",
+            candidateText: "external_financial_agent_pattern_distillation",
+            proposedTaskFamily: "external_financial_agent_pattern_distillation",
+            proposedPrimaryModules: [
+              "finance_learning_memory",
+              "skill_pattern_distillation",
+              "agent_workflow_memory",
+              "source_registry",
+              "review_panel",
+            ],
+            proposedSupportingModules: ["control_room_summary"],
+            proposedRequiredTools: ["source_registry", "review_panel"],
+            proposedMissingData: [
+              "source_repo_url_or_local_clone_path",
+              "source_commit_or_version",
+              "actual_reading_scope",
+            ],
+            proposedRiskBoundaries: [
+              "research_only",
+              "no_execution_authority",
+              "no_provider_config_change",
+              "no_live_sender_change",
+            ],
+            proposedNextStep:
+              "Distill pinned external financial-agent workflow boundaries before review.",
+          },
+        ],
+      }),
+    );
+    await fs.utimes(
+      newestPath,
+      new Date("2026-05-08T04:54:30.096Z"),
+      new Date("2026-05-08T04:54:30.096Z"),
+    );
+
+    await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-dataset.ts",
+        "--workspace",
+        workspaceDir,
+        "--out",
+        outDir,
+        "--max-files",
+        "2",
+        "--json",
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: fixtureRoot },
+      },
+    );
+
+    const allExamples = [
+      ...(await parseJsonl(path.join(outDir, "train.jsonl"))),
+      ...(await parseJsonl(path.join(outDir, "valid.jsonl"))),
+      ...(await parseJsonl(path.join(outDir, "test.jsonl"))),
+    ];
+    expect(JSON.stringify(allExamples)).toContain("external_financial_agent_pattern_distillation");
+  });
 });

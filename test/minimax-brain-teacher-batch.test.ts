@@ -292,6 +292,30 @@ describe("minimax brain teacher batch parsing", () => {
     expect(plan.risk_boundaries).toContain("no_model_fabricated_portfolio_math");
   });
 
+  it("keeps crypto module plans behind the explicit high-leverage boundary", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "quota_sentiment_validation_layer_00000",
+        userMessage: "训练本地大脑识别新闻情绪只能当验证层，不能当独立 alpha；先拆模块和风险边界。",
+        sourceSummary:
+          "teacher selected crypto market structure as an adjacent module even though the prompt did not say crypto.",
+      },
+      normalizeTeacherPlan({
+        task_family: "sentiment_validation_layer_not_alpha",
+        primary_modules: ["event_driven", "crypto_market_structure", "portfolio_risk_gates"],
+        supporting_modules: ["review_panel"],
+        required_tools: ["review_panel"],
+        missing_data: ["fresh_market_data_snapshot"],
+        risk_boundaries: ["research_only", "no_execution_authority"],
+        next_step: "review",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.primary_modules).toContain("crypto_market_structure");
+    expect(plan.risk_boundaries).toContain("no_high_leverage_crypto");
+  });
+
   it("turns all-domain finance prompts into broad research loops", () => {
     const plan = hardenTeacherPlanForPrompt(
       {
@@ -648,6 +672,71 @@ describe("minimax brain teacher batch parsing", () => {
         "single_phrase_patch_without_transfer",
         "current_example_only_success",
         "unverified_generalization_claim",
+      ]),
+    );
+  });
+
+  it("turns Anthropic financial agents into bounded workflow distillation", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "anthropic_financial_agent_pattern_distillation",
+        userMessage:
+          "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer。请学习它们帮助我们的智能体，但不要改 provider config、live sender，也不要假设企业 MCP。",
+        sourceSummary: "Anthropic financial-services agent framework learning request.",
+      },
+      normalizeTeacherPlan({
+        task_family: "learn_external_agent",
+        primary_modules: [],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: [],
+        next_step: "install the agents and use them",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.task_family).toBe("external_financial_agent_pattern_distillation");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "finance_learning_memory",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "source_repo_url_or_local_clone_path",
+        "source_commit_or_version",
+        "actual_reading_scope",
+        "agent_pattern_inventory",
+        "orchestrator_leaf_tool_boundary_map",
+        "untrusted_source_isolation_rule",
+        "artifact_qc_gate_mapping",
+        "fresh_adjacent_application_task",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "untrusted_external_source",
+        "no_enterprise_mcp_assumption",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_distribution_or_publication",
+        "cite_every_number_or_mark_unsourced",
+        "human_review_required_before_external_use",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining([
+        "install_enterprise_mcp_without_credentials",
+        "copy_external_agent_as_trade_recommendation_engine",
       ]),
     );
   });

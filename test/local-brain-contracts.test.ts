@@ -852,4 +852,55 @@ describe("hardenLocalBrainPlanForAsk", () => {
       ]),
     );
   });
+
+  it("distills external financial agents into bounded LCX workflow patterns", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "Anthropic 上传了好几个金融 agent，包含 market researcher、earnings reviewer 和 model builder。请学习它们怎么帮助我们的智能体，但不要改 provider config 或 live sender，也不要假设我们有企业 MCP。",
+      },
+    );
+
+    expect(plan.task_family).toBe("external_financial_agent_pattern_distillation");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "finance_learning_memory",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "source_repo_url_or_local_clone_path",
+        "source_commit_or_version",
+        "actual_reading_scope",
+        "orchestrator_leaf_tool_boundary_map",
+        "untrusted_source_isolation_rule",
+        "artifact_qc_gate_mapping",
+        "application_validation_receipt",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "untrusted_external_source",
+        "no_enterprise_mcp_assumption",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "cite_every_number_or_mark_unsourced",
+        "human_review_required_before_external_use",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining([
+        "install_enterprise_mcp_without_credentials",
+        "copy_external_agent_as_trade_recommendation_engine",
+      ]),
+    );
+  });
 });

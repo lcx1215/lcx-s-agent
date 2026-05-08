@@ -1,0 +1,17 @@
+[
+  {
+    "id": "anthropic_financial_agent_pattern_distillation",
+    "userMessage": "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer、wealth management workflow。请训练本地大脑学习它们能怎么帮助我们的智能体：只吸收 orchestrator/leaf 工具边界、untrusted-source 隔离、cite every number、artifact QC gate、review checkpoint 和 research-only 金融工作流；不要改 provider config、live sender，不要假设我们有企业 MCP，不要变成交易执行。",
+    "sourceSummary": "Anthropic financial-services agent framework learning request requiring pinned source review, reusable workflow-pattern distillation, tool-boundary map, QC gates, and research-only/no-live-change boundaries."
+  },
+  {
+    "id": "anthropic_earnings_fundamental_adapter",
+    "userMessage": "把 Anthropic earnings-reviewer 和 model-builder 的思路转成本地大脑的基本面研究方法：财报、电话会、估值模型、variance table、audit-xls 都只能作为 research-only 分析链路；必须要求 10-Q/10-K/earnings release/transcript/source timestamp，不能编数字，不能给交易建议。",
+    "sourceSummary": "fresh adjacent application of external financial-agent patterns to LCX fundamentals/value-investing research; require source evidence, model QC, citation, and no trade advice."
+  },
+  {
+    "id": "anthropic_market_researcher_sector_adapter",
+    "userMessage": "把 Anthropic market-researcher 的 sector overview、competitive landscape、comps spread、idea shortlist 学成本地大脑的行业研究流程：先限定行业和 universe，再拆市场结构、竞争格局、估值口径、source quality、red-team invalidation；没有 CapIQ/FactSet 不能假装有，只能列数据缺口和下一步。",
+    "sourceSummary": "fresh adjacent sector-research application requiring scope, universe, source-quality tiers, comps methodology, missing data honesty, red-team invalidation, and no enterprise MCP assumption."
+  }
+]

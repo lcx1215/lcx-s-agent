@@ -186,6 +186,13 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "agent-skill distillation request requiring source review, isolated local skill install, eval harness, and protected-memory guardrails.",
   },
   {
+    id: "anthropic_financial_agent_pattern_distillation",
+    userMessage:
+      "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer、wealth management workflow。请训练本地大脑学习它们能怎么帮助我们的智能体：只吸收 orchestrator/leaf 工具边界、untrusted-source 隔离、cite every number、artifact QC gate、review checkpoint 和 research-only 金融工作流；不要改 provider config、live sender，不要假设我们有企业 MCP，不要变成交易执行。",
+    sourceSummary:
+      "Anthropic financial-services agent framework learning request requiring pinned source review, reusable workflow-pattern distillation, tool-boundary map, QC gates, and research-only/no-live-change boundaries.",
+  },
+  {
     id: "external_knowledge_internalization_protocol",
     userMessage:
       "未来本地大脑碰到论文和 GitHub/HuggingFace 开源项目，要怎么思考和内化？请给统一协议：source registry、实际阅读范围、license/write scope、安全和 prompt-injection 审计、复现或样本外验证、能力卡、retrieval receipt、apply validation、Qwen/local-brain eval 吸收、fresh adjacent task、keep/downrank/discard 决策都要有；不能直接说已经学会。",
@@ -384,6 +391,7 @@ export function buildTeacherSystemPrompt(): string {
     "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
+    "- external financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow patterns, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, agent pattern inventory, orchestrator/leaf tool-boundary map, untrusted-source isolation rule, artifact QC gates, application validation, fresh adjacent application, and keep/downrank/discard decision",
     "- before creating any new mechanism, check prior_art_search_terms_or_existing_artifact_paths and existing_contract_eval_skill_or_receipt_candidates, then choose reuse_extend_or_new_decision; prefer reuse or extension over a parallel V2 path",
     "- papers and open-source project internalization must check prior related contracts/evals/skills/receipts first, classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, then keep, downrank, or discard",
     "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
@@ -674,7 +682,76 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
     };
   }
   if (
-    /skill|skills|skill\.md|agent skill|本地 agent|本地agent|技能|工作流|harness|hermes/u.test(
+    /(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository).{0,80}(金融|financial|finance|equity research|investment banking|wealth management|market researcher|earnings reviewer|model builder|valuation reviewer).{0,80}(agent|agents|智能体|插件|plugins?|workflow|工作流)/iu.test(
+      text,
+    ) ||
+    /(金融|financial|finance).{0,40}(agent|agents|智能体|插件|plugins?|workflow|工作流).{0,80}(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository)/iu.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "external_financial_agent_pattern_distillation",
+      primary_modules: [
+        "finance_learning_memory",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: ["causal_map", "quant_math", "technical_timing"],
+      required_tools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "license_and_write_scope_review",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "source_repo_url_or_local_clone_path",
+        "source_commit_or_version",
+        "license_and_write_scope_review",
+        "actual_reading_scope",
+        "agent_pattern_inventory",
+        "orchestrator_leaf_tool_boundary_map",
+        "untrusted_source_isolation_rule",
+        "artifact_qc_gate_mapping",
+        "application_validation_receipt",
+        "fresh_adjacent_application_task",
+        "keep_downrank_or_discard_decision",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_source",
+        "evaluate_before_installing",
+        "no_enterprise_mcp_assumption",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_protected_memory_write",
+        "no_distribution_or_publication",
+        "cite_every_number_or_mark_unsourced",
+        "human_review_required_before_external_use",
+        "no_trade_advice",
+      ],
+      next_step:
+        "read_source_at_pinned_commit_then_distill_orchestrator_leaf_boundaries_untrusted_source_isolation_artifact_qc_and_research_only_finance_eval_before_claiming_helpful",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "install_enterprise_mcp_without_credentials",
+        "copy_external_agent_as_trade_recommendation_engine",
+        "publication_or_distribution_without_review",
+        "model_internal_learning_claim_without_training_eval_evidence",
+      ],
+    };
+  }
+  if (
+    /skill|skills|skill\.md|agent skill|本地 agent|本地agent|金融agent|金融 agent|financial agent|agent plugins?|managed agents?|智能体插件|技能|工作流|harness|hermes/u.test(
       text,
     ) &&
     !(
@@ -1582,6 +1659,13 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     /价值投资|基本面优先|value investing|intrinsic value|内在价值|安全边际|margin of safety|护城河|moat|自由现金流|roic|价值陷阱/iu.test(
       ask,
     );
+  const isExternalFinancialAgentPattern =
+    /(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository).{0,80}(金融|financial|finance|equity research|investment banking|wealth management|market researcher|earnings reviewer|model builder|valuation reviewer).{0,80}(agent|agents|智能体|插件|plugins?|workflow|工作流)/iu.test(
+      ask,
+    ) ||
+    /(金融|financial|finance).{0,40}(agent|agents|智能体|插件|plugins?|workflow|工作流).{0,80}(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository)/iu.test(
+      ask,
+    );
   const isExternalKnowledgeInternalization =
     /(论文|paper|preprint|arxiv|ssrn|nber)/iu.test(ask) &&
     /(开源项目|github|repo|repository|hugging ?face|代码|code|skill|skills|open[- ]?source)/iu.test(
@@ -1656,7 +1740,10 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ensureRisk(["no_unverified_live_market_data_claims"]);
   }
 
-  if (!isContextReset && /美股|A股|指数和加密币|跨市场|crypto|BTC|加密币/iu.test(ask)) {
+  if (
+    !isContextReset &&
+    /美股|A股|指数和加密币|跨市场|crypto|BTC|ETH|stablecoin|加密币|稳定币/iu.test(ask)
+  ) {
     ensurePrimary([
       "us_equity_market_structure",
       "china_a_share_policy_flow",
@@ -1672,6 +1759,15 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "position_weights_and_return_series",
     ]);
     ensureRisk(["no_high_leverage_crypto", "no_unverified_cross_market_claims"]);
+  }
+
+  if (
+    !isContextReset &&
+    (primaryModules.includes("crypto_market_structure") ||
+      supportingModules.includes("crypto_market_structure") ||
+      /crypto|BTC|ETH|stablecoin|加密币|稳定币/iu.test(ask))
+  ) {
+    ensureRisk(["no_high_leverage_crypto"]);
   }
 
   if (isSourceGated) {
@@ -1781,6 +1877,59 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ]);
     nextStep =
       "Read source filings first, score business quality and cash flows, test valuation and margin of safety, then review risk.";
+  }
+
+  if (!isContextReset && isExternalFinancialAgentPattern) {
+    taskFamily = "external_financial_agent_pattern_distillation";
+    ensurePrimary([
+      "finance_learning_memory",
+      "skill_pattern_distillation",
+      "agent_workflow_memory",
+      "source_registry",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+      "company_fundamentals_value",
+      "portfolio_risk_gates",
+    ]);
+    for (const module of ["causal_map", "quant_math", "technical_timing"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "source_repo_url_or_local_clone_path",
+      "source_commit_or_version",
+      "license_and_write_scope_review",
+      "actual_reading_scope",
+      "agent_pattern_inventory",
+      "orchestrator_leaf_tool_boundary_map",
+      "untrusted_source_isolation_rule",
+      "artifact_qc_gate_mapping",
+      "application_validation_receipt",
+      "fresh_adjacent_application_task",
+      "keep_downrank_or_discard_decision",
+    ]);
+    ensureRisk([
+      "untrusted_external_source",
+      "evaluate_before_installing",
+      "no_enterprise_mcp_assumption",
+      "no_provider_config_change",
+      "no_live_sender_change",
+      "no_protected_memory_write",
+      "no_distribution_or_publication",
+      "cite_every_number_or_mark_unsourced",
+      "human_review_required_before_external_use",
+      "no_trade_advice",
+    ]);
+    ensureRejected([
+      "install_enterprise_mcp_without_credentials",
+      "copy_external_agent_as_trade_recommendation_engine",
+      "publication_or_distribution_without_review",
+      "model_internal_learning_claim_without_training_eval_evidence",
+    ]);
+    nextStep =
+      "Read the pinned external financial-agent source, distill reusable workflow boundaries, isolate untrusted data, map QC gates, then prove one adjacent LCX research task before keeping the pattern.";
   }
 
   if (!isContextReset && isExternalKnowledgeInternalization) {

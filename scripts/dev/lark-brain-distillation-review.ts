@@ -92,9 +92,6 @@ async function collectJsonFiles(root: string, maxFiles: number): Promise<string[
   }
   const files: Array<{ filePath: string; mtimeMs: number }> = [];
   async function walk(dir: string): Promise<void> {
-    if (files.length >= maxFiles) {
-      return;
-    }
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);

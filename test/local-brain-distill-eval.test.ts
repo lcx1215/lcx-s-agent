@@ -312,6 +312,51 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary.promotionReady).toBe(true);
   });
 
+  it("gates Anthropic financial-agent learning behind source and workflow prerequisites", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "anthropic_financial_agent_pattern_distillation",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { promotionReady: boolean; total: number };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual([
+      "anthropic_financial_agent_pattern_distillation",
+    ]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "agent_skill_distillation_safety",
+        "external_knowledge_internalization_protocol",
+        "external_source_missing_url",
+        "single_company_fundamental_risk",
+        "portfolio_rebalance_no_execution_authority",
+      ]),
+    );
+    expect(payload.summary.total).toBeGreaterThan(5);
+    expect(payload.summary.promotionReady).toBe(true);
+  });
+
   it("does not let hardened diagnostic fallback pass an empty generation", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-"));
     const fakePython = path.join(tempDir, "python");
