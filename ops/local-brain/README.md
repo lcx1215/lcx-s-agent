@@ -26,6 +26,11 @@ Read the `minimax-brain-training-guard` check first. It summarizes:
 
 If this command is `ok=true`, prefer continuing from the reported state instead of restarting training.
 
+The default system doctor includes a doctrine-consistency gate. It fails when
+active entrypoints drift back toward stale stage wording, tiny symptom-patch
+rules, static brain adapters, invalid eval commands, upstream package identity,
+or missing L5 regression skill wiring.
+
 ## Prior-Work Reuse Gate
 
 Before adding a new local-brain contract, eval, teacher prompt, skill, receipt,

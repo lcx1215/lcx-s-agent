@@ -281,6 +281,13 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       providerConfigTouched: payload.providerConfigTouched,
     };
   }
+  if (name === "doctrine-consistency") {
+    return {
+      ok: payload.ok,
+      summary: payload.summary,
+      actionableFailures: payload.actionableFailures,
+    };
+  }
   if (name === "local-brain-plan") {
     const plan =
       payload.plan && typeof payload.plan === "object"
@@ -843,6 +850,14 @@ const checks: CheckResult[] = [];
 
 checks.push(await gitStatusCheck());
 checks.push(await entrypointCheck());
+checks.push(
+  await runCommand({
+    name: "doctrine-consistency",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-doctrine-consistency.ts", "--json"],
+    parseJson: true,
+  }),
+);
 checks.push(await minimaxTrainingGuardStatusCheck());
 checks.push(await modelCouncilProviderEvidenceCheck());
 checks.push(

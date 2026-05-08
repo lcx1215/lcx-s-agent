@@ -4,6 +4,11 @@
 LCX Agent dev health. It is read-only by default and does not probe live Lark,
 restart daemons, change provider config, or write durable memory.
 
+The default run also includes a `doctrine-consistency` gate. That gate catches
+active-entrypoint drift such as stale stage language, tiny symptom-patch
+rules, static local-brain adapter paths, invalid eval commands, upstream package
+identity regressions, or missing L5 regression skill wiring.
+
 ## Fast Dev Check
 
 ```bash
