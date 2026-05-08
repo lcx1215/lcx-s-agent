@@ -26,6 +26,31 @@ Read the `minimax-brain-training-guard` check first. It summarizes:
 
 If this command is `ok=true`, prefer continuing from the reported state instead of restarting training.
 
+## Prior-Work Reuse Gate
+
+Before adding a new local-brain contract, eval, teacher prompt, skill, receipt,
+automation, or internalization workflow, check whether a similar mechanism
+already exists. Start with targeted search instead of inventing a parallel lane:
+
+```bash
+rg -n "<keyword>|<task_family>|<case_id>|<module_id>" \
+  scripts/dev test ops/local-brain AGENTS.md README.md docs src extensions
+find /Users/liuchengxu/.codex/skills -maxdepth 2 -name SKILL.md | sort
+```
+
+Prefer extending existing source registry, capability-card, retrieval/apply,
+eval, skill-harvester, receipt, and runbook paths. If a new path is still
+needed, leave the decision in the artifact or summary as:
+
+```text
+prior_art_checked=<files_or_receipts>
+decision=reuse|extend|new
+why_existing_path_was_insufficient=<short_reason>
+```
+
+For papers, open-source projects, external skills, and finance research modules,
+this gate is mandatory before claiming anything was learned or internalized.
+
 ## Codex Skills To Load
 
 When context is missing, load only the skills that match the current question. The most useful local skill files are:

@@ -1071,6 +1071,9 @@ export function hardenLocalBrainPlanForAsk(
         "review_panel",
       ],
       missing_data: [
+        "prior_art_search_terms_or_existing_artifact_paths",
+        "existing_contract_eval_skill_or_receipt_candidates",
+        "reuse_extend_or_new_decision",
         "source_url_or_local_source_path",
         "actual_reading_scope",
         "license_and_write_scope_review",
@@ -1088,6 +1091,8 @@ export function hardenLocalBrainPlanForAsk(
         "evidence_required",
         "untrusted_external_source",
         "evaluate_before_installing",
+        "do_not_create_parallel_protocol_before_prior_art_check",
+        "prefer_reuse_over_duplicate_pipeline",
         "no_model_internal_learning_claim_without_eval",
         "no_protected_memory_write",
         "no_provider_config_change",
@@ -1097,9 +1102,10 @@ export function hardenLocalBrainPlanForAsk(
         "no_trade_advice",
       ],
       next_step:
-        "classify_source_then_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
+        "check_prior_art_then_classify_source_reuse_or_extend_existing_path_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
       rejected_context: [
         "old_lark_conversation_history",
+        "new_parallel_protocol_without_prior_art_check",
         "unverified_paper_summary",
         "untrusted_external_skill",
         "model_internal_learning_claim_without_training_eval_evidence",

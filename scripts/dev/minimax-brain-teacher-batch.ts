@@ -377,7 +377,8 @@ export function buildTeacherSystemPrompt(): string {
     "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
-    "- papers and open-source project internalization must classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, then keep, downrank, or discard",
+    "- before creating any new mechanism, check prior_art_search_terms_or_existing_artifact_paths and existing_contract_eval_skill_or_receipt_candidates, then choose reuse_extend_or_new_decision; prefer reuse or extension over a parallel V2 path",
+    "- papers and open-source project internalization must check prior related contracts/evals/skills/receipts first, classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, then keep, downrank, or discard",
     "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
     "- crypto work is research-only; include no_high_leverage_crypto and never imply execution approval",
     "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
@@ -752,6 +753,9 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "review_panel",
       ],
       missing_data: [
+        "prior_art_search_terms_or_existing_artifact_paths",
+        "existing_contract_eval_skill_or_receipt_candidates",
+        "reuse_extend_or_new_decision",
         "source_url_or_local_source_path",
         "actual_reading_scope",
         "license_and_write_scope_review",
@@ -769,6 +773,8 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "evidence_required",
         "untrusted_external_source",
         "evaluate_before_installing",
+        "do_not_create_parallel_protocol_before_prior_art_check",
+        "prefer_reuse_over_duplicate_pipeline",
         "no_model_internal_learning_claim_without_eval",
         "no_protected_memory_write",
         "no_provider_config_change",
@@ -778,9 +784,10 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "no_trade_advice",
       ],
       next_step:
-        "classify_source_then_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
+        "check_prior_art_then_classify_source_reuse_or_extend_existing_path_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
       rejected_context: [
         "old_lark_conversation_history",
+        "new_parallel_protocol_without_prior_art_check",
         "unverified_paper_summary",
         "untrusted_external_skill",
         "model_internal_learning_claim_without_training_eval_evidence",
@@ -1780,6 +1787,9 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       }
     }
     ensureMissing([
+      "prior_art_search_terms_or_existing_artifact_paths",
+      "existing_contract_eval_skill_or_receipt_candidates",
+      "reuse_extend_or_new_decision",
       "source_url_or_local_source_path",
       "actual_reading_scope",
       "license_and_write_scope_review",
@@ -1794,6 +1804,8 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ensureRisk([
       "untrusted_external_source",
       "evaluate_before_installing",
+      "do_not_create_parallel_protocol_before_prior_art_check",
+      "prefer_reuse_over_duplicate_pipeline",
       "no_model_internal_learning_claim_without_eval",
       "no_protected_memory_write",
       "no_provider_config_change",
@@ -1803,13 +1815,14 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "no_trade_advice",
     ]);
     ensureRejected([
+      "new_parallel_protocol_without_prior_art_check",
       "unverified_paper_summary",
       "untrusted_external_skill",
       "model_internal_learning_claim_without_training_eval_evidence",
       "cloud_skill_sharing_by_default",
     ]);
     nextStep =
-      "Classify source, verify license and safety, prove reading scope, validate application, add eval evidence, then keep or downrank.";
+      "Check prior similar contracts/evals/skills/receipts, reuse or extend the existing path, verify license and safety, prove reading scope, validate application, add eval evidence, then keep or downrank.";
   }
 
   if (primaryModules.length === 0) {
