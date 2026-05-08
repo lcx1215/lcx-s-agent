@@ -1,5 +1,6 @@
-import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
+import readline from "node:readline/promises";
 
 type CliOptions = {
   dataDir: string;
@@ -75,29 +76,36 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function parseJsonl(raw: string, filePath: string): Array<Record<string, unknown>> {
-  return raw
-    .split(/\r?\n/u)
-    .map((line, index) => ({ line, lineNumber: index + 1 }))
-    .filter(({ line }) => line.trim())
-    .map(({ line, lineNumber }) => {
+async function validateJsonlSplit(filePath: string, split: string): Promise<number> {
+  let count = 0;
+  const stream = createReadStream(filePath, { encoding: "utf8" });
+  const lines = readline.createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+      count += 1;
       try {
-        return JSON.parse(line) as Record<string, unknown>;
+        validateExample(JSON.parse(line) as Record<string, unknown>, split, count - 1);
       } catch (error) {
         throw new Error(
-          `invalid JSONL in ${filePath}:${lineNumber}: ${error instanceof Error ? error.message : String(error)}`,
+          `invalid JSONL in ${filePath}:${count}: ${error instanceof Error ? error.message : String(error)}`,
           { cause: error },
         );
       }
-    });
+    }
+  } finally {
+    stream.destroy();
+  }
+  return count;
 }
 
-async function readJsonl(filePath: string): Promise<Array<Record<string, unknown>>> {
+async function readJsonlCount(filePath: string, split: string): Promise<number> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= JSONL_READ_ATTEMPTS; attempt += 1) {
-    const raw = await fs.readFile(filePath, "utf8");
     try {
-      return parseJsonl(raw, filePath);
+      return await validateJsonlSplit(filePath, split);
     } catch (error) {
       lastError = error;
       if (attempt < JSONL_READ_ATTEMPTS) {
@@ -146,26 +154,22 @@ function validateExample(example: Record<string, unknown>, split: string, index:
 
 const options = parseArgs(process.argv.slice(2));
 const splits = {
-  train: await readJsonl(path.join(options.dataDir, "train.jsonl")),
-  valid: await readJsonl(path.join(options.dataDir, "valid.jsonl")),
-  test: await readJsonl(path.join(options.dataDir, "test.jsonl")),
+  train: await readJsonlCount(path.join(options.dataDir, "train.jsonl"), "train"),
+  valid: await readJsonlCount(path.join(options.dataDir, "valid.jsonl"), "valid"),
+  test: await readJsonlCount(path.join(options.dataDir, "test.jsonl"), "test"),
 };
 
-assert(splits.train.length >= options.minTrain, `train split too small: ${splits.train.length}`);
-assert(splits.valid.length >= 1, "valid split empty");
-assert(splits.test.length >= 1, "test split empty");
-
-for (const [split, examples] of Object.entries(splits)) {
-  examples.forEach((example, index) => validateExample(example, split, index));
-}
+assert(splits.train >= options.minTrain, `train split too small: ${splits.train}`);
+assert(splits.valid >= 1, "valid split empty");
+assert(splits.test >= 1, "test split empty");
 
 const result = {
   ok: true,
   boundary: "local_auxiliary_thought_flow_only",
   counts: {
-    train: splits.train.length,
-    valid: splits.valid.length,
-    test: splits.test.length,
+    train: splits.train,
+    valid: splits.valid,
+    test: splits.test,
   },
   checked: REQUIRED_COMPLETION_KEYS,
   liveTouched: false,
@@ -175,5 +179,5 @@ const result = {
 process.stdout.write(
   options.json
     ? `${JSON.stringify(result, null, 2)}\n`
-    : `local brain distillation smoke ok train=${splits.train.length} valid=${splits.valid.length} test=${splits.test.length}\n`,
+    : `local brain distillation smoke ok train=${splits.train} valid=${splits.valid} test=${splits.test}\n`,
 );
