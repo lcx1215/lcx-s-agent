@@ -341,6 +341,21 @@ function normalizeRiskBoundaries(values: string[]): string[] {
   return uniq(hasResearchBoundary ? normalized : [...normalized, ...BOUNDARIES]);
 }
 
+function inferRiskBoundariesFromText(text: string): string[] {
+  const inferred: string[] = [];
+  if (/language corpus|formal_lark_routing_corpus|语言语料|路由语料/iu.test(text)) {
+    inferred.push("no_language_corpus_modification");
+  }
+  if (
+    /no live market claim|no live finance advice|unverified live data|实时行情|实时数据|live market/iu.test(
+      text,
+    )
+  ) {
+    inferred.push("no_unverified_live_market_data_claims");
+  }
+  return inferred;
+}
+
 function buildPrompt(params: {
   sourceKind: string;
   userAsk: string;
@@ -552,7 +567,18 @@ function exampleFromAcceptedBrainCandidate(
   const supportingModules = readStringArray(accepted.proposedSupportingModules);
   const requiredTools = readStringArray(accepted.proposedRequiredTools);
   const missingData = readStringArray(accepted.proposedMissingData);
-  const riskBoundaries = normalizeRiskBoundaries(readStringArray(accepted.proposedRiskBoundaries));
+  const safetyText = [
+    readString(accepted.candidateText),
+    readString(accepted.userMessage),
+    readString(accepted.proposedNextStep),
+    readString((accepted.sample as Record<string, unknown> | undefined)?.distillableText),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const riskBoundaries = normalizeRiskBoundaries([
+    ...readStringArray(accepted.proposedRiskBoundaries),
+    ...inferRiskBoundariesFromText(safetyText),
+  ]);
   const taskFamily = readString(accepted.proposedTaskFamily) ?? "brain_distillation_candidate";
   const rawNextStep =
     readString(accepted.proposedNextStep) ??

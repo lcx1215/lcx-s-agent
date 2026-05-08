@@ -1071,9 +1071,17 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "source_repo_url_or_local_clone_path",
         "source_commit_or_version",
         "actual_reading_scope",
+        "workflow_owner_definition",
+        "leaf_worker_inventory",
+        "handoff_contract",
         "orchestrator_leaf_tool_boundary_map",
+        "tool_permission_boundary_map",
         "untrusted_source_isolation_rule",
+        "citation_and_provenance_rule",
         "artifact_qc_gate_mapping",
+        "artifact_qc_gate_sequence",
+        "human_signoff_checkpoint",
+        "visible_summary_contract",
         "application_validation_receipt",
       ]),
     );
@@ -1085,11 +1093,15 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "no_live_sender_change",
         "cite_every_number_or_mark_unsourced",
         "human_review_required_before_external_use",
+        "no_hidden_tool_authority",
+        "no_direct_external_agent_install",
       ]),
     );
     expect(plan.rejected_context).toEqual(
       expect.arrayContaining([
         "install_enterprise_mcp_without_credentials",
+        "direct_install_external_agent_without_isolation",
+        "single_agent_chat_role_without_workflow_contract",
         "copy_external_agent_as_trade_recommendation_engine",
       ]),
     );

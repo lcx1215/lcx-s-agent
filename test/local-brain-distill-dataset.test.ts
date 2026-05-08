@@ -131,7 +131,8 @@ describe("local brain distill dataset", () => {
             status: "accepted_brain_plan",
             review: { accepted: true },
             userMessage: "未来一个月看 QQQ、TLT 和 ETH 风险，先拆模块不要交易建议。",
-            candidateText: "research-only macro liquidity plan",
+            candidateText:
+              "research-only macro liquidity plan; writes brain distillation only; no live sender, provider config, language corpus, protected memory, or finance doctrine change; no live market claim supplied.",
             proposedTaskFamily: "portfolio_regime",
             proposedPrimaryModules: ["macro_rates_inflation", "portfolio_risk_gates"],
             proposedSupportingModules: ["review_panel"],
@@ -181,8 +182,15 @@ describe("local brain distill dataset", () => {
     const completion = JSON.parse(reviewedExample?.completion ?? "{}") as {
       missing_data?: string[];
       next_step?: string;
+      risk_boundaries?: string[];
     };
     expect(completion.missing_data).toContain("position_weights_and_return_series");
+    expect(completion.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "no_language_corpus_modification",
+        "no_unverified_live_market_data_claims",
+      ]),
+    );
     expect(completion.next_step).not.toMatch(/pull latest|ETF flow data|ETH market/i);
     expect(completion.next_step).toContain("timestamped source evidence");
   });

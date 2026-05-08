@@ -188,9 +188,9 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
   {
     id: "anthropic_financial_agent_pattern_distillation",
     userMessage:
-      "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer、wealth management workflow。请训练本地大脑学习它们能怎么帮助我们的智能体：只吸收 orchestrator/leaf 工具边界、untrusted-source 隔离、cite every number、artifact QC gate、review checkpoint 和 research-only 金融工作流；不要改 provider config、live sender，不要假设我们有企业 MCP，不要变成交易执行。",
+      "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer、wealth management workflow。请训练本地大脑学习它们的架构哲学：workflow owner 负责端到端目标，orchestrator 拆任务，leaf worker 只做窄任务，handoff contract 约束交接，tool permission boundary 限制工具权限，untrusted-source 隔离外部资料，cite every number，artifact QC gate sequence，human signoff checkpoint，最后输出人话 control-room summary。不要改 provider config、live sender，不要假设我们有企业 MCP，不要变成交易执行。",
     sourceSummary:
-      "Anthropic financial-services agent framework learning request requiring pinned source review, reusable workflow-pattern distillation, tool-boundary map, QC gates, and research-only/no-live-change boundaries.",
+      "Anthropic financial-services agent architecture learning request requiring pinned source review, reusable workflow-owner/orchestrator/leaf-worker distillation, handoff contract, tool-boundary map, QC sequence, visible summary, and research-only/no-live-change boundaries.",
   },
   {
     id: "external_knowledge_internalization_protocol",
@@ -391,7 +391,7 @@ export function buildTeacherSystemPrompt(): string {
     "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
-    "- external financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow patterns, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, agent pattern inventory, orchestrator/leaf tool-boundary map, untrusted-source isolation rule, artifact QC gates, application validation, fresh adjacent application, and keep/downrank/discard decision",
+    "- external financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision",
     "- before creating any new mechanism, check prior_art_search_terms_or_existing_artifact_paths and existing_contract_eval_skill_or_receipt_candidates, then choose reuse_extend_or_new_decision; prefer reuse or extension over a parallel V2 path",
     "- papers and open-source project internalization must check prior related contracts/evals/skills/receipts first, classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, then keep, downrank, or discard",
     "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
@@ -717,9 +717,17 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "license_and_write_scope_review",
         "actual_reading_scope",
         "agent_pattern_inventory",
+        "workflow_owner_definition",
+        "leaf_worker_inventory",
+        "handoff_contract",
         "orchestrator_leaf_tool_boundary_map",
+        "tool_permission_boundary_map",
         "untrusted_source_isolation_rule",
+        "citation_and_provenance_rule",
         "artifact_qc_gate_mapping",
+        "artifact_qc_gate_sequence",
+        "human_signoff_checkpoint",
+        "visible_summary_contract",
         "application_validation_receipt",
         "fresh_adjacent_application_task",
         "keep_downrank_or_discard_decision",
@@ -737,13 +745,17 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "no_distribution_or_publication",
         "cite_every_number_or_mark_unsourced",
         "human_review_required_before_external_use",
+        "no_hidden_tool_authority",
+        "no_direct_external_agent_install",
         "no_trade_advice",
       ],
       next_step:
-        "read_source_at_pinned_commit_then_distill_orchestrator_leaf_boundaries_untrusted_source_isolation_artifact_qc_and_research_only_finance_eval_before_claiming_helpful",
+        "read_source_at_pinned_commit_then_distill_workflow_owner_leaf_workers_handoff_contract_tool_boundaries_untrusted_source_isolation_qc_sequence_human_signoff_and_visible_summary_before_claiming_helpful",
       rejected_context: [
         "old_lark_conversation_history",
         "install_enterprise_mcp_without_credentials",
+        "direct_install_external_agent_without_isolation",
+        "single_agent_chat_role_without_workflow_contract",
         "copy_external_agent_as_trade_recommendation_engine",
         "publication_or_distribution_without_review",
         "model_internal_learning_claim_without_training_eval_evidence",
@@ -1554,9 +1566,22 @@ function canonicalRiskBoundary(entry: string): string {
   }
   if (
     normalized === "no_live_market_claims" ||
+    normalized === "no_live_market_claim" ||
+    normalized === "no_live_finance_advice" ||
+    normalized === "no_unverified_live_data" ||
     normalized === "no_unverified_live_market_data_claims"
   ) {
     return "no_unverified_live_market_data_claims";
+  }
+  if (
+    normalized === "no_language_corpus_change" ||
+    normalized === "no_language_corpus_changes" ||
+    normalized === "no_language_corpus_modification" ||
+    normalized === "no_language_corpus_modify" ||
+    normalized === "no_formal_lark_routing_corpus" ||
+    normalized === "no_formal_lark_routing_corpus_change"
+  ) {
+    return "no_language_corpus_modification";
   }
   return normalized || entry.trim();
 }
@@ -1621,8 +1646,9 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   };
   const ensureRisk = (items: string[]) => {
     for (const item of items) {
-      if (!riskBoundaries.includes(item)) {
-        riskBoundaries.push(item);
+      const boundary = canonicalRiskBoundary(item);
+      if (!riskBoundaries.includes(boundary)) {
+        riskBoundaries.push(boundary);
       }
     }
   };
@@ -1737,6 +1763,18 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "portfolio_risk_gates",
     ]);
     ensureMissing(["fresh_market_data_snapshot", "current_position_weights"]);
+    ensureRisk(["no_unverified_live_market_data_claims"]);
+  }
+
+  if (/language corpus|formal_lark_routing_corpus|语言语料|路由语料/iu.test(ask)) {
+    ensureRisk(["no_language_corpus_modification"]);
+  }
+
+  if (
+    /no live market claim|no live finance advice|unverified live data|实时行情|实时数据|live market/iu.test(
+      ask,
+    )
+  ) {
     ensureRisk(["no_unverified_live_market_data_claims"]);
   }
 
@@ -1903,9 +1941,17 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "license_and_write_scope_review",
       "actual_reading_scope",
       "agent_pattern_inventory",
+      "workflow_owner_definition",
+      "leaf_worker_inventory",
+      "handoff_contract",
       "orchestrator_leaf_tool_boundary_map",
+      "tool_permission_boundary_map",
       "untrusted_source_isolation_rule",
+      "citation_and_provenance_rule",
       "artifact_qc_gate_mapping",
+      "artifact_qc_gate_sequence",
+      "human_signoff_checkpoint",
+      "visible_summary_contract",
       "application_validation_receipt",
       "fresh_adjacent_application_task",
       "keep_downrank_or_discard_decision",
@@ -1920,16 +1966,20 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "no_distribution_or_publication",
       "cite_every_number_or_mark_unsourced",
       "human_review_required_before_external_use",
+      "no_hidden_tool_authority",
+      "no_direct_external_agent_install",
       "no_trade_advice",
     ]);
     ensureRejected([
       "install_enterprise_mcp_without_credentials",
+      "direct_install_external_agent_without_isolation",
+      "single_agent_chat_role_without_workflow_contract",
       "copy_external_agent_as_trade_recommendation_engine",
       "publication_or_distribution_without_review",
       "model_internal_learning_claim_without_training_eval_evidence",
     ]);
     nextStep =
-      "Read the pinned external financial-agent source, distill reusable workflow boundaries, isolate untrusted data, map QC gates, then prove one adjacent LCX research task before keeping the pattern.";
+      "Read the pinned external financial-agent source, distill workflow owner, leaf workers, handoff contracts, tool boundaries, QC sequence, human signoff, and visible summary, then prove one adjacent LCX research task before keeping the pattern.";
   }
 
   if (!isContextReset && isExternalKnowledgeInternalization) {

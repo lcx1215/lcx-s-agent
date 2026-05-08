@@ -482,6 +482,36 @@ describe("minimax brain teacher batch parsing", () => {
     );
   });
 
+  it("promotes safety text into canonical teacher risk boundaries", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "quota_safety_boundary_text_00000",
+        userMessage: "训练本地大脑做 research-only 风险拆解，不要改 language corpus。",
+        sourceSummary:
+          "Writes brain distillation review only; no live sender, provider config, language corpus, protected memory, or finance doctrine change. No live market claim supplied.",
+      },
+      normalizeTeacherPlan({
+        task_family: "portfolio_regime",
+        primary_modules: ["portfolio_risk_gates"],
+        supporting_modules: ["review_panel"],
+        required_tools: ["review_panel"],
+        missing_data: [],
+        risk_boundaries: ["research_only", "no execution", "no live finance advice"],
+        next_step: "review",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "research_only",
+        "no_execution_authority",
+        "no_language_corpus_modification",
+        "no_unverified_live_market_data_claims",
+      ]),
+    );
+  });
+
   it("converts ETF-as-company bad samples into fund-structure research plans", () => {
     const plan = hardenTeacherPlanForPrompt(
       {
@@ -716,9 +746,17 @@ describe("minimax brain teacher batch parsing", () => {
         "source_commit_or_version",
         "actual_reading_scope",
         "agent_pattern_inventory",
+        "workflow_owner_definition",
+        "leaf_worker_inventory",
+        "handoff_contract",
         "orchestrator_leaf_tool_boundary_map",
+        "tool_permission_boundary_map",
         "untrusted_source_isolation_rule",
+        "citation_and_provenance_rule",
         "artifact_qc_gate_mapping",
+        "artifact_qc_gate_sequence",
+        "human_signoff_checkpoint",
+        "visible_summary_contract",
         "fresh_adjacent_application_task",
       ]),
     );
@@ -731,11 +769,15 @@ describe("minimax brain teacher batch parsing", () => {
         "no_distribution_or_publication",
         "cite_every_number_or_mark_unsourced",
         "human_review_required_before_external_use",
+        "no_hidden_tool_authority",
+        "no_direct_external_agent_install",
       ]),
     );
     expect(plan.rejected_context).toEqual(
       expect.arrayContaining([
         "install_enterprise_mcp_without_credentials",
+        "direct_install_external_agent_without_isolation",
+        "single_agent_chat_role_without_workflow_contract",
         "copy_external_agent_as_trade_recommendation_engine",
       ]),
     );
