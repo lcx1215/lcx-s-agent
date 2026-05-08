@@ -3,7 +3,7 @@
 ## Status
 
 - dev-fixed: yes | no
-- live-fixed: yes | no
+- live-visible-fixed: yes | no
 
 ## Patch
 
@@ -12,7 +12,7 @@
 
 ## Live sync
 
-- migrated to `Projects/openclaw`: yes | no
+- migrated to `~/.openclaw/live-sidecars/lcx-s-openclaw`: yes | no
 - live build passed: yes | no
 - gateway restarted: yes | no
 - `openclaw channels status --probe` passed: yes | no

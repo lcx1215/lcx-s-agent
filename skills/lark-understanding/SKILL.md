@@ -8,7 +8,7 @@ metadata: { "openclaw": { "emoji": "🧭" } }
 
 Use this skill when improving how Lobster understands natural-language requests in the Feishu/Lark control room.
 
-The goal is not to make the bot sound smarter. The goal is to reliably classify a real user utterance into the right semantic family, decide the right work surface or truth surface, and keep the reply honest about what is dev-fixed versus live-fixed.
+The goal is not to make the bot sound smarter. The goal is to reliably classify a real user utterance into the right semantic family, decide the right work surface or truth surface, and keep the reply honest about what is dev-fixed versus live-visible-fixed.
 
 ## Core Rule
 

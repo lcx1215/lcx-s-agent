@@ -1511,7 +1511,7 @@ function renderFeishuProtocolTruthSurfaceReply(params: {
     "不可用边界:",
     "- 这不是自动交易执行器，不会批准下单、付款、删文件、生产发布或其它高风险动作。",
     "- 没有新鲜来源或工具证明时，不能把旧证据说成今天的 live 事实。",
-    "- dev-fixed 和 live-fixed 必须分开；只有 build/restart/probe/真实 Lark 可见回复都通过，才算 live-fixed。",
+    "- dev-fixed 和 live-visible-fixed 必须分开；只有 build/restart/probe/真实 Lark 可见回复都通过，才算 live-visible-fixed。",
     "",
     "下一步会做什么:",
     "- 对每条真实 Lark 消息先分类，再走对应工作面；如果缺 source、权限、证据或 receipt，就直接说失败原因。",
@@ -1538,7 +1538,7 @@ function shouldUseFeishuProtocolTruthIdentityReply(text: string): boolean {
 function shouldUseFeishuProtocolStatusReadbackReply(text: string): boolean {
   return (
     resolveProtocolInfoQuestionKind(text) === "status_readback" &&
-    /(status audit|current evidence|dev-fixed|live-fixed|unverified|acceptance code|proof|failedreason|what did you just fix|当前证据|当前 proof|刚才.*修|修了什么)/iu.test(
+    /(status audit|current evidence|dev-fixed|live-visible-fixed|live-fixed|unverified|acceptance code|proof|failedreason|what did you just fix|当前证据|当前 proof|刚才.*修|修了什么)/iu.test(
       text,
     )
   );
@@ -4209,7 +4209,7 @@ async function waitForFeishuDispatcherAndPublishes(params: {
         impact:
           "the primary Feishu reply may have landed, but one secondary publish target did not receive its artifact",
         suggestedScope:
-          "treat this as partial delivery: preserve the primary reply, inspect the secondary target, and do not call the classified publish fully live-fixed until the target publish is verified",
+          "treat this as partial delivery: preserve the primary reply, inspect the secondary target, and do not call the classified publish fully live-visible-fixed until the target publish is verified",
       });
     }
   }
@@ -4870,7 +4870,7 @@ function buildFeishuScopeNotices(content: string): string[] {
     ),
     createFeishuScopeNoticeRule(
       looksLikeCapabilityClaimScopeAsk(content),
-      "[System: Capability-claim guard detected. Separate current real capability, design target, local/dev-fixed change, live-fixed state, configuration or credential gaps, and stale prior evidence. For dev-to-live handoff requests, separate source patch, build, restart, live probe, and visible Lark/Feishu reply evidence. If an acceptance phrase or equivalent semantic acceptance condition is required, define it before judging the live probe, then report whether the visible reply matched it. Do not say a tool, provider, automation, memory path, routing path, or Lark/Feishu integration is working now unless current proof supports it. Name the proof, probe, receipt, or acceptance phrase; otherwise label it unverified, unavailable, or dev-only.]",
+      "[System: Capability-claim guard detected. Separate current real capability, design target, local/dev-fixed change, live-visible-fixed state, configuration or credential gaps, and stale prior evidence. For dev-to-live handoff requests, separate source patch, build, restart, live probe, and visible Lark/Feishu reply evidence. If an acceptance phrase or equivalent semantic acceptance condition is required, define it before judging the live probe, then report whether the visible reply matched it. Do not say a tool, provider, automation, memory path, routing path, or Lark/Feishu integration is working now unless current proof supports it. Name the proof, probe, receipt, or acceptance phrase; otherwise label it unverified, unavailable, or dev-only.]",
     ),
     createFeishuScopeNoticeRule(
       looksLikeClarificationBoundaryScopeAsk(content),

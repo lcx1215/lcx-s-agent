@@ -1320,7 +1320,7 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
   }
 
   if (
-    /(status readback|dev-fixed|live-fixed|evidence order|visible lark\/feishu reply-flow evidence|current evidence)/iu.test(
+    /(status readback|dev-fixed|live-visible-fixed|live-fixed|evidence order|visible lark\/feishu reply-flow evidence|current evidence)/iu.test(
       normalized,
     )
   ) {
@@ -1364,7 +1364,7 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
   }
 
   if (
-    /(我是\s+lcx agent|我是\s+openclaw|lark 控制室入口|当前可用能力|不可用边界|dev-fixed 和 live-fixed)/iu.test(
+    /(我是\s+lcx agent|我是\s+openclaw|lark 控制室入口|当前可用能力|不可用边界|dev-fixed 和 (?:live-visible-fixed|live-fixed))/iu.test(
       normalized,
     )
   ) {

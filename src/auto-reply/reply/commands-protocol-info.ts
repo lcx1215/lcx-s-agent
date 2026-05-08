@@ -495,7 +495,7 @@ export function buildProtocolInfoReply(params: {
       lines.push("Visible Lark/Feishu reply-flow evidence: missing from this status reply.");
     }
     lines.push(
-      "Next check: name the first missing evidence layer instead of collapsing dev-fixed, live-fixed, started, running, completed, blocked, and unproven into one success label.",
+      "Next check: name the first missing evidence layer instead of collapsing dev-fixed, live-visible-fixed, started, running, completed, blocked, and unproven into one success label.",
     );
     lines.push(lobsterLine);
     return { text: lines.filter(Boolean).join("\n") };
@@ -1075,7 +1075,7 @@ export function buildProtocolInfoReply(params: {
         "Backend paths to look for: finance_learning_pipeline_orchestrator, finance_learning_capability_inspect, finance_learning_capability_attach, finance_article_extract_capability_input, and learning_command council routing.",
         "What this means: the system can classify Lark language into the learning surface and has internal tool paths for bounded finance-learning artifacts; it should preserve existing candidates and receipts instead of restarting from blank learning.",
         "Current acceptance gate: a finance-learning run is not treated as internalized just because it became retrievable. The pipeline distinguishes application_ready, retrievable_but_not_application_ready, and not_retrievable through retrievalFirstLearning.learningInternalizationStatus.",
-        "What it does not prove: this is not live-fixed by itself. It does not prove the current deployed Lark bot rebuilt, restarted, routed a real message, or visibly invoked the pipeline in production.",
+        "What it does not prove: this is not live-visible-fixed by itself. It does not prove the current deployed Lark bot rebuilt, restarted, routed a real message, or visibly invoked the pipeline in production.",
         "Required live proof: build, restart, probe, one real Lark phrase for this family, visible reply naming target surface=learning_command plus the intended finance-learning tool path and learningInternalizationStatus, and no fake claim that a background learning swarm started.",
         lobsterLine,
       ]

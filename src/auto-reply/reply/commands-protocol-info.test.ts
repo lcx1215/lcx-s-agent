@@ -70,7 +70,7 @@ describe("commands-protocol-info", () => {
     ["is this live-fixed", "status_readback"],
     ["where are we now", "status_readback"],
     [
-      "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-fixed unverified next step proof. If unknown say failedReason.",
+      "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-visible-fixed unverified next step proof. If unknown say failedReason.",
       "status_readback",
     ],
     ["can you use file_search", "specific_capability"],
@@ -357,7 +357,7 @@ describe("commands-protocol-info", () => {
         "retrievalFirstLearning.learningInternalizationStatus",
       );
       expect(learningCapabilityStateReply?.text).toContain("application_ready");
-      expect(learningCapabilityStateReply?.text).toContain("not live-fixed by itself");
+      expect(learningCapabilityStateReply?.text).toContain("not live-visible-fixed by itself");
       expect(learningCapabilityStateReply?.text).toContain("Required live proof");
 
       const limitationsReply = buildProtocolInfoReply({

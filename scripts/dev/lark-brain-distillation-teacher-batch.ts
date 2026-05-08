@@ -245,14 +245,14 @@ const CASES: TeacherCase[] = [
   {
     userMessage: "它刚才又像串到旧任务了，先审计是不是 Lark 上下文污染，不要继续金融分析。",
     payload:
-      "This is an ops audit, not a finance research task. Select ops_audit and request visible reply or message id before claiming live fixed.",
+      "This is an ops audit, not a finance research task. Select ops_audit and request visible reply or message id before claiming live-visible-fixed.",
     taskFamily: "lark_context_pollution_audit",
     primaryModules: ["ops_audit"],
     supportingModules: ["control_room_summary"],
     requiredTools: ["lark_loop_diagnose", "sessions_history", "review_panel"],
     missingData: ["fresh_lark_message_id_or_visible_reply_text"],
     riskBoundaries: ["no_execution_authority", "evidence_required"],
-    nextStep: "inspect_lark_session_store_and_candidate_replay_before_claiming_live_fixed",
+    nextStep: "inspect_lark_session_store_and_candidate_replay_before_claiming_live_visible_fixed",
     reason: "keeps ops audit from turning into finance analysis",
   },
   {

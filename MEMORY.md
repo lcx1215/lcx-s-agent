@@ -88,7 +88,7 @@
 - There is still no durable per-asset or per-position state plane.
 - The learning timebox is still process-bound, not a global durable workflow engine.
 - The fundamental hook family is richer than the current local research corpus.
-- The development repo is stronger than the live runtime proof. `dev-fixed` is not `live-fixed`.
+- The development repo is stronger than the live runtime proof. `dev-fixed` is not `live-visible-fixed`.
 
 ## Cleanup Rule
 

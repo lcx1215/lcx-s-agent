@@ -122,7 +122,7 @@ function architectureSvg() {
     <rect x="474" y="760" width="274" height="46" rx="18" fill="#effbf2" stroke="#bee8c8"/>
     <text x="611" y="791" text-anchor="middle" fill="#14532d" font-size="22" font-weight="850">Feishu = Lark</text>
     <rect x="782" y="760" width="350" height="46" rx="18" fill="#fff7e6" stroke="#f5d08a"/>
-    <text x="957" y="791" text-anchor="middle" fill="#7a4a00" font-size="22" font-weight="850">dev-fixed ≠ live-fixed</text>
+    <text x="957" y="791" text-anchor="middle" fill="#7a4a00" font-size="20" font-weight="850">dev-fixed ≠ live-visible-fixed</text>
     <rect x="1166" y="760" width="460" height="46" rx="18" fill="#f5f3ff" stroke="#d8ccff"/>
     <text x="1396" y="791" text-anchor="middle" fill="#4c1d95" font-size="22" font-weight="850">底层 runtime 不是主叙事</text>
   </g>

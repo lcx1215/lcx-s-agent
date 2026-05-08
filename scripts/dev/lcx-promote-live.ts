@@ -444,7 +444,7 @@ function writeJson(filePath: string, payload: unknown): void {
 
 function makeAcceptancePhrase(commit: string): string {
   const shortSha = commit.slice(0, 10);
-  return `lark-live-fixed-${shortSha}`;
+  return `lark-live-visible-fixed-${shortSha}`;
 }
 
 function summarizeReplyFlowRecord(record: Record<string, unknown>): ReplyFlowSummary {

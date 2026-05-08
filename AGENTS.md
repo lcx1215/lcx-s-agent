@@ -121,7 +121,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - If a weakness spans language intake, local brain planning, memory retrieval, visible reply formatting, eval, and receipts, repair the whole loop instead of fixing only the first failing file.
 - Prefer reusable contracts and regression surfaces over one-off prompt patches.
 - Every system-improvement change must still leave proof: targeted tests, smoke/eval output, receipt, CLI diagnosis, or a named live acceptance path.
-- Keep hard safety boundaries intact: research-only finance behavior, no hidden trading authority, no fake live-fixed claims, no protected-memory overwrite, no provider/config expansion unless the user explicitly asks for that class of change.
+- Keep hard safety boundaries intact: research-only finance behavior, no hidden trading authority, no fake live-visible-fixed claims, no protected-memory overwrite, no provider/config expansion unless the user explicitly asks for that class of change.
 
 ## Prior-Work Reuse Doctrine
 
@@ -219,8 +219,8 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - Default to coherent bounded batches rather than tiny artificial steps. When a bug implies a shared contract failure, continue through related failure families end to end instead of stopping after the first small patch.
 - Do not perform unrelated cleanup or opportunistic refactors. Cleanup, refactor, module extraction, or interface reshaping is in scope when it directly improves the active system goal, removes repeated leakage, reduces verification risk, or prevents the failure family from reappearing through sibling paths.
 - Treat verification as mandatory: run targeted tests, lint touched files, and name a fixed Feishu/live acceptance phrase for later real verification.
-- Do not confuse `dev-fixed` with `live-fixed`.
-- A change is only `live-fixed` after explicit migration, build, restart, probe, and real-entry verification.
+- Do not confuse `dev-fixed` with `live-visible-fixed`.
+- A change is only `live-visible-fixed` after explicit migration, build, restart, probe, and real-entry verification.
 - Keep degraded / partial / rescue states honest; never present degraded behavior as full success.
 
 ## Long-Running Task Autonomy

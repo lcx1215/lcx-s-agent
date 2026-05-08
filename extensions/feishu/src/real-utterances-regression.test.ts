@@ -1552,7 +1552,7 @@ describe("real daily utterance regression", () => {
       {
         label: "control room capability readback",
         utterance:
-          "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。 当前可用能力: 可以在本地 workspace 内跑有 receipt 的 finance learning pipeline；成功时必须出现 application_ready 或明确 failedReason。不可用边界: dev-fixed 和 live-fixed 必须区分。",
+          "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。 当前可用能力: 可以在本地 workspace 内跑有 receipt 的 finance learning pipeline；成功时必须出现 application_ready 或明确 failedReason。不可用边界: dev-fixed 和 live-visible-fixed 必须区分。",
         family: "protocol_truth_surface",
         expectedSurface: undefined,
       },

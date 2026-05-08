@@ -360,7 +360,7 @@ describe("resolveFeishuSurfaceRouting", () => {
     const cases = [
       "live-sync-check 84d8695：请只回复 live-sync-ok，并说明 gateway 已指向 lcx-s-openclaw；不要扩展。",
       "前台超时验收：进入 learning council，但如果超过 8 秒没形成最终结果，必须显式回复 timeout，不准沉默。验收码 live-council-visible-timeout-20260503-1",
-      "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-fixed unverified next step proof. If unknown say failedReason.",
+      "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-visible-fixed unverified next step proof. If unknown say failedReason.",
     ];
 
     for (const content of cases) {
@@ -788,7 +788,7 @@ describe("buildFeishuSurfaceNotice", () => {
       "If the work intent is ambiguous, default to the smallest useful mode that keeps progress visible",
     );
     expect(notice).toContain(
-      "Feishu/Lark status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
+      "Feishu/Lark status boundary: before claiming live-visible-fixed, dev-fixed, started, running, completed, blocked, or unproven",
     );
     expect(notice).toContain(
       "Treat questions like 现在在干什么, 修到哪了, 还剩多少, 是不是 live 了, 现在能用了吗, and what remains as status-readback requests.",
@@ -803,7 +803,7 @@ describe("buildFeishuSurfaceNotice", () => {
     expect(notice).toContain("use current evidence instead of chat memory alone");
     expect(notice).toContain("dev-fixed means local implementation or tests");
     expect(notice).toContain(
-      "live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
+      "live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
     );
     expect(notice).toContain("say unproven or unknown and name the next check");
     expect(notice).toContain("Configured target chat for this surface = oc-tech");
@@ -835,7 +835,7 @@ describe("buildFeishuSurfaceNotice", () => {
 
     expect(notice).toContain("Feishu operating surface target = control_room");
     expect(notice).toContain(
-      "Feishu/Lark status boundary: before claiming live-fixed, dev-fixed, started, running, completed, blocked, or unproven",
+      "Feishu/Lark status boundary: before claiming live-visible-fixed, dev-fixed, started, running, completed, blocked, or unproven",
     );
     expect(notice).toContain(
       "you may directly create or update low-risk artifacts such as HOOK notes, correction notes, weekly reviews, learning summaries",
@@ -1939,7 +1939,7 @@ describe("buildFeishuControlRoomOrchestrationNotice", () => {
     expect(notice).toContain("current-research-line and protected summaries first");
     expect(notice).toContain("dev-fixed means local implementation or tests only");
     expect(notice).toContain(
-      "live-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
+      "live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
     );
     expect(notice).toContain("started/running/completed/blocked/unproven");
     expect(notice).toContain("say unproven or unknown");

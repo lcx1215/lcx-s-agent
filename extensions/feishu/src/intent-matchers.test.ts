@@ -389,14 +389,14 @@ describe("feishu intent matchers", () => {
 
   it("detects capability-claim scope asks without catching ordinary capability questions", () => {
     const positiveCases = [
-      "现在 Lark 搜索能力能用吗，别把 dev-fixed 说成 live-fixed",
+      "现在 Lark 搜索能力能用吗，别把 dev-fixed 说成 live-visible-fixed",
       "这个 provider 是不是已经接上了，用当前证据说，没验过就标 unverified",
       "已经支持自动学习了吗，区分设计目标、本地测试和 live 状态",
       "这个 routing 现在真的生效了吗，给 proof 或 acceptance phrase",
-      "Lark 真实对话没问题的就接 live 跟上，别把 dev-fixed 当 live-fixed",
+      "Lark 真实对话没问题的就接 live 跟上，别把 dev-fixed 当 live-visible-fixed",
       "这个 prompt guard 是 dev-fixed 还是已经 build/restart 后 live 生效了",
       "接到线上之前先说清楚 build、restart、probe 哪个做了",
-      "接 live 前先定义验收短语，没命中 acceptance phrase 就别说 live-fixed",
+      "接 live 前先定义验收短语，没命中 acceptance phrase 就别说 live-visible-fixed",
       "is web search available right now, do not use stale proof",
       "is the integration wired in production or only locally tested",
     ];
@@ -511,7 +511,7 @@ describe("feishu intent matchers", () => {
       "Lark 测试回执要标同一个 chat / thread、对应回复和 message-time，别拿旧回复当 proof",
       "live 回执要列 acceptance phrase、是否命中、可见回复和 dev/live 边界",
       "等价语义验收要列核心槽位、命中槽位、缺失槽位，缺了就不能 pass",
-      "visible reply receipt: tested phrase, pass/fail, dev-fixed vs live-fixed, next step",
+      "visible reply receipt: tested phrase, pass/fail, dev-fixed vs live-visible-fixed, next step",
       "show acceptance phrase match status in the visible reply receipt",
       "equivalent semantic match must show core slots, matched slots, and missing slots",
       "visible reply evidence must show same thread, matching reply, and tested phrase",

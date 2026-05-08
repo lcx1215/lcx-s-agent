@@ -1460,7 +1460,8 @@ describe("buildFeishuAgentBody", () => {
   it("adds capability-claim guard without losing search-health framing", () => {
     const body = buildFeishuAgentBody({
       ctx: {
-        content: "现在 Lark 搜索能力能用吗，别把 dev-fixed 说成 live-fixed，用当前 proof 说",
+        content:
+          "现在 Lark 搜索能力能用吗，别把 dev-fixed 说成 live-visible-fixed，用当前 proof 说",
         senderName: "Sender Name",
         senderOpenId: "ou-sender",
         messageId: "msg-capability-claim-search-42",
@@ -1476,7 +1477,8 @@ describe("buildFeishuAgentBody", () => {
   it("adds capability-claim guard without losing classify-work framing", () => {
     const body = buildFeishuAgentBody({
       ctx: {
-        content: "先分类这个 routing 能力现在是不是 live-fixed，没验过就标 unverified，再说下一步",
+        content:
+          "先分类这个 routing 能力现在是不是 live-visible-fixed，没验过就标 unverified，再说下一步",
         senderName: "Sender Name",
         senderOpenId: "ou-sender",
         messageId: "msg-capability-claim-classify-42",
@@ -1491,7 +1493,8 @@ describe("buildFeishuAgentBody", () => {
   it("adds capability-claim guard for dev-to-live handoff prompts", () => {
     const body = buildFeishuAgentBody({
       ctx: {
-        content: "Lark 真实对话没问题的就接 live 跟上，没 build/restart/probe 就别说 live-fixed",
+        content:
+          "Lark 真实对话没问题的就接 live 跟上，没 build/restart/probe 就别说 live-visible-fixed",
         senderName: "Sender Name",
         senderOpenId: "ou-sender",
         messageId: "msg-capability-claim-live-handoff-42",
@@ -1507,7 +1510,7 @@ describe("buildFeishuAgentBody", () => {
   it("adds capability-claim guard for live acceptance phrase prompts", () => {
     const body = buildFeishuAgentBody({
       ctx: {
-        content: "接 live 前先定义验收短语，没命中 acceptance phrase 就别说 live-fixed",
+        content: "接 live 前先定义验收短语，没命中 acceptance phrase 就别说 live-visible-fixed",
         senderName: "Sender Name",
         senderOpenId: "ou-sender",
         messageId: "msg-capability-claim-live-acceptance-phrase-42",
@@ -1573,7 +1576,7 @@ describe("buildFeishuAgentBody", () => {
     const body = buildFeishuAgentBody({
       ctx: {
         content:
-          "现在 web 搜索能力要查最新但不要联网，先指出冲突，再用 proof 区分 dev-fixed 和 live-fixed",
+          "现在 web 搜索能力要查最新但不要联网，先指出冲突，再用 proof 区分 dev-fixed 和 live-visible-fixed",
         senderName: "Sender Name",
         senderOpenId: "ou-sender",
         messageId: "msg-instruction-conflict-capability-42",
@@ -7814,7 +7817,7 @@ describe("learning council routing", () => {
         chat_type: "p2p",
         message_type: "text",
         content: JSON.stringify({
-          text: "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-fixed unverified next step proof. If unknown say failedReason. Do not mention stale March dates. acceptance code lark-status-boundary-test",
+          text: "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-visible-fixed unverified next step proof. If unknown say failedReason. Do not mention stale March dates. acceptance code lark-status-boundary-test",
         }),
       },
     };

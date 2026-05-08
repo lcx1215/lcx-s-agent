@@ -24,7 +24,7 @@ LCX Agent 是一个个人 AI 研究操作系统。它的核心不是某个单点
 - 用 Hermes 思路传递消息、意图、上下文和 receipt，让模块之间靠 artifact 对齐，而不是靠聊天幻觉。
 - 用 MiniMax、Kimi、DeepSeek 等大模型做任务拆解、审阅和生成。
 - 用本地大脑沉淀记忆、模块化思考和可复用经验。
-- 把 dev-fixed 和 live-fixed 分清楚，避免把本地通过误报成线上可见。
+- 把 dev-fixed 和 live-visible-fixed 分清楚，避免把本地通过误报成线上可见。
 - 修问题时优先收敛同类接口和流程契约，而不是只补当前触发样例。
 - 对金融研究保持低频、研究型、风险优先，不做自动交易。
 
@@ -51,7 +51,7 @@ LCX Agent 的设计更接近一个可长期运行的研究系统，而不是一�
 | 飞书 / Lark 控制室   | 用户在一个主群或主对话里说自然语言，系统内部完成分类、路由和回复。          |
 | Agent 任务路由       | 把请求分到语言理解、研究、学习、运维、审计、finance review 等链路。         |
 | 本地学习大脑         | 把有价值的材料蒸馏成样本、能力卡、修正笔记、review artifact 和评估记录。    |
-| 证据与 truth surface | 区分已搜索、已学习、已写入、仅推断、dev-fixed、live-fixed 等状态。          |
+| 证据与 truth surface | 区分已搜索、已学习、已写入、仅推断、dev-fixed、live-visible-fixed 等状态。  |
 | 金融研究工作流       | 面向 ETF、主要资产和头部公司，强调基本面筛选、技术面择时和硬风险门控。      |
 
 ## 一个真实链路
@@ -70,7 +70,7 @@ LCX Agent 的设计更接近一个可长期运行的研究系统，而不是一�
 3. finance、math、memory、review 等模块分别参与，但不把内部 JSON 直接甩给用户。
 4. 最终回复先给人能读懂的摘要，再给必要的风险边界和后续检查点。
 5. Hermes 生成 handoff、context packet、receipt 和 review artifact，方便之后复盘和学习。
-6. Harness 检查边界：research-only、无交易建议、无假 live-fixed、失败必须显式化。
+6. Harness 检查边界：research-only、无交易建议、无假 live-visible-fixed、失败必须显式化。
 
 ## 这个项目不是什么
 
@@ -106,7 +106,7 @@ LCX Agent 长期运行在真实飞书 / Lark 回路里，所以“本地修了�
 5. 保持语言 corpus、学习大脑 artifact、finance doctrine 互不污染。
 6. 让本地 Qwen / local brain 吃进大模型审阅和蒸馏结果。
 7. 用 MiniMax 等大模型额度做持续高质量任务拆解、审阅和训练样本沉淀。
-8. 对 live migration 留下可追踪证据，不把 dev-ready 说成 live-fixed。
+8. 对 live migration 留下可追踪证据，不把 dev-ready 说成 live-visible-fixed。
 9. 做新模块、新技能、新 eval、新 receipt 或新 workflow 前，先查仓库和本地 skills 里有没有类似工程；能复用或扩展就不要另造一套。
 
 ## 系统提升和问题族修复纪律
@@ -126,7 +126,7 @@ LCX Agent 不把 baseline hardening 理解成“只把当前触发样例补过�
 9. 新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口之前，先查已有相似工程；优先复用、合并或扩展旧路径，确实要新建时说明旧路径为什么不够。
 10. 允许为了 L5 能力提升主动新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口。
 11. 大脑能力必须单调：难题会做，简单前置题必须更会做。复杂评测、训练 promotion 和学习 receipt 不能绕过对应的简单用户入口。
-12. 仍然禁止无关 provider、交易执行层、假 live-fixed、保护记忆覆盖，以及没有验证指标的炫技式扩张。
+12. 仍然禁止无关 provider、交易执行层、假 live-visible-fixed、保护记忆覆盖，以及没有验证指标的炫技式扩张。
 
 简短说：范围要有边界，但不能小到只修症状。该收敛问题族时，就一次收干净；该升级系统能力时，就用测试、receipt 和真实回路证明它真的变强。
 

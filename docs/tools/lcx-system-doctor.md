@@ -63,4 +63,4 @@ Adds live-facing checks:
 - `openclaw channels status --probe --json`
 
 Only use this when the goal is to prove live Lark/Feishu state. A default dev
-doctor result is not a live-fixed claim.
+doctor result is not a live-visible-fixed claim.

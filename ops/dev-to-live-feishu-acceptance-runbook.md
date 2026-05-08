@@ -6,7 +6,7 @@ Use this runbook when a bounded development-repo patch needs to become a real Fe
 
 This document is intentionally narrow:
 
-- it describes the current `lcx-s-openclaw` -> `Projects/openclaw` path
+- it describes the current `lcx-s-openclaw` -> `~/.openclaw/live-sidecars/lcx-s-openclaw` path
 - it uses only repo-grounded scripts and commands
 - it does **not** count as live proof by itself
 
@@ -15,12 +15,12 @@ This document is intentionally narrow:
 - development repo:
   - `lcx-s-openclaw`
 - live runtime repo:
-  - `~/Projects/openclaw`
+  - `~/.openclaw/live-sidecars/lcx-s-openclaw`
 
-`dev-fixed` becomes `live-fixed` only after:
+`dev-fixed` becomes `live-visible-fixed` only after:
 
 1. bounded live port
-2. live verification in `~/Projects/openclaw`
+2. live verification in `~/.openclaw/live-sidecars/lcx-s-openclaw`
 3. live build
 4. live restart / probe
 5. real-entry Feishu acceptance
@@ -40,7 +40,7 @@ Do not port a patch whose dev-repo seam is still ambiguous.
 
 ## Step 2: Confirm The Live Seam Exists
 
-In `~/Projects/openclaw`, confirm the equivalent seam exists before porting.
+In `~/.openclaw/live-sidecars/lcx-s-openclaw`, confirm the equivalent seam exists before porting.
 
 Current observed live acceptance scripts include:
 
@@ -56,7 +56,7 @@ If the live repo does not have the equivalent seam, stop and write a bounded liv
 
 ## Step 3: Port Only The Bounded Live Equivalent
 
-In `~/Projects/openclaw`:
+In `~/.openclaw/live-sidecars/lcx-s-openclaw`:
 
 1. inspect `git status --short`
 2. port only the equivalent seam
@@ -77,7 +77,7 @@ Examples already present in the live repo:
 
 ## Step 5: Build And Restart
 
-In `~/Projects/openclaw`:
+In `~/.openclaw/live-sidecars/lcx-s-openclaw`:
 
 1. run `corepack pnpm build`
 2. restart the live runtime by the current operator-owned path
@@ -125,7 +125,7 @@ Current repo-grounded examples:
 
 ## Reporting Rule
 
-Only report `live-fixed: yes` after all five are true:
+Only report `live-visible-fixed: yes` after all five are true:
 
 1. live repo patched
 2. live seam-local checks passed
@@ -136,4 +136,4 @@ Only report `live-fixed: yes` after all five are true:
 If any one of those is missing, report:
 
 - `dev-fixed: yes`
-- `live-fixed: no`
+- `live-visible-fixed: no`
