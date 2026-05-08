@@ -186,6 +186,13 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "agent-skill distillation request requiring source review, isolated local skill install, eval harness, and protected-memory guardrails.",
   },
   {
+    id: "external_knowledge_internalization_protocol",
+    userMessage:
+      "未来本地大脑碰到论文和 GitHub/HuggingFace 开源项目，要怎么思考和内化？请给统一协议：source registry、实际阅读范围、license/write scope、安全和 prompt-injection 审计、复现或样本外验证、能力卡、retrieval receipt、apply validation、Qwen/local-brain eval 吸收、fresh adjacent task、keep/downrank/discard 决策都要有；不能直接说已经学会。",
+    sourceSummary:
+      "unified paper and open-source project internalization protocol requiring source, license, security, validation, capability, retrieval, application, eval absorption, and keep/downrank/discard decisions.",
+  },
+  {
     id: "finance_skill_curriculum_bridge",
     userMessage:
       "把可学的 agent skills 转成金融研究大脑课程：美股、A股、指数、加密币都能用，但只教任务拆解、证据审计、风险门和审阅流程，不教交易执行。",
@@ -370,6 +377,7 @@ export function buildTeacherSystemPrompt(): string {
     "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
+    "- papers and open-source project internalization must classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, then keep, downrank, or discard",
     "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
     "- crypto work is research-only; include no_high_leverage_crypto and never imply execution approval",
     "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
@@ -658,7 +666,15 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
     };
   }
   if (
-    /skill|skills|skill\.md|agent skill|本地 agent|本地agent|技能|工作流|harness|hermes/u.test(text)
+    /skill|skills|skill\.md|agent skill|本地 agent|本地agent|技能|工作流|harness|hermes/u.test(
+      text,
+    ) &&
+    !(
+      /(论文|paper|preprint|arxiv|ssrn|nber)/iu.test(text) &&
+      /(开源项目|github|repo|repository|hugging ?face|代码|code|skill|skills|open[- ]?source)/iu.test(
+        text,
+      )
+    )
   ) {
     return {
       task_family: "agent_skill_pattern_distillation",
@@ -702,6 +718,74 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "old_lark_conversation_history",
         "cloud_skill_sharing_by_default",
         "market_alpha_claim_without_source",
+      ],
+    };
+  }
+  if (
+    /(论文|paper|preprint|arxiv|ssrn|nber)/iu.test(text) &&
+    /(开源项目|github|repo|repository|hugging ?face|代码|code|skill|skills|open[- ]?source)/iu.test(
+      text,
+    ) &&
+    /(内化|吸收|学进去|学习|沉淀|变成能力|可复用|协议|怎么思考|internali[sz]e|absorb|distill|learn)/iu.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "external_knowledge_internalization_protocol",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "portfolio_risk_gates", "quant_math"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_learning_pipeline_orchestrator",
+        "skill_harvester",
+        "license_and_write_scope_review",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "source_url_or_local_source_path",
+        "actual_reading_scope",
+        "license_and_write_scope_review",
+        "prompt_injection_and_security_review",
+        "replication_or_sample_out_evidence",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "fresh_adjacent_application_task",
+        "keep_downrank_or_discard_decision",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_source",
+        "evaluate_before_installing",
+        "no_model_internal_learning_claim_without_eval",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_doctrine_mutation",
+        "sample_out_validation_required",
+        "no_trade_advice",
+      ],
+      next_step:
+        "classify_source_then_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "unverified_paper_summary",
+        "untrusted_external_skill",
+        "model_internal_learning_claim_without_training_eval_evidence",
+        "cloud_skill_sharing_by_default",
+        "trade_recommendation_without_evidence",
       ],
     };
   }
@@ -1483,6 +1567,14 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     /价值投资|基本面优先|value investing|intrinsic value|内在价值|安全边际|margin of safety|护城河|moat|自由现金流|roic|价值陷阱/iu.test(
       ask,
     );
+  const isExternalKnowledgeInternalization =
+    /(论文|paper|preprint|arxiv|ssrn|nber)/iu.test(ask) &&
+    /(开源项目|github|repo|repository|hugging ?face|代码|code|skill|skills|open[- ]?source)/iu.test(
+      ask,
+    ) &&
+    /(内化|吸收|学进去|学习|沉淀|变成能力|可复用|协议|怎么思考|internali[sz]e|absorb|distill|learn)/iu.test(
+      ask,
+    );
 
   if (isContextReset) {
     replacePrimary(["ops_audit", "agent_workflow_memory", "control_room_summary"]);
@@ -1670,6 +1762,54 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ]);
     nextStep =
       "Read source filings first, score business quality and cash flows, test valuation and margin of safety, then review risk.";
+  }
+
+  if (!isContextReset && isExternalKnowledgeInternalization) {
+    ensurePrimary([
+      "finance_learning_memory",
+      "source_registry",
+      "skill_pattern_distillation",
+      "agent_workflow_memory",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of ["causal_map", "portfolio_risk_gates", "quant_math"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "source_url_or_local_source_path",
+      "actual_reading_scope",
+      "license_and_write_scope_review",
+      "prompt_injection_and_security_review",
+      "replication_or_sample_out_evidence",
+      "capability_card_or_retrieval_receipt",
+      "application_validation_receipt",
+      "training_or_eval_absorption_evidence",
+      "fresh_adjacent_application_task",
+      "keep_downrank_or_discard_decision",
+    ]);
+    ensureRisk([
+      "untrusted_external_source",
+      "evaluate_before_installing",
+      "no_model_internal_learning_claim_without_eval",
+      "no_protected_memory_write",
+      "no_provider_config_change",
+      "no_live_sender_change",
+      "no_doctrine_mutation",
+      "sample_out_validation_required",
+      "no_trade_advice",
+    ]);
+    ensureRejected([
+      "unverified_paper_summary",
+      "untrusted_external_skill",
+      "model_internal_learning_claim_without_training_eval_evidence",
+      "cloud_skill_sharing_by_default",
+    ]);
+    nextStep =
+      "Classify source, verify license and safety, prove reading scope, validate application, add eval evidence, then keep or downrank.";
   }
 
   if (primaryModules.length === 0) {

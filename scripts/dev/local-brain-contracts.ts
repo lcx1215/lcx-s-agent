@@ -441,6 +441,21 @@ function looksLikePaperLearningWithSource(text: string): boolean {
   return asksToLearn && hasSource && wantsReusableKnowledge;
 }
 
+function looksLikeExternalKnowledgeInternalizationProtocol(text: string): boolean {
+  const hasPaper = /(论文|paper|preprint|arxiv|ssrn|nber|working paper|research article)/iu.test(
+    text,
+  );
+  const hasOpenSource =
+    /(开源项目|github|repo|repository|hugging ?face|代码|code|skill|skills|open[- ]?source project)/iu.test(
+      text,
+    );
+  const asksToInternalize =
+    /(内化|吸收|学进去|学习|沉淀|变成能力|可复用|框架|协议|怎么思考|internali[sz]e|absorb|distill|learn)/iu.test(
+      text,
+    );
+  return hasPaper && hasOpenSource && asksToInternalize;
+}
+
 function looksLikeUnverifiedLiveMarketData(text: string): boolean {
   const asksForLiveMarketData =
     /(今天|最新|实时|当前行情|当前市场|this morning|today|latest|real[- ]?time|right now)/iu.test(
@@ -1029,6 +1044,68 @@ export function hardenLocalBrainPlanForAsk(
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ]),
+    };
+  }
+
+  if (looksLikeExternalKnowledgeInternalizationProtocol(text)) {
+    return {
+      ...safe,
+      task_family: "external_knowledge_internalization_protocol",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "portfolio_risk_gates", "quant_math"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_learning_pipeline_orchestrator",
+        "skill_harvester",
+        "license_and_write_scope_review",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "source_url_or_local_source_path",
+        "actual_reading_scope",
+        "license_and_write_scope_review",
+        "prompt_injection_and_security_review",
+        "replication_or_sample_out_evidence",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "fresh_adjacent_application_task",
+        "keep_downrank_or_discard_decision",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_source",
+        "evaluate_before_installing",
+        "no_model_internal_learning_claim_without_eval",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_doctrine_mutation",
+        "sample_out_validation_required",
+        "no_trade_advice",
+      ],
+      next_step:
+        "classify_source_then_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "unverified_paper_summary",
+        "untrusted_external_skill",
+        "model_internal_learning_claim_without_training_eval_evidence",
+        "cloud_skill_sharing_by_default",
+        "trade_recommendation_without_evidence",
+      ],
     };
   }
 

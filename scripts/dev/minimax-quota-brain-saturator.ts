@@ -171,6 +171,13 @@ const TASK_TEMPLATES = [
     summary:
       "sentiment as validation layer only, with source timestamps, sample-out validation, overfit checks, quant review, and risk gates.",
   },
+  {
+    family: "external_knowledge_internalization_protocol",
+    message:
+      "未来本地大脑碰到一篇关于 {theme} 的论文，或者一个 GitHub/HuggingFace 开源项目，要怎么思考和内化？训练它先做 source registry、实际阅读范围、license/write scope、安全和 prompt-injection 审计、复现或样本外验证、能力卡、retrieval receipt、apply validation、Qwen/local-brain eval 吸收、fresh adjacent task、keep/downrank/discard 决策；不能直接说已经学会。",
+    summary:
+      "unified paper and open-source project internalization protocol with source, license, security, validation, capability, retrieval, application, eval absorption, and keep/downrank/discard decisions.",
+  },
 ] as const;
 
 const ASSETS = [

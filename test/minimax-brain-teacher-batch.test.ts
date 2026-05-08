@@ -533,4 +533,62 @@ describe("minimax brain teacher batch parsing", () => {
     );
     expect(plan.next_step).toContain("require a source URL or local source path");
   });
+
+  it("keeps paper and open-source internalization evidence-gated", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "external_knowledge_internalization_protocol",
+        userMessage:
+          "未来本地大脑碰到论文和 GitHub/HuggingFace 开源项目，要怎么思考和内化？要有 source registry、实际阅读范围、license/write scope、安全审计、复现、能力卡、retrieval receipt、apply validation、Qwen eval 吸收和 keep/downrank/discard 决策。",
+        sourceSummary: "unified paper and open-source project internalization protocol.",
+      },
+      normalizeTeacherPlan({
+        task_family: "external_learning",
+        primary_modules: [],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: [],
+        next_step: "learn it",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "finance_learning_memory",
+        "source_registry",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "eval_harness_design",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "actual_reading_scope",
+        "license_and_write_scope_review",
+        "prompt_injection_and_security_review",
+        "replication_or_sample_out_evidence",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "fresh_adjacent_application_task",
+        "keep_downrank_or_discard_decision",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "untrusted_external_source",
+        "evaluate_before_installing",
+        "no_model_internal_learning_claim_without_eval",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining(["unverified_paper_summary", "untrusted_external_skill"]),
+    );
+  });
 });

@@ -214,6 +214,50 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary.promotionReady).toBe(true);
   });
 
+  it("gates external knowledge internalization behind paper and skill prerequisites", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "external_knowledge_internalization_protocol",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual([
+      "external_knowledge_internalization_protocol",
+    ]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "external_source_missing_url",
+        "agent_skill_distillation_safety",
+        "paper_learning_internalization_absorption",
+        "source_coverage_actual_reading_scope",
+      ]),
+    );
+    expect(payload.summary.total).toBeGreaterThan(4);
+    expect(payload.summary.promotionReady).toBe(true);
+  });
+
   it("does not let hardened diagnostic fallback pass an empty generation", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-"));
     const fakePython = path.join(tempDir, "python");
