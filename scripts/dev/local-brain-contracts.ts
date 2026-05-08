@@ -21,6 +21,20 @@ const CONTRACT_FIELD_TOKENS = [
   "rejected_context",
   "required_tools",
 ] as const;
+const CONTRACT_BOUNDARY_TOKENS = [
+  "do_not_promote_unverified_memory_claims",
+  "no_high_leverage_crypto",
+  "no_live_sender_change",
+  "no_model_math_guessing",
+  "no_protected_memory_write",
+  "no_provider_config_change",
+  "no_trade_advice",
+  "no_unverified_live_data",
+  "no_unverified_live_data_claims",
+  "research_only",
+  "risk_gate_before_action_language",
+  "technical_timing_not_standalone_alpha",
+] as const;
 
 function arrayValue(value: unknown): string[] {
   return Array.isArray(value)
@@ -65,12 +79,12 @@ function cleanModuleList(value: unknown): string[] {
 }
 
 function cleanMissingData(value: unknown): string[] {
-  const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS]);
+  const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS, ...CONTRACT_BOUNDARY_TOKENS]);
   return arrayValue(value).filter((entry) => !blocked.has(entry));
 }
 
 function cleanRequiredTools(value: unknown): string[] {
-  const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS]);
+  const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS, ...CONTRACT_BOUNDARY_TOKENS]);
   return arrayValue(value).filter((entry) => !blocked.has(entry));
 }
 
@@ -162,6 +176,8 @@ function looksLikeExternalCoverage(text: string): boolean {
 
 function looksLikeCommodityFrameworkLearning(text: string): boolean {
   return (
+    !looksLikeFullStackFinanceStressTest(text) &&
+    !looksLikeCrossMarketFinance(text) &&
     !looksLikeEtfAsCompanyFundamentalTrap(text) &&
     !looksLikePaperLearningWithSource(text) &&
     /(大宗商品|commodity|commodities|原油|石油|crude|oil|黄金|gold|铜|copper|gld|dbc|uso|dba)/iu.test(
@@ -490,6 +506,8 @@ function looksLikeUnverifiedLiveMarketData(text: string): boolean {
     ) || /现在.{0,16}(怎么看|走势|涨跌|价格|行情|market|price)/iu.test(text);
   return (
     asksForLiveMarketData &&
+    !looksLikeFullStackFinanceStressTest(text) &&
+    !looksLikeCrossMarketFinance(text) &&
     !looksLikeFilingResearchMissingEvidence(text) &&
     /(qqq|spy|tlt|nvda|a股|指数|btc|crypto|利率|美元|市场|走势|涨跌|价格|成交量|财报|宏观)/iu.test(
       text,

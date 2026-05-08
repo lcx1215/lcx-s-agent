@@ -345,6 +345,93 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("keeps commodity mentions from swallowing full-stack cross-market stress prompts", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {
+        task_family: "commodity_macro_framework_learning_planning",
+        primary_modules: [
+          "finance_learning_memory",
+          "source_registry",
+          "macro_rates_inflation",
+          "cross_asset_liquidity",
+          "fx_currency_liquidity",
+          "fx_dollar",
+          "commodities_oil_gold",
+          "etf_regime",
+          "portfolio_risk_gates",
+          "causal_map",
+          "review_panel",
+        ],
+        supporting_modules: ["quant_math", "control_room_summary"],
+        required_tools: [
+          "no_high_leverage_crypto",
+          "no_provider_config_change",
+          "artifact_memory_recall",
+          "finance_framework_portfolio_risk_gates_producer",
+        ],
+        missing_data: [
+          "source_url_or_local_source_path",
+          "fresh_market_data_snapshot",
+          "position_weights_and_return_series",
+          "commodity_curve_roll_yield_and_inventory_inputs",
+          "no_unverified_live_data_claims",
+          "no_high_leverage_crypto",
+        ],
+        risk_boundaries: ["research_only", "no_execution_authority", "no_trade_advice"],
+      },
+      {
+        ask: "我同时看美股科技、QQQ、TLT、A股政策资金、恒生科技、美元/人民币、黄金、原油和 BTC。请做全栈 research-only 拆解：财报、宏观利率、信用流动性、跨资产流动性、FX、美股结构、A股政策流、全球指数、crypto 结构、仓位门槛、技术面、反方论证和数据缺口，不要交易建议，不要假装实时数据。",
+        sourceSummary:
+          "dev acceptance adapter output narrowed this to commodity framework; expected full-stack cross-market decomposition",
+      },
+    );
+
+    expect(plan.task_family).toBe("full_stack_finance_stress_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "company_fundamentals_value",
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "crypto_market_structure",
+        "commodities_oil_gold",
+        "technical_timing",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "latest_10q_10k_or_earnings_release",
+        "current_rates_inflation_fed_path_and_liquidity_inputs",
+        "position_weights_cost_basis_and_risk_limits",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "red_team_invalidation_evidence",
+        "fresh_market_data_snapshot",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "research_only",
+        "no_execution_authority",
+        "no_unverified_live_data",
+        "red_team_invalidation_required",
+        "no_trade_advice",
+      ]),
+    );
+    expect(plan.required_tools).not.toEqual(
+      expect.arrayContaining(["no_high_leverage_crypto", "no_provider_config_change"]),
+    );
+    expect(plan.missing_data).not.toEqual(
+      expect.arrayContaining(["no_high_leverage_crypto", "no_unverified_live_data_claims"]),
+    );
+    expect(plan.rejected_context).toContain("trade_recommendation_without_evidence");
+  });
+
   it("keeps crypto to QQQ spillover tied to index regime and risk gates", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
