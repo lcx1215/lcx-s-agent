@@ -1423,15 +1423,41 @@ try {
       break;
     }
     if (teacherSidecar) {
-      await appendLog(options.logPath, {
-        event: "step_skipped",
-        round,
-        name: "minimax_plus_brain_saturator",
-        reason: "teacher_sidecar_active",
-        sidecarPid: teacherSidecar.pid,
-        liveTouched: false,
-        providerConfigTouched: false,
-      });
+      if (teacherSidecar.exitCode === null) {
+        await appendLog(options.logPath, {
+          event: "step_skipped",
+          round,
+          name: "minimax_plus_brain_saturator",
+          reason: "teacher_sidecar_active",
+          sidecarPid: teacherSidecar.pid,
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+      } else if (teacherSidecar.exitCode === 0) {
+        await appendLog(options.logPath, {
+          event: "step_skipped",
+          round,
+          name: "minimax_plus_brain_saturator",
+          reason: "teacher_sidecar_completed",
+          sidecarPid: teacherSidecar.pid,
+          sidecarExitCode: teacherSidecar.exitCode,
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+      } else {
+        await appendLog(options.logPath, {
+          event: "step_resumed",
+          round,
+          name: "minimax_plus_brain_saturator",
+          reason: "teacher_sidecar_failed_fallback_to_serial_teacher",
+          sidecarPid: teacherSidecar.pid,
+          sidecarExitCode: teacherSidecar.exitCode,
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+        teacherSidecar = undefined;
+        await runTeacherStep(options, round);
+      }
     } else {
       await runTeacherStep(options, round);
     }

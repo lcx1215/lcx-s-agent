@@ -110,6 +110,8 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("teacherSidecar: true");
     expect(source).toContain('event: "teacher_sidecar_started"');
     expect(source).toContain('reason: "teacher_sidecar_active"');
+    expect(source).toContain('reason: "teacher_sidecar_completed"');
+    expect(source).toContain("teacher_sidecar_failed_fallback_to_serial_teacher");
     expect(source).toContain("scripts/dev/minimax-quota-brain-saturator.ts");
     expect(source).toContain("--adaptive");
     expect(source).toContain("--allow-partial-write");

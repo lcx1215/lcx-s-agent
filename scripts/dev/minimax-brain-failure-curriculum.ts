@@ -118,6 +118,62 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
       "训练本地大脑回答来源覆盖时必须区分实际读过、只发现、只存档、已应用和已进入 eval 的材料；不能说全覆盖，也不能把摘要当原文阅读。",
     sourceSummary: "targeted repair for source coverage honesty and actual reading scope.",
   },
+  {
+    caseId: "single_company_fundamental_risk",
+    priority: 100,
+    userMessage:
+      "训练本地大脑分析单公司基本面风险时要先要 10-K/10-Q、earnings release、call transcript 或本地来源，再拆业务质量、收入质量、毛利率/经营杠杆、FCF、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱和 thesis invalidation；缺来源就只列证据缺口，不编财报细节。",
+    sourceSummary:
+      "targeted repair for single-company fundamental risk with value-investing anchors and filing/source evidence gate.",
+  },
+  {
+    caseId: "unverified_live_market_data_boundary",
+    priority: 98,
+    userMessage:
+      "训练本地大脑遇到实时价格、最新财报、当前利率、美元流动性或新闻时必须标注未验证边界：没有 timestamped source 就不能说最新、当前、上涨下跌或具体数值；只能列需要的来源、数据时间戳、冲突处理和 research-only 下一步。",
+    sourceSummary:
+      "targeted repair for unverified live market data boundary; no current-market claims without timestamped evidence.",
+  },
+  {
+    caseId: "rate_shock_duration_equity_chain",
+    priority: 96,
+    userMessage:
+      "训练本地大脑拆利率冲击到股票和债券的链条：名义利率、实际利率、通胀预期、期限溢价、duration、折现率、权益风险溢价、估值倍数、盈利预期、TLT/QQQ/NVDA 敞口和反方证据；缺 DV01、久期、权重或收益序列时必须列缺口，不做伪数学。",
+    sourceSummary:
+      "targeted repair for rate-shock duration equity transmission with portfolio math gaps and no fake precision.",
+  },
+  {
+    caseId: "nvda_capex_supplier_second_order_risk",
+    priority: 94,
+    userMessage:
+      "训练本地大脑分析 NVDA 与 AI capex 二阶风险：先要原始财报/指引/客户 capex 来源，再拆客户集中度、云厂商预算、供应链瓶颈、GPU 交付、毛利率、库存、竞争、估值、QQQ 权重传导、供应商/客户二阶影响和反方证据；缺来源就不编细节。",
+    sourceSummary:
+      "targeted repair for NVDA AI capex second-order risk with source-gated fundamentals and portfolio transmission.",
+  },
+  {
+    caseId: "index_concentration_mag7_portfolio_risk",
+    priority: 92,
+    userMessage:
+      "训练本地大脑拆指数集中度和 Mag7 组合风险：先要指数权重、ETF 持仓、用户仓位、相关性、收益序列和估值分布，再拆 concentration、factor overlap、single-name shock、QQQ/SPY 传导、再平衡风险和缺口；不能没有权重就给仓位建议。",
+    sourceSummary:
+      "targeted repair for index concentration and mega-cap overlap risk with holdings and weights evidence gates.",
+  },
+  {
+    caseId: "drawdown_budget_without_weights",
+    priority: 90,
+    userMessage:
+      "训练本地大脑处理 drawdown budget 时必须先要仓位权重、资产收益序列、波动、相关性、时间窗口和最大回撤定义；没有这些输入时只能给风险预算框架和缺口清单，不能编百分比、止损线或建议卖买。",
+    sourceSummary:
+      "targeted repair for drawdown budget without weights; fail closed on missing portfolio inputs.",
+  },
+  {
+    caseId: "data_vendor_conflict_reconciliation",
+    priority: 88,
+    userMessage:
+      "训练本地大脑处理数据供应商冲突：先列供应商、字段定义、时间戳、复权口径、币种、更新频率、异常值、可信优先级和需要人工 review 的冲突；不能随便选一个数据源当真相，也不能把冲突数据写成确定结论。",
+    sourceSummary:
+      "targeted repair for data vendor conflict reconciliation with timestamp, definition, and review gates.",
+  },
 ];
 
 function parseJsonLine(line: string): Record<string, unknown> | undefined {

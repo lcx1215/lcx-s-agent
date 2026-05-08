@@ -81,6 +81,53 @@ describe("minimax brain failure curriculum", () => {
     expect(prompts[0].userMessage).toContain("research");
   });
 
+  it("has specific recipes for the current retained Qwen seed failures", async () => {
+    const logPath = await makeGuardLog([
+      {
+        at: "2026-05-08T21:18:35.211Z",
+        event: "step_non_passing",
+        name: "candidate_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r3",
+          summary: {
+            passed: 55,
+            total: 64,
+            passRate: 0.859,
+            failedCaseIds: [
+              "single_company_fundamental_risk",
+              "unverified_live_market_data_boundary",
+              "rate_shock_duration_equity_chain",
+              "nvda_capex_supplier_second_order_risk",
+              "a_share_policy_flow_us_tech_spillover",
+              "recession_soft_landing_scenario_tree",
+              "index_concentration_mag7_portfolio_risk",
+              "drawdown_budget_without_weights",
+              "data_vendor_conflict_reconciliation",
+            ],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+
+    const prompts = await buildFailureCurriculumPrompts({
+      guardLogPath: logPath,
+      maxPrompts: 9,
+      startIndex: 20,
+    });
+    const promptText = prompts.map((prompt) => prompt.userMessage).join("\n");
+
+    expect(prompts).toHaveLength(9);
+    expect(promptText).not.toContain("修复 eval 失败项");
+    expect(promptText).toContain("10-K/10-Q");
+    expect(promptText).toContain("timestamped source");
+    expect(promptText).toContain("DV01");
+    expect(promptText).toContain("AI capex");
+    expect(promptText).toContain("Mag7");
+    expect(promptText).toContain("drawdown budget");
+    expect(promptText).toContain("数据供应商冲突");
+  });
+
   it("returns no prompts when no failed eval evidence exists", async () => {
     const logPath = await makeGuardLog([
       {
