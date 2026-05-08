@@ -35,6 +35,7 @@ type CliOptions = {
   maxProviderInstabilityRounds: number;
   failureFocus: boolean;
   guardLogPath: string;
+  previewPrompts: number;
 };
 
 type TeacherPrompt = {
@@ -266,6 +267,7 @@ function usage(): never {
       "  --failure-focus      mix eval-failure targeted prompts into each MiniMax teacher batch",
       "  --no-failure-focus   disable eval-failure targeted prompt mixing",
       "  --guard-log PATH     guard JSONL for failure-focus prompts, default medium guard log",
+      "  --preview-prompts N  dry-run only: include the next N prompt ids/messages in JSON output",
       "  --write               actually call MiniMax and write review artifacts; default is dry-run",
       "  --mock                use mock teacher for smoke without provider quota",
       "  --direct-api          call MiniMax directly with auth profile fallback instead of openclaw agent",
@@ -334,6 +336,7 @@ function parseArgs(args: string[]): CliOptions {
     maxProviderInstabilityRounds: 3,
     failureFocus: false,
     guardLogPath: DEFAULT_GUARD_LOG,
+    previewPrompts: 0,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -399,6 +402,9 @@ function parseArgs(args: string[]): CliOptions {
       options.failureFocus = false;
     } else if (arg === "--guard-log") {
       options.guardLogPath = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--preview-prompts") {
+      options.previewPrompts = readNonNegativeInteger(readValue(args, index));
       index += 1;
     } else if (arg === "--duration-minutes") {
       options.durationMinutes = readPositiveInteger(readValue(args, index));
@@ -669,6 +675,7 @@ const plan = {
   dataDir: options.dataDir,
   logPath: options.logPath,
   promptDir: options.promptDir,
+  previewPrompts: options.previewPrompts,
   notTouched: [
     "live_sender",
     "provider_config",
@@ -679,7 +686,32 @@ const plan = {
 };
 
 if (!options.write) {
-  process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+  const preview =
+    options.previewPrompts > 0
+      ? await buildBatchPrompts(options, 0, options.previewPrompts)
+      : undefined;
+  process.stdout.write(
+    `${JSON.stringify(
+      preview
+        ? {
+            ...plan,
+            preview: {
+              promptCount: preview.prompts.length,
+              failureFocusPrompts: preview.failureFocusPrompts,
+              prompts: preview.prompts.map((prompt) => ({
+                id: prompt.id,
+                sourceSummary: prompt.sourceSummary,
+                userMessage: prompt.userMessage,
+              })),
+              liveTouched: false,
+              providerConfigTouched: false,
+            },
+          }
+        : plan,
+      null,
+      2,
+    )}\n`,
+  );
   process.exit(0);
 }
 
