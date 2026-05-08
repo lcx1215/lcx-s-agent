@@ -173,7 +173,7 @@ function looksLikeCommodityFrameworkLearning(text: string): boolean {
 
 function looksLikeBroadFinanceModuleCoverage(text: string): boolean {
   const asksForModuleMap =
-    /(金融模块|金融能力|模块地图|模块体系|能力层|module taxonomy|finance module|模块还不够|还不够.{0,12}模块|全部.{0,12}模块|所有.{0,12}模块|扩充.{0,12}模块)/iu.test(
+    /(金融模块|金融能力|全领域.{0,8}金融|金融.{0,8}全领域|模块地图|模块体系|能力层|module taxonomy|finance module|模块还不够|还不够.{0,12}模块|全部.{0,12}模块|所有.{0,12}模块|扩充.{0,12}模块|source registry.*review panel)/iu.test(
       text,
     );
   const hasFinanceScope =

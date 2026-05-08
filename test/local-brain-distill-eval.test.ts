@@ -167,6 +167,52 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary.promotionReady).toBe(true);
   });
 
+  it("gates all-domain finance learning behind simple prerequisite evals", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "all_domain_finance_research_loop",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual(["all_domain_finance_research_loop"]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "broad_finance_module_taxonomy_coverage",
+        "portfolio_mixed_q_t_nvda",
+        "portfolio_math_without_guessing",
+        "cross_market_us_a_index_crypto_analysis",
+        "commodity_fx_inflation_inventory_portfolio_loop",
+        "options_iv_event_risk_no_trade",
+        "sentiment_market_external_module_learning",
+        "factor_turnover_cost_capacity_guard",
+      ]),
+    );
+    expect(payload.summary.total).toBeGreaterThan(8);
+    expect(payload.summary.promotionReady).toBe(true);
+  });
+
   it("does not let hardened diagnostic fallback pass an empty generation", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-"));
     const fakePython = path.join(tempDir, "python");

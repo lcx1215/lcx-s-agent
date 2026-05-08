@@ -292,6 +292,67 @@ describe("minimax brain teacher batch parsing", () => {
     expect(plan.risk_boundaries).toContain("no_model_fabricated_portfolio_math");
   });
 
+  it("turns all-domain finance prompts into broad research loops", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "all_domain_finance_research_loop",
+        userMessage:
+          "训练本地 Qwen 教本地大脑做全领域金融研究：美股、A股、指数、ETF、公司基本面、宏观利率、信用、美元/人民币流动性、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel 都要连起来；research-only。",
+        sourceSummary: "all-domain finance research loop.",
+      },
+      normalizeTeacherPlan({
+        task_family: "finance",
+        primary_modules: [],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: [],
+        next_step: "review",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "etf_regime",
+        "company_fundamentals_value",
+        "commodities_oil_gold",
+        "options_volatility",
+        "crypto_market_structure",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+    const modules = [...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools];
+    expect(modules).toEqual(
+      expect.arrayContaining(["finance_learning_memory", "source_registry", "review_panel"]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "memory_recall_scope_or_relevant_receipts",
+        "commodity_curve_roll_yield_and_inventory_inputs",
+        "options_iv_skew_gamma_and_event_calendar",
+        "position_weights_and_return_series",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "no_model_math_guessing",
+        "no_unverified_cross_market_claims",
+        "no_high_leverage_crypto",
+        "sentiment_signal_not_standalone_alpha",
+        "no_trade_advice",
+      ]),
+    );
+    expect(plan.rejected_context).toContain("simple_prerequisite_skipped");
+  });
+
   it("rewrites live market data collection overclaims in teacher next steps", () => {
     const plan = hardenTeacherPlanForPrompt(
       {

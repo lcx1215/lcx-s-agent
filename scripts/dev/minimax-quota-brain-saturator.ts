@@ -135,6 +135,34 @@ const TASK_TEMPLATES = [
     summary:
       "cross-market finance planning across US equities, China A-shares, global indices, crypto, FX/liquidity, quant checks, memory recall, and review handoff.",
   },
+  {
+    family: "all_domain_finance_research_loop",
+    message:
+      "训练本地 Qwen 教本地大脑做全领域金融研究：{assetA}、{assetB}、{assetC} 之外，还要覆盖宏观利率、信用、美元/人民币流动性、美股、A股、全球指数、ETF、公司基本面、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel；先拆简单前置能力，再组合成复杂分析，research-only。",
+    summary:
+      "all-domain finance research loop with prerequisite monotonicity, broad module coverage, evidence gates, quant validation, and review handoff.",
+  },
+  {
+    family: "rates_credit_fx_commodity_chain",
+    message:
+      "把 {theme} 放进宏观链条：利率曲线、实际利率、信用利差、美元/人民币流动性、原油/黄金/铜、通胀和 {assetA}/{assetB}/{assetC} 组合风险怎么互相传导？只训练拆解和证据缺口。",
+    summary:
+      "rates, credit, FX, commodities, inflation, and portfolio transmission with evidence gaps.",
+  },
+  {
+    family: "options_event_company_portfolio_chain",
+    message:
+      "{assetA} 遇到财报、监管或产品事件时，怎么把公司基本面、ETF/指数权重、期权 IV/skew/gamma、技术面、仓位风险和 review panel 连成一条研究回路？不要给期权策略。",
+    summary:
+      "company event, ETF/index exposure, options volatility, technical timing, and portfolio-risk loop without options advice.",
+  },
+  {
+    family: "sentiment_quant_validation_layer",
+    message:
+      "如果新闻情绪、社媒情绪和价格动量都指向 {theme}，训练本地大脑不要把情绪当 alpha：要拆 source/vendor timestamp、样本外验证、过拟合、量化验证、反方论证和风险门。",
+    summary:
+      "sentiment as validation layer only, with source timestamps, sample-out validation, overfit checks, quant review, and risk gates.",
+  },
 ] as const;
 
 const ASSETS = [
@@ -143,6 +171,9 @@ const ASSETS = [
   ["IWM", "HYG", "AAPL"],
   ["XLK", "XLF", "GOOGL"],
   ["GLD", "UUP", "AMD"],
+  ["USO", "GLD", "FCX"],
+  ["DBC", "TLT", "QQQ"],
+  ["KWEB", "沪深300", "CNH liquidity"],
   ["SPY", "沪深300", "BTC"],
   ["NASDAQ 100", "中证500", "ETH"],
   ["AAPL", "创业板指", "USDT liquidity"],
@@ -165,6 +196,13 @@ const THEMES = [
   "crypto liquidity and custody risk",
   "FX dollar yuan liquidity transmission",
   "cross-asset risk appetite regime",
+  "oil inventory term structure and roll yield",
+  "gold real-yield safe-haven regime",
+  "copper China demand and dollar sensitivity",
+  "options skew gamma and event risk",
+  "news sentiment validation not standalone alpha",
+  "A-share policy flow and US tech spillover",
+  "credit spreads refinancing and equity duration",
 ] as const;
 
 const HORIZONS = ["一周", "两周", "一个月", "一个季度"] as const;

@@ -85,6 +85,13 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "broad finance module taxonomy request; research-only; require dedicated modules and risk boundaries.",
   },
   {
+    id: "all_domain_finance_research_loop",
+    userMessage:
+      "训练本地 Qwen 教本地大脑做全领域金融研究：美股、A股、指数、ETF、公司基本面、宏观利率、信用、美元/人民币流动性、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel 都要连起来；简单任务不能比复杂任务更差，research-only。",
+    sourceSummary:
+      "all-domain finance research loop requiring broad module coverage, simple-prerequisite monotonicity, evidence gates, review handoff, and no trade advice.",
+  },
+  {
     id: "multi_asset_macro_portfolio_risk",
     userMessage:
       "我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex、美元流动性，先拆内部模块，不要给交易建议。",
@@ -352,6 +359,7 @@ export function buildTeacherSystemPrompt(): string {
     "- ambiguous repeat must ask for current_subject_or_original_request and reject old_lark_conversation_history",
     "- ops audit must not become finance analysis",
     "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
+    "- all-domain finance learning must connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, company fundamentals, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
     "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
@@ -990,6 +998,86 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       rejected_context: ["old_lark_conversation_history", "single_factor_technical_story"],
     };
   }
+  if (
+    /全领域|全部金融|完整金融|金融研究.*(美股|A股|指数|ETF).*大宗商品.*期权|source registry.*review panel/u.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "all_domain_finance_research_loop",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "fx_dollar",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "etf_regime",
+        "company_fundamentals_value",
+        "commodities_oil_gold",
+        "options_volatility",
+        "crypto_market_structure",
+        "technical_timing",
+        "event_driven",
+        "quant_math",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "finance_framework_core_inspect",
+        "quant_math",
+        "review_panel",
+      ],
+      missing_data: [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "macro_rates_inflation_credit_fx_inputs",
+        "china_a_share_policy_liquidity_and_northbound_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "latest_company_fundamental_inputs",
+        "commodity_curve_roll_yield_and_inventory_inputs",
+        "options_iv_skew_gamma_and_event_calendar",
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "validation_dataset_and_sample_out_plan",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_model_math_guessing",
+        "no_unverified_live_data",
+        "no_unverified_cross_market_claims",
+        "technical_timing_not_standalone_alpha",
+        "sentiment_signal_not_standalone_alpha",
+        "no_high_leverage_crypto",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step:
+        "recall_memory_then_decompose_all_finance_layers_check_simple_prerequisites_collect_evidence_run_quant_risk_and_review",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "single_bucket_finance_routing",
+        "simple_prerequisite_skipped",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
   if (/美股|A股|a股|指数|加密|crypto|cross-market|跨市场/u.test(text)) {
     return {
       task_family: "cross_market_finance_research_planning",
@@ -1329,6 +1417,10 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     /没有给 URL|没有给链接|没有给 10-Q|没有给 10-K|没有给实时行情源|source|artifact|receipt|filing/iu.test(
       ask,
     );
+  const isAllDomainFinance =
+    /全领域|全部金融|完整金融|金融研究.*(美股|A股|指数|ETF).*大宗商品.*期权|source registry.*review panel/iu.test(
+      ask,
+    );
 
   if (isContextReset) {
     replacePrimary(["ops_audit", "agent_workflow_memory", "control_room_summary"]);
@@ -1413,6 +1505,68 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ensurePrimary(["source_registry", "review_panel"]);
     ensureMissing(["source_url_or_local_source_path", "actual_reading_scope_receipt"]);
     ensureRisk(["evidence_required"]);
+  }
+
+  if (!isContextReset && isAllDomainFinance) {
+    ensurePrimary([
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "cross_asset_liquidity",
+      "fx_currency_liquidity",
+      "fx_dollar",
+      "us_equity_market_structure",
+      "china_a_share_policy_flow",
+      "global_index_regime",
+      "etf_regime",
+      "company_fundamentals_value",
+      "commodities_oil_gold",
+      "options_volatility",
+      "crypto_market_structure",
+      "technical_timing",
+      "event_driven",
+      "quant_math",
+      "portfolio_risk_gates",
+    ]);
+    for (const module of [
+      "causal_map",
+      "finance_learning_memory",
+      "source_registry",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "memory_recall_scope_or_relevant_receipts",
+      "fresh_market_data_snapshot",
+      "source_timestamp_and_vendor",
+      "macro_rates_inflation_credit_fx_inputs",
+      "china_a_share_policy_liquidity_and_northbound_inputs",
+      "index_constituents_weights_and_technical_regime_inputs",
+      "latest_company_fundamental_inputs",
+      "commodity_curve_roll_yield_and_inventory_inputs",
+      "options_iv_skew_gamma_and_event_calendar",
+      "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+      "validation_dataset_and_sample_out_plan",
+      "position_weights_and_return_series",
+      "portfolio_weights_and_risk_limits",
+    ]);
+    ensureRisk([
+      "no_model_math_guessing",
+      "no_unverified_live_data",
+      "no_unverified_cross_market_claims",
+      "technical_timing_not_standalone_alpha",
+      "sentiment_signal_not_standalone_alpha",
+      "no_high_leverage_crypto",
+      "risk_gate_before_action_language",
+      "no_trade_advice",
+    ]);
+    ensureRejected(["single_bucket_finance_routing", "simple_prerequisite_skipped"]);
+    nextStep =
+      "Recall memory, check simple prerequisites, decompose all finance layers, collect evidence gaps, then run quant risk and review.";
   }
 
   if (primaryModules.length === 0) {

@@ -1559,6 +1559,58 @@ const EVAL_CASES: EvalCase[] = [
     ],
     requiredRiskBoundaries: ["no_model_math_guessing", "no_trade_advice"],
   },
+  {
+    id: "all_domain_finance_research_loop",
+    userAsk:
+      "训练本地 Qwen 教本地大脑做全领域金融研究：美股、A股、指数、ETF、公司基本面、宏观利率、信用、美元/人民币流动性、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel 都要连起来。简单任务不能比复杂任务更差，research-only，不要交易建议。",
+    sourceSummary:
+      "all-domain finance research loop requiring broad module coverage, simple-prerequisite monotonicity, evidence gates, review handoff, and no trade advice.",
+    requiredModules: [
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "cross_asset_liquidity",
+      "fx_currency_liquidity",
+      "fx_dollar",
+      "etf_regime",
+      "global_index_regime",
+      "us_equity_market_structure",
+      "china_a_share_policy_flow",
+      "crypto_market_structure",
+      "commodities_oil_gold",
+      "options_volatility",
+      "event_driven",
+      "technical_timing",
+      "company_fundamentals_value",
+      "quant_math",
+      "portfolio_risk_gates",
+      "causal_map",
+      "finance_learning_memory",
+      "source_registry",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 20,
+    requiredMissingData: [
+      "memory_recall_scope_or_relevant_receipts",
+      "fresh_market_data_snapshot",
+      "source_timestamp_and_vendor",
+      "position_weights_and_return_series",
+      "portfolio_weights_and_risk_limits",
+      "macro_rates_inflation_credit_fx_inputs",
+      "commodity_curve_roll_yield_and_inventory_inputs",
+      "options_iv_skew_gamma_and_event_calendar",
+      "price_volume_breadth_and_technical_regime_inputs",
+      "latest_company_fundamental_inputs",
+    ],
+    requiredRiskBoundaries: [
+      "no_model_math_guessing",
+      "no_unverified_live_data",
+      "technical_timing_not_standalone_alpha",
+      "sentiment_signal_not_standalone_alpha",
+      "risk_gate_before_action_language",
+      "no_trade_advice",
+    ],
+  },
 ];
 
 const EVAL_CASE_BY_ID = new Map(EVAL_CASES.map((evalCase) => [evalCase.id, evalCase]));
@@ -1656,6 +1708,19 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
   [
     "scenario_probability_no_model_math_guessing",
     ["recession_soft_landing_scenario_tree", "portfolio_math_without_guessing"],
+  ],
+  [
+    "all_domain_finance_research_loop",
+    [
+      "broad_finance_module_taxonomy_coverage",
+      "portfolio_mixed_q_t_nvda",
+      "portfolio_math_without_guessing",
+      "cross_market_us_a_index_crypto_analysis",
+      "commodity_fx_inflation_inventory_portfolio_loop",
+      "options_iv_event_risk_no_trade",
+      "sentiment_market_external_module_learning",
+      "factor_turnover_cost_capacity_guard",
+    ],
   ],
 ]);
 

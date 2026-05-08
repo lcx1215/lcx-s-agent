@@ -53,6 +53,7 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "If a company risk can affect a portfolio or ETF sleeve, include portfolio_risk_gates.",
   "If the user asks to use local memory, learned rules, receipts, or prior knowledge, include finance_learning_memory, source_registry, causal_map, review_panel, and memory_recall_scope_or_relevant_receipts.",
   "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
+  "All-domain finance learning must connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, company fundamentals, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel; do not let a harder task bypass simpler prerequisite modules.",
   "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
   "Options, commodities, FX, event risk, and technical timing must use their dedicated modules when mentioned; do not collapse them into generic macro or ETF labels.",
   "Agent skill learning tasks must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
