@@ -228,6 +228,46 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary.promotionReady).toBe(true);
   });
 
+  it("gates plain market and position asks as local-brain prerequisites", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "plain_buy_hold_research_boundary",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+
+    expect(payload.ok).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual(["plain_buy_hold_research_boundary"]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "plain_recent_stock_market_brief_preflight",
+        "plain_single_stock_position_sizing_preflight",
+      ]),
+    );
+    expect(payload.summary).toMatchObject({ passed: 3, total: 3, promotionReady: true });
+  });
+
   it("gates external knowledge internalization behind paper and skill prerequisites", () => {
     const result = spawnSync(
       process.execPath,

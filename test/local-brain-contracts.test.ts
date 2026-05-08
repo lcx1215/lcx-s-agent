@@ -2,6 +2,110 @@ import { describe, expect, it } from "vitest";
 import { hardenLocalBrainPlanForAsk } from "../scripts/dev/local-brain-contracts.js";
 
 describe("hardenLocalBrainPlanForAsk", () => {
+  it("expands short recent-market asks into scoped research preflight", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "分析最近股市。",
+      },
+    );
+
+    expect(plan.task_family).toBe("plain_recent_stock_market_brief_preflight");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "global_index_regime",
+        "us_equity_market_structure",
+        "etf_regime",
+        "company_fundamentals_value",
+        "technical_timing",
+        "portfolio_risk_gates",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "market_scope_and_time_window",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "price_volume_breadth_and_technical_regime_inputs",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["no_unverified_live_data", "no_trade_advice"]),
+    );
+    expect(plan.rejected_context).toContain("generic_market_commentary_without_scope_or_sources");
+  });
+
+  it("turns short position-sizing wording into input-gated research planning", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "关注 NVDA 持仓多少。",
+      },
+    );
+
+    expect(plan.task_family).toBe("plain_single_stock_position_sizing_preflight");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "quant_math",
+        "technical_timing",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "current_total_assets_and_position_size",
+        "position_weights_cost_basis_and_risk_limits",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ]),
+    );
+    expect(plan.risk_boundaries).toContain(
+      "position_sizing_requires_user_constraints_and_risk_budget",
+    );
+    expect(plan.rejected_context).toContain("invented_position_percentage");
+  });
+
+  it("converts short buy-or-hold wording into research-only boundary planning", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "NVDA 还能不能拿，要不要买一点？",
+      },
+    );
+
+    expect(plan.task_family).toBe("plain_buy_hold_research_boundary");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "macro_rates_inflation",
+        "technical_timing",
+        "source_registry",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "user_objective_time_horizon_and_current_position",
+        "position_weights_cost_basis_and_risk_limits",
+        "latest_company_fundamental_inputs",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["convert_trade_question_to_research_preflight", "no_trade_advice"]),
+    );
+    expect(plan.rejected_context).toContain("direct_buy_sell_answer");
+  });
+
   it("expands broad finance asks into dedicated module coverage", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

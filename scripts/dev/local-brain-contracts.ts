@@ -386,6 +386,48 @@ function looksLikeLocalKnowledgeActivation(text: string): boolean {
   );
 }
 
+function looksLikePlainRecentMarketBrief(text: string): boolean {
+  return (
+    !looksLikeUnverifiedLiveMarketData(text) &&
+    !looksLikePaperLearningWithSource(text) &&
+    /(最近|今天|这几天|近期|当前|now|recent|latest)/iu.test(text) &&
+    /(股市|市场|大盘|美股|a股|指数|stock market|market|stocks?|equities|qqq|spy|纳指|标普)/iu.test(
+      text,
+    ) &&
+    /(分析|怎么看|看法|brief|summary|研究|判断|怎么拆|复盘)/iu.test(text)
+  );
+}
+
+function looksLikePlainPositionSizingPreflight(text: string): boolean {
+  const namesPositionSizing =
+    /(持仓多少|仓位多少|仓位该多少|配多少|加多少|减多少|position sizing|allocation|how much).{0,80}(股票|个股|qqq|spy|nvda|msft|aapl|tlt|etf|stock|position)?/iu.test(
+      text,
+    ) ||
+    /(关注|持有|拿着|想买|想加|想减|watch|hold|buy|add|reduce).{0,60}(仓位|持仓|position|allocation|多少|比例|权重)/iu.test(
+      text,
+    );
+  return (
+    namesPositionSizing &&
+    !looksLikePaperLearningWithSource(text) &&
+    !looksLikeExternalKnowledgeInternalizationProtocol(text) &&
+    !looksLikeFullStackFinanceStressTest(text) &&
+    !looksLikeCrossMarketFinance(text)
+  );
+}
+
+function looksLikePlainBuyHoldBoundary(text: string): boolean {
+  return (
+    !looksLikePaperLearningWithSource(text) &&
+    !looksLikeExternalKnowledgeInternalizationProtocol(text) &&
+    !looksLikeFullStackFinanceStressTest(text) &&
+    !looksLikeCrossMarketFinance(text) &&
+    /(还能不能拿|要不要买|该不该买|能不能买|要不要加|要不要减|该不该卖|要不要卖|should i buy|should i hold|should i sell|add to position|reduce position)/iu.test(
+      text,
+    ) &&
+    /(股票|个股|qqq|spy|nvda|msft|aapl|tlt|etf|stock|position|仓位|持仓)?/iu.test(text)
+  );
+}
+
 function looksLikeCrossMarketFinance(text: string): boolean {
   const groups = [
     /(美股|us equities|us stocks?|nasdaq|s&p|spx|spy|qqq|iwm|nvda|msft|aapl)/iu.test(text),
@@ -637,6 +679,168 @@ export function hardenLocalBrainPlanForAsk(
         "old_lark_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
+      ],
+    };
+  }
+
+  if (looksLikePlainRecentMarketBrief(text)) {
+    return {
+      ...safe,
+      task_family: "plain_recent_stock_market_brief_preflight",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "global_index_regime",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "etf_regime",
+        "company_fundamentals_value",
+        "technical_timing",
+        "portfolio_risk_gates",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "finance_learning_memory", "quant_math"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_etf_regime_producer",
+        "finance_framework_company_fundamentals_value_producer",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "market_scope_and_time_window",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "macro_rates_inflation_credit_fx_inputs",
+        "latest_company_fundamental_inputs",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_live_data",
+        "technical_timing_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step:
+        "ask_for_market_scope_time_window_and_timestamped_sources_then_build_macro_breadth_fundamental_timing_risk_and_review_brief",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "generic_market_commentary_without_scope_or_sources",
+        "unverified_current_market_claim",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikePlainPositionSizingPreflight(text)) {
+    return {
+      ...safe,
+      task_family: "plain_single_stock_position_sizing_preflight",
+      primary_modules: [
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "quant_math",
+        "technical_timing",
+        "macro_rates_inflation",
+        "etf_regime",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "finance_learning_memory"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_framework_company_fundamentals_value_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "current_total_assets_and_position_size",
+        "position_weights_cost_basis_and_risk_limits",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+        "latest_company_fundamental_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_model_math_guessing",
+        "risk_gate_before_action_language",
+        "position_sizing_requires_user_constraints_and_risk_budget",
+        "no_trade_advice",
+      ],
+      next_step:
+        "request_current_position_cost_basis_total_assets_risk_budget_sources_and_return_series_before_any_position_size_language",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "invented_position_percentage",
+        "single_stock_sizing_without_portfolio_context",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikePlainBuyHoldBoundary(text)) {
+    return {
+      ...safe,
+      task_family: "plain_buy_hold_research_boundary",
+      primary_modules: [
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "macro_rates_inflation",
+        "etf_regime",
+        "technical_timing",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "finance_learning_memory", "quant_math"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_framework_company_fundamentals_value_producer",
+        "finance_framework_etf_regime_producer",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "user_objective_time_horizon_and_current_position",
+        "position_weights_cost_basis_and_risk_limits",
+        "latest_company_fundamental_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "convert_trade_question_to_research_preflight",
+        "technical_timing_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step:
+        "convert_buy_hold_wording_into_research_preflight_then_request_position_fundamental_valuation_macro_timing_and_risk_inputs",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "direct_buy_sell_answer",
+        "unverified_price_or_fundamental_claim",
+        "trade_recommendation_without_evidence",
       ],
     };
   }
