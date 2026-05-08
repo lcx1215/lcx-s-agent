@@ -722,6 +722,17 @@ async function examplesFromFile(filePath: string, workspaceDir: string): Promise
   return [];
 }
 
+async function collectExamplesFromFiles(
+  files: string[],
+  workspaceDir: string,
+): Promise<DistillExample[]> {
+  const examples: DistillExample[] = [];
+  for (const filePath of files) {
+    examples.push(...(await examplesFromFile(filePath, workspaceDir)));
+  }
+  return examples;
+}
+
 function splitExamples(examples: DistillExample[]): {
   train: DistillExample[];
   valid: DistillExample[];
@@ -1352,11 +1363,9 @@ const roots = [
   path.join(memoryDir, "lark-brain-distillation-reviews"),
 ];
 const files = (await Promise.all(roots.map((root) => collectFiles(root, options.maxFiles)))).flat();
-const examples = (
-  await Promise.all(files.map((filePath) => examplesFromFile(filePath, options.workspaceDir)))
-)
-  .flat()
-  .concat(buildSeedExamples());
+const examples = (await collectExamplesFromFiles(files, options.workspaceDir)).concat(
+  buildSeedExamples(),
+);
 
 if (examples.length < 3) {
   throw new Error(`Not enough distillation examples: ${examples.length}`);

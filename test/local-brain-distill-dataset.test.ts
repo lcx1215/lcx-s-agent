@@ -28,6 +28,9 @@ describe("local brain distill dataset", () => {
     expect(source).toContain("await fs.rename(tempPath, filePath)");
     expect(source).toContain('const handle = await fs.open(tempPath, "w")');
     expect(source).toContain("for (const example of examples)");
+    expect(source).toContain("async function collectExamplesFromFiles");
+    expect(source).toContain("for (const filePath of files)");
+    expect(source).not.toContain("Promise.all(files.map((filePath) => examplesFromFile");
   });
 
   it("writes parseable seed splits for downstream smoke checks", async () => {
