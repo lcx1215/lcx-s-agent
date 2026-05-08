@@ -78,6 +78,27 @@ const DEFAULT_GUARD_LOG = path.join(
 
 const TASK_TEMPLATES = [
   {
+    family: "plain_recent_stock_market_brief",
+    message:
+      "用户只说“分析最近股市”或“最近市场怎么看”。训练本地大脑不要泛泛而谈：先确认市场范围和时间窗口，再拆美股/A股/全球指数、利率、美元/人民币流动性、信用、市场宽度、行业轮动、ETF 资金流、关键公司财报、技术 timing、情绪/新闻验证、数据时间戳、反方证据和风险门；没有实时来源就标未验证，只给 research-only 框架和下一步数据清单。",
+    summary:
+      "plain-language recent stock-market brief that expands a short user ask into timestamped market scope, macro, breadth, flows, fundamentals, timing, sentiment validation, evidence gaps, and risk gates.",
+  },
+  {
+    family: "plain_single_stock_position_sizing_preflight",
+    message:
+      "用户只说“关注 {assetA} 持仓多少”或“这个股票仓位该多少”。训练本地大脑不能直接给百分比：先要当前总资产、已有持仓权重、风险预算、时间尺度、最大回撤承受、相关性、流动性、财报/估值来源、组合集中度、单股事件风险和退出/失效条件；然后拆基本面价值锚、估值安全边际、技术 timing、组合风险和 review panel，只输出 research-only 仓位框架和缺口，不给交易建议。",
+    summary:
+      "plain-language single-stock position-sizing preflight; no invented allocation without portfolio inputs, source evidence, risk budget, and review.",
+  },
+  {
+    family: "plain_should_i_buy_or_hold_boundary",
+    message:
+      "用户只说“{assetA} 还能不能拿”“要不要买一点”。训练本地大脑必须把买卖问法转换成 research-only 决策支持：先拒绝直接交易指令，再拆用户目标、持仓成本/权重、基本面变化、估值、宏观流动性、技术 timing、风险预算、反方证据、数据缺口和可观察触发条件；最终给人话总结，不给买卖点。",
+    summary:
+      "plain buy-or-hold wording converted into research-only decision support with user constraints, fundamentals, valuation, macro, timing, risk budget, red-team, and evidence gaps.",
+  },
+  {
     family: "portfolio_regime_risk",
     message:
       "我持有 {assetA}、{assetB}、{assetC}，担心未来 {horizon} 的利率、美元流动性和风险偏好切换。先拆模块，不要给买卖建议。",

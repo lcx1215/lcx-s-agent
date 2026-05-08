@@ -36,6 +36,49 @@ async function makeGuardLog(): Promise<string> {
 }
 
 describe("minimax quota brain saturator preview", () => {
+  it("includes simple real-world market and sizing asks in the normal teacher curriculum", async () => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/minimax-quota-brain-saturator.ts",
+        "--profile",
+        "minimax-plus-brain",
+        "--no-failure-focus",
+        "--max-calls",
+        "3",
+        "--duration-minutes",
+        "1",
+        "--preview-prompts",
+        "3",
+      ],
+      {
+        cwd: path.resolve(import.meta.dirname, ".."),
+        timeout: 20_000,
+        env: {
+          ...process.env,
+          PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}`,
+        },
+      },
+    );
+
+    const payload = JSON.parse(stdout) as {
+      preview?: {
+        failureFocusPrompts: number;
+        prompts: Array<{ id: string; userMessage: string }>;
+      };
+    };
+    const promptText = payload.preview?.prompts.map((prompt) => prompt.userMessage).join("\n");
+
+    expect(payload.preview?.failureFocusPrompts).toBe(0);
+    expect(promptText).toContain("分析最近股市");
+    expect(promptText).toContain("关注");
+    expect(promptText).toContain("持仓多少");
+    expect(promptText).toContain("不能直接给百分比");
+    expect(promptText).toContain("research-only");
+  });
+
   it("shows failure-focused prompts in dry-run output without calling the provider", async () => {
     const guardLogPath = await makeGuardLog();
     const { stdout } = await execFileAsync(
