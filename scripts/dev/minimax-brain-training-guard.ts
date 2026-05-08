@@ -788,6 +788,16 @@ function trainingSeedFromEvalResult(
   };
 }
 
+function shouldTrainRound(options: CliOptions, round: number, seedAdapter?: string): boolean {
+  if (options.noTrain) {
+    return false;
+  }
+  if (!seedAdapter) {
+    return true;
+  }
+  return round % options.trainEvery === 0;
+}
+
 async function resolveBestTrainingSeedAdapter(
   adapterPrefix: string,
 ): Promise<TrainingSeedSelection | undefined> {
@@ -1403,7 +1413,7 @@ try {
       }
     }
 
-    if (!options.noTrain && (!currentAdapter || round % options.trainEvery === 0)) {
+    if (shouldTrainRound(options, round, currentAdapter ?? trainingSeedAdapter)) {
       const candidateAdapter = adapterPathForRound(options, round);
       const trained = await runTrain(
         options,

@@ -161,6 +161,23 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("currentAdapter ? {} : { allowFailure: true }");
   });
 
+  it("honors train-every when a best-effort training seed exists but no adapter is promotion-ready", async () => {
+    const source = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("function shouldTrainRound");
+    expect(source).toContain("if (!seedAdapter)");
+    expect(source).toContain("return round % options.trainEvery === 0");
+    expect(source).toContain(
+      "shouldTrainRound(options, round, currentAdapter ?? trainingSeedAdapter)",
+    );
+    expect(source).not.toContain(
+      "!options.noTrain && (!currentAdapter || round % options.trainEvery === 0)",
+    );
+  });
+
   it("uses the highest scoring non-promotion candidate as the next training seed", async () => {
     let strongAdapter = "";
     let weakAdapter = "";
