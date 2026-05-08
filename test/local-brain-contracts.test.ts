@@ -533,6 +533,44 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("prioritizes fundamentals for value-investing asks before timing", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "以后价值投资很重要。先研究 NVDA 基本面：收入质量、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际和价值陷阱；技术面只能后置。",
+      },
+    );
+
+    expect(plan.task_family).toBe("value_investing_fundamental_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "company_fundamentals_value",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "latest_10q_10k_or_earnings_release",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "moat_management_and_capital_allocation_evidence",
+        "valuation_range_and_margin_of_safety_inputs",
+        "value_trap_risks_and_thesis_invalidation_evidence",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "fundamentals_first_not_price_action_first",
+        "margin_of_safety_required",
+        "value_investing_not_trade_signal",
+        "no_trade_advice",
+      ]),
+    );
+    expect(plan.rejected_context).toContain("technical_timing_before_fundamentals");
+  });
+
   it("routes sourced paper learning into internalization and eval absorption checks", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

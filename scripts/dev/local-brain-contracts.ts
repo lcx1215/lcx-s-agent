@@ -204,10 +204,22 @@ function looksLikeEtfAsCompanyFundamentalTrap(text: string): boolean {
 
 function looksLikeCompanyToPortfolioRisk(text: string): boolean {
   return (
-    /(公司|基本面|fundamental|capex|revenue|margin|earnings|估值|收入质量|客户集中度)/iu.test(
+    /(公司|基本面|价值投资|value investing|fundamental|capex|revenue|margin|earnings|估值|收入质量|客户集中度)/iu.test(
       text,
     ) && /(组合|持仓|仓位|科技仓|etf sleeve|portfolio|sleeve|risk|风险|传导|连接|影响)/iu.test(text)
   );
+}
+
+function looksLikeValueInvestingFundamentalCore(text: string): boolean {
+  const asksForValueInvesting =
+    /(价值投资|长期投资|基本面优先|fundamentals?[- ]?first|value investing|intrinsic value|内在价值|安全边际|margin of safety|护城河|moat)/iu.test(
+      text,
+    );
+  const namesValueEvidence =
+    /(自由现金流|free cash flow|fcf|roic|资产负债表|balance sheet|管理层|资本配置|capital allocation|安全边际|margin of safety|护城河|moat|价值陷阱|value trap|内在价值|intrinsic value)/iu.test(
+      text,
+    );
+  return asksForValueInvesting || namesValueEvidence;
 }
 
 function looksLikePortfolioMathMissingInputs(text: string): boolean {
@@ -673,6 +685,9 @@ export function hardenLocalBrainPlanForAsk(
         "options_iv_skew_gamma_and_event_calendar",
         "price_volume_breadth_and_technical_regime_inputs",
         "latest_company_fundamental_inputs",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
+        "value_trap_risks_and_thesis_invalidation_evidence",
       ],
       risk_boundaries: [
         "research_only",
@@ -1348,6 +1363,54 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
+  if (looksLikeValueInvestingFundamentalCore(text) && !looksLikeEtfAsCompanyFundamentalTrap(text)) {
+    return {
+      ...safe,
+      task_family: "value_investing_fundamental_research_planning",
+      primary_modules: [
+        "company_fundamentals_value",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["finance_learning_memory", "macro_rates_inflation", "quant_math"],
+      required_tools: [
+        "finance_framework_company_fundamentals_value_producer",
+        "source_registry_lookup",
+        "finance_learning_capability_apply",
+        "review_panel",
+      ],
+      missing_data: [
+        "latest_10q_10k_or_earnings_release",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "moat_management_and_capital_allocation_evidence",
+        "valuation_range_and_margin_of_safety_inputs",
+        "value_trap_risks_and_thesis_invalidation_evidence",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "fundamentals_first_not_price_action_first",
+        "margin_of_safety_required",
+        "value_investing_not_trade_signal",
+        "no_unverified_filing_claims",
+        "no_trade_advice",
+      ],
+      next_step:
+        "read_source_filings_first_then_score_business_quality_cash_flow_roic_balance_sheet_moat_valuation_safety_margin_value_trap_and_invalidation",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "technical_timing_before_fundamentals",
+        "valuation_without_source_evidence",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
   if (looksLikeModelReviewDisagreement(text)) {
     return {
       ...safe,
@@ -1719,6 +1782,8 @@ export function hardenLocalBrainPlanForAsk(
       missing_data: [
         "source_url_or_local_source_path",
         "latest_company_fundamental_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
+        "value_trap_risks_and_thesis_invalidation_evidence",
         "portfolio_weights_and_risk_limits",
       ],
       risk_boundaries: [
@@ -2057,7 +2122,11 @@ function inferFinanceModulesFromLocalKnowledgeText(text: string): string[] {
   if (mentionsCryptoMarket(text)) {
     modules.push("crypto_market_structure");
   }
-  if (/(nvda|公司|基本面|fundamental|capex|估值|revenue|earnings|ai capex)/iu.test(text)) {
+  if (
+    /(nvda|公司|基本面|价值投资|value investing|intrinsic value|安全边际|护城河|fundamental|capex|估值|revenue|earnings|ai capex)/iu.test(
+      text,
+    )
+  ) {
     modules.push("company_fundamentals_value");
   }
   if (/(数学|量化|波动|相关|回撤|correlation|volatility|drawdown)/iu.test(text)) {

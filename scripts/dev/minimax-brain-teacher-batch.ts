@@ -87,9 +87,16 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
   {
     id: "all_domain_finance_research_loop",
     userMessage:
-      "训练本地 Qwen 教本地大脑做全领域金融研究：美股、A股、指数、ETF、公司基本面、宏观利率、信用、美元/人民币流动性、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel 都要连起来；简单任务不能比复杂任务更差，research-only。",
+      "训练本地 Qwen 教本地大脑做全领域金融研究：先把公司基本面和价值投资作为核心锚点，再连接美股、A股、指数、ETF、宏观利率、信用、美元/人民币流动性、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel；简单任务不能比复杂任务更差，research-only。",
     sourceSummary:
       "all-domain finance research loop requiring broad module coverage, simple-prerequisite monotonicity, evidence gates, review handoff, and no trade advice.",
+  },
+  {
+    id: "value_investing_fundamental_core",
+    userMessage:
+      "以后价值投资很重要。训练本地大脑先做基本面和企业价值判断：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、反方证据和组合风险都要拆清楚；技术面只能后置做 timing context，不要给买卖建议。",
+    sourceSummary:
+      "fundamentals-first value-investing research loop requiring source evidence, business quality, valuation range, margin of safety, value-trap invalidation, and portfolio risk boundaries.",
   },
   {
     id: "multi_asset_macro_portfolio_risk",
@@ -359,7 +366,8 @@ export function buildTeacherSystemPrompt(): string {
     "- ambiguous repeat must ask for current_subject_or_original_request and reject old_lark_conversation_history",
     "- ops audit must not become finance analysis",
     "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
-    "- all-domain finance learning must connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, company fundamentals, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
+    "- fundamentals and value-investing asks must prioritize company_fundamentals_value before technical timing; require filing/source evidence, revenue quality, margin durability, free cash flow, ROIC, balance sheet, moat, management capital allocation, valuation range, margin of safety, value-trap risk, and thesis invalidation",
+    "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
     "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
@@ -1078,6 +1086,56 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       ],
     };
   }
+  if (
+    /价值投资|基本面优先|value investing|intrinsic value|内在价值|安全边际|margin of safety|护城河|moat|自由现金流|roic|价值陷阱/iu.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "value_investing_fundamental_research_planning",
+      primary_modules: [
+        "company_fundamentals_value",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["finance_learning_memory", "macro_rates_inflation", "quant_math"],
+      required_tools: [
+        "finance_framework_company_fundamentals_value_producer",
+        "source_registry_lookup",
+        "finance_learning_capability_apply",
+        "review_panel",
+      ],
+      missing_data: [
+        "latest_10q_10k_or_earnings_release",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "moat_management_and_capital_allocation_evidence",
+        "valuation_range_and_margin_of_safety_inputs",
+        "value_trap_risks_and_thesis_invalidation_evidence",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "fundamentals_first_not_price_action_first",
+        "margin_of_safety_required",
+        "value_investing_not_trade_signal",
+        "no_unverified_filing_claims",
+        "no_trade_advice",
+      ],
+      next_step:
+        "read_source_filings_first_then_score_business_quality_cash_flow_roic_balance_sheet_moat_valuation_safety_margin_value_trap_and_invalidation",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "technical_timing_before_fundamentals",
+        "valuation_without_source_evidence",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
   if (/美股|A股|a股|指数|加密|crypto|cross-market|跨市场/u.test(text)) {
     return {
       task_family: "cross_market_finance_research_planning",
@@ -1421,6 +1479,10 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     /全领域|全部金融|完整金融|金融研究.*(美股|A股|指数|ETF).*大宗商品.*期权|source registry.*review panel/iu.test(
       ask,
     );
+  const isValueInvestingFundamental =
+    /价值投资|基本面优先|value investing|intrinsic value|内在价值|安全边际|margin of safety|护城河|moat|自由现金流|roic|价值陷阱/iu.test(
+      ask,
+    );
 
   if (isContextReset) {
     replacePrimary(["ops_audit", "agent_workflow_memory", "control_room_summary"]);
@@ -1547,6 +1609,9 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "china_a_share_policy_liquidity_and_northbound_inputs",
       "index_constituents_weights_and_technical_regime_inputs",
       "latest_company_fundamental_inputs",
+      "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "value_trap_risks_and_thesis_invalidation_evidence",
       "commodity_curve_roll_yield_and_inventory_inputs",
       "options_iv_skew_gamma_and_event_calendar",
       "crypto_liquidity_volatility_custody_and_regulatory_inputs",
@@ -1567,6 +1632,44 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ensureRejected(["single_bucket_finance_routing", "simple_prerequisite_skipped"]);
     nextStep =
       "Recall memory, check simple prerequisites, decompose all finance layers, collect evidence gaps, then run quant risk and review.";
+  }
+
+  if (!isContextReset && isValueInvestingFundamental) {
+    ensurePrimary([
+      "company_fundamentals_value",
+      "source_registry",
+      "causal_map",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of ["finance_learning_memory", "macro_rates_inflation", "quant_math"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "latest_10q_10k_or_earnings_release",
+      "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+      "moat_management_and_capital_allocation_evidence",
+      "valuation_range_and_margin_of_safety_inputs",
+      "value_trap_risks_and_thesis_invalidation_evidence",
+      "portfolio_weights_and_risk_limits",
+    ]);
+    ensureRisk([
+      "fundamentals_first_not_price_action_first",
+      "margin_of_safety_required",
+      "value_investing_not_trade_signal",
+      "no_unverified_filing_claims",
+      "no_trade_advice",
+    ]);
+    ensureRejected([
+      "technical_timing_before_fundamentals",
+      "valuation_without_source_evidence",
+      "trade_recommendation_without_evidence",
+    ]);
+    nextStep =
+      "Read source filings first, score business quality and cash flows, test valuation and margin of safety, then review risk.";
   }
 
   if (primaryModules.length === 0) {

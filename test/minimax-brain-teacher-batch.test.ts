@@ -336,6 +336,9 @@ describe("minimax brain teacher batch parsing", () => {
     expect(plan.missing_data).toEqual(
       expect.arrayContaining([
         "memory_recall_scope_or_relevant_receipts",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
+        "value_trap_risks_and_thesis_invalidation_evidence",
         "commodity_curve_roll_yield_and_inventory_inputs",
         "options_iv_skew_gamma_and_event_calendar",
         "position_weights_and_return_series",
@@ -351,6 +354,55 @@ describe("minimax brain teacher batch parsing", () => {
       ]),
     );
     expect(plan.rejected_context).toContain("simple_prerequisite_skipped");
+  });
+
+  it("keeps value-investing prompts fundamentals-first", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "value_investing_fundamental_core",
+        userMessage:
+          "以后价值投资很重要。训练本地大脑先做企业基本面和内在价值判断：收入质量、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、反方证据和组合风险都要拆清楚；技术面只能后置。",
+        sourceSummary: "fundamentals-first value-investing loop.",
+      },
+      normalizeTeacherPlan({
+        task_family: "finance",
+        primary_modules: [],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: [],
+        next_step: "review",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "company_fundamentals_value",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "latest_10q_10k_or_earnings_release",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "moat_management_and_capital_allocation_evidence",
+        "valuation_range_and_margin_of_safety_inputs",
+        "value_trap_risks_and_thesis_invalidation_evidence",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "fundamentals_first_not_price_action_first",
+        "margin_of_safety_required",
+        "value_investing_not_trade_signal",
+        "no_trade_advice",
+      ]),
+    );
+    expect(plan.rejected_context).toContain("technical_timing_before_fundamentals");
   });
 
   it("rewrites live market data collection overclaims in teacher next steps", () => {

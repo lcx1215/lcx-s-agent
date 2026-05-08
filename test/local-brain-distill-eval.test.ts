@@ -202,6 +202,7 @@ describe("local-brain-distill-eval", () => {
         "broad_finance_module_taxonomy_coverage",
         "portfolio_mixed_q_t_nvda",
         "portfolio_math_without_guessing",
+        "value_investing_fundamental_core",
         "cross_market_us_a_index_crypto_analysis",
         "commodity_fx_inflation_inventory_portfolio_loop",
         "options_iv_event_risk_no_trade",

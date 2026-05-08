@@ -102,8 +102,9 @@ const TASK_TEMPLATES = [
   {
     family: "single_company_transmission",
     message:
-      "研究 {assetA} 的基本面风险：收入质量、估值、客户集中度和宏观传导，只输出 research-only 风险图。",
-    summary: "single company fundamentals with portfolio transmission, no trade recommendation.",
+      "研究 {assetA} 的基本面和价值风险：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱和宏观传导，只输出 research-only 风险图。",
+    summary:
+      "single company fundamentals and value-investing research with portfolio transmission, margin of safety, and no trade recommendation.",
   },
   {
     family: "context_reset_guard",
@@ -138,9 +139,16 @@ const TASK_TEMPLATES = [
   {
     family: "all_domain_finance_research_loop",
     message:
-      "训练本地 Qwen 教本地大脑做全领域金融研究：{assetA}、{assetB}、{assetC} 之外，还要覆盖宏观利率、信用、美元/人民币流动性、美股、A股、全球指数、ETF、公司基本面、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel；先拆简单前置能力，再组合成复杂分析，research-only。",
+      "训练本地 Qwen 教本地大脑做全领域金融研究：先把公司基本面和价值投资作为核心锚点，再连接 {assetA}、{assetB}、{assetC}、宏观利率、信用、美元/人民币流动性、美股、A股、全球指数、ETF、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel；先拆简单前置能力，再组合成复杂分析，research-only。",
     summary:
       "all-domain finance research loop with prerequisite monotonicity, broad module coverage, evidence gates, quant validation, and review handoff.",
+  },
+  {
+    family: "value_investing_fundamental_core",
+    message:
+      "以后价值投资很重要。训练本地大脑先做 {assetA} 的基本面和企业价值判断：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、反方证据和组合风险都要拆清楚；技术面只能后置做 timing context，不要给买卖建议。",
+    summary:
+      "fundamentals-first value-investing loop with source evidence, business quality, valuation range, margin of safety, value-trap checks, and portfolio risk.",
   },
   {
     family: "rates_credit_fx_commodity_chain",
@@ -182,6 +190,11 @@ const ASSETS = [
 const THEMES = [
   "ETF regime timing",
   "duration risk",
+  "fundamentals-first value investing",
+  "free cash flow ROIC and margin durability",
+  "moat management and capital allocation",
+  "valuation range and margin of safety",
+  "value trap and thesis invalidation",
   "earnings revision quality",
   "AI capex transmission",
   "credit liquidity stress",

@@ -275,6 +275,37 @@ const EVAL_CASES: EvalCase[] = [
     minModuleMatches: 3,
   },
   {
+    id: "value_investing_fundamental_core",
+    userAsk:
+      "以后价值投资很重要。训练本地大脑先做企业基本面和内在价值判断：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、反方证据和组合风险都要拆清楚；技术面只能后置做 timing context，不要给买卖建议。",
+    sourceSummary:
+      "fundamentals-first value-investing research loop requiring source evidence, business quality, valuation range, margin of safety, value-trap invalidation, and portfolio risk boundaries.",
+    requiredModules: [
+      "company_fundamentals_value",
+      "source_registry",
+      "causal_map",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 6,
+    requiredMissingData: [
+      "latest_10q_10k_or_earnings_release",
+      "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+      "moat_management_and_capital_allocation_evidence",
+      "valuation_range_and_margin_of_safety_inputs",
+      "value_trap_risks_and_thesis_invalidation_evidence",
+      "portfolio_weights_and_risk_limits",
+    ],
+    requiredRiskBoundaries: [
+      "fundamentals_first_not_price_action_first",
+      "margin_of_safety_required",
+      "value_investing_not_trade_signal",
+      "no_unverified_filing_claims",
+      "no_trade_advice",
+    ],
+  },
+  {
     id: "lark_context_pollution_audit",
     userAsk: "它刚才又像串到旧任务了，先审计是不是 Lark 上下文污染，不要继续金融分析。",
     sourceSummary: "ops audit request, explicitly not a finance research request.",
@@ -1597,6 +1628,9 @@ const EVAL_CASES: EvalCase[] = [
       "position_weights_and_return_series",
       "portfolio_weights_and_risk_limits",
       "macro_rates_inflation_credit_fx_inputs",
+      "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "value_trap_risks_and_thesis_invalidation_evidence",
       "commodity_curve_roll_yield_and_inventory_inputs",
       "options_iv_skew_gamma_and_event_calendar",
       "price_volume_breadth_and_technical_regime_inputs",
@@ -1650,6 +1684,7 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
   ["factor_backtest_overfit_guard", ["external_source_missing_url"]],
   ["sentiment_market_external_module_learning", ["external_source_missing_url"]],
   ["company_filing_missing_evidence_gate", ["single_company_fundamental_risk"]],
+  ["value_investing_fundamental_core", ["single_company_fundamental_risk"]],
   ["technical_timing_not_standalone_alpha", ["unseen_etf_timing_framework"]],
   [
     "rate_shock_duration_equity_chain",
@@ -1715,6 +1750,7 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
       "broad_finance_module_taxonomy_coverage",
       "portfolio_mixed_q_t_nvda",
       "portfolio_math_without_guessing",
+      "value_investing_fundamental_core",
       "cross_market_us_a_index_crypto_analysis",
       "commodity_fx_inflation_inventory_portfolio_loop",
       "options_iv_event_risk_no_trade",
