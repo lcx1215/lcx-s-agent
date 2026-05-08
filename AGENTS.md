@@ -243,7 +243,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 
 ## Contemporary Agent Work Pattern
 
-- Prefer specialized subagents for bounded exploration, planning, or repair passes that would otherwise pollute the main context window.
+- Prefer specialized subagents for bounded exploration, planning, or repair passes that would otherwise pollute the main context window only when the active Codex/platform rules and the user have allowed delegation. If higher-priority Codex instructions restrict subagent spawning to explicit user authorization, follow that higher-priority rule.
 - Keep subagent tool access narrower than the main agent when possible; use separate context windows to preserve the mainline state instead of stuffing every branch into one transcript.
 - CLI and built-in local tools remain the primary operational surface; do not replace them with MCP by default.
 - Prefer local CLI and built-in tool paths first; use project-scoped MCP context when local CLI or repo-local evidence cannot provide the needed official or external context.
@@ -264,8 +264,8 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 
 ## Repository Guidelines
 
-- Repo: https://github.com/openclaw/openclaw
-- In chat replies, file references must be repo-root relative only (example: `extensions/bluebubbles/src/channel.ts:80`); never absolute paths or `~/...`.
+- Repo: https://github.com/lcx1215/lcx-s-agent. Upstream OpenClaw remains the runtime lineage, but LCX Agent is the public identity for this fork.
+- In GitHub issues/comments/PR comments and repo-authored docs, prefer repo-root relative file references (example: `extensions/bluebubbles/src/channel.ts:80`). In Codex Desktop chat, if higher-priority app instructions require absolute local file links for clickable references, follow the app instruction and keep the label readable.
 - GitHub issues/comments/PR comments: use literal multiline strings or `-F - <<'EOF'` (or $'...') for real newlines; never embed "\\n".
 - GitHub comment footgun: never use `gh issue/pr comment -b "..."` when body contains backticks or shell chars. Always use single-quoted heredoc (`-F - <<'EOF'`) so no command substitution/escaping corruption.
 - GitHub linking footgun: don’t wrap issue/PR refs like `#24643` in backticks when you want auto-linking. Use plain `#24643` (optionally add full URL).
@@ -348,7 +348,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - Add brief code comments for tricky or non-obvious logic.
 - Keep files concise; extract helpers instead of “V2” copies. Use existing patterns for CLI options and dependency injection via `createDefaultDeps`.
 - Aim to keep files under ~700 LOC; guideline only (not a hard guardrail). Split/refactor when it improves clarity or testability.
-- Naming: use **OpenClaw** for product/app/docs headings; use `openclaw` for CLI command, package/binary, paths, and config keys.
+- Naming: use **LCX Agent** for this fork's product, README, interview, control-room, and L5 doctrine surfaces. Use **OpenClaw** only for upstream runtime lineage, app/binary/config/API surfaces, inherited docs, and compatibility handles where the name is still technically correct. Use `openclaw` for CLI command, package/binary, paths, and config keys.
 
 ## Release Channels (Naming)
 

@@ -254,6 +254,62 @@ async function main() {
     evidence: packageEvidence,
   });
 
+  checks.push(
+    checkTextContains({
+      id: "repo_identity_lcx",
+      text: agents,
+      fileLabel: "AGENTS.md repository identity",
+      required: [
+        "https://github.com/lcx1215/lcx-s-agent",
+        "Upstream OpenClaw remains the runtime lineage",
+      ],
+      summary:
+        "repo guidance should identify the LCX fork without erasing upstream runtime lineage",
+    }),
+  );
+
+  checks.push(
+    checkTextContains({
+      id: "codex_chat_file_link_precedence",
+      text: agents,
+      fileLabel: "AGENTS.md file-reference rules",
+      required: [
+        "Codex Desktop chat",
+        "higher-priority app instructions require absolute local file links",
+      ],
+      summary:
+        "repo-root file references should not conflict with higher-priority Codex Desktop clickable-link rules",
+    }),
+  );
+
+  checks.push(
+    checkTextContains({
+      id: "subagent_authorization_precedence",
+      text: agents,
+      fileLabel: "AGENTS.md subagent rules",
+      required: [
+        "only when the active Codex/platform rules and the user have allowed delegation",
+        "explicit user authorization",
+      ],
+      summary:
+        "subagent preference should not override higher-priority Codex delegation restrictions",
+    }),
+  );
+
+  checks.push(
+    checkTextContains({
+      id: "live_visible_fixed_canonical",
+      text: readme,
+      fileLabel: "README live status rules",
+      required: [
+        "live-visible-fixed",
+        "旧文档里的 `live-fixed` 只能当口语简称",
+        "正式状态以 `live-visible-fixed` 为准",
+      ],
+      summary: "README should use live-visible-fixed as the canonical live proof state",
+    }),
+  );
+
   const l5ScriptPath = path.join(
     codexSkillsRoot,
     "l5-regression-batterer",

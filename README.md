@@ -82,16 +82,16 @@ LCX Agent 的设计更接近一个可长期运行的研究系统，而不是一�
 
 所有金融输出都应视为 research-only，不构成投资建议。
 
-## 为什么强调 dev-fixed 和 live-fixed
+## 为什么强调 dev-fixed 和 live-visible-fixed
 
 LCX Agent 长期运行在真实飞书 / Lark 回路里，所以“本地修了”和“用户真的看到了”必须分开。
 
-| 状态       | 含义                                                                   |
-| ---------- | ---------------------------------------------------------------------- |
-| dev-fixed  | 开发仓里代码、测试或 smoke 已经通过。                                  |
-| migrated   | 改动已同步到 live sidecar。                                            |
-| probe-ok   | live gateway 已 build / restart，并且 `channels status --probe` 通过。 |
-| live-fixed | 真实 Lark/Feishu 入站、路由、回复和可见输出都被验证。                  |
+| 状态               | 含义                                                                   |
+| ------------------ | ---------------------------------------------------------------------- |
+| dev-fixed          | 开发仓里代码、测试或 smoke 已经通过。                                  |
+| migrated           | 改动已同步到 live sidecar。                                            |
+| probe-ok           | live gateway 已 build / restart，并且 `channels status --probe` 通过。 |
+| live-visible-fixed | 真实 Lark/Feishu 入站、路由、回复和可见输出都被验证。                  |
 
 这套边界能防止 silent failure：系统不能因为“生成过回复”就假装“用户已经收到回复”。
 
@@ -240,7 +240,7 @@ promotion 只代表 live runtime 已经切到某个 git 快照并完成探测。
 ~/.openclaw/workspace/memory/
 ```
 
-只有看到真实入站、路由、回复和用户可见结果，才能说 live-fixed。
+只有看到真实入站、路由、回复和用户可见结果，才能说 `live-visible-fixed`。旧文档里的 `live-fixed` 只能当口语简称，正式状态以 `live-visible-fixed` 为准。
 
 状态含义：
 
