@@ -27,7 +27,8 @@ Use the matching skill before acting:
 - `finance-learning-researcher` for finance, ETF, quant, source-gated learning.
 - `lark-live-loop-debugger` and `lark-post-migration-probe` for Feishu/Lark proof.
 - `agent-runtime-drift-auditor` for dev/live/runtime drift.
-- `l4-regression-batterer` as the legacy-path L5 baseline pressure-test skill.
+- `l5-regression-batterer` for L5 baseline pressure tests with realistic user/Lark prompts.
+- `l4-regression-batterer` only as a legacy compatibility alias that should forward to the L5 battery.
 - `skill-harvester` for evaluating and isolating new external/local skills.
 
 Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.

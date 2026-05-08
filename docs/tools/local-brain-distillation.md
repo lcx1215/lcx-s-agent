@@ -214,7 +214,7 @@ Run a tiny first pass:
   --model Qwen/Qwen3-0.6B \
   --train \
   --data ~/.openclaw/local-brain-trainer/datasets/thought-flow-v1 \
-  --adapter-path ~/.openclaw/local-brain-trainer/adapters/thought-flow-v1-qwen3-0.6b \
+  --adapter-path ~/.openclaw/local-brain-trainer/adapters/thought-flow-v1-qwen3-0.6b-manual-smoke \
   --fine-tune-type lora \
   --batch-size 1 \
   --iters 20 \
@@ -225,6 +225,11 @@ Run a tiny first pass:
 ```
 
 For a smoke-only run on an 8 GB machine, use `--iters 2`.
+
+This manual smoke path is only an output directory for a first local LoRA
+experiment. Do not use it as the active brain adapter. Recurring training,
+planning, and eval should resolve the current adapter through the guard
+`latest-passing` selector described below and in `ops/local-brain/README.md`.
 
 ## Acceptance
 

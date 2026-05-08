@@ -228,12 +228,12 @@ describe("resolveResponsePrefix with per-channel override", () => {
 
   // ─── Full cascade ─────────────────────────────────────────────────
 
-  describe("full 4-level cascade", () => {
+  describe("full response-prefix priority cascade", () => {
     const fullCfg = makeConfig({
       agents: {
         list: [{ id: "main", identity: { name: "TestBot" } }],
       },
-      messages: { responsePrefix: "[L4-Global] " },
+      messages: { responsePrefix: "[Global] " },
       channels: {
         whatsapp: {
           responsePrefix: "[L2-Channel] ",
@@ -246,20 +246,20 @@ describe("resolveResponsePrefix with per-channel override", () => {
       },
     } satisfies OpenClawConfig);
 
-    it("L1: account prefix wins when all levels set", () => {
+    it("account prefix wins when all levels set", () => {
       expect(
         resolveResponsePrefix(fullCfg, "main", { channel: "whatsapp", accountId: "business" }),
       ).toBe("[L1-Account] ");
     });
 
-    it("L2: channel prefix when account undefined", () => {
+    it("channel prefix wins when account prefix is undefined", () => {
       expect(
         resolveResponsePrefix(fullCfg, "main", { channel: "whatsapp", accountId: "default" }),
       ).toBe("[L2-Channel] ");
     });
 
-    it("L4: global prefix when channel has no prefix", () => {
-      expect(resolveResponsePrefix(fullCfg, "main", { channel: "telegram" })).toBe("[L4-Global] ");
+    it("global prefix applies when channel has no prefix", () => {
+      expect(resolveResponsePrefix(fullCfg, "main", { channel: "telegram" })).toBe("[Global] ");
     });
 
     it("undefined: no prefix at any level", () => {

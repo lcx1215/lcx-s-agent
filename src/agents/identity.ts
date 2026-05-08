@@ -15,7 +15,7 @@ export function resolveAckReaction(
   agentId: string,
   opts?: { channel?: string; accountId?: string },
 ): string {
-  // L1: Channel account level
+  // Priority 1: channel account level
   if (opts?.channel && opts?.accountId) {
     const channelCfg = getChannelConfig(cfg, opts.channel);
     const accounts = channelCfg?.accounts as Record<string, Record<string, unknown>> | undefined;
@@ -25,7 +25,7 @@ export function resolveAckReaction(
     }
   }
 
-  // L2: Channel level
+  // Priority 2: channel level
   if (opts?.channel) {
     const channelCfg = getChannelConfig(cfg, opts.channel);
     const channelReaction = channelCfg?.ackReaction as string | undefined;
@@ -34,13 +34,13 @@ export function resolveAckReaction(
     }
   }
 
-  // L3: Global messages level
+  // Priority 3: global messages level
   const configured = cfg.messages?.ackReaction;
   if (configured !== undefined) {
     return configured.trim();
   }
 
-  // L4: Agent identity emoji fallback
+  // Priority 4: agent identity emoji fallback
   const emoji = resolveAgentIdentity(cfg, agentId)?.emoji?.trim();
   return emoji || DEFAULT_ACK_REACTION;
 }
@@ -96,7 +96,7 @@ export function resolveResponsePrefix(
   agentId: string,
   opts?: { channel?: string; accountId?: string },
 ): string | undefined {
-  // L1: Channel account level
+  // Priority 1: channel account level
   if (opts?.channel && opts?.accountId) {
     const channelCfg = getChannelConfig(cfg, opts.channel);
     const accounts = channelCfg?.accounts as Record<string, Record<string, unknown>> | undefined;
@@ -109,7 +109,7 @@ export function resolveResponsePrefix(
     }
   }
 
-  // L2: Channel level
+  // Priority 2: channel level
   if (opts?.channel) {
     const channelCfg = getChannelConfig(cfg, opts.channel);
     const channelPrefix = channelCfg?.responsePrefix as string | undefined;
@@ -121,7 +121,7 @@ export function resolveResponsePrefix(
     }
   }
 
-  // L4: Global level
+  // Priority 3: global messages level
   const configured = cfg.messages?.responsePrefix;
   if (configured !== undefined) {
     if (configured === "auto") {

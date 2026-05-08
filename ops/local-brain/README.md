@@ -63,6 +63,7 @@ When context is missing, load only the skills that match the current question. T
 /Users/liuchengxu/.codex/skills/lark-live-loop-debugger/SKILL.md
 /Users/liuchengxu/.codex/skills/lark-post-migration-probe/SKILL.md
 /Users/liuchengxu/.codex/skills/agent-runtime-drift-auditor/SKILL.md
+/Users/liuchengxu/.codex/skills/l5-regression-batterer/SKILL.md
 /Users/liuchengxu/.codex/skills/l4-regression-batterer/SKILL.md
 /Users/liuchengxu/.codex/skills/skill-harvester/SKILL.md
 ```
@@ -82,7 +83,8 @@ Use them like this:
 - `lark-live-loop-debugger`: Feishu/Lark live message, reply flow, routing, and visible reply diagnosis.
 - `lark-post-migration-probe`: prove post-migration real Lark inbound plus visible reply.
 - `agent-runtime-drift-auditor`: compare dev repo, live sidecar, daemon/runtime, and receipts for drift.
-- `l4-regression-batterer`: legacy path name; use it for L5 baseline pressure tests with realistic Chinese finance/control-room prompts.
+- `l5-regression-batterer`: L5 baseline pressure tests with realistic Chinese finance/control-room prompts.
+- `l4-regression-batterer`: legacy compatibility alias only; prefer the L5 skill in new work.
 - `skill-harvester`: evaluate and isolate new external or local skills before letting them affect the agent.
 
 The skills are operator guidance, not durable market memory. Do not copy their text into protected repo memory.
