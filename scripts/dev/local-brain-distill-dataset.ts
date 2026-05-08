@@ -1321,14 +1321,25 @@ async function writeFileAtomic(filePath: string, content: string): Promise<void>
 }
 
 async function writeJsonl(filePath: string, examples: DistillExample[]): Promise<void> {
-  const lines = examples.map((example) =>
-    JSON.stringify({
-      prompt: example.prompt,
-      completion: example.completion,
-      meta: example.meta,
-    }),
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
   );
-  await writeFileAtomic(filePath, `${lines.join("\n")}\n`);
+  const handle = await fs.open(tempPath, "w");
+  try {
+    for (const example of examples) {
+      await handle.write(
+        `${JSON.stringify({
+          prompt: example.prompt,
+          completion: example.completion,
+          meta: example.meta,
+        })}\n`,
+      );
+    }
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(tempPath, filePath);
 }
 
 const options = parseArgs(process.argv.slice(2));

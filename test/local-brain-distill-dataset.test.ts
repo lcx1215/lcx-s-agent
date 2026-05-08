@@ -26,6 +26,8 @@ describe("local brain distill dataset", () => {
     expect(source).toContain("async function writeFileAtomic");
     expect(source).toContain('await fs.writeFile(tempPath, content, "utf8")');
     expect(source).toContain("await fs.rename(tempPath, filePath)");
+    expect(source).toContain('const handle = await fs.open(tempPath, "w")');
+    expect(source).toContain("for (const example of examples)");
   });
 
   it("writes parseable seed splits for downstream smoke checks", async () => {
