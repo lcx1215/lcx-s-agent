@@ -147,6 +147,12 @@ function textOf(candidate: LarkBrainDistillationCandidate): string {
   return [candidate.userMessage, candidate.candidateText].filter(Boolean).join("\n");
 }
 
+function looksLikeExternalKnowledgeWork(text: string): boolean {
+  return /(google scholar|ssrn|nber|arxiv|working paper|preprint|论文|paper|网页|source|citation|url|链接|github|hugging ?face|开源项目|skill|skills|工具|workflow|eval|receipt)/iu.test(
+    text,
+  );
+}
+
 function hardenAcceptedCandidate(
   candidate: LarkBrainDistillationCandidate,
 ): LarkBrainDistillationCandidate {
@@ -157,18 +163,31 @@ function hardenAcceptedCandidate(
   let riskBoundaries = (candidate.proposedRiskBoundaries ?? []).filter(
     (entry) => !["language_routing_only", "language_routing_required"].includes(entry),
   );
-  if (
-    /(google scholar|ssrn|nber|arxiv|working paper|preprint|论文|paper|网页|source|citation|url|链接)/iu.test(
-      text,
-    )
-  ) {
+  if (looksLikeExternalKnowledgeWork(text)) {
     modules = mergeUnique(modules, ["finance_learning_memory", "source_registry"]);
     tools = mergeUnique(tools, [
       "finance_article_source_collection_preflight",
       "finance_article_source_registry_record",
       "finance_learning_retrieval_review",
     ]);
-    missingData = mergeUnique(missingData, ["source_url_or_local_source_path"]);
+    missingData = mergeUnique(missingData, [
+      "prior_art_search_terms_or_existing_artifact_paths",
+      "existing_contract_eval_skill_or_receipt_candidates",
+      "reuse_extend_or_new_decision",
+      "source_url_or_local_source_path",
+    ]);
+    riskBoundaries = mergeUnique(riskBoundaries, [
+      "do_not_create_parallel_protocol_before_prior_art_check",
+      "prefer_reuse_over_duplicate_pipeline",
+    ]);
+  }
+  if (/(github|hugging ?face|开源项目|skill|skills|workflow|工具)/iu.test(text)) {
+    modules = mergeUnique(modules, ["skill_pattern_distillation", "agent_workflow_memory"]);
+    tools = mergeUnique(tools, ["skill_harvester", "skill_isolation_review"]);
+    missingData = mergeUnique(missingData, [
+      "license_and_write_scope_review",
+      "prompt_injection_and_security_review",
+    ]);
   }
   if (/(google scholar|ssrn|nber|全覆盖|读过哪些|coverage|actual read|实际读过)/iu.test(text)) {
     modules = mergeUnique(modules, ["causal_map"]);

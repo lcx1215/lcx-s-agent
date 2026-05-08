@@ -43,6 +43,14 @@ const pending = buildLarkBrainDistillationCandidate({
     "先把 NVDA 基本面、AI capex、估值压力和科技仓组合风险连接起来，再用 review panel 检查缺失证据。",
   createdAt: "2026-05-04T00:00:00.000Z",
 });
+const externalPending = buildLarkBrainDistillationCandidate({
+  source: "lark_visible_reply",
+  userMessage:
+    "帮本地大脑学习一篇 GitHub 上的开源金融 agent 项目和论文，先看以前有没有类似 skill、eval、receipt 或 source registry 路径，再决定复用还是扩展。",
+  payload:
+    "这是外部知识和技能内化任务：先查已有工程，再做 source registry、skill harvester、license 和安全审计，不能直接说已经学会。",
+  createdAt: "2026-05-04T00:00:00.000Z",
+});
 const secret = buildLarkBrainDistillationCandidate({
   source: "api_reply",
   payload: "api_key=sk-this-secret-like-value-must-not-enter-training-123456",
@@ -55,7 +63,7 @@ const binary = buildLarkBrainDistillationCandidate({
 });
 const artifact = buildLarkBrainDistillationCandidateArtifact({
   generatedAt: "2026-05-04T00:00:00.000Z",
-  candidates: [accepted, pending, secret, binary],
+  candidates: [accepted, pending, externalPending, secret, binary],
 });
 await fs.writeFile(
   path.join(candidateDir, "teacher-reviewed-scholar.json"),
@@ -86,9 +94,46 @@ const reviewRun = await execFileAsync(process.execPath, [
 ]);
 const reviewManifest = JSON.parse(reviewRun.stdout) as {
   counts?: { accepted?: number; rejected?: number; discarded?: number };
+  reviewPath?: string;
 };
-assert(reviewManifest.counts?.accepted === 1, "review accepted pending candidate once");
+assert(reviewManifest.counts?.accepted === 2, "review accepted pending candidates");
 assert(reviewManifest.counts?.discarded === 2, "review counted discarded unsafe candidates");
+assert(reviewManifest.reviewPath, "review path returned");
+const reviewArtifact = JSON.parse(
+  await fs.readFile(path.join(workspace, reviewManifest.reviewPath), "utf8"),
+) as {
+  acceptedCandidates?: Array<{
+    proposedMissingData?: string[];
+    proposedRiskBoundaries?: string[];
+    proposedRequiredTools?: string[];
+  }>;
+};
+const externalReviewed = reviewArtifact.acceptedCandidates?.find((candidate) =>
+  candidate.proposedRequiredTools?.includes("skill_harvester"),
+);
+assert(externalReviewed, "external skill/source candidate reviewed");
+assert(
+  externalReviewed.proposedMissingData?.includes(
+    "prior_art_search_terms_or_existing_artifact_paths",
+  ),
+  "review preserves prior-art search gate",
+);
+assert(
+  externalReviewed.proposedMissingData?.includes(
+    "existing_contract_eval_skill_or_receipt_candidates",
+  ),
+  "review preserves existing mechanism candidates",
+);
+assert(
+  externalReviewed.proposedMissingData?.includes("reuse_extend_or_new_decision"),
+  "review preserves reuse/extend/new decision",
+);
+assert(
+  externalReviewed.proposedRiskBoundaries?.includes(
+    "do_not_create_parallel_protocol_before_prior_art_check",
+  ),
+  "review blocks parallel protocol before prior-art check",
+);
 
 const { stdout } = await execFileAsync(process.execPath, [
   "--import",
@@ -106,10 +151,7 @@ assert(
   sourceKinds?.brain_distillation_candidate_review === 1,
   "brain candidate entered dataset once",
 );
-assert(
-  sourceKinds?.brain_distillation_review === 1,
-  "reviewed brain candidate entered dataset once",
-);
+assert(sourceKinds?.brain_distillation_review === 2, "reviewed brain candidates entered dataset");
 
 const splitText = (
   await Promise.all(
@@ -127,13 +169,17 @@ assert(
   splitText.includes("actual_reading_scope"),
   "dataset preserves actual reading scope contract",
 );
+assert(
+  splitText.includes("prior_art_search_terms_or_existing_artifact_paths"),
+  "dataset preserves prior-art reuse gate",
+);
 
 const result = {
   ok: true,
   boundary: "brain_distillation_candidate",
   workspace,
   outDir,
-  acceptedCandidates: 2,
+  acceptedCandidates: 3,
   discardedCandidates: 2,
   languageRoutingTouched: false,
   liveTouched: false,

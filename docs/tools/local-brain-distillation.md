@@ -8,6 +8,13 @@ For fast operator recovery when chat context is missing, start with:
 ops/local-brain/README.md
 ```
 
+That runbook is the current operational source of truth for active training
+commands, adapter selection, MiniMax teacher-sidecar settings, load limits, and
+log paths. Treat this page as the conceptual map. If a command or adapter path
+here disagrees with `ops/local-brain/README.md` or
+`scripts/dev/lcx-system-doctor.ts --json`, follow the runbook and current CLI
+evidence.
+
 ## Role
 
 The local model learns only a planning packet:
@@ -40,20 +47,12 @@ The main agent can use that helper as a draft planner, then still require API
 review, evidence checks, and normal LCX risk boundaries before replying.
 
 The prompt includes the current allowed module taxonomy so the auxiliary model
-learns to route work into concrete LCX modules instead of inventing broad labels:
+learns to route work into concrete LCX modules instead of inventing broad labels.
+Do not duplicate the taxonomy in this doc; the source of truth is:
 
-- `macro_rates_inflation`
-- `credit_liquidity`
-- `etf_regime`
-- `company_fundamentals_value`
-- `quant_math`
-- `portfolio_risk_gates`
-- `causal_map`
-- `finance_learning_memory`
-- `source_registry`
-- `review_panel`
-- `control_room_summary`
-- `ops_audit`
+```bash
+sed -n '1,140p' scripts/dev/local-brain-taxonomy.ts
+```
 
 The prompt also carries hard planning hints:
 
@@ -62,14 +61,21 @@ The prompt also carries hard planning hints:
 - missing portfolio math inputs means `position_weights_and_return_series`
 - company risk that can affect a portfolio or ETF sleeve must include
   `portfolio_risk_gates`
+- external papers, open-source projects, skills, evals, receipts, and workflows
+  must first check for prior similar repo or skill work before creating a new
+  path
 
 ## Current Recommended Base Model
 
-Use a small Apple Silicon friendly model first:
+Current recurring local training should use the small Apple Silicon friendly
+model:
 
 - `Qwen/Qwen3-0.6B`
 
-Reason: this machine has 8 GB memory. A 0.6B model is the right first target for MLX LoRA. Larger 4B or 7B models should wait until the dataset and evaluation loop are clean.
+Reason: this machine has 8 GB memory. A Qwen3 1.7B pilot was mechanism-valid but
+overloaded the machine, so it should stay a future shadow/bootstrap path for
+stronger hardware. Do not switch the recurring guard to 1.7B, 4B, 7B, or larger
+models unless the runbook and current machine constraints are updated first.
 
 ## Build Dataset
 
@@ -186,6 +192,11 @@ The resulting artifacts are still review artifacts with
 local brain dataset; they do not promote language-routing families and do not
 prove live Lark behavior.
 
+For normal recurring training, prefer the medium guard command in
+`ops/local-brain/README.md`. That guard runs MiniMax teacher generation as a
+sidecar so MiniMax quota is still used while local Qwen training or eval is slow,
+and it enforces load limits before starting MLX LoRA work.
+
 ## Train First LoRA
 
 Install MLX-LM in an isolated local environment, not in repo dependencies:
@@ -254,34 +265,20 @@ shape but collapse the actual work plan into a generic `finance_learning` or
 `company_fundamentals_value`, and `portfolio_risk_gates`; it also needs to keep
 ambiguous repeat requests out of old Lark context.
 
-Current local accepted adapter:
+Current adapter selection is intentionally dynamic. Do not promote or copy a
+static adapter path from this page. Use the runbook or system doctor:
 
-```text
-~/.openclaw/local-brain-trainer/adapters/thought-flow-v1-qwen3-0.6b-taxonomy-v3/
+```bash
+node --import tsx scripts/dev/lcx-system-doctor.ts --json
+node --import tsx scripts/dev/minimax-brain-training-guard.ts \
+  --resolve-current-adapter \
+  --model Qwen/Qwen3-0.6B \
+  --log /Users/liuchengxu/.openclaw/workspace/logs/minimax-brain-training-guard-medium.jsonl
 ```
 
-Current benchmark snapshot:
-
-- bare `Qwen/Qwen3-0.6B`: 0 / 7 strong planning cases
-- `taxonomy-v3`: 5 / 7 strong planning cases
-- `taxonomy-v4`: 4 / 7 strong planning cases
-- `synonym-v5`: 1 / 7 strong planning cases after expanding language
-  synonym seeds. Rejected because it learned the broader wording but drifted on
-  strict planning contracts such as `source_registry`, `causal_map`,
-  `position_weights_and_return_series`, and stable old-context rejection.
-- `teacher-v6`: 1 / 7 after adding a reviewed teacher batch and training 30
-  iterations at `6e-6`. Rejected because it overfit noisy planning language,
-  duplicated boundaries, and reintroduced dirty old-context concepts.
-- `teacher-v7`: 0 / 7 after oversampling reviewed brain cases and training 16
-  iterations at `2e-6`. Rejected because it frequently emitted prose or invalid
-  JSON, confused missing-data keys, and failed ambiguous-repeat isolation.
-- `teacher-v7` plus hardened planner contracts: 7 / 7 strong planning cases.
-  This is accepted only as the runtime pattern "model draft plus contract
-  repair"; the raw adapter is still rejected as a standalone planner.
-
-Keep `taxonomy-v3` as the selected local helper until a newer adapter beats it
-on the strong eval. Newer training runs are candidates, not automatic
-promotions.
+Newer training runs are candidates, not automatic promotions. Promotion depends
+on eval evidence, model-specific adapter prefix selection, and the latest-passing
+or best-evidence fallback rules documented in `ops/local-brain/README.md`.
 
 Operational fallback: `local-brain-plan.ts` applies hard contract overlays for
 known high-risk families such as ambiguous repeat/reset, external source missing

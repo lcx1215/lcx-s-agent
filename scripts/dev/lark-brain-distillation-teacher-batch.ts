@@ -174,11 +174,19 @@ const CASES: TeacherCase[] = [
       ...REVIEW_TOOLS,
     ],
     missingData: [
+      "prior_art_search_terms_or_existing_artifact_paths",
+      "existing_contract_eval_skill_or_receipt_candidates",
+      "reuse_extend_or_new_decision",
       "source_url_or_local_source_path",
       "actual_reading_scope",
       "source_coverage_limits",
     ],
-    riskBoundaries: [...RESEARCH_BOUNDARIES, "do_not_claim_exhaustive_coverage"],
+    riskBoundaries: [
+      ...RESEARCH_BOUNDARIES,
+      "do_not_create_parallel_protocol_before_prior_art_check",
+      "prefer_reuse_over_duplicate_pipeline",
+      "do_not_claim_exhaustive_coverage",
+    ],
     nextStep:
       "collect_or_verify_source_list_then_report_actual_reading_scope_before_any_learning_claim",
     reason: "teaches coverage honesty for broad research requests",
