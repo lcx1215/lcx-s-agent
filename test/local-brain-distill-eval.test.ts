@@ -5,6 +5,20 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("local-brain-distill-eval", () => {
+  it("supports current adapter resolution instead of requiring static adapter paths", async () => {
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(
+        path.join(path.resolve(__dirname, ".."), "scripts/dev/local-brain-distill-eval.ts"),
+        "utf8",
+      ),
+    );
+
+    expect(source).toContain("--adapter latest-passing");
+    expect(source).toContain("--resolve-current-adapter");
+    expect(source).toContain("--bootstrap-if-missing");
+    expect(source).toContain("adapterSelectionStatus");
+  });
+
   it("covers broad finance module taxonomy beyond the old core buckets", () => {
     const result = spawnSync(
       process.execPath,

@@ -241,7 +241,7 @@ Run the local acceptance probe:
 ```bash
 node --import tsx scripts/dev/local-brain-distill-eval.ts \
   --model Qwen/Qwen3-0.6B \
-  --adapter ~/.openclaw/local-brain-trainer/adapters/thought-flow-v1-qwen3-0.6b \
+  --adapter latest-passing \
   --json
 ```
 
@@ -252,11 +252,15 @@ completion:
 ```bash
 node --import tsx scripts/dev/local-brain-distill-eval.ts \
   --model Qwen/Qwen3-0.6B \
-  --adapter ~/.openclaw/local-brain-trainer/adapters/thought-flow-v1-qwen3-0.6b \
+  --adapter latest-passing \
   --hardened \
   --progress \
   --json
 ```
+
+The eval output reports whether `latest-passing` resolved to a strict
+promotion-ready adapter or only to a best-evidence training seed. Do not call a
+best-effort seed promotion-ready.
 
 The probe runs multiple cases. It must fail adapters that only learn the JSON
 shape but collapse the actual work plan into a generic `finance_learning` or

@@ -21,6 +21,13 @@ type CliOptions = {
   caseIds: string[];
 };
 
+type AdapterResolution = {
+  adapterPath?: string;
+  status?: "explicit" | "promotion_ready" | "best_effort_training_seed";
+  selectedAdapter?: string;
+  trainingSeedAdapter?: string;
+};
+
 const REQUIRED_KEYS = [
   "task_family",
   "primary_modules",
@@ -55,13 +62,23 @@ const DEFAULT_PYTHON = path.join(
   "python",
 );
 
+const DEFAULT_GUARD_LOG = path.join(
+  process.env.HOME ?? ".",
+  ".openclaw",
+  "workspace",
+  "logs",
+  "minimax-brain-training-guard-medium.jsonl",
+);
+
 function usage(): never {
   throw new Error(
     [
       "Usage: node --import tsx scripts/dev/local-brain-distill-eval.ts (--adapter PATH | --no-adapter) [--model MODEL] [--python BIN] [--json] [--summary-only] [--progress] [--timeout-ms N] [--case-id ID[,ID...]]",
+      "       node --import tsx scripts/dev/local-brain-distill-eval.ts --adapter latest-passing [--model MODEL] [--json] [--summary-only]",
       "       node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only [--json] [--summary-only] [--case-id ID[,ID...]]",
       "",
       "Runs one local inference acceptance check for the auxiliary thought-flow adapter.",
+      "Use --adapter latest-passing to resolve the current adapter through minimax-brain-training-guard; this may fall back to the best-evidence training seed and reports that status separately.",
       "Use --contract-only for a fast hardened contract check that does not start MLX.",
     ].join("\n"),
   );
@@ -73,6 +90,10 @@ function readValue(args: string[], index: number): string {
     usage();
   }
   return value;
+}
+
+function isAdapterSelector(value: string): boolean {
+  return value === "latest-passing" || value === "current";
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -140,7 +161,7 @@ function parseArgs(args: string[]): CliOptions {
   if (!options.contractOnly && options.noAdapter && options.adapterPath) {
     usage();
   }
-  if (options.adapterPath) {
+  if (options.adapterPath && !isAdapterSelector(options.adapterPath)) {
     options.adapterPath = path.resolve(options.adapterPath);
   }
   return options;
@@ -1923,6 +1944,91 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
   });
 }
 
+function parseJsonFromOutput(raw: string): Record<string, unknown> {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    throw new Error(`no JSON object found in command output: ${raw.slice(0, 240)}`);
+  }
+  return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+}
+
+function runResolveCurrentAdapter(options: CliOptions): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/minimax-brain-training-guard.ts",
+        "--resolve-current-adapter",
+        "--bootstrap-if-missing",
+        "--model",
+        options.model,
+        "--log",
+        DEFAULT_GUARD_LOG,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`current adapter resolver exited ${code}\n${stderr}`));
+        return;
+      }
+      try {
+        resolve(parseJsonFromOutput(stdout));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+async function resolveEvalAdapter(options: CliOptions): Promise<AdapterResolution> {
+  if (options.contractOnly || options.noAdapter || !options.adapterPath) {
+    return { adapterPath: options.adapterPath };
+  }
+  if (!isAdapterSelector(options.adapterPath)) {
+    return { adapterPath: options.adapterPath, status: "explicit" };
+  }
+  const resolved = await runResolveCurrentAdapter(options);
+  const selectedAdapter =
+    typeof resolved.selectedAdapter === "string" && resolved.selectedAdapter
+      ? resolved.selectedAdapter
+      : undefined;
+  const trainingSeedAdapter =
+    typeof resolved.trainingSeedAdapter === "string" && resolved.trainingSeedAdapter
+      ? resolved.trainingSeedAdapter
+      : undefined;
+  if (selectedAdapter) {
+    return {
+      adapterPath: selectedAdapter,
+      status: "promotion_ready",
+      selectedAdapter,
+      trainingSeedAdapter,
+    };
+  }
+  if (trainingSeedAdapter) {
+    return {
+      adapterPath: trainingSeedAdapter,
+      status: "best_effort_training_seed",
+      trainingSeedAdapter,
+    };
+  }
+  throw new Error("current adapter resolver returned no selectedAdapter or trainingSeedAdapter");
+}
+
 function extractJson(raw: string): Record<string, unknown> {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
@@ -2013,6 +2119,11 @@ function parseFailureAcceptance(error: unknown): ReturnType<typeof evaluate> {
 }
 
 const options = parseArgs(process.argv.slice(2));
+const adapterResolution = await resolveEvalAdapter(options);
+const resolvedOptions: CliOptions = {
+  ...options,
+  adapterPath: adapterResolution.adapterPath,
+};
 const { evalCases, autoIncludedPrerequisiteCaseIds } = expandEvalCasesWithPrerequisites(
   options.caseIds,
 );
@@ -2035,8 +2146,10 @@ for (const evalCase of evalCases) {
     process.stderr.write(`[local-brain-eval] start ${evalCase.id}\n`);
   }
   try {
-    const rawOutput = options.contractOnly ? "" : await runGenerate(options, evalCase);
-    const rawParsed = options.contractOnly ? {} : extractJson(rawOutput);
+    const rawOutput = resolvedOptions.contractOnly
+      ? ""
+      : await runGenerate(resolvedOptions, evalCase);
+    const rawParsed = resolvedOptions.contractOnly ? {} : extractJson(rawOutput);
     const parsed = options.hardened
       ? hardenLocalBrainPlanForAsk(rawParsed, {
           ask: evalCase.userAsk,
@@ -2086,7 +2199,10 @@ const result = {
   ok: failedCases.length === 0,
   boundary: "local_auxiliary_thought_flow_only",
   model: options.model,
-  adapterPath: options.adapterPath ?? null,
+  adapterPath: resolvedOptions.adapterPath ?? null,
+  adapterSelectionStatus: adapterResolution.status,
+  selectedAdapter: adapterResolution.selectedAdapter,
+  trainingSeedAdapter: adapterResolution.trainingSeedAdapter,
   noAdapter: options.noAdapter,
   hardened: options.hardened,
   contractOnly: options.contractOnly,

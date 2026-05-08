@@ -167,8 +167,10 @@ pnpm vitest run extensions/feishu/src/surfaces.test.ts
 本地大脑 smoke / eval：
 
 ```bash
+node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/local-brain-distill-smoke.ts --json
-node --import tsx scripts/dev/local-brain-distill-eval.ts --summary-only --json
+node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only --summary-only --json
+node --import tsx scripts/dev/local-brain-distill-eval.ts --adapter latest-passing --hardened --summary-only --json
 ```
 
 MiniMax quota 持续消耗和训练样本沉淀：

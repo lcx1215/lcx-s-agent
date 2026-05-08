@@ -243,13 +243,14 @@ Run hardened eval against the latest selected adapter:
 ```bash
 node --import tsx scripts/dev/local-brain-distill-eval.ts \
   --model Qwen/Qwen3-0.6B \
-  --adapter /Users/liuchengxu/.openclaw/local-brain-trainer/adapters/thought-flow-v1-qwen3-0.6b-minimax-guard-2026-05-05T16-27-05-938Z-r6 \
+  --adapter latest-passing \
   --hardened \
   --summary-only \
   --json
 ```
 
-If the adapter path is stale, run the resolve-current-adapter command first and replace the path.
+The eval result reports `adapterSelectionStatus`. Treat
+`best_effort_training_seed` as a dev training seed, not as promotion-ready.
 
 Promotion is acceptable only when:
 
