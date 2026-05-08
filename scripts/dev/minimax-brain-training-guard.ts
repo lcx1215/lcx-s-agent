@@ -28,6 +28,11 @@ type CliOptions = {
   resolveCurrentAdapterOnly: boolean;
   workspaceDir: string;
   dataDir: string;
+  trainSliceDir: string;
+  trainSliceMaxReviewExamples: number;
+  trainSliceCuratedRepeat: number;
+  trainSliceNonReviewRepeat: number;
+  noTrainSlice: boolean;
   pythonBin: string;
   currentAdapter: string;
   adapterPrefix: string;
@@ -79,6 +84,9 @@ const DEFAULT_TRAIN_LOAD_MAX = 12;
 const MIN_PROMOTION_EVAL_CASES = 50;
 const MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES = 285;
 const TRAIN_SKIP_BACKOFF_MS = 5 * 60_000;
+const DEFAULT_TRAIN_SLICE_MAX_REVIEW_EXAMPLES = 1024;
+const DEFAULT_TRAIN_SLICE_CURATED_REPEAT = 6;
+const DEFAULT_TRAIN_SLICE_NON_REVIEW_REPEAT = 2;
 
 function usage(): never {
   throw new Error(
@@ -100,6 +108,11 @@ function usage(): never {
       "  --train-every N         train every N rounds, default 3",
       "  --eval-every N          eval current/new adapter every N rounds, default 1",
       "  --train-iters N         MLX LoRA iters, default 40",
+      "  --train-slice-dir DIR   bounded balanced MLX train data dir, default <data>-train-slice",
+      "  --train-slice-max-review-examples N  review examples kept in local train slice, default 1024",
+      "  --train-slice-curated-repeat N       curated seed repeat in train slice, default 6",
+      "  --train-slice-non-review-repeat N    non-review receipt repeat in train slice, default 2",
+      "  --no-train-slice       train directly on full dataset; not recommended for Qwen3-0.6B",
       "  --load-max N            skip the guard when 1m system load is above N, default 100",
       "  --train-load-max N      skip local MLX LoRA train when 1m system load is above N, default 12",
       "  --bootstrap-if-missing  train a first adapter from the base model when no matching adapter exists",
@@ -149,6 +162,7 @@ function readPositiveInteger(value: string): number {
 
 function parseArgs(args: string[]): CliOptions {
   let adapterPrefixProvided = false;
+  let trainSliceDirProvided = false;
   const options: CliOptions = {
     durationMinutes: MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES,
     batchLimit: 20,
@@ -174,6 +188,11 @@ function parseArgs(args: string[]): CliOptions {
     resolveCurrentAdapterOnly: false,
     workspaceDir: path.join(HOME, ".openclaw", "workspace"),
     dataDir: DEFAULT_DATA_DIR,
+    trainSliceDir: `${DEFAULT_DATA_DIR}-train-slice`,
+    trainSliceMaxReviewExamples: DEFAULT_TRAIN_SLICE_MAX_REVIEW_EXAMPLES,
+    trainSliceCuratedRepeat: DEFAULT_TRAIN_SLICE_CURATED_REPEAT,
+    trainSliceNonReviewRepeat: DEFAULT_TRAIN_SLICE_NON_REVIEW_REPEAT,
+    noTrainSlice: false,
     pythonBin: path.join(TRAINER_ROOT, ".venv", "bin", "python"),
     currentAdapter: "latest-passing",
     adapterPrefix: defaultAdapterPrefixForModel(DEFAULT_MODEL),
@@ -227,6 +246,21 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--train-iters") {
       options.trainIters = readPositiveInteger(readValue(args, index));
       index += 1;
+    } else if (arg === "--train-slice-dir") {
+      options.trainSliceDir = path.resolve(readValue(args, index));
+      trainSliceDirProvided = true;
+      index += 1;
+    } else if (arg === "--train-slice-max-review-examples") {
+      options.trainSliceMaxReviewExamples = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--train-slice-curated-repeat") {
+      options.trainSliceCuratedRepeat = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--train-slice-non-review-repeat") {
+      options.trainSliceNonReviewRepeat = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--no-train-slice") {
+      options.noTrainSlice = true;
     } else if (arg === "--load-max") {
       options.loadMax = readPositiveInteger(readValue(args, index));
       index += 1;
@@ -249,6 +283,9 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--data") {
       options.dataDir = path.resolve(readValue(args, index));
+      if (!trainSliceDirProvided) {
+        options.trainSliceDir = `${options.dataDir}-train-slice`;
+      }
       index += 1;
     } else if (arg === "--python") {
       options.pythonBin = path.resolve(readValue(args, index));
@@ -278,6 +315,9 @@ function parseArgs(args: string[]): CliOptions {
   }
   if (!adapterPrefixProvided) {
     options.adapterPrefix = defaultAdapterPrefixForModel(options.model);
+  }
+  if (!trainSliceDirProvided) {
+    options.trainSliceDir = `${options.dataDir}-train-slice`;
   }
   options.requestedDurationMinutes = options.durationMinutes;
   if (shouldUpgradeToMediumMiniMaxWindow(options)) {
@@ -1057,6 +1097,41 @@ async function runTeacherStep(options: CliOptions, round: number): Promise<unkno
   ]);
 }
 
+async function buildTrainSlice(options: CliOptions, round: number): Promise<string> {
+  if (options.noTrainSlice) {
+    await appendLog(options.logPath, {
+      event: "train_slice_skipped",
+      round,
+      reason: "no_train_slice",
+      dataDir: options.dataDir,
+      liveTouched: false,
+      providerConfigTouched: false,
+    });
+    return options.dataDir;
+  }
+  const result = await runJsonStep(options, round, "train_slice", "node", [
+    "--import",
+    "tsx",
+    "scripts/dev/local-brain-distill-train-slice.ts",
+    "--data",
+    options.dataDir,
+    "--out",
+    options.trainSliceDir,
+    "--max-review-examples",
+    String(options.trainSliceMaxReviewExamples),
+    "--curated-repeat",
+    String(options.trainSliceCuratedRepeat),
+    "--non-review-repeat",
+    String(options.trainSliceNonReviewRepeat),
+    "--json",
+  ]);
+  const payload = result as { outDir?: unknown };
+  if (typeof payload.outDir !== "string" || !payload.outDir) {
+    throw new Error("train slice did not return outDir");
+  }
+  return payload.outDir;
+}
+
 async function runTrain(
   options: CliOptions,
   round: number,
@@ -1073,6 +1148,7 @@ async function runTrain(
   ) {
     return false;
   }
+  const trainDataDir = await buildTrainSlice(options, round);
   process.stdout.write(`\n[minimax-guard] round=${round} step=train adapter=${adapterPath}\n`);
   await fs.rm(adapterPath, { recursive: true, force: true });
   await fs.mkdir(path.dirname(adapterPath), { recursive: true });
@@ -1087,7 +1163,7 @@ async function runTrain(
     options.model,
     "--train",
     "--data",
-    options.dataDir,
+    trainDataDir,
     "--adapter-path",
     adapterPath,
     ...(resumeAdapterPath
@@ -1111,6 +1187,7 @@ async function runTrain(
     round,
     name: "train",
     adapterPath,
+    trainDataDir,
     durationMs: result.durationMs,
   });
   return true;

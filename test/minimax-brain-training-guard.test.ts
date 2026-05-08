@@ -145,6 +145,19 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("local_mlx_train_resource_guard_skip");
   });
 
+  it("trains local Qwen from a bounded balanced slice instead of the full noisy corpus", async () => {
+    const source = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("local-brain-distill-train-slice.ts");
+    expect(source).toContain('"train_slice",');
+    expect(source).toContain("trainSliceMaxReviewExamples");
+    expect(source).toContain("trainDataDir");
+    expect(source).toContain("--no-train-slice");
+  });
+
   it("continues local Qwen training from an existing adapter instead of restarting from base", async () => {
     const source = await fs.readFile(
       path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
