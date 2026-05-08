@@ -47,11 +47,11 @@ describe("minimax quota brain saturator preview", () => {
         "minimax-plus-brain",
         "--no-failure-focus",
         "--max-calls",
-        "3",
+        "4",
         "--duration-minutes",
         "1",
         "--preview-prompts",
-        "3",
+        "4",
       ],
       {
         cwd: path.resolve(import.meta.dirname, ".."),
@@ -72,6 +72,9 @@ describe("minimax quota brain saturator preview", () => {
     const promptText = payload.preview?.prompts.map((prompt) => prompt.userMessage).join("\n");
 
     expect(payload.preview?.failureFocusPrompts).toBe(0);
+    expect(promptText).toContain("短口语表层请求，隐藏复杂工作流");
+    expect(promptText).toContain("abstracted failure family");
+    expect(promptText).toContain("regression proof");
     expect(promptText).toContain("分析最近股市");
     expect(promptText).toContain("关注");
     expect(promptText).toContain("持仓多少");

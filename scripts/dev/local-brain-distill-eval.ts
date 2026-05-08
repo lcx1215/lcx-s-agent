@@ -403,6 +403,37 @@ const EVAL_CASES: EvalCase[] = [
     ],
   },
   {
+    id: "plain_language_hidden_complexity_intake",
+    userAsk:
+      "如果我只说一句很短的话，比如“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”或“Lark 回复看不懂”，不要按字面短答。请先抽象成问题族：original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof，然后再决定具体模块和人话总结。",
+    sourceSummary:
+      "generic plain-language hidden-complexity intake requiring abstraction transfer before specialized finance, learning, ops, or visible-reply handling.",
+    requiredModules: [
+      "agent_workflow_memory",
+      "eval_harness_design",
+      "source_registry",
+      "finance_learning_memory",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 5,
+    requiredMissingData: [
+      "original_example",
+      "abstracted_failure_family",
+      "adjacent_non_identical_scenario",
+      "shared_contract",
+      "regression_proof",
+      "hidden_workflow_scope",
+      "user_visible_summary_contract",
+    ],
+    requiredRiskBoundaries: [
+      "do_not_answer_literal_short_phrase_only",
+      "do_not_stop_at_original_example",
+      "proof_required_before_claiming_transfer",
+      "no_raw_json_visible_reply",
+    ],
+  },
+  {
     id: "single_company_fundamental_risk",
     userAsk:
       "只研究 NVDA 基本面风险：AI capex、收入质量、估值、客户集中度、对科技仓的传导，不要给买卖建议。",
@@ -1987,10 +2018,19 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
     ["single_company_fundamental_risk", "portfolio_math_without_guessing"],
   ],
   ["commodity_fx_inflation_inventory_portfolio_loop", ["short_lark_commodity_learning_intake"]],
-  ["plain_single_stock_position_sizing_preflight", ["plain_recent_stock_market_brief_preflight"]],
+  ["short_lark_commodity_learning_intake", ["plain_language_hidden_complexity_intake"]],
+  ["plain_recent_stock_market_brief_preflight", ["plain_language_hidden_complexity_intake"]],
+  [
+    "plain_single_stock_position_sizing_preflight",
+    ["plain_language_hidden_complexity_intake", "plain_recent_stock_market_brief_preflight"],
+  ],
   [
     "plain_buy_hold_research_boundary",
-    ["plain_recent_stock_market_brief_preflight", "plain_single_stock_position_sizing_preflight"],
+    [
+      "plain_language_hidden_complexity_intake",
+      "plain_recent_stock_market_brief_preflight",
+      "plain_single_stock_position_sizing_preflight",
+    ],
   ],
   ["china_property_credit_a_share_us_tech_spillover", ["cross_market_us_a_index_crypto_analysis"]],
   ["paper_claim_conflicts_with_local_memory_rule", ["paper_learning_internalization_absorption"]],
@@ -2003,6 +2043,7 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
     "all_domain_finance_research_loop",
     [
       "broad_finance_module_taxonomy_coverage",
+      "plain_language_hidden_complexity_intake",
       "portfolio_mixed_q_t_nvda",
       "portfolio_math_without_guessing",
       "plain_recent_stock_market_brief_preflight",
@@ -2018,7 +2059,11 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
   ],
   [
     "abstraction_transfer_repair_protocol",
-    ["short_lark_commodity_learning_intake", "lark_context_pollution_audit"],
+    [
+      "plain_language_hidden_complexity_intake",
+      "short_lark_commodity_learning_intake",
+      "lark_context_pollution_audit",
+    ],
   ],
 ]);
 

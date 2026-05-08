@@ -78,6 +78,13 @@ const DEFAULT_GUARD_LOG = path.join(
 
 const TASK_TEMPLATES = [
   {
+    family: "plain_language_hidden_complexity_intake",
+    message:
+      "训练本地大脑识别“短口语表层请求，隐藏复杂工作流”这一类问题：用户可能只说“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”或“Lark 回复看不懂”。不要按字面短答，要先写 original example、abstracted failure family、adjacent non-identical scenario、shared contract 和 regression proof，再拆范围、证据、模块、记忆、review panel 和人话总结。",
+    summary:
+      "generic plain-language hidden-complexity intake; turn short user examples into failure-family abstraction, adjacent transfer cases, shared contract, and regression proof before specialized handling.",
+  },
+  {
     family: "plain_recent_stock_market_brief",
     message:
       "用户只说“分析最近股市”或“最近市场怎么看”。训练本地大脑不要泛泛而谈：先确认市场范围和时间窗口，再拆美股/A股/全球指数、利率、美元/人民币流动性、信用、市场宽度、行业轮动、ETF 资金流、关键公司财报、技术 timing、情绪/新闻验证、数据时间戳、反方证据和风险门；没有实时来源就标未验证，只给 research-only 框架和下一步数据清单。",

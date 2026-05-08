@@ -386,6 +386,21 @@ function looksLikeLocalKnowledgeActivation(text: string): boolean {
   );
 }
 
+function looksLikePlainLanguageHiddenComplexityIntake(text: string): boolean {
+  const namesHiddenComplexity =
+    /(短口语|表层请求|隐藏复杂|很短的话|hidden[-_ ]?complexity|按字面短答|literal short|plain[- ]language).{0,120}(问题族|failure family|工作流|workflow|shared contract|共享契约|regression proof|回归证明|抽象|模块|review panel|人话总结|user[- ]visible)/iu.test(
+      text,
+    ) ||
+    /(问题族|failure family|工作流|workflow|shared contract|共享契约|regression proof|回归证明|抽象|模块|review panel|人话总结|user[- ]visible).{0,120}(短口语|表层请求|隐藏复杂|很短的话|hidden[-_ ]?complexity|按字面短答|literal short|plain[- ]language)/iu.test(
+      text,
+    );
+  const givesShortExamples =
+    /(分析最近股市|持仓多少|学习大宗商品|读这篇论文|lark 回复|回复看不懂|recent market|position sizing|learn commodities|read this paper)/iu.test(
+      text,
+    );
+  return namesHiddenComplexity && givesShortExamples;
+}
+
 function looksLikePlainRecentMarketBrief(text: string): boolean {
   return (
     !looksLikeUnverifiedLiveMarketData(text) &&
@@ -683,6 +698,58 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
+  if (looksLikePlainLanguageHiddenComplexityIntake(text)) {
+    return {
+      ...safe,
+      task_family: "plain_language_hidden_complexity_intake",
+      primary_modules: [
+        "agent_workflow_memory",
+        "eval_harness_design",
+        "source_registry",
+        "finance_learning_memory",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["ops_audit", "causal_map", "portfolio_risk_gates"],
+      required_tools: [
+        "doctrine_consistency_doctor",
+        "local_brain_eval",
+        "source_registry_lookup",
+        "artifact_memory_recall",
+        "review_panel",
+        "l5_regression_batterer",
+      ],
+      missing_data: [
+        "original_example",
+        "abstracted_failure_family",
+        "adjacent_non_identical_scenario",
+        "shared_contract",
+        "regression_proof",
+        "hidden_workflow_scope",
+        "user_visible_summary_contract",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "do_not_answer_literal_short_phrase_only",
+        "do_not_stop_at_original_example",
+        "proof_required_before_claiming_transfer",
+        "no_raw_json_visible_reply",
+      ],
+      next_step:
+        "classify_short_utterance_as_hidden_complexity_family_then_prove_original_example_adjacent_scenario_shared_contract_and_regression_before_specialized_handling",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "literal_short_answer",
+        "single_phrase_patch_without_transfer",
+        "current_example_only_success",
+        "raw_internal_json_visible_reply",
+        "unverified_generalization_claim",
+      ],
+    };
+  }
+
   if (looksLikePlainRecentMarketBrief(text)) {
     return {
       ...safe,
@@ -925,13 +992,18 @@ export function hardenLocalBrainPlanForAsk(
         "shared_contract",
         "regression_proof",
         "simple_prerequisite_case",
+        "hidden_workflow_scope",
+        "user_visible_summary_contract",
       ],
       risk_boundaries: [
         "research_only",
         "no_execution_authority",
+        "evidence_required",
+        "do_not_answer_literal_short_phrase_only",
         "do_not_stop_at_original_example",
         "no_one_off_phrase_patch",
         "proof_required_before_claiming_transfer",
+        "no_raw_json_visible_reply",
         "no_protected_memory_write",
         "no_provider_config_change",
         "no_live_sender_change",

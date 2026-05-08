@@ -116,17 +116,22 @@ describe("local-brain-distill-eval", () => {
       hierarchy: {
         requestedCaseIds: string[];
         autoIncludedPrerequisiteCaseIds: string[];
+        registeredPrerequisiteRuleCount: number;
       };
       cases: Array<{ id: string; acceptance: { ok: boolean } }>;
     };
     expect(payload.ok).toBe(true);
-    expect(payload.summary).toMatchObject({ passed: 2, total: 2, promotionReady: true });
+    expect(payload.summary).toMatchObject({ passed: 3, total: 3, promotionReady: true });
     expect(payload.hierarchy).toMatchObject({
       requestedCaseIds: ["commodity_fx_inflation_inventory_portfolio_loop"],
-      autoIncludedPrerequisiteCaseIds: ["short_lark_commodity_learning_intake"],
+      autoIncludedPrerequisiteCaseIds: [
+        "plain_language_hidden_complexity_intake",
+        "short_lark_commodity_learning_intake",
+      ],
     });
     expect(payload.hierarchy.registeredPrerequisiteRuleCount).toBeGreaterThan(10);
     expect(payload.cases.map((entry) => entry.id)).toEqual([
+      "plain_language_hidden_complexity_intake",
       "short_lark_commodity_learning_intake",
       "commodity_fx_inflation_inventory_portfolio_loop",
     ]);
@@ -214,6 +219,7 @@ describe("local-brain-distill-eval", () => {
     expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
       expect.arrayContaining([
         "broad_finance_module_taxonomy_coverage",
+        "plain_language_hidden_complexity_intake",
         "portfolio_mixed_q_t_nvda",
         "portfolio_math_without_guessing",
         "value_investing_fundamental_core",
@@ -261,11 +267,12 @@ describe("local-brain-distill-eval", () => {
     expect(payload.hierarchy.requestedCaseIds).toEqual(["plain_buy_hold_research_boundary"]);
     expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
       expect.arrayContaining([
+        "plain_language_hidden_complexity_intake",
         "plain_recent_stock_market_brief_preflight",
         "plain_single_stock_position_sizing_preflight",
       ]),
     );
-    expect(payload.summary).toMatchObject({ passed: 3, total: 3, promotionReady: true });
+    expect(payload.summary).toMatchObject({ passed: 4, total: 4, promotionReady: true });
   });
 
   it("gates external knowledge internalization behind paper and skill prerequisites", () => {
@@ -344,6 +351,7 @@ describe("local-brain-distill-eval", () => {
     expect(payload.hierarchy.requestedCaseIds).toEqual(["abstraction_transfer_repair_protocol"]);
     expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
       expect.arrayContaining([
+        "plain_language_hidden_complexity_intake",
         "short_lark_commodity_learning_intake",
         "lark_context_pollution_audit",
       ]),

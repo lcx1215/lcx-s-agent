@@ -122,10 +122,11 @@ LCX Agent 不把 baseline hardening 理解成“只把当前触发样例补过�
 5. 如果缺口横跨语言入口、本地大脑、永久记忆、Lark 回复、eval 或 receipt，就按一条完整回路修，不把问题拆成互相推诿的小补丁。
 6. 用户给的例子只是问题族入口，不是修复边界。例如“大宗商品”要抽象成简单前置题、复杂题、相邻非同类题都能复用的通用规则。
 7. 抽象迁移必须留下五段式证据：`original example`、`abstracted failure family`、`adjacent non-identical scenario`、`shared contract`、`regression proof`。
-8. 新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口之前，先查已有相似工程；优先复用、合并或扩展旧路径，确实要新建时说明旧路径为什么不够。
-9. 允许为了 L5 能力提升主动新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口。
-10. 大脑能力必须单调：难题会做，简单前置题必须更会做。复杂评测、训练 promotion 和学习 receipt 不能绕过对应的简单用户入口。
-11. 仍然禁止无关 provider、交易执行层、假 live-fixed、保护记忆覆盖，以及没有验证指标的炫技式扩张。
+8. 短口语不是短逻辑。像“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”“Lark 回复看不懂”这类表层很短的话，默认先抽象成 `plain-language hidden-complexity intake`：确认范围、证据、模块、记忆、审阅、人话总结和回归证明，再决定具体工作流。
+9. 新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口之前，先查已有相似工程；优先复用、合并或扩展旧路径，确实要新建时说明旧路径为什么不够。
+10. 允许为了 L5 能力提升主动新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口。
+11. 大脑能力必须单调：难题会做，简单前置题必须更会做。复杂评测、训练 promotion 和学习 receipt 不能绕过对应的简单用户入口。
+12. 仍然禁止无关 provider、交易执行层、假 live-fixed、保护记忆覆盖，以及没有验证指标的炫技式扩张。
 
 简短说：范围要有边界，但不能小到只修症状。该收敛问题族时，就一次收干净；该升级系统能力时，就用测试、receipt 和真实回路证明它真的变强。
 
