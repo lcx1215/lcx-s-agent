@@ -41,6 +41,42 @@ describe("local-brain-distill-eval", () => {
     });
   });
 
+  it("keeps local-memory activation promotion-ready in contract-only eval", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "local_memory_knowledge_activation",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary).toMatchObject({ passed: 2, total: 2, promotionReady: true });
+    expect(payload.hierarchy).toMatchObject({
+      requestedCaseIds: ["local_memory_knowledge_activation"],
+      autoIncludedPrerequisiteCaseIds: ["portfolio_mixed_q_t_nvda"],
+    });
+  });
+
   it("runs simple prerequisite cases before complex commodity evals", () => {
     const result = spawnSync(
       process.execPath,

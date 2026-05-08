@@ -663,6 +663,7 @@ export function hardenLocalBrainPlanForAsk(
         "review_panel",
       ],
       missing_data: [
+        "memory_recall_scope_or_relevant_receipts",
         "fresh_market_data_snapshot",
         "source_timestamp_and_vendor",
         "position_weights_and_return_series",
