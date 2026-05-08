@@ -465,6 +465,23 @@ function summarizeDatasetEvent(
   };
 }
 
+function summarizeTrainSliceEvent(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const result =
+    payload?.result && typeof payload.result === "object"
+      ? (payload.result as Record<string, unknown>)
+      : {};
+  return {
+    at: eventTime(payload),
+    sourceDataDir: result.sourceDataDir,
+    outDir: result.outDir,
+    policy: result.policy,
+    counts: result.counts,
+    notTouched: result.notTouched,
+  };
+}
+
 function summarizeTeacherEvent(
   payload: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
@@ -534,12 +551,12 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
       .map((entry) => ({
         pid: entry.pid,
         ppid: entry.ppid,
-        role: entry.command.includes("minimax-brain-training-guard")
-          ? "guard"
-          : entry.command.includes("minimax-quota-brain-saturator")
-            ? "saturator"
-            : entry.command.includes("minimax-brain-teacher-batch")
-              ? "teacher_batch"
+        role: entry.command.includes("minimax-quota-brain-saturator")
+          ? "saturator"
+          : entry.command.includes("minimax-brain-teacher-batch")
+            ? "teacher_batch"
+            : entry.command.includes("minimax-brain-training-guard")
+              ? "guard"
               : entry.command.includes("local-brain-distill-eval")
                 ? "local_brain_eval"
                 : entry.command.includes("mlx_lm")
@@ -550,6 +567,7 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
     const latestGuardStart = latestEvent(guardEvents, (event) => event.event === "guard_start");
     const latestGuardFailure = latestEvent(guardEvents, (event) => event.event === "guard_failed");
     const latestDataset = latestEvent(guardEvents, (event) => event.name === "dataset");
+    const latestTrainSlice = latestEvent(guardEvents, (event) => event.name === "train_slice");
     const latestSmoke = latestEvent(guardEvents, (event) => event.name === "smoke");
     const latestStableEval = latestEvent(
       guardEvents,
@@ -609,6 +627,7 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
         latestGuardStart: eventTime(latestGuardStart),
         latestGuardFailure: failedAfterStart ? eventTime(latestGuardFailure) : undefined,
         latestDataset: summarizeDatasetEvent(latestDataset),
+        latestTrainSlice: summarizeTrainSliceEvent(latestTrainSlice),
         latestSmokeAt: eventTime(latestSmoke),
         latestStableEval: summarizeEvalEvent(latestStableEval),
         latestTrainingSeedEval: summarizeEvalEvent(latestTrainingSeedEval),
