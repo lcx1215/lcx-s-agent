@@ -19,13 +19,6 @@ type CheckResult = {
   error?: string;
 };
 
-const DEFAULT_ADAPTER = path.join(
-  process.env.HOME ?? ".",
-  ".openclaw",
-  "local-brain-trainer",
-  "adapters",
-  "thought-flow-v1-qwen3-0.6b-taxonomy-v3",
-);
 const HOME = process.env.HOME ?? ".";
 const WORKSPACE_DIR = path.join(HOME, ".openclaw", "workspace");
 const WORKSPACE_LOG_DIR = path.join(HOME, ".openclaw", "workspace", "logs");
@@ -275,6 +268,19 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       adapterPath: payload.adapterPath,
     };
   }
+  if (name === "local-brain-current-adapter") {
+    return {
+      ok: payload.ok,
+      selectedAdapter: payload.selectedAdapter,
+      trainingSeedAdapter: payload.trainingSeedAdapter,
+      trainingSeed: payload.trainingSeed,
+      model: payload.model,
+      adapterPrefix: payload.adapterPrefix,
+      selectionMode: payload.selectionMode,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+    };
+  }
   if (name === "local-brain-plan") {
     const plan =
       payload.plan && typeof payload.plan === "object"
@@ -287,6 +293,8 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       liveTouched: payload.liveTouched,
       providerConfigTouched: payload.providerConfigTouched,
       durableMemoryTouched: payload.durableMemoryTouched,
+      adapterPath: payload.adapterPath,
+      adapterSelectionStatus: payload.adapterSelectionStatus,
     };
   }
   if (name === "lark-loop-diagnose" || name === "channels-status-probe") {
@@ -869,6 +877,23 @@ checks.push(
     parseJson: true,
   }),
 );
+const currentAdapterCheck = await runCommand({
+  name: "local-brain-current-adapter",
+  command: process.execPath,
+  args: [
+    "--import",
+    "tsx",
+    "scripts/dev/minimax-brain-training-guard.ts",
+    "--resolve-current-adapter",
+    "--bootstrap-if-missing",
+    "--model",
+    "Qwen/Qwen3-0.6B",
+    "--log",
+    MINIMAX_GUARD_LOG,
+  ],
+  parseJson: true,
+});
+checks.push(currentAdapterCheck);
 checks.push(
   options.brainPlan || options.deep
     ? await runCommand({
@@ -888,22 +913,30 @@ checks.push(
 );
 
 if (options.deep) {
+  const currentAdapterPath =
+    typeof currentAdapterCheck.summary.selectedAdapter === "string"
+      ? currentAdapterCheck.summary.selectedAdapter
+      : typeof currentAdapterCheck.summary.trainingSeedAdapter === "string"
+        ? currentAdapterCheck.summary.trainingSeedAdapter
+        : undefined;
   checks.push(
-    await runCommand({
-      name: "local-brain-eval",
-      command: process.execPath,
-      args: [
-        "--import",
-        "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
-        "--model",
-        "Qwen/Qwen3-0.6B",
-        "--adapter",
-        DEFAULT_ADAPTER,
-        "--json",
-      ],
-      parseJson: true,
-    }),
+    currentAdapterPath
+      ? await runCommand({
+          name: "local-brain-eval",
+          command: process.execPath,
+          args: [
+            "--import",
+            "tsx",
+            "scripts/dev/local-brain-distill-eval.ts",
+            "--model",
+            "Qwen/Qwen3-0.6B",
+            "--adapter",
+            currentAdapterPath,
+            "--json",
+          ],
+          parseJson: true,
+        })
+      : skipped("local-brain-eval", "current adapter resolver returned no usable adapter"),
   );
   checks.push(
     await runCommand({

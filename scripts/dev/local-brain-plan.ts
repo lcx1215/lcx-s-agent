@@ -7,9 +7,16 @@ type CliOptions = {
   ask: string;
   sourceSummary: string;
   model: string;
-  adapterPath: string;
+  adapterPath?: string;
   pythonBin: string;
   json: boolean;
+};
+
+type AdapterResolution = {
+  adapterPath: string;
+  status: "explicit" | "promotion_ready" | "best_effort_training_seed";
+  selectedAdapter?: string;
+  trainingSeedAdapter?: string;
 };
 
 const DEFAULT_PYTHON = path.join(
@@ -21,20 +28,21 @@ const DEFAULT_PYTHON = path.join(
   "python",
 );
 
-const DEFAULT_ADAPTER = path.join(
+const DEFAULT_GUARD_LOG = path.join(
   process.env.HOME ?? ".",
   ".openclaw",
-  "local-brain-trainer",
-  "adapters",
-  "thought-flow-v1-qwen3-0.6b-taxonomy-v3",
+  "workspace",
+  "logs",
+  "minimax-brain-training-guard-medium.jsonl",
 );
 
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/dev/local-brain-plan.ts --ask TEXT [--source-summary TEXT] [--json]",
+      "Usage: node --import tsx scripts/dev/local-brain-plan.ts --ask TEXT [--source-summary TEXT] [--adapter DIR] [--json]",
       "",
-      "Runs the accepted local auxiliary thought-flow adapter as a read-only planner.",
+      "Runs the current local auxiliary thought-flow adapter as a read-only planner.",
+      "When --adapter is omitted, resolves the current adapter through minimax-brain-training-guard latest-passing selection and falls back to the best-evidence training seed.",
     ].join("\n"),
   );
 }
@@ -52,7 +60,6 @@ function parseArgs(args: string[]): CliOptions {
     ask: "",
     sourceSummary: "manual_cli_planning_request_no_live_side_effects",
     model: "Qwen/Qwen3-0.6B",
-    adapterPath: DEFAULT_ADAPTER,
     pythonBin: DEFAULT_PYTHON,
     json: false,
   };
@@ -84,7 +91,9 @@ function parseArgs(args: string[]): CliOptions {
   if (!options.ask.trim()) {
     usage();
   }
-  options.adapterPath = path.resolve(options.adapterPath);
+  if (options.adapterPath) {
+    options.adapterPath = path.resolve(options.adapterPath);
+  }
   return options;
 }
 
@@ -106,6 +115,9 @@ function buildPrompt(options: CliOptions): string {
 }
 
 function runGenerate(options: CliOptions): Promise<string> {
+  if (!options.adapterPath) {
+    throw new Error("local brain adapter path was not resolved before generation");
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(
       options.pythonBin,
@@ -116,7 +128,7 @@ function runGenerate(options: CliOptions): Promise<string> {
         "--model",
         options.model,
         "--adapter-path",
-        options.adapterPath,
+        options.adapterPath ?? "",
         "--prompt",
         buildPrompt(options),
         "--max-tokens",
@@ -147,6 +159,88 @@ function runGenerate(options: CliOptions): Promise<string> {
       }
     });
   });
+}
+
+function parseJsonFromOutput(raw: string): Record<string, unknown> {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    throw new Error(`no JSON object found in command output: ${raw.slice(0, 240)}`);
+  }
+  return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+}
+
+function runResolveCurrentAdapter(options: CliOptions): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/minimax-brain-training-guard.ts",
+        "--resolve-current-adapter",
+        "--bootstrap-if-missing",
+        "--model",
+        options.model,
+        "--log",
+        DEFAULT_GUARD_LOG,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`current adapter resolver exited ${code}\n${stderr}`));
+        return;
+      }
+      try {
+        resolve(parseJsonFromOutput(stdout));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+async function resolveAdapter(options: CliOptions): Promise<AdapterResolution> {
+  if (options.adapterPath) {
+    return { adapterPath: options.adapterPath, status: "explicit" };
+  }
+  const resolved = await runResolveCurrentAdapter(options);
+  const selectedAdapter =
+    typeof resolved.selectedAdapter === "string" && resolved.selectedAdapter
+      ? resolved.selectedAdapter
+      : undefined;
+  const trainingSeedAdapter =
+    typeof resolved.trainingSeedAdapter === "string" && resolved.trainingSeedAdapter
+      ? resolved.trainingSeedAdapter
+      : undefined;
+  if (selectedAdapter) {
+    return {
+      adapterPath: selectedAdapter,
+      status: "promotion_ready",
+      selectedAdapter,
+      trainingSeedAdapter,
+    };
+  }
+  if (trainingSeedAdapter) {
+    return {
+      adapterPath: trainingSeedAdapter,
+      status: "best_effort_training_seed",
+      trainingSeedAdapter,
+    };
+  }
+  throw new Error("current adapter resolver returned no selectedAdapter or trainingSeedAdapter");
 }
 
 function extractJson(raw: string): Record<string, unknown> {
@@ -387,7 +481,12 @@ function hardenPlanForKnownContracts(
 }
 
 const options = parseArgs(process.argv.slice(2));
-const rawOutput = await runGenerate(options);
+const adapterResolution = await resolveAdapter(options);
+const resolvedOptions: CliOptions = {
+  ...options,
+  adapterPath: adapterResolution.adapterPath,
+};
+const rawOutput = await runGenerate(resolvedOptions);
 let rawParseError: string | null = null;
 let rawPlan: Record<string, unknown> = {};
 try {
@@ -407,7 +506,10 @@ const result = {
   durableMemoryTouched: false,
   rawParseError,
   model: options.model,
-  adapterPath: options.adapterPath,
+  adapterPath: adapterResolution.adapterPath,
+  adapterSelectionStatus: adapterResolution.status,
+  selectedAdapter: adapterResolution.selectedAdapter,
+  trainingSeedAdapter: adapterResolution.trainingSeedAdapter,
   ask: options.ask,
   plan: parsed,
 };

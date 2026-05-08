@@ -142,6 +142,7 @@ Use this to see which local adapter the guard will use:
 ```bash
 node --import tsx scripts/dev/minimax-brain-training-guard.ts \
   --resolve-current-adapter \
+  --bootstrap-if-missing \
   --model Qwen/Qwen3-0.6B \
   --log /Users/liuchengxu/.openclaw/workspace/logs/minimax-brain-training-guard-medium.jsonl
 ```
@@ -152,6 +153,11 @@ The expected current selection pattern is:
 selectionMode=latest-passing
 adapterPrefix=.../thought-flow-v1-qwen3-0.6b-minimax-guard
 ```
+
+Read `selectedAdapter` and `trainingSeedAdapter` separately. `selectedAdapter`
+means strict promotion-ready selection. `trainingSeedAdapter` is a best-evidence
+fallback for continuing local Qwen work when no strict promotion-ready adapter
+exists yet; it must not be reported as promotion-ready.
 
 The guard now filters `latest-passing` by model-specific adapter prefix, so a future Qwen3 1.7B bootstrap cannot accidentally reuse a Qwen3 0.6B adapter.
 

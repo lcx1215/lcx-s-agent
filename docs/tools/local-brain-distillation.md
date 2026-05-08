@@ -272,6 +272,7 @@ static adapter path from this page. Use the runbook or system doctor:
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/minimax-brain-training-guard.ts \
   --resolve-current-adapter \
+  --bootstrap-if-missing \
   --model Qwen/Qwen3-0.6B \
   --log /Users/liuchengxu/.openclaw/workspace/logs/minimax-brain-training-guard-medium.jsonl
 ```
