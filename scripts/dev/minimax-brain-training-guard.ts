@@ -1678,34 +1678,59 @@ try {
       "--json",
     ]);
 
+    const shouldRunRecoveryTrain =
+      round === 1 &&
+      Boolean(trainingResumeAdapter) &&
+      Boolean(trainingSeedAdapter) &&
+      trainingResumeAdapter !== trainingSeedAdapter;
+    const trainThisRound =
+      shouldTrainRound(options, round, trainingResumeAdapter) || shouldRunRecoveryTrain;
+    const seedEvalWouldDelayCandidateTrain =
+      !currentAdapter &&
+      trainThisRound &&
+      !localTrainingPaused &&
+      (Boolean(trainingResumeAdapter) || options.bootstrapIfMissing);
+
     if (round % options.evalEvery === 0) {
       const evalAdapter = currentAdapter ?? trainingSeedAdapter;
       if (evalAdapter) {
         const evalName = currentAdapter ? "stable_hardened_eval" : "training_seed_hardened_eval";
-        const stableEval = await runJsonStep(
-          options,
-          round,
-          evalName,
-          "node",
-          [
-            "--import",
-            "tsx",
-            "scripts/dev/local-brain-distill-eval.ts",
-            "--model",
-            options.model,
-            "--adapter",
-            evalAdapter,
-            "--hardened",
-            "--progress",
-            "--timeout-ms",
-            "180000",
-            "--summary-only",
-            "--json",
-          ],
-          currentAdapter ? {} : { allowFailure: true },
-        );
-        if (currentAdapter && !promotionEvalPassed(stableEval)) {
-          throw new Error(`stable adapter failed hardened eval: ${currentAdapter}`);
+        if (seedEvalWouldDelayCandidateTrain) {
+          await appendLog(options.logPath, {
+            event: "step_skipped",
+            round,
+            name: evalName,
+            reason: "train_round_candidate_eval_will_run",
+            adapterPath: evalAdapter,
+            liveTouched: false,
+            providerConfigTouched: false,
+          });
+        } else {
+          const stableEval = await runJsonStep(
+            options,
+            round,
+            evalName,
+            "node",
+            [
+              "--import",
+              "tsx",
+              "scripts/dev/local-brain-distill-eval.ts",
+              "--model",
+              options.model,
+              "--adapter",
+              evalAdapter,
+              "--hardened",
+              "--progress",
+              "--timeout-ms",
+              "180000",
+              "--summary-only",
+              "--json",
+            ],
+            currentAdapter ? {} : { allowFailure: true },
+          );
+          if (currentAdapter && !promotionEvalPassed(stableEval)) {
+            throw new Error(`stable adapter failed hardened eval: ${currentAdapter}`);
+          }
         }
       } else {
         await appendLog(options.logPath, {
@@ -1720,12 +1745,7 @@ try {
       }
     }
 
-    const shouldRunRecoveryTrain =
-      round === 1 &&
-      Boolean(trainingResumeAdapter) &&
-      Boolean(trainingSeedAdapter) &&
-      trainingResumeAdapter !== trainingSeedAdapter;
-    if (shouldTrainRound(options, round, trainingResumeAdapter) || shouldRunRecoveryTrain) {
+    if (trainThisRound) {
       const resumeAdapter = trainingResumeAdapter;
       if (localTrainingPaused) {
         await appendLog(options.logPath, {
