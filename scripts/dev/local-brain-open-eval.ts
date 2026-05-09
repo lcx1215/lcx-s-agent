@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type OpenEvalCase = {
   id: string;
@@ -243,13 +244,11 @@ function runProvider(
         reject(new Error(`provider exited ${code}: ${stderr || stdout}`));
         return;
       }
-      const start = stdout.indexOf("{");
-      const end = stdout.lastIndexOf("}");
-      if (start < 0 || end <= start) {
+      try {
+        resolve(parseJsonObjectFromOutput(stdout));
+      } catch {
         reject(new Error(`provider returned no JSON: ${stdout.slice(0, 240)}`));
-        return;
       }
-      resolve(JSON.parse(stdout.slice(start, end + 1)) as Record<string, unknown>);
     });
   });
 }

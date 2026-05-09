@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
   durationMinutes: number;
@@ -389,40 +390,7 @@ function runCommand(
 }
 
 function parseJsonFromStdout(stdout: string): unknown {
-  const end = stdout.lastIndexOf("}");
-  if (end < 0) {
-    return null;
-  }
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = end; index >= 0; index -= 1) {
-    const char = stdout[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = inString;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      continue;
-    }
-    if (char === "}") {
-      depth += 1;
-    } else if (char === "{") {
-      depth -= 1;
-      if (depth === 0) {
-        return JSON.parse(stdout.slice(index, end + 1));
-      }
-    }
-  }
-  return null;
+  return parseJsonObjectFromOutput(stdout);
 }
 
 function runQuietCommand(command: string, args: string[]): Promise<CommandResult> {

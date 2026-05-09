@@ -124,6 +124,22 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("shouldUpgradeToMediumMiniMaxWindow");
   });
 
+  it("uses the shared balanced JSON output parser for guard and quota child steps", async () => {
+    const guardSource = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      "utf8",
+    );
+    const quotaSource = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-quota-brain-saturator.ts"),
+      "utf8",
+    );
+
+    expect(guardSource).toContain("parseJsonObjectFromOutput(stdout)");
+    expect(quotaSource).toContain("parseJsonObjectFromOutput(stdout)");
+    expect(guardSource).not.toContain("stdout.slice(index, end + 1)");
+    expect(quotaSource).not.toContain("stdout.slice(start, end + 1)");
+  });
+
   it("backs off MiniMax sidecar pressure on transport instability, not only rate limits", async () => {
     const source = await fs.readFile(
       path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-quota-brain-saturator.ts"),

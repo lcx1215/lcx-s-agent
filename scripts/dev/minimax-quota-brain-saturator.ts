@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { buildFailureCurriculumPrompts } from "./minimax-brain-failure-curriculum.js";
+import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
   profile: "manual" | "minimax-plus-brain";
@@ -612,12 +613,7 @@ function runCommand(command: string, args: string[]): Promise<CommandResult> {
 }
 
 function parseJsonFromStdout(stdout: string): unknown {
-  const start = stdout.indexOf("{");
-  const end = stdout.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    return null;
-  }
-  return JSON.parse(stdout.slice(start, end + 1)) as unknown;
+  return parseJsonObjectFromOutput(stdout);
 }
 
 function sleep(ms: number): Promise<void> {

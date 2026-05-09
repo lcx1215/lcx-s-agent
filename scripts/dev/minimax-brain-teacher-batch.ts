@@ -12,6 +12,7 @@ import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
 import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
 import { loadConfig } from "../../src/config/config.js";
 import { LOCAL_BRAIN_MODULE_TAXONOMY } from "./local-brain-taxonomy.js";
+import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
   workspaceDir: string;
@@ -477,12 +478,11 @@ function runCommand(command: string, args: string[]): Promise<string> {
 }
 
 function parseJsonObject(raw: string): Record<string, unknown> {
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start < 0 || end <= start) {
+  try {
+    return parseJsonObjectFromOutput(raw);
+  } catch {
     throw new Error(`no JSON object found: ${raw.slice(0, 240)}`);
   }
-  return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
 }
 
 function readOpenClawAgentPayload(raw: string): string {
