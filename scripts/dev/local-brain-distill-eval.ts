@@ -2188,12 +2188,51 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
 }
 
 function parseJsonFromOutput(raw: string): Record<string, unknown> {
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    throw new Error(`no JSON object found in command output: ${raw.slice(0, 240)}`);
+  let searchFrom = 0;
+  while (searchFrom < raw.length) {
+    const start = raw.indexOf("{", searchFrom);
+    if (start < 0) {
+      break;
+    }
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < raw.length; index += 1) {
+      const char = raw[index];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = inString;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) {
+        continue;
+      }
+      if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(raw.slice(start, index + 1));
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              return parsed as Record<string, unknown>;
+            }
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+    searchFrom = start + 1;
   }
-  return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+  throw new Error(`no JSON object found in command output: ${raw.slice(0, 240)}`);
 }
 
 function runResolveCurrentAdapter(options: CliOptions): Promise<Record<string, unknown>> {
@@ -2400,6 +2439,10 @@ function parseFailureAcceptance(error: unknown): ReturnType<typeof evaluate> {
   } as ReturnType<typeof evaluate> & { parseError: string };
 }
 
+function formatProgressError(error: unknown): string {
+  return String(error).replace(/\s+/gu, " ").slice(0, 240);
+}
+
 const options = parseArgs(process.argv.slice(2));
 const adapterResolution = await resolveEvalAdapter(options);
 const resolvedOptions: CliOptions = {
@@ -2451,6 +2494,7 @@ for (const evalCase of evalCases) {
     }
   } catch (error) {
     const rawOutput = "";
+    const parseError = String(error);
     const fallbackParsed = options.hardened
       ? hardenLocalBrainPlanForAsk(
           {},
@@ -2466,17 +2510,26 @@ for (const evalCase of evalCases) {
       parsed: null,
       diagnosticFallbackParsed: fallbackParsed,
       acceptance: parseFailureAcceptance(error),
-      parseError: String(error),
+      parseError,
     });
     if (options.progress) {
       process.stderr.write(
-        `[local-brain-eval] done ${evalCase.id} ok=${caseResults.at(-1)?.acceptance.ok ? "true" : "false"} parseError=true\n`,
+        `[local-brain-eval] done ${evalCase.id} ok=${caseResults.at(-1)?.acceptance.ok ? "true" : "false"} parseError=${formatProgressError(error)}\n`,
       );
     }
   }
 }
 const passedCases = caseResults.filter((entry) => entry.acceptance.ok);
 const failedCases = caseResults.filter((entry) => !entry.acceptance.ok);
+const failedCaseDiagnostics = failedCases.map((entry) => ({
+  id: entry.id,
+  parseError: "parseError" in entry ? entry.parseError : undefined,
+  missingFinanceModules: entry.acceptance.missingFinanceModules,
+  missingRequiredData: entry.acceptance.missingRequiredData,
+  missingRequiredRiskBoundaries: entry.acceptance.missingRequiredRiskBoundaries,
+  boundaryOk: entry.acceptance.boundaryOk,
+  oldContextRejected: entry.acceptance.oldContextRejected,
+}));
 const result = {
   ok: failedCases.length === 0,
   boundary: "local_auxiliary_thought_flow_only",
@@ -2498,6 +2551,10 @@ const result = {
     total: caseResults.length,
     passRate: Number((passedCases.length / caseResults.length).toFixed(3)),
     failedCaseIds: failedCases.map((entry) => entry.id),
+    parseErrorCaseIds: failedCases
+      .filter((entry) => "parseError" in entry)
+      .map((entry) => entry.id),
+    failedCaseDiagnostics,
     promotionReady: failedCases.length === 0,
   },
   cases: options.summaryOnly ? undefined : caseResults,

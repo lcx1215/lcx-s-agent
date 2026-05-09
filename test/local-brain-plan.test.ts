@@ -17,4 +17,15 @@ describe("local-brain-plan adapter selection", () => {
     expect(source).toContain("adapterSelectionStatus");
     expect(source).not.toContain("thought-flow-v1-qwen3-0.6b-taxonomy-v3");
   });
+
+  it("uses balanced JSON extraction for noisy local brain output", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/local-brain-plan.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("let searchFrom = 0");
+    expect(source).toContain('if (parsed && typeof parsed === "object" && !Array.isArray(parsed))');
+    expect(source).not.toContain("JSON.parse(raw.slice(start, end + 1))");
+  });
 });

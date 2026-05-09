@@ -497,11 +497,15 @@ describe("local-brain-distill-eval", () => {
       }>;
     };
     expect(payload.ok).toBe(false);
-    expect(payload.summary).toEqual({
+    expect(payload.summary).toMatchObject({
       passed: 0,
       total: 2,
       passRate: 0,
       failedCaseIds: ["external_source_missing_url", "paper_learning_internalization_absorption"],
+      parseErrorCaseIds: [
+        "external_source_missing_url",
+        "paper_learning_internalization_absorption",
+      ],
       promotionReady: false,
     });
     const targetCase = payload.cases.find(
