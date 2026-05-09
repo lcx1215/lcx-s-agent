@@ -208,7 +208,7 @@ node --import tsx scripts/dev/minimax-brain-training-guard.ts \
   --teacher-sidecar-max-calls 900 \
   --teacher-sidecar-batch-limit 36 \
   --teacher-sidecar-concurrency 8 \
-  --train-every 3 \
+  --train-every 2 \
   --eval-every 1 \
   --train-iters 40 \
   --load-max 100 \
