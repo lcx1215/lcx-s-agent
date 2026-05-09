@@ -89,6 +89,8 @@ const DEFAULT_TRAIN_SLICE_CURATED_REPEAT = 6;
 const DEFAULT_TRAIN_SLICE_NON_REVIEW_REPEAT = 2;
 const CATASTROPHIC_CANDIDATE_MIN_CASES = 10;
 const CATASTROPHIC_CANDIDATE_MAX_PASS_RATE = 0.05;
+const LOCAL_TRAINING_COLLAPSE_BACKOFF_SEED_LIMIT = 2;
+const TRAIN_NAN_PATTERN = /\b(?:train|val)\s+loss\s+nan\b|\bloss\s*[:=]\s*nan\b|\bnan\b/iu;
 
 function usage(): never {
   throw new Error(
@@ -756,6 +758,10 @@ type TrainingSeedSelection = {
   source: string;
 };
 
+function shouldPauseLocalTrainingAfterCollapse(backoffs: ReadonlySet<string>): boolean {
+  return backoffs.size >= LOCAL_TRAINING_COLLAPSE_BACKOFF_SEED_LIMIT;
+}
+
 function isCatastrophicCandidateScore(seed: TrainingSeedSelection | undefined): boolean {
   if (!seed) {
     return false;
@@ -1217,7 +1223,15 @@ async function runTrain(
   round: number,
   adapterPath: string,
   resumeAdapterPath?: string,
-): Promise<boolean> {
+): Promise<
+  | { ok: true; trainDataDir: string; durationMs: number }
+  | {
+      ok: false;
+      reason: "resource_backoff" | "train_loss_nan";
+      trainDataDir?: string;
+      durationMs?: number;
+    }
+> {
   if (
     await skipForHighLoad({
       options,
@@ -1226,7 +1240,7 @@ async function runTrain(
       loadMax: options.trainLoadMax,
     })
   ) {
-    return false;
+    return { ok: false, reason: "resource_backoff" };
   }
   const trainDataDir = await buildTrainSlice(options, round);
   process.stdout.write(`\n[minimax-guard] round=${round} step=train adapter=${adapterPath}\n`);
@@ -1262,6 +1276,30 @@ async function runTrain(
     "--mask-prompt",
     "--grad-checkpoint",
   ]);
+  const combinedOutput = `${result.stdout}\n${result.stderr}`;
+  if (TRAIN_NAN_PATTERN.test(combinedOutput)) {
+    await fs.rm(adapterPath, { recursive: true, force: true });
+    await appendLog(options.logPath, {
+      event: "step_failed",
+      round,
+      name: "train",
+      adapterPath,
+      trainDataDir,
+      resumeAdapterPath,
+      durationMs: result.durationMs,
+      reason: "train_loss_nan",
+      localTrainingBackoff: true,
+      removedAdapterPath: adapterPath,
+      liveTouched: false,
+      providerConfigTouched: false,
+    });
+    return {
+      ok: false,
+      reason: "train_loss_nan",
+      trainDataDir,
+      durationMs: result.durationMs,
+    };
+  }
   await appendLog(options.logPath, {
     event: "step_ok",
     round,
@@ -1270,7 +1308,7 @@ async function runTrain(
     trainDataDir,
     durationMs: result.durationMs,
   });
-  return true;
+  return { ok: true, trainDataDir, durationMs: result.durationMs };
 }
 
 function promotionEvalPassed(result: unknown): boolean {
@@ -1417,12 +1455,19 @@ if (options.resolveCurrentAdapterOnly) {
     options.logPath,
     options.adapterPrefix,
   );
+  const localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
+    catastrophicTrainingSeedBackoffs,
+  );
   const trainingSeed =
-    !selectedAdapter && !options.noTrain
-      ? await resolveBestTrainingSeedAdapter(options.adapterPrefix)
+    !selectedAdapter && !options.noTrain && !localTrainingPaused
+      ? await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+          excludedAdapters: catastrophicTrainingSeedBackoffs,
+        })
       : undefined;
   const trainingResumeSeed =
-    !options.noTrain && (!selectedAdapter || catastrophicTrainingSeedBackoffs.has(selectedAdapter))
+    !localTrainingPaused &&
+    !options.noTrain &&
+    (!selectedAdapter || catastrophicTrainingSeedBackoffs.has(selectedAdapter))
       ? await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
           excludedAdapters: catastrophicTrainingSeedBackoffs,
         })
@@ -1436,11 +1481,17 @@ if (options.resolveCurrentAdapterOnly) {
         trainingSeedAdapter: trainingSeed?.adapterPath,
         trainingSeed,
         trainingResumeAdapter:
-          selectedAdapter && !catastrophicTrainingSeedBackoffs.has(selectedAdapter)
+          !localTrainingPaused &&
+          selectedAdapter &&
+          !catastrophicTrainingSeedBackoffs.has(selectedAdapter)
             ? selectedAdapter
             : trainingResumeSeed?.adapterPath,
-        trainingResumeSeed,
+        trainingResumeSeed: localTrainingPaused ? undefined : trainingResumeSeed,
         catastrophicTrainingSeedBackoffs: [...catastrophicTrainingSeedBackoffs],
+        localTrainingPaused,
+        localTrainingPauseReason: localTrainingPaused
+          ? "repeated_catastrophic_training_seed_backoff"
+          : undefined,
         model: options.model,
         adapterPrefix: options.adapterPrefix,
         bootstrapIfMissing: options.bootstrapIfMissing,
@@ -1474,11 +1525,17 @@ let catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBack
   options.logPath,
   options.adapterPrefix,
 );
+let localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(catastrophicTrainingSeedBackoffs);
 let trainingSeed =
-  currentAdapter || options.noTrain
+  currentAdapter || options.noTrain || localTrainingPaused
     ? undefined
-    : await resolveBestTrainingSeedAdapter(options.adapterPrefix);
-let trainingSeedAdapter = currentAdapter ?? trainingSeed?.adapterPath;
+    : await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+        excludedAdapters: catastrophicTrainingSeedBackoffs,
+      });
+let trainingSeedAdapter =
+  currentAdapter && !catastrophicTrainingSeedBackoffs.has(currentAdapter)
+    ? currentAdapter
+    : trainingSeed?.adapterPath;
 let trainingResumeSeed =
   options.noTrain || (currentAdapter && !catastrophicTrainingSeedBackoffs.has(currentAdapter))
     ? undefined
@@ -1489,6 +1546,10 @@ let trainingResumeAdapter =
   currentAdapter && !catastrophicTrainingSeedBackoffs.has(currentAdapter)
     ? currentAdapter
     : trainingResumeSeed?.adapterPath;
+if (localTrainingPaused) {
+  trainingResumeSeed = undefined;
+  trainingResumeAdapter = undefined;
+}
 let teacherSidecar: TeacherSidecar | undefined;
 
 await appendLog(options.logPath, {
@@ -1498,7 +1559,13 @@ await appendLog(options.logPath, {
   originalPipelineReplaced: false,
   liveTouched: false,
   providerConfigTouched: false,
-  options: { ...options, currentAdapter, trainingSeedAdapter, trainingResumeAdapter },
+  options: {
+    ...options,
+    currentAdapter,
+    trainingSeedAdapter,
+    trainingResumeAdapter,
+    localTrainingPaused,
+  },
 });
 if (!currentAdapter && trainingSeedAdapter) {
   await appendLog(options.logPath, {
@@ -1541,6 +1608,19 @@ if (trainingResumeAdapter && trainingResumeAdapter !== trainingSeedAdapter) {
       : undefined,
     reason: "best_non_catastrophic_training_seed",
     strictPromotionUnchanged: true,
+    liveTouched: false,
+    providerConfigTouched: false,
+  });
+}
+if (localTrainingPaused) {
+  await appendLog(options.logPath, {
+    event: "local_training_paused_after_repeated_collapse",
+    reason: "repeated_catastrophic_training_seed_backoff",
+    catastrophicTrainingSeedBackoffCount: catastrophicTrainingSeedBackoffs.size,
+    catastrophicTrainingSeedBackoffs: [...catastrophicTrainingSeedBackoffs],
+    trainingSeedAdapter,
+    trainingResumeAdapter,
+    sidecarContinues: options.teacherSidecar,
     liveTouched: false,
     providerConfigTouched: false,
   });
@@ -1661,6 +1741,21 @@ try {
       trainingResumeAdapter !== trainingSeedAdapter;
     if (shouldTrainRound(options, round, trainingResumeAdapter) || shouldRunRecoveryTrain) {
       const resumeAdapter = trainingResumeAdapter;
+      if (localTrainingPaused) {
+        await appendLog(options.logPath, {
+          event: "step_skipped",
+          round,
+          name: "train",
+          reason: "local_training_paused_after_repeated_collapse",
+          catastrophicTrainingSeedBackoffCount: catastrophicTrainingSeedBackoffs.size,
+          trainingSeedAdapter,
+          trainingResumeAdapter,
+          sidecarContinues: Boolean(teacherSidecar?.pid),
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+        continue;
+      }
       if (shouldRunRecoveryTrain) {
         await appendLog(options.logPath, {
           event: "training_resume_recovery_train_scheduled",
@@ -1698,7 +1793,38 @@ try {
       }
       const candidateAdapter = adapterPathForRound(options, round);
       const trained = await runTrain(options, round, candidateAdapter, resumeAdapter);
-      if (!trained) {
+      if (!trained.ok) {
+        if (trained.reason === "train_loss_nan") {
+          const failedSeedAdapter = resumeAdapter ?? currentAdapter ?? trainingSeedAdapter;
+          if (failedSeedAdapter) {
+            catastrophicTrainingSeedBackoffs.add(failedSeedAdapter);
+          }
+          localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
+            catastrophicTrainingSeedBackoffs,
+          );
+          if (localTrainingPaused) {
+            trainingResumeSeed = undefined;
+            trainingResumeAdapter = undefined;
+          } else {
+            trainingResumeSeed = await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+              excludedAdapters: catastrophicTrainingSeedBackoffs,
+            });
+            trainingResumeAdapter = trainingResumeSeed?.adapterPath;
+          }
+          await appendLog(options.logPath, {
+            event: "local_training_paused_after_train_nan",
+            round,
+            adapterPath: candidateAdapter,
+            failedSeedAdapter,
+            reason: "train_loss_nan",
+            catastrophicTrainingSeedBackoffCount: catastrophicTrainingSeedBackoffs.size,
+            nextTrainingResumeAdapter: trainingResumeAdapter,
+            sidecarContinues: Boolean(teacherSidecar?.pid),
+            liveTouched: false,
+            providerConfigTouched: false,
+          });
+          continue;
+        }
         await appendLog(options.logPath, {
           event: "step_backoff",
           round,
@@ -1753,10 +1879,18 @@ try {
           if (failedSeedAdapter) {
             catastrophicTrainingSeedBackoffs.add(failedSeedAdapter);
           }
-          trainingResumeSeed = await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
-            excludedAdapters: catastrophicTrainingSeedBackoffs,
-          });
-          trainingResumeAdapter = trainingResumeSeed?.adapterPath;
+          localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
+            catastrophicTrainingSeedBackoffs,
+          );
+          if (localTrainingPaused) {
+            trainingResumeSeed = undefined;
+            trainingResumeAdapter = undefined;
+          } else {
+            trainingResumeSeed = await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+              excludedAdapters: catastrophicTrainingSeedBackoffs,
+            });
+            trainingResumeAdapter = trainingResumeSeed?.adapterPath;
+          }
           await appendLog(options.logPath, {
             event: "candidate_catastrophic_eval_detected",
             round,
@@ -1775,11 +1909,13 @@ try {
             strictPromotionUnchanged: true,
             localTrainingBackoff: true,
             liveTouched: false,
+            providerConfigTouched: false,
           });
         }
         if (!currentAdapter) {
           if (
             candidateSeed &&
+            !isCatastrophicCandidateScore(candidateSeed) &&
             (!trainingSeed || compareTrainingSeedSelection(candidateSeed, trainingSeed) < 0)
           ) {
             trainingSeed = candidateSeed;

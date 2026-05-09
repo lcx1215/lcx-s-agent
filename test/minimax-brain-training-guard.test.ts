@@ -212,6 +212,70 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain(
       "const failedSeedAdapter = resumeAdapter ?? currentAdapter ?? trainingSeedAdapter",
     );
+    expect(source).toContain("LOCAL_TRAINING_COLLAPSE_BACKOFF_SEED_LIMIT");
+    expect(source).toContain("shouldPauseLocalTrainingAfterCollapse");
+    expect(source).toContain('event: "local_training_paused_after_repeated_collapse"');
+    expect(source).toContain('reason: "local_training_paused_after_repeated_collapse"');
+    expect(source).toContain('event: "local_training_paused_after_train_nan"');
+    expect(source).toContain('reason: "train_loss_nan"');
+    expect(source).toContain("TRAIN_NAN_PATTERN");
+    expect(source).toContain("removedAdapterPath");
+  });
+
+  it("reports local training paused after repeated catastrophic seed backoffs", async () => {
+    let firstSeed = "";
+    let secondSeed = "";
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      firstSeed = `${adapterPrefix}-2026-05-07T12-04-09-522Z-r18`;
+      secondSeed = `${adapterPrefix}-2026-05-07T11-24-32-133Z-r15`;
+      const firstBadCandidate = `${adapterPrefix}-2026-05-09T14-08-52-247Z-r1`;
+      const secondBadCandidate = `${adapterPrefix}-2026-05-09T15-12-39-464Z-r3`;
+      return [
+        nonPassingEval("2026-05-07T12:16:10.000Z", "candidate_hardened_eval", firstSeed, 53, 59),
+        nonPassingEval("2026-05-07T11:30:10.000Z", "candidate_hardened_eval", secondSeed, 51, 59),
+        nonPassingEval(
+          "2026-05-09T14:39:01.830Z",
+          "candidate_hardened_eval",
+          firstBadCandidate,
+          0,
+          68,
+        ),
+        {
+          at: "2026-05-09T14:39:01.873Z",
+          event: "candidate_catastrophic_eval_detected",
+          adapterPath: firstBadCandidate,
+          trainingSeedAdapter: firstSeed,
+        },
+        nonPassingEval(
+          "2026-05-09T15:39:01.830Z",
+          "candidate_hardened_eval",
+          secondBadCandidate,
+          0,
+          68,
+        ),
+        {
+          at: "2026-05-09T15:39:01.873Z",
+          event: "candidate_catastrophic_eval_detected",
+          adapterPath: secondBadCandidate,
+          trainingSeedAdapter: secondSeed,
+        },
+      ];
+    });
+
+    const { stdout } = await resolveCurrentAdapter(fixture, ["--bootstrap-if-missing"]);
+    const parsed = JSON.parse(stdout) as {
+      localTrainingPaused?: boolean;
+      localTrainingPauseReason?: string;
+      catastrophicTrainingSeedBackoffs?: string[];
+      trainingResumeAdapter?: string;
+    };
+
+    expect(parsed.localTrainingPaused).toBe(true);
+    expect(parsed.localTrainingPauseReason).toBe("repeated_catastrophic_training_seed_backoff");
+    expect(parsed.catastrophicTrainingSeedBackoffs).toEqual(
+      expect.arrayContaining([firstSeed, secondSeed]),
+    );
+    expect(parsed.trainingResumeAdapter).toBeUndefined();
   });
 
   it("uses the highest scoring non-promotion candidate as the next training seed", async () => {
