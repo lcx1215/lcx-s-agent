@@ -154,6 +154,8 @@ describe("local-brain-distill-eval", () => {
     );
 
     expect(source).toContain("/no_think");
+    expect(source).toContain("QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{\"enable_thinking\":false}'");
+    expect(source).toContain("--chat-template-config");
     expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
     expect(source).toContain("Keep the JSON compact");
   });

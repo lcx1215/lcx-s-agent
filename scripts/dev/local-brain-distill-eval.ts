@@ -70,6 +70,7 @@ const DEFAULT_GUARD_LOG = path.join(
   "minimax-brain-training-guard-medium.jsonl",
 );
 const LOCAL_BRAIN_EVAL_MAX_TOKENS = "1600";
+const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
 
 function usage(): never {
   throw new Error(
@@ -2161,6 +2162,8 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
       "0",
       "--verbose",
       "false",
+      "--chat-template-config",
+      QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG,
     ];
     if (options.adapterPath) {
       args.splice(5, 0, "--adapter-path", options.adapterPath);
