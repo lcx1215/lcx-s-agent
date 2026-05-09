@@ -9,9 +9,14 @@ When a new Codex coding window enters this repo without prior chat context, star
 ```bash
 sed -n '1,220p' ops/local-brain/README.md
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
+node --import tsx scripts/dev/local-brain-training-plan.ts --json
 ```
 
 That runbook points to the current local-brain training commands, MiniMax teacher loop, Qwen adapter selection, eval commands, launchd/log paths, and the most relevant local Codex skills under `/Users/liuchengxu/.codex/skills/`.
+The training plan command is the shared coordinator for repeated training
+failures: it classifies whether the next step is continue training,
+failure-focus sample generation, teacher-quality repair, promotion audit, or
+Codex auto-repair through the repo repair lock.
 
 If the task asks about external or newly added skills, use the runbook's skill inventory command:
 

@@ -26,6 +26,21 @@ Read the `minimax-brain-training-guard` check first. It summarizes:
 
 If this command is `ok=true`, prefer continuing from the reported state instead of restarting training.
 
+For training-specific automation, run the unified plan immediately after the
+doctor:
+
+```bash
+node --import tsx scripts/dev/local-brain-training-plan.ts --json
+```
+
+This is the shared training coordinator for future Codex windows and recurring
+automations. It reads the guard/quota logs and classifies the next action into
+one of the existing lanes: keep the medium guard running, feed MiniMax
+failure-focus curriculum, run teacher-quality repair, run promotion audit, or
+enter Codex auto-repair mode through the repo repair lock. Use this plan before
+creating a new training script, eval lane, automation prompt, or one-off fix.
+It is dev/local only and must not be used to claim live Lark success.
+
 The default system doctor includes a doctrine-consistency gate. It fails when
 active entrypoints drift back toward stale stage wording, tiny symptom-patch
 rules, static brain adapters, invalid eval commands, upstream package identity,
