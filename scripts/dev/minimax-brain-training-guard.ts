@@ -111,7 +111,7 @@ function usage(): never {
       "  --teacher-sidecar-duration-minutes N  sidecar budget, default matches guard duration",
       "  --teacher-sidecar-batch-limit N       sidecar batch size, default 36",
       "  --teacher-sidecar-concurrency N       sidecar concurrency, default 8",
-      "  --train-every N         train every N rounds, default 3",
+      "  --train-every N         train every N rounds, default 2",
       "  --eval-every N          eval current/new adapter every N rounds, default 1",
       "  --train-iters N         MLX LoRA iters, default 40",
       "  --train-slice-dir DIR   bounded balanced MLX train data dir, default <data>-train-slice",
@@ -182,7 +182,7 @@ function parseArgs(args: string[]): CliOptions {
     teacherSidecarConcurrency: 8,
     requestedDurationMinutes: MEDIUM_MINIMAX_SIDECAR_DURATION_MINUTES,
     durationAutoUpgraded: false,
-    trainEvery: 3,
+    trainEvery: 2,
     evalEvery: 1,
     trainIters: 40,
     loadMax: DEFAULT_LOAD_MAX,
@@ -815,11 +815,19 @@ function trainingSeedFromEvalResult(
   };
 }
 
-function shouldTrainRound(options: CliOptions, round: number, seedAdapter?: string): boolean {
+function shouldTrainRound(
+  options: CliOptions,
+  round: number,
+  seedAdapter?: string,
+  currentAdapter?: string,
+): boolean {
   if (options.noTrain) {
     return false;
   }
   if (!seedAdapter) {
+    return true;
+  }
+  if (!currentAdapter && round === 1) {
     return true;
   }
   return round % options.trainEvery === 0;
@@ -1684,7 +1692,8 @@ try {
       Boolean(trainingSeedAdapter) &&
       trainingResumeAdapter !== trainingSeedAdapter;
     const trainThisRound =
-      shouldTrainRound(options, round, trainingResumeAdapter) || shouldRunRecoveryTrain;
+      shouldTrainRound(options, round, trainingResumeAdapter, currentAdapter) ||
+      shouldRunRecoveryTrain;
     const seedEvalWouldDelayCandidateTrain =
       !currentAdapter &&
       trainThisRound &&

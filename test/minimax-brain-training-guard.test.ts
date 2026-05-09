@@ -201,8 +201,11 @@ describe("minimax brain training guard adapter resolution", () => {
 
     expect(source).toContain("function shouldTrainRound");
     expect(source).toContain("if (!seedAdapter)");
+    expect(source).toContain("if (!currentAdapter && round === 1)");
     expect(source).toContain("return round % options.trainEvery === 0");
-    expect(source).toContain("shouldTrainRound(options, round, trainingResumeAdapter)");
+    expect(source).toContain(
+      "shouldTrainRound(options, round, trainingResumeAdapter, currentAdapter)",
+    );
     expect(source).toContain("seedEvalWouldDelayCandidateTrain");
     expect(source).toContain('reason: "train_round_candidate_eval_will_run"');
     expect(source).not.toContain(
