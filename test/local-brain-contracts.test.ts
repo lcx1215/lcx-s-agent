@@ -218,6 +218,28 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("canonicalizes weak high-leverage crypto boundary variants", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {
+        risk_boundaries: [
+          "research_only",
+          "no_execution_authority",
+          "no_high_leverage_crypto_reference",
+          "no_crypto_leverage_trade_recommendation",
+        ],
+      },
+      {
+        ask: "User will watch US equities, China A-shares, global indices, and crypto; keep it research-only.",
+      },
+    );
+
+    expect(
+      plan.risk_boundaries.filter((entry) => entry === "no_high_leverage_crypto"),
+    ).toHaveLength(1);
+    expect(plan.risk_boundaries).not.toContain("no_high_leverage_crypto_reference");
+    expect(plan.risk_boundaries).not.toContain("no_crypto_leverage_trade_recommendation");
+  });
+
   it("does not misroute cross-market data-gap prompts into source audit", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

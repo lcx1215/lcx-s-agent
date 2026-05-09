@@ -142,7 +142,11 @@ describe("local brain distill dataset", () => {
               "return_series_or_price_history",
               "fresh_market_data_snapshot",
             ],
-            proposedRiskBoundaries: ["research_only", "no_execution_authority"],
+            proposedRiskBoundaries: [
+              "research_only",
+              "no_execution_authority",
+              ...Array.from({ length: 50 }, (_, index) => `teacher_noise_boundary_${index}`),
+            ],
             proposedNextStep:
               "Pull latest Fed rate expectations, USD liquidity indicators, ETF flow data, and ETH market structure metrics, then summarize.",
           },
@@ -169,7 +173,7 @@ describe("local brain distill dataset", () => {
     );
 
     const trainExamples = await parseJsonl(path.join(outDir, "train.jsonl"));
-    const reviewedExample = trainExamples.find((entry) => {
+    const reviewedExamples = trainExamples.filter((entry) => {
       if (!entry || typeof entry !== "object") {
         return false;
       }
@@ -177,7 +181,9 @@ describe("local brain distill dataset", () => {
         (entry as { meta?: { sourceKind?: string } }).meta?.sourceKind ===
         "brain_distillation_review"
       );
-    }) as { completion: string } | undefined;
+    }) as Array<{ completion: string; prompt: string }>;
+    const reviewedExample = reviewedExamples[0];
+    expect(reviewedExamples).toHaveLength(1);
     expect(reviewedExample).toBeTruthy();
     const completion = JSON.parse(reviewedExample?.completion ?? "{}") as {
       missing_data?: string[];
@@ -191,8 +197,11 @@ describe("local brain distill dataset", () => {
         "no_unverified_live_market_data_claims",
       ]),
     );
+    expect(completion.risk_boundaries?.length).toBeLessThanOrEqual(12);
+    expect(completion.risk_boundaries).not.toContain("teacher_noise_boundary_49");
     expect(completion.next_step).not.toMatch(/pull latest|ETF flow data|ETH market/i);
     expect(completion.next_step).toContain("timestamped source evidence");
+    expect(reviewedExample.prompt.length + reviewedExample.completion.length).toBeLessThan(6_000);
   });
 
   it("collects newest review artifacts before applying max file limits", async () => {

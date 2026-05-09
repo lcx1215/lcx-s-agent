@@ -90,6 +90,7 @@ const DEFAULT_TRAIN_SLICE_NON_REVIEW_REPEAT = 2;
 const CATASTROPHIC_CANDIDATE_MIN_CASES = 10;
 const CATASTROPHIC_CANDIDATE_MAX_PASS_RATE = 0.05;
 const LOCAL_TRAINING_COLLAPSE_BACKOFF_SEED_LIMIT = 2;
+const TRAINING_ABSORPTION_CONTRACT_VERSION = "compact_teacher_review_v2";
 const TRAIN_NAN_PATTERN = /\b(?:train|val)\s+loss\s+nan\b|\bloss\s*[:=]\s*nan\b|\bnan\b/iu;
 
 function usage(): never {
@@ -933,12 +934,17 @@ async function resolveCatastrophicTrainingSeedBackoffs(
       latestCatastrophicCandidate =
         seed &&
         isCatastrophicCandidateScore(seed) &&
-        adapterMatchesPrefix(seed.adapterPath, adapterPrefix)
+        adapterMatchesPrefix(seed.adapterPath, adapterPrefix) &&
+        payload.trainingAbsorptionContractVersion === TRAINING_ABSORPTION_CONTRACT_VERSION
           ? seed.adapterPath
           : undefined;
       continue;
     }
     if (payload.event === "candidate_catastrophic_eval_detected") {
+      if (payload.trainingAbsorptionContractVersion !== TRAINING_ABSORPTION_CONTRACT_VERSION) {
+        latestCatastrophicCandidate = undefined;
+        continue;
+      }
       const trainingSeedAdapter = payload.trainingSeedAdapter;
       if (
         typeof trainingSeedAdapter === "string" &&
@@ -957,6 +963,7 @@ async function resolveCatastrophicTrainingSeedBackoffs(
       const adapterPath = payload.adapterPath;
       const trainingSeedAdapter = payload.currentTrainingSeedAdapter;
       if (
+        payload.trainingAbsorptionContractVersion === TRAINING_ABSORPTION_CONTRACT_VERSION &&
         adapterPath === latestCatastrophicCandidate &&
         typeof trainingSeedAdapter === "string" &&
         adapterMatchesPrefix(trainingSeedAdapter, adapterPrefix)
@@ -1107,6 +1114,13 @@ async function runJsonStep(
       stepOptions.allowFailure && !promotionEvalPassed(parsed) ? "step_non_passing" : "step_ok",
     round,
     name,
+    trainingAbsorptionContractVersion:
+      name === "candidate_hardened_eval" ||
+      name === "train" ||
+      name === "train_slice" ||
+      name === "training_seed_hardened_eval"
+        ? TRAINING_ABSORPTION_CONTRACT_VERSION
+        : undefined,
     command,
     args,
     durationMs: result.durationMs,
@@ -1288,6 +1302,7 @@ async function runTrain(
       resumeAdapterPath,
       durationMs: result.durationMs,
       reason: "train_loss_nan",
+      trainingAbsorptionContractVersion: TRAINING_ABSORPTION_CONTRACT_VERSION,
       localTrainingBackoff: true,
       removedAdapterPath: adapterPath,
       liveTouched: false,
@@ -1307,6 +1322,7 @@ async function runTrain(
     adapterPath,
     trainDataDir,
     durationMs: result.durationMs,
+    trainingAbsorptionContractVersion: TRAINING_ABSORPTION_CONTRACT_VERSION,
   });
   return { ok: true, trainDataDir, durationMs: result.durationMs };
 }
@@ -1565,6 +1581,7 @@ await appendLog(options.logPath, {
     trainingSeedAdapter,
     trainingResumeAdapter,
     localTrainingPaused,
+    trainingAbsorptionContractVersion: TRAINING_ABSORPTION_CONTRACT_VERSION,
   },
 });
 if (!currentAdapter && trainingSeedAdapter) {
@@ -1616,6 +1633,7 @@ if (localTrainingPaused) {
   await appendLog(options.logPath, {
     event: "local_training_paused_after_repeated_collapse",
     reason: "repeated_catastrophic_training_seed_backoff",
+    trainingAbsorptionContractVersion: TRAINING_ABSORPTION_CONTRACT_VERSION,
     catastrophicTrainingSeedBackoffCount: catastrophicTrainingSeedBackoffs.size,
     catastrophicTrainingSeedBackoffs: [...catastrophicTrainingSeedBackoffs],
     trainingSeedAdapter,
@@ -1747,6 +1765,7 @@ try {
           round,
           name: "train",
           reason: "local_training_paused_after_repeated_collapse",
+          trainingAbsorptionContractVersion: TRAINING_ABSORPTION_CONTRACT_VERSION,
           catastrophicTrainingSeedBackoffCount: catastrophicTrainingSeedBackoffs.size,
           trainingSeedAdapter,
           trainingResumeAdapter,
@@ -1817,6 +1836,7 @@ try {
             adapterPath: candidateAdapter,
             failedSeedAdapter,
             reason: "train_loss_nan",
+            trainingAbsorptionContractVersion: TRAINING_ABSORPTION_CONTRACT_VERSION,
             catastrophicTrainingSeedBackoffCount: catastrophicTrainingSeedBackoffs.size,
             nextTrainingResumeAdapter: trainingResumeAdapter,
             sidecarContinues: Boolean(teacherSidecar?.pid),
@@ -1897,6 +1917,7 @@ try {
             adapterPath: candidateAdapter,
             trainingSeedAdapter: failedSeedAdapter,
             nextTrainingResumeAdapter: trainingResumeAdapter,
+            trainingAbsorptionContractVersion: TRAINING_ABSORPTION_CONTRACT_VERSION,
             score: candidateSeed
               ? {
                   passed: candidateSeed.passed,

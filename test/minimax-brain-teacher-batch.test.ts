@@ -123,6 +123,50 @@ describe("minimax brain teacher batch parsing", () => {
     );
   });
 
+  it("caps oversized MiniMax teacher plans before they enter Qwen training", () => {
+    const plan = normalizeTeacherPlan({
+      task_family: "oversized_teacher_plan",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "etf_regime",
+        "global_index_regime",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "crypto_market_structure",
+        "company_fundamentals_value",
+      ],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+        "quant_math",
+        "technical_timing",
+      ],
+      required_tools: ["source_registry", "review_panel", "control_room_summary"],
+      missing_data: Array.from({ length: 30 }, (_, index) => `missing_input_${index}`),
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        ...Array.from({ length: 80 }, (_, index) => `noisy_boundary_${index}`),
+      ],
+      next_step: Array.from({ length: 40 }, () => "gather evidence then review").join(" "),
+      rejected_context: Array.from({ length: 20 }, (_, index) => `rejected_${index}`),
+    });
+
+    expect(plan.primary_modules.length).toBeLessThanOrEqual(20);
+    expect(plan.supporting_modules.length).toBeLessThanOrEqual(8);
+    expect(plan.missing_data).toHaveLength(24);
+    expect(plan.risk_boundaries.length).toBeLessThanOrEqual(16);
+    expect(plan.risk_boundaries.slice(0, 2)).toEqual(["research_only", "no_execution_authority"]);
+    expect(plan.next_step.length).toBeLessThanOrEqual(260);
+    expect(plan.rejected_context).toHaveLength(6);
+  });
+
   it("repairs missing commas in otherwise valid teacher JSON", () => {
     const plan = extractJson(`{
       "task_family": "missing_comma_repair"
@@ -314,6 +358,31 @@ describe("minimax brain teacher batch parsing", () => {
 
     expect(plan.primary_modules).toContain("crypto_market_structure");
     expect(plan.risk_boundaries).toContain("no_high_leverage_crypto");
+  });
+
+  it("canonicalizes weak high-leverage crypto boundary synonyms", () => {
+    const plan = normalizeTeacherPlan({
+      task_family: "crypto_boundary_synonyms",
+      primary_modules: ["portfolio_risk_gates"],
+      supporting_modules: [],
+      required_tools: [],
+      missing_data: [],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "no_high_leverage_crypto_reference",
+        "no_crypto_leverage",
+        "do_not_execute_crypto_leverage",
+      ],
+      next_step: "review",
+      rejected_context: [],
+    });
+
+    expect(
+      plan.risk_boundaries.filter((entry) => entry === "no_high_leverage_crypto"),
+    ).toHaveLength(1);
+    expect(plan.risk_boundaries).not.toContain("no_high_leverage_crypto_reference");
+    expect(plan.risk_boundaries).not.toContain("no_crypto_leverage");
   });
 
   it("turns all-domain finance prompts into broad research loops", () => {

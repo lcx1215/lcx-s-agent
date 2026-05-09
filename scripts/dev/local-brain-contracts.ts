@@ -62,6 +62,26 @@ function withoutValues(values: string[], blockedValues: readonly string[]): stri
   return values.filter((value) => !blocked.has(value.toLowerCase()));
 }
 
+function canonicalRiskBoundary(entry: string): string {
+  const normalized = entry
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (
+    normalized.includes("no_high_leverage_crypto") ||
+    normalized === "no_crypto_leverage" ||
+    normalized === "crypto_no_leverage" ||
+    normalized === "no_crypto_high_leverage" ||
+    normalized === "do_not_execute_crypto_leverage" ||
+    normalized === "no_crypto_leverage_trade_recommendation" ||
+    normalized === "no_crypto_high_leverage_trading"
+  ) {
+    return "no_high_leverage_crypto";
+  }
+  return normalized || entry.trim();
+}
+
 function cleanRiskBoundaries(value: unknown): string[] {
   const blocked = new Set([
     ...MODULE_IDS,
@@ -71,7 +91,9 @@ function cleanRiskBoundaries(value: unknown): string[] {
     "next_step",
     "rejected_context",
   ]);
-  return arrayValue(value).filter((entry) => !blocked.has(entry));
+  return arrayValue(value)
+    .map(canonicalRiskBoundary)
+    .filter((entry) => !blocked.has(entry));
 }
 
 function cleanModuleList(value: unknown): string[] {

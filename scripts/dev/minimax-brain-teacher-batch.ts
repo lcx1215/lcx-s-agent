@@ -1481,6 +1481,13 @@ function asArray(value: unknown): string[] {
 }
 
 const REQUIRED_RISK_BOUNDARIES = ["research_only", "no_execution_authority"] as const;
+const MAX_TEACHER_PRIMARY_MODULES = 20;
+const MAX_TEACHER_SUPPORTING_MODULES = 8;
+const MAX_TEACHER_REQUIRED_TOOLS = 8;
+const MAX_TEACHER_MISSING_DATA = 24;
+const MAX_TEACHER_RISK_BOUNDARIES = 16;
+const MAX_TEACHER_REJECTED_CONTEXT = 6;
+const MAX_TEACHER_NEXT_STEP_CHARS = 260;
 
 function cleanStringArray(value: unknown): string[] {
   return [
@@ -1490,6 +1497,17 @@ function cleanStringArray(value: unknown): string[] {
         .filter(Boolean),
     ),
   ];
+}
+
+function capStringArray(values: string[], maxItems: number): string[] {
+  return values.slice(0, maxItems);
+}
+
+function compactNextStep(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized.length <= MAX_TEACHER_NEXT_STEP_CHARS
+    ? normalized
+    : `${normalized.slice(0, MAX_TEACHER_NEXT_STEP_CHARS - 3)}...`;
 }
 
 function cleanModuleArray(value: unknown): string[] {
@@ -1560,7 +1578,14 @@ function canonicalRiskBoundary(entry: string): string {
   if (
     normalized === "no_high_leverage_crypto_positions" ||
     normalized === "no_high_leverage_crypto_position" ||
-    normalized === "no_high_leverage_crypto"
+    normalized === "no_high_leverage_crypto" ||
+    normalized.includes("no_high_leverage_crypto") ||
+    normalized === "no_crypto_leverage" ||
+    normalized === "crypto_no_leverage" ||
+    normalized === "no_crypto_high_leverage" ||
+    normalized === "do_not_execute_crypto_leverage" ||
+    normalized === "no_crypto_leverage_trade_recommendation" ||
+    normalized === "no_crypto_high_leverage_trading"
   ) {
     return "no_high_leverage_crypto";
   }
@@ -1587,9 +1612,13 @@ function canonicalRiskBoundary(entry: string): string {
 }
 
 export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
-  const primaryModules = cleanModuleArray(plan.primary_modules);
-  const supportingModules = cleanModuleArray(plan.supporting_modules).filter(
-    (entry) => !primaryModules.includes(entry),
+  const primaryModules = capStringArray(
+    cleanModuleArray(plan.primary_modules),
+    MAX_TEACHER_PRIMARY_MODULES,
+  );
+  const supportingModules = capStringArray(
+    cleanModuleArray(plan.supporting_modules).filter((entry) => !primaryModules.includes(entry)),
+    MAX_TEACHER_SUPPORTING_MODULES,
   );
   const riskBoundaries = [
     ...new Set(cleanStringArray(plan.risk_boundaries).map(canonicalRiskBoundary)),
@@ -1599,6 +1628,10 @@ export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
       riskBoundaries.unshift(boundary);
     }
   }
+  const prioritizedRiskBoundaries = [
+    ...REQUIRED_RISK_BOUNDARIES.filter((entry) => riskBoundaries.includes(entry)),
+    ...riskBoundaries.filter((entry) => !REQUIRED_RISK_BOUNDARIES.includes(entry as never)),
+  ];
   return {
     task_family:
       typeof plan.task_family === "string" && plan.task_family.trim()
@@ -1606,14 +1639,20 @@ export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
         : "teacher_plan_unclassified",
     primary_modules: primaryModules,
     supporting_modules: supportingModules,
-    required_tools: cleanRequiredToolArray(plan.required_tools),
-    missing_data: cleanStringArray(plan.missing_data),
-    risk_boundaries: riskBoundaries,
+    required_tools: capStringArray(
+      cleanRequiredToolArray(plan.required_tools),
+      MAX_TEACHER_REQUIRED_TOOLS,
+    ),
+    missing_data: capStringArray(cleanStringArray(plan.missing_data), MAX_TEACHER_MISSING_DATA),
+    risk_boundaries: capStringArray(prioritizedRiskBoundaries, MAX_TEACHER_RISK_BOUNDARIES),
     next_step:
       typeof plan.next_step === "string" && plan.next_step.trim()
-        ? plan.next_step.trim()
+        ? compactNextStep(plan.next_step)
         : "review_teacher_plan_before_dataset_promotion",
-    rejected_context: cleanStringArray(plan.rejected_context),
+    rejected_context: capStringArray(
+      cleanStringArray(plan.rejected_context),
+      MAX_TEACHER_REJECTED_CONTEXT,
+    ),
   };
 }
 
@@ -2094,12 +2133,16 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   return {
     ...plan,
     task_family: taskFamily,
-    primary_modules: primaryModules,
-    supporting_modules: supportingModules.filter((entry) => !primaryModules.includes(entry)),
-    missing_data: missingData,
-    risk_boundaries: riskBoundaries,
-    next_step: nextStep,
-    rejected_context: rejectedContext,
+    primary_modules: capStringArray(primaryModules, MAX_TEACHER_PRIMARY_MODULES),
+    supporting_modules: capStringArray(
+      supportingModules.filter((entry) => !primaryModules.includes(entry)),
+      MAX_TEACHER_SUPPORTING_MODULES,
+    ),
+    required_tools: capStringArray(plan.required_tools, MAX_TEACHER_REQUIRED_TOOLS),
+    missing_data: capStringArray(missingData, MAX_TEACHER_MISSING_DATA),
+    risk_boundaries: capStringArray(riskBoundaries, MAX_TEACHER_RISK_BOUNDARIES),
+    next_step: compactNextStep(nextStep),
+    rejected_context: capStringArray(rejectedContext, MAX_TEACHER_REJECTED_CONTEXT),
   };
 }
 

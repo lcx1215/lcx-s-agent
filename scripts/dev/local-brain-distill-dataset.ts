@@ -32,6 +32,20 @@ const DEFAULT_OUT_DIR = path.join(
 );
 
 const BOUNDARIES = [...LOCAL_BRAIN_RISK_BOUNDARIES];
+const MAX_DISTILL_USER_ASK_CHARS = 420;
+const MAX_ACCEPTED_CANDIDATE_SUMMARY_CHARS = 420;
+const MAX_NEXT_STEP_CHARS = 220;
+const MAX_PRIMARY_MODULES = 8;
+const MAX_SUPPORTING_MODULES = 6;
+const MAX_REQUIRED_TOOLS = 8;
+const MAX_MISSING_DATA = 12;
+const MAX_RISK_BOUNDARIES = 12;
+const MAX_REJECTED_CONTEXT = 6;
+const DEFAULT_REJECTED_CONTEXT = [
+  "old_lark_conversation_history",
+  "language_routing_candidate_artifacts",
+  "unsupported_execution_language",
+];
 
 function usage(): never {
   throw new Error(
@@ -152,6 +166,14 @@ function compactJson(value: unknown): string {
 
 function uniq(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function compactList(values: string[], maxItems: number): string[] {
+  return uniq(values.map((entry) => entry.trim()).filter(Boolean)).slice(0, maxItems);
+}
+
+function compactText(value: string, maxChars: number): string {
+  return truncate(value, maxChars);
 }
 
 function readBoolean(value: unknown): boolean | undefined {
@@ -338,7 +360,26 @@ function normalizeRiskBoundaries(values: string[]): string[] {
   const normalized = values.map((entry) => entry.trim()).filter(Boolean);
   const hasResearchBoundary =
     normalized.includes("research_only") || normalized.includes("no_execution_authority");
-  return uniq(hasResearchBoundary ? normalized : [...normalized, ...BOUNDARIES]);
+  const unique = uniq(hasResearchBoundary ? normalized : [...normalized, ...BOUNDARIES]);
+  const priority = [
+    "research_only",
+    "no_execution_authority",
+    "evidence_required",
+    "no_model_math_guessing",
+    "no_unverified_live_market_data_claims",
+    "no_language_corpus_modification",
+    "no_provider_config_change",
+    "no_live_sender_change",
+    "no_protected_memory_write",
+    "no_high_leverage_crypto",
+  ];
+  return compactList(
+    [
+      ...priority.filter((entry) => unique.includes(entry)),
+      ...unique.filter((entry) => !priority.includes(entry)),
+    ],
+    MAX_RISK_BOUNDARIES,
+  );
 }
 
 function inferRiskBoundariesFromText(text: string): string[] {
@@ -369,7 +410,7 @@ function buildPrompt(params: {
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
     "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
-    `Planning contract hints: ${LOCAL_BRAIN_CONTRACT_HINTS.join(" ")}`,
+    `Core planning hints: ${LOCAL_BRAIN_CONTRACT_HINTS.slice(0, 4).join(" ")}`,
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
     "",
     `source_kind: ${params.sourceKind}`,
@@ -563,10 +604,21 @@ function exampleFromAcceptedBrainCandidate(
     return undefined;
   }
   const candidateText = readString(accepted.candidateText) ?? "";
-  const primaryModules = readStringArray(accepted.proposedPrimaryModules);
-  const supportingModules = readStringArray(accepted.proposedSupportingModules);
-  const requiredTools = readStringArray(accepted.proposedRequiredTools);
-  const missingData = readStringArray(accepted.proposedMissingData);
+  const primaryModules = compactList(
+    readStringArray(accepted.proposedPrimaryModules),
+    MAX_PRIMARY_MODULES,
+  );
+  const supportingModules = compactList(
+    readStringArray(accepted.proposedSupportingModules).filter(
+      (entry) => !primaryModules.includes(entry),
+    ),
+    MAX_SUPPORTING_MODULES,
+  );
+  const requiredTools = compactList(
+    readStringArray(accepted.proposedRequiredTools),
+    MAX_REQUIRED_TOOLS,
+  );
+  const missingData = compactList(readStringArray(accepted.proposedMissingData), MAX_MISSING_DATA);
   const safetyText = [
     readString(accepted.candidateText),
     readString(accepted.userMessage),
@@ -583,14 +635,20 @@ function exampleFromAcceptedBrainCandidate(
   const rawNextStep =
     readString(accepted.proposedNextStep) ??
     "route_to_concrete_modules_then_review_before_visible_reply";
-  const normalizedMissingData = normalizeMissingDataEntries(missingData);
-  const nextStep = sanitizeNextStep(rawNextStep, normalizedMissingData);
+  const normalizedMissingData = compactList(
+    normalizeMissingDataEntries(missingData),
+    MAX_MISSING_DATA,
+  );
+  const nextStep = compactText(
+    sanitizeNextStep(rawNextStep, normalizedMissingData),
+    MAX_NEXT_STEP_CHARS,
+  );
   if (primaryModules.length === 0 || requiredTools.length === 0) {
     return undefined;
   }
   const sourceSummary = truncate(
     compactJson({
-      candidateText,
+      candidateText: compactText(candidateText, MAX_ACCEPTED_CANDIDATE_SUMMARY_CHARS),
       taskFamily,
       primaryModules,
       supportingModules,
@@ -599,12 +657,12 @@ function exampleFromAcceptedBrainCandidate(
       review: accepted.review,
       noLanguageRoutingPromotion,
     }),
-    1800,
+    560,
   );
   return {
     prompt: buildPrompt({
       sourceKind,
-      userAsk,
+      userAsk: compactText(userAsk, MAX_DISTILL_USER_ASK_CHARS),
       sourceSummary,
     }),
     completion: buildCompletion({
@@ -615,6 +673,10 @@ function exampleFromAcceptedBrainCandidate(
       missingData: normalizedMissingData,
       riskBoundaries,
       nextStep,
+      rejectedContext: compactList(
+        [...readStringArray(accepted.proposedRejectedContext), ...DEFAULT_REJECTED_CONTEXT],
+        MAX_REJECTED_CONTEXT,
+      ),
     }),
     meta: {
       sourcePath,
@@ -779,19 +841,10 @@ function splitExamples(examples: DistillExample[]): {
     .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
   const testCount = Math.max(1, Math.floor(sorted.length * 0.1));
   const validCount = Math.max(1, Math.floor(sorted.length * 0.1));
-  const reviewedBrainTrain = Array.from({ length: 8 }, (_, round) =>
-    reviewedBrain.map((example) => ({
-      ...example,
-      meta: {
-        ...example.meta,
-        sourcePath: `${example.meta.sourcePath}-review-round-${round + 1}`,
-      },
-    })),
-  ).flat();
   return {
     test: sorted.slice(0, testCount),
     valid: sorted.slice(testCount, testCount + validCount),
-    train: sorted.slice(testCount + validCount).concat(reviewedBrainTrain, curated),
+    train: sorted.slice(testCount + validCount).concat(reviewedBrain, curated),
   };
 }
 

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
+const trainingAbsorptionContractVersion = "compact_teacher_review_v2";
 
 async function makeGuardFixture(logLinesForPrefix: (adapterPrefix: string) => unknown[]) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-minimax-guard-"));
@@ -213,6 +214,7 @@ describe("minimax brain training guard adapter resolution", () => {
       "const failedSeedAdapter = resumeAdapter ?? currentAdapter ?? trainingSeedAdapter",
     );
     expect(source).toContain("LOCAL_TRAINING_COLLAPSE_BACKOFF_SEED_LIMIT");
+    expect(source).toContain("TRAINING_ABSORPTION_CONTRACT_VERSION");
     expect(source).toContain("shouldPauseLocalTrainingAfterCollapse");
     expect(source).toContain('event: "local_training_paused_after_repeated_collapse"');
     expect(source).toContain('reason: "local_training_paused_after_repeated_collapse"');
@@ -245,6 +247,7 @@ describe("minimax brain training guard adapter resolution", () => {
           event: "candidate_catastrophic_eval_detected",
           adapterPath: firstBadCandidate,
           trainingSeedAdapter: firstSeed,
+          trainingAbsorptionContractVersion,
         },
         nonPassingEval(
           "2026-05-09T15:39:01.830Z",
@@ -258,6 +261,7 @@ describe("minimax brain training guard adapter resolution", () => {
           event: "candidate_catastrophic_eval_detected",
           adapterPath: secondBadCandidate,
           trainingSeedAdapter: secondSeed,
+          trainingAbsorptionContractVersion,
         },
       ];
     });
@@ -276,6 +280,40 @@ describe("minimax brain training guard adapter resolution", () => {
       expect.arrayContaining([firstSeed, secondSeed]),
     );
     expect(parsed.trainingResumeAdapter).toBeUndefined();
+  });
+
+  it("does not let pre-repair collapse logs pause the compact training contract", async () => {
+    let firstSeed = "";
+    let secondSeed = "";
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      firstSeed = `${adapterPrefix}-2026-05-07T12-04-09-522Z-r18`;
+      secondSeed = `${adapterPrefix}-2026-05-07T11-24-32-133Z-r15`;
+      return [
+        nonPassingEval("2026-05-07T12:16:10.000Z", "candidate_hardened_eval", firstSeed, 53, 59),
+        nonPassingEval("2026-05-07T11:30:10.000Z", "candidate_hardened_eval", secondSeed, 51, 59),
+        {
+          at: "2026-05-09T14:39:01.873Z",
+          event: "candidate_catastrophic_eval_detected",
+          adapterPath: `${adapterPrefix}-2026-05-09T14-08-52-247Z-r1`,
+          trainingSeedAdapter: firstSeed,
+        },
+        {
+          at: "2026-05-09T15:39:01.873Z",
+          event: "candidate_catastrophic_eval_detected",
+          adapterPath: `${adapterPrefix}-2026-05-09T15-12-39-464Z-r3`,
+          trainingSeedAdapter: secondSeed,
+        },
+      ];
+    });
+
+    const { stdout } = await resolveCurrentAdapter(fixture, ["--bootstrap-if-missing"]);
+    const parsed = JSON.parse(stdout) as {
+      localTrainingPaused?: boolean;
+      trainingResumeAdapter?: string;
+    };
+
+    expect(parsed.localTrainingPaused).toBe(false);
+    expect(parsed.trainingResumeAdapter).toBe(firstSeed);
   });
 
   it("uses the highest scoring non-promotion candidate as the next training seed", async () => {
