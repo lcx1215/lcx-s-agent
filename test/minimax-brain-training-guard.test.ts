@@ -185,9 +185,7 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("function shouldTrainRound");
     expect(source).toContain("if (!seedAdapter)");
     expect(source).toContain("return round % options.trainEvery === 0");
-    expect(source).toContain(
-      "shouldTrainRound(options, round, currentAdapter ?? trainingSeedAdapter)",
-    );
+    expect(source).toContain("shouldTrainRound(options, round, trainingResumeAdapter)");
     expect(source).not.toContain(
       "!options.noTrain && (!currentAdapter || round % options.trainEvery === 0)",
     );
@@ -206,6 +204,14 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain('event: "candidate_catastrophic_eval_detected"');
     expect(source).toContain('event: "training_seed_catastrophic_backoff_active"');
     expect(source).toContain('reason: "catastrophic_training_seed_backoff"');
+    expect(source).toContain('event: "training_resume_seed_selected"');
+    expect(source).toContain('reason: "best_non_catastrophic_training_seed"');
+    expect(source).toContain("excludedAdapters: catastrophicTrainingSeedBackoffs");
+    expect(source).toContain('event: "training_resume_recovery_train_scheduled"');
+    expect(source).toContain('reason: "catastrophic_eval_seed_has_safe_resume_seed"');
+    expect(source).toContain(
+      "const failedSeedAdapter = resumeAdapter ?? currentAdapter ?? trainingSeedAdapter",
+    );
   });
 
   it("uses the highest scoring non-promotion candidate as the next training seed", async () => {

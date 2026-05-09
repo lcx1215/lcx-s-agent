@@ -852,6 +852,7 @@ function shouldTrainRound(options: CliOptions, round: number, seedAdapter?: stri
 
 async function resolveBestTrainingSeedAdapter(
   adapterPrefix: string,
+  options: { excludedAdapters?: ReadonlySet<string> } = {},
 ): Promise<TrainingSeedSelection | undefined> {
   let logFiles: string[];
   try {
@@ -885,6 +886,9 @@ async function resolveBestTrainingSeedAdapter(
   }
   const ranked = [...candidates.values()].toSorted(compareTrainingSeedSelection);
   for (const candidate of ranked) {
+    if (options.excludedAdapters?.has(candidate.adapterPath)) {
+      continue;
+    }
     if (
       (await hasAdapterConfig(candidate.adapterPath)) &&
       (await hasAdapterWeights(candidate.adapterPath))
@@ -1409,9 +1413,19 @@ function adapterPathForRound(options: CliOptions, round: number): string {
 const options = parseArgs(process.argv.slice(2));
 if (options.resolveCurrentAdapterOnly) {
   const selectedAdapter = await resolveCurrentAdapter(options);
+  const catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBackoffs(
+    options.logPath,
+    options.adapterPrefix,
+  );
   const trainingSeed =
     !selectedAdapter && !options.noTrain
       ? await resolveBestTrainingSeedAdapter(options.adapterPrefix)
+      : undefined;
+  const trainingResumeSeed =
+    !options.noTrain && (!selectedAdapter || catastrophicTrainingSeedBackoffs.has(selectedAdapter))
+      ? await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+          excludedAdapters: catastrophicTrainingSeedBackoffs,
+        })
       : undefined;
   process.stdout.write(
     `${JSON.stringify(
@@ -1421,6 +1435,12 @@ if (options.resolveCurrentAdapterOnly) {
         selectedAdapter,
         trainingSeedAdapter: trainingSeed?.adapterPath,
         trainingSeed,
+        trainingResumeAdapter:
+          selectedAdapter && !catastrophicTrainingSeedBackoffs.has(selectedAdapter)
+            ? selectedAdapter
+            : trainingResumeSeed?.adapterPath,
+        trainingResumeSeed,
+        catastrophicTrainingSeedBackoffs: [...catastrophicTrainingSeedBackoffs],
         model: options.model,
         adapterPrefix: options.adapterPrefix,
         bootstrapIfMissing: options.bootstrapIfMissing,
@@ -1450,15 +1470,25 @@ const startedAt = Date.now();
 const deadline = startedAt + options.durationMinutes * 60_000;
 let round = 0;
 let currentAdapter = await resolveCurrentAdapter(options);
+let catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBackoffs(
+  options.logPath,
+  options.adapterPrefix,
+);
 let trainingSeed =
   currentAdapter || options.noTrain
     ? undefined
     : await resolveBestTrainingSeedAdapter(options.adapterPrefix);
 let trainingSeedAdapter = currentAdapter ?? trainingSeed?.adapterPath;
-let catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBackoffs(
-  options.logPath,
-  options.adapterPrefix,
-);
+let trainingResumeSeed =
+  options.noTrain || (currentAdapter && !catastrophicTrainingSeedBackoffs.has(currentAdapter))
+    ? undefined
+    : await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+        excludedAdapters: catastrophicTrainingSeedBackoffs,
+      });
+let trainingResumeAdapter =
+  currentAdapter && !catastrophicTrainingSeedBackoffs.has(currentAdapter)
+    ? currentAdapter
+    : trainingResumeSeed?.adapterPath;
 let teacherSidecar: TeacherSidecar | undefined;
 
 await appendLog(options.logPath, {
@@ -1468,7 +1498,7 @@ await appendLog(options.logPath, {
   originalPipelineReplaced: false,
   liveTouched: false,
   providerConfigTouched: false,
-  options: { ...options, currentAdapter, trainingSeedAdapter },
+  options: { ...options, currentAdapter, trainingSeedAdapter, trainingResumeAdapter },
 });
 if (!currentAdapter && trainingSeedAdapter) {
   await appendLog(options.logPath, {
@@ -1492,6 +1522,25 @@ if (trainingSeedAdapter && catastrophicTrainingSeedBackoffs.has(trainingSeedAdap
     event: "training_seed_catastrophic_backoff_active",
     adapterPath: trainingSeedAdapter,
     reason: "recent_candidate_eval_collapsed_from_this_seed",
+    liveTouched: false,
+    providerConfigTouched: false,
+  });
+}
+if (trainingResumeAdapter && trainingResumeAdapter !== trainingSeedAdapter) {
+  await appendLog(options.logPath, {
+    event: "training_resume_seed_selected",
+    evalSeedAdapter: trainingSeedAdapter,
+    trainingResumeAdapter,
+    score: trainingResumeSeed
+      ? {
+          passed: trainingResumeSeed.passed,
+          total: trainingResumeSeed.total,
+          passRate: trainingResumeSeed.passRate,
+          failedCount: trainingResumeSeed.failedCount,
+        }
+      : undefined,
+    reason: "best_non_catastrophic_training_seed",
+    strictPromotionUnchanged: true,
     liveTouched: false,
     providerConfigTouched: false,
   });
@@ -1605,8 +1654,24 @@ try {
       }
     }
 
-    if (shouldTrainRound(options, round, currentAdapter ?? trainingSeedAdapter)) {
-      const resumeAdapter = currentAdapter ?? trainingSeedAdapter;
+    const shouldRunRecoveryTrain =
+      round === 1 &&
+      Boolean(trainingResumeAdapter) &&
+      Boolean(trainingSeedAdapter) &&
+      trainingResumeAdapter !== trainingSeedAdapter;
+    if (shouldTrainRound(options, round, trainingResumeAdapter) || shouldRunRecoveryTrain) {
+      const resumeAdapter = trainingResumeAdapter;
+      if (shouldRunRecoveryTrain) {
+        await appendLog(options.logPath, {
+          event: "training_resume_recovery_train_scheduled",
+          round,
+          evalSeedAdapter: trainingSeedAdapter,
+          trainingResumeAdapter,
+          reason: "catastrophic_eval_seed_has_safe_resume_seed",
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+      }
       if (resumeAdapter && catastrophicTrainingSeedBackoffs.has(resumeAdapter)) {
         await appendLog(options.logPath, {
           event: "step_skipped",
@@ -1614,6 +1679,18 @@ try {
           name: "train",
           reason: "catastrophic_training_seed_backoff",
           trainingSeedAdapter: resumeAdapter,
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+        continue;
+      }
+      if (!resumeAdapter && !options.bootstrapIfMissing) {
+        await appendLog(options.logPath, {
+          event: "step_skipped",
+          round,
+          name: "train",
+          reason: "no_safe_training_resume_adapter",
+          evalSeedAdapter: trainingSeedAdapter,
           liveTouched: false,
           providerConfigTouched: false,
         });
@@ -1660,6 +1737,8 @@ try {
       if (promotionEvalPassed(candidateEval)) {
         currentAdapter = candidateAdapter;
         trainingSeedAdapter = candidateAdapter;
+        trainingResumeAdapter = candidateAdapter;
+        trainingResumeSeed = undefined;
         trainingSeed = trainingSeedFromEvalResult(candidateAdapter, candidateEval);
         await appendLog(options.logPath, {
           event: "adapter_promoted_for_guard_session",
@@ -1670,15 +1749,20 @@ try {
       } else {
         const candidateSeed = trainingSeedFromEvalResult(candidateAdapter, candidateEval);
         if (isCatastrophicCandidateScore(candidateSeed)) {
-          const failedSeedAdapter = currentAdapter ?? trainingSeedAdapter;
+          const failedSeedAdapter = resumeAdapter ?? currentAdapter ?? trainingSeedAdapter;
           if (failedSeedAdapter) {
             catastrophicTrainingSeedBackoffs.add(failedSeedAdapter);
           }
+          trainingResumeSeed = await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+            excludedAdapters: catastrophicTrainingSeedBackoffs,
+          });
+          trainingResumeAdapter = trainingResumeSeed?.adapterPath;
           await appendLog(options.logPath, {
             event: "candidate_catastrophic_eval_detected",
             round,
             adapterPath: candidateAdapter,
             trainingSeedAdapter: failedSeedAdapter,
+            nextTrainingResumeAdapter: trainingResumeAdapter,
             score: candidateSeed
               ? {
                   passed: candidateSeed.passed,
@@ -1700,6 +1784,8 @@ try {
           ) {
             trainingSeed = candidateSeed;
             trainingSeedAdapter = candidateAdapter;
+            trainingResumeSeed = candidateSeed;
+            trainingResumeAdapter = candidateAdapter;
             await appendLog(options.logPath, {
               event: "candidate_retained_as_training_seed",
               round,
