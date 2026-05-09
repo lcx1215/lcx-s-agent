@@ -1538,7 +1538,7 @@ function shouldUseFeishuProtocolTruthIdentityReply(text: string): boolean {
 function shouldUseFeishuProtocolStatusReadbackReply(text: string): boolean {
   return (
     resolveProtocolInfoQuestionKind(text) === "status_readback" &&
-    /(status audit|current evidence|dev-fixed|live-visible-fixed|live-fixed|unverified|acceptance code|proof|failedreason|what did you just fix|当前证据|当前 proof|刚才.*修|修了什么)/iu.test(
+    /(status audit|current evidence|probe-fixed|dev-fixed|live-visible-fixed|live-fixed|unverified|acceptance code|proof|failedreason|what did you just fix|自检|当前状态|当前证据|当前 proof|刚才.*修|修了什么)/iu.test(
       text,
     )
   );

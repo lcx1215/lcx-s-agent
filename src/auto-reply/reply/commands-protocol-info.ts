@@ -447,55 +447,58 @@ export function buildProtocolInfoReply(params: {
     const workflowRisk = readLatestLearningWorkflowRiskEvidence(params.cfg);
     const lines = [
       "🧭 Status readback",
-      "Classification: this is a status-readback request, not a request for optimistic progress prose.",
-      "Evidence order: repo state -> scoped diff or commit receipt -> targeted test or lint receipt -> migration/build/restart receipt -> live probe receipt -> visible Lark/Feishu reply-flow evidence.",
-      "Dev-fixed: only supported by current local implementation plus scoped verification receipts.",
-      "Live-fixed: unproven unless migration, build, restart, live probe, and visible Lark/Feishu reply evidence are all present.",
+      "这是状态回读，不是进度包装。",
+      "证据顺序：本地代码和测试 -> 迁移/build/restart -> channel probe -> 真实 Lark/Feishu 入站和可见回复回执。",
+      "Dev-fixed: 只代表当前 dev 代码和本地验证通过。",
+      "Probe-fixed: 只代表 gateway/channel probe 通过，不能替代真实可见回复。",
+      "Live-visible-fixed: 必须同时看到迁移、build、restart、probe、真实 Lark/Feishu 入站和 outbound_result=success，少一层都不能宣称完成。",
     ];
     if (learning.source === "lobster-workface") {
-      lines.push(`Latest durable learning artifact: present (${learning.date ?? "unknown date"})`);
+      lines.push(`最近持久学习 artifact: 有 (${learning.date ?? "unknown date"})`);
       lines.push(buildCarryoverCueStatusLine(learning) ?? "Carryover cue: unavailable");
     } else if (learning.source === "current-research-line") {
-      lines.push("Latest durable learning artifact: current-research-line only");
+      lines.push("最近持久学习 artifact: 只有 current-research-line。");
       if (learning.summary) {
-        lines.push(`Current carried summary: ${learning.summary}`);
+        lines.push(`当前摘要: ${learning.summary}`);
       }
     } else {
-      lines.push("Latest durable learning artifact: none recent");
+      lines.push("最近持久学习 artifact: 未找到新的。");
     }
     if (timebox.source === "timebox") {
       lines.push(
-        `Latest learning session receipt: ${timebox.status ?? "unknown"}${timebox.sessionId ? ` (${timebox.sessionId})` : ""}`,
+        `最近学习 session 回执: ${timebox.status ?? "unknown"}${timebox.sessionId ? ` (${timebox.sessionId})` : ""}`,
       );
     } else {
-      lines.push("Latest learning session receipt: none found");
+      lines.push("最近学习 session 回执: 未找到。");
     }
     if (writeFailure.source === "anomaly") {
       lines.push(
-        `Latest write anomaly: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
+        `最近写入异常: ${writeFailure.sourceSystem ?? "feishu"}${writeFailure.lastSeenAt ? ` @ ${writeFailure.lastSeenAt}` : ""}`,
       );
       if (writeFailure.problem) {
-        lines.push(`Write anomaly problem: ${writeFailure.problem}`);
+        lines.push(`写入异常问题: ${writeFailure.problem}`);
       }
     } else {
-      lines.push("Latest write anomaly: none found");
+      lines.push("最近写入异常: 未找到。");
     }
     if (workflowRisk.source === "anomaly") {
       lines.push(
-        `Latest workflow risk: ${workflowRisk.sourceSystem ?? "feishu"}${workflowRisk.lastSeenAt ? ` @ ${workflowRisk.lastSeenAt}` : ""}`,
+        `最近工作流风险: ${workflowRisk.sourceSystem ?? "feishu"}${workflowRisk.lastSeenAt ? ` @ ${workflowRisk.lastSeenAt}` : ""}`,
       );
       if (workflowRisk.problem) {
-        lines.push(`Workflow risk problem: ${workflowRisk.problem}`);
+        lines.push(`工作流风险问题: ${workflowRisk.problem}`);
       }
     }
     if (params.feishuReplyFlowEvidence?.trim()) {
-      lines.push("Visible Lark/Feishu reply-flow evidence: present");
+      lines.push("可见 Lark/Feishu reply-flow 证据: 已提供。");
       lines.push(params.feishuReplyFlowEvidence.trim());
     } else {
-      lines.push("Visible Lark/Feishu reply-flow evidence: missing from this status reply.");
+      lines.push(
+        "可见 Lark/Feishu reply-flow 证据: 本次回复发出前无法自证，必须看随后 outbound_result。",
+      );
     }
     lines.push(
-      "Next check: name the first missing evidence layer instead of collapsing dev-fixed, live-visible-fixed, started, running, completed, blocked, and unproven into one success label.",
+      "下一步检查: 明确第一层缺失证据，不能把 dev-fixed、probe-fixed、live-visible-fixed、started、running、completed 混成一个成功标签。",
     );
     lines.push(lobsterLine);
     return { text: lines.filter(Boolean).join("\n") };

@@ -7817,7 +7817,7 @@ describe("learning council routing", () => {
         chat_type: "p2p",
         message_type: "text",
         content: JSON.stringify({
-          text: "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-visible-fixed unverified next step proof. If unknown say failedReason. Do not mention stale March dates. acceptance code lark-status-boundary-test",
+          text: "lark-live-visible-fixed-947ae4138b 自检：用一句人话回复当前状态，必须区分 dev-fixed、probe-fixed、live-visible-fixed，不要输出 JSON。",
         }),
       },
     };
@@ -7830,10 +7830,12 @@ describe("learning council routing", () => {
     )[0]?.[0]).text;
     expect(replyText).toContain("🧭 Status readback");
     expect(replyText).toContain("Dev-fixed:");
-    expect(replyText).toContain("Live-fixed:");
+    expect(replyText).toContain("Probe-fixed:");
+    expect(replyText).toContain("Live-visible-fixed:");
     expect(replyText).toContain("交接回执:");
     expect(replyText).toContain("protocol_status_readback_guard");
     expect(replyText).toContain("model_worker=not_called");
+    expect(replyText).not.toContain("当前可用能力:");
     expect(replyText).not.toContain("2026-03-27");
     await fs.rm(tempDir, { recursive: true, force: true });
   });

@@ -1051,15 +1051,16 @@ describe("handleCommands context", () => {
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
       expect(result.reply?.text).toContain("🧭 Status readback");
-      expect(result.reply?.text).toContain("Classification: this is a status-readback request");
+      expect(result.reply?.text).toContain("这是状态回读，不是进度包装。");
       expect(result.reply?.text).toContain(
-        "Live-fixed: unproven unless migration, build, restart, live probe, and visible Lark/Feishu reply evidence are all present.",
+        "Probe-fixed: 只代表 gateway/channel probe 通过，不能替代真实可见回复。",
       );
+      expect(result.reply?.text).toContain("Live-visible-fixed: 必须同时看到迁移");
       expect(result.reply?.text).toContain(
-        "Visible Lark/Feishu reply-flow evidence: missing from this status reply.",
+        "可见 Lark/Feishu reply-flow 证据: 本次回复发出前无法自证，必须看随后 outbound_result。",
       );
       expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).not.toHaveBeenCalled();
-      expect(result.reply?.text).toContain("Next check: name the first missing evidence layer");
+      expect(result.reply?.text).toContain("下一步检查: 明确第一层缺失证据");
       expect(result.reply?.text).not.toContain("ℹ️ Help");
     },
   );
@@ -1095,7 +1096,7 @@ describe("handleCommands context", () => {
     expect(result.shouldContinue).toBe(false);
     expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
     expect(result.reply?.text).toContain("🧭 Status readback");
-    expect(result.reply?.text).toContain("Visible Lark/Feishu reply-flow evidence: present");
+    expect(result.reply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
     expect(result.reply?.text).toContain("Reply-path status evidence: visible_reply_delivered");
     expect(result.reply?.text).toContain(
       "Boundary: this proves only the recorded reply delivery layer.",
@@ -1130,9 +1131,9 @@ describe("handleCommands context", () => {
     expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
     expect(result.reply?.text).toContain("🧭 Status readback");
     expect(result.reply?.text).toContain(
-      "Visible Lark/Feishu reply-flow evidence: missing from this status reply.",
+      "可见 Lark/Feishu reply-flow 证据: 本次回复发出前无法自证，必须看随后 outbound_result。",
     );
-    expect(result.reply?.text).toContain("Next check: name the first missing evidence layer");
+    expect(result.reply?.text).toContain("下一步检查: 明确第一层缺失证据");
   });
 
   it.each(["lobster开了吗？", "is lobster on"])(

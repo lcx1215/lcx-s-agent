@@ -193,37 +193,28 @@ describe("commands-protocol-info", () => {
         ].join("\n"),
       });
       expect(statusReadbackReply?.text).toContain("🧭 Status readback");
+      expect(statusReadbackReply?.text).toContain("这是状态回读，不是进度包装。");
       expect(statusReadbackReply?.text).toContain(
-        "Classification: this is a status-readback request",
+        "证据顺序：本地代码和测试 -> 迁移/build/restart -> channel probe -> 真实 Lark/Feishu 入站和可见回复回执。",
       );
+      expect(statusReadbackReply?.text).toContain("Dev-fixed: 只代表当前 dev 代码和本地验证通过。");
       expect(statusReadbackReply?.text).toContain(
-        "Evidence order: repo state -> scoped diff or commit receipt -> targeted test or lint receipt -> migration/build/restart receipt -> live probe receipt -> visible Lark/Feishu reply-flow evidence.",
+        "Probe-fixed: 只代表 gateway/channel probe 通过，不能替代真实可见回复。",
       );
+      expect(statusReadbackReply?.text).toContain("Live-visible-fixed: 必须同时看到迁移");
+      expect(statusReadbackReply?.text).toContain("最近持久学习 artifact: 有 (2026-04-23)");
       expect(statusReadbackReply?.text).toContain(
-        "Dev-fixed: only supported by current local implementation plus scoped verification receipts.",
+        "最近学习 session 回执: running (2026-04-23T10-00-00.000Z__oc-learning)",
       );
-      expect(statusReadbackReply?.text).toContain(
-        "Live-fixed: unproven unless migration, build, restart, live probe, and visible Lark/Feishu reply evidence are all present.",
-      );
-      expect(statusReadbackReply?.text).toContain(
-        "Latest durable learning artifact: present (2026-04-23)",
-      );
-      expect(statusReadbackReply?.text).toContain(
-        "Latest learning session receipt: running (2026-04-23T10-00-00.000Z__oc-learning)",
-      );
-      expect(statusReadbackReply?.text).toContain("Latest write anomaly: none found");
-      expect(statusReadbackReply?.text).toContain(
-        "Visible Lark/Feishu reply-flow evidence: present",
-      );
+      expect(statusReadbackReply?.text).toContain("最近写入异常: 未找到。");
+      expect(statusReadbackReply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
       expect(statusReadbackReply?.text).toContain(
         "Reply-path status evidence: visible_reply_delivered",
       );
       expect(statusReadbackReply?.text).toContain(
         "Boundary: this proves only the recorded reply delivery layer.",
       );
-      expect(statusReadbackReply?.text).toContain(
-        "Next check: name the first missing evidence layer",
-      );
+      expect(statusReadbackReply?.text).toContain("下一步检查: 明确第一层缺失证据");
 
       const lobsterReply = buildProtocolInfoReply({ text: "lobster开了吗？", cfg });
       expect(lobsterReply?.text).toContain("🦞 Lobster");
