@@ -69,6 +69,7 @@ const DEFAULT_GUARD_LOG = path.join(
   "logs",
   "minimax-brain-training-guard-medium.jsonl",
 );
+const LOCAL_BRAIN_EVAL_MAX_TOKENS = "1600";
 
 function usage(): never {
   throw new Error(
@@ -2149,7 +2150,7 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
       "--prompt",
       buildPrompt(evalCase),
       "--max-tokens",
-      "800",
+      LOCAL_BRAIN_EVAL_MAX_TOKENS,
       "--temp",
       "0",
       "--verbose",
