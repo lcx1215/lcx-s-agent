@@ -49,8 +49,9 @@ export const LOCAL_BRAIN_RISK_BOUNDARIES = [
 
 export const LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS = [
   "Output one single-line JSON object only; no pretty printing, markdown, or prose outside JSON.",
-  "Hard output budget: primary_modules <= 20, supporting_modules <= 12, required_tools <= 8, missing_data <= 10, risk_boundaries <= 8, rejected_context <= 5.",
-  "Every array item must be a compact snake_case id; prefer dropping lower-priority optional items over producing long prose or an unclosed JSON object.",
+  "Hard output budget: primary_modules <= 8, supporting_modules <= 6, required_tools <= 6, missing_data <= 8, risk_boundaries <= 6, rejected_context <= 3.",
+  "Every array item must be a compact snake_case id from the allowed vocabulary; prefer fewer ids over long prose, invented ids, or an unclosed JSON object.",
+  "If the task is complex, compress by selecting only the highest-signal module ids; never explain the module map inside JSON values.",
 ] as const;
 
 export const LOCAL_BRAIN_CONTRACT_HINTS = [

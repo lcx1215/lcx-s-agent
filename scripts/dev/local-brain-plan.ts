@@ -39,7 +39,7 @@ const DEFAULT_GUARD_LOG = path.join(
   "logs",
   "minimax-brain-training-guard-medium.jsonl",
 );
-const LOCAL_BRAIN_PLAN_MAX_TOKENS = "2200";
+const LOCAL_BRAIN_PLAN_MAX_TOKENS = "700";
 const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
 
 function usage(): never {
@@ -113,8 +113,9 @@ function buildPrompt(options: CliOptions): string {
     "Do not answer the user's finance question directly.",
     "/no_think",
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
-    "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 12 words, and always close the final brace.",
+    "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 8 words, and always close the final brace.",
     `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
+    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
     "primary_modules, supporting_modules, and required_tools must use exact allowed module ids only; do not invent prefixes like finance_framework_*.",

@@ -38,10 +38,10 @@ const MAX_ACCEPTED_CANDIDATE_SUMMARY_CHARS = 420;
 const MAX_NEXT_STEP_CHARS = 220;
 const MAX_PRIMARY_MODULES = 8;
 const MAX_SUPPORTING_MODULES = 6;
-const MAX_REQUIRED_TOOLS = 8;
-const MAX_MISSING_DATA = 12;
-const MAX_RISK_BOUNDARIES = 12;
-const MAX_REJECTED_CONTEXT = 6;
+const MAX_REQUIRED_TOOLS = 6;
+const MAX_MISSING_DATA = 8;
+const MAX_RISK_BOUNDARIES = 6;
+const MAX_REJECTED_CONTEXT = 3;
 const DEFAULT_REJECTED_CONTEXT = [
   "old_lark_conversation_history",
   "language_routing_candidate_artifacts",
@@ -409,8 +409,9 @@ function buildPrompt(params: {
     "Do not answer the user's finance question directly.",
     "/no_think",
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
-    "Keep the JSON compact: short arrays, short next_step, no explanation outside JSON.",
+    "Keep the JSON compact: short arrays, short next_step, no explanation inside or outside JSON.",
     `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
+    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,

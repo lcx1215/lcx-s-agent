@@ -43,6 +43,8 @@ describe("local brain distill dataset", () => {
     expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
     expect(source).toContain("Keep the JSON compact");
     expect(source).toContain("LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS");
+    expect(source).toContain("Use this exact compact shape");
+    expect(source).toContain('risk_boundaries":["research_only"]');
   });
 
   it("writes parseable seed splits for downstream smoke checks", async () => {
@@ -214,7 +216,7 @@ describe("local brain distill dataset", () => {
         "no_unverified_live_market_data_claims",
       ]),
     );
-    expect(completion.risk_boundaries?.length).toBeLessThanOrEqual(12);
+    expect(completion.risk_boundaries?.length).toBeLessThanOrEqual(6);
     expect(completion.risk_boundaries).not.toContain("teacher_noise_boundary_49");
     expect(completion.next_step).not.toMatch(/pull latest|ETF flow data|ETH market/i);
     expect(completion.next_step).toContain("timestamped source evidence");
