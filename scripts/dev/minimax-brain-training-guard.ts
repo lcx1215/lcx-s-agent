@@ -87,6 +87,8 @@ const TRAIN_SKIP_BACKOFF_MS = 5 * 60_000;
 const DEFAULT_TRAIN_SLICE_MAX_REVIEW_EXAMPLES = 1024;
 const DEFAULT_TRAIN_SLICE_CURATED_REPEAT = 6;
 const DEFAULT_TRAIN_SLICE_NON_REVIEW_REPEAT = 2;
+const CATASTROPHIC_CANDIDATE_MIN_CASES = 10;
+const CATASTROPHIC_CANDIDATE_MAX_PASS_RATE = 0.05;
 
 function usage(): never {
   throw new Error(
@@ -754,6 +756,16 @@ type TrainingSeedSelection = {
   source: string;
 };
 
+function isCatastrophicCandidateScore(seed: TrainingSeedSelection | undefined): boolean {
+  if (!seed) {
+    return false;
+  }
+  return (
+    seed.total >= CATASTROPHIC_CANDIDATE_MIN_CASES &&
+    seed.passRate <= CATASTROPHIC_CANDIDATE_MAX_PASS_RATE
+  );
+}
+
 function trainingSeedFromVerdict(verdict: EvalVerdict): TrainingSeedSelection | undefined {
   if (verdict.source !== "candidate_hardened_eval") {
     return undefined;
@@ -881,6 +893,70 @@ async function resolveBestTrainingSeedAdapter(
     }
   }
   return undefined;
+}
+
+async function resolveCatastrophicTrainingSeedBackoffs(
+  logPath: string,
+  adapterPrefix: string,
+): Promise<Set<string>> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(logPath, "utf8");
+  } catch {
+    return new Set();
+  }
+  const suspended = new Set<string>();
+  let latestCatastrophicCandidate: string | undefined;
+  for (const line of raw.split(/\r?\n/u)) {
+    if (!line.trim()) {
+      continue;
+    }
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (payload.name === "candidate_hardened_eval") {
+      const verdict = evalVerdictFromPayload(payload);
+      const seed = verdict ? trainingSeedFromVerdict(verdict) : undefined;
+      latestCatastrophicCandidate =
+        seed &&
+        isCatastrophicCandidateScore(seed) &&
+        adapterMatchesPrefix(seed.adapterPath, adapterPrefix)
+          ? seed.adapterPath
+          : undefined;
+      continue;
+    }
+    if (payload.event === "candidate_catastrophic_eval_detected") {
+      const trainingSeedAdapter = payload.trainingSeedAdapter;
+      if (
+        typeof trainingSeedAdapter === "string" &&
+        adapterMatchesPrefix(trainingSeedAdapter, adapterPrefix)
+      ) {
+        suspended.add(trainingSeedAdapter);
+      }
+      latestCatastrophicCandidate = undefined;
+      continue;
+    }
+    if (
+      latestCatastrophicCandidate &&
+      (payload.event === "candidate_not_retained_as_training_seed" ||
+        payload.event === "adapter_rejected_for_guard_session")
+    ) {
+      const adapterPath = payload.adapterPath;
+      const trainingSeedAdapter = payload.currentTrainingSeedAdapter;
+      if (
+        adapterPath === latestCatastrophicCandidate &&
+        typeof trainingSeedAdapter === "string" &&
+        adapterMatchesPrefix(trainingSeedAdapter, adapterPrefix)
+      ) {
+        suspended.add(trainingSeedAdapter);
+      }
+      latestCatastrophicCandidate = undefined;
+    }
+  }
+  return suspended;
 }
 
 async function resolveLatestPassingAdapter(adapterPrefix: string): Promise<string | undefined> {
@@ -1379,6 +1455,10 @@ let trainingSeed =
     ? undefined
     : await resolveBestTrainingSeedAdapter(options.adapterPrefix);
 let trainingSeedAdapter = currentAdapter ?? trainingSeed?.adapterPath;
+let catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBackoffs(
+  options.logPath,
+  options.adapterPrefix,
+);
 let teacherSidecar: TeacherSidecar | undefined;
 
 await appendLog(options.logPath, {
@@ -1405,6 +1485,15 @@ if (!currentAdapter && trainingSeedAdapter) {
     reason: "no_promotion_ready_adapter_available",
     strictPromotionUnchanged: true,
     liveTouched: false,
+  });
+}
+if (trainingSeedAdapter && catastrophicTrainingSeedBackoffs.has(trainingSeedAdapter)) {
+  await appendLog(options.logPath, {
+    event: "training_seed_catastrophic_backoff_active",
+    adapterPath: trainingSeedAdapter,
+    reason: "recent_candidate_eval_collapsed_from_this_seed",
+    liveTouched: false,
+    providerConfigTouched: false,
   });
 }
 
@@ -1517,13 +1606,21 @@ try {
     }
 
     if (shouldTrainRound(options, round, currentAdapter ?? trainingSeedAdapter)) {
+      const resumeAdapter = currentAdapter ?? trainingSeedAdapter;
+      if (resumeAdapter && catastrophicTrainingSeedBackoffs.has(resumeAdapter)) {
+        await appendLog(options.logPath, {
+          event: "step_skipped",
+          round,
+          name: "train",
+          reason: "catastrophic_training_seed_backoff",
+          trainingSeedAdapter: resumeAdapter,
+          liveTouched: false,
+          providerConfigTouched: false,
+        });
+        continue;
+      }
       const candidateAdapter = adapterPathForRound(options, round);
-      const trained = await runTrain(
-        options,
-        round,
-        candidateAdapter,
-        currentAdapter ?? trainingSeedAdapter,
-      );
+      const trained = await runTrain(options, round, candidateAdapter, resumeAdapter);
       if (!trained) {
         await appendLog(options.logPath, {
           event: "step_backoff",
@@ -1571,8 +1668,32 @@ try {
           liveTouched: false,
         });
       } else {
+        const candidateSeed = trainingSeedFromEvalResult(candidateAdapter, candidateEval);
+        if (isCatastrophicCandidateScore(candidateSeed)) {
+          const failedSeedAdapter = currentAdapter ?? trainingSeedAdapter;
+          if (failedSeedAdapter) {
+            catastrophicTrainingSeedBackoffs.add(failedSeedAdapter);
+          }
+          await appendLog(options.logPath, {
+            event: "candidate_catastrophic_eval_detected",
+            round,
+            adapterPath: candidateAdapter,
+            trainingSeedAdapter: failedSeedAdapter,
+            score: candidateSeed
+              ? {
+                  passed: candidateSeed.passed,
+                  total: candidateSeed.total,
+                  passRate: candidateSeed.passRate,
+                  failedCount: candidateSeed.failedCount,
+                }
+              : undefined,
+            reason: "candidate_eval_collapsed_near_zero_pass_rate",
+            strictPromotionUnchanged: true,
+            localTrainingBackoff: true,
+            liveTouched: false,
+          });
+        }
         if (!currentAdapter) {
-          const candidateSeed = trainingSeedFromEvalResult(candidateAdapter, candidateEval);
           if (
             candidateSeed &&
             (!trainingSeed || compareTrainingSeedSelection(candidateSeed, trainingSeed) < 0)

@@ -193,6 +193,21 @@ describe("minimax brain training guard adapter resolution", () => {
     );
   });
 
+  it("backs off local training when a candidate collapses to a near-zero eval score", async () => {
+    const source = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("CATASTROPHIC_CANDIDATE_MIN_CASES");
+    expect(source).toContain("CATASTROPHIC_CANDIDATE_MAX_PASS_RATE");
+    expect(source).toContain("function isCatastrophicCandidateScore");
+    expect(source).toContain("resolveCatastrophicTrainingSeedBackoffs");
+    expect(source).toContain('event: "candidate_catastrophic_eval_detected"');
+    expect(source).toContain('event: "training_seed_catastrophic_backoff_active"');
+    expect(source).toContain('reason: "catastrophic_training_seed_backoff"');
+  });
+
   it("uses the highest scoring non-promotion candidate as the next training seed", async () => {
     let strongAdapter = "";
     let weakAdapter = "";
