@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resolveProtocolInfoQuestionKind } from "../../../src/auto-reply/reply/commands-protocol-families.js";
 import {
   looksLikeBatchQueueScopeAsk,
@@ -845,6 +845,43 @@ describe("real daily utterance regression", () => {
     expect(handoff.notice).toContain("Lark instruction-understanding envelope");
     expect(handoff.notice).toContain("Validated work order");
     expect(handoff.notice).toContain("not execution approval");
+  });
+
+  it("short-circuits status readbacks before API route planning", async () => {
+    const apiProvider = vi.fn(async () => ({
+      family: "live_probe_failure" as const,
+      confidence: 0.95,
+      rationale: "misclassified status readback as live probe failure",
+      workOrder: {
+        objective: "incorrectly inspect live probe receipts",
+        requiredModules: ["feishu_live_probe"],
+        evidenceRequired: ["live probe receipt"],
+        safetyBoundaries: ["do not mutate"],
+        outputContract: ["one-line status"],
+      },
+    }));
+
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance:
+        "lark-live-visible-fixed-status-readback-v3 自检：用一句人话回复当前状态，必须区分 dev-fixed、probe-fixed、live-visible-fixed，不要输出 JSON。",
+      apiProvider,
+    });
+
+    expect(apiProvider).not.toHaveBeenCalled();
+    expect(handoff).toMatchObject({
+      family: "protocol_truth_surface",
+      source: "deterministic_fallback",
+      confidence: 0.96,
+      targetSurface: "protocol_truth_surface",
+      workOrder: {
+        family: "protocol_truth_surface",
+        source: "deterministic_fallback_audited",
+      },
+    });
+    expect(handoff.apiCandidate).toBeUndefined();
+    expect(handoff.notice).toContain("status-readback requests are answered");
   });
 
   it("lets the API planner remain primary with no local semantic live decomposition", async () => {

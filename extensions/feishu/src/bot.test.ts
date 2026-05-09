@@ -7747,11 +7747,12 @@ describe("learning council routing", () => {
       replyOptions: {},
       markDispatchIdle: vi.fn(),
     });
-    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+    const apiRouteProvider = vi.fn(async () => ({
       family: "knowledge_internalization_audit",
       confidence: 0.7,
       rationale: "misclassified status audit as learning audit",
     }));
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(apiRouteProvider);
 
     const mockDispatchReplyFromConfig = vi.fn();
     setFeishuRuntime(
@@ -7828,15 +7829,44 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("🧭 Status readback");
-    expect(replyText).toContain("Dev-fixed:");
-    expect(replyText).toContain("Probe-fixed:");
-    expect(replyText).toContain("Live-visible-fixed:");
-    expect(replyText).toContain("交接回执:");
-    expect(replyText).toContain("protocol_status_readback_guard");
-    expect(replyText).toContain("model_worker=not_called");
+    expect(replyText).toContain("当前状态：dev-fixed");
+    expect(replyText).toContain("probe-fixed");
+    expect(replyText).toContain("live-visible-fixed");
+    expect(replyText).toContain("发送成功回执");
+    expect(replyText).toContain("状态回读走确定性边界");
+    expect(replyText).not.toContain("交接回执:");
+    expect(replyText).not.toContain("Handoff receipt:");
+    expect(replyText).not.toContain("protocol_status_readback_guard");
+    expect(replyText).not.toContain("model_worker=not_called");
+    expect(replyText).not.toContain("control_room_main_lane");
+    expect(replyText).not.toContain("分发状态");
+    expect(replyText).not.toContain("Distribution:");
     expect(replyText).not.toContain("当前可用能力:");
     expect(replyText).not.toContain("2026-03-27");
+    expect(apiRouteProvider).not.toHaveBeenCalled();
+    const handoffReceiptRoot = path.join(tempDir, "memory", "lark-language-handoff-receipts");
+    const handoffReceiptFiles = (await fs.readdir(handoffReceiptRoot, { recursive: true }))
+      .map(String)
+      .filter((name) => name.endsWith(".json"));
+    expect(handoffReceiptFiles).toHaveLength(1);
+    const handoffReceiptFile = handoffReceiptFiles[0];
+    if (!handoffReceiptFile) {
+      throw new Error("expected one Lark handoff receipt");
+    }
+    const handoffReceipt = JSON.parse(
+      await fs.readFile(path.join(handoffReceiptRoot, handoffReceiptFile), "utf-8"),
+    ) as {
+      handoff?: {
+        family?: string;
+        source?: string;
+        apiCandidate?: unknown;
+      };
+    };
+    expect(handoffReceipt.handoff).toMatchObject({
+      family: "protocol_truth_surface",
+      source: "deterministic_fallback",
+    });
+    expect(handoffReceipt.handoff?.apiCandidate).toBeUndefined();
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 

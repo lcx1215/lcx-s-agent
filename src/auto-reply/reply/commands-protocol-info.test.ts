@@ -209,6 +209,10 @@ describe("commands-protocol-info", () => {
       expect(statusReadbackReply?.text).toContain("最近写入异常: 未找到。");
       expect(statusReadbackReply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
       expect(statusReadbackReply?.text).toContain(
+        "内部边界: 状态回读只报告证据层级，不输出路由、模块或 JSON 细节。",
+      );
+      expect(statusReadbackReply?.text).not.toContain("🦞 Lobster:");
+      expect(statusReadbackReply?.text).toContain(
         "Reply-path status evidence: visible_reply_delivered",
       );
       expect(statusReadbackReply?.text).toContain(

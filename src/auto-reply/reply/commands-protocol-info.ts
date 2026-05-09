@@ -500,7 +500,7 @@ export function buildProtocolInfoReply(params: {
     lines.push(
       "下一步检查: 明确第一层缺失证据，不能把 dev-fixed、probe-fixed、live-visible-fixed、started、running、completed 混成一个成功标签。",
     );
-    lines.push(lobsterLine);
+    lines.push("内部边界: 状态回读只报告证据层级，不输出路由、模块或 JSON 细节。");
     return { text: lines.filter(Boolean).join("\n") };
   }
   if (kind === "lobster") {

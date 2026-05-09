@@ -1962,6 +1962,47 @@ export async function resolveLarkAgentInstructionHandoff(params: {
     chatId: params.chatId,
     content: params.utterance,
   });
+  const deterministicSurface = deterministicRouting.targetSurface;
+  const protocolKind = resolveProtocolInfoQuestionKind(params.utterance);
+  if (protocolKind === "status_readback") {
+    const family: LarkRoutingFamily = "protocol_truth_surface";
+    const targetSurface = LARK_ROUTING_FAMILY_CONTRACTS[family].target;
+    const confidence = 0.96;
+    const workOrder = buildValidatedAgentWorkOrder({
+      family,
+      utterance: params.utterance,
+      source: "deterministic_fallback",
+      targetSurface,
+      deterministicSurface,
+    });
+    const targetLine = `Suggested family=${family}; target=${
+      targetSurface ?? "deterministic_surface"
+    }; source=deterministic_fallback; confidence=${confidence.toFixed(2)}.`;
+    const deterministicLine = deterministicSurface
+      ? `Deterministic surface=${deterministicSurface}.`
+      : "Deterministic surface=unresolved.";
+    const workOrderLine = `Validated work order: source=${workOrder.source}; modules=${workOrder.requiredModules.join(
+      ",",
+    )}; evidence=${workOrder.evidenceRequired.join(",")}; validation=${workOrder.validation.notes.join(
+      ",",
+    )}.`;
+
+    return {
+      family,
+      source: "deterministic_fallback",
+      confidence,
+      targetSurface,
+      deterministicSurface,
+      workOrder,
+      notice: [
+        "[Lark instruction-understanding envelope]",
+        targetLine,
+        deterministicLine,
+        workOrderLine,
+        "Safety boundary: status-readback requests are answered from deterministic evidence boundaries before API route planning; this is not execution approval and not live-visible proof by itself.",
+      ].join("\n"),
+    };
+  }
   let api: LarkApiRouteCandidate | undefined;
   if (params.apiProvider) {
     try {
@@ -1980,7 +2021,6 @@ export async function resolveLarkAgentInstructionHandoff(params: {
       };
     }
   }
-  const deterministicSurface = deterministicRouting.targetSurface;
   const apiSelected =
     api && api.family !== "unknown" && api.confidence >= LARK_ROUTING_API_CONFIDENCE_THRESHOLD
       ? { family: api.family, source: "api" as const, confidence: api.confidence }

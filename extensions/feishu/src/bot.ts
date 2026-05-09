@@ -3937,6 +3937,35 @@ function renderFeishuLiveSchedulingQueueReply(params: {
   ].join("\n");
 }
 
+function shouldUseConciseFeishuStatusReadback(userMessage: string): boolean {
+  return /一句人话|一句话|一行|简短|不要输出\s*json|不要\s*json/iu.test(userMessage);
+}
+
+function renderFeishuProtocolStatusReadbackReply(params: {
+  userMessage: string;
+  protocolText?: string;
+}): string {
+  if (shouldUseConciseFeishuStatusReadback(params.userMessage)) {
+    return [
+      "当前状态：dev-fixed 只代表本地代码和测试通过；probe-fixed 只代表 gateway/channel 探活通过；live-visible-fixed 必须等真实 Lark 入站和发送成功回执都落账后才算，不能提前混成完成。",
+      "后台处理：这类状态回读走确定性边界，不调用大模型自由生成，也不执行 build、restart 或 probe。",
+    ].join("\n");
+  }
+  const fallback = "🧭 Status readback\nfailedReason: protocol_status_readback_unavailable";
+  const visibleLines = (params.protocolText?.trim() || fallback).split(/\r?\n/u).filter((line) => {
+    const trimmed = line.trim();
+    return (
+      trimmed.length > 0 &&
+      !/^🦞\s*Lobster:/iu.test(trimmed) &&
+      !/\b(control_room_main_lane|openclaw_embedded_agent|handoff receipt|model_worker|protocol_status_readback_guard)\b/iu.test(
+        trimmed,
+      )
+    );
+  });
+  visibleLines.push("后台证据会落账；前台只展示人能读懂的状态边界。");
+  return visibleLines.join("\n");
+}
+
 async function persistFeishuSurfaceLineWithFailureReceipt(params: {
   cfg: ClawdbotConfig;
   agentId: string;
@@ -6241,15 +6270,13 @@ export async function handleFeishuMessage(params: {
           text: ctx.content,
           cfg: effectiveCfg as OpenClawConfig,
         });
-        const statusReadbackText = [
-          statusReadbackReply?.text ??
-            "🧭 Status readback\nfailedReason: protocol_status_readback_unavailable",
-          `Handoff receipt: ${larkHandoffReceipt?.relativePath ?? "write_failed_or_unavailable"}`,
-          "Direct dispatch: protocol_status_readback_guard; model_worker=not_called; boundary=current_evidence_only_no_trade_no_file_mutation.",
-        ].join("\n");
+        const statusReadbackText = renderFeishuProtocolStatusReadbackReply({
+          userMessage: ctx.content,
+          protocolText: statusReadbackReply?.text,
+        });
         const statusReadbackSendResult = await sendFeishuFinalTextReply({
           replyRuntime: core.channel.reply,
-          dispatcher: effectiveDispatcher,
+          dispatcher: surfaceLineCapture.dispatcher,
           markDispatchIdle,
           text: statusReadbackText,
         });
