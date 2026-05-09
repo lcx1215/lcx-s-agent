@@ -91,6 +91,60 @@ describe("local-brain-distill-eval", () => {
     });
   });
 
+  it("extracts the first balanced JSON object from noisy model output", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-json-"));
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/bin/sh",
+        "cat <<'EOF'",
+        "preface that the model should not have emitted",
+        JSON.stringify({
+          task_family: "finance_research_planning",
+          primary_modules: ["macro_rates_inflation", "credit_liquidity", "etf_regime"],
+          supporting_modules: [],
+          required_tools: [],
+          missing_data: [],
+          risk_boundaries: ["research_only"],
+          next_step: "route_to_review",
+          rejected_context: ["old_lark_conversation_history"],
+        }),
+        "trailing explanation with an unmatched { that must not poison parsing",
+        "EOF",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--no-adapter",
+        "--python",
+        fakePython,
+        "--case-id",
+        "portfolio_mixed_q_t_nvda",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary).toMatchObject({ passed: 1, total: 1, promotionReady: true });
+  });
+
   it("runs simple prerequisite cases before complex commodity evals", () => {
     const result = spawnSync(
       process.execPath,

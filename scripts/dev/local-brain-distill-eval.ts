@@ -2273,12 +2273,51 @@ async function resolveEvalAdapter(options: CliOptions): Promise<AdapterResolutio
 }
 
 function extractJson(raw: string): Record<string, unknown> {
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    throw new Error(`no JSON object found in model output: ${raw.slice(0, 240)}`);
+  let searchFrom = 0;
+  while (searchFrom < raw.length) {
+    const start = raw.indexOf("{", searchFrom);
+    if (start < 0) {
+      break;
+    }
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < raw.length; index += 1) {
+      const char = raw[index];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = inString;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) {
+        continue;
+      }
+      if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(raw.slice(start, index + 1));
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              return parsed as Record<string, unknown>;
+            }
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+    searchFrom = start + 1;
   }
-  return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+  throw new Error(`no JSON object found in model output: ${raw.slice(0, 240)}`);
 }
 
 function asStringArray(value: unknown): string[] {
