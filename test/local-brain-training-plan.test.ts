@@ -200,4 +200,47 @@ describe("local-brain-training-plan", () => {
       repairDecisionIds: [],
     });
   });
+
+  it("treats summary-only parse error case ids as output-contract failures", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+      {
+        at: "2026-05-09T10:20:00.000Z",
+        event: "step_non_passing",
+        name: "training_seed_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r4",
+          summary: {
+            passed: 61,
+            total: 68,
+            passRate: 0.897,
+            failedCaseIds: ["local_memory_knowledge_activation"],
+            parseErrorCaseIds: ["local_memory_knowledge_activation"],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "output_contract_or_parser_failure",
+          codexRepairEligible: true,
+        }),
+      ]),
+    );
+    expect(plan.codexAutoRepair).toMatchObject({
+      eligible: true,
+      repairDecisionIds: ["output_contract_or_parser_failure"],
+    });
+  });
 });

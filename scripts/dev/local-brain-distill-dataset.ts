@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   LOCAL_BRAIN_CONTRACT_HINTS,
   LOCAL_BRAIN_MODULE_TAXONOMY,
+  LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
   LOCAL_BRAIN_RISK_BOUNDARIES,
 } from "./local-brain-taxonomy.js";
 
@@ -409,6 +410,7 @@ function buildPrompt(params: {
     "/no_think",
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
     "Keep the JSON compact: short arrays, short next_step, no explanation outside JSON.",
+    `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,

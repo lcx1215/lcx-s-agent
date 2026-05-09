@@ -320,6 +320,9 @@ function hasOutputContractSignals(
   snapshot: EvalSnapshot | undefined,
   guardFailure?: JsonRecord,
 ): boolean {
+  if ((snapshot?.parseErrorCaseIds.length ?? 0) > 0) {
+    return true;
+  }
   const haystack = [
     ...(snapshot?.parseErrorCaseIds ?? []),
     ...(snapshot?.parseErrorSamples ?? []),

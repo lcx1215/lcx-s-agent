@@ -3,6 +3,7 @@ import path from "node:path";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
+  LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
   LOCAL_BRAIN_REQUIRED_FINANCE_MODULES,
   selectLocalBrainContractHints,
 } from "./local-brain-taxonomy.js";
@@ -2133,6 +2134,7 @@ function buildPrompt(evalCase: EvalCase): string {
     "/no_think",
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
     "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 12 words, and always close the final brace.",
+    `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,

@@ -42,6 +42,7 @@ describe("local brain distill dataset", () => {
     expect(source).toContain("/no_think");
     expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
     expect(source).toContain("Keep the JSON compact");
+    expect(source).toContain("LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS");
   });
 
   it("writes parseable seed splits for downstream smoke checks", async () => {

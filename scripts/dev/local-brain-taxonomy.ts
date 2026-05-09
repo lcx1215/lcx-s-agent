@@ -47,6 +47,12 @@ export const LOCAL_BRAIN_RISK_BOUNDARIES = [
   "no_unverified_cross_market_claims",
 ] as const;
 
+export const LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS = [
+  "Output one single-line JSON object only; no pretty printing, markdown, or prose outside JSON.",
+  "Hard output budget: primary_modules <= 20, supporting_modules <= 12, required_tools <= 8, missing_data <= 10, risk_boundaries <= 8, rejected_context <= 5.",
+  "Every array item must be a compact snake_case id; prefer dropping lower-priority optional items over producing long prose or an unclosed JSON object.",
+] as const;
+
 export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "If source URL or local file is missing, include source_registry and missing_data source_url_or_local_source_path.",
   "If portfolio math inputs are missing, include missing_data position_weights_and_return_series exactly.",

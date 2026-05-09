@@ -40,6 +40,7 @@ describe("local-brain-plan adapter selection", () => {
     expect(source).toContain("--chat-template-config");
     expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
     expect(source).toContain("Keep the JSON compact and complete");
+    expect(source).toContain("LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS");
     expect(source).toContain("always close the final brace");
     expect(source).toContain("must use exact allowed module ids only");
     expect(source).toContain("do not invent prefixes like finance_framework_*");
