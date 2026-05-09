@@ -162,7 +162,7 @@ function readStringArray(value: unknown): string[] {
 }
 
 function compactJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(value);
 }
 
 function uniq(values: string[]): string[] {

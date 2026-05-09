@@ -102,6 +102,11 @@ describe("local brain distill dataset", () => {
       return completion.missing_data?.includes("position_weights_and_return_series");
     });
     expect(canonicalQuantGap).toBe(true);
+    for (const entry of trainExamples) {
+      const completion = (entry as { completion?: unknown }).completion;
+      expect(typeof completion).toBe("string");
+      expect(completion).not.toContain("\n");
+    }
 
     const { stdout } = await execFileAsync(
       process.execPath,
