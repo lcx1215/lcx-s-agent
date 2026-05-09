@@ -33,6 +33,17 @@ describe("local brain distill dataset", () => {
     expect(source).not.toContain("Promise.all(files.map((filePath) => examplesFromFile");
   });
 
+  it("teaches Qwen no-think compact JSON prompts in every generated dataset example", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/local-brain-distill-dataset.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("/no_think");
+    expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
+    expect(source).toContain("Keep the JSON compact");
+  });
+
   it("writes parseable seed splits for downstream smoke checks", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-dataset-"));
     const workspaceDir = path.join(fixtureRoot, "workspace");

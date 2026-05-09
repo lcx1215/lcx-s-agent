@@ -153,7 +153,9 @@ describe("local-brain-distill-eval", () => {
       ),
     );
 
+    expect(source).toContain("/no_think");
     expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
+    expect(source).toContain("Keep the JSON compact");
   });
 
   it("runs simple prerequisite cases before complex commodity evals", () => {
