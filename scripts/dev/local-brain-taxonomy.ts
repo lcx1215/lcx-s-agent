@@ -63,3 +63,46 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "Agent skill learning tasks must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
   "External financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision.",
 ] as const;
+
+const BASE_CONTRACT_HINT_INDEXES = [0, 1, 2, 3, 4, 5] as const;
+
+const CONTRACT_HINT_SELECTORS: Array<{
+  indexes: readonly number[];
+  pattern: RegExp;
+}> = [
+  {
+    indexes: [6, 7],
+    pattern:
+      /短|口语|看不懂|lark|feishu|飞书|最近股市|持仓|拿|买|卖|大宗商品|plain|recent stock|buy|hold|position sizing|visible reply/iu,
+  },
+  {
+    indexes: [8, 9, 10],
+    pattern:
+      /美股|a股|指数|加密|期权|大宗|商品|黄金|原油|美元|外汇|事件|技术|跨市场|crypto|option|commodity|gold|oil|dollar|fx|event|technical|cross-market/iu,
+  },
+  {
+    indexes: [11, 12],
+    pattern:
+      /论文|arxiv|ssrn|github|huggingface|开源|source|capability|receipt|skill|paper|open-source|framework|dataset|eval/iu,
+  },
+  {
+    indexes: [13],
+    pattern:
+      /anthropic|financial agent|financial-services|hermes|harness|外部.*agent|金融.*agent|架构哲学/iu,
+  },
+];
+
+export function selectLocalBrainContractHints(text: string): readonly string[] {
+  const selected = new Set<number>(BASE_CONTRACT_HINT_INDEXES);
+  for (const selector of CONTRACT_HINT_SELECTORS) {
+    if (selector.pattern.test(text)) {
+      for (const index of selector.indexes) {
+        selected.add(index);
+      }
+    }
+  }
+  return [...selected]
+    .toSorted((a, b) => a - b)
+    .map((index) => LOCAL_BRAIN_CONTRACT_HINTS[index])
+    .filter((hint): hint is string => Boolean(hint));
+}

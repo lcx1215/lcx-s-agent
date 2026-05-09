@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
-  LOCAL_BRAIN_CONTRACT_HINTS,
   LOCAL_BRAIN_MODULE_TAXONOMY,
   LOCAL_BRAIN_REQUIRED_FINANCE_MODULES,
+  selectLocalBrainContractHints,
 } from "./local-brain-taxonomy.js";
 
 type CliOptions = {
@@ -2122,6 +2122,9 @@ function expandEvalCasesWithPrerequisites(caseIds: string[]): {
 }
 
 function buildPrompt(evalCase: EvalCase): string {
+  const contractHints = selectLocalBrainContractHints(
+    `${evalCase.userAsk}\n${evalCase.sourceSummary}`,
+  ).join(" ");
   return [
     "You are the LCX Agent local auxiliary thought-flow model.",
     "Task: produce a concise control-room planning packet for the main agent.",
@@ -2130,7 +2133,7 @@ function buildPrompt(evalCase: EvalCase): string {
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
     "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
-    `Planning contract hints: ${LOCAL_BRAIN_CONTRACT_HINTS.join(" ")}`,
+    `Planning contract hints: ${contractHints}`,
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
     "",
     "source_kind: clean_eval",
