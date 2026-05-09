@@ -38,7 +38,7 @@ const DEFAULT_GUARD_LOG = path.join(
   "logs",
   "minimax-brain-training-guard-medium.jsonl",
 );
-const LOCAL_BRAIN_PLAN_MAX_TOKENS = "1600";
+const LOCAL_BRAIN_PLAN_MAX_TOKENS = "2200";
 const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
 
 function usage(): never {
@@ -112,9 +112,10 @@ function buildPrompt(options: CliOptions): string {
     "Do not answer the user's finance question directly.",
     "/no_think",
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
-    "Keep the JSON compact: short arrays, short next_step, no explanation outside JSON.",
+    "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 12 words, and always close the final brace.",
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
+    "primary_modules, supporting_modules, and required_tools must use exact allowed module ids only; do not invent prefixes like finance_framework_*.",
     "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
     `Planning contract hints: ${contractHints}`,
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",

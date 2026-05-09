@@ -39,6 +39,10 @@ describe("local-brain-plan adapter selection", () => {
     expect(source).toContain("QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{\"enable_thinking\":false}'");
     expect(source).toContain("--chat-template-config");
     expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
-    expect(source).toContain("Keep the JSON compact");
+    expect(source).toContain("Keep the JSON compact and complete");
+    expect(source).toContain("always close the final brace");
+    expect(source).toContain("must use exact allowed module ids only");
+    expect(source).toContain("do not invent prefixes like finance_framework_*");
+    expect(source).toContain('LOCAL_BRAIN_PLAN_MAX_TOKENS = "2200"');
   });
 });
