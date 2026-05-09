@@ -145,6 +145,17 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary).toMatchObject({ passed: 1, total: 1, promotionReady: true });
   });
 
+  it("tells the local model not to emit think blocks during eval", async () => {
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(
+        path.join(path.resolve(__dirname, ".."), "scripts/dev/local-brain-distill-eval.ts"),
+        "utf8",
+      ),
+    );
+
+    expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
+  });
+
   it("runs simple prerequisite cases before complex commodity evals", () => {
     const result = spawnSync(
       process.execPath,

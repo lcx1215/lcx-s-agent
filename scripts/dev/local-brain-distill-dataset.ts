@@ -406,6 +406,7 @@ function buildPrompt(params: {
     "You are the LCX Agent local auxiliary thought-flow model.",
     "Task: produce a concise control-room planning packet for the main agent.",
     "Do not answer the user's finance question directly.",
+    "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent live data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,

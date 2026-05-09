@@ -28,4 +28,13 @@ describe("local-brain-plan adapter selection", () => {
     expect(source).toContain('if (parsed && typeof parsed === "object" && !Array.isArray(parsed))');
     expect(source).not.toContain("JSON.parse(raw.slice(start, end + 1))");
   });
+
+  it("tells the local model not to emit think blocks during planning", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/local-brain-plan.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
+  });
 });
