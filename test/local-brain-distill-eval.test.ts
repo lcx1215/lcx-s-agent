@@ -145,6 +145,85 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary).toMatchObject({ passed: 1, total: 1, promotionReady: true });
   });
 
+  it("recovers useful partial hardened JSON without pretending it is promotion-ready", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-partial-json-"));
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/bin/sh",
+        "cat <<'EOF'",
+        '{"task_family":"finance_research_planning","primary_modules":["finance_framework_macro_rates_inflation_producer","credit_liquidity","etf_regime"],"supporting_modules":["review_tier","source_registry_lookup"],"required_tools":["artifact_memory_recall"',
+        "EOF",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--no-adapter",
+        "--python",
+        fakePython,
+        "--hardened",
+        "--case-id",
+        "portfolio_mixed_q_t_nvda",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: {
+        passed: number;
+        total: number;
+        promotionReady: boolean;
+        parseErrorCaseIds: string[];
+        parseRecoveredCaseIds: string[];
+      };
+      cases: Array<{
+        id: string;
+        parsed: {
+          primary_modules: string[];
+          supporting_modules: string[];
+          required_tools: string[];
+        };
+        parseRecovered?: boolean;
+        acceptance: { ok: boolean };
+      }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary).toMatchObject({
+      passed: 1,
+      total: 1,
+      promotionReady: false,
+      parseErrorCaseIds: [],
+      parseRecoveredCaseIds: ["portfolio_mixed_q_t_nvda"],
+    });
+    const targetCase = payload.cases.find((entry) => entry.id === "portfolio_mixed_q_t_nvda");
+    expect(targetCase?.parseRecovered).toBe(true);
+    expect(targetCase?.acceptance.ok).toBe(true);
+    const moduleFields = [
+      ...(targetCase?.parsed.primary_modules ?? []),
+      ...(targetCase?.parsed.supporting_modules ?? []),
+      ...(targetCase?.parsed.required_tools ?? []),
+    ];
+    expect(moduleFields).toEqual(
+      expect.arrayContaining(["macro_rates_inflation", "credit_liquidity", "etf_regime"]),
+    );
+    expect(moduleFields).not.toContain("finance_framework_macro_rates_inflation_producer");
+    expect(moduleFields).not.toContain("review_tier");
+    expect(moduleFields).not.toContain("source_registry_lookup");
+  });
+
   it("tells the local model not to emit think blocks during eval", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(

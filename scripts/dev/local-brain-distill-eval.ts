@@ -2374,6 +2374,96 @@ function extractJson(raw: string): Record<string, unknown> {
   throw new Error(`no JSON object found in model output: ${raw.slice(0, 240)}`);
 }
 
+function parseJsonStringLiteral(value: string): string | undefined {
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "string" && parsed.trim().length > 0 ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function recoverStringField(raw: string, field: string): string | undefined {
+  const match = new RegExp(`"${field}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`, "u").exec(raw);
+  return match ? parseJsonStringLiteral(match[1]) : undefined;
+}
+
+function recoverStringArrayField(raw: string, field: string): string[] | undefined {
+  const fieldMatch = new RegExp(`"${field}"\\s*:\\s*\\[`, "u").exec(raw);
+  if (!fieldMatch) {
+    return undefined;
+  }
+  const values: string[] = [];
+  let inString = false;
+  let escaped = false;
+  let literalStart = -1;
+  const start = (fieldMatch.index ?? 0) + fieldMatch[0].length;
+  for (let index = start; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = inString;
+      continue;
+    }
+    if (char === '"') {
+      if (!inString) {
+        inString = true;
+        literalStart = index;
+      } else {
+        inString = false;
+        const parsed = parseJsonStringLiteral(raw.slice(literalStart, index + 1));
+        if (parsed) {
+          values.push(parsed);
+        }
+        literalStart = -1;
+      }
+      continue;
+    }
+    if (!inString && char === "]") {
+      break;
+    }
+  }
+  return values.length > 0 ? values : undefined;
+}
+
+function recoverPartialJsonPlan(raw: string): Record<string, unknown> | undefined {
+  if (!raw.includes("{")) {
+    return undefined;
+  }
+  const recovered: Record<string, unknown> = {};
+  const taskFamily = recoverStringField(raw, "task_family");
+  if (taskFamily) {
+    recovered.task_family = taskFamily;
+  }
+  const nextStep = recoverStringField(raw, "next_step");
+  if (nextStep) {
+    recovered.next_step = nextStep;
+  }
+  for (const field of [
+    "primary_modules",
+    "supporting_modules",
+    "required_tools",
+    "missing_data",
+    "risk_boundaries",
+    "rejected_context",
+  ] as const) {
+    const values = recoverStringArrayField(raw, field);
+    if (values) {
+      recovered[field] = values;
+    }
+  }
+  const hasPlanIntent = Boolean(recovered.task_family || recovered.next_step);
+  const hasModuleIntent = [
+    recovered.primary_modules,
+    recovered.supporting_modules,
+    recovered.required_tools,
+  ].some((value) => Array.isArray(value) && value.length > 0);
+  return hasPlanIntent && hasModuleIntent ? recovered : undefined;
+}
+
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
@@ -2499,10 +2589,9 @@ for (const evalCase of evalCases) {
   if (options.progress) {
     process.stderr.write(`[local-brain-eval] start ${evalCase.id}\n`);
   }
+  let rawOutput = "";
   try {
-    const rawOutput = resolvedOptions.contractOnly
-      ? ""
-      : await runGenerate(resolvedOptions, evalCase);
+    rawOutput = resolvedOptions.contractOnly ? "" : await runGenerate(resolvedOptions, evalCase);
     const rawParsed = resolvedOptions.contractOnly ? {} : extractJson(rawOutput);
     const parsed = finalizeModuleFields(
       options.hardened
@@ -2524,8 +2613,31 @@ for (const evalCase of evalCases) {
       );
     }
   } catch (error) {
-    const rawOutput = "";
     const parseError = String(error);
+    const recoveredRawParsed =
+      options.hardened && !resolvedOptions.contractOnly ? recoverPartialJsonPlan(rawOutput) : null;
+    if (recoveredRawParsed) {
+      const parsed = finalizeModuleFields(
+        hardenLocalBrainPlanForAsk(recoveredRawParsed, {
+          ask: evalCase.userAsk,
+          sourceSummary: evalCase.sourceSummary,
+        }),
+      );
+      caseResults.push({
+        id: evalCase.id,
+        rawOutput,
+        parsed,
+        acceptance: evaluate(parsed, evalCase),
+        parseRecovered: true,
+        parseError,
+      });
+      if (options.progress) {
+        process.stderr.write(
+          `[local-brain-eval] done ${evalCase.id} ok=${caseResults.at(-1)?.acceptance.ok ? "true" : "false"} parseRecovered=true parseError=${formatProgressError(error)}\n`,
+        );
+      }
+      continue;
+    }
     const fallbackParsed = options.hardened
       ? hardenLocalBrainPlanForAsk(
           {},
@@ -2552,6 +2664,9 @@ for (const evalCase of evalCases) {
 }
 const passedCases = caseResults.filter((entry) => entry.acceptance.ok);
 const failedCases = caseResults.filter((entry) => !entry.acceptance.ok);
+const parseRecoveredCases = caseResults.filter(
+  (entry) => "parseRecovered" in entry && entry.parseRecovered === true,
+);
 const failedCaseDiagnostics = failedCases.map((entry) => ({
   id: entry.id,
   parseError: "parseError" in entry ? entry.parseError : undefined,
@@ -2585,8 +2700,9 @@ const result = {
     parseErrorCaseIds: failedCases
       .filter((entry) => "parseError" in entry)
       .map((entry) => entry.id),
+    parseRecoveredCaseIds: parseRecoveredCases.map((entry) => entry.id),
     failedCaseDiagnostics,
-    promotionReady: failedCases.length === 0,
+    promotionReady: failedCases.length === 0 && parseRecoveredCases.length === 0,
   },
   cases: options.summaryOnly ? undefined : caseResults,
 };
