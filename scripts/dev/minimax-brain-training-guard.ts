@@ -48,6 +48,8 @@ type CommandResult = {
   stdout: string;
   stderr: string;
   durationMs: number;
+  timedOut?: boolean;
+  timeoutReason?: "total_timeout" | "idle_timeout";
 };
 
 type ActiveProcess = {
@@ -93,6 +95,8 @@ const CATASTROPHIC_CANDIDATE_MAX_PASS_RATE = 0.05;
 const LOCAL_TRAINING_COLLAPSE_BACKOFF_SEED_LIMIT = 2;
 const TRAINING_ABSORPTION_CONTRACT_VERSION = "compact_teacher_review_v2";
 const TRAIN_NAN_PATTERN = /\b(?:train|val)\s+loss\s+nan\b|\bloss\s*[:=]\s*nan\b|\bnan\b/iu;
+const HARDENED_EVAL_STEP_TIMEOUT_MS = 60 * 60 * 1000;
+const HARDENED_EVAL_IDLE_TIMEOUT_MS = 12 * 60 * 1000;
 
 function usage(): never {
   throw new Error(
@@ -356,10 +360,13 @@ function sleep(ms: number): Promise<void> {
 function runCommand(
   command: string,
   args: string[],
-  options: { allowFailure?: boolean } = {},
+  options: { allowFailure?: boolean; timeoutMs?: number; idleTimeoutMs?: number } = {},
 ): Promise<CommandResult> {
   const started = Date.now();
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let totalTimer: NodeJS.Timeout | undefined;
+    let idleTimer: NodeJS.Timeout | undefined;
     const child = spawn(command, args, {
       cwd: process.cwd(),
       env: process.env,
@@ -367,23 +374,96 @@ function runCommand(
     });
     let stdout = "";
     let stderr = "";
+    const clearTimers = () => {
+      if (totalTimer) {
+        clearTimeout(totalTimer);
+      }
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+      }
+    };
+    const settle = (outcome: "resolve" | "reject", value: CommandResult | Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimers();
+      if (outcome === "resolve") {
+        resolve(value as CommandResult);
+      } else {
+        reject(value);
+      }
+    };
+    const timeoutResult = (timeoutReason: "total_timeout" | "idle_timeout"): CommandResult => ({
+      command,
+      args,
+      stdout,
+      stderr,
+      durationMs: Date.now() - started,
+      timedOut: true,
+      timeoutReason,
+    });
+    const armIdleTimer = () => {
+      if (!options.idleTimeoutMs) {
+        return;
+      }
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+      }
+      idleTimer = setTimeout(() => {
+        const result = timeoutResult("idle_timeout");
+        child.kill("SIGTERM");
+        if (options.allowFailure) {
+          settle("resolve", result);
+        } else {
+          settle(
+            "reject",
+            new Error(
+              `${command} ${args.join(" ")} idle timed out after ${options.idleTimeoutMs}ms`,
+            ),
+          );
+        }
+      }, options.idleTimeoutMs);
+    };
+    if (options.timeoutMs) {
+      totalTimer = setTimeout(() => {
+        const result = timeoutResult("total_timeout");
+        child.kill("SIGTERM");
+        if (options.allowFailure) {
+          settle("resolve", result);
+        } else {
+          settle(
+            "reject",
+            new Error(`${command} ${args.join(" ")} timed out after ${options.timeoutMs}ms`),
+          );
+        }
+      }, options.timeoutMs);
+    }
+    armIdleTimer();
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
       process.stdout.write(chunk);
+      armIdleTimer();
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
       process.stderr.write(chunk);
+      armIdleTimer();
     });
-    child.on("error", reject);
+    child.on("error", (error) => {
+      settle("reject", error);
+    });
     child.on("close", (code) => {
       const result = { command, args, stdout, stderr, durationMs: Date.now() - started };
       if (code === 0 || options.allowFailure) {
-        resolve(result);
+        settle("resolve", result);
       } else {
-        reject(new Error(`${command} ${args.join(" ")} exited ${code}\n${stderr}\n${stdout}`));
+        settle(
+          "reject",
+          new Error(`${command} ${args.join(" ")} exited ${code}\n${stderr}\n${stdout}`),
+        );
       }
     });
   });
@@ -391,6 +471,36 @@ function runCommand(
 
 function parseJsonFromStdout(stdout: string): unknown {
   return parseJsonObjectFromOutput(stdout);
+}
+
+function adapterArgFromArgs(args: string[]): string | undefined {
+  const index = args.indexOf("--adapter");
+  const value = index >= 0 ? args[index + 1] : undefined;
+  return value && !value.startsWith("--") ? value : undefined;
+}
+
+function timedOutStepResult(name: string, args: string[], result: CommandResult): unknown {
+  return {
+    ok: false,
+    boundary: "local_auxiliary_thought_flow_only",
+    adapterPath: adapterArgFromArgs(args),
+    summary: {
+      passed: 0,
+      total: 0,
+      passRate: 0,
+      failedCaseIds: [`${name}_${result.timeoutReason ?? "timeout"}`],
+      parseErrorCaseIds: [],
+      parseRecoveredCaseIds: [],
+      failedCaseDiagnostics: [],
+      promotionReady: false,
+    },
+    timedOut: true,
+    timeoutReason: result.timeoutReason,
+    timeoutMs: result.timeoutReason === "idle_timeout" ? undefined : result.durationMs,
+    durationMs: result.durationMs,
+    liveTouched: false,
+    providerConfigTouched: false,
+  };
 }
 
 function runQuietCommand(command: string, args: string[]): Promise<CommandResult> {
@@ -1086,14 +1196,19 @@ async function runJsonStep(
   name: string,
   command: string,
   args: string[],
-  stepOptions: { allowFailure?: boolean } = {},
+  stepOptions: { allowFailure?: boolean; timeoutMs?: number; idleTimeoutMs?: number } = {},
 ): Promise<unknown> {
   process.stdout.write(`\n[minimax-guard] round=${round} step=${name}\n`);
   const result = await runCommand(command, args, stepOptions);
-  const parsed = parseJsonFromStdout(result.stdout);
+  const parsed = result.timedOut
+    ? timedOutStepResult(name, args, result)
+    : parseJsonFromStdout(result.stdout);
   await appendLog(options.logPath, {
-    event:
-      stepOptions.allowFailure && !promotionEvalPassed(parsed) ? "step_non_passing" : "step_ok",
+    event: result.timedOut
+      ? "step_timeout"
+      : stepOptions.allowFailure && !promotionEvalPassed(parsed)
+        ? "step_non_passing"
+        : "step_ok",
     round,
     name,
     trainingAbsorptionContractVersion:
@@ -1106,6 +1221,7 @@ async function runJsonStep(
     command,
     args,
     durationMs: result.durationMs,
+    timeoutReason: result.timeoutReason,
     result: parsed,
   });
   return parsed;
@@ -1740,7 +1856,16 @@ try {
               "--summary-only",
               "--json",
             ],
-            currentAdapter ? {} : { allowFailure: true },
+            currentAdapter
+              ? {
+                  timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS,
+                  idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS,
+                }
+              : {
+                  allowFailure: true,
+                  timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS,
+                  idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS,
+                },
           );
           if (currentAdapter && !promotionEvalPassed(stableEval)) {
             throw new Error(`stable adapter failed hardened eval: ${currentAdapter}`);
@@ -1885,7 +2010,11 @@ try {
           "--summary-only",
           "--json",
         ],
-        { allowFailure: true },
+        {
+          allowFailure: true,
+          timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS,
+          idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS,
+        },
       );
       if (promotionEvalPassed(candidateEval)) {
         currentAdapter = candidateAdapter;

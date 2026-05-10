@@ -190,7 +190,28 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain('event: "candidate_not_retained_as_training_seed"');
     expect(source).toContain("resolveBestTrainingSeedAdapter");
     expect(source).toContain('"training_seed_hardened_eval"');
-    expect(source).toContain("currentAdapter ? {} : { allowFailure: true }");
+    expect(source).toContain("currentAdapter");
+    expect(source).toContain("allowFailure: true");
+    expect(source).toContain("HARDENED_EVAL_STEP_TIMEOUT_MS");
+    expect(source).toContain("HARDENED_EVAL_IDLE_TIMEOUT_MS");
+  });
+
+  it("bounds hardened eval child steps so a stuck candidate cannot stall training", async () => {
+    const source = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("timedOutStepResult");
+    expect(source).toContain('? "step_timeout"');
+    expect(source).toContain('"total_timeout"');
+    expect(source).toContain('"idle_timeout"');
+    expect(source).toContain("promotionReady: false");
+    expect(source).toContain("HARDENED_EVAL_STEP_TIMEOUT_MS");
+    expect(source).toContain("HARDENED_EVAL_IDLE_TIMEOUT_MS");
+    expect(source).toMatch(
+      /"candidate_hardened_eval"[\s\S]*scripts\/dev\/local-brain-distill-eval\.ts[\s\S]*allowFailure: true[\s\S]*timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS[\s\S]*idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS/u,
+    );
   });
 
   it("honors train-every when a best-effort training seed exists but no adapter is promotion-ready", async () => {
