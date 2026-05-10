@@ -727,8 +727,11 @@ type TrainingSeedSelection = {
   source: string;
 };
 
-function shouldPauseLocalTrainingAfterCollapse(backoffs: ReadonlySet<string>): boolean {
-  return backoffs.size >= LOCAL_TRAINING_COLLAPSE_BACKOFF_SEED_LIMIT;
+function shouldPauseLocalTrainingAfterCollapse(
+  backoffs: ReadonlySet<string>,
+  hasSafeRecoverySeed = false,
+): boolean {
+  return backoffs.size >= LOCAL_TRAINING_COLLAPSE_BACKOFF_SEED_LIMIT && !hasSafeRecoverySeed;
 }
 
 function isCatastrophicCandidateScore(seed: TrainingSeedSelection | undefined): boolean {
@@ -859,6 +862,9 @@ async function resolveBestTrainingSeedAdapter(
       }
       const seed = trainingSeedFromVerdict(verdict);
       if (!seed) {
+        continue;
+      }
+      if (isCatastrophicCandidateScore(seed)) {
         continue;
       }
       const current = candidates.get(seed.adapterPath);
@@ -1447,23 +1453,22 @@ if (options.resolveCurrentAdapterOnly) {
     options.logPath,
     options.adapterPrefix,
   );
+  const selectedAdapterUsable =
+    Boolean(selectedAdapter) && !catastrophicTrainingSeedBackoffs.has(selectedAdapter as string);
+  const recoverySeed =
+    !options.noTrain && !selectedAdapterUsable
+      ? await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
+          excludedAdapters: catastrophicTrainingSeedBackoffs,
+        })
+      : undefined;
   const localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
     catastrophicTrainingSeedBackoffs,
+    selectedAdapterUsable || Boolean(recoverySeed),
   );
   const trainingSeed =
-    !selectedAdapter && !options.noTrain && !localTrainingPaused
-      ? await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
-          excludedAdapters: catastrophicTrainingSeedBackoffs,
-        })
-      : undefined;
+    !selectedAdapter && !options.noTrain && !localTrainingPaused ? recoverySeed : undefined;
   const trainingResumeSeed =
-    !localTrainingPaused &&
-    !options.noTrain &&
-    (!selectedAdapter || catastrophicTrainingSeedBackoffs.has(selectedAdapter))
-      ? await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
-          excludedAdapters: catastrophicTrainingSeedBackoffs,
-        })
-      : undefined;
+    !localTrainingPaused && !options.noTrain && !selectedAdapterUsable ? recoverySeed : undefined;
   process.stdout.write(
     `${JSON.stringify(
       {
@@ -1517,31 +1522,31 @@ let catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBack
   options.logPath,
   options.adapterPrefix,
 );
-let localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(catastrophicTrainingSeedBackoffs);
+const currentAdapterUsableForTraining =
+  Boolean(currentAdapter) && !catastrophicTrainingSeedBackoffs.has(currentAdapter as string);
 let trainingSeed =
-  currentAdapter || options.noTrain || localTrainingPaused
+  options.noTrain || currentAdapterUsableForTraining
     ? undefined
     : await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
         excludedAdapters: catastrophicTrainingSeedBackoffs,
       });
+let localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
+  catastrophicTrainingSeedBackoffs,
+  currentAdapterUsableForTraining || Boolean(trainingSeed),
+);
+if (localTrainingPaused) {
+  trainingSeed = undefined;
+}
 let trainingSeedAdapter =
-  currentAdapter && !catastrophicTrainingSeedBackoffs.has(currentAdapter)
-    ? currentAdapter
-    : trainingSeed?.adapterPath;
+  currentAdapter && currentAdapterUsableForTraining ? currentAdapter : trainingSeed?.adapterPath;
 let trainingResumeSeed =
-  options.noTrain || (currentAdapter && !catastrophicTrainingSeedBackoffs.has(currentAdapter))
+  options.noTrain || currentAdapterUsableForTraining || localTrainingPaused
     ? undefined
-    : await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
-        excludedAdapters: catastrophicTrainingSeedBackoffs,
-      });
+    : trainingSeed;
 let trainingResumeAdapter =
-  currentAdapter && !catastrophicTrainingSeedBackoffs.has(currentAdapter)
+  currentAdapter && currentAdapterUsableForTraining
     ? currentAdapter
     : trainingResumeSeed?.adapterPath;
-if (localTrainingPaused) {
-  trainingResumeSeed = undefined;
-  trainingResumeAdapter = undefined;
-}
 let teacherSidecar: TeacherSidecar | undefined;
 
 await appendLog(options.logPath, {
@@ -1815,16 +1820,21 @@ try {
           if (failedSeedAdapter) {
             catastrophicTrainingSeedBackoffs.add(failedSeedAdapter);
           }
+          const nextTrainingResumeSeed = await resolveBestTrainingSeedAdapter(
+            options.adapterPrefix,
+            {
+              excludedAdapters: catastrophicTrainingSeedBackoffs,
+            },
+          );
           localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
             catastrophicTrainingSeedBackoffs,
+            Boolean(nextTrainingResumeSeed),
           );
           if (localTrainingPaused) {
             trainingResumeSeed = undefined;
             trainingResumeAdapter = undefined;
           } else {
-            trainingResumeSeed = await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
-              excludedAdapters: catastrophicTrainingSeedBackoffs,
-            });
+            trainingResumeSeed = nextTrainingResumeSeed;
             trainingResumeAdapter = trainingResumeSeed?.adapterPath;
           }
           await appendLog(options.logPath, {
@@ -1896,16 +1906,21 @@ try {
           if (failedSeedAdapter) {
             catastrophicTrainingSeedBackoffs.add(failedSeedAdapter);
           }
+          const nextTrainingResumeSeed = await resolveBestTrainingSeedAdapter(
+            options.adapterPrefix,
+            {
+              excludedAdapters: catastrophicTrainingSeedBackoffs,
+            },
+          );
           localTrainingPaused = shouldPauseLocalTrainingAfterCollapse(
             catastrophicTrainingSeedBackoffs,
+            Boolean(nextTrainingResumeSeed),
           );
           if (localTrainingPaused) {
             trainingResumeSeed = undefined;
             trainingResumeAdapter = undefined;
           } else {
-            trainingResumeSeed = await resolveBestTrainingSeedAdapter(options.adapterPrefix, {
-              excludedAdapters: catastrophicTrainingSeedBackoffs,
-            });
+            trainingResumeSeed = nextTrainingResumeSeed;
             trainingResumeAdapter = trainingResumeSeed?.adapterPath;
           }
           await appendLog(options.logPath, {

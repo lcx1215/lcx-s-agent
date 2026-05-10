@@ -303,6 +303,51 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(parsed.trainingResumeAdapter).toBeUndefined();
   });
 
+  it("recovers from repeated catastrophic seed backoffs when another safe seed exists", async () => {
+    let firstSeed = "";
+    let secondSeed = "";
+    let safeSeed = "";
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      firstSeed = `${adapterPrefix}-2026-05-07T12-04-09-522Z-r18`;
+      secondSeed = `${adapterPrefix}-2026-05-07T11-24-32-133Z-r15`;
+      safeSeed = `${adapterPrefix}-2026-05-07T10-13-44-017Z-r12`;
+      return [
+        nonPassingEval("2026-05-07T12:16:10.000Z", "candidate_hardened_eval", firstSeed, 58, 68),
+        nonPassingEval("2026-05-07T11:30:10.000Z", "candidate_hardened_eval", secondSeed, 57, 68),
+        nonPassingEval("2026-05-07T10:18:10.000Z", "candidate_hardened_eval", safeSeed, 55, 68),
+        {
+          at: "2026-05-09T14:39:01.873Z",
+          event: "candidate_catastrophic_eval_detected",
+          adapterPath: `${adapterPrefix}-2026-05-09T14-08-52-247Z-r1`,
+          trainingSeedAdapter: firstSeed,
+          trainingAbsorptionContractVersion,
+        },
+        {
+          at: "2026-05-09T15:39:01.873Z",
+          event: "candidate_catastrophic_eval_detected",
+          adapterPath: `${adapterPrefix}-2026-05-09T15-12-39-464Z-r3`,
+          trainingSeedAdapter: secondSeed,
+          trainingAbsorptionContractVersion,
+        },
+      ];
+    });
+
+    const { stdout } = await resolveCurrentAdapter(fixture, ["--bootstrap-if-missing"]);
+    const parsed = JSON.parse(stdout) as {
+      localTrainingPaused?: boolean;
+      trainingSeedAdapter?: string;
+      trainingResumeAdapter?: string;
+      catastrophicTrainingSeedBackoffs?: string[];
+    };
+
+    expect(parsed.localTrainingPaused).toBe(false);
+    expect(parsed.trainingSeedAdapter).toBe(safeSeed);
+    expect(parsed.trainingResumeAdapter).toBe(safeSeed);
+    expect(parsed.catastrophicTrainingSeedBackoffs).toEqual(
+      expect.arrayContaining([firstSeed, secondSeed]),
+    );
+  });
+
   it("does not let pre-repair collapse logs pause the compact training contract", async () => {
     let firstSeed = "";
     let secondSeed = "";
