@@ -241,7 +241,9 @@ describe("local-brain-distill-eval", () => {
     expect(source).toContain("always close the final brace");
     expect(source).toContain("Use this exact compact shape");
     expect(source).toContain('risk_boundaries":["research_only"]');
-    expect(source).toContain("must use exact allowed module ids only");
+    expect(source).toContain("Recommended module ids for this case");
+    expect(source).toContain("normalizeLocalBrainModuleList");
+    expect(source).toContain("must use exact recommended module ids only");
     expect(source).toContain("do not invent prefixes like finance_framework_*");
     expect(source).toContain('LOCAL_BRAIN_EVAL_MAX_TOKENS = "700"');
   });

@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
-  LOCAL_BRAIN_MODULE_TAXONOMY,
   LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
   LOCAL_BRAIN_REQUIRED_FINANCE_MODULES,
+  normalizeLocalBrainModuleList,
   packLocalBrainModuleFields,
   selectLocalBrainContractHints,
 } from "./local-brain-taxonomy.js";
@@ -42,6 +42,14 @@ const REQUIRED_KEYS = [
 ] as const;
 
 const REQUIRED_FINANCE_MODULES = [...LOCAL_BRAIN_REQUIRED_FINANCE_MODULES];
+const CORE_PROMPT_MODULES = [
+  "finance_learning_memory",
+  "source_registry",
+  "causal_map",
+  "portfolio_risk_gates",
+  "review_panel",
+  "control_room_summary",
+] as const;
 
 type EvalCase = {
   id: string;
@@ -2128,6 +2136,10 @@ function buildPrompt(evalCase: EvalCase): string {
   const contractHints = selectLocalBrainContractHints(
     `${evalCase.userAsk}\n${evalCase.sourceSummary}`,
   ).join(" ");
+  const promptModuleIds = normalizeLocalBrainModuleList([
+    ...evalCase.requiredModules,
+    ...CORE_PROMPT_MODULES,
+  ]);
   return [
     "You are the LCX Agent local auxiliary thought-flow model.",
     "Task: produce a concise control-room planning packet for the main agent.",
@@ -2139,9 +2151,9 @@ function buildPrompt(evalCase: EvalCase): string {
     'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent live data, execution approval, or durable memory writes.",
-    `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
-    "primary_modules, supporting_modules, and required_tools must use exact allowed module ids only; do not invent prefixes like finance_framework_*.",
-    "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
+    `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`,
+    "primary_modules, supporting_modules, and required_tools must use exact recommended module ids only; do not invent prefixes like finance_framework_*.",
+    "For finance tasks, choose concrete recommended module ids instead of generic finance labels or the full taxonomy.",
     `Planning contract hints: ${contractHints}`,
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
     "",
