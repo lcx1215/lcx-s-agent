@@ -21,7 +21,8 @@ describe("minimax brain teacher batch parsing", () => {
     expect(prompt).toContain("no markdown fences");
     expect(prompt).toContain("no trailing commas");
     expect(prompt).toContain("never copy the full user prompt into JSON values");
-    expect(prompt).toContain("prefer 3-8 items per array");
+    expect(prompt).toContain("prefer 3-5 items per array");
+    expect(prompt).toContain("Do not copy or enumerate the full module taxonomy");
   });
 
   it("keeps MiniMax direct API instructions in system prompt form", () => {
