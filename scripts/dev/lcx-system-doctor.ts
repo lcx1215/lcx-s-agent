@@ -27,6 +27,8 @@ const MINIMAX_QUOTA_LOG_PATTERN = /^minimax-quota-brain-saturator-\d{4}-\d{2}-\d
 const LEARNING_COUNCIL_DIR = path.join(WORKSPACE_DIR, "bank", "knowledge", "learning-councils");
 const REVIEW_PANEL_RECEIPT_DIR = path.join(WORKSPACE_DIR, "memory", "review-panel-receipts");
 const MODEL_COUNCIL_AUDIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const LIVE_LARK_DIAGNOSE_TIMEOUT_MS = 30_000;
+const LIVE_CHANNEL_PROBE_TIMEOUT_MS = 30_000;
 
 function usage(): never {
   throw new Error(
@@ -69,9 +71,11 @@ function runCommand(params: {
   args: string[];
   parseJson?: boolean;
   cwd?: string;
+  timeoutMs?: number;
 }): Promise<CheckResult> {
   const startedAt = Date.now();
   return new Promise((resolve) => {
+    let settled = false;
     const child = spawn(params.command, params.args, {
       cwd: params.cwd ?? process.cwd(),
       env: process.env,
@@ -87,7 +91,35 @@ function runCommand(params: {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
+    const timeout =
+      params.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            child.kill("SIGTERM");
+            resolve({
+              name: params.name,
+              ok: false,
+              durationMs: Date.now() - startedAt,
+              summary: {
+                stdoutTail: stdout.slice(-500),
+                stderrTail: stderr.slice(-500),
+                timeoutMs: params.timeoutMs,
+              },
+              error: `${params.name} timed out after ${params.timeoutMs}ms`,
+            });
+          }, params.timeoutMs);
     child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       resolve({
         name: params.name,
         ok: false,
@@ -97,6 +129,13 @@ function runCommand(params: {
       });
     });
     child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       const durationMs = Date.now() - startedAt;
       if (code !== 0) {
         resolve({
@@ -991,6 +1030,7 @@ if (options.live) {
       command: "pnpm",
       args: ["--silent", "openclaw", "capabilities", "lark-loop-diagnose", "--json"],
       parseJson: true,
+      timeoutMs: LIVE_LARK_DIAGNOSE_TIMEOUT_MS,
     }),
   );
   checks.push(
@@ -999,6 +1039,7 @@ if (options.live) {
       command: "pnpm",
       args: ["--silent", "openclaw", "channels", "status", "--probe", "--json"],
       parseJson: true,
+      timeoutMs: LIVE_CHANNEL_PROBE_TIMEOUT_MS,
     }),
   );
 } else {
