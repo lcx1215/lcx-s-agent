@@ -11,7 +11,11 @@ import {
 import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
 import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
 import { loadConfig } from "../../src/config/config.js";
-import { LOCAL_BRAIN_MODULE_TAXONOMY } from "./local-brain-taxonomy.js";
+import {
+  LOCAL_BRAIN_MODULE_TAXONOMY,
+  normalizeLocalBrainModuleList,
+  packLocalBrainModuleFields,
+} from "./local-brain-taxonomy.js";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -1481,13 +1485,13 @@ function asArray(value: unknown): string[] {
 }
 
 const REQUIRED_RISK_BOUNDARIES = ["research_only", "no_execution_authority"] as const;
-const MAX_TEACHER_PRIMARY_MODULES = 20;
-const MAX_TEACHER_SUPPORTING_MODULES = 8;
-const MAX_TEACHER_REQUIRED_TOOLS = 8;
-const MAX_TEACHER_MISSING_DATA = 24;
-const MAX_TEACHER_RISK_BOUNDARIES = 16;
-const MAX_TEACHER_REJECTED_CONTEXT = 6;
-const MAX_TEACHER_NEXT_STEP_CHARS = 260;
+const MAX_TEACHER_PRIMARY_MODULES = 8;
+const MAX_TEACHER_SUPPORTING_MODULES = 6;
+const MAX_TEACHER_REQUIRED_TOOLS = 6;
+const MAX_TEACHER_MISSING_DATA = 8;
+const MAX_TEACHER_RISK_BOUNDARIES = 6;
+const MAX_TEACHER_REJECTED_CONTEXT = 3;
+const MAX_TEACHER_NEXT_STEP_CHARS = 160;
 
 function cleanStringArray(value: unknown): string[] {
   return [
@@ -1510,27 +1514,12 @@ function compactNextStep(value: string): string {
     : `${normalized.slice(0, MAX_TEACHER_NEXT_STEP_CHARS - 3)}...`;
 }
 
-function cleanModuleArray(value: unknown): string[] {
-  const allowed = new Set(MODULE_TAXONOMY);
-  return cleanStringArray(value).filter((entry) => allowed.has(entry));
-}
-
-const SAFE_REQUIRED_TOOLS = new Set([
-  ...MODULE_TAXONOMY,
-  "local_memory_retrieval",
-  "source_registry_query",
-  "actual_source_receipt",
-  "review_panel",
-  "local_quant_math",
-  "control_room_summary",
-]);
-
 const OVERCLAIMED_TOOL_PATTERN =
   /api|feed|terminal|bloomberg|reuters|refinitiv|broker|scrap|yfinance|quandl|fred|fedwatch|cftc|finra|barra|riskmetrics|jupyter|notebook|pandas|numpy|sklearn|tensorflow|mlflow|weights|market_data|data_fetch|dashboard|parser|calculator|engine|generator|visualizer|monitor|http|www\.|\.com|internal/iu;
 
 function cleanRequiredToolArray(value: unknown): string[] {
-  return cleanStringArray(value).filter(
-    (entry) => SAFE_REQUIRED_TOOLS.has(entry) && !OVERCLAIMED_TOOL_PATTERN.test(entry),
+  return normalizeLocalBrainModuleList(
+    cleanStringArray(value).filter((entry) => !OVERCLAIMED_TOOL_PATTERN.test(entry)),
   );
 }
 
@@ -1611,39 +1600,108 @@ function canonicalRiskBoundary(entry: string): string {
   return normalized || entry.trim();
 }
 
-export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
-  const primaryModules = capStringArray(
-    cleanModuleArray(plan.primary_modules),
-    MAX_TEACHER_PRIMARY_MODULES,
-  );
-  const supportingModules = capStringArray(
-    cleanModuleArray(plan.supporting_modules).filter((entry) => !primaryModules.includes(entry)),
-    MAX_TEACHER_SUPPORTING_MODULES,
-  );
-  const riskBoundaries = [
-    ...new Set(cleanStringArray(plan.risk_boundaries).map(canonicalRiskBoundary)),
+const TEACHER_RISK_PRIORITY = [
+  "research_only",
+  "no_execution_authority",
+  "evidence_required",
+  "no_trade_advice",
+  "no_model_math_guessing",
+  "no_unverified_cross_market_claims",
+  "no_high_leverage_crypto",
+  "risk_gate_before_action_language",
+  "no_unverified_live_data",
+  "no_unverified_live_market_data_claims",
+  "fundamentals_first_not_price_action_first",
+  "margin_of_safety_required",
+  "value_investing_not_trade_signal",
+  "do_not_stop_at_original_example",
+  "no_one_off_phrase_patch",
+  "proof_required_before_claiming_transfer",
+  "no_protected_memory_write",
+  "no_provider_config_change",
+  "no_live_sender_change",
+] as const;
+
+const TEACHER_MISSING_DATA_PRIORITY = [
+  "source_url_or_local_source_path",
+  "actual_reading_scope_receipt",
+  "source_repo_url_or_local_clone_path",
+  "source_commit_or_version",
+  "prior_art_search_terms_or_existing_artifact_paths",
+  "existing_contract_eval_skill_or_receipt_candidates",
+  "reuse_extend_or_new_decision",
+  "actual_reading_scope",
+  "license_and_write_scope_review",
+  "prompt_injection_and_security_review",
+  "agent_pattern_inventory",
+  "workflow_owner_definition",
+  "leaf_worker_inventory",
+  "handoff_contract",
+  "tool_permission_boundary_map",
+  "untrusted_source_isolation_rule",
+  "citation_and_provenance_rule",
+  "artifact_qc_gate_sequence",
+  "replication_or_sample_out_evidence",
+  "capability_card_or_retrieval_receipt",
+  "application_validation_receipt",
+  "training_or_eval_absorption_evidence",
+  "fresh_adjacent_application_task",
+  "keep_downrank_or_discard_decision",
+  "human_signoff_checkpoint",
+  "visible_summary_contract",
+  "position_weights_and_return_series",
+  "fresh_market_data_snapshot",
+] as const;
+
+function prioritizeRiskBoundaries(values: string[]): string[] {
+  const unique = [...new Set(values.map(canonicalRiskBoundary))];
+  return [
+    ...TEACHER_RISK_PRIORITY.filter((entry) => unique.includes(entry)),
+    ...unique.filter((entry) => !TEACHER_RISK_PRIORITY.includes(entry as never)),
   ];
+}
+
+function prioritizeMissingData(values: string[]): string[] {
+  const unique = [...new Set(values)];
+  return [
+    ...TEACHER_MISSING_DATA_PRIORITY.filter((entry) => unique.includes(entry)),
+    ...unique.filter((entry) => !TEACHER_MISSING_DATA_PRIORITY.includes(entry as never)),
+  ];
+}
+
+export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
+  const packedModules = packLocalBrainModuleFields(
+    cleanStringArray(plan.primary_modules),
+    cleanStringArray(plan.supporting_modules),
+    cleanRequiredToolArray(plan.required_tools),
+    {
+      primary: MAX_TEACHER_PRIMARY_MODULES,
+      supporting: MAX_TEACHER_SUPPORTING_MODULES,
+      requiredTools: MAX_TEACHER_REQUIRED_TOOLS,
+    },
+  );
+  const riskBoundaries = prioritizeRiskBoundaries(cleanStringArray(plan.risk_boundaries));
   for (const boundary of REQUIRED_RISK_BOUNDARIES) {
     if (!riskBoundaries.includes(boundary)) {
       riskBoundaries.unshift(boundary);
     }
   }
-  const prioritizedRiskBoundaries = [
-    ...REQUIRED_RISK_BOUNDARIES.filter((entry) => riskBoundaries.includes(entry)),
-    ...riskBoundaries.filter((entry) => !REQUIRED_RISK_BOUNDARIES.includes(entry as never)),
-  ];
+  const prioritizedRiskBoundaries = prioritizeRiskBoundaries([
+    ...REQUIRED_RISK_BOUNDARIES,
+    ...riskBoundaries,
+  ]);
   return {
     task_family:
       typeof plan.task_family === "string" && plan.task_family.trim()
         ? plan.task_family.trim()
         : "teacher_plan_unclassified",
-    primary_modules: primaryModules,
-    supporting_modules: supportingModules,
-    required_tools: capStringArray(
-      cleanRequiredToolArray(plan.required_tools),
-      MAX_TEACHER_REQUIRED_TOOLS,
+    primary_modules: packedModules.primary_modules,
+    supporting_modules: packedModules.supporting_modules,
+    required_tools: packedModules.required_tools,
+    missing_data: capStringArray(
+      prioritizeMissingData(cleanStringArray(plan.missing_data)),
+      MAX_TEACHER_MISSING_DATA,
     ),
-    missing_data: capStringArray(cleanStringArray(plan.missing_data), MAX_TEACHER_MISSING_DATA),
     risk_boundaries: capStringArray(prioritizedRiskBoundaries, MAX_TEACHER_RISK_BOUNDARIES),
     next_step:
       typeof plan.next_step === "string" && plan.next_step.trim()
@@ -1675,6 +1733,12 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   };
   const replacePrimary = (modules: string[]) => {
     primaryModules.splice(0, primaryModules.length, ...modules);
+  };
+  const replaceSupporting = (modules: string[]) => {
+    supportingModules.splice(0, supportingModules.length, ...modules);
+  };
+  const replaceRequiredTools = (modules: string[]) => {
+    plan.required_tools.splice(0, plan.required_tools.length, ...modules);
   };
   const ensureMissing = (items: string[]) => {
     for (const item of items) {
@@ -1713,7 +1777,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       ask,
     );
   const isSourceGated =
-    /没有给 URL|没有给链接|没有给 10-Q|没有给 10-K|没有给实时行情源|source|artifact|receipt|filing/iu.test(
+    /没有给 URL|没有给链接|没有给 10-Q|没有给 10-K|没有给实时行情源|缺少.{0,12}(source|来源|链接|url|filing)|missing.{0,12}(source|url|filing)|without.{0,12}(source|url|filing)|source_url_or_local_source_path|actual_reading_scope_receipt/iu.test(
       ask,
     );
   const isAllDomainFinance =
@@ -1746,6 +1810,8 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
 
   if (isContextReset) {
     replacePrimary(["ops_audit", "agent_workflow_memory", "control_room_summary"]);
+    replaceSupporting(["review_panel"]);
+    replaceRequiredTools([]);
     ensureMissing(["current_subject_or_original_request"]);
     ensureRejected(["old_lark_conversation_history", "unstated_finance_subject"]);
     ensureRisk(["ops_audit_must_not_become_finance_analysis"]);
@@ -1764,6 +1830,8 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "review_panel",
       "control_room_summary",
     ]);
+    replaceSupporting([]);
+    replaceRequiredTools([]);
     ensureMissing([
       "fund_or_etf_prospectus_or_fact_sheet",
       "fresh_market_data_snapshot",
@@ -1772,7 +1840,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ensureRisk(["evidence_required", "no_unverified_live_market_data_claims"]);
     ensureRejected(["single_company_fundamental_labels_for_etf"]);
     nextStep =
-      "Treat the ETF/fund as a fund-structure and macro/liquidity research task: require prospectus or fact sheet evidence, NAV or holdings context, fresh market data, and position weights before any risk map; do not infer company revenue quality, customer concentration, filings, or valuation multiples.";
+      "Treat the ETF/fund as fund-structure research, require prospectus, holdings, fresh data and weights; do not infer company revenue quality.";
   }
 
   if (!isContextReset && isQuantInputMissing) {
@@ -1854,7 +1922,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   }
 
   if (!isContextReset && isAllDomainFinance) {
-    ensurePrimary([
+    replacePrimary([
       "macro_rates_inflation",
       "credit_liquidity",
       "cross_asset_liquidity",
@@ -1868,23 +1936,16 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "commodities_oil_gold",
       "options_volatility",
       "crypto_market_structure",
-      "technical_timing",
       "event_driven",
       "quant_math",
       "portfolio_risk_gates",
-    ]);
-    for (const module of [
       "causal_map",
       "finance_learning_memory",
       "source_registry",
-      "eval_harness_design",
       "review_panel",
-      "control_room_summary",
-    ]) {
-      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
-        supportingModules.push(module);
-      }
-    }
+    ]);
+    replaceSupporting([]);
+    replaceRequiredTools([]);
     ensureMissing([
       "memory_recall_scope_or_relevant_receipts",
       "fresh_market_data_snapshot",
@@ -2116,7 +2177,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   if (primaryModules.length === 0) {
     ensurePrimary(["control_room_summary", "source_registry", "review_panel"]);
   }
-  if (plan.required_tools.length === 0) {
+  if (normalizeLocalBrainModuleList(plan.required_tools).length === 0) {
     plan.required_tools.push("source_registry", "review_panel");
   }
   if (!isContextReset && nextStepOverclaims(nextStep)) {
@@ -2130,17 +2191,27 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     }
   }
 
+  const packedModules = packLocalBrainModuleFields(
+    primaryModules,
+    supportingModules,
+    plan.required_tools,
+    {
+      primary: MAX_TEACHER_PRIMARY_MODULES,
+      supporting: MAX_TEACHER_SUPPORTING_MODULES,
+      requiredTools: MAX_TEACHER_REQUIRED_TOOLS,
+    },
+  );
   return {
     ...plan,
     task_family: taskFamily,
-    primary_modules: capStringArray(primaryModules, MAX_TEACHER_PRIMARY_MODULES),
-    supporting_modules: capStringArray(
-      supportingModules.filter((entry) => !primaryModules.includes(entry)),
-      MAX_TEACHER_SUPPORTING_MODULES,
+    primary_modules: packedModules.primary_modules,
+    supporting_modules: packedModules.supporting_modules,
+    required_tools: packedModules.required_tools,
+    missing_data: capStringArray(prioritizeMissingData(missingData), MAX_TEACHER_MISSING_DATA),
+    risk_boundaries: capStringArray(
+      prioritizeRiskBoundaries(riskBoundaries),
+      MAX_TEACHER_RISK_BOUNDARIES,
     ),
-    required_tools: capStringArray(plan.required_tools, MAX_TEACHER_REQUIRED_TOOLS),
-    missing_data: capStringArray(missingData, MAX_TEACHER_MISSING_DATA),
-    risk_boundaries: capStringArray(riskBoundaries, MAX_TEACHER_RISK_BOUNDARIES),
     next_step: compactNextStep(nextStep),
     rejected_context: capStringArray(rejectedContext, MAX_TEACHER_REJECTED_CONTEXT),
   };

@@ -29,6 +29,100 @@ export const LOCAL_BRAIN_MODULE_TAXONOMY = [
 
 export type LocalBrainModuleId = (typeof LOCAL_BRAIN_MODULE_TAXONOMY)[number];
 
+const LOCAL_BRAIN_MODULE_ID_SET = new Set<string>(LOCAL_BRAIN_MODULE_TAXONOMY);
+
+export type LocalBrainModuleFieldCaps = {
+  primary: number;
+  supporting: number;
+  requiredTools: number;
+};
+
+const DEFAULT_MODULE_FIELD_CAPS: LocalBrainModuleFieldCaps = {
+  primary: 8,
+  supporting: 6,
+  requiredTools: 6,
+};
+
+const LEGACY_TOOL_TO_MODULE: Record<string, LocalBrainModuleId> = {
+  artifact_memory_recall: "finance_learning_memory",
+  capability_card_or_retrieval_receipt: "source_registry",
+  doctrine_consistency_doctor: "agent_workflow_memory",
+  finance_article_source_collection_preflight: "source_registry",
+  finance_article_source_registry_record: "source_registry",
+  finance_framework_core_inspect: "source_registry",
+  finance_learning_capability_apply: "finance_learning_memory",
+  l5_regression_batterer: "eval_harness_design",
+  lark_loop_diagnose: "ops_audit",
+  local_brain_eval: "eval_harness_design",
+  local_memory_retrieval: "finance_learning_memory",
+  review_tier: "review_panel",
+  sessions_history: "agent_workflow_memory",
+  source_registry_lookup: "source_registry",
+  source_registry_query: "source_registry",
+};
+
+export function normalizeLocalBrainModuleId(value: string): LocalBrainModuleId | undefined {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (LOCAL_BRAIN_MODULE_ID_SET.has(normalized)) {
+    return normalized as LocalBrainModuleId;
+  }
+  const legacyToolModule = LEGACY_TOOL_TO_MODULE[normalized];
+  if (legacyToolModule) {
+    return legacyToolModule;
+  }
+  const financeProducer = /^finance_framework_(.+?)_producer$/u.exec(normalized)?.[1];
+  if (financeProducer && LOCAL_BRAIN_MODULE_ID_SET.has(financeProducer)) {
+    return financeProducer as LocalBrainModuleId;
+  }
+  return undefined;
+}
+
+export function normalizeLocalBrainModuleList(values: readonly string[]): LocalBrainModuleId[] {
+  const seen = new Set<LocalBrainModuleId>();
+  const modules: LocalBrainModuleId[] = [];
+  for (const value of values) {
+    const module = normalizeLocalBrainModuleId(value);
+    if (!module || seen.has(module)) {
+      continue;
+    }
+    seen.add(module);
+    modules.push(module);
+  }
+  return modules;
+}
+
+export function packLocalBrainModuleFields(
+  primaryModules: readonly string[],
+  supportingModules: readonly string[],
+  requiredTools: readonly string[],
+  caps: LocalBrainModuleFieldCaps = DEFAULT_MODULE_FIELD_CAPS,
+): {
+  primary_modules: LocalBrainModuleId[];
+  supporting_modules: LocalBrainModuleId[];
+  required_tools: LocalBrainModuleId[];
+} {
+  const ordered = normalizeLocalBrainModuleList([
+    ...primaryModules,
+    ...supportingModules,
+    ...requiredTools,
+  ]);
+  const primary_modules = ordered.slice(0, caps.primary);
+  const supporting_modules = ordered.slice(caps.primary, caps.primary + caps.supporting);
+  const required_tools = ordered.slice(
+    caps.primary + caps.supporting,
+    caps.primary + caps.supporting + caps.requiredTools,
+  );
+  return {
+    primary_modules,
+    supporting_modules,
+    required_tools,
+  };
+}
+
 export const LOCAL_BRAIN_REQUIRED_FINANCE_MODULES = [
   "macro_rates_inflation",
   "credit_liquidity",

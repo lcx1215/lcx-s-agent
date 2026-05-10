@@ -4,6 +4,7 @@ import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
   LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
+  packLocalBrainModuleFields,
   selectLocalBrainContractHints,
 } from "./local-brain-taxonomy.js";
 
@@ -575,6 +576,20 @@ function hardenPlanForKnownContracts(
   };
 }
 
+function finalizeModuleFields(plan: Record<string, unknown>): Record<string, unknown> {
+  const packedModules = packLocalBrainModuleFields(
+    arrayValue(plan.primary_modules),
+    arrayValue(plan.supporting_modules),
+    arrayValue(plan.required_tools),
+  );
+  return {
+    ...plan,
+    primary_modules: packedModules.primary_modules,
+    supporting_modules: packedModules.supporting_modules,
+    required_tools: packedModules.required_tools,
+  };
+}
+
 const options = parseArgs(process.argv.slice(2));
 const adapterResolution = await resolveAdapter(options);
 const resolvedOptions: CliOptions = {
@@ -589,10 +604,12 @@ try {
 } catch (error) {
   rawParseError = String(error);
 }
-const parsed = hardenLocalBrainPlanForAsk(hardenPlanForKnownContracts(rawPlan, options), {
-  ask: options.ask,
-  sourceSummary: options.sourceSummary,
-});
+const parsed = finalizeModuleFields(
+  hardenLocalBrainPlanForAsk(hardenPlanForKnownContracts(rawPlan, options), {
+    ask: options.ask,
+    sourceSummary: options.sourceSummary,
+  }),
+);
 const result = {
   ok: true,
   boundary: "local_auxiliary_thought_flow_only",

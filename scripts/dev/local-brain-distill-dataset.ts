@@ -5,6 +5,7 @@ import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
   LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
   LOCAL_BRAIN_RISK_BOUNDARIES,
+  packLocalBrainModuleFields,
 } from "./local-brain-taxonomy.js";
 
 type DistillExample = {
@@ -249,16 +250,7 @@ function inferFinanceModules(text: string): string[] {
 }
 
 function toolsForModules(modules: string[]): string[] {
-  const tools = modules.map((module) => {
-    if (module === "quant_math") {
-      return "quant_math";
-    }
-    if (module === "review_panel") {
-      return "review_panel";
-    }
-    return `finance_framework_${module}_producer`;
-  });
-  return uniq([...tools, "review_panel"]);
+  return uniq([...modules, "review_panel"]);
 }
 
 function missingDataForModules(modules: string[]): string[] {
@@ -435,19 +427,23 @@ function buildCompletion(params: {
   nextStep: string;
   rejectedContext?: string[];
 }): string {
+  const packedModules = packLocalBrainModuleFields(
+    params.primaryModules,
+    params.supportingModules ?? [],
+    params.requiredTools ?? [],
+  );
   return compactJson({
     task_family: params.taskFamily,
-    primary_modules: params.primaryModules,
-    supporting_modules: params.supportingModules ?? [],
-    required_tools: params.requiredTools ?? [],
-    missing_data: params.missingData ?? [],
-    risk_boundaries: params.riskBoundaries ?? BOUNDARIES,
-    next_step: params.nextStep,
-    rejected_context: params.rejectedContext ?? [
-      "old_lark_conversation_history",
-      "language_routing_candidate_artifacts",
-      "unsupported_execution_language",
-    ],
+    primary_modules: packedModules.primary_modules,
+    supporting_modules: packedModules.supporting_modules,
+    required_tools: packedModules.required_tools,
+    missing_data: compactList(params.missingData ?? [], MAX_MISSING_DATA),
+    risk_boundaries: compactList(params.riskBoundaries ?? BOUNDARIES, MAX_RISK_BOUNDARIES),
+    next_step: compactText(params.nextStep, MAX_NEXT_STEP_CHARS),
+    rejected_context: compactList(
+      params.rejectedContext ?? DEFAULT_REJECTED_CONTEXT,
+      MAX_REJECTED_CONTEXT,
+    ),
   });
 }
 

@@ -1,4 +1,8 @@
-import { LOCAL_BRAIN_MODULE_TAXONOMY } from "./local-brain-taxonomy.js";
+import {
+  LOCAL_BRAIN_MODULE_TAXONOMY,
+  normalizeLocalBrainModuleList,
+  packLocalBrainModuleFields,
+} from "./local-brain-taxonomy.js";
 
 export type LocalBrainContractInput = {
   ask: string;
@@ -106,8 +110,8 @@ function cleanMissingData(value: unknown): string[] {
 }
 
 function cleanRequiredTools(value: unknown): string[] {
-  const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS, ...CONTRACT_BOUNDARY_TOKENS]);
-  return arrayValue(value).filter((entry) => !blocked.has(entry));
+  const blocked = new Set([...CONTRACT_FIELD_TOKENS, ...CONTRACT_BOUNDARY_TOKENS]);
+  return normalizeLocalBrainModuleList(arrayValue(value).filter((entry) => !blocked.has(entry)));
 }
 
 function cleanRejectedContext(value: unknown): string[] {
@@ -116,11 +120,16 @@ function cleanRejectedContext(value: unknown): string[] {
 }
 
 function basePlan(plan: Record<string, unknown>): Record<string, unknown> {
+  const packedModules = packLocalBrainModuleFields(
+    cleanModuleList(plan.primary_modules),
+    cleanModuleList(plan.supporting_modules),
+    cleanRequiredTools(plan.required_tools),
+  );
   return {
     ...plan,
-    primary_modules: cleanModuleList(plan.primary_modules),
-    supporting_modules: cleanModuleList(plan.supporting_modules),
-    required_tools: cleanRequiredTools(plan.required_tools),
+    primary_modules: packedModules.primary_modules,
+    supporting_modules: packedModules.supporting_modules,
+    required_tools: packedModules.required_tools,
     missing_data: cleanMissingData(plan.missing_data),
     risk_boundaries: mergeUnique(cleanRiskBoundaries(plan.risk_boundaries), [
       "research_only",

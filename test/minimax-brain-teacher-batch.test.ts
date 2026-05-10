@@ -117,7 +117,7 @@ describe("minimax brain teacher batch parsing", () => {
     `);
 
     const normalized = normalizeTeacherPlan(plan);
-    expect(normalized.primary_modules).toEqual(["portfolio_risk_gates"]);
+    expect(normalized.primary_modules).toEqual(["portfolio_risk_gates", "review_panel"]);
     expect(normalized.risk_boundaries).toEqual(
       expect.arrayContaining(["research_only", "no_execution_authority", "evidence_required"]),
     );
@@ -158,13 +158,14 @@ describe("minimax brain teacher batch parsing", () => {
       rejected_context: Array.from({ length: 20 }, (_, index) => `rejected_${index}`),
     });
 
-    expect(plan.primary_modules.length).toBeLessThanOrEqual(20);
-    expect(plan.supporting_modules.length).toBeLessThanOrEqual(8);
-    expect(plan.missing_data).toHaveLength(24);
-    expect(plan.risk_boundaries.length).toBeLessThanOrEqual(16);
+    expect(plan.primary_modules.length).toBeLessThanOrEqual(8);
+    expect(plan.supporting_modules.length).toBeLessThanOrEqual(6);
+    expect(plan.required_tools.length).toBeLessThanOrEqual(6);
+    expect(plan.missing_data).toHaveLength(8);
+    expect(plan.risk_boundaries.length).toBeLessThanOrEqual(6);
     expect(plan.risk_boundaries.slice(0, 2)).toEqual(["research_only", "no_execution_authority"]);
-    expect(plan.next_step.length).toBeLessThanOrEqual(260);
-    expect(plan.rejected_context).toHaveLength(6);
+    expect(plan.next_step.length).toBeLessThanOrEqual(160);
+    expect(plan.rejected_context).toHaveLength(3);
   });
 
   it("repairs missing commas in otherwise valid teacher JSON", () => {
@@ -200,9 +201,9 @@ describe("minimax brain teacher batch parsing", () => {
       }`),
     );
 
-    expect(plan.primary_modules).toEqual([]);
+    expect(plan.primary_modules).toEqual(["review_panel"]);
     expect(plan.required_tools).toEqual([]);
-    expect(plan.supporting_modules).toEqual(["review_panel"]);
+    expect(plan.supporting_modules).toEqual([]);
   });
 
   it("keeps ambiguous context-reset teacher samples out of broad finance fanout", () => {
@@ -248,11 +249,13 @@ describe("minimax brain teacher batch parsing", () => {
       }),
     );
 
-    expect(plan.primary_modules).toEqual([
-      "ops_audit",
-      "agent_workflow_memory",
-      "control_room_summary",
-    ]);
+    const modules = [...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools];
+    expect(modules).toEqual(
+      expect.arrayContaining(["ops_audit", "agent_workflow_memory", "control_room_summary"]),
+    );
+    expect(modules).not.toEqual(
+      expect.arrayContaining(["macro_rates_inflation", "crypto_market_structure"]),
+    );
     expect(plan.missing_data).toContain("current_subject_or_original_request");
     expect(plan.rejected_context).toContain("old_lark_conversation_history");
     expect(plan.risk_boundaries).toContain("ops_audit_must_not_become_finance_analysis");
@@ -278,7 +281,8 @@ describe("minimax brain teacher batch parsing", () => {
       }),
     );
 
-    expect(plan.primary_modules).toEqual(
+    const modules = [...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools];
+    expect(modules).toEqual(
       expect.arrayContaining([
         "us_equity_market_structure",
         "china_a_share_policy_flow",
@@ -405,7 +409,8 @@ describe("minimax brain teacher batch parsing", () => {
       }),
     );
 
-    expect(plan.primary_modules).toEqual(
+    const modules = [...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools];
+    expect(modules).toEqual(
       expect.arrayContaining([
         "macro_rates_inflation",
         "credit_liquidity",
@@ -422,19 +427,15 @@ describe("minimax brain teacher batch parsing", () => {
         "portfolio_risk_gates",
       ]),
     );
-    const modules = [...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools];
     expect(modules).toEqual(
       expect.arrayContaining(["finance_learning_memory", "source_registry", "review_panel"]),
     );
     expect(plan.missing_data).toEqual(
       expect.arrayContaining([
         "memory_recall_scope_or_relevant_receipts",
-        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
-        "valuation_range_and_margin_of_safety_inputs",
-        "value_trap_risks_and_thesis_invalidation_evidence",
-        "commodity_curve_roll_yield_and_inventory_inputs",
-        "options_iv_skew_gamma_and_event_calendar",
         "position_weights_and_return_series",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
       ]),
     );
     expect(plan.risk_boundaries).toEqual(
@@ -442,7 +443,6 @@ describe("minimax brain teacher batch parsing", () => {
         "no_model_math_guessing",
         "no_unverified_cross_market_claims",
         "no_high_leverage_crypto",
-        "sentiment_signal_not_standalone_alpha",
         "no_trade_advice",
       ]),
     );
@@ -540,7 +540,9 @@ describe("minimax brain teacher batch parsing", () => {
       rejected_context: [],
     });
 
-    expect(plan.required_tools).toEqual(["source_registry", "review_panel"]);
+    expect([...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools]).toEqual(
+      expect.arrayContaining(["source_registry", "review_panel"]),
+    );
     expect(plan.risk_boundaries).toEqual(
       expect.arrayContaining([
         "research_only",
@@ -613,7 +615,9 @@ describe("minimax brain teacher batch parsing", () => {
       "review_panel",
       "control_room_summary",
     ]);
-    expect(plan.required_tools).toEqual(["source_registry", "review_panel"]);
+    expect([...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools]).toEqual(
+      expect.arrayContaining(["source_registry", "review_panel"]),
+    );
     expect(plan.missing_data).toEqual(
       expect.arrayContaining([
         "fund_or_etf_prospectus_or_fact_sheet",
@@ -646,7 +650,9 @@ describe("minimax brain teacher batch parsing", () => {
       }),
     );
 
-    expect(plan.required_tools).toEqual(["source_registry", "review_panel"]);
+    expect([...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools]).toEqual(
+      expect.arrayContaining(["source_registry", "review_panel"]),
+    );
     expect(plan.missing_data).toEqual(
       expect.arrayContaining(["source_url_or_local_source_path", "actual_reading_scope_receipt"]),
     );
@@ -677,7 +683,7 @@ describe("minimax brain teacher batch parsing", () => {
       }),
     );
 
-    expect(plan.primary_modules).toEqual(
+    expect([...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools]).toEqual(
       expect.arrayContaining([
         "finance_learning_memory",
         "source_registry",
@@ -689,6 +695,7 @@ describe("minimax brain teacher batch parsing", () => {
     );
     expect(plan.missing_data).toEqual(
       expect.arrayContaining([
+        "source_url_or_local_source_path",
         "prior_art_search_terms_or_existing_artifact_paths",
         "existing_contract_eval_skill_or_receipt_candidates",
         "reuse_extend_or_new_decision",
@@ -696,23 +703,16 @@ describe("minimax brain teacher batch parsing", () => {
         "license_and_write_scope_review",
         "prompt_injection_and_security_review",
         "replication_or_sample_out_evidence",
-        "capability_card_or_retrieval_receipt",
-        "application_validation_receipt",
-        "training_or_eval_absorption_evidence",
-        "fresh_adjacent_application_task",
-        "keep_downrank_or_discard_decision",
       ]),
     );
     expect(plan.risk_boundaries).toEqual(
       expect.arrayContaining([
-        "untrusted_external_source",
-        "evaluate_before_installing",
-        "do_not_create_parallel_protocol_before_prior_art_check",
-        "prefer_reuse_over_duplicate_pipeline",
-        "no_model_internal_learning_claim_without_eval",
+        "research_only",
+        "no_execution_authority",
+        "no_trade_advice",
+        "no_unverified_live_market_data_claims",
         "no_protected_memory_write",
         "no_provider_config_change",
-        "no_live_sender_change",
       ]),
     );
     expect(plan.rejected_context).toEqual(
@@ -796,7 +796,7 @@ describe("minimax brain teacher batch parsing", () => {
     );
 
     expect(plan.task_family).toBe("external_financial_agent_pattern_distillation");
-    expect(plan.primary_modules).toEqual(
+    expect([...plan.primary_modules, ...plan.supporting_modules, ...plan.required_tools]).toEqual(
       expect.arrayContaining([
         "finance_learning_memory",
         "skill_pattern_distillation",
@@ -814,32 +814,21 @@ describe("minimax brain teacher batch parsing", () => {
         "source_repo_url_or_local_clone_path",
         "source_commit_or_version",
         "actual_reading_scope",
+        "license_and_write_scope_review",
         "agent_pattern_inventory",
         "workflow_owner_definition",
         "leaf_worker_inventory",
         "handoff_contract",
-        "orchestrator_leaf_tool_boundary_map",
-        "tool_permission_boundary_map",
-        "untrusted_source_isolation_rule",
-        "citation_and_provenance_rule",
-        "artifact_qc_gate_mapping",
-        "artifact_qc_gate_sequence",
-        "human_signoff_checkpoint",
-        "visible_summary_contract",
-        "fresh_adjacent_application_task",
       ]),
     );
     expect(plan.risk_boundaries).toEqual(
       expect.arrayContaining([
-        "untrusted_external_source",
-        "no_enterprise_mcp_assumption",
+        "research_only",
+        "no_execution_authority",
+        "no_trade_advice",
+        "no_protected_memory_write",
         "no_provider_config_change",
         "no_live_sender_change",
-        "no_distribution_or_publication",
-        "cite_every_number_or_mark_unsourced",
-        "human_review_required_before_external_use",
-        "no_hidden_tool_authority",
-        "no_direct_external_agent_install",
       ]),
     );
     expect(plan.rejected_context).toEqual(
@@ -847,7 +836,6 @@ describe("minimax brain teacher batch parsing", () => {
         "install_enterprise_mcp_without_credentials",
         "direct_install_external_agent_without_isolation",
         "single_agent_chat_role_without_workflow_contract",
-        "copy_external_agent_as_trade_recommendation_engine",
       ]),
     );
   });

@@ -5,6 +5,7 @@ import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
   LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
   LOCAL_BRAIN_REQUIRED_FINANCE_MODULES,
+  packLocalBrainModuleFields,
   selectLocalBrainContractHints,
 } from "./local-brain-taxonomy.js";
 
@@ -2379,6 +2380,20 @@ function asStringArray(value: unknown): string[] {
     : [];
 }
 
+function finalizeModuleFields(output: Record<string, unknown>): Record<string, unknown> {
+  const packedModules = packLocalBrainModuleFields(
+    asStringArray(output.primary_modules),
+    asStringArray(output.supporting_modules),
+    asStringArray(output.required_tools),
+  );
+  return {
+    ...output,
+    primary_modules: packedModules.primary_modules,
+    supporting_modules: packedModules.supporting_modules,
+    required_tools: packedModules.required_tools,
+  };
+}
+
 function evaluate(
   output: Record<string, unknown>,
   evalCase: EvalCase,
@@ -2489,12 +2504,14 @@ for (const evalCase of evalCases) {
       ? ""
       : await runGenerate(resolvedOptions, evalCase);
     const rawParsed = resolvedOptions.contractOnly ? {} : extractJson(rawOutput);
-    const parsed = options.hardened
-      ? hardenLocalBrainPlanForAsk(rawParsed, {
-          ask: evalCase.userAsk,
-          sourceSummary: evalCase.sourceSummary,
-        })
-      : rawParsed;
+    const parsed = finalizeModuleFields(
+      options.hardened
+        ? hardenLocalBrainPlanForAsk(rawParsed, {
+            ask: evalCase.userAsk,
+            sourceSummary: evalCase.sourceSummary,
+          })
+        : rawParsed,
+    );
     caseResults.push({
       id: evalCase.id,
       rawOutput,
