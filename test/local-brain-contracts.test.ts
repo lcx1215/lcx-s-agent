@@ -164,6 +164,39 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.rejected_context).toContain("single_bucket_finance_routing");
   });
 
+  it("keeps FOMC and CPI event-risk asks on the macro event preflight contract", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "FOMC 和 CPI 前，我持有 QQQ、TLT、NVDA。请先拆事件风险研究链路：宏观利率、美元流动性、ETF regime、仓位风险、技术面和反方证据，不要预测当天涨跌。",
+      },
+    );
+
+    expect(plan.task_family).toBe("macro_event_risk_research_preflight");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "event_driven",
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "etf_regime",
+        "technical_timing",
+        "portfolio_risk_gates",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "current_rates_and_inflation_inputs",
+        "current_credit_and_liquidity_inputs",
+        "target_etf_price_and_regime_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ]),
+    );
+    expect(plan.risk_boundaries).toContain("no_same_day_price_prediction");
+    expect(plan.rejected_context).toContain("same_day_price_prediction");
+  });
+
   it("keeps learned-rule cross-market prompts out of the missing-source gate", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

@@ -1433,15 +1433,17 @@ const EVAL_CASES: EvalCase[] = [
     sourceSummary:
       "FOMC/CPI event-risk preflight for equity-duration-tech portfolio; no same-day prediction.",
     requiredModules: [
+      "event_driven",
       "macro_rates_inflation",
       "credit_liquidity",
       "etf_regime",
+      "technical_timing",
       "company_fundamentals_value",
       "quant_math",
       "portfolio_risk_gates",
       "review_panel",
     ],
-    minModuleMatches: 6,
+    minModuleMatches: 7,
     requiredMissingData: [
       "current_rates_and_inflation_inputs",
       "current_credit_and_liquidity_inputs",

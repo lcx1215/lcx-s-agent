@@ -391,8 +391,7 @@ function looksLikeModelReviewDisagreement(text: string): boolean {
 
 function looksLikeMacroEventRiskPreflight(text: string): boolean {
   return (
-    !looksLikeFullStackFinanceStressTest(text) &&
-    /(fomc|cpi|fed|议息|通胀数据|利率决议|事件风险|event risk)/iu.test(text) &&
+    /(fomc|cpi|议息|通胀数据|利率决议|事件风险|event risk)/iu.test(text) &&
     /(qqq|tlt|nvda|持有|组合|portfolio|仓位|etf|技术面)/iu.test(text) &&
     /(不要预测|不要.*涨跌|preflight|先拆|研究链路|research-only)/iu.test(text)
   );
@@ -456,6 +455,7 @@ function looksLikePlainPositionSizingPreflight(text: string): boolean {
     namesPositionSizing &&
     !looksLikePaperLearningWithSource(text) &&
     !looksLikeExternalKnowledgeInternalizationProtocol(text) &&
+    !looksLikeMacroEventRiskPreflight(text) &&
     !looksLikeFullStackFinanceStressTest(text) &&
     !looksLikeCrossMarketFinance(text)
   );
@@ -465,6 +465,7 @@ function looksLikePlainBuyHoldBoundary(text: string): boolean {
   return (
     !looksLikePaperLearningWithSource(text) &&
     !looksLikeExternalKnowledgeInternalizationProtocol(text) &&
+    !looksLikeMacroEventRiskPreflight(text) &&
     !looksLikeFullStackFinanceStressTest(text) &&
     !looksLikeCrossMarketFinance(text) &&
     /(还能不能拿|要不要买|该不该买|能不能买|要不要加|要不要减|该不该卖|要不要卖|should i buy|should i hold|should i sell|add to position|reduce position)/iu.test(
@@ -1129,9 +1130,11 @@ export function hardenLocalBrainPlanForAsk(
       ...safe,
       task_family: "scenario_probability_missing_inputs_research_preflight",
       primary_modules: [
+        "event_driven",
         "macro_rates_inflation",
         "credit_liquidity",
         "etf_regime",
+        "technical_timing",
         "company_fundamentals_value",
         "quant_math",
         "portfolio_risk_gates",
@@ -1147,6 +1150,7 @@ export function hardenLocalBrainPlanForAsk(
         "finance_framework_macro_rates_inflation_producer",
         "finance_framework_credit_liquidity_producer",
         "finance_framework_etf_regime_producer",
+        "finance_framework_event_driven_producer",
         "finance_framework_company_fundamentals_value_producer",
         "quant_math",
         "finance_framework_portfolio_risk_gates_producer",
@@ -2014,9 +2018,11 @@ export function hardenLocalBrainPlanForAsk(
       ...safe,
       task_family: "macro_event_risk_research_preflight",
       primary_modules: [
+        "event_driven",
         "macro_rates_inflation",
         "credit_liquidity",
         "etf_regime",
+        "technical_timing",
         "company_fundamentals_value",
         "quant_math",
         "portfolio_risk_gates",
@@ -2034,6 +2040,7 @@ export function hardenLocalBrainPlanForAsk(
         "finance_framework_macro_rates_inflation_producer",
         "finance_framework_credit_liquidity_producer",
         "finance_framework_etf_regime_producer",
+        "finance_framework_event_driven_producer",
         "finance_framework_company_fundamentals_value_producer",
         "quant_math",
         "finance_framework_portfolio_risk_gates_producer",
