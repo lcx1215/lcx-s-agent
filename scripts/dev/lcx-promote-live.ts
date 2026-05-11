@@ -87,8 +87,29 @@ type GitState = {
   commit: string;
   upstream: string | null;
   trackedDirty: string[];
+  untracked: string[];
   ahead: number | null;
   behind: number | null;
+};
+
+type DevLiveDriftStatus = {
+  sourceRoot: string;
+  currentDevBranch: string;
+  currentDevCommit: string;
+  currentDevUpstream: string | null;
+  currentDevAheadOfUpstream: number | null;
+  currentDevBehindUpstream: number | null;
+  currentDevTrackedDirtyCount: number;
+  currentDevUntrackedCount: number;
+  liveMatchesCurrentDev: boolean;
+  liveNeedsPromotion: boolean;
+  devLiveDrift:
+    | "missing_state"
+    | "source_git_unavailable"
+    | "current_dev_dirty"
+    | "current_dev_has_untracked_files"
+    | "live_matches_current_dev"
+    | "dev_commit_differs";
 };
 
 type PromotionReceipt = {
@@ -248,6 +269,10 @@ function readGitState(sourceRoot: string): GitState {
       .split(/\r?\n/u)
       .map((line) => line.trim())
       .filter(Boolean),
+    untracked: gitOutput(sourceRoot, ["status", "--short", "--untracked-files=all"])
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("?? ")),
     ahead,
     behind,
   };
@@ -653,11 +678,29 @@ function renderText(receipt: PromotionReceipt): string {
 function renderStatus(params: {
   args: Args;
   state: PromotionReceipt | null;
+  devLiveDrift: DevLiveDriftStatus;
   probe: CommandResult | null;
   visibleProof: LiveVisibleProof | null;
 }): string {
+  const driftLines = [
+    `currentDevBranch=${params.devLiveDrift.currentDevBranch}`,
+    `currentDevCommit=${params.devLiveDrift.currentDevCommit}`,
+    `currentDevUpstream=${params.devLiveDrift.currentDevUpstream ?? "none"}`,
+    `currentDevAheadOfUpstream=${params.devLiveDrift.currentDevAheadOfUpstream ?? "unknown"}`,
+    `currentDevBehindUpstream=${params.devLiveDrift.currentDevBehindUpstream ?? "unknown"}`,
+    `currentDevTrackedDirtyCount=${params.devLiveDrift.currentDevTrackedDirtyCount}`,
+    `currentDevUntrackedCount=${params.devLiveDrift.currentDevUntrackedCount}`,
+    `liveMatchesCurrentDev=${params.devLiveDrift.liveMatchesCurrentDev}`,
+    `liveNeedsPromotion=${params.devLiveDrift.liveNeedsPromotion}`,
+    `devLiveDrift=${params.devLiveDrift.devLiveDrift}`,
+  ];
   if (!params.state) {
-    return `livePromotionStatus=missing\ntargetRoot=${params.args.targetRoot}\nstatePath=${path.join(params.args.targetRoot, PROMOTION_STATE_PATH)}\n`;
+    return `${[
+      "livePromotionStatus=missing",
+      `targetRoot=${params.args.targetRoot}`,
+      `statePath=${path.join(params.args.targetRoot, PROMOTION_STATE_PATH)}`,
+      ...driftLines,
+    ].join("\n")}\n`;
   }
   const lines = [
     `livePromotionStatus=${params.state.status}`,
@@ -667,6 +710,7 @@ function renderStatus(params: {
     `generatedAt=${params.state.generatedAt}`,
     `acceptancePhrase=${params.state.acceptancePhrase}`,
     `receiptPath=${params.state.receiptPath}`,
+    ...driftLines,
   ];
   if (params.probe) {
     lines.push(`${params.probe.command}.status=${params.probe.status}`);
@@ -686,12 +730,56 @@ function renderStatus(params: {
   return `${lines.join("\n")}\n`;
 }
 
+export function readDevLiveDrift(params: {
+  sourceRoot: string;
+  state: PromotionReceipt | null;
+}): DevLiveDriftStatus {
+  const current = readGitState(params.sourceRoot);
+  const sourceGitUnavailable = current.commit === "unknown";
+  const currentDevTrackedDirtyCount = current.trackedDirty.length;
+  const currentDevUntrackedCount = current.untracked.length;
+  const liveMatchesCurrentDev =
+    Boolean(params.state) &&
+    !sourceGitUnavailable &&
+    currentDevTrackedDirtyCount === 0 &&
+    currentDevUntrackedCount === 0 &&
+    params.state?.git.commit === current.commit;
+  const devLiveDrift: DevLiveDriftStatus["devLiveDrift"] = !params.state
+    ? "missing_state"
+    : sourceGitUnavailable
+      ? "source_git_unavailable"
+      : currentDevTrackedDirtyCount > 0
+        ? "current_dev_dirty"
+        : currentDevUntrackedCount > 0
+          ? "current_dev_has_untracked_files"
+          : liveMatchesCurrentDev
+            ? "live_matches_current_dev"
+            : "dev_commit_differs";
+  return {
+    sourceRoot: params.sourceRoot,
+    currentDevBranch: current.branch,
+    currentDevCommit: current.commit,
+    currentDevUpstream: current.upstream,
+    currentDevAheadOfUpstream: current.ahead,
+    currentDevBehindUpstream: current.behind,
+    currentDevTrackedDirtyCount,
+    currentDevUntrackedCount,
+    liveMatchesCurrentDev,
+    liveNeedsPromotion: !liveMatchesCurrentDev,
+    devLiveDrift,
+  };
+}
+
 export function main(argv = process.argv.slice(2)): number {
   const initialArgs = parseArgs(argv);
   if (initialArgs.status) {
     const state = readJsonIfExists<PromotionReceipt>(
       path.join(initialArgs.targetRoot, PROMOTION_STATE_PATH),
     );
+    const devLiveDrift = readDevLiveDrift({
+      sourceRoot: initialArgs.sourceRoot,
+      state,
+    });
     const probe =
       !initialArgs.statusProbe || initialArgs.skipProbe || !state
         ? null
@@ -709,8 +797,8 @@ export function main(argv = process.argv.slice(2)): number {
       : null;
     process.stdout.write(
       initialArgs.json
-        ? `${JSON.stringify({ state, probe, visibleProof }, null, 2)}\n`
-        : renderStatus({ args: initialArgs, state, probe, visibleProof }),
+        ? `${JSON.stringify({ state, devLiveDrift, probe, visibleProof }, null, 2)}\n`
+        : renderStatus({ args: initialArgs, state, devLiveDrift, probe, visibleProof }),
     );
     return probe?.status === "failed" ? 1 : 0;
   }
