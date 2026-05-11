@@ -221,8 +221,14 @@ pnpm lcx:live:status
 `pnpm lcx:live:status` 是快速状态命令，只读 promotion state，并扫描 `~/.openclaw/logs/feishu-reply-flow.jsonl`。它不会默认跑慢 probe，所以适合日常反复检查。它会直接输出：
 
 - `liveStatus`: runtime promotion 和 probe 层状态。
+- `currentDevCommit`: 当前 dev 仓的 HEAD。
+- `liveMatchesCurrentDev`: 当前 dev HEAD 是否已经和最近一次 live promotion commit 一致。
+- `liveNeedsPromotion`: 当前 dev 仓是否还有未迁移到 live sidecar 的改动。
+- `devLiveDrift`: dev/live 不一致的原因，例如 `dev_commit_differs`、`current_dev_dirty` 或 `live_matches_current_dev`。
 - `liveVisibleStatus`: 真实 Lark/Feishu 入站和回复证据状态。
 - `acceptanceMatched`: 最新验收短语是否已经在真实回复里出现。
+
+看到 `livePromotionStatus=promoted` 只代表曾经有一次 promotion 成功；如果同时看到 `liveNeedsPromotion=true`，说明当前 dev 仓还有更新没有进入 live sidecar，不能把当前 dev 修复说成 live 已修复。
 
 需要重新跑 channel probe 时，用深度状态命令：
 
