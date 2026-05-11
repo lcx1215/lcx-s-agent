@@ -122,6 +122,11 @@ describe("lcx-promote-live status", () => {
 
     expect(stdout).toContain(`sourceCommit=${promotedCommit}`);
     expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain("statusModel=dev-ready -> live-runtime-updated -> live-user-seen");
+    expect(stdout).toContain("devReady=not_checked_by_live_status");
+    expect(stdout).toContain("liveRuntimeUpdated=false");
+    expect(stdout).toContain("liveUserSeen=false");
+    expect(stdout).toContain("nextHumanStep=run_dev_tests_then_promote_dev_to_live");
     expect(stdout).toContain("liveMatchesCurrentDev=false");
     expect(stdout).toContain("liveNeedsPromotion=true");
     expect(stdout).toContain("devLiveDrift=dev_commit_differs");
@@ -144,8 +149,39 @@ describe("lcx-promote-live status", () => {
 
     expect(stdout).toContain(`sourceCommit=${currentCommit}`);
     expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain("statusModel=dev-ready -> live-runtime-updated -> live-user-seen");
+    expect(stdout).toContain("devReady=not_checked_by_live_status");
+    expect(stdout).toContain("liveRuntimeUpdated=true");
+    expect(stdout).toContain("liveUserSeen=false");
+    expect(stdout).toContain("nextHumanStep=send_real_lark_acceptance");
     expect(stdout).toContain("liveMatchesCurrentDev=true");
     expect(stdout).toContain("liveNeedsPromotion=false");
     expect(stdout).toContain("devLiveDrift=live_matches_current_dev");
+  });
+
+  it("does not call dirty dev work live-runtime-updated", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+    const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
+
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "dirty\n", "utf8");
+    writePromotionState(targetRoot, currentCommit);
+    const stdout = runStatus(sourceRoot, targetRoot);
+
+    expect(stdout).toContain(`sourceCommit=${currentCommit}`);
+    expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain("liveRuntimeUpdated=false");
+    expect(stdout).toContain("liveUserSeen=false");
+    expect(stdout).toContain("nextHumanStep=commit_or_clean_dev_then_run_dev_tests");
+    expect(stdout).toContain("liveMatchesCurrentDev=false");
+    expect(stdout).toContain("liveNeedsPromotion=true");
+    expect(stdout).toContain("devLiveDrift=current_dev_dirty");
   });
 });

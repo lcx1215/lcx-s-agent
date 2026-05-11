@@ -82,9 +82,21 @@ LCX Agent 的设计更接近一个可长期运行的研究系统，而不是一�
 
 所有金融输出都应视为 research-only，不构成投资建议。
 
-## 为什么强调 dev-fixed 和 live-visible-fixed
+## 为什么区分 dev 和 live
 
 LCX Agent 长期运行在真实飞书 / Lark 回路里，所以“本地修了”和“用户真的看到了”必须分开。
+
+对人只需要记住三层：
+
+| 状态                 | 大白话含义                                       |
+| -------------------- | ------------------------------------------------ |
+| dev-ready            | dev 仓本地测试、smoke 或模拟 Lark 回路已经通过。 |
+| live-runtime-updated | live sidecar 已迁移到 dev 确认过的 git 快照。    |
+| live-user-seen       | 真实 Lark/Feishu 用户入口已经看到正确回复。      |
+
+dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主要靠单元测试、smoke、synthetic/replay Lark 输入、routing score、本地 reply formatting 和本地 brain eval。真实 Lark 只用于迁移后的最后验收。
+
+底层机器字段仍然保留更细状态：
 
 | 状态               | 含义                                                                   |
 | ------------------ | ---------------------------------------------------------------------- |
@@ -225,6 +237,11 @@ pnpm lcx:live:status
 - `liveMatchesCurrentDev`: 当前 dev HEAD 是否已经和最近一次 live promotion commit 一致。
 - `liveNeedsPromotion`: 当前 dev 仓是否还有未迁移到 live sidecar 的改动。
 - `devLiveDrift`: dev/live 不一致的原因，例如 `dev_commit_differs`、`current_dev_dirty` 或 `live_matches_current_dev`。
+- `statusModel`: 对人看的三层模型，固定是 `dev-ready -> live-runtime-updated -> live-user-seen`。
+- `devReady`: `lcx:live:status` 不跑 dev 测试，所以这里会显示 `not_checked_by_live_status`。
+- `liveRuntimeUpdated`: 当前 clean dev HEAD 是否已经迁移到 live sidecar。
+- `liveUserSeen`: 当前 dev HEAD 对应的 live runtime 是否已经被真实 Lark/Feishu 可见回复验收。
+- `nextHumanStep`: 下一步该做 dev 测试、迁移 live，还是发真实 Lark 验收。
 - `liveVisibleStatus`: 真实 Lark/Feishu 入站和回复证据状态。
 - `acceptanceMatched`: 最新验收短语是否已经在真实回复里出现。
 
@@ -246,7 +263,7 @@ promotion 只代表 live runtime 已经切到某个 git 快照并完成探测。
 ~/.openclaw/workspace/memory/
 ```
 
-只有看到真实入站、路由、回复和用户可见结果，才能说 `live-visible-fixed`。旧文档里的 `live-fixed` 只能当口语简称，正式状态以 `live-visible-fixed` 为准。
+只有看到真实入站、路由、回复和用户可见结果，才能说 `live-user-seen`。旧文档里的 `live-fixed` 只能当口语简称，正式状态以 `live-visible-fixed` 为准；对人汇报时 `live-user-seen` 是同一件事的简单说法，不能用来替代 dev 验收。
 
 状态含义：
 
@@ -256,6 +273,8 @@ promotion 只代表 live runtime 已经切到某个 git 快照并完成探测。
 | live-promoted      | live sidecar 已切到 promotion 对应的 git 快照。             |
 | probe-ok           | gateway 和 channel 探测通过。                               |
 | live-visible-fixed | 重启后的真实 Lark/Feishu 入站、路由、回复、可见输出都通过。 |
+
+对人汇报时优先说 `dev-ready`、`live-runtime-updated`、`live-user-seen`；底层字段只作为证据展开。
 
 ## 底层 runtime
 

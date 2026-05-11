@@ -112,6 +112,18 @@ type DevLiveDriftStatus = {
     | "dev_commit_differs";
 };
 
+type OperatorStatus = {
+  statusModel: "dev-ready -> live-runtime-updated -> live-user-seen";
+  devReady: "not_checked_by_live_status";
+  liveRuntimeUpdated: boolean;
+  liveUserSeen: boolean;
+  nextHumanStep:
+    | "commit_or_clean_dev_then_run_dev_tests"
+    | "run_dev_tests_then_promote_dev_to_live"
+    | "send_real_lark_acceptance"
+    | "no_action_current_dev_seen_in_live";
+};
+
 type PromotionReceipt = {
   schemaVersion: 1;
   generatedAt: string;
@@ -679,9 +691,17 @@ function renderStatus(params: {
   args: Args;
   state: PromotionReceipt | null;
   devLiveDrift: DevLiveDriftStatus;
+  operatorStatus: OperatorStatus;
   probe: CommandResult | null;
   visibleProof: LiveVisibleProof | null;
 }): string {
+  const operatorLines = [
+    `statusModel=${params.operatorStatus.statusModel}`,
+    `devReady=${params.operatorStatus.devReady}`,
+    `liveRuntimeUpdated=${params.operatorStatus.liveRuntimeUpdated}`,
+    `liveUserSeen=${params.operatorStatus.liveUserSeen}`,
+    `nextHumanStep=${params.operatorStatus.nextHumanStep}`,
+  ];
   const driftLines = [
     `currentDevBranch=${params.devLiveDrift.currentDevBranch}`,
     `currentDevCommit=${params.devLiveDrift.currentDevCommit}`,
@@ -699,12 +719,14 @@ function renderStatus(params: {
       "livePromotionStatus=missing",
       `targetRoot=${params.args.targetRoot}`,
       `statePath=${path.join(params.args.targetRoot, PROMOTION_STATE_PATH)}`,
+      ...operatorLines,
       ...driftLines,
     ].join("\n")}\n`;
   }
   const lines = [
     `livePromotionStatus=${params.state.status}`,
     `liveStatus=${params.state.liveStatus}`,
+    ...operatorLines,
     `sourceCommit=${params.state.git.commit}`,
     `sourceSnapshot=${params.state.sourceSnapshot?.mode ?? "unknown"}`,
     `generatedAt=${params.state.generatedAt}`,
@@ -728,6 +750,31 @@ function renderStatus(params: {
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+export function resolveOperatorStatus(params: {
+  devLiveDrift: DevLiveDriftStatus;
+  visibleProof: LiveVisibleProof | null;
+}): OperatorStatus {
+  const devHasLocalChanges =
+    params.devLiveDrift.devLiveDrift === "current_dev_dirty" ||
+    params.devLiveDrift.devLiveDrift === "current_dev_has_untracked_files";
+  const liveRuntimeUpdated = params.devLiveDrift.liveMatchesCurrentDev;
+  const liveUserSeen = liveRuntimeUpdated && params.visibleProof?.status === "live_visible_fixed";
+  const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
+    ? "commit_or_clean_dev_then_run_dev_tests"
+    : !liveRuntimeUpdated
+      ? "run_dev_tests_then_promote_dev_to_live"
+      : !liveUserSeen
+        ? "send_real_lark_acceptance"
+        : "no_action_current_dev_seen_in_live";
+  return {
+    statusModel: "dev-ready -> live-runtime-updated -> live-user-seen",
+    devReady: "not_checked_by_live_status",
+    liveRuntimeUpdated,
+    liveUserSeen,
+    nextHumanStep,
+  };
 }
 
 export function readDevLiveDrift(params: {
@@ -795,10 +842,21 @@ export function main(argv = process.argv.slice(2)): number {
           acceptancePhrase: state.acceptancePhrase,
         })
       : null;
+    const operatorStatus = resolveOperatorStatus({
+      devLiveDrift,
+      visibleProof,
+    });
     process.stdout.write(
       initialArgs.json
-        ? `${JSON.stringify({ state, devLiveDrift, probe, visibleProof }, null, 2)}\n`
-        : renderStatus({ args: initialArgs, state, devLiveDrift, probe, visibleProof }),
+        ? `${JSON.stringify({ state, operatorStatus, devLiveDrift, probe, visibleProof }, null, 2)}\n`
+        : renderStatus({
+            args: initialArgs,
+            state,
+            devLiveDrift,
+            operatorStatus,
+            probe,
+            visibleProof,
+          }),
     );
     return probe?.status === "failed" ? 1 : 0;
   }

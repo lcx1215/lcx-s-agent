@@ -226,6 +226,13 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - Treat verification as mandatory: run targeted tests, lint touched files, and name a fixed Feishu/live acceptance phrase for later real verification.
 - Do not confuse `dev-fixed` with `live-visible-fixed`.
 - A change is only `live-visible-fixed` after explicit migration, build, restart, probe, and real-entry verification.
+- For human-facing status, prefer the simpler three-layer wording:
+  `dev-ready` means dev tests/smoke/synthetic or replay Lark checks passed;
+  `live-runtime-updated` means the live sidecar has been migrated to the verified
+  dev git snapshot and restarted/probed; `live-user-seen` means a real
+  Lark/Feishu user entry produced the expected visible reply. Dev correctness
+  must not depend on the real live Lark bot, because the real bot is attached to
+  the live sidecar.
 - Keep degraded / partial / rescue states honest; never present degraded behavior as full success.
 
 ## Long-Running Task Autonomy
