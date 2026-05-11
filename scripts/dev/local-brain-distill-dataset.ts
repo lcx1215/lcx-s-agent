@@ -367,7 +367,7 @@ function normalizeMissingDataEntries(values: string[]): string[] {
 }
 
 function normalizeRiskBoundaries(values: string[]): string[] {
-  const normalized = values.map((entry) => entry.trim()).filter(Boolean);
+  const normalized = values.map(canonicalRiskBoundary).filter(Boolean);
   const hasResearchBoundary =
     normalized.includes("research_only") || normalized.includes("no_execution_authority");
   const unique = uniq(hasResearchBoundary ? normalized : [...normalized, ...BOUNDARIES]);
@@ -390,6 +390,51 @@ function normalizeRiskBoundaries(values: string[]): string[] {
     ],
     MAX_RISK_BOUNDARIES,
   );
+}
+
+function canonicalRiskBoundary(entry: string): string {
+  const normalized = entry
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (
+    normalized.includes("no_high_leverage_crypto") ||
+    normalized === "no_high_leverage" ||
+    normalized === "no_leverage_on_crypto" ||
+    normalized === "no_crypto_leverage_recommendation" ||
+    normalized === "no_crypto_leverage" ||
+    normalized === "crypto_no_leverage" ||
+    normalized === "no_crypto_high_leverage" ||
+    normalized === "do_not_execute_crypto_leverage" ||
+    normalized === "no_crypto_leverage_trade_recommendation" ||
+    normalized === "no_crypto_high_leverage_trading"
+  ) {
+    return "no_high_leverage_crypto";
+  }
+  if (
+    normalized === "no_live_market_claims" ||
+    normalized === "no_live_market_claim" ||
+    normalized === "no_live_finance_advice" ||
+    normalized === "no_unverified_live_data" ||
+    normalized === "no_unverified_live_data_claims" ||
+    normalized === "no_unverified_live_market_data_claims" ||
+    normalized === "no_unverified_current_market_claims" ||
+    normalized === "no_unverified_current_market_claim" ||
+    normalized === "no_unverified_current_market_data_claims"
+  ) {
+    return "no_unverified_current_market_data";
+  }
+  if (
+    normalized === "no_language_corpus_change" ||
+    normalized === "no_language_corpus_changes" ||
+    normalized === "no_language_corpus_modify" ||
+    normalized === "no_formal_lark_routing_corpus" ||
+    normalized === "no_formal_lark_routing_corpus_change"
+  ) {
+    return "no_language_corpus_modification";
+  }
+  return normalized || entry.trim();
 }
 
 function inferRiskBoundariesFromText(text: string): string[] {

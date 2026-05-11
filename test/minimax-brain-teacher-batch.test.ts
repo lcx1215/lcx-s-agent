@@ -378,6 +378,8 @@ describe("minimax brain teacher batch parsing", () => {
         "no_high_leverage_crypto_reference",
         "no_crypto_leverage",
         "do_not_execute_crypto_leverage",
+        "no_leverage_on_crypto",
+        "no_high_leverage",
       ],
       next_step: "review",
       rejected_context: [],
@@ -388,6 +390,23 @@ describe("minimax brain teacher batch parsing", () => {
     ).toHaveLength(1);
     expect(plan.risk_boundaries).not.toContain("no_high_leverage_crypto_reference");
     expect(plan.risk_boundaries).not.toContain("no_crypto_leverage");
+    expect(plan.risk_boundaries).not.toContain("no_leverage_on_crypto");
+    expect(plan.risk_boundaries).not.toContain("no_high_leverage");
+  });
+
+  it("canonicalizes fragmented position and return-series missing data", () => {
+    const plan = normalizeTeacherPlan({
+      task_family: "portfolio_math_missing_inputs",
+      primary_modules: ["quant_math"],
+      supporting_modules: ["portfolio_risk_gates"],
+      required_tools: [],
+      missing_data: ["current_position_weights", "return_series_or_price_history"],
+      risk_boundaries: ["research_only", "no_execution_authority"],
+      next_step: "review",
+      rejected_context: [],
+    });
+
+    expect(plan.missing_data).toContain("position_weights_and_return_series");
   });
 
   it("turns all-domain finance prompts into broad research loops", () => {

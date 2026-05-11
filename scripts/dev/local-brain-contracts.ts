@@ -76,6 +76,9 @@ function canonicalRiskBoundary(entry: string): string {
     .replace(/^_+|_+$/gu, "");
   if (
     normalized.includes("no_high_leverage_crypto") ||
+    normalized === "no_high_leverage" ||
+    normalized === "no_leverage_on_crypto" ||
+    normalized === "no_crypto_leverage_recommendation" ||
     normalized === "no_crypto_leverage" ||
     normalized === "crypto_no_leverage" ||
     normalized === "no_crypto_high_leverage" ||
@@ -102,6 +105,24 @@ function canonicalRiskBoundary(entry: string): string {
   return normalized || entry.trim();
 }
 
+function canonicalMissingData(entry: string): string {
+  const normalized = entry
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (
+    normalized.includes("position_weights_and_return_series") ||
+    (/(^|_)position_weights?($|_)|current_position_weights|asset_position_weights|portfolio_weight/u.test(
+      normalized,
+    ) &&
+      /return_series|price_history|return_history|price_series/u.test(normalized))
+  ) {
+    return "position_weights_and_return_series";
+  }
+  return entry.trim();
+}
+
 function cleanRiskBoundaries(value: unknown): string[] {
   const blocked = new Set([
     ...MODULE_IDS,
@@ -122,7 +143,22 @@ function cleanModuleList(value: unknown): string[] {
 
 function cleanMissingData(value: unknown): string[] {
   const blocked = new Set([...MODULE_IDS, ...CONTRACT_FIELD_TOKENS, ...CONTRACT_BOUNDARY_TOKENS]);
-  return arrayValue(value).filter((entry) => !blocked.has(entry));
+  const normalized = arrayValue(value)
+    .map(canonicalMissingData)
+    .filter((entry) => !blocked.has(entry));
+  const lowerValues = normalized.map((entry) => entry.toLowerCase());
+  const hasPositionWeights = lowerValues.some((entry) =>
+    /(^|_)position_weights?($|_)|current_position_weights|asset_position_weights|portfolio_weight/u.test(
+      entry,
+    ),
+  );
+  const hasReturnSeries = lowerValues.some((entry) =>
+    /return_series|price_history|return_history|price_series/u.test(entry),
+  );
+  return mergeUnique(
+    hasPositionWeights && hasReturnSeries ? ["position_weights_and_return_series"] : [],
+    normalized,
+  );
 }
 
 function cleanRequiredTools(value: unknown): string[] {

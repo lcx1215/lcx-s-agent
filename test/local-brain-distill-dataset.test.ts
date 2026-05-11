@@ -164,6 +164,7 @@ describe("local brain distill dataset", () => {
             proposedRiskBoundaries: [
               "research_only",
               "no_execution_authority",
+              "no_leverage_on_crypto",
               ...Array.from({ length: 50 }, (_, index) => `teacher_noise_boundary_${index}`),
             ],
             proposedNextStep:
@@ -214,6 +215,7 @@ describe("local brain distill dataset", () => {
       expect.arrayContaining([
         "no_language_corpus_modification",
         "no_unverified_current_market_data",
+        "no_high_leverage_crypto",
       ]),
     );
     expect(completion.risk_boundaries?.length).toBeLessThanOrEqual(6);

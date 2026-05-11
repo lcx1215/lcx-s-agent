@@ -1573,6 +1573,9 @@ function canonicalRiskBoundary(entry: string): string {
     normalized === "no_high_leverage_crypto_position" ||
     normalized === "no_high_leverage_crypto" ||
     normalized.includes("no_high_leverage_crypto") ||
+    normalized === "no_high_leverage" ||
+    normalized === "no_leverage_on_crypto" ||
+    normalized === "no_crypto_leverage_recommendation" ||
     normalized === "no_crypto_leverage" ||
     normalized === "crypto_no_leverage" ||
     normalized === "no_crypto_high_leverage" ||
@@ -1607,6 +1610,24 @@ function canonicalRiskBoundary(entry: string): string {
     return "no_language_corpus_modification";
   }
   return normalized || entry.trim();
+}
+
+function canonicalMissingData(entry: string): string {
+  const normalized = entry
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (
+    normalized.includes("position_weights_and_return_series") ||
+    (/(^|_)position_weights?($|_)|current_position_weights|asset_position_weights|portfolio_weight/u.test(
+      normalized,
+    ) &&
+      /return_series|price_history|return_history|price_series/u.test(normalized))
+  ) {
+    return "position_weights_and_return_series";
+  }
+  return entry.trim();
 }
 
 const TEACHER_RISK_PRIORITY = [
@@ -1670,7 +1691,22 @@ function prioritizeRiskBoundaries(values: string[]): string[] {
 }
 
 function prioritizeMissingData(values: string[]): string[] {
-  const unique = [...new Set(values)];
+  const normalized = values.map(canonicalMissingData);
+  const lowerValues = normalized.map((entry) => entry.toLowerCase());
+  const hasPositionWeights = lowerValues.some((entry) =>
+    /(^|_)position_weights?($|_)|current_position_weights|asset_position_weights|portfolio_weight/u.test(
+      entry,
+    ),
+  );
+  const hasReturnSeries = lowerValues.some((entry) =>
+    /return_series|price_history|return_history|price_series/u.test(entry),
+  );
+  const unique = [
+    ...new Set([
+      ...(hasPositionWeights && hasReturnSeries ? ["position_weights_and_return_series"] : []),
+      ...normalized,
+    ]),
+  ];
   return [
     ...TEACHER_MISSING_DATA_PRIORITY.filter((entry) => unique.includes(entry)),
     ...unique.filter((entry) => !TEACHER_MISSING_DATA_PRIORITY.includes(entry as never)),

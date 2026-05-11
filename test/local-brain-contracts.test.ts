@@ -259,6 +259,8 @@ describe("hardenLocalBrainPlanForAsk", () => {
           "no_execution_authority",
           "no_high_leverage_crypto_reference",
           "no_crypto_leverage_trade_recommendation",
+          "no_leverage_on_crypto",
+          "no_high_leverage",
         ],
       },
       {
@@ -271,6 +273,21 @@ describe("hardenLocalBrainPlanForAsk", () => {
     ).toHaveLength(1);
     expect(plan.risk_boundaries).not.toContain("no_high_leverage_crypto_reference");
     expect(plan.risk_boundaries).not.toContain("no_crypto_leverage_trade_recommendation");
+    expect(plan.risk_boundaries).not.toContain("no_leverage_on_crypto");
+    expect(plan.risk_boundaries).not.toContain("no_high_leverage");
+  });
+
+  it("canonicalizes fragmented position and return-series missing data", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {
+        missing_data: ["current_position_weights", "return_series_or_price_history"],
+      },
+      {
+        ask: "我想做组合回撤和相关性，但只给了当前仓位和历史价格，先拆数据缺口。",
+      },
+    );
+
+    expect(plan.missing_data).toContain("position_weights_and_return_series");
   });
 
   it("does not misroute cross-market data-gap prompts into source audit", () => {
