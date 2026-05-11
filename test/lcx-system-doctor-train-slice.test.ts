@@ -18,6 +18,16 @@ describe("LCX system doctor train slice observability", () => {
     expect(source).toContain("policy: result.policy");
   });
 
+  it("reads enough guard history to keep latestGuardStart visible during long runs", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("MINIMAX_GUARD_LOG_TAIL_LINES = 5_000");
+    expect(source).toContain("readJsonlTail(MINIMAX_GUARD_LOG, MINIMAX_GUARD_LOG_TAIL_LINES)");
+  });
+
   it("classifies the MiniMax saturator before matching its guard-log argument", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),

@@ -25,6 +25,8 @@ const WORKSPACE_DIR = path.join(HOME, ".openclaw", "workspace");
 const WORKSPACE_LOG_DIR = path.join(HOME, ".openclaw", "workspace", "logs");
 const MINIMAX_GUARD_LOG = path.join(WORKSPACE_LOG_DIR, "minimax-brain-training-guard-medium.jsonl");
 const MINIMAX_QUOTA_LOG_PATTERN = /^minimax-quota-brain-saturator-\d{4}-\d{2}-\d{2}\.jsonl$/u;
+const MINIMAX_GUARD_LOG_TAIL_LINES = 5_000;
+const MINIMAX_QUOTA_LOG_TAIL_LINES = 500;
 const LEARNING_COUNCIL_DIR = path.join(WORKSPACE_DIR, "bank", "knowledge", "learning-councils");
 const REVIEW_PANEL_RECEIPT_DIR = path.join(WORKSPACE_DIR, "memory", "review-panel-receipts");
 const MODEL_COUNCIL_AUDIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -583,8 +585,10 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
   try {
     const [psResult, guardEvents, quotaEvents] = await Promise.all([
       runQuietCommand("ps", ["-axo", "pid=,ppid=,command="]),
-      readJsonlTail(MINIMAX_GUARD_LOG, 120),
-      quotaLogPath ? readJsonlTail(quotaLogPath, 120) : Promise.resolve([]),
+      readJsonlTail(MINIMAX_GUARD_LOG, MINIMAX_GUARD_LOG_TAIL_LINES),
+      quotaLogPath
+        ? readJsonlTail(quotaLogPath, MINIMAX_QUOTA_LOG_TAIL_LINES)
+        : Promise.resolve([]),
     ]);
     const activeProcesses = psResult.stdout
       .split(/\r?\n/u)
