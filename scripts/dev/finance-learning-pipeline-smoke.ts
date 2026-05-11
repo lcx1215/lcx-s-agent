@@ -16,6 +16,7 @@ const SAFE_COMPLIANCE_NOTES =
   "Use only public feeds, local exports, normal browser-visible access, or manual operator capture with no bypasses.";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_DIR = path.resolve(__dirname, "../..");
 const FIXTURE_DIR = path.resolve(__dirname, "../../test/fixtures/finance-learning-pipeline");
 
 type SmokeCase =
@@ -764,7 +765,7 @@ async function main() {
       {
         ok: true,
         workspaceDir,
-        fixtureDir: path.relative(process.cwd(), FIXTURE_DIR),
+        fixtureDir: path.relative(WORKTREE_DIR, FIXTURE_DIR),
         cases: results,
       },
       null,

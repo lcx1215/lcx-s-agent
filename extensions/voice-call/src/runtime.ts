@@ -33,19 +33,36 @@ type Logger = {
 function createRuntimeResourceLifecycle(params: {
   config: VoiceCallConfig;
   webhookServer: VoiceCallWebhookServer;
+  logger?: Logger;
 }): {
   setTunnelResult: (result: TunnelResult | null) => void;
   stop: (opts?: { suppressErrors?: boolean }) => Promise<void>;
 } {
   let tunnelResult: TunnelResult | null = null;
   let stopped = false;
+  const logger: Logger = params.logger ?? {
+    info: console.info,
+    warn: console.warn,
+    error: console.error,
+  };
 
-  const runStep = async (step: () => Promise<void>, suppressErrors: boolean) => {
+  const runStep = async (
+    step: () => Promise<void>,
+    suppressErrors: boolean,
+  ): Promise<Error | undefined> => {
     if (suppressErrors) {
-      await step().catch(() => {});
-      return;
+      try {
+        await step();
+        return undefined;
+      } catch (error) {
+        logger.warn(
+          `[voice-call] stop step failed (suppressed): ${String(error instanceof Error ? error.message : error)}`,
+        );
+        return error instanceof Error ? error : new Error(String(error));
+      }
     }
     await step();
+    return undefined;
   };
 
   return {
@@ -58,17 +75,34 @@ function createRuntimeResourceLifecycle(params: {
       }
       stopped = true;
       const suppressErrors = opts?.suppressErrors ?? false;
-      await runStep(async () => {
-        if (tunnelResult) {
-          await tunnelResult.stop();
+      const errors: Error[] = [];
+      const pushError = (error: Error | undefined) => {
+        if (error) {
+          errors.push(error);
         }
-      }, suppressErrors);
-      await runStep(async () => {
-        await cleanupTailscaleExposure(params.config);
-      }, suppressErrors);
-      await runStep(async () => {
-        await params.webhookServer.stop();
-      }, suppressErrors);
+      };
+      pushError(
+        await runStep(async () => {
+          if (tunnelResult) {
+            await tunnelResult.stop();
+          }
+        }, suppressErrors),
+      );
+      pushError(
+        await runStep(async () => {
+          await cleanupTailscaleExposure(params.config);
+        }, suppressErrors),
+      );
+      pushError(
+        await runStep(async () => {
+          await params.webhookServer.stop();
+        }, suppressErrors),
+      );
+      if (errors.length > 0 && suppressErrors) {
+        logger.error(
+          `[voice-call] lifecycle stop had ${errors.length} suppressed error(s): ${errors.map((error) => error.message).join(" | ")}`,
+        );
+      }
     },
   };
 }
@@ -166,7 +200,7 @@ export async function createVoiceCallRuntime(params: {
   const provider = resolveProvider(config);
   const manager = new CallManager(config);
   const webhookServer = new VoiceCallWebhookServer(config, manager, provider, coreConfig);
-  const lifecycle = createRuntimeResourceLifecycle({ config, webhookServer });
+  const lifecycle = createRuntimeResourceLifecycle({ config, webhookServer, logger: log });
 
   const localUrl = await webhookServer.start();
 

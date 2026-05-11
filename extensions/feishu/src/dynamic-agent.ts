@@ -4,6 +4,15 @@ import path from "node:path";
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
 import type { DynamicAgentCreationConfig } from "./types.js";
 
+function isFeishuFamilyChannel(rawChannel?: string | null): boolean {
+  const normalized = rawChannel?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const base = normalized.split(":")[0];
+  return base === "feishu" || base === "lark";
+}
+
 export type MaybeCreateDynamicAgentResult = {
   created: boolean;
   updatedCfg: OpenClawConfig;
@@ -27,7 +36,7 @@ export async function maybeCreateDynamicAgent(params: {
   const existingBindings = cfg.bindings ?? [];
   const hasBinding = existingBindings.some(
     (b) =>
-      b.match?.channel === "feishu" &&
+      isFeishuFamilyChannel(b.match?.channel) &&
       b.match?.peer?.kind === "direct" &&
       b.match?.peer?.id === senderOpenId,
   );

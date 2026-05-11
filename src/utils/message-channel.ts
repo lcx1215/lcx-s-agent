@@ -53,7 +53,7 @@ export function isWebchatClient(client?: GatewayClientInfoLike | null): boolean 
 }
 
 export function normalizeMessageChannel(raw?: string | null): string | undefined {
-  const normalized = raw?.trim().toLowerCase();
+  const normalized = normalizeMessageChannelFamilyAlias(raw);
   if (!normalized) {
     return undefined;
   }
@@ -130,6 +130,47 @@ export function resolveGatewayMessageChannel(
     return undefined;
   }
   return isGatewayMessageChannel(normalized) ? normalized : undefined;
+}
+
+/**
+ * Normalize a raw channel label to the underlying routing family.
+ *
+ * Keeps split-chain identifiers such as "lark:dm:xxx" aligned with their
+ * parent family and preserves Feishu/Lark equivalence through explicit
+ * family mapping.
+ */
+export function normalizeMessageChannelFamilyAlias(raw?: string | null): string | undefined {
+  const normalized = raw?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  const baseAlias = normalized.split(":")[0];
+  if (!baseAlias) {
+    return undefined;
+  }
+  if (baseAlias === INTERNAL_MESSAGE_CHANNEL) {
+    return INTERNAL_MESSAGE_CHANNEL;
+  }
+  if (baseAlias === "lark" || baseAlias === "feishu") {
+    return "feishu";
+  }
+  const baseNormalized =
+    normalizeChatChannelId(baseAlias) ?? normalizeFamilyAliasPluginId(baseAlias) ?? baseAlias;
+  return baseNormalized;
+}
+
+function normalizeFamilyAliasPluginId(alias: string): string | undefined {
+  const registry = getActivePluginRegistry();
+  if (!registry) {
+    return undefined;
+  }
+  const match = registry.channels.find((entry) => {
+    if (entry.plugin.id.toLowerCase() === alias) {
+      return true;
+    }
+    return (entry.plugin.meta.aliases ?? []).some((item) => item.trim().toLowerCase() === alias);
+  });
+  return match?.plugin.id;
 }
 
 export function resolveMessageChannel(

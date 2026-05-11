@@ -1,5 +1,9 @@
 const prompt = process.argv.at(-1) ?? "";
 
+const sourceSummary =
+  process.env.LCX_OPEN_EVAL_SOURCE_SUMMARY?.trim() ||
+  "open_source_eval_provider_no_live_side_effects";
+
 const plan = prompt.includes("Lark 上下文污染")
   ? {
       task_family: "ops_audit",
@@ -10,6 +14,7 @@ const plan = prompt.includes("Lark 上下文污染")
       risk_boundaries: ["research_only"],
       next_step: "inspect_lark_context",
       rejected_context: ["old_lark_conversation_history"],
+      source_summary_from_provider: sourceSummary,
     }
   : {
       task_family: "cross_market_finance_research_planning",
@@ -63,6 +68,7 @@ const plan = prompt.includes("Lark 上下文污染")
       ],
       next_step: "review_plan",
       rejected_context: ["old_lark_conversation_history"],
+      source_summary_from_provider: sourceSummary,
     };
 
 process.stdout.write(`${JSON.stringify(plan)}\n`);

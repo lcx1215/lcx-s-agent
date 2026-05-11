@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type OpenEvalCase = {
@@ -16,12 +17,17 @@ type OpenEvalCase = {
 type CliOptions = {
   providerCommand: string;
   json: boolean;
+  providerTimeoutMs: number;
 };
 
 type ProviderInvocation = {
   command: string;
   args: string[];
 };
+
+const DEFAULT_PROVIDER_TIMEOUT_MS = 20_000;
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 
 const REQUIRED_KEYS = [
   "task_family",
@@ -131,7 +137,7 @@ const CASES: OpenEvalCase[] = [
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/dev/local-brain-open-eval.ts [--json] [--provider-command CMD]",
+      "Usage: node --import tsx scripts/dev/local-brain-open-eval.ts [--json] [--provider-command CMD] [--provider-timeout-ms N]",
       "",
       "Runs the LCX local-brain open-source eval bridge cases without touching live sender, provider config, protected memory, or language corpus.",
     ].join("\n"),
@@ -150,6 +156,7 @@ function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     providerCommand: "node --import tsx scripts/dev/local-brain-open-eval-provider.ts",
     json: false,
+    providerTimeoutMs: DEFAULT_PROVIDER_TIMEOUT_MS,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -157,6 +164,14 @@ function parseArgs(args: string[]): CliOptions {
       options.json = true;
     } else if (arg === "--provider-command") {
       options.providerCommand = readValue(args, index);
+      index += 1;
+    } else if (arg === "--provider-timeout-ms") {
+      const rawValue = readValue(args, index);
+      const timeoutMs = Number(rawValue);
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        usage();
+      }
+      options.providerTimeoutMs = timeoutMs;
       index += 1;
     } else if (arg === "--help" || arg === "-h") {
       usage();
@@ -220,14 +235,26 @@ function runProvider(
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const provider = tokenizeProviderCommand(options.providerCommand);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let hasTimedOut = false;
     const child = spawn(provider.command, [...provider.args, evalCase.ask], {
-      cwd: path.resolve("."),
+      cwd: WORKTREE_CWD,
       env: {
         ...process.env,
         LCX_OPEN_EVAL_SOURCE_SUMMARY: evalCase.sourceSummary,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const clearProviderTimeout = (): void => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = undefined;
+      }
+    };
+    timeout = setTimeout(() => {
+      hasTimedOut = true;
+      child.kill("SIGKILL");
+    }, options.providerTimeoutMs);
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -238,16 +265,27 @@ function runProvider(
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", reject);
+    child.on("error", (error) => {
+      clearProviderTimeout();
+      reject(error);
+    });
     child.on("close", (code) => {
+      clearProviderTimeout();
+      if (hasTimedOut) {
+        reject(new Error(`provider timed out after ${options.providerTimeoutMs}ms`));
+        return;
+      }
       if (code !== 0) {
-        reject(new Error(`provider exited ${code}: ${stderr || stdout}`));
+        reject(new Error(`provider exited ${code}: ${stderr || stdout || "no output"}`));
         return;
       }
       try {
         resolve(parseJsonObjectFromOutput(stdout));
       } catch {
-        reject(new Error(`provider returned no JSON: ${stdout.slice(0, 240)}`));
+        const stderrText = stderr.trim();
+        const stdoutText = stdout.trim();
+        const parseError = `provider returned no JSON: ${stdoutText.slice(-240)}${stderrText ? `; stderr=${stderrText.slice(-240)}` : ""}`;
+        reject(new Error(parseError));
       }
     });
   });

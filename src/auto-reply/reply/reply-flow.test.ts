@@ -768,6 +768,40 @@ describe("followup queue deduplication", () => {
     expect(second).toBe(true);
   });
 
+  it("deduplicates message id across feishu/lark-family alias variants", async () => {
+    const key = `test-dedup-lark-feishu-alias-${Date.now()}`;
+    const settings: QueueSettings = {
+      mode: "collect",
+      debounceMs: 0,
+      cap: 50,
+      dropPolicy: "summarize",
+    };
+
+    const first = enqueueFollowupRun(
+      key,
+      createRun({
+        prompt: "dup with alias",
+        messageId: "m-alias",
+        originatingChannel: "lark:dm:ou_abc",
+        originatingTo: "ou_abc",
+      }),
+      settings,
+    );
+    expect(first).toBe(true);
+
+    const second = enqueueFollowupRun(
+      key,
+      createRun({
+        prompt: "dup with alias",
+        messageId: "m-alias",
+        originatingChannel: "feishu",
+        originatingTo: "ou_abc",
+      }),
+      settings,
+    );
+    expect(second).toBe(false);
+  });
+
   it("can opt-in to prompt-based dedupe when message id is absent", async () => {
     const key = `test-dedup-prompt-mode-${Date.now()}`;
     const settings: QueueSettings = {
@@ -889,6 +923,50 @@ describe("followup queue collect routing", () => {
     expect(calls[0]?.prompt).toContain("[Queued messages while agent was busy]");
     expect(calls[0]?.originatingChannel).toBe("slack");
     expect(calls[0]?.originatingTo).toBe("channel:A");
+  });
+
+  it("collects when lark-family aliases are routed to the same feishu channel", async () => {
+    const key = `test-collect-lark-feishu-alias-${Date.now()}`;
+    const calls: FollowupRun[] = [];
+    const done = createDeferred<void>();
+    const expectedCalls = 1;
+    const runFollowup = async (run: FollowupRun) => {
+      calls.push(run);
+      if (calls.length >= expectedCalls) {
+        done.resolve();
+      }
+    };
+    const settings: QueueSettings = {
+      mode: "collect",
+      debounceMs: 0,
+      cap: 50,
+      dropPolicy: "summarize",
+    };
+
+    enqueueFollowupRun(
+      key,
+      createRun({
+        prompt: "one",
+        originatingChannel: "lark:dm:ou_abc",
+        originatingTo: "ou_abc",
+      }),
+      settings,
+    );
+    enqueueFollowupRun(
+      key,
+      createRun({
+        prompt: "two",
+        originatingChannel: "feishu",
+        originatingTo: "ou_abc",
+      }),
+      settings,
+    );
+
+    scheduleFollowupDrain(key, runFollowup);
+    await done.promise;
+    expect(calls[0]?.prompt).toContain("[Queued messages while agent was busy]");
+    expect(calls[0]?.originatingChannel).toBe("lark:dm:ou_abc");
+    expect(calls[0]?.originatingTo).toBe("ou_abc");
   });
 
   it("collects Slack messages in same thread and preserves string thread id", async () => {

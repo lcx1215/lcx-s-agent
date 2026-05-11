@@ -17,7 +17,7 @@ const CONTRACT_FIELD_TOKENS = [
   "no_execution_authority",
   "evidence_required",
   "no_model_math_guessing",
-  "no_unverified_live_data",
+  "no_unverified_current_market_data",
   "no_trade_advice",
   "missing_data",
   "risk_boundaries",
@@ -30,6 +30,8 @@ const CONTRACT_BOUNDARY_TOKENS = [
   "no_high_leverage_crypto",
   "no_live_sender_change",
   "no_model_math_guessing",
+  "no_unverified_current_market_data",
+  "no_unverified_current_market_data_claims",
   "no_protected_memory_write",
   "no_provider_config_change",
   "no_trade_advice",
@@ -82,6 +84,20 @@ function canonicalRiskBoundary(entry: string): string {
     normalized === "no_crypto_high_leverage_trading"
   ) {
     return "no_high_leverage_crypto";
+  }
+  if (
+    // Backward compatibility for older receipts/prompts; canonical output uses current-market wording.
+    normalized === "no_live_market_claims" ||
+    normalized === "no_live_market_claim" ||
+    normalized === "no_live_finance_advice" ||
+    normalized === "no_unverified_live_data" ||
+    normalized === "no_unverified_live_data_claims" ||
+    normalized === "no_unverified_live_market_data_claims" ||
+    normalized === "no_unverified_current_market_claims" ||
+    normalized === "no_unverified_current_market_claim" ||
+    normalized === "no_unverified_current_market_data_claims"
+  ) {
+    return "no_unverified_current_market_data";
   }
   return normalized || entry.trim();
 }
@@ -307,7 +323,7 @@ function looksLikeSourceGroundingAudit(text: string): boolean {
     !looksLikeExternalCoverage(text) &&
     !looksLikeFilingResearchMissingEvidence(text) &&
     !looksLikeSentimentMarketModuleLearning(text) &&
-    !looksLikeUnverifiedLiveMarketData(text) &&
+    !looksLikeCurrentMarketDataFreshnessGap(text) &&
     !looksLikeDataConflictReconciliation(text) &&
     /(哪来的|来源|source|artifact|receipt|citation|证据|unverified|未验证|出处|根据什么)/iu.test(
       text,
@@ -319,7 +335,7 @@ function looksLikeSourceGroundingAudit(text: string): boolean {
 
 function looksLikeDataConflictReconciliation(text: string): boolean {
   return (
-    !looksLikeUnverifiedLiveMarketData(text) &&
+    !looksLikeCurrentMarketDataFreshnessGap(text) &&
     !looksLikePaperLearningWithSource(text) &&
     /(不同数据源|数据源.*不一致|vendor|data source|conflict|冲突|口径|时间戳|timestamp)/iu.test(
       text,
@@ -433,7 +449,7 @@ function looksLikePlainLanguageHiddenComplexityIntake(text: string): boolean {
 
 function looksLikePlainRecentMarketBrief(text: string): boolean {
   return (
-    !looksLikeUnverifiedLiveMarketData(text) &&
+    !looksLikeCurrentMarketDataFreshnessGap(text) &&
     !looksLikePaperLearningWithSource(text) &&
     /(最近|今天|这几天|近期|当前|now|recent|latest)/iu.test(text) &&
     /(股市|市场|大盘|美股|a股|指数|stock market|market|stocks?|equities|qqq|spy|纳指|标普)/iu.test(
@@ -588,13 +604,13 @@ function looksLikeAbstractionTransferProtocol(text: string): boolean {
   return namesAbstraction || namesExampleTransfer;
 }
 
-function looksLikeUnverifiedLiveMarketData(text: string): boolean {
-  const asksForLiveMarketData =
+function looksLikeCurrentMarketDataFreshnessGap(text: string): boolean {
+  const asksForFreshMarketData =
     /(今天|最新|实时|当前行情|当前市场|this morning|today|latest|real[- ]?time|right now)/iu.test(
       text,
     ) || /现在.{0,16}(怎么看|走势|涨跌|价格|行情|market|price)/iu.test(text);
   return (
-    asksForLiveMarketData &&
+    asksForFreshMarketData &&
     !looksLikeFullStackFinanceStressTest(text) &&
     !looksLikeCrossMarketFinance(text) &&
     !looksLikeFilingResearchMissingEvidence(text) &&
@@ -825,7 +841,7 @@ export function hardenLocalBrainPlanForAsk(
         "research_only",
         "no_execution_authority",
         "evidence_required",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "technical_timing_not_standalone_alpha",
         "risk_gate_before_action_language",
         "no_trade_advice",
@@ -982,14 +998,14 @@ export function hardenLocalBrainPlanForAsk(
         "research_only",
         "no_execution_authority",
         "evidence_required",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "do_not_pick_model_answer_without_evidence",
         "do_not_promote_unverified_memory_claims",
         "no_model_math_guessing",
         "no_trade_advice",
       ],
       next_step:
-        "separate_memory_claims_live_data_and_model_opinions_then_resolve_by_source_timestamp_assumptions_quant_checks_and_review_before_summary",
+        "separate_memory_claims_current_data_and_model_opinions_then_resolve_by_source_timestamp_assumptions_quant_checks_and_review_before_summary",
       rejected_context: [
         "old_lark_conversation_history",
         "stale_memory_rule_as_current_fact",
@@ -1108,7 +1124,7 @@ export function hardenLocalBrainPlanForAsk(
         "no_execution_authority",
         "evidence_required",
         "no_model_math_guessing",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "technical_timing_not_standalone_alpha",
         "sentiment_signal_not_standalone_alpha",
         "risk_gate_before_action_language",
@@ -1222,7 +1238,7 @@ export function hardenLocalBrainPlanForAsk(
         "research_only",
         "no_execution_authority",
         "evidence_required",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "commodity_framework_not_trade_signal",
         "no_trade_advice",
       ],
@@ -1249,7 +1265,7 @@ export function hardenLocalBrainPlanForAsk(
         "research_only",
         "no_execution_authority",
         "evidence_required",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
       ],
       next_step: "mark_claim_unverified_until_source_artifact_or_receipt_is_found",
       rejected_context: [
@@ -1287,7 +1303,7 @@ export function hardenLocalBrainPlanForAsk(
         "research_only",
         "no_execution_authority",
         "evidence_required",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
       ],
       next_step:
         "compare_vendor_timestamps_definitions_and_missing_fields_before_promoting_any_market_claim",
@@ -1698,10 +1714,10 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
-  if (looksLikeUnverifiedLiveMarketData(text)) {
+  if (looksLikeCurrentMarketDataFreshnessGap(text)) {
     return {
       ...safe,
-      task_family: "unverified_live_market_data_research_preflight",
+      task_family: "current_market_data_research_preflight",
       primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
         "source_registry",
         "macro_rates_inflation",
@@ -1731,13 +1747,13 @@ export function hardenLocalBrainPlanForAsk(
         "research_only",
         "no_execution_authority",
         "evidence_required",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "no_trade_advice",
       ]),
       next_step:
-        "mark_live_market_claims_unverified_until_source_timestamp_and_fresh_data_snapshot_are_available_then_run_review",
+        "mark_current_market_claims_unverified_until_source_timestamp_and_fresh_data_snapshot_are_available_then_run_review",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
-        "unverified_live_market_claim",
+        "unverified_current_market_claim",
         "old_lark_conversation_history",
         "language_routing_candidate_artifacts",
         "trade_recommendation_without_evidence",
@@ -2216,7 +2232,7 @@ export function hardenLocalBrainPlanForAsk(
         "no_execution_authority",
         "evidence_required",
         "no_model_math_guessing",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "red_team_invalidation_required",
         "no_trade_advice",
       ]),
@@ -2227,7 +2243,7 @@ export function hardenLocalBrainPlanForAsk(
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
         "single_factor_technical_story",
-        "unverified_live_market_claim",
+        "unverified_current_market_claim",
         "trade_recommendation_without_evidence",
       ]),
     };
@@ -2270,7 +2286,7 @@ export function hardenLocalBrainPlanForAsk(
         "research_only",
         "no_execution_authority",
         "evidence_required",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "no_trade_advice",
       ],
       next_step:

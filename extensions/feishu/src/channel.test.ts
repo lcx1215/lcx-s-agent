@@ -150,3 +150,9 @@ describe("feishuPlugin.actions", () => {
     ).rejects.toThrow(/requires a chat target/);
   });
 });
+
+describe("feishuPlugin.pairing.normalizeAllowEntry", () => {
+  it("strips lark provider prefix", () => {
+    expect(feishuPlugin.pairing?.normalizeAllowEntry?.("lark:user:ou_allowed")).toBe("ou_allowed");
+  });
+});

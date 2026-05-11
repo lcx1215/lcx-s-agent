@@ -95,7 +95,7 @@ describe("minimax brain failure curriculum", () => {
             passRate: 0.859,
             failedCaseIds: [
               "single_company_fundamental_risk",
-              "unverified_live_market_data_boundary",
+              "current_market_data_freshness_boundary",
               "rate_shock_duration_equity_chain",
               "nvda_capex_supplier_second_order_risk",
               "a_share_policy_flow_us_tech_spillover",

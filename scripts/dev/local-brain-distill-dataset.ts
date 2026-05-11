@@ -120,15 +120,32 @@ async function collectFiles(root: string, maxFiles: number): Promise<string[]> {
     return [];
   }
   const result: Array<{ path: string; mtimeMs: number }> = [];
+  const visitedDirs = new Set<string>();
   async function walk(dir: string): Promise<void> {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
+    let realDir: string;
+    try {
+      realDir = await fs.realpath(dir);
+    } catch {
+      return;
+    }
+    if (visitedDirs.has(realDir)) {
+      return;
+    }
+    visitedDirs.add(realDir);
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      const entryStat = await fs.lstat(fullPath).catch(() => undefined);
+      if (!entryStat) {
+        continue;
+      }
+      if (entryStat.isSymbolicLink()) {
+        continue;
+      }
+      if (entryStat.isDirectory()) {
         await walk(fullPath);
-      } else if (entry.isFile() && /\.(json|md)$/u.test(entry.name)) {
-        const stat = await fs.stat(fullPath);
-        result.push({ path: fullPath, mtimeMs: stat.mtimeMs });
+      } else if (entryStat.isFile() && /\.(json|md)$/u.test(entry.name)) {
+        result.push({ path: fullPath, mtimeMs: entryStat.mtimeMs });
       }
     }
   }
@@ -359,7 +376,7 @@ function normalizeRiskBoundaries(values: string[]): string[] {
     "no_execution_authority",
     "evidence_required",
     "no_model_math_guessing",
-    "no_unverified_live_market_data_claims",
+    "no_unverified_current_market_data",
     "no_language_corpus_modification",
     "no_provider_config_change",
     "no_live_sender_change",
@@ -381,11 +398,12 @@ function inferRiskBoundariesFromText(text: string): string[] {
     inferred.push("no_language_corpus_modification");
   }
   if (
-    /no live market claim|no live finance advice|unverified live data|实时行情|实时数据|live market/iu.test(
+    // Accept older live-market wording in receipts, but emit the current-market boundary.
+    /no live market claim|no live finance advice|unverified live data|current market claim|current market data|timestamped market data|实时行情|实时数据|live market/iu.test(
       text,
     )
   ) {
-    inferred.push("no_unverified_live_market_data_claims");
+    inferred.push("no_unverified_current_market_data");
   }
   return inferred;
 }
@@ -405,7 +423,7 @@ function buildPrompt(params: {
     `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
     'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
-    "Do not invent live data, execution approval, or durable memory writes.",
+    "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
     "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
     `Core planning hints: ${LOCAL_BRAIN_CONTRACT_HINTS.slice(0, 4).join(" ")}`,
@@ -866,7 +884,7 @@ function buildSeedExamples(): DistillExample[] {
       userAsk:
         "我持有 QQQ、TLT 和少量 NVDA，未来两周担心利率、AI capex、美元流动性。先规划内部模块，不要给交易建议。",
       sourceSummary:
-        "clean portfolio risk planning request; needs modules before conclusion; no live market data supplied.",
+        "clean portfolio risk planning request; needs modules before conclusion; no current market data supplied.",
       taskFamily: "portfolio_risk_research_planning",
       primaryModules: [
         "macro_rates_inflation",

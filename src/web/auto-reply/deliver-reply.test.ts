@@ -226,6 +226,27 @@ describe("deliverWebReply", () => {
     );
   });
 
+  it("sends all caption chunks once when the first media send fails", async () => {
+    const msg = makeMsg();
+    mockLoadedImageMedia();
+    mockFirstSendMediaFailure(msg, "boom");
+
+    await deliverWebReply({
+      replyResult: { text: "abcdefghijk", mediaUrl: "http://example.com/img.jpg" },
+      msg,
+      maxMediaBytes: 1024 * 1024,
+      textLimit: 4,
+      replyLogger,
+      skipLog: true,
+    });
+
+    expect(msg.reply).toHaveBeenCalledTimes(1);
+    expect(msg.reply).toHaveBeenCalledWith("abcd\nefgh\nijk\n⚠️ Media failed: boom");
+    expect((msg.sendMedia as unknown as { mock: { calls: unknown[][] } }).mock.calls).toHaveLength(
+      1,
+    );
+  });
+
   it("sends audio media as ptt voice note", async () => {
     const msg = makeMsg();
     (

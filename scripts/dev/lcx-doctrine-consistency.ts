@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 type DoctrineCheck = {
   id: string;
@@ -8,7 +9,8 @@ type DoctrineCheck = {
   evidence?: string[];
 };
 
-const repoRoot = process.cwd();
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 const home = process.env.HOME ?? "";
 const codexSkillsRoot = process.env.LCX_CODEX_SKILLS_ROOT ?? path.join(home, ".codex", "skills");
 

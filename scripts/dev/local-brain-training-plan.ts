@@ -2,12 +2,13 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 type CliOptions = {
   guardLogPath: string;
   quotaLogPath?: string;
+  worktree?: string;
   json: boolean;
   processCheck: boolean;
 };
@@ -50,6 +51,9 @@ type TrainingDecision = {
 };
 
 const HOME = process.env.HOME ?? os.homedir();
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SCRIPT_REPO_CWD = path.resolve(SCRIPT_DIR, "..", "..");
+const DEFAULT_WORKTREE = process.env.LCX_REPO_WORKTREE ?? SCRIPT_REPO_CWD;
 const DEFAULT_GUARD_LOG = path.join(
   HOME,
   ".openclaw",
@@ -58,11 +62,15 @@ const DEFAULT_GUARD_LOG = path.join(
   "minimax-brain-training-guard-medium.jsonl",
 );
 const DEFAULT_QUOTA_LOG_DIR = path.join(HOME, ".openclaw", "workspace", "logs");
-const REPO_CWD = "/Users/liuchengxu/Desktop/lcx-s-openclaw";
-const REPAIR_LOCK_COMMAND =
-  "node --import tsx scripts/dev/lcx-automation-repair-lock.ts --mode acquire --lane local-brain-training-plan --worktree /Users/liuchengxu/Desktop/lcx-s-openclaw --json";
-const MEDIUM_TRAINING_COMMAND =
-  "node --import tsx scripts/dev/minimax-brain-training-guard.ts --duration-minutes 285 --batch-limit 20 --teacher-profile minimax-plus-brain --teacher-duration-minutes 12 --teacher-concurrency 6 --teacher-sidecar --teacher-sidecar-max-calls 900 --teacher-sidecar-batch-limit 36 --teacher-sidecar-concurrency 8 --train-every 2 --eval-every 1 --train-iters 40 --load-max 100 --train-load-max 12 --log /Users/liuchengxu/.openclaw/workspace/logs/minimax-brain-training-guard-medium.jsonl";
+const quoteShellArg = (value: string): string => `'${value.replaceAll("'", "'\"'\"'")}'`;
+const normalizeWorktree = (value?: string): string => {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed.length > 0 ? path.resolve(trimmed) : SCRIPT_REPO_CWD;
+};
+const buildRepairLockCommand = (worktree: string): string =>
+  `node --import tsx scripts/dev/lcx-automation-repair-lock.ts --mode acquire --lane local-brain-training-plan --worktree ${quoteShellArg(worktree)} --json`;
+const buildMediumTrainingCommand = (logPath: string): string =>
+  `node --import tsx scripts/dev/minimax-brain-training-guard.ts --duration-minutes 285 --batch-limit 20 --teacher-profile minimax-plus-brain --teacher-duration-minutes 12 --teacher-concurrency 6 --teacher-sidecar --teacher-sidecar-max-calls 900 --teacher-sidecar-batch-limit 36 --teacher-sidecar-concurrency 8 --train-every 2 --eval-every 1 --train-iters 40 --load-max 100 --train-load-max 12 --log ${quoteShellArg(logPath)}`;
 
 const execFileAsync = promisify(execFile);
 
@@ -79,6 +87,7 @@ function usage(): never {
       "  --guard-log PATH  default ~/.openclaw/workspace/logs/minimax-brain-training-guard-medium.jsonl",
       "  --quota-log PATH  default latest minimax-quota-brain-saturator-*.jsonl",
       "  --no-process-check  skip ps-based active process detection",
+      "  --worktree PATH  default script directory's repo root",
       "  --json            print JSON, default true",
     ].join("\n"),
   );
@@ -95,6 +104,7 @@ function readValue(args: string[], index: number): string {
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     guardLogPath: DEFAULT_GUARD_LOG,
+    worktree: DEFAULT_WORKTREE,
     json: true,
     processCheck: true,
   };
@@ -105,6 +115,9 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--quota-log") {
       options.quotaLogPath = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--worktree") {
+      options.worktree = path.resolve(readValue(args, index));
       index += 1;
     } else if (arg === "--no-process-check") {
       options.processCheck = false;
@@ -353,6 +366,8 @@ function buildDecisions(params: {
   latestGuardFailure?: JsonRecord;
   latestEval?: EvalSnapshot;
   latestTeacher?: TeacherSnapshot;
+  guardLogPath: string;
+  worktree: string;
 }): TrainingDecision[] {
   const decisions: TrainingDecision[] = [];
   const active = params.activeProcesses.length > 0;
@@ -365,7 +380,7 @@ function buildDecisions(params: {
       ? "A local-brain guard or child process is already active."
       : "No active local-brain training process was detected.",
     codexRepairEligible: false,
-    nextCommand: active ? undefined : MEDIUM_TRAINING_COMMAND,
+    nextCommand: active ? undefined : buildMediumTrainingCommand(params.guardLogPath),
   });
 
   const guardStartAt = eventTime(params.latestGuardStart);
@@ -386,7 +401,7 @@ function buildDecisions(params: {
         "latest guard_failed is newer than start",
       ),
       codexRepairEligible: true,
-      nextCommand: REPAIR_LOCK_COMMAND,
+      nextCommand: buildRepairLockCommand(params.worktree),
     });
   }
 
@@ -426,7 +441,7 @@ function buildDecisions(params: {
       reason:
         "Eval/guard evidence contains JSON, parser, think-block, or invalid module-id output-contract signals.",
       codexRepairEligible: true,
-      nextCommand: REPAIR_LOCK_COMMAND,
+      nextCommand: buildRepairLockCommand(params.worktree),
     });
   }
 
@@ -439,7 +454,7 @@ function buildDecisions(params: {
       reason:
         params.latestTeacher.failureErrors.join("; ") || "Latest teacher batch reported failures.",
       codexRepairEligible: true,
-      nextCommand: REPAIR_LOCK_COMMAND,
+      nextCommand: buildRepairLockCommand(params.worktree),
     });
   }
 
@@ -461,6 +476,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const guardEvents = await readJsonl(options.guardLogPath);
   const quotaLogPath = options.quotaLogPath ?? (await latestQuotaLogPath());
   const quotaEvents = await readJsonl(quotaLogPath);
+  const worktree = normalizeWorktree(options.worktree);
   const activeProcesses = await activeTrainingProcesses(options.processCheck);
   const latestGuardStart = latestEvent(guardEvents, (event) => event.event === "guard_start");
   const latestGuardFailure = latestEvent(guardEvents, (event) => event.event === "guard_failed");
@@ -480,13 +496,15 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestGuardFailure,
     latestEval,
     latestTeacher,
+    guardLogPath: options.guardLogPath,
+    worktree,
   });
   const repairDecisions = decisions.filter((decision) => decision.codexRepairEligible);
   return {
     ok: true,
     boundary: "dev_local_brain_training_plan_only",
     planVersion: "local_brain_training_plan_v1",
-    cwd: REPO_CWD,
+    cwd: worktree,
     guardLogPath: options.guardLogPath,
     quotaLogPath: quotaLogPath ?? "",
     activeProcesses,
@@ -502,7 +520,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     codexAutoRepair: {
       eligible: repairDecisions.length > 0,
       repairDecisionIds: repairDecisions.map((decision) => decision.id),
-      lockCommand: REPAIR_LOCK_COMMAND,
+      lockCommand: buildRepairLockCommand(worktree),
       allowedScope:
         "dev-only local-brain training/eval/teacher/doctor scripts, focused tests, and dev-only receipts",
       forbiddenScope:

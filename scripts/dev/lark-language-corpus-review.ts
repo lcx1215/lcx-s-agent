@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildLarkRoutingCandidatePromotionReview,
   LARK_LANGUAGE_CANDIDATE_DIR,
@@ -15,6 +16,9 @@ type CliOptions = {
   write: boolean;
   json: boolean;
 };
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_DIR = path.resolve(__dirname, "../..");
 
 function usage(): never {
   throw new Error(
@@ -136,7 +140,7 @@ function renderText(params: {
   return `${lines.join("\n")}\n`;
 }
 
-const workspaceDir = process.cwd();
+const workspaceDir = WORKTREE_DIR;
 const options = parseArgs(process.argv.slice(2));
 const sourceRoot = resolveRootDir(workspaceDir, options);
 

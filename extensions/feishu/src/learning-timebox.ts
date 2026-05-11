@@ -519,13 +519,28 @@ async function finishLearningTimeboxSession(params: {
   }
   active.state.status = params.status;
   active.state.lastHeartbeatAt = new Date().toISOString();
-  await writeTimeboxState({
-    workspaceDir: params.workspaceDir,
-    state: active.state,
-  });
-  let finalMessageId: string | undefined;
+  const finishAt = new Date().toISOString();
+  await Promise.all([
+    writeTimeboxState({
+      workspaceDir: params.workspaceDir,
+      state: active.state,
+    }),
+    appendTimeboxReceipt({
+      workspaceDir: params.workspaceDir,
+      sessionId: active.state.sessionId,
+      receipt: {
+        type: "session_finished",
+        at: finishAt,
+        sessionId: active.state.sessionId,
+        status: params.status,
+        iterationsCompleted: active.state.iterationsCompleted,
+        iterationsFailed: active.state.iterationsFailed,
+        finalMessageId: undefined,
+      },
+    }),
+  ]);
   try {
-    finalMessageId = await sendTimeboxSummary({
+    await sendTimeboxSummary({
       cfg: params.cfg,
       accountId: active.state.accountId,
       chatId: active.state.chatId,
@@ -552,19 +567,6 @@ async function finishLearningTimeboxSession(params: {
         "smallest-safe-patch only; inspect Feishu send health or completion-summary delivery for learning timeboxes",
     });
   }
-  await appendTimeboxReceipt({
-    workspaceDir: params.workspaceDir,
-    sessionId: active.state.sessionId,
-    receipt: {
-      type: "session_finished",
-      at: new Date().toISOString(),
-      sessionId: active.state.sessionId,
-      status: params.status,
-      iterationsCompleted: active.state.iterationsCompleted,
-      iterationsFailed: active.state.iterationsFailed,
-      finalMessageId,
-    },
-  });
   ACTIVE_LEARNING_TIMEBOXES.delete(params.laneKey);
 }
 

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -47,5 +48,55 @@ describe("local-brain-plan adapter selection", () => {
     expect(source).toContain("must use exact allowed module ids only");
     expect(source).toContain("do not invent prefixes like finance_framework_*");
     expect(source).toContain('LOCAL_BRAIN_PLAN_MAX_TOKENS = "700"');
+  });
+
+  it("passes no-think template settings through the mlx_lm generate call", async () => {
+    const tmp = await fs.mkdtemp(path.join(process.cwd(), "tmp-lcx-local-brain-plan-"));
+    const argLog = path.join(tmp, "python-args.log");
+    const fakePython = path.join(tmp, "python");
+    const fakeAdapter = path.join(tmp, "adapter");
+    await fs.mkdir(fakeAdapter);
+    await fs.writeFile(
+      fakePython,
+      [
+        "#!/bin/sh",
+        'printf "%s\\n" "$@" > "$LOCAL_BRAIN_FAKE_PYTHON_LOG"',
+        "cat <<'JSON'",
+        '{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":[],"required_tools":["finance_learning_memory"],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_lark_conversation_history"]}',
+        "JSON",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-plan.ts",
+          "--ask",
+          "给我做一个不交易建议的季度风险框架",
+          "--adapter",
+          fakeAdapter,
+          "--python",
+          fakePython,
+          "--json",
+        ],
+        {
+          cwd: path.join(process.cwd()),
+          encoding: "utf8",
+          env: { ...process.env, LOCAL_BRAIN_FAKE_PYTHON_LOG: argLog },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const loggedArgs = await fs.readFile(argLog, "utf8");
+      expect(loggedArgs).toContain("--chat-template-config");
+      expect(loggedArgs).toContain('{"enable_thinking":false}');
+      expect(loggedArgs).toContain("/no_think");
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
   });
 });

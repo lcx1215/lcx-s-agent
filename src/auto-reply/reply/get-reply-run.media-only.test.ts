@@ -381,6 +381,40 @@ describe("runPreparedReply media-only handling", () => {
     expect(call?.followupRun.run.extraSystemPrompt).toContain("Latest completed correlationId");
   });
 
+  it("injects recent Feishu/Lark reply-flow evidence into Lark reply runs", async () => {
+    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockResolvedValueOnce(
+      "## Recent Feishu/Lark Reply Flow Evidence\nLatest completed correlationId: ff-lark-123",
+    );
+
+    await runPreparedReply(
+      baseParams({
+        ctx: {
+          Body: "status",
+          RawBody: "status",
+          CommandBody: "status",
+          OriginatingChannel: "lark",
+          OriginatingTo: "oc-room",
+          ChatType: "group",
+        },
+        sessionCtx: {
+          Body: "status",
+          BodyStripped: "status",
+          Provider: "lark",
+          ChatType: "group",
+          OriginatingChannel: "lark",
+          OriginatingTo: "oc-room",
+        },
+      }),
+    );
+
+    const call = vi.mocked(runReplyAgent).mock.calls.at(-1)?.[0];
+    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
+    expect(call?.followupRun.run.extraSystemPrompt).toContain(
+      "## Recent Feishu/Lark Reply Flow Evidence",
+    );
+    expect(call?.followupRun.run.extraSystemPrompt).toContain("Latest completed correlationId");
+  });
+
   it("does not read Feishu reply-flow evidence for non-Feishu reply runs", async () => {
     await runPreparedReply(baseParams());
 

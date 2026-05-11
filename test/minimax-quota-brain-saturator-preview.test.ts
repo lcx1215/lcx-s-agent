@@ -24,7 +24,7 @@ async function makeGuardLog(): Promise<string> {
           passRate: 0.859,
           failedCaseIds: [
             "single_company_fundamental_risk",
-            "unverified_live_market_data_boundary",
+            "current_market_data_freshness_boundary",
             "drawdown_budget_without_weights",
           ],
           promotionReady: false,

@@ -751,7 +751,7 @@ describe("buildAgentSystemPrompt", () => {
       "Do not default to vague liquidity-stress explanations such as 'liquidity was pulled' or 'everything was sold for cash' unless fresh evidence shows genuine funding stress, forced deleveraging, or another concrete cross-asset signal that supports it.",
     );
     expect(prompt).toContain(
-      "If the live-data layer looks stale, cached, or contradictory, say so explicitly, list the missing anchors, and do not fake a confident market ranking.",
+      "If the current-data layer looks stale, cached, or contradictory, say so explicitly, list the missing anchors, and do not fake a confident market ranking.",
     );
     expect(prompt).toContain(
       "When freshness is weak or provider/search reliability is degraded, do not present high-specificity market figures, exact levels, exact percentages, or exact point estimates as if they were freshly verified in this turn.",

@@ -16,7 +16,7 @@ function normalizeFeishuAllowEntry(raw: string): string {
   if (trimmed === "*") {
     return "*";
   }
-  const withoutProviderPrefix = trimmed.replace(/^feishu:/i, "");
+  const withoutProviderPrefix = trimmed.replace(/^(feishu|lark):/i, "");
   const normalized = normalizeFeishuTarget(withoutProviderPrefix) ?? withoutProviderPrefix;
   return normalized.trim().toLowerCase();
 }

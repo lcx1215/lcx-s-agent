@@ -62,7 +62,14 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount> = {
   },
   pairing: {
     idLabel: "feishuUserId",
-    normalizeAllowEntry: (entry) => entry.replace(/^(feishu|user|open_id):/i, ""),
+    normalizeAllowEntry: (entry) => {
+      let normalized = entry;
+      const prefixPattern = /^(feishu|lark|user|open_id):/i;
+      while (prefixPattern.test(normalized)) {
+        normalized = normalized.replace(prefixPattern, "");
+      }
+      return normalized;
+    },
     notifyApproval: async ({ cfg, id }) => {
       await sendMessageFeishu({
         cfg,

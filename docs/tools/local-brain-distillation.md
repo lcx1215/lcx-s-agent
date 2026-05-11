@@ -28,7 +28,7 @@ The local model learns only a planning packet:
 - next step
 - rejected context
 
-It should not produce final investment answers, live market claims, execution instructions, or durable doctrine edits.
+It should not produce final investment answers, unverified current market claims, execution instructions, or durable doctrine edits.
 
 ## How It Trains LCX Agent
 

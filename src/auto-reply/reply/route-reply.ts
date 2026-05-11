@@ -9,7 +9,6 @@
 
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveEffectiveMessagesConfig } from "../../agents/identity.js";
-import { normalizeChannelId } from "../../channels/plugins/index.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
@@ -17,6 +16,7 @@ import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
 import { shouldSuppressReasoningPayload } from "./reply-payloads.js";
+import { isFeishuFamilyChannel, resolveReplyRouteChannel } from "./reply-routing-helpers.js";
 
 let deliverRuntimePromise: Promise<
   typeof import("../../infra/outbound/deliver-runtime.js")
@@ -25,6 +25,31 @@ let deliverRuntimePromise: Promise<
 function loadDeliverRuntime() {
   deliverRuntimePromise ??= import("../../infra/outbound/deliver-runtime.js");
   return deliverRuntimePromise;
+}
+
+function readRouteReplyResponsePrefix(
+  cfg: OpenClawConfig,
+  channel?: string | null,
+  accountId?: string,
+): string | undefined {
+  const channels = cfg.channels as Record<string, unknown> | undefined;
+  const channelCfg =
+    channel && typeof channels?.[channel] === "object" && channels[channel] !== null
+      ? (channels[channel] as Record<string, unknown>)
+      : undefined;
+  if (channelCfg && accountId) {
+    const accounts = channelCfg.accounts as Record<string, Record<string, unknown>> | undefined;
+    const accountPrefix = accounts?.[accountId]?.responsePrefix;
+    if (typeof accountPrefix === "string") {
+      return accountPrefix === "auto" ? undefined : accountPrefix;
+    }
+  }
+  const channelPrefix = channelCfg?.responsePrefix;
+  if (typeof channelPrefix === "string") {
+    return channelPrefix === "auto" ? undefined : channelPrefix;
+  }
+  const globalPrefix = cfg.messages?.responsePrefix;
+  return globalPrefix === "auto" ? undefined : globalPrefix;
 }
 
 export type RouteReplyParams = {
@@ -74,7 +99,8 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
   if (shouldSuppressReasoningPayload(payload)) {
     return { ok: true };
   }
-  const normalizedChannel = normalizeMessageChannel(channel);
+  const resolvedRouteChannel = resolveReplyRouteChannel(channel);
+  const normalizedChannel = resolvedRouteChannel ?? normalizeMessageChannel(channel);
   const resolvedAgentId = params.sessionKey
     ? resolveSessionAgentId({
         sessionKey: params.sessionKey,
@@ -87,13 +113,11 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     ? resolveEffectiveMessagesConfig(
         cfg,
         resolvedAgentId ?? resolveSessionAgentId({ config: cfg }),
-        { channel: normalizedChannel, accountId },
+        { channel: resolvedRouteChannel ?? normalizedChannel, accountId },
       ).responsePrefix
-    : cfg.messages?.responsePrefix === "auto"
-      ? undefined
-      : cfg.messages?.responsePrefix;
+    : readRouteReplyResponsePrefix(cfg, resolvedRouteChannel ?? normalizedChannel, accountId);
   const normalized = normalizeReplyPayload(payload, {
-    responsePrefix,
+    responsePrefix: responsePrefix?.trimEnd(),
   });
   if (!normalized) {
     return { ok: true };
@@ -112,14 +136,14 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     return { ok: true };
   }
 
-  if (channel === INTERNAL_MESSAGE_CHANNEL) {
+  if (normalizedChannel === INTERNAL_MESSAGE_CHANNEL) {
     return {
       ok: false,
       error: "Webchat routing not supported for queued replies",
     };
   }
 
-  const channelId = normalizeChannelId(channel) ?? null;
+  const channelId = resolvedRouteChannel ?? null;
   if (!channelId) {
     return { ok: false, error: `Unknown channel: ${String(channel)}` };
   }
@@ -184,8 +208,15 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
 export function isRoutableChannel(
   channel: OriginatingChannelType | undefined,
 ): channel is Exclude<OriginatingChannelType, typeof INTERNAL_MESSAGE_CHANNEL> {
-  if (!channel || channel === INTERNAL_MESSAGE_CHANNEL) {
+  if (!channel) {
     return false;
   }
-  return normalizeChannelId(channel) !== null;
+  const normalized = normalizeMessageChannel(channel);
+  if (!normalized || normalized === INTERNAL_MESSAGE_CHANNEL) {
+    return false;
+  }
+  if (isFeishuFamilyChannel(channel)) {
+    return true;
+  }
+  return Boolean(resolveReplyRouteChannel(channel));
 }

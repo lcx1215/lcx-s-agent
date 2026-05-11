@@ -195,7 +195,8 @@ export async function deliverWebReply(params: {
       if (index === 0) {
         const warning =
           err instanceof Error ? `⚠️ Media failed: ${err.message}` : "⚠️ Media failed.";
-        const fallbackTextParts = [remainingText.shift() ?? caption ?? "", warning].filter(Boolean);
+        const fallbackTextParts = [caption ?? "", ...remainingText, warning].filter(Boolean);
+        remainingText.length = 0;
         const fallbackText = fallbackTextParts.join("\n");
         if (fallbackText) {
           whatsappOutboundLog.warn(`Media skipped; sent text-only to ${msg.from}`);

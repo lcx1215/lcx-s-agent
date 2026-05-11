@@ -283,7 +283,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     if (!streamingEnabled || streamingStartPromise || streaming) {
       return;
     }
-    streamingStartPromise = (async () => {
+
+    const nextStreamingStartPromise = (async () => {
       const creds =
         account.appId && account.appSecret
           ? { appId: account.appId, appSecret: account.appSecret, domain: account.domain }
@@ -322,6 +323,13 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         streaming = null;
       }
     })();
+
+    streamingStartPromise = nextStreamingStartPromise;
+    nextStreamingStartPromise.finally(() => {
+      if (streamingStartPromise === nextStreamingStartPromise) {
+        streamingStartPromise = null;
+      }
+    });
   };
 
   const closeStreaming = async () => {

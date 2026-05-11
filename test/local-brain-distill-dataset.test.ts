@@ -151,7 +151,7 @@ describe("local brain distill dataset", () => {
             review: { accepted: true },
             userMessage: "未来一个月看 QQQ、TLT 和 ETH 风险，先拆模块不要交易建议。",
             candidateText:
-              "research-only macro liquidity plan; writes brain distillation only; no live sender, provider config, language corpus, protected memory, or finance doctrine change; no live market claim supplied.",
+              "research-only macro liquidity plan; writes brain distillation only; no live sender, provider config, language corpus, protected memory, or finance doctrine change; no current market claim supplied.",
             proposedTaskFamily: "portfolio_regime",
             proposedPrimaryModules: ["macro_rates_inflation", "portfolio_risk_gates"],
             proposedSupportingModules: ["review_panel"],
@@ -213,7 +213,7 @@ describe("local brain distill dataset", () => {
     expect(completion.risk_boundaries).toEqual(
       expect.arrayContaining([
         "no_language_corpus_modification",
-        "no_unverified_live_market_data_claims",
+        "no_unverified_current_market_data",
       ]),
     );
     expect(completion.risk_boundaries?.length).toBeLessThanOrEqual(6);
@@ -327,5 +327,54 @@ describe("local brain distill dataset", () => {
       ...(await parseJsonl(path.join(outDir, "test.jsonl"))),
     ];
     expect(JSON.stringify(allExamples)).toContain("external_financial_agent_pattern_distillation");
+  });
+
+  it("continues dataset generation when some directories are unreadable", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-unreadable-"));
+    const workspaceDir = path.join(fixtureRoot, "workspace");
+    const outDir = path.join(fixtureRoot, "dataset");
+    const readableDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const unreadableDir = path.join(workspaceDir, "private");
+    await fs.mkdir(readableDir, { recursive: true });
+    await fs.mkdir(unreadableDir, { recursive: true });
+    await fs.writeFile(
+      path.join(readableDir, "ok.md"),
+      "## User Ask\n- Decompose the macro risk split\n\n## Final Reply Summary\n- check liquidity and flow with safe labels",
+    );
+    await fs.writeFile(path.join(unreadableDir, "blocked.md"), "blocked");
+    await fs.chmod(unreadableDir, 0);
+
+    try {
+      await execFileAsync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-dataset.ts",
+          "--workspace",
+          workspaceDir,
+          "--out",
+          outDir,
+          "--json",
+        ],
+        {
+          cwd: repoRoot,
+          env: { ...process.env, HOME: fixtureRoot },
+        },
+      );
+      const [trainExamples, validExamples, testExamples] = await Promise.all([
+        parseJsonl(path.join(outDir, "train.jsonl")),
+        parseJsonl(path.join(outDir, "valid.jsonl")),
+        parseJsonl(path.join(outDir, "test.jsonl")),
+      ]);
+
+      expect(trainExamples.length + validExamples.length + testExamples.length).toBeGreaterThan(0);
+    } finally {
+      await fs.chmod(unreadableDir, 0o700);
+    }
   });
 });

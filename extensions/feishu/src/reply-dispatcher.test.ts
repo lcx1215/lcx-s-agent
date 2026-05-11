@@ -11,6 +11,11 @@ const createReplyDispatcherWithTypingMock = vi.hoisted(() => vi.fn());
 const addTypingIndicatorMock = vi.hoisted(() => vi.fn(async () => ({ messageId: "om_msg" })));
 const removeTypingIndicatorMock = vi.hoisted(() => vi.fn(async () => {}));
 const recordFeishuReplyFlowEventMock = vi.hoisted(() => vi.fn(async () => {}));
+const streamingSessionStartMock = vi.hoisted(() =>
+  vi.fn(async function (this: { active: boolean }) {
+    this.active = true;
+  }),
+);
 const streamingInstances = vi.hoisted(() => [] as any[]);
 
 vi.mock("./accounts.js", () => ({ resolveFeishuAccount: resolveFeishuAccountMock }));
@@ -29,9 +34,7 @@ vi.mock("./typing.js", () => ({
 vi.mock("./streaming-card.js", () => ({
   FeishuStreamingSession: class {
     active = false;
-    start = vi.fn(async () => {
-      this.active = true;
-    });
+    start = streamingSessionStartMock;
     update = vi.fn(async () => {});
     close = vi.fn(async () => {
       this.active = false;
@@ -55,6 +58,9 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     vi.clearAllMocks();
     streamingInstances.length = 0;
     sendMediaFeishuMock.mockResolvedValue(undefined);
+    streamingSessionStartMock.mockImplementation(async function (this: { active: boolean }) {
+      this.active = true;
+    });
 
     resolveFeishuAccountMock.mockReturnValue({
       accountId: "main",
@@ -372,6 +378,31 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         deliveryMessageId: "om_stream",
       }),
     );
+  });
+
+  it("retries streaming start on next final chunk after a failed start", async () => {
+    const runtimeErrorMock = vi.fn();
+    streamingSessionStartMock
+      .mockRejectedValueOnce(new Error("first stream start failed"))
+      .mockResolvedValueOnce(undefined);
+
+    createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: { log: vi.fn(), error: runtimeErrorMock } as never,
+      chatId: "oc_chat",
+      replyFlowCorrelationId: "om_stream_parent",
+    });
+
+    const options = createReplyDispatcherWithTypingMock.mock.calls[0]?.[0];
+    await options.deliver({ text: "```ts\nconst x = 1\n```" }, { kind: "final" });
+    await options.deliver({ text: "```ts\nconst y = 2\n```" }, { kind: "final" });
+
+    expect(streamingSessionStartMock).toHaveBeenCalledTimes(2);
+    expect(runtimeErrorMock).toHaveBeenCalledWith(
+      "feishu: streaming start failed: Error: first stream start failed",
+    );
+    expect(sendMarkdownCardFeishuMock).toHaveBeenCalled();
   });
 
   it("closes streaming with block text when final reply is missing", async () => {

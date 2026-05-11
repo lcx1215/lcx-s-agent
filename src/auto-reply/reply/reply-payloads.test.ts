@@ -110,6 +110,16 @@ describe("shouldSuppressMessagingToolReplies", () => {
     ).toBe(false);
   });
 
+  it("normalizes lark target provider to feishu for suppression comparison", () => {
+    expect(
+      shouldSuppressMessagingToolReplies({
+        messageProvider: "feishu",
+        originatingTo: "ou_xyz",
+        messagingToolSentTargets: [{ tool: "message", provider: "lark", to: "ou_xyz" }],
+      }),
+    ).toBe(true);
+  });
+
   it("suppresses telegram topic-origin replies when explicit threadId matches", () => {
     expect(
       shouldSuppressMessagingToolReplies({

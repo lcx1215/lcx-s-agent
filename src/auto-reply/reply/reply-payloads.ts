@@ -7,6 +7,7 @@ import { normalizeOptionalAccountId } from "../../routing/account-id.js";
 import { parseTelegramTarget } from "../../telegram/targets.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
+import { normalizeReplyRouteProviderAlias } from "./reply-routing-helpers.js";
 import { extractReplyToTag } from "./reply-tags.js";
 import { createReplyToModeFilterForChannel } from "./reply-threading.js";
 
@@ -146,21 +147,17 @@ export function filterMessagingToolMediaDuplicates(params: {
   });
 }
 
-const PROVIDER_ALIAS_MAP: Record<string, string> = {
-  lark: "feishu",
-};
-
 function normalizeProviderForComparison(value?: string): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
     return undefined;
   }
-  const lowered = trimmed.toLowerCase();
-  const normalizedChannel = normalizeChannelId(trimmed);
-  if (normalizedChannel) {
-    return normalizedChannel;
+  const aliasNormalized = normalizeReplyRouteProviderAlias(trimmed);
+  if (!aliasNormalized) {
+    return undefined;
   }
-  return PROVIDER_ALIAS_MAP[lowered] ?? lowered;
+  const normalizedChannel = normalizeChannelId(aliasNormalized);
+  return normalizedChannel ?? aliasNormalized;
 }
 
 function normalizeThreadIdForComparison(value?: string): string | undefined {

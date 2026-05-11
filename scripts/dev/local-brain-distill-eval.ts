@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
   LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
@@ -81,6 +82,29 @@ const DEFAULT_GUARD_LOG = path.join(
 );
 const LOCAL_BRAIN_EVAL_MAX_TOKENS = "700";
 const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
+let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
+
+function terminateActiveGenerateChild(): void {
+  const child = activeGenerateChild;
+  if (child && !child.killed) {
+    child.kill("SIGTERM");
+    setTimeout(() => {
+      if (activeGenerateChild === child && child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+    }, 750).unref();
+  }
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    terminateActiveGenerateChild();
+    process.exitCode = 1;
+    setTimeout(() => process.exit(1), 1_000).unref();
+  });
+}
 
 function usage(): never {
   throw new Error(
@@ -235,7 +259,7 @@ const EVAL_CASES: EvalCase[] = [
     id: "unseen_etf_timing_framework",
     userAsk:
       "我想做一个低频ETF择时研究框架，先拆内部能力：宏观、流动性、ETF状态、数学验证、风险门都要考虑。",
-    sourceSummary: "unseen adjacent ETF timing planning request; no live data supplied.",
+    sourceSummary: "unseen adjacent ETF timing planning request; no current market data supplied.",
     requiredModules: [
       "macro_rates_inflation",
       "credit_liquidity",
@@ -574,7 +598,7 @@ const EVAL_CASES: EvalCase[] = [
       "portfolio_weights_and_risk_limits",
     ],
     requiredRiskBoundaries: [
-      "no_unverified_live_data",
+      "no_unverified_current_market_data",
       "technical_timing_not_standalone_alpha",
       "no_trade_advice",
     ],
@@ -714,7 +738,7 @@ const EVAL_CASES: EvalCase[] = [
     ],
     requiredRiskBoundaries: [
       "no_model_math_guessing",
-      "no_unverified_live_data",
+      "no_unverified_current_market_data",
       "red_team_invalidation_required",
       "no_trade_advice",
     ],
@@ -754,11 +778,11 @@ const EVAL_CASES: EvalCase[] = [
     ],
   },
   {
-    id: "unverified_live_market_data_boundary",
+    id: "current_market_data_freshness_boundary",
     userAsk:
       "今天 QQQ、TLT、NVDA 和美元流动性最新怎么看？我没有给实时行情源，先拆内部模块和数据缺口，不要装作已经拿到实时数据，也不要给交易建议。",
     sourceSummary:
-      "fresh live-market style request without supplied real-time source; model must mark live claims unverified and require timestamped data.",
+      "fresh current-market request without supplied real-time source; model must mark current market claims unverified and require timestamped data.",
     requiredModules: [
       "source_registry",
       "macro_rates_inflation",
@@ -775,7 +799,7 @@ const EVAL_CASES: EvalCase[] = [
       "source_timestamp_and_vendor",
       "memory_recall_scope_or_relevant_receipts",
     ],
-    requiredRiskBoundaries: ["no_unverified_live_data", "no_trade_advice"],
+    requiredRiskBoundaries: ["no_unverified_current_market_data", "no_trade_advice"],
   },
   {
     id: "factor_backtest_overfit_guard",
@@ -1606,7 +1630,7 @@ const EVAL_CASES: EvalCase[] = [
       "index_constituents_weights_and_technical_regime_inputs",
       "validation_dataset_and_sample_out_plan",
     ],
-    requiredRiskBoundaries: ["no_unverified_live_data"],
+    requiredRiskBoundaries: ["no_unverified_current_market_data"],
   },
   {
     id: "analyst_report_learning_source_quality",
@@ -1683,7 +1707,7 @@ const EVAL_CASES: EvalCase[] = [
     userAsk:
       "本地记忆里旧规则说美元流动性改善利好 QQQ，但今天最新数据源口径不一致，MiniMax、Kimi、DeepSeek 对 QQQ/TLT/NVDA 也有分歧。先拆证据治理、旧记忆降权、实时数据缺口、模型分歧和组合风险，不要直接给交易建议。",
     sourceSummary:
-      "multi-constraint governance case combining stale memory, live-data gap, vendor conflict, model disagreement, and portfolio risk.",
+      "multi-constraint governance case combining stale memory, current-data gap, vendor conflict, model disagreement, and portfolio risk.",
     requiredModules: [
       "finance_learning_memory",
       "source_registry",
@@ -1707,7 +1731,7 @@ const EVAL_CASES: EvalCase[] = [
       "portfolio_weights_and_risk_limits",
     ],
     requiredRiskBoundaries: [
-      "no_unverified_live_data",
+      "no_unverified_current_market_data",
       "do_not_pick_model_answer_without_evidence",
       "do_not_promote_unverified_memory_claims",
       "no_trade_advice",
@@ -1849,7 +1873,7 @@ const EVAL_CASES: EvalCase[] = [
       "index_constituents_weights_and_technical_regime_inputs",
       "validation_dataset_and_sample_out_plan",
     ],
-    requiredRiskBoundaries: ["no_unverified_live_data"],
+    requiredRiskBoundaries: ["no_unverified_current_market_data"],
   },
   {
     id: "scenario_probability_no_model_math_guessing",
@@ -1925,7 +1949,7 @@ const EVAL_CASES: EvalCase[] = [
     ],
     requiredRiskBoundaries: [
       "no_model_math_guessing",
-      "no_unverified_live_data",
+      "no_unverified_current_market_data",
       "technical_timing_not_standalone_alpha",
       "sentiment_signal_not_standalone_alpha",
       "risk_gate_before_action_language",
@@ -1967,7 +1991,7 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
     ],
   ],
   ["paper_learning_internalization_absorption", ["external_source_missing_url"]],
-  ["unverified_live_market_data_boundary", ["portfolio_mixed_q_t_nvda"]],
+  ["current_market_data_freshness_boundary", ["portfolio_mixed_q_t_nvda"]],
   ["factor_backtest_overfit_guard", ["external_source_missing_url"]],
   ["sentiment_market_external_module_learning", ["external_source_missing_url"]],
   [
@@ -2152,7 +2176,7 @@ function buildPrompt(evalCase: EvalCase): string {
     `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
     'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
-    "Do not invent live data, execution approval, or durable memory writes.",
+    "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`,
     "primary_modules, supporting_modules, and required_tools must use exact recommended module ids only; do not invent prefixes like finance_framework_*.",
     "For finance tasks, choose concrete recommended module ids instead of generic finance labels or the full taxonomy.",
@@ -2188,6 +2212,7 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
       args.splice(5, 0, "--adapter-path", options.adapterPath);
     }
     const child = spawn(options.pythonBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    activeGenerateChild = child;
     let stdout = "";
     let stderr = "";
     const timeout = setTimeout(() => {
@@ -2206,6 +2231,9 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
     });
     child.on("error", reject);
     child.on("close", (code) => {
+      if (activeGenerateChild === child) {
+        activeGenerateChild = undefined;
+      }
       clearTimeout(timeout);
       if (code === 0) {
         resolve(stdout);
@@ -2271,7 +2299,7 @@ function runResolveCurrentAdapter(options: CliOptions): Promise<Record<string, u
       [
         "--import",
         "tsx",
-        "scripts/dev/minimax-brain-training-guard.ts",
+        path.join(WORKTREE_CWD, "scripts/dev/minimax-brain-training-guard.ts"),
         "--resolve-current-adapter",
         "--bootstrap-if-missing",
         "--model",
@@ -2279,7 +2307,7 @@ function runResolveCurrentAdapter(options: CliOptions): Promise<Record<string, u
         "--log",
         DEFAULT_GUARD_LOG,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { cwd: WORKTREE_CWD, stdio: ["ignore", "pipe", "pipe"] },
     );
     let stdout = "";
     let stderr = "";
@@ -2451,6 +2479,8 @@ function recoverPartialJsonPlan(raw: string): Record<string, unknown> | undefine
   const taskFamily = recoverStringField(raw, "task_family");
   if (taskFamily) {
     recovered.task_family = taskFamily;
+  } else if (/"task_family"\s*:\s*"/u.test(raw)) {
+    recovered.task_family = "partial_json_object";
   }
   const nextStep = recoverStringField(raw, "next_step");
   if (nextStep) {
@@ -2475,7 +2505,12 @@ function recoverPartialJsonPlan(raw: string): Record<string, unknown> | undefine
     recovered.supporting_modules,
     recovered.required_tools,
   ].some((value) => Array.isArray(value) && value.length > 0);
-  return hasPlanIntent && hasModuleIntent ? recovered : undefined;
+  // Hardened eval may receive a truncated object that only started task_family before
+  // the model repeated whitespace. Recover it as a diagnostic-only plan; the caller
+  // still marks parseRecovered so promotion remains blocked.
+  return hasPlanIntent && (hasModuleIntent || typeof recovered.task_family === "string")
+    ? recovered
+    : undefined;
 }
 
 function asStringArray(value: unknown): string[] {

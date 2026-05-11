@@ -1,4 +1,5 @@
 import { applyQueueDropPolicy, shouldSkipQueueItem } from "../../../utils/queue-helpers.js";
+import { resolveReplyRouteChannel } from "../reply-routing-helpers.js";
 import { kickFollowupDrainIfIdle } from "./drain.js";
 import { getExistingFollowupQueue, getFollowupQueue } from "./state.js";
 import type { FollowupRun, QueueDedupeMode, QueueSettings } from "./types.js";
@@ -8,8 +9,9 @@ function isRunAlreadyQueued(
   items: FollowupRun[],
   allowPromptFallback = false,
 ): boolean {
+  const normalizedChannel = resolveReplyRouteChannel(run.originatingChannel);
   const hasSameRouting = (item: FollowupRun) =>
-    item.originatingChannel === run.originatingChannel &&
+    resolveReplyRouteChannel(item.originatingChannel) === normalizedChannel &&
     item.originatingTo === run.originatingTo &&
     item.originatingAccountId === run.originatingAccountId &&
     item.originatingThreadId === run.originatingThreadId;

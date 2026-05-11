@@ -1103,6 +1103,77 @@ describe("handleCommands context", () => {
     );
   });
 
+  it("includes Lark reply-flow evidence in Lark status-readback replies", async () => {
+    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockResolvedValueOnce(
+      [
+        "## Recent Feishu/Lark Reply Flow Evidence",
+        "Reply-path status evidence: visible_reply_delivered",
+        "Boundary: this proves only the recorded reply delivery layer.",
+      ].join("\n"),
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const params = buildParams("现在修到哪了", cfg, {
+      OriginatingChannel: "lark",
+      OriginatingTo: "oc-control",
+      Provider: "lark",
+      Surface: "lark",
+    });
+    params.provider = "lark";
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
+    expect(result.reply?.text).toContain("🧭 Status readback");
+    expect(result.reply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
+    expect(result.reply?.text).toContain("Reply-path status evidence: visible_reply_delivered");
+    expect(result.reply?.text).toContain(
+      "Boundary: this proves only the recorded reply delivery layer.",
+    );
+  });
+
+  it("keeps Lark status-readback deterministic when reply-flow evidence read fails", async () => {
+    vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockRejectedValueOnce(
+      new Error("log unavailable"),
+    );
+    const cfg = {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+      agents: {
+        defaults: {
+          workspace: testWorkspaceDir,
+          model: { primary: "moonshot/kimi-k2.6" },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const params = buildParams("现在能用了吗", cfg, {
+      OriginatingChannel: "lark",
+      OriginatingTo: "oc-control",
+      Provider: "lark",
+      Surface: "lark",
+    });
+    params.provider = "lark";
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
+    expect(result.reply?.text).toContain("🧭 Status readback");
+    expect(result.reply?.text).toContain(
+      "可见 Lark/Feishu reply-flow 证据: 本次回复发出前无法自证，必须看随后 outbound_result。",
+    );
+    expect(result.reply?.text).toContain("下一步检查: 明确第一层缺失证据");
+  });
+
   it("keeps Feishu status-readback deterministic when reply-flow evidence read fails", async () => {
     vi.mocked(summarizeRecentFeishuReplyFlowEvidence).mockRejectedValueOnce(
       new Error("log unavailable"),

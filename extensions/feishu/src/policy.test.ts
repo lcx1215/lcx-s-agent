@@ -76,6 +76,15 @@ describe("feishu policy", () => {
       ).toEqual({ allowed: true, matchKey: "ou_allowed", matchSource: "id" });
     });
 
+    it("matches lark-prefixed allowlist entries", () => {
+      expect(
+        resolveFeishuAllowlistMatch({
+          allowFrom: ["lark:user:OU_ALLOWED"],
+          senderId: "ou_allowed",
+        }),
+      ).toEqual({ allowed: true, matchKey: "ou_allowed", matchSource: "id" });
+    });
+
     it("supports user_id as an additional immutable sender candidate", () => {
       expect(
         resolveFeishuAllowlistMatch({

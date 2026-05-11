@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   buildLarkBrainDistillationCandidate,
   LARK_BRAIN_DISTILLATION_REVIEW_DIR,
@@ -78,6 +78,8 @@ const DEFAULT_WORKSPACE = path.join(process.env.HOME ?? ".", ".openclaw", "works
 const DEFAULT_MODEL = process.env.MINIMAX_TEACHER_MODEL?.trim() || "MiniMax-M2.7";
 const DEFAULT_BASE_URL =
   process.env.MINIMAX_ANTHROPIC_BASE_URL?.trim() || "https://api.minimax.io/anthropic";
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 
 const MODULE_TAXONOMY = LOCAL_BRAIN_MODULE_TAXONOMY;
 
@@ -107,7 +109,8 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
     id: "multi_asset_macro_portfolio_risk",
     userMessage:
       "我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex、美元流动性，先拆内部模块，不要给交易建议。",
-    sourceSummary: "portfolio risk planning; no live data supplied; no execution authority.",
+    sourceSummary:
+      "portfolio risk planning; no current market data supplied; no execution authority.",
   },
   {
     id: "portfolio_math_missing_inputs",
@@ -226,11 +229,11 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "sourced arXiv portfolio-management paper learning request requiring source registry, actual reading scope, capability retention, retrieval/apply proof, training or eval absorption evidence, and overfit/sample-out boundaries.",
   },
   {
-    id: "unverified_live_market_data_boundary",
+    id: "current_market_data_freshness_boundary",
     userMessage:
       "今天 QQQ、TLT、NVDA 和美元流动性最新怎么看？我没有给实时行情源，先拆内部模块和数据缺口，不要装作已经拿到实时数据，也不要给交易建议。",
     sourceSummary:
-      "fresh live-market style request without supplied real-time source; mark live claims unverified and require timestamped data.",
+      "fresh current-market request without supplied real-time source; mark current market claims unverified and require timestamped data.",
   },
   {
     id: "factor_backtest_overfit_guard",
@@ -457,7 +460,7 @@ async function loadTeacherPrompts(options: CliOptions): Promise<TeacherPrompt[]>
 function runCommand(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd: WORKTREE_CWD,
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
@@ -953,7 +956,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
     )
   ) {
     return {
-      task_family: "unverified_live_market_data_research_preflight",
+      task_family: "current_market_data_research_preflight",
       primary_modules: [
         "source_registry",
         "macro_rates_inflation",
@@ -983,12 +986,12 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "research_only",
         "no_execution_authority",
         "evidence_required",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "no_trade_advice",
       ],
       next_step:
-        "mark_live_market_claims_unverified_until_source_timestamp_and_fresh_data_snapshot_are_available_then_run_review",
-      rejected_context: ["unverified_live_market_claim", "old_lark_conversation_history"],
+        "mark_current_market_claims_unverified_until_source_timestamp_and_fresh_data_snapshot_are_available_then_run_review",
+      rejected_context: ["unverified_current_market_claim", "old_lark_conversation_history"],
     };
   }
   if (
@@ -1260,7 +1263,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "no_execution_authority",
         "evidence_required",
         "no_model_math_guessing",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "no_unverified_cross_market_claims",
         "technical_timing_not_standalone_alpha",
         "sentiment_signal_not_standalone_alpha",
@@ -1580,13 +1583,18 @@ function canonicalRiskBoundary(entry: string): string {
     return "no_high_leverage_crypto";
   }
   if (
+    // Backward compatibility for older teacher outputs; canonical output uses current-market wording.
     normalized === "no_live_market_claims" ||
     normalized === "no_live_market_claim" ||
     normalized === "no_live_finance_advice" ||
     normalized === "no_unverified_live_data" ||
-    normalized === "no_unverified_live_market_data_claims"
+    normalized === "no_unverified_live_market_data_claims" ||
+    normalized === "no_unverified_current_market_claims" ||
+    normalized === "no_unverified_current_market_claim" ||
+    normalized === "no_unverified_current_market_data" ||
+    normalized === "no_unverified_current_market_data_claims"
   ) {
-    return "no_unverified_live_market_data_claims";
+    return "no_unverified_current_market_data";
   }
   if (
     normalized === "no_language_corpus_change" ||
@@ -1610,8 +1618,7 @@ const TEACHER_RISK_PRIORITY = [
   "no_unverified_cross_market_claims",
   "no_high_leverage_crypto",
   "risk_gate_before_action_language",
-  "no_unverified_live_data",
-  "no_unverified_live_market_data_claims",
+  "no_unverified_current_market_data",
   "fundamentals_first_not_price_action_first",
   "margin_of_safety_required",
   "value_investing_not_trade_signal",
@@ -1838,7 +1845,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "fresh_market_data_snapshot",
       "current_position_weights",
     ]);
-    ensureRisk(["evidence_required", "no_unverified_live_market_data_claims"]);
+    ensureRisk(["evidence_required", "no_unverified_current_market_data"]);
     ensureRejected(["single_company_fundamental_labels_for_etf"]);
     nextStep =
       "Treat the ETF/fund as fund-structure research, require prospectus, holdings, fresh data and weights; do not infer company revenue quality.";
@@ -1862,7 +1869,10 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
 
   if (
     !isContextReset &&
-    /持有|未来|一周|一个月|两周|利率|美元流动性|风险偏好|latest|最新|实时|live market/iu.test(ask)
+    // Match older live-market phrasing as an alias, but harden to current-market output.
+    /持有|未来|一周|一个月|两周|利率|美元流动性|风险偏好|latest|最新|实时|current market|live market/iu.test(
+      ask,
+    )
   ) {
     ensurePrimary([
       "macro_rates_inflation",
@@ -1871,7 +1881,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "portfolio_risk_gates",
     ]);
     ensureMissing(["fresh_market_data_snapshot", "current_position_weights"]);
-    ensureRisk(["no_unverified_live_market_data_claims"]);
+    ensureRisk(["no_unverified_current_market_data"]);
   }
 
   if (/language corpus|formal_lark_routing_corpus|语言语料|路由语料/iu.test(ask)) {
@@ -1879,11 +1889,12 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   }
 
   if (
-    /no live market claim|no live finance advice|unverified live data|实时行情|实时数据|live market/iu.test(
+    // Match older live-market safety wording as an alias, but harden to current-market output.
+    /no live market claim|no live finance advice|unverified live data|current market data|timestamped market data|实时行情|实时数据|live market/iu.test(
       ask,
     )
   ) {
-    ensureRisk(["no_unverified_live_market_data_claims"]);
+    ensureRisk(["no_unverified_current_market_data"]);
   }
 
   if (
@@ -1967,7 +1978,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ]);
     ensureRisk([
       "no_model_math_guessing",
-      "no_unverified_live_data",
+      "no_unverified_current_market_data",
       "no_unverified_cross_market_claims",
       "technical_timing_not_standalone_alpha",
       "sentiment_signal_not_standalone_alpha",

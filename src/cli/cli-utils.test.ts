@@ -9,12 +9,45 @@ import { waitForever } from "./wait.js";
 const { registerDnsCli } = await import("./dns-cli.js");
 
 describe("waitForever", () => {
-  it("creates an unref'ed interval and returns a pending promise", () => {
-    const setIntervalSpy = vi.spyOn(global, "setInterval");
+  it("creates a long-lived wait interval", () => {
+    const unrefSpy = vi.fn();
+    const setIntervalHandle = {
+      hasRef: vi.fn().mockReturnValue(true),
+      refresh: vi.fn(),
+      ref: vi.fn(),
+      unref: unrefSpy,
+      [Symbol.toPrimitive]: () => 0,
+    } as unknown as ReturnType<typeof setInterval>;
+    const setIntervalSpy = vi.spyOn(global, "setInterval").mockReturnValue(setIntervalHandle);
     const promise = waitForever();
     expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 1_000_000);
+    expect(unrefSpy).toHaveBeenCalledTimes(1);
     expect(promise).toBeInstanceOf(Promise);
+    promise.cancel();
     setIntervalSpy.mockRestore();
+  });
+
+  it("can cancel the wait handle to remove signal listeners", () => {
+    const clearIntervalSpy = vi.spyOn(global, "clearInterval");
+    const processOnceSpy = vi.spyOn(process, "once");
+    const processOffSpy = vi.spyOn(process, "off");
+
+    const promise = waitForever();
+    promise.cancel();
+
+    expect(clearIntervalSpy).toHaveBeenCalled();
+    expect(processOnceSpy).toHaveBeenCalledWith("SIGINT", expect.any(Function));
+    expect(processOffSpy).toHaveBeenCalledWith("SIGINT", expect.any(Function));
+    processOnceSpy.mockRestore();
+    processOffSpy.mockRestore();
+    clearIntervalSpy.mockRestore();
+  });
+
+  it("resolves immediately when cancel is called", async () => {
+    const waitHandle = waitForever();
+    const cancelResult = waitHandle.cancel();
+    await waitHandle;
+    expect(cancelResult).toBeUndefined();
   });
 });
 

@@ -13,6 +13,12 @@ Inspect configs and fails fast without requiring external packages:
 node --import tsx scripts/dev/local-brain-open-eval.ts --json
 ```
 
+If a provider is slow or hangs, add a timeout so the run stays bounded:
+
+```bash
+node --import tsx scripts/dev/local-brain-open-eval.ts --json --provider-timeout-ms 20000
+```
+
 ## Promptfoo
 
 Promptfoo is useful for prompt pressure tests and red-team style assertions.

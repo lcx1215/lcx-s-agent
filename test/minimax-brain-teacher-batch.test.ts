@@ -499,13 +499,13 @@ describe("minimax brain teacher batch parsing", () => {
     expect(plan.rejected_context).toContain("technical_timing_before_fundamentals");
   });
 
-  it("rewrites live market data collection overclaims in teacher next steps", () => {
+  it("rewrites current market data collection overclaims in teacher next steps", () => {
     const plan = hardenTeacherPlanForPrompt(
       {
         id: "quota_portfolio_regime_risk_00000",
         userMessage:
           "未来一个月担心利率、美元流动性、ETH 和美股风险偏好，先拆研究模块，不要给交易建议。",
-        sourceSummary: "live-style macro and liquidity request with no supplied data.",
+        sourceSummary: "current-market macro and liquidity request with no supplied data.",
       },
       normalizeTeacherPlan({
         task_family: "portfolio_regime",
@@ -535,7 +535,7 @@ describe("minimax brain teacher batch parsing", () => {
       risk_boundaries: [
         "Research only; no execution authority",
         "No high-leverage crypto positions",
-        "No live market claims",
+        "No unverified current market claims",
       ],
       next_step: "review",
       rejected_context: [],
@@ -549,8 +549,11 @@ describe("minimax brain teacher batch parsing", () => {
         "research_only",
         "no_execution_authority",
         "no_high_leverage_crypto",
-        "no_unverified_live_market_data_claims",
+        "no_unverified_current_market_data",
       ]),
+    );
+    expect(plan.risk_boundaries).not.toEqual(
+      expect.arrayContaining(["no_unverified_live_market_data_claims"]),
     );
   });
 
@@ -560,7 +563,7 @@ describe("minimax brain teacher batch parsing", () => {
         id: "quota_safety_boundary_text_00000",
         userMessage: "训练本地大脑做 research-only 风险拆解，不要改 language corpus。",
         sourceSummary:
-          "Writes brain distillation review only; no live sender, provider config, language corpus, protected memory, or finance doctrine change. No live market claim supplied.",
+          "Writes brain distillation review only; no live sender, provider config, language corpus, protected memory, or finance doctrine change. No current market claim supplied.",
       },
       normalizeTeacherPlan({
         task_family: "portfolio_regime",
@@ -568,7 +571,7 @@ describe("minimax brain teacher batch parsing", () => {
         supporting_modules: ["review_panel"],
         required_tools: ["review_panel"],
         missing_data: [],
-        risk_boundaries: ["research_only", "no execution", "no live finance advice"],
+        risk_boundaries: ["research_only", "no execution", "no unverified current market data"],
         next_step: "review",
         rejected_context: [],
       }),
@@ -579,7 +582,7 @@ describe("minimax brain teacher batch parsing", () => {
         "research_only",
         "no_execution_authority",
         "no_language_corpus_modification",
-        "no_unverified_live_market_data_claims",
+        "no_unverified_current_market_data",
       ]),
     );
   });
@@ -711,7 +714,7 @@ describe("minimax brain teacher batch parsing", () => {
         "research_only",
         "no_execution_authority",
         "no_trade_advice",
-        "no_unverified_live_market_data_claims",
+        "no_unverified_current_market_data",
         "no_protected_memory_write",
         "no_provider_config_change",
       ]),

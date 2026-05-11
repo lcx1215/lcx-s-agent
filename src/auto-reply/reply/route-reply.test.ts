@@ -14,6 +14,7 @@ import { createIMessageTestPlugin } from "../../test-utils/imessage-test-plugin.
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 
 const mocks = vi.hoisted(() => ({
+  sendMessageFeishu: vi.fn(async (_params: unknown) => ({ messageId: "f1" })),
   sendMessageDiscord: vi.fn(async () => ({ messageId: "m1", channelId: "c1" })),
   sendMessageIMessage: vi.fn(async () => ({ messageId: "ok" })),
   sendMessageMSTeams: vi.fn(async (_params: unknown) => ({
@@ -59,7 +60,7 @@ const actualDeliver = await vi.importActual<typeof import("../../infra/outbound/
   "../../infra/outbound/deliver.js",
 );
 
-const { routeReply } = await import("./route-reply.js");
+const { isRoutableChannel, routeReply } = await import("./route-reply.js");
 
 const createRegistry = (channels: PluginRegistry["channels"]): PluginRegistry => ({
   plugins: [],
@@ -88,6 +89,18 @@ const createMSTeamsOutbound = (): ChannelOutboundAdapter => ({
   },
 });
 
+const createFeishuOutbound = (): ChannelOutboundAdapter => ({
+  deliveryMode: "direct",
+  sendText: async ({ cfg, to, text }) => {
+    const result = await mocks.sendMessageFeishu({ cfg, to, text });
+    return { channel: "feishu", ...result };
+  },
+  sendMedia: async ({ cfg, to, text, mediaUrl }) => {
+    const result = await mocks.sendMessageFeishu({ cfg, to, text, mediaUrl });
+    return { channel: "feishu", ...result };
+  },
+});
+
 const createMSTeamsPlugin = (params: { outbound: ChannelOutboundAdapter }): ChannelPlugin => ({
   id: "msteams",
   meta: {
@@ -95,6 +108,7 @@ const createMSTeamsPlugin = (params: { outbound: ChannelOutboundAdapter }): Chan
     label: "Microsoft Teams",
     selectionLabel: "Microsoft Teams (Bot Framework)",
     docsPath: "/channels/msteams",
+    aliases: ["teams"],
     blurb: "Bot Framework; enterprise support.",
   },
   capabilities: { chatTypes: ["direct"] },
@@ -374,6 +388,176 @@ describe("routeReply", () => {
         text: "hi",
       }),
     );
+  });
+
+  it("routes Teams legacy alias to msteams plugin", async () => {
+    mocks.sendMessageMSTeams.mockClear();
+    const cfg = {
+      channels: {
+        msteams: { enabled: true },
+      },
+    } as unknown as OpenClawConfig;
+    await routeReply({
+      payload: { text: "hi" },
+      channel: "teams",
+      to: "conversation:19:abc@thread.tacv2",
+      cfg,
+    });
+
+    expect(mocks.sendMessageMSTeams).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cfg,
+        to: "conversation:19:abc@thread.tacv2",
+        text: "hi",
+      }),
+    );
+    expect(isRoutableChannel("teams")).toBe(true);
+  });
+
+  it("maps lark channel label to feishu routing target", async () => {
+    setActivePluginRegistry(
+      createRegistry([
+        {
+          pluginId: "feishu",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "feishu",
+            outbound: createFeishuOutbound(),
+            label: "Feishu",
+          }),
+        },
+      ]),
+    );
+    const cfg = {
+      channels: {
+        feishu: { enabled: true },
+      },
+    } as unknown as OpenClawConfig;
+
+    mocks.sendMessageFeishu.mockClear();
+    const result = await routeReply({
+      payload: { text: "hi" },
+      channel: "lark" as never,
+      to: "ou_xyz",
+      cfg,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(isRoutableChannel("lark")).toBe(true);
+    expect(mocks.sendMessageFeishu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cfg,
+        to: "ou_xyz",
+        text: "hi",
+      }),
+    );
+  });
+
+  it("maps lark chain label channel to feishu routing target", async () => {
+    setActivePluginRegistry(
+      createRegistry([
+        {
+          pluginId: "feishu",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "feishu",
+            outbound: createFeishuOutbound(),
+            label: "Feishu",
+          }),
+        },
+      ]),
+    );
+    const cfg = {
+      channels: {
+        feishu: { enabled: true },
+      },
+    } as unknown as OpenClawConfig;
+
+    mocks.sendMessageFeishu.mockClear();
+    const result = await routeReply({
+      payload: { text: "hi" },
+      channel: "lark:dm:ou_xyz" as never,
+      to: "ou_xyz",
+      cfg,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(isRoutableChannel("lark:dm:ou_xyz" as never)).toBe(true);
+    expect(mocks.sendMessageFeishu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cfg,
+        to: "ou_xyz",
+        text: "hi",
+      }),
+    );
+  });
+
+  it("applies feishu family responsePrefix for lark chain channel", async () => {
+    setActivePluginRegistry(
+      createRegistry([
+        {
+          pluginId: "feishu",
+          source: "test",
+          plugin: createOutboundTestPlugin({
+            id: "feishu",
+            outbound: createFeishuOutbound(),
+            label: "Feishu",
+          }),
+        },
+      ]),
+    );
+    const cfg = {
+      messages: {
+        responsePrefix: "[global] ",
+      },
+      channels: {
+        feishu: {
+          responsePrefix: "[feishu] ",
+        },
+      },
+    } as unknown as OpenClawConfig;
+
+    mocks.sendMessageFeishu.mockClear();
+    const result = await routeReply({
+      payload: { text: "hi" },
+      channel: "lark:dm:ou_xyz" as never,
+      to: "ou_xyz",
+      cfg,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.sendMessageFeishu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cfg,
+        to: "ou_xyz",
+        text: "[feishu] hi",
+      }),
+    );
+  });
+
+  it("fails cleanly for lark family routing when feishu outbound is missing", async () => {
+    mocks.sendMessageFeishu.mockClear();
+    const cfg = {
+      channels: {},
+    } as unknown as OpenClawConfig;
+
+    const result = await routeReply({
+      payload: { text: "hi" },
+      channel: "lark" as never,
+      to: "ou_xyz",
+      cfg,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe(
+      "Failed to route reply to lark: Outbound not configured for channel: feishu",
+    );
+    expect(isRoutableChannel("lark")).toBe(true);
+    expect(mocks.sendMessageFeishu).not.toHaveBeenCalled();
+  });
+
+  it("does not mark unknown channels as routable", async () => {
+    expect(isRoutableChannel("random-unknown" as never)).toBe(false);
   });
 
   it("passes mirror data when sessionKey is set", async () => {

@@ -127,12 +127,12 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
       "targeted repair for single-company fundamental risk with value-investing anchors and filing/source evidence gate.",
   },
   {
-    caseId: "unverified_live_market_data_boundary",
+    caseId: "current_market_data_freshness_boundary",
     priority: 98,
     userMessage:
       "训练本地大脑遇到实时价格、最新财报、当前利率、美元流动性或新闻时必须标注未验证边界：没有 timestamped source 就不能说最新、当前、上涨下跌或具体数值；只能列需要的来源、数据时间戳、冲突处理和 research-only 下一步。",
     sourceSummary:
-      "targeted repair for unverified live market data boundary; no current-market claims without timestamped evidence.",
+      "targeted repair for current market data freshness boundary; no current-market claims without timestamped evidence.",
   },
   {
     caseId: "rate_shock_duration_equity_chain",

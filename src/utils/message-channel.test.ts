@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createMSTeamsTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
-import { resolveGatewayMessageChannel } from "./message-channel.js";
+import {
+  normalizeMessageChannel,
+  normalizeMessageChannelFamilyAlias,
+  resolveGatewayMessageChannel,
+} from "./message-channel.js";
 
 const emptyRegistry = createTestRegistry([]);
 const msteamsPlugin: ChannelPlugin = {
@@ -30,5 +34,17 @@ describe("message-channel", () => {
       createTestRegistry([{ pluginId: "msteams", plugin: msteamsPlugin, source: "test" }]),
     );
     expect(resolveGatewayMessageChannel("teams")).toBe("msteams");
+  });
+
+  it("normalizes lark chain labels to feishu family", () => {
+    expect(normalizeMessageChannelFamilyAlias("lark")).toBe("feishu");
+    expect(normalizeMessageChannelFamilyAlias("LARK:dm:ou_123")).toBe("feishu");
+    expect(normalizeMessageChannelFamilyAlias("lark:group:oc_456")).toBe("feishu");
+    expect(normalizeMessageChannelFamilyAlias("feishu:dm:ou_123")).toBe("feishu");
+  });
+
+  it("normalizes lark and feishu chain labels without plugin registry", () => {
+    expect(normalizeMessageChannel("LARK:dm:ou_123")).toBe("feishu");
+    expect(normalizeMessageChannel("feishu:dm:ou_123")).toBe("feishu");
   });
 });

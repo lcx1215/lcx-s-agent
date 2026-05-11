@@ -24,7 +24,7 @@ import { resolveTelegramInlineButtonsScope } from "../../../telegram/inline-butt
 import { resolveTelegramReactionLevel } from "../../../telegram/reaction-level.js";
 import { buildTtsSystemPromptHint } from "../../../tts/tts.js";
 import { resolveUserPath } from "../../../utils.js";
-import { normalizeMessageChannel } from "../../../utils/message-channel.js";
+import { normalizeMessageChannelFamilyAlias } from "../../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
 import { resolveOpenClawAgentDir } from "../../agent-paths.js";
 import { resolveSessionAgentIds } from "../../agent-scope.js";
@@ -649,6 +649,9 @@ export async function runEmbeddedAttempt(
     });
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
+    const runtimeMessageChannel = normalizeMessageChannelFamilyAlias(
+      params.messageChannel ?? params.messageProvider,
+    );
     const toolsRaw = params.disableTools
       ? []
       : createOpenClawCodingTools({
@@ -658,7 +661,7 @@ export async function runEmbeddedAttempt(
             elevated: params.bashElevated,
           },
           sandbox,
-          messageProvider: params.messageChannel ?? params.messageProvider,
+          messageProvider: runtimeMessageChannel ?? params.messageProvider,
           agentAccountId: params.agentAccountId,
           messageTo: params.messageTo,
           messageThreadId: params.messageThreadId,
@@ -700,7 +703,7 @@ export async function runEmbeddedAttempt(
     logToolSchemasForGoogle({ tools, provider: params.provider });
 
     const machineName = await getMachineDisplayName();
-    const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
+    const runtimeChannel = runtimeMessageChannel;
     let runtimeCapabilities = runtimeChannel
       ? (resolveChannelCapabilities({
           cfg: params.config,
@@ -1400,9 +1403,9 @@ export async function runEmbeddedAttempt(
           sessionKey: params.sessionKey,
           sessionId: params.sessionId,
           workspaceDir: params.workspaceDir,
-          messageProvider: params.messageProvider ?? undefined,
+          messageProvider: runtimeMessageChannel ?? params.messageProvider,
           trigger: params.trigger,
-          channelId: params.messageChannel ?? params.messageProvider ?? undefined,
+          channelId: runtimeMessageChannel ?? params.messageChannel ?? params.messageProvider,
         };
         const hookResult = await resolvePromptBuildHookResult({
           prompt: params.prompt,
@@ -1516,7 +1519,7 @@ export async function runEmbeddedAttempt(
                   sessionKey: params.sessionKey,
                   sessionId: params.sessionId,
                   workspaceDir: params.workspaceDir,
-                  messageProvider: params.messageProvider ?? undefined,
+                  messageProvider: runtimeMessageChannel ?? params.messageProvider,
                 },
               )
               .catch((err) => {
@@ -1651,7 +1654,7 @@ export async function runEmbeddedAttempt(
                 sessionKey: params.sessionKey,
                 sessionId: params.sessionId,
                 workspaceDir: params.workspaceDir,
-                messageProvider: params.messageProvider ?? undefined,
+                messageProvider: runtimeMessageChannel ?? params.messageProvider,
               },
             )
             .catch((err) => {
@@ -1711,7 +1714,7 @@ export async function runEmbeddedAttempt(
               sessionKey: params.sessionKey,
               sessionId: params.sessionId,
               workspaceDir: params.workspaceDir,
-              messageProvider: params.messageProvider ?? undefined,
+              messageProvider: runtimeMessageChannel ?? params.messageProvider,
             },
           )
           .catch((err) => {

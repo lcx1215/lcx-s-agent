@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -224,6 +224,107 @@ describe("local-brain-distill-eval", () => {
     expect(moduleFields).not.toContain("source_registry_lookup");
   });
 
+  it("recovers task-family-only factor eval stalls without promotion", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-factor-stall-"));
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      ["#!/bin/sh", "cat <<'EOF'", '{"task_family":"etf_factor_backtest             ', "EOF"].join(
+        "\n",
+      ),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--no-adapter",
+        "--python",
+        fakePython,
+        "--hardened",
+        "--case-id",
+        "factor_turnover_cost_capacity_guard",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: {
+        passed: number;
+        total: number;
+        promotionReady: boolean;
+        parseRecoveredCaseIds: string[];
+      };
+      cases: Array<{
+        id: string;
+        parsed: {
+          primary_modules: string[];
+          supporting_modules: string[];
+          required_tools: string[];
+          missing_data: string[];
+          risk_boundaries: string[];
+        };
+        parseRecovered?: boolean;
+        acceptance: { ok: boolean };
+      }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary).toMatchObject({
+      passed: 3,
+      total: 3,
+      promotionReady: false,
+      parseRecoveredCaseIds: [
+        "external_source_missing_url",
+        "factor_backtest_overfit_guard",
+        "factor_turnover_cost_capacity_guard",
+      ],
+    });
+    const targetCase = payload.cases.find(
+      (entry) => entry.id === "factor_turnover_cost_capacity_guard",
+    );
+    expect(targetCase?.parseRecovered).toBe(true);
+    expect(targetCase?.acceptance.ok).toBe(true);
+    const moduleFields = [
+      ...(targetCase?.parsed.primary_modules ?? []),
+      ...(targetCase?.parsed.supporting_modules ?? []),
+      ...(targetCase?.parsed.required_tools ?? []),
+    ];
+    expect(moduleFields).toEqual(
+      expect.arrayContaining([
+        "quant_math",
+        "finance_learning_memory",
+        "source_registry",
+        "portfolio_risk_gates",
+        "review_panel",
+        "etf_regime",
+      ]),
+    );
+    expect(targetCase?.parsed.missing_data).toEqual(
+      expect.arrayContaining([
+        "sample_out_validation_plan",
+        "survivor_bias_and_lookahead_bias_check",
+        "walk_forward_or_cross_validation_evidence",
+      ]),
+    );
+    expect(targetCase?.parsed.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "backtest_overfit_check_required",
+        "sample_out_validation_required",
+        "survivor_bias_check_required",
+        "no_trade_advice",
+      ]),
+    );
+  });
+
   it("tells the local model not to emit think blocks during eval", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(
@@ -246,6 +347,70 @@ describe("local-brain-distill-eval", () => {
     expect(source).toContain("must use exact recommended module ids only");
     expect(source).toContain("do not invent prefixes like finance_framework_*");
     expect(source).toContain('LOCAL_BRAIN_EVAL_MAX_TOKENS = "700"');
+  });
+
+  it("passes no-think template settings through the mlx_lm generate call", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-args-"));
+    const argLog = path.join(tempDir, "python-args.log");
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/bin/sh",
+        'printf "%s\\n" "$@" > "$EVAL_FAKE_PYTHON_LOG"',
+        "cat <<'JSON'",
+        '{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":[],"required_tools":["finance_learning_memory"],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_lark_conversation_history"]}',
+        "JSON",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--case-id",
+          "portfolio_mixed_q_t_nvda",
+          "--summary-only",
+          "--json",
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            EVAL_FAKE_PYTHON_LOG: argLog,
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const loggedArgs = readFileSync(argLog, "utf8");
+      expect(loggedArgs).toContain("--chat-template-config");
+      expect(loggedArgs).toContain('{"enable_thinking":false}');
+      expect(loggedArgs).toContain("/no_think");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans up the active mlx child when the eval wrapper receives a termination signal", async () => {
+    const source = readFileSync(
+      path.resolve(__dirname, "..", "scripts/dev/local-brain-distill-eval.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("activeGenerateChild");
+    expect(source).toContain("terminateActiveGenerateChild");
+    expect(source).toContain("process.once(signal");
+    expect(source).toContain('child.kill("SIGTERM")');
+    expect(source).toContain('child.kill("SIGKILL")');
   });
 
   it("runs simple prerequisite cases before complex commodity evals", () => {

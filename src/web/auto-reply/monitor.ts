@@ -342,13 +342,15 @@ export async function monitorWebChannel(
       return;
     }
 
+    const shutdownWait = waitForever();
     const reason = await Promise.race([
       listener.onClose?.catch((err) => {
         reconnectLogger.error({ error: formatError(err) }, "listener.onClose rejected");
         return { status: 500, isLoggedOut: false, error: err };
-      }) ?? waitForever(),
-      abortPromise ?? waitForever(),
+      }) ?? shutdownWait,
+      abortPromise ?? shutdownWait,
     ]);
+    shutdownWait.cancel();
 
     const uptimeMs = Date.now() - startedAt;
     if (uptimeMs > heartbeatSeconds * 1000) {

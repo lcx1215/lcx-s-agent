@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
@@ -42,6 +43,8 @@ const DEFAULT_GUARD_LOG = path.join(
 );
 const LOCAL_BRAIN_PLAN_MAX_TOKENS = "700";
 const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 
 function usage(): never {
   throw new Error(
@@ -117,7 +120,7 @@ function buildPrompt(options: CliOptions): string {
     "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 8 words, and always close the final brace.",
     `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
     'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
-    "Do not invent live data, execution approval, or durable memory writes.",
+    "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
     "primary_modules, supporting_modules, and required_tools must use exact allowed module ids only; do not invent prefixes like finance_framework_*.",
     "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
@@ -234,7 +237,7 @@ function runResolveCurrentAdapter(options: CliOptions): Promise<Record<string, u
       [
         "--import",
         "tsx",
-        "scripts/dev/minimax-brain-training-guard.ts",
+        path.join(WORKTREE_CWD, "scripts/dev/minimax-brain-training-guard.ts"),
         "--resolve-current-adapter",
         "--bootstrap-if-missing",
         "--model",
@@ -242,7 +245,7 @@ function runResolveCurrentAdapter(options: CliOptions): Promise<Record<string, u
         "--log",
         DEFAULT_GUARD_LOG,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { cwd: WORKTREE_CWD, stdio: ["ignore", "pipe", "pipe"] },
     );
     let stdout = "";
     let stderr = "";

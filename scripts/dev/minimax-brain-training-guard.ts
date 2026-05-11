@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -97,6 +98,10 @@ const TRAINING_ABSORPTION_CONTRACT_VERSION = "compact_teacher_review_v2";
 const TRAIN_NAN_PATTERN = /\b(?:train|val)\s+loss\s+nan\b|\bloss\s*[:=]\s*nan\b|\bnan\b/iu;
 const HARDENED_EVAL_STEP_TIMEOUT_MS = 60 * 60 * 1000;
 const HARDENED_EVAL_IDLE_TIMEOUT_MS = 12 * 60 * 1000;
+const STABLE_EVAL_TIMEOUT_BACKOFF_MS = 5 * 60_000;
+const STABLE_EVAL_NON_PASSING_BACKOFF_MS = 5 * 60_000;
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 
 function usage(): never {
   throw new Error(
@@ -368,7 +373,7 @@ function runCommand(
     let totalTimer: NodeJS.Timeout | undefined;
     let idleTimer: NodeJS.Timeout | undefined;
     const child = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd: WORKTREE_CWD,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -507,7 +512,7 @@ function runQuietCommand(command: string, args: string[]): Promise<CommandResult
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd: WORKTREE_CWD,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -609,7 +614,7 @@ async function acquireRunLock(options: CliOptions): Promise<() => Promise<void>>
           startedAt: new Date().toISOString(),
           command: process.argv.join(" "),
           logPath: options.logPath,
-          cwd: process.cwd(),
+          cwd: WORKTREE_CWD,
         },
         null,
         2,
@@ -689,6 +694,7 @@ type EvalVerdict = {
   total: number;
   passRate: number;
   failedCount: number;
+  parseRecoveredCount: number;
   source: string;
 };
 
@@ -699,6 +705,7 @@ function evalSummaryFromPayload(payload: Record<string, unknown>):
       total: number;
       passRate: number;
       failedCount: number;
+      parseRecoveredCount: number;
     }
   | undefined {
   if (payload.event !== "step_ok") {
@@ -724,6 +731,8 @@ function evalSummaryFromPayload(payload: Record<string, unknown>):
   const total = (summary as { total?: unknown }).total;
   const passRate = (summary as { passRate?: unknown }).passRate;
   const failedCaseIds = (summary as { failedCaseIds?: unknown }).failedCaseIds;
+  const parseRecoveredCaseIds = (summary as { parseRecoveredCaseIds?: unknown })
+    .parseRecoveredCaseIds;
   const safePassed = typeof passed === "number" ? passed : 0;
   const safeTotal = typeof total === "number" ? total : 0;
   return {
@@ -734,6 +743,7 @@ function evalSummaryFromPayload(payload: Record<string, unknown>):
     failedCount: Array.isArray(failedCaseIds)
       ? failedCaseIds.length
       : Math.max(0, safeTotal - safePassed),
+    parseRecoveredCount: Array.isArray(parseRecoveredCaseIds) ? parseRecoveredCaseIds.length : 0,
   };
 }
 
@@ -768,6 +778,7 @@ function evalVerdictFromPayload(payload: Record<string, unknown>): EvalVerdict |
     total: summary.total,
     passRate: summary.passRate,
     failedCount: summary.failedCount,
+    parseRecoveredCount: summary.parseRecoveredCount,
     source: String(payload.name),
   };
 }
@@ -801,6 +812,7 @@ function failedStableEvalVerdictFromGuardFailure(
     total: totalMatch ? Number(totalMatch[1]) : 0,
     passRate: 0,
     failedCount: totalMatch ? Number(totalMatch[1]) : 0,
+    parseRecoveredCount: 0,
     source: "guard_failed_stable_hardened_eval",
   };
 }
@@ -834,6 +846,7 @@ type TrainingSeedSelection = {
   total: number;
   passRate: number;
   failedCount: number;
+  parseRecoveredCount: number;
   source: string;
 };
 
@@ -868,6 +881,7 @@ function trainingSeedFromVerdict(verdict: EvalVerdict): TrainingSeedSelection | 
     total: verdict.total,
     passRate: verdict.passRate,
     failedCount: verdict.failedCount,
+    parseRecoveredCount: verdict.parseRecoveredCount,
     source: verdict.source,
   };
 }
@@ -876,9 +890,10 @@ function compareTrainingSeedSelection(
   left: TrainingSeedSelection,
   right: TrainingSeedSelection,
 ): number {
-  const passedDelta = right.passed - left.passed;
-  if (passedDelta !== 0) {
-    return passedDelta;
+  const cleanPassedDelta =
+    right.passed - right.parseRecoveredCount - (left.passed - left.parseRecoveredCount);
+  if (cleanPassedDelta !== 0) {
+    return cleanPassedDelta;
   }
   const coverageDelta = right.total - left.total;
   if (coverageDelta !== 0) {
@@ -891,6 +906,14 @@ function compareTrainingSeedSelection(
   const failureDelta = left.failedCount - right.failedCount;
   if (failureDelta !== 0) {
     return failureDelta;
+  }
+  const parseRecoveredDelta = left.parseRecoveredCount - right.parseRecoveredCount;
+  if (parseRecoveredDelta !== 0) {
+    return parseRecoveredDelta;
+  }
+  const passedDelta = right.passed - left.passed;
+  if (passedDelta !== 0) {
+    return passedDelta;
   }
   return right.at.localeCompare(left.at);
 }
@@ -910,6 +933,8 @@ function trainingSeedFromEvalResult(
   const total = (summary as { total?: unknown }).total;
   const passRate = (summary as { passRate?: unknown }).passRate;
   const failedCaseIds = (summary as { failedCaseIds?: unknown }).failedCaseIds;
+  const parseRecoveredCaseIds = (summary as { parseRecoveredCaseIds?: unknown })
+    .parseRecoveredCaseIds;
   const safePassed = typeof passed === "number" ? passed : 0;
   const safeTotal = typeof total === "number" ? total : 0;
   if (safeTotal <= 0) {
@@ -924,6 +949,7 @@ function trainingSeedFromEvalResult(
     failedCount: Array.isArray(failedCaseIds)
       ? failedCaseIds.length
       : Math.max(0, safeTotal - safePassed),
+    parseRecoveredCount: Array.isArray(parseRecoveredCaseIds) ? parseRecoveredCaseIds.length : 0,
     source: "candidate_hardened_eval",
   };
 }
@@ -1438,6 +1464,38 @@ function promotionEvalPassed(result: unknown): boolean {
   );
 }
 
+function evalTimedOut(result: unknown): boolean {
+  return Boolean(
+    result && typeof result === "object" && (result as { timedOut?: unknown }).timedOut,
+  );
+}
+
+function stableEvalBackoff(result: unknown):
+  | {
+      name: "stable_eval_timeout_backoff" | "stable_eval_non_passing_backoff";
+      durationMs: number;
+      reason:
+        | "stable_hardened_eval_timeout_continue_guard"
+        | "stable_hardened_eval_non_passing_continue_guard";
+    }
+  | undefined {
+  if (promotionEvalPassed(result)) {
+    return undefined;
+  }
+  if (evalTimedOut(result)) {
+    return {
+      name: "stable_eval_timeout_backoff",
+      durationMs: STABLE_EVAL_TIMEOUT_BACKOFF_MS,
+      reason: "stable_hardened_eval_timeout_continue_guard",
+    };
+  }
+  return {
+    name: "stable_eval_non_passing_backoff",
+    durationMs: STABLE_EVAL_NON_PASSING_BACKOFF_MS,
+    reason: "stable_hardened_eval_non_passing_continue_guard",
+  };
+}
+
 type TeacherSidecar = {
   pid?: number;
   exitCode?: number | null;
@@ -1495,7 +1553,7 @@ async function startTeacherSidecar(options: CliOptions): Promise<TeacherSidecar 
     ...(options.mock ? ["--mock"] : []),
   ];
   const child = spawn("node", args, {
-    cwd: process.cwd(),
+    cwd: WORKTREE_CWD,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1691,6 +1749,7 @@ if (!currentAdapter && trainingSeedAdapter) {
           total: trainingSeed.total,
           passRate: trainingSeed.passRate,
           failedCount: trainingSeed.failedCount,
+          parseRecoveredCount: trainingSeed.parseRecoveredCount,
         }
       : undefined,
     reason: "no_promotion_ready_adapter_available",
@@ -1718,6 +1777,7 @@ if (trainingResumeAdapter && trainingResumeAdapter !== trainingSeedAdapter) {
           total: trainingResumeSeed.total,
           passRate: trainingResumeSeed.passRate,
           failedCount: trainingResumeSeed.failedCount,
+          parseRecoveredCount: trainingResumeSeed.parseRecoveredCount,
         }
       : undefined,
     reason: "best_non_catastrophic_training_seed",
@@ -1856,19 +1916,29 @@ try {
               "--summary-only",
               "--json",
             ],
-            currentAdapter
-              ? {
-                  timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS,
-                  idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS,
-                }
-              : {
-                  allowFailure: true,
-                  timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS,
-                  idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS,
-                },
+            {
+              allowFailure: true,
+              timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS,
+              idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS,
+            },
           );
-          if (currentAdapter && !promotionEvalPassed(stableEval)) {
-            throw new Error(`stable adapter failed hardened eval: ${currentAdapter}`);
+          if (currentAdapter) {
+            const backoff = stableEvalBackoff(stableEval);
+            if (backoff) {
+              await appendLog(options.logPath, {
+                event: "step_backoff",
+                round,
+                name: backoff.name,
+                durationMs: backoff.durationMs,
+                reason: backoff.reason,
+                adapterPath: currentAdapter,
+                result: stableEval,
+                liveTouched: false,
+                providerConfigTouched: false,
+              });
+              await sleep(backoff.durationMs);
+              continue;
+            }
           }
         }
       } else {
@@ -2065,6 +2135,7 @@ try {
                   total: candidateSeed.total,
                   passRate: candidateSeed.passRate,
                   failedCount: candidateSeed.failedCount,
+                  parseRecoveredCount: candidateSeed.parseRecoveredCount,
                 }
               : undefined,
             reason: "candidate_eval_collapsed_near_zero_pass_rate",
@@ -2093,6 +2164,7 @@ try {
                 total: candidateSeed.total,
                 passRate: candidateSeed.passRate,
                 failedCount: candidateSeed.failedCount,
+                parseRecoveredCount: candidateSeed.parseRecoveredCount,
               },
               reason: "best_available_non_promotion_eval_candidate",
               strictPromotionUnchanged: true,

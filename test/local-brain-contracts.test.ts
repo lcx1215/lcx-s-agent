@@ -35,7 +35,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
       ]),
     );
     expect(plan.risk_boundaries).toEqual(
-      expect.arrayContaining(["no_unverified_live_data", "no_trade_advice"]),
+      expect.arrayContaining(["no_unverified_current_market_data", "no_trade_advice"]),
     );
     expect(plan.rejected_context).toContain("generic_market_commentary_without_scope_or_sources");
   });
@@ -371,7 +371,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "research_only",
         "no_execution_authority",
         "no_model_math_guessing",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "red_team_invalidation_required",
         "no_trade_advice",
       ]),
@@ -414,7 +414,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.risk_boundaries).toEqual(
       expect.arrayContaining([
         "research_only",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "red_team_invalidation_required",
         "no_trade_advice",
       ]),
@@ -462,7 +462,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
       {
         ask: "我要做完整金融研究拆解：组合有 QQQ、NVDA、现金和一点 BTC，同时看 NVDA 财报、AI capex 指引、Fed 利率路径、美元流动性、A股政策资金面、全球指数权重、仓位权重、技术面趋势和成交量，还要反方论证和数据缺口，research-only，不要交易建议。",
         sourceSummary:
-          "dev acceptance actual adapter probe for full-stack finance stress; no live data available; require gaps, review, and no execution authority",
+          "dev acceptance actual adapter probe for full-stack finance stress; no current market data available; require gaps, review, and no execution authority",
       },
     );
 
@@ -497,7 +497,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
       expect.arrayContaining([
         "research_only",
         "no_execution_authority",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "red_team_invalidation_required",
         "no_trade_advice",
       ]),
@@ -533,7 +533,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
           "fresh_market_data_snapshot",
           "position_weights_and_return_series",
           "commodity_curve_roll_yield_and_inventory_inputs",
-          "no_unverified_live_data_claims",
+          "no_unverified_current_market_data",
           "no_high_leverage_crypto",
         ],
         risk_boundaries: ["research_only", "no_execution_authority", "no_trade_advice"],
@@ -577,7 +577,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
       expect.arrayContaining([
         "research_only",
         "no_execution_authority",
-        "no_unverified_live_data",
+        "no_unverified_current_market_data",
         "red_team_invalidation_required",
         "no_trade_advice",
       ]),
@@ -586,7 +586,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
       expect.arrayContaining(["no_high_leverage_crypto", "no_provider_config_change"]),
     );
     expect(plan.missing_data).not.toEqual(
-      expect.arrayContaining(["no_high_leverage_crypto", "no_unverified_live_data_claims"]),
+      expect.arrayContaining(["no_high_leverage_crypto", "no_unverified_current_market_data"]),
     );
     expect(plan.rejected_context).toContain("trade_recommendation_without_evidence");
   });
@@ -620,7 +620,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
       {
         ask: "学习大宗商品。别给我甩一堆术语，先拆脑内模块，告诉我需要哪些证据和缺口，后面要能用于 QQQ/TLT/GLD/DBC 组合。",
         sourceSummary:
-          "fresh torture test; no live market data supplied; research-only; require missing data and review before visible reply",
+          "fresh torture test; no current market data supplied; research-only; require missing data and review before visible reply",
       },
     );
 
@@ -973,7 +973,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
       },
     );
 
-    expect(plan.task_family).toBe("unverified_live_market_data_research_preflight");
+    expect(plan.task_family).toBe("current_market_data_research_preflight");
     expect(plan.primary_modules).toEqual(
       expect.arrayContaining([
         "source_registry",
@@ -988,17 +988,20 @@ describe("hardenLocalBrainPlanForAsk", () => {
       expect.arrayContaining(["fresh_market_data_snapshot", "source_timestamp_and_vendor"]),
     );
     expect(plan.risk_boundaries).toEqual(
-      expect.arrayContaining(["no_unverified_live_data", "no_trade_advice"]),
+      expect.arrayContaining(["no_unverified_current_market_data", "no_trade_advice"]),
     );
+    expect(plan.risk_boundaries).not.toEqual(expect.arrayContaining(["no_unverified_live_data"]));
+    expect(plan.rejected_context).toContain("unverified_current_market_claim");
+    expect(plan.rejected_context).not.toContain("unverified_live_market_claim");
   });
 
-  it("does not let no-live-data source wording hide portfolio macro risk routing", () => {
+  it("does not let no-current-data source wording hide portfolio macro risk routing", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
       {
         ask: "我想低频研究 QQQ、TLT、NVDA 的组合风险：如果未来一个月利率上行、美元流动性收紧、AI capex 预期降温，我应该让智能体怎么拆任务、找哪些证据、哪些结论不能直接下？research-only，不要交易建议。",
         sourceSummary:
-          "dev-only real finance planning probe; no live market data provided; require missing data and no_execution_authority",
+          "dev-only real finance planning probe; no current market data provided; require missing data and no_execution_authority",
       },
     );
 

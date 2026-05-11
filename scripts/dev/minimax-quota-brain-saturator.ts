@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildFailureCurriculumPrompts } from "./minimax-brain-failure-curriculum.js";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
@@ -76,6 +77,8 @@ const DEFAULT_GUARD_LOG = path.join(
   "logs",
   "minimax-brain-training-guard-medium.jsonl",
 );
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 
 const TASK_TEMPLATES = [
   {
@@ -110,7 +113,8 @@ const TASK_TEMPLATES = [
     family: "portfolio_regime_risk",
     message:
       "我持有 {assetA}、{assetB}、{assetC}，担心未来 {horizon} 的利率、美元流动性和风险偏好切换。先拆模块，不要给买卖建议。",
-    summary: "portfolio regime planning with no execution authority and incomplete live data.",
+    summary:
+      "portfolio regime planning with no execution authority and incomplete current market data.",
   },
   {
     family: "missing_quant_inputs",
@@ -551,7 +555,7 @@ function buildPrompt(index: number): TeacherPrompt {
   return {
     id: `quota_${template.family}_${String(variant).padStart(5, "0")}`,
     userMessage: `${userMessage} 验收码 minimax-quota-${String(index).padStart(5, "0")}`,
-    sourceSummary: `${template.summary} Synthetic quota-training prompt; no private user data or live market claim supplied.`,
+    sourceSummary: `${template.summary} Synthetic quota-training prompt; no private user data or current market claim supplied.`,
   };
 }
 
@@ -589,7 +593,7 @@ function runCommand(command: string, args: string[]): Promise<CommandResult> {
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd: WORKTREE_CWD,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });

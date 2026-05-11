@@ -28,6 +28,7 @@ import { shouldBypassAcpDispatchForCommand, tryDispatchAcpReply } from "./dispat
 import { shouldSkipDuplicateInbound } from "./inbound-dedupe.js";
 import type { ReplyDispatcher, ReplyDispatchKind } from "./reply-dispatcher.js";
 import { shouldSuppressReasoningPayload } from "./reply-payloads.js";
+import { resolveReplyRouteChannel } from "./reply-routing-helpers.js";
 import { isRoutableChannel, routeReply } from "./route-reply.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
 
@@ -208,10 +209,13 @@ export async function dispatchReplyFromConfig(params: {
   // flow when the provider handles its own messages.
   //
   // Debug: `pnpm test src/auto-reply/reply/dispatch-from-config.test.ts`
-  const originatingChannel = normalizeMessageChannel(ctx.OriginatingChannel);
+  const resolveRoutingChannel = (value?: string) => {
+    return resolveReplyRouteChannel(value) ?? normalizeMessageChannel(value);
+  };
+  const originatingChannel = resolveRoutingChannel(ctx.OriginatingChannel);
   const originatingTo = ctx.OriginatingTo;
-  const providerChannel = normalizeMessageChannel(ctx.Provider);
-  const surfaceChannel = normalizeMessageChannel(ctx.Surface);
+  const providerChannel = resolveRoutingChannel(ctx.Provider);
+  const surfaceChannel = resolveRoutingChannel(ctx.Surface);
   // Prefer provider channel because surface may carry origin metadata in relayed flows.
   const currentSurface = providerChannel ?? surfaceChannel;
   const shouldRouteToOriginating = Boolean(

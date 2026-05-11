@@ -43,6 +43,7 @@ import { buildInboundMetaSystemPrompt, buildInboundUserContextPrefix } from "./i
 import type { createModelSelectionState } from "./model-selection.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { resolveQueueSettings } from "./queue.js";
+import { isFeishuFamilyChannel } from "./reply-routing-helpers.js";
 import { routeReply } from "./route-reply.js";
 import { buildBareSessionResetPrompt } from "./session-reset-prompt.js";
 import { buildQueuedSystemPrompt, ensureSkillSnapshot } from "./session-updates.js";
@@ -58,9 +59,9 @@ function shouldInjectFeishuReplyFlowEvidence(params: {
   originatingChannel?: string;
   provider?: string;
 }): boolean {
-  const originatingChannel = params.originatingChannel?.trim().toLowerCase();
-  const provider = params.provider?.trim().toLowerCase();
-  return originatingChannel === "feishu" || provider === "feishu";
+  const isFeishuFamilyOriginatingChannel = isFeishuFamilyChannel(params.originatingChannel);
+  const isFeishuFamilyProvider = isFeishuFamilyChannel(params.provider);
+  return isFeishuFamilyOriginatingChannel || isFeishuFamilyProvider;
 }
 
 function buildResetSessionNoticeText(params: {

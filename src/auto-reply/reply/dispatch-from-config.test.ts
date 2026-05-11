@@ -380,6 +380,30 @@ describe("dispatchReplyFromConfig", () => {
     );
   });
 
+  it("normalizes lark chain-originating channel to feishu when routing", async () => {
+    setNoAbort();
+    mocks.routeReply.mockClear();
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "webchat",
+      Surface: "feishu",
+      OriginatingChannel: "lark:dm:ou_xyz",
+      OriginatingTo: "ou_xyz",
+    });
+
+    const replyResolver = async () => ({ text: "hi" }) satisfies ReplyPayload;
+    await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+    expect(mocks.routeReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "feishu",
+        to: "ou_xyz",
+      }),
+    );
+  });
+
   it("does not route when provider already matches originating channel", async () => {
     setNoAbort();
     mocks.routeReply.mockClear();

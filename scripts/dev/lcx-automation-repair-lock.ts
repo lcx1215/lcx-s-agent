@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 type Mode = "status" | "acquire" | "release";
@@ -28,8 +29,16 @@ type RepairLock = {
   command: string;
 };
 
+type ParsedLock = RepairLock | undefined;
+type ParsedLockState = {
+  lock: ParsedLock;
+  malformed: boolean;
+};
+
 const execFileAsync = promisify(execFile);
 const HOME = process.env.HOME ?? os.homedir();
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const DEFAULT_LOCK = path.join(HOME, ".openclaw", "workspace", "run", "lcx-automation-repair.lock");
 const DEFAULT_TTL_MINUTES = 90;
 
@@ -47,7 +56,7 @@ function usage(): never {
       "  --lane NAME          automation lane name",
       "  --token TOKEN        token printed by acquire",
       "  --lock PATH          lock file path",
-      "  --worktree DIR       git worktree to guard, default current directory",
+      "  --worktree DIR       git worktree to guard, default script directory repo root",
       "  --ttl-minutes N      lock expiry, default 90",
       "  --allow-dirty        allow acquiring while git worktree is dirty",
       "  --json               print JSON, default true",
@@ -76,7 +85,7 @@ function parseArgs(args: string[]): CliOptions {
     mode: "status",
     lane: "unknown",
     lockPath: DEFAULT_LOCK,
-    worktreeDir: process.cwd(),
+    worktreeDir: REPO_ROOT,
     ttlMinutes: DEFAULT_TTL_MINUTES,
     allowDirty: false,
     json: true,
@@ -136,12 +145,16 @@ async function gitStatusPorcelain(cwd: string): Promise<string[]> {
   }
 }
 
-async function readLock(lockPath: string): Promise<RepairLock | undefined> {
+async function readLock(lockPath: string): Promise<ParsedLockState> {
   const raw = await fs.readFile(lockPath, "utf8").catch(() => "");
   if (!raw.trim()) {
-    return undefined;
+    return { lock: undefined, malformed: false };
   }
-  return JSON.parse(raw) as RepairLock;
+  try {
+    return { lock: JSON.parse(raw) as RepairLock, malformed: false };
+  } catch {
+    return { lock: undefined, malformed: true };
+  }
 }
 
 function isExpired(lock: RepairLock): boolean {
@@ -207,7 +220,22 @@ async function acquire(options: CliOptions): Promise<Record<string, unknown>> {
     };
   }
 
-  const existing = await readLock(options.lockPath);
+  const existingState = await readLock(options.lockPath);
+  if (existingState.malformed) {
+    return {
+      ok: true,
+      acquired: false,
+      status: "locked",
+      boundary: "dev_automation_coordination_only",
+      lockPath: options.lockPath,
+      worktreeDir: options.worktreeDir,
+      lock: undefined,
+      malformedLock: true,
+      liveTouched: false,
+      providerConfigTouched: false,
+    };
+  }
+  const existing = existingState.lock;
   if (existing && !isExpired(existing)) {
     return {
       ok: true,
@@ -217,6 +245,7 @@ async function acquire(options: CliOptions): Promise<Record<string, unknown>> {
       lockPath: options.lockPath,
       worktreeDir: options.worktreeDir,
       lock: publicLock(existing),
+      malformedLock: false,
       liveTouched: false,
       providerConfigTouched: false,
     };
@@ -248,7 +277,8 @@ async function acquire(options: CliOptions): Promise<Record<string, unknown>> {
       boundary: "dev_automation_coordination_only",
       lockPath: options.lockPath,
       worktreeDir: options.worktreeDir,
-      lock: publicLock(racedLock),
+      lock: publicLock(racedLock.lock),
+      malformedLock: racedLock.malformed,
       liveTouched: false,
       providerConfigTouched: false,
     };
@@ -256,7 +286,8 @@ async function acquire(options: CliOptions): Promise<Record<string, unknown>> {
 }
 
 async function release(options: CliOptions): Promise<Record<string, unknown>> {
-  const existing = await readLock(options.lockPath);
+  const existingState = await readLock(options.lockPath);
+  const existing = existingState.lock;
   if (!existing) {
     return {
       ok: true,
@@ -265,6 +296,7 @@ async function release(options: CliOptions): Promise<Record<string, unknown>> {
       boundary: "dev_automation_coordination_only",
       lockPath: options.lockPath,
       worktreeDir: options.worktreeDir,
+      malformedLock: existingState.malformed,
       liveTouched: false,
       providerConfigTouched: false,
     };
@@ -278,6 +310,7 @@ async function release(options: CliOptions): Promise<Record<string, unknown>> {
       lockPath: options.lockPath,
       worktreeDir: options.worktreeDir,
       lock: publicLock(existing),
+      malformedLock: existingState.malformed,
       liveTouched: false,
       providerConfigTouched: false,
     };
@@ -296,14 +329,22 @@ async function release(options: CliOptions): Promise<Record<string, unknown>> {
 }
 
 async function status(options: CliOptions): Promise<Record<string, unknown>> {
-  const existing = await readLock(options.lockPath);
+  const existingState = await readLock(options.lockPath);
+  const existing = existingState.lock;
   return {
     ok: true,
-    status: existing ? (isExpired(existing) ? "expired" : "locked") : "unlocked",
+    status: existingState.malformed
+      ? "locked"
+      : existing
+        ? isExpired(existing)
+          ? "expired"
+          : "locked"
+        : "unlocked",
     boundary: "dev_automation_coordination_only",
     lockPath: options.lockPath,
     worktreeDir: options.worktreeDir,
     lock: publicLock(existing),
+    malformedLock: existingState.malformed,
     liveTouched: false,
     providerConfigTouched: false,
   };

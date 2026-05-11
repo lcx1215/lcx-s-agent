@@ -12,6 +12,7 @@ import { buildProtocolInfoReply } from "./commands-protocol-info.js";
 import { buildStatusReply } from "./commands-status.js";
 import type { CommandHandler } from "./commands-types.js";
 import { summarizeRecentFeishuReplyFlowEvidence } from "./feishu-reply-flow-evidence.js";
+import { isFeishuFamilyChannel } from "./reply-routing-helpers.js";
 
 function shouldReadFeishuReplyFlowEvidence(params: {
   kind: ReturnType<typeof resolveProtocolInfoQuestionKind>;
@@ -21,9 +22,7 @@ function shouldReadFeishuReplyFlowEvidence(params: {
   if (params.kind !== "status_readback") {
     return false;
   }
-  const originatingChannel = params.originatingChannel?.trim().toLowerCase();
-  const provider = params.provider?.trim().toLowerCase();
-  return originatingChannel === "feishu" || provider === "feishu";
+  return isFeishuFamilyChannel(params.originatingChannel) || isFeishuFamilyChannel(params.provider);
 }
 
 export const handleHelpCommand: CommandHandler = async (params, allowTextCommands) => {

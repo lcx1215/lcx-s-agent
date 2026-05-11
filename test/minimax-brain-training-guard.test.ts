@@ -57,6 +57,7 @@ function nonPassingEval(
   adapterPath: string,
   passed: number,
   total: number,
+  options: { parseRecoveredCount?: number } = {},
 ) {
   return {
     at,
@@ -69,6 +70,10 @@ function nonPassingEval(
         total,
         passRate: passed / total,
         failedCaseIds: Array.from({ length: total - passed }, (_, index) => `case_${index}`),
+        parseRecoveredCaseIds: Array.from(
+          { length: options.parseRecoveredCount ?? 0 },
+          (_, index) => `recovered_case_${index}`,
+        ),
         promotionReady: false,
       },
     },
@@ -209,8 +214,18 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("promotionReady: false");
     expect(source).toContain("HARDENED_EVAL_STEP_TIMEOUT_MS");
     expect(source).toContain("HARDENED_EVAL_IDLE_TIMEOUT_MS");
+    expect(source).toContain("STABLE_EVAL_TIMEOUT_BACKOFF_MS");
+    expect(source).toContain("STABLE_EVAL_NON_PASSING_BACKOFF_MS");
+    expect(source).toContain("stableEvalBackoff");
+    expect(source).toContain('"stable_eval_timeout_backoff"');
+    expect(source).toContain('"stable_eval_non_passing_backoff"');
+    expect(source).toContain('"stable_hardened_eval_timeout_continue_guard"');
+    expect(source).toContain('"stable_hardened_eval_non_passing_continue_guard"');
     expect(source).toMatch(
       /"candidate_hardened_eval"[\s\S]*scripts\/dev\/local-brain-distill-eval\.ts[\s\S]*allowFailure: true[\s\S]*timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS[\s\S]*idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS/u,
+    );
+    expect(source).toMatch(
+      /const evalName = currentAdapter \? "stable_hardened_eval"[\s\S]*runJsonStep\([\s\S]*evalName[\s\S]*allowFailure: true[\s\S]*const backoff = stableEvalBackoff\(stableEval\)[\s\S]*await sleep\(backoff\.durationMs\)[\s\S]*continue;/u,
     );
   });
 
@@ -440,6 +455,46 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(parsed.trainingSeed?.passed).toBe(53);
     expect(parsed.trainingSeed?.total).toBe(59);
     expect(parsed.trainingSeed?.passRate).toBeCloseTo(53 / 59);
+  });
+
+  it("penalizes parse-recovered candidate evals when choosing the next training seed", async () => {
+    let cleanAdapter = "";
+    let noisyAdapter = "";
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      cleanAdapter = `${adapterPrefix}-2026-05-11T06-29-32-873Z-r18`;
+      noisyAdapter = `${adapterPrefix}-2026-05-11T14-26-44-214Z-r1`;
+      return [
+        nonPassingEval(
+          "2026-05-11T06:43:41.325Z",
+          "candidate_hardened_eval",
+          cleanAdapter,
+          68,
+          68,
+          { parseRecoveredCount: 5 },
+        ),
+        nonPassingEval(
+          "2026-05-11T14:45:21.818Z",
+          "candidate_hardened_eval",
+          noisyAdapter,
+          68,
+          68,
+          { parseRecoveredCount: 18 },
+        ),
+      ];
+    });
+
+    const { stdout } = await resolveCurrentAdapter(fixture, ["--bootstrap-if-missing"]);
+    const parsed = JSON.parse(stdout) as {
+      trainingSeedAdapter?: string;
+      trainingSeed?: { passed?: number; total?: number; parseRecoveredCount?: number };
+    };
+
+    expect(parsed.trainingSeedAdapter).toBe(cleanAdapter);
+    expect(parsed.trainingSeed).toMatchObject({
+      passed: 68,
+      total: 68,
+      parseRecoveredCount: 5,
+    });
   });
 
   it("does not select an adapter after a newer failed hardened eval", async () => {

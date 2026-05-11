@@ -9,7 +9,7 @@ import {
   previewQueueSummaryPrompt,
   waitForQueueDebounce,
 } from "../../../utils/queue-helpers.js";
-import { isRoutableChannel } from "../route-reply.js";
+import { resolveReplyRouteChannel } from "../reply-routing-helpers.js";
 import { FOLLOWUP_QUEUES } from "./state.js";
 import type { FollowupRun } from "./types.js";
 
@@ -48,18 +48,19 @@ function resolveOriginRoutingMetadata(items: FollowupRun[]): OriginRoutingMetada
 }
 
 function resolveCrossChannelKey(item: FollowupRun): { cross?: true; key?: string } {
-  const { originatingChannel: channel, originatingTo: to, originatingAccountId: accountId } = item;
+  const { originatingChannel, originatingTo: to, originatingAccountId: accountId } = item;
   const threadId = item.originatingThreadId;
-  if (!channel && !to && !accountId && (threadId == null || threadId === "")) {
+  if (!originatingChannel && !to && !accountId && (threadId == null || threadId === "")) {
     return {};
   }
-  if (!isRoutableChannel(channel) || !to) {
+  const normalizedChannel = resolveReplyRouteChannel(originatingChannel);
+  if (!normalizedChannel || !to) {
     return { cross: true };
   }
   // Support both number (Telegram topic IDs) and string (Slack thread_ts) thread IDs.
   const threadKey = threadId != null && threadId !== "" ? String(threadId) : "";
   return {
-    key: [channel, to, accountId || "", threadKey].join("|"),
+    key: [normalizedChannel, to, accountId || "", threadKey].join("|"),
   };
 }
 

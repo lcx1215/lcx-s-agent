@@ -1783,9 +1783,6 @@ function resolveDeterministicFallbackFamily(params: {
   if (contract.target !== params.deterministicSurface) {
     return undefined;
   }
-  if (semantic.family !== "market_capability_learning_intake") {
-    return undefined;
-  }
   return {
     family: semantic.family,
     confidence: Math.min(semantic.score, LARK_ROUTING_API_CONFIDENCE_THRESHOLD - 0.01),

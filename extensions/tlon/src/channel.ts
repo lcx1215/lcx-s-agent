@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { configureClient } from "@tloncorp/api";
 import type {
   ChannelOutboundAdapter,
   ChannelPlugin,
@@ -27,7 +26,7 @@ import {
   sendDmWithStory,
   sendGroupMessageWithStory,
 } from "./urbit/send.js";
-import { uploadImageFromUrl } from "./urbit/upload.js";
+import { configureTlonUploadClient, uploadImageFromUrl } from "./urbit/upload.js";
 
 // Simple HTTP-only poke that doesn't open an EventSource (avoids conflict with monitor's SSE)
 async function createHttpPokeApi(params: {
@@ -226,8 +225,9 @@ const tlonOutbound: ChannelOutboundAdapter = {
       throw new Error(`Invalid Tlon target. Use ${formatTargetHint()}`);
     }
 
-    // Configure the API client for uploads
-    configureClient({
+    // Configure the optional Tlon API client for uploads. If the git dependency is not built,
+    // uploadImageFromUrl falls back to the original media URL instead of breaking messaging.
+    await configureTlonUploadClient({
       shipUrl: account.url,
       shipName: account.ship.replace(/^~/, ""),
       verbose: false,

@@ -1147,7 +1147,7 @@ describe("real daily utterance regression", () => {
     });
   });
 
-  it("does not promote local semantics into a live work order when the API planner fails", async () => {
+  it("falls back to deterministic routing instead of aborting when the API planner fails", async () => {
     const handoff = await resolveLarkAgentInstructionHandoff({
       cfg,
       chatId: "oc-control",
@@ -1158,19 +1158,54 @@ describe("real daily utterance regression", () => {
     });
 
     expect(handoff).toMatchObject({
-      family: "unknown",
-      source: "unknown",
-      confidence: 0,
+      family: "learning_external_source",
+      source: "deterministic_fallback",
       deterministicSurface: "learning_command",
       apiCandidate: expect.objectContaining({
         family: "unknown",
         rationale: expect.stringContaining("api route provider failed"),
       }),
     });
-    expect(handoff.targetSurface).toBeUndefined();
-    expect(handoff.backendToolContract).toBeUndefined();
-    expect(handoff.workOrder).toBeUndefined();
-    expect(handoff.notice).toBe("");
+    expect(handoff.confidence).toBeGreaterThan(0.7);
+    expect(handoff.targetSurface).toBe("learning_command");
+    expect(handoff.backendToolContract?.toolName).toBe("finance_learning_pipeline_orchestrator");
+    expect(handoff.workOrder).toBeDefined();
+    expect(handoff.notice).toContain("deterministic fallback routing hint");
+  });
+
+  it("falls back to deterministic family for non-learning intents when API planning times out", async () => {
+    const utterance = "MSFT 这次财报我最该盯什么";
+
+    const routing = resolveFeishuSurfaceRouting({
+      cfg,
+      chatId: "oc-control",
+      content: utterance,
+    });
+    const semantic = resolveLarkSemanticRouteCandidate(utterance);
+    expect(routing.targetSurface).toBe("fundamental_research");
+    expect(semantic.family).toBe("fundamental_research");
+    expect(semantic.score).toBeGreaterThan(0.85);
+
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance,
+      apiProvider: async () => {
+        throw new Error("gateway timeout after 35000ms");
+      },
+    });
+
+    expect(handoff).toMatchObject({
+      family: "fundamental_research",
+      source: "deterministic_fallback",
+      targetSurface: "fundamental_research",
+      workOrder: {
+        family: "fundamental_research",
+        source: "deterministic_fallback_audited",
+      },
+    });
+    expect(handoff.notice).toContain("deterministic fallback routing hint");
+    expect(handoff.notice).toContain("fundamental_research");
   });
 
   it("requires source proof when external philosophy skills select finance pipeline via API work order", async () => {

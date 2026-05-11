@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -28,7 +29,18 @@ const LEARNING_COUNCIL_DIR = path.join(WORKSPACE_DIR, "bank", "knowledge", "lear
 const REVIEW_PANEL_RECEIPT_DIR = path.join(WORKSPACE_DIR, "memory", "review-panel-receipts");
 const MODEL_COUNCIL_AUDIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const LIVE_LARK_DIAGNOSE_TIMEOUT_MS = 30_000;
-const LIVE_CHANNEL_PROBE_TIMEOUT_MS = 30_000;
+const DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS = 120_000;
+const LIVE_CHANNEL_PROBE_TIMEOUT_MS = resolvePositiveTimeout(
+  process.env.LIVE_CHANNEL_PROBE_TIMEOUT_MS,
+  DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS,
+);
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
+
+function resolvePositiveTimeout(raw: string | undefined, fallbackMs: number): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs;
+}
 
 function usage(): never {
   throw new Error(
@@ -77,7 +89,7 @@ function runCommand(params: {
   return new Promise((resolve) => {
     let settled = false;
     const child = spawn(params.command, params.args, {
-      cwd: params.cwd ?? process.cwd(),
+      cwd: params.cwd ?? WORKTREE_CWD,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -181,7 +193,7 @@ function runQuietCommand(command: string, args: string[]): Promise<CommandResult
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd: WORKTREE_CWD,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -204,7 +216,7 @@ function runQuietCommand(command: string, args: string[]): Promise<CommandResult
 
 async function gitStatusCheck(): Promise<CheckResult> {
   const startedAt = Date.now();
-  const cwd = process.cwd();
+  const cwd = WORKTREE_CWD;
   try {
     const cwdReal = await fs.realpath(cwd);
     const root = await runQuietCommand("git", ["rev-parse", "--show-toplevel"]);
@@ -871,7 +883,7 @@ async function entrypointCheck(): Promise<CheckResult> {
   ];
   const missing = [];
   for (const entry of entries) {
-    if (!(await fileExists(path.join(process.cwd(), entry)))) {
+    if (!(await fileExists(path.join(WORKTREE_CWD, entry)))) {
       missing.push(entry);
     }
   }

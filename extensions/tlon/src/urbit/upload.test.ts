@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 
+const { mockConfigureClient, mockUploadFile } = vi.hoisted(() => ({
+  mockConfigureClient: vi.fn(),
+  mockUploadFile: vi.fn(),
+}));
+
 // Mock fetchWithSsrFGuard from plugin-sdk
 vi.mock("openclaw/plugin-sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openclaw/plugin-sdk")>();
@@ -9,26 +14,25 @@ vi.mock("openclaw/plugin-sdk", async (importOriginal) => {
   };
 });
 
-// Mock @tloncorp/api
-vi.mock("@tloncorp/api", () => ({
-  uploadFile: vi.fn(),
-}));
-
 describe("uploadImageFromUrl", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { setTlonApiModuleForTest } = await import("./upload.js");
+    setTlonApiModuleForTest({
+      configureClient: mockConfigureClient,
+      uploadFile: mockUploadFile,
+    });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { setTlonApiModuleForTest } = await import("./upload.js");
+    setTlonApiModuleForTest(undefined);
     vi.restoreAllMocks();
   });
 
   it("fetches image and calls uploadFile, returns uploaded URL", async () => {
     const { fetchWithSsrFGuard } = await import("openclaw/plugin-sdk");
     const mockFetch = vi.mocked(fetchWithSsrFGuard);
-
-    const { uploadFile } = await import("@tloncorp/api");
-    const mockUploadFile = vi.mocked(uploadFile);
 
     // Mock fetchWithSsrFGuard to return a successful response with a blob
     const mockBlob = new Blob(["fake-image"], { type: "image/png" });
@@ -82,9 +86,6 @@ describe("uploadImageFromUrl", () => {
     const { fetchWithSsrFGuard } = await import("openclaw/plugin-sdk");
     const mockFetch = vi.mocked(fetchWithSsrFGuard);
 
-    const { uploadFile } = await import("@tloncorp/api");
-    const mockUploadFile = vi.mocked(uploadFile);
-
     // Mock fetchWithSsrFGuard to return a successful response
     const mockBlob = new Blob(["fake-image"], { type: "image/png" });
     mockFetch.mockResolvedValue({
@@ -130,9 +131,6 @@ describe("uploadImageFromUrl", () => {
     const { fetchWithSsrFGuard } = await import("openclaw/plugin-sdk");
     const mockFetch = vi.mocked(fetchWithSsrFGuard);
 
-    const { uploadFile } = await import("@tloncorp/api");
-    const mockUploadFile = vi.mocked(uploadFile);
-
     const mockBlob = new Blob(["fake-image"], { type: "image/jpeg" });
     mockFetch.mockResolvedValue({
       response: {
@@ -159,9 +157,6 @@ describe("uploadImageFromUrl", () => {
   it("uses default filename when URL has no path", async () => {
     const { fetchWithSsrFGuard } = await import("openclaw/plugin-sdk");
     const mockFetch = vi.mocked(fetchWithSsrFGuard);
-
-    const { uploadFile } = await import("@tloncorp/api");
-    const mockUploadFile = vi.mocked(uploadFile);
 
     const mockBlob = new Blob(["fake-image"], { type: "image/png" });
     mockFetch.mockResolvedValue({

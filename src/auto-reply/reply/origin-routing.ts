@@ -1,7 +1,8 @@
+import { normalizeMessageChannelFamilyAlias } from "../../utils/message-channel.js";
 import type { OriginatingChannelType } from "../templating.js";
 
 function normalizeProviderValue(value?: string): string | undefined {
-  const normalized = value?.trim().toLowerCase();
+  const normalized = normalizeMessageChannelFamilyAlias(value);
   return normalized || undefined;
 }
 

@@ -199,7 +199,8 @@ describe("lark language handoff receipts", () => {
       result.artifact.financeBrainOrchestration,
     );
     expect(notice).toContain("Finance brain orchestration contract");
-    expect(notice).toContain("primaryModules=etf_regime,quant_math,causal_map");
+    expect(notice).toContain("primaryModules=");
+    expect(notice).toContain("us_equity_market_structure");
     expect(notice).toContain("requiredTools=");
     expect(notice).toContain("do not replace quant_math with model guesses");
   });

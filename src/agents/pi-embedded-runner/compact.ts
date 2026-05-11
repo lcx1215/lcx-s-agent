@@ -21,7 +21,7 @@ import { resolveTelegramInlineButtonsScope } from "../../telegram/inline-buttons
 import { resolveTelegramReactionLevel } from "../../telegram/reaction-level.js";
 import { buildTtsSystemPromptHint } from "../../tts/tts.js";
 import { resolveUserPath } from "../../utils.js";
-import { normalizeMessageChannel } from "../../utils/message-channel.js";
+import { normalizeMessageChannelFamilyAlias } from "../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import { resolveSessionAgentIds } from "../agent-scope.js";
@@ -363,12 +363,15 @@ export async function compactEmbeddedPiSessionDirect(
       warn: makeBootstrapWarn({ sessionLabel, warn: (message) => log.warn(message) }),
     });
     const runAbortController = new AbortController();
+    const runtimeMessageChannel = normalizeMessageChannelFamilyAlias(
+      params.messageChannel ?? params.messageProvider,
+    );
     const toolsRaw = createOpenClawCodingTools({
       exec: {
         elevated: params.bashElevated,
       },
       sandbox,
-      messageProvider: params.messageChannel ?? params.messageProvider,
+      messageProvider: runtimeMessageChannel ?? params.messageProvider,
       agentAccountId: params.agentAccountId,
       sessionKey: sandboxSessionKey,
       sessionId: params.sessionId,
@@ -391,7 +394,7 @@ export async function compactEmbeddedPiSessionDirect(
     const allowedToolNames = collectAllowedToolNames({ tools });
     logToolSchemasForGoogle({ tools, provider });
     const machineName = await getMachineDisplayName();
-    const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
+    const runtimeChannel = runtimeMessageChannel;
     let runtimeCapabilities = runtimeChannel
       ? (resolveChannelCapabilities({
           cfg: params.config,
@@ -630,7 +633,7 @@ export async function compactEmbeddedPiSessionDirect(
           sessionKey: params.sessionKey,
           sessionId: params.sessionId,
           workspaceDir: params.workspaceDir,
-          messageProvider: params.messageChannel ?? params.messageProvider,
+          messageProvider: runtimeMessageChannel ?? params.messageProvider,
         };
         if (hookRunner?.hasHooks("before_compaction")) {
           hookRunner

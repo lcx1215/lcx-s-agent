@@ -5,7 +5,10 @@ import { generateSecureToken } from "../../infra/secure-random.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookBeforeAgentStartResult } from "../../plugins/types.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
-import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
+import {
+  isMarkdownCapableMessageChannel,
+  normalizeMessageChannelFamilyAlias,
+} from "../../utils/message-channel.js";
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import { hasConfiguredModelFallbacks } from "../agent-scope.js";
 import {
@@ -209,7 +212,10 @@ export async function runEmbeddedPiAgent(
     params.enqueue ?? ((task, opts) => enqueueCommandInLane(globalLane, task, opts));
   const enqueueSession =
     params.enqueue ?? ((task, opts) => enqueueCommandInLane(sessionLane, task, opts));
-  const channelHint = params.messageChannel ?? params.messageProvider;
+  const resolvedMessageChannel = normalizeMessageChannelFamilyAlias(
+    params.messageChannel ?? params.messageProvider,
+  );
+  const channelHint = resolvedMessageChannel;
   const resolvedToolResultFormat =
     params.toolResultFormat ??
     (channelHint
@@ -262,9 +268,10 @@ export async function runEmbeddedPiAgent(
         sessionKey: params.sessionKey,
         sessionId: params.sessionId,
         workspaceDir: resolvedWorkspace,
-        messageProvider: params.messageProvider ?? undefined,
+        messageProvider: resolvedMessageChannel ?? params.messageProvider,
         trigger: params.trigger,
-        channelId: params.messageChannel ?? params.messageProvider ?? undefined,
+        channelId:
+          resolvedMessageChannel ?? params.messageProvider ?? params.messageChannel ?? undefined,
       };
       if (hookRunner?.hasHooks("before_model_resolve")) {
         try {

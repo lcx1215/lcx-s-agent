@@ -19,6 +19,7 @@ type CaseExpectation = {
   expectedPrimaryModules?: readonly string[];
   expectedRequiredTools?: readonly string[];
   expectedNoticeSnippets?: readonly string[];
+  expectedNoticePrimaryModules?: readonly string[];
 };
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -50,6 +51,32 @@ function assertIncludesAll(values: readonly string[], expected: readonly string[
   }
 }
 
+function parseNoticeModules(notice: string | undefined, key: string): readonly string[] {
+  if (!notice) {
+    return [];
+  }
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = notice.match(new RegExp(`^${escapedKey}=([^\\n]+)$`, "mu"));
+  if (!match) {
+    return [];
+  }
+  return match[1]
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function assertNoticeModuleSet(
+  notice: string | undefined,
+  key: string,
+  expected: readonly string[],
+  label: string,
+) {
+  const values = parseNoticeModules(notice, key);
+  assert(values.length > 0, `${label}: missing ${key} line`);
+  assertIncludesAll(values, expected, `${label}: ${key}`);
+}
+
 const CASES: readonly CaseExpectation[] = [
   {
     name: "market-math-index",
@@ -63,9 +90,9 @@ const CASES: readonly CaseExpectation[] = [
     expectedRequiredTools: ["quant_math", "review_panel"],
     expectedNoticeSnippets: [
       "Finance brain orchestration contract",
-      "primaryModules=etf_regime,quant_math,causal_map",
       "do not replace quant_math with model guesses",
     ],
+    expectedNoticePrimaryModules: ["etf_regime", "quant_math", "causal_map"],
   },
   {
     name: "learn-not-teach",
@@ -117,7 +144,9 @@ const CASES: readonly CaseExpectation[] = [
     expectedFamily: "ops_source_grounding",
     expectedTarget: "ops_audit",
     expectedBackendTool: null,
-    expectFinanceOrchestration: false,
+    expectFinanceOrchestration: true,
+    expectedPrimaryModules: ["causal_map"],
+    expectedNoticePrimaryModules: ["causal_map"],
   },
   {
     name: "external-coverage-honesty",
@@ -179,6 +208,14 @@ async function runCase(testCase: CaseExpectation) {
       testCase.expectedRequiredTools ?? [],
       `${testCase.name}: requiredTools`,
     );
+    if (testCase.expectedNoticePrimaryModules) {
+      assertNoticeModuleSet(
+        financeNotice,
+        "primaryModules",
+        testCase.expectedNoticePrimaryModules,
+        testCase.name,
+      );
+    }
   }
   for (const snippet of testCase.expectedNoticeSnippets ?? []) {
     assert(financeNotice?.includes(snippet), `${testCase.name}: notice missing ${snippet}`);
