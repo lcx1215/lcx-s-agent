@@ -13,6 +13,7 @@ const PROMOTION_STATE_PATH = "branches/_system/live-promotion-state.json";
 const DEFAULT_PORT = 18789;
 const DEFAULT_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const RESTART_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
+const LIVE_RESTART_HEALTH_TIMEOUT_MS = 180_000;
 const PROBE_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_REPLY_FLOW_LOG = path.join(os.homedir(), ".openclaw/logs/feishu-reply-flow.jsonl");
 
@@ -123,6 +124,7 @@ type OperatorStatus = {
   nextHumanStep:
     | "commit_or_clean_dev_then_run_dev_tests"
     | "run_dev_tests_then_promote_dev_to_live"
+    | "retry_live_restart_then_probe"
     | "send_real_lark_acceptance"
     | "no_action_current_dev_seen_in_live";
 };
@@ -215,6 +217,7 @@ function runCommand(
   args: string[],
   cwd: string,
   timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): CommandResult {
   const result = spawnSync(command, args, {
     cwd,
@@ -222,6 +225,7 @@ function runCommand(
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,
     killSignal: "SIGTERM",
+    env: { ...process.env, ...extraEnv },
   });
   const errorText = result.error
     ? `\n[spawn error] ${result.error.name}: ${result.error.message}`
@@ -771,15 +775,19 @@ export function resolveOperatorStatus(params: {
   const liveRuntimeRestartCommandStatus = params.state?.commands.restart?.status ?? "not_run";
   const liveRuntimeProbePassed =
     params.probe?.status === "passed" || params.state?.commands.probe?.status === "passed";
-  const liveRuntimeUpdated = liveRuntimeCommitMatched && liveRuntimeProbePassed;
+  const liveRuntimeRestarted = liveRuntimeRestartCommandStatus === "passed";
+  const liveRuntimeUpdated =
+    liveRuntimeCommitMatched && liveRuntimeRestarted && liveRuntimeProbePassed;
   const liveUserSeen = liveRuntimeUpdated && params.visibleProof?.status === "live_visible_fixed";
   const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
     ? "commit_or_clean_dev_then_run_dev_tests"
-    : !liveRuntimeUpdated
+    : !liveRuntimeCommitMatched
       ? "run_dev_tests_then_promote_dev_to_live"
-      : !liveUserSeen
-        ? "send_real_lark_acceptance"
-        : "no_action_current_dev_seen_in_live";
+      : !liveRuntimeRestarted || !liveRuntimeProbePassed
+        ? "retry_live_restart_then_probe"
+        : !liveUserSeen
+          ? "send_real_lark_acceptance"
+          : "no_action_current_dev_seen_in_live";
   return {
     statusModel: "dev-ready -> live-runtime-updated -> live-user-seen",
     devReady: "not_checked_by_live_status",
@@ -1014,6 +1022,9 @@ export function main(argv = process.argv.slice(2)): number {
           ["--silent", "openclaw", "daemon", "restart"],
           args.targetRoot,
           RESTART_COMMAND_TIMEOUT_MS,
+          {
+            OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS: String(LIVE_RESTART_HEALTH_TIMEOUT_MS),
+          },
         );
     if (commands.restart.status === "failed") {
       restartFailed = true;

@@ -21,6 +21,21 @@ import type { DaemonLifecycleOptions } from "./types.js";
 
 const POST_RESTART_HEALTH_ATTEMPTS = DEFAULT_RESTART_HEALTH_ATTEMPTS;
 const POST_RESTART_HEALTH_DELAY_MS = DEFAULT_RESTART_HEALTH_DELAY_MS;
+const RESTART_HEALTH_TIMEOUT_ENV = "OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS";
+
+function resolveRestartHealthAttempts(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[RESTART_HEALTH_TIMEOUT_ENV];
+  if (!raw) {
+    return POST_RESTART_HEALTH_ATTEMPTS;
+  }
+
+  const timeoutMs = Number.parseInt(raw, 10);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return POST_RESTART_HEALTH_ATTEMPTS;
+  }
+
+  return Math.ceil(timeoutMs / POST_RESTART_HEALTH_DELAY_MS);
+}
 
 async function resolveGatewayRestartPort() {
   const service = resolveGatewayService();
@@ -73,7 +88,8 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
   const restartPort = await resolveGatewayRestartPort().catch(() =>
     resolveGatewayPort(loadConfig(), process.env),
   );
-  const restartWaitMs = POST_RESTART_HEALTH_ATTEMPTS * POST_RESTART_HEALTH_DELAY_MS;
+  const restartHealthAttempts = resolveRestartHealthAttempts();
+  const restartWaitMs = restartHealthAttempts * POST_RESTART_HEALTH_DELAY_MS;
   const restartWaitSeconds = Math.round(restartWaitMs / 1000);
 
   return await runServiceRestart({
@@ -86,7 +102,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
       let health = await waitForGatewayHealthyRestart({
         service,
         port: restartPort,
-        attempts: POST_RESTART_HEALTH_ATTEMPTS,
+        attempts: restartHealthAttempts,
         delayMs: POST_RESTART_HEALTH_DELAY_MS,
         includeUnknownListenersAsStale: process.platform === "win32",
       });
@@ -104,7 +120,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         health = await waitForGatewayHealthyRestart({
           service,
           port: restartPort,
-          attempts: POST_RESTART_HEALTH_ATTEMPTS,
+          attempts: restartHealthAttempts,
           delayMs: POST_RESTART_HEALTH_DELAY_MS,
           includeUnknownListenersAsStale: process.platform === "win32",
         });

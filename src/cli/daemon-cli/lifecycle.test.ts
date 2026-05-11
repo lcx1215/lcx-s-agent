@@ -133,4 +133,32 @@ describe("runDaemonRestart health checks", () => {
     expect(terminateStaleGatewayPids).not.toHaveBeenCalled();
     expect(renderRestartDiagnostics).toHaveBeenCalledTimes(1);
   });
+
+  it("honors an extended restart health timeout from the environment", async () => {
+    const previous = process.env.OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS;
+    process.env.OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS = "180000";
+    const unhealthy: RestartHealthSnapshot = {
+      healthy: false,
+      staleGatewayPids: [],
+      runtime: { status: "stopped" },
+      portUsage: { port: 18789, status: "free", listeners: [], hints: [] },
+    };
+    waitForGatewayHealthyRestart.mockResolvedValue(unhealthy);
+
+    try {
+      await expect(runDaemonRestart({ json: true })).rejects.toMatchObject({
+        message: "Gateway restart timed out after 180s waiting for health checks.",
+        hints: ["openclaw gateway status --deep", "openclaw doctor"],
+      });
+      expect(waitForGatewayHealthyRestart).toHaveBeenCalledWith(
+        expect.objectContaining({ attempts: 360, delayMs: 500 }),
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS;
+      } else {
+        process.env.OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS = previous;
+      }
+    }
+  });
 });

@@ -238,6 +238,31 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveRuntimeRestartCommandStatus=passed");
     expect(stdout).toContain("liveRuntimeProbePassed=false");
     expect(stdout).toContain("liveRuntimeUpdated=false");
-    expect(stdout).toContain("nextHumanStep=run_dev_tests_then_promote_dev_to_live");
+    expect(stdout).toContain("nextHumanStep=retry_live_restart_then_probe");
+  });
+
+  it("does not call matching commit live-runtime-updated when restart failed but probe passed", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+    const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
+
+    writePromotionState(targetRoot, currentCommit, {
+      restartStatus: "failed",
+      probeStatus: "passed",
+    });
+    const stdout = runStatus(sourceRoot, targetRoot);
+
+    expect(stdout).toContain("liveRuntimeCommitMatched=true");
+    expect(stdout).toContain("liveRuntimeRestartCommandStatus=failed");
+    expect(stdout).toContain("liveRuntimeProbePassed=true");
+    expect(stdout).toContain("liveRuntimeUpdated=false");
+    expect(stdout).toContain("nextHumanStep=retry_live_restart_then_probe");
   });
 });
