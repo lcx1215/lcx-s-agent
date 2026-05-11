@@ -239,7 +239,10 @@ pnpm lcx:live:status
 - `devLiveDrift`: dev/live 不一致的原因，例如 `dev_commit_differs`、`current_dev_dirty` 或 `live_matches_current_dev`。
 - `statusModel`: 对人看的三层模型，固定是 `dev-ready -> live-runtime-updated -> live-user-seen`。
 - `devReady`: `lcx:live:status` 不跑 dev 测试，所以这里会显示 `not_checked_by_live_status`。
-- `liveRuntimeUpdated`: 当前 clean dev HEAD 是否已经迁移到 live sidecar。
+- `liveRuntimeCommitMatched`: 当前 clean dev HEAD 是否和 live sidecar 记录的 commit 一样。
+- `liveRuntimeRestartCommandStatus`: 最近一次 live promotion 记录里的 restart 命令状态；它是证据字段，不等于真实用户验收。
+- `liveRuntimeProbePassed`: live sidecar 的 runtime/channel probe 是否通过。
+- `liveRuntimeUpdated`: 当前 clean dev HEAD 是否已经迁移到 live sidecar，并且 live runtime probe 已通过。
 - `liveUserSeen`: 当前 dev HEAD 对应的 live runtime 是否已经被真实 Lark/Feishu 可见回复验收。
 - `nextHumanStep`: 下一步该做 dev 测试、迁移 live，还是发真实 Lark 验收。
 - `liveVisibleStatus`: 真实 Lark/Feishu 入站和回复证据状态。

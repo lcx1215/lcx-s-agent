@@ -115,6 +115,9 @@ type DevLiveDriftStatus = {
 type OperatorStatus = {
   statusModel: "dev-ready -> live-runtime-updated -> live-user-seen";
   devReady: "not_checked_by_live_status";
+  liveRuntimeCommitMatched: boolean;
+  liveRuntimeRestartCommandStatus: StepStatus | "not_run";
+  liveRuntimeProbePassed: boolean;
   liveRuntimeUpdated: boolean;
   liveUserSeen: boolean;
   nextHumanStep:
@@ -698,6 +701,9 @@ function renderStatus(params: {
   const operatorLines = [
     `statusModel=${params.operatorStatus.statusModel}`,
     `devReady=${params.operatorStatus.devReady}`,
+    `liveRuntimeCommitMatched=${params.operatorStatus.liveRuntimeCommitMatched}`,
+    `liveRuntimeRestartCommandStatus=${params.operatorStatus.liveRuntimeRestartCommandStatus}`,
+    `liveRuntimeProbePassed=${params.operatorStatus.liveRuntimeProbePassed}`,
     `liveRuntimeUpdated=${params.operatorStatus.liveRuntimeUpdated}`,
     `liveUserSeen=${params.operatorStatus.liveUserSeen}`,
     `nextHumanStep=${params.operatorStatus.nextHumanStep}`,
@@ -753,13 +759,19 @@ function renderStatus(params: {
 }
 
 export function resolveOperatorStatus(params: {
+  state: PromotionReceipt | null;
   devLiveDrift: DevLiveDriftStatus;
+  probe: CommandResult | null;
   visibleProof: LiveVisibleProof | null;
 }): OperatorStatus {
   const devHasLocalChanges =
     params.devLiveDrift.devLiveDrift === "current_dev_dirty" ||
     params.devLiveDrift.devLiveDrift === "current_dev_has_untracked_files";
-  const liveRuntimeUpdated = params.devLiveDrift.liveMatchesCurrentDev;
+  const liveRuntimeCommitMatched = params.devLiveDrift.liveMatchesCurrentDev;
+  const liveRuntimeRestartCommandStatus = params.state?.commands.restart?.status ?? "not_run";
+  const liveRuntimeProbePassed =
+    params.probe?.status === "passed" || params.state?.commands.probe?.status === "passed";
+  const liveRuntimeUpdated = liveRuntimeCommitMatched && liveRuntimeProbePassed;
   const liveUserSeen = liveRuntimeUpdated && params.visibleProof?.status === "live_visible_fixed";
   const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
     ? "commit_or_clean_dev_then_run_dev_tests"
@@ -771,6 +783,9 @@ export function resolveOperatorStatus(params: {
   return {
     statusModel: "dev-ready -> live-runtime-updated -> live-user-seen",
     devReady: "not_checked_by_live_status",
+    liveRuntimeCommitMatched,
+    liveRuntimeRestartCommandStatus,
+    liveRuntimeProbePassed,
     liveRuntimeUpdated,
     liveUserSeen,
     nextHumanStep,
@@ -843,7 +858,9 @@ export function main(argv = process.argv.slice(2)): number {
         })
       : null;
     const operatorStatus = resolveOperatorStatus({
+      state,
       devLiveDrift,
+      probe,
       visibleProof,
     });
     process.stdout.write(

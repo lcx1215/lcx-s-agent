@@ -21,8 +21,23 @@ function git(cwd: string, args: string[]): string {
   return (result.stdout || "").trim();
 }
 
-function writePromotionState(targetRoot: string, commit: string): void {
+function writePromotionState(
+  targetRoot: string,
+  commit: string,
+  options: {
+    restartStatus?: "skipped" | "passed" | "failed";
+    probeStatus?: "skipped" | "passed" | "failed";
+  } = {},
+): void {
   const statePath = path.join(targetRoot, "branches/_system/live-promotion-state.json");
+  const command = (name: string, status: "skipped" | "passed" | "failed") => ({
+    command: name,
+    cwd: targetRoot,
+    status,
+    code: status === "failed" ? 1 : 0,
+    stdout: "",
+    stderr: "",
+  });
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   fs.writeFileSync(
     statePath,
@@ -62,8 +77,12 @@ function writePromotionState(targetRoot: string, commit: string): void {
           install: null,
           targetBuild: null,
           gatewayInstall: null,
-          restart: null,
-          probe: null,
+          restart: options.restartStatus
+            ? command("pnpm --silent openclaw daemon restart", options.restartStatus)
+            : null,
+          probe: options.probeStatus
+            ? command("pnpm --silent openclaw channels status --probe", options.probeStatus)
+            : null,
         },
         acceptancePhrase: `lark-live-visible-fixed-${commit.slice(0, 10)}`,
         nextLiveProof: [],
@@ -124,6 +143,9 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
     expect(stdout).toContain("statusModel=dev-ready -> live-runtime-updated -> live-user-seen");
     expect(stdout).toContain("devReady=not_checked_by_live_status");
+    expect(stdout).toContain("liveRuntimeCommitMatched=false");
+    expect(stdout).toContain("liveRuntimeRestartCommandStatus=not_run");
+    expect(stdout).toContain("liveRuntimeProbePassed=false");
     expect(stdout).toContain("liveRuntimeUpdated=false");
     expect(stdout).toContain("liveUserSeen=false");
     expect(stdout).toContain("nextHumanStep=run_dev_tests_then_promote_dev_to_live");
@@ -144,13 +166,19 @@ describe("lcx-promote-live status", () => {
     git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
     const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
 
-    writePromotionState(targetRoot, currentCommit);
+    writePromotionState(targetRoot, currentCommit, {
+      restartStatus: "passed",
+      probeStatus: "passed",
+    });
     const stdout = runStatus(sourceRoot, targetRoot);
 
     expect(stdout).toContain(`sourceCommit=${currentCommit}`);
     expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
     expect(stdout).toContain("statusModel=dev-ready -> live-runtime-updated -> live-user-seen");
     expect(stdout).toContain("devReady=not_checked_by_live_status");
+    expect(stdout).toContain("liveRuntimeCommitMatched=true");
+    expect(stdout).toContain("liveRuntimeRestartCommandStatus=passed");
+    expect(stdout).toContain("liveRuntimeProbePassed=true");
     expect(stdout).toContain("liveRuntimeUpdated=true");
     expect(stdout).toContain("liveUserSeen=false");
     expect(stdout).toContain("nextHumanStep=send_real_lark_acceptance");
@@ -172,16 +200,44 @@ describe("lcx-promote-live status", () => {
     const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
 
     fs.writeFileSync(path.join(sourceRoot, "a.txt"), "dirty\n", "utf8");
-    writePromotionState(targetRoot, currentCommit);
+    writePromotionState(targetRoot, currentCommit, {
+      restartStatus: "passed",
+      probeStatus: "passed",
+    });
     const stdout = runStatus(sourceRoot, targetRoot);
 
     expect(stdout).toContain(`sourceCommit=${currentCommit}`);
     expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain("liveRuntimeCommitMatched=false");
+    expect(stdout).toContain("liveRuntimeRestartCommandStatus=passed");
+    expect(stdout).toContain("liveRuntimeProbePassed=true");
     expect(stdout).toContain("liveRuntimeUpdated=false");
     expect(stdout).toContain("liveUserSeen=false");
     expect(stdout).toContain("nextHumanStep=commit_or_clean_dev_then_run_dev_tests");
     expect(stdout).toContain("liveMatchesCurrentDev=false");
     expect(stdout).toContain("liveNeedsPromotion=true");
     expect(stdout).toContain("devLiveDrift=current_dev_dirty");
+  });
+
+  it("does not call matching commit live-runtime-updated without runtime probe evidence", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+    const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
+
+    writePromotionState(targetRoot, currentCommit, { restartStatus: "passed" });
+    const stdout = runStatus(sourceRoot, targetRoot);
+
+    expect(stdout).toContain("liveRuntimeCommitMatched=true");
+    expect(stdout).toContain("liveRuntimeRestartCommandStatus=passed");
+    expect(stdout).toContain("liveRuntimeProbePassed=false");
+    expect(stdout).toContain("liveRuntimeUpdated=false");
+    expect(stdout).toContain("nextHumanStep=run_dev_tests_then_promote_dev_to_live");
   });
 });
