@@ -608,6 +608,68 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.rejected_context).toContain("trade_recommendation_without_evidence");
   });
 
+  it("keeps workflow training wording from outranking all-domain finance intent", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {
+        task_family: "agent_skill_pattern_distillation",
+        primary_modules: [
+          "skill_pattern_distillation",
+          "agent_workflow_memory",
+          "source_registry",
+          "review_panel",
+          "eval_harness_design",
+          "control_room_summary",
+          "finance_learning_memory",
+        ],
+        missing_data: [
+          "candidate_skill_source_or_local_skill_path",
+          "target_workflow_acceptance_metric",
+          "license_and_write_scope_review",
+        ],
+        risk_boundaries: ["research_only", "no_execution_authority"],
+      },
+      {
+        ask: "我现在要做一个全市场低频研究拆解：同时看美股大盘和龙头股（QQQ/SPY/NVDA/MSFT）、中国A股政策和资金流、全球主要指数、ETF、黄金/原油/美元/人民币流动性、债券利率、信用流动性、BTC/ETH 加密市场结构。请像控制室一样先拆内部模块，不要直接给交易建议；必须包含 财报+宏观+仓位+技术面+反方论证+数据缺口，并且要明确 fresh-data gap、指数权重/成分股 gap、A股政策/资金流 gap、crypto liquidity/volatility/custody/regulatory gap、FX dollar/yuan liquidity gap、position weights/return series gap。注意：这是为了训练 local brain 的 workflow，但不要因为我提到 workflow/training/local brain 就变成 agent-skill 学习任务；最终用户表面应该先给中文大白话摘要，research-only，不要 JSON-first。",
+        sourceSummary:
+          "dev-full-loop-acceptance requires finance_learning_memory, source_registry, causal_map, review_panel, control_room_summary, macro rates, credit liquidity, cross asset liquidity, FX dollar/yuan liquidity, US equity market structure, China A-share policy flow, global index regime, crypto market structure, quant math, portfolio risk gates, explicit named missing-data gaps, red-team invalidation, plain-language summary first, research-only, and no trade advice.",
+      },
+    );
+
+    expect(plan.task_family).toBe("full_stack_finance_stress_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "crypto_market_structure",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.supporting_modules).toEqual(
+      expect.arrayContaining(["finance_learning_memory", "source_registry", "causal_map"]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "fresh_market_data_snapshot",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "china_a_share_policy_liquidity_and_northbound_inputs",
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "fx_dollar_yuan_and_global_liquidity_inputs",
+        "position_weights_and_return_series",
+        "red_team_invalidation_evidence",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_execution_authority", "no_trade_advice"]),
+    );
+    expect(plan.task_family).not.toBe("agent_skill_pattern_distillation");
+  });
+
   it("keeps crypto to QQQ spillover tied to index regime and risk gates", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

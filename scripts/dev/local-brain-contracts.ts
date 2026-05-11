@@ -271,6 +271,9 @@ function looksLikeCommodityFrameworkLearning(text: string): boolean {
 }
 
 function looksLikeBroadFinanceModuleCoverage(text: string): boolean {
+  if (looksLikeFullStackFinanceStressTest(text)) {
+    return false;
+  }
   const asksForModuleMap =
     /(金融模块|金融能力|全领域.{0,8}金融|金融.{0,8}全领域|模块地图|模块体系|能力层|module taxonomy|finance module|模块还不够|还不够.{0,12}模块|全部.{0,12}模块|所有.{0,12}模块|扩充.{0,12}模块|source registry.*review panel)/iu.test(
       text,
@@ -574,6 +577,13 @@ function looksLikeFullStackFinanceStressTest(text: string): boolean {
 }
 
 function looksLikeAgentSkillLearning(text: string): boolean {
+  if (
+    looksLikeFullStackFinanceStressTest(text) ||
+    looksLikeCrossMarketFinance(text) ||
+    looksLikeBroadFinanceModuleCoverage(text)
+  ) {
+    return false;
+  }
   return (
     /(skill|skills|skill\.md|agent skill|microagent|openhands|hugging face|agent结构|本地agent|本地 agent|金融agent|金融 agent|financial agent|agent plugins?|managed agents?|智能体插件|技能|工作流|workflow|harness|hermes)/iu.test(
       text,
@@ -2216,8 +2226,7 @@ export function hardenLocalBrainPlanForAsk(
     return {
       ...safe,
       task_family: "full_stack_finance_stress_research_planning",
-      primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
-        ...inferFinanceModulesFromLocalKnowledgeText(text),
+      primary_modules: mergeUnique([
         "company_fundamentals_value",
         "macro_rates_inflation",
         "credit_liquidity",
@@ -2230,6 +2239,8 @@ export function hardenLocalBrainPlanForAsk(
         "technical_timing",
         "quant_math",
         "portfolio_risk_gates",
+        ...inferFinanceModulesFromLocalKnowledgeText(text),
+        ...arrayValue(safe.primary_modules),
       ]),
       supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
         "causal_map",
@@ -2252,25 +2263,32 @@ export function hardenLocalBrainPlanForAsk(
         "finance_framework_portfolio_risk_gates_producer",
         "review_panel",
       ]),
-      missing_data: mergeUnique(arrayValue(safe.missing_data), [
+      missing_data: mergeUnique([
         "memory_recall_scope_or_relevant_receipts",
+        "fresh_market_data_snapshot",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "china_a_share_policy_liquidity_and_northbound_inputs",
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "fx_dollar_yuan_and_global_liquidity_inputs",
+        "position_weights_and_return_series",
+        "red_team_invalidation_evidence",
         "latest_10q_10k_or_earnings_release",
         "guidance_revision_margin_revenue_and_valuation_inputs",
         "current_rates_inflation_fed_path_and_liquidity_inputs",
         "position_weights_cost_basis_and_risk_limits",
         "price_volume_breadth_and_technical_regime_inputs",
         "portfolio_weights_and_risk_limits",
-        "red_team_invalidation_evidence",
-        "fresh_market_data_snapshot",
+        ...arrayValue(safe.missing_data),
       ]),
-      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
+      risk_boundaries: mergeUnique([
         "research_only",
         "no_execution_authority",
+        "no_trade_advice",
         "evidence_required",
         "no_model_math_guessing",
         "no_unverified_current_market_data",
         "red_team_invalidation_required",
-        "no_trade_advice",
+        ...cleanRiskBoundaries(safe.risk_boundaries),
       ]),
       next_step:
         "recall_local_finance_rules_then_collect_fundamental_macro_position_technical_inputs_build_causal_map_run_quant_risk_gates_and_red_team_review_before_control_room_summary",

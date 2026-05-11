@@ -42,6 +42,9 @@ const DEFAULT_GUARD_LOG = path.join(
   "minimax-brain-training-guard-medium.jsonl",
 );
 const LOCAL_BRAIN_PLAN_MAX_TOKENS = "700";
+const LOCAL_BRAIN_MISSING_DATA_CAP = 8;
+const LOCAL_BRAIN_RISK_BOUNDARY_CAP = 6;
+const LOCAL_BRAIN_REJECTED_CONTEXT_CAP = 3;
 const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
@@ -593,6 +596,18 @@ function finalizeModuleFields(plan: Record<string, unknown>): Record<string, unk
   };
 }
 
+function compactPlanOutputBudget(plan: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...plan,
+    missing_data: arrayValue(plan.missing_data).slice(0, LOCAL_BRAIN_MISSING_DATA_CAP),
+    risk_boundaries: planRiskBoundaryValue(plan.risk_boundaries).slice(
+      0,
+      LOCAL_BRAIN_RISK_BOUNDARY_CAP,
+    ),
+    rejected_context: arrayValue(plan.rejected_context).slice(0, LOCAL_BRAIN_REJECTED_CONTEXT_CAP),
+  };
+}
+
 const options = parseArgs(process.argv.slice(2));
 const adapterResolution = await resolveAdapter(options);
 const resolvedOptions: CliOptions = {
@@ -607,11 +622,13 @@ try {
 } catch (error) {
   rawParseError = String(error);
 }
-const parsed = finalizeModuleFields(
-  hardenLocalBrainPlanForAsk(hardenPlanForKnownContracts(rawPlan, options), {
-    ask: options.ask,
-    sourceSummary: options.sourceSummary,
-  }),
+const parsed = compactPlanOutputBudget(
+  finalizeModuleFields(
+    hardenLocalBrainPlanForAsk(hardenPlanForKnownContracts(rawPlan, options), {
+      ask: options.ask,
+      sourceSummary: options.sourceSummary,
+    }),
+  ),
 );
 const result = {
   ok: true,

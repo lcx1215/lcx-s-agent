@@ -88,11 +88,11 @@ LCX Agent 长期运行在真实飞书 / Lark 回路里，所以“本地修了�
 
 对人只需要记住三层：
 
-| 状态                 | 大白话含义                                       |
-| -------------------- | ------------------------------------------------ |
-| dev-ready            | dev 仓本地测试、smoke 或模拟 Lark 回路已经通过。 |
-| live-runtime-updated | live sidecar 已迁移到 dev 确认过的 git 快照。    |
-| live-user-seen       | 真实 Lark/Feishu 用户入口已经看到正确回复。      |
+| 状态                 | 大白话含义                                                                     |
+| -------------------- | ------------------------------------------------------------------------------ |
+| dev-ready            | dev 仓本地测试、smoke 或模拟 Lark 回路已经通过。                               |
+| live-runtime-updated | live sidecar 已迁移到 dev 确认过的 git 快照，并且重启和 channel probe 已通过。 |
+| live-user-seen       | 真实 Lark/Feishu 用户入口已经看到正确回复。                                    |
 
 dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主要靠单元测试、smoke、synthetic/replay Lark 输入、routing score、本地 reply formatting 和本地 brain eval。真实 Lark 只用于迁移后的最后验收。
 

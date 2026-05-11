@@ -99,4 +99,63 @@ describe("local-brain-plan adapter selection", () => {
       await fs.rm(tmp, { recursive: true, force: true });
     }
   });
+
+  it("keeps hardened planner arrays inside the compact JSON budget", async () => {
+    const tmp = await fs.mkdtemp(path.join(process.cwd(), "tmp-lcx-local-brain-plan-"));
+    const fakePython = path.join(tmp, "python");
+    const fakeAdapter = path.join(tmp, "adapter");
+    await fs.mkdir(fakeAdapter);
+    await fs.writeFile(
+      fakePython,
+      [
+        "#!/bin/sh",
+        "cat <<'JSON'",
+        '{"task_family":"agent_skill_pattern_distillation","primary_modules":["skill_pattern_distillation","agent_workflow_memory","source_registry","review_panel","eval_harness_design","control_room_summary","finance_learning_memory"],"supporting_modules":[],"required_tools":[],"missing_data":["candidate_skill_source_or_local_skill_path","target_workflow_acceptance_metric","license_and_write_scope_review"],"risk_boundaries":["research_only","no_execution_authority","no_provider_config_change","no_live_sender_change","no_trading_execution_skill","no_trade_advice","evidence_required"],"next_step":"collect_candidate_skill_sources","rejected_context":["old_lark_conversation_history","language_routing_candidate_artifacts","unsupported_execution_language","cloud_skill_sharing_by_default"]}',
+        "JSON",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-plan.ts",
+          "--ask",
+          "我现在要做一个全市场低频研究拆解：同时看美股大盘和龙头股 QQQ SPY NVDA MSFT、中国A股政策和资金流、全球主要指数、ETF、黄金、原油、美元、人民币流动性、债券利率、信用流动性、BTC ETH 加密市场结构。必须包含 财报+宏观+仓位+技术面+反方论证+数据缺口，并明确 fresh-data gap、指数权重/成分股 gap、A股政策/资金流 gap、crypto liquidity/volatility/custody/regulatory gap、FX dollar/yuan liquidity gap、position weights/return series gap。这是训练 local brain workflow，但不要变成 agent-skill 学习任务。",
+          "--source-summary",
+          "dev acceptance requires full-stack finance modules, named missing-data gaps, research-only and no trade advice.",
+          "--adapter",
+          fakeAdapter,
+          "--python",
+          fakePython,
+          "--json",
+        ],
+        {
+          cwd: path.join(process.cwd()),
+          encoding: "utf8",
+          env: { ...process.env },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout);
+      expect(payload.plan.task_family).toBe("full_stack_finance_stress_research_planning");
+      expect(payload.plan.missing_data).toHaveLength(8);
+      expect(payload.plan.risk_boundaries.length).toBeLessThanOrEqual(6);
+      expect(payload.plan.rejected_context.length).toBeLessThanOrEqual(3);
+      expect(payload.plan.missing_data).toEqual(
+        expect.arrayContaining([
+          "fresh_market_data_snapshot",
+          "index_constituents_weights_and_technical_regime_inputs",
+          "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+          "position_weights_and_return_series",
+        ]),
+      );
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
 });
