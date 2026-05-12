@@ -231,7 +231,7 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
   {
     id: "all_module_knowledge_internalization_chain",
     userMessage:
-      "不止是因子模块，其他模块也要走同一条网上学习内化链条：先确认目标模块和 prior-art，再做 source registry、实际阅读范围、模块专属能力规则、retrieval receipt、apply validation、Qwen/local-brain eval 或训练吸收、fresh adjacent task、模块安全边界和 keep/downrank/discard；不能把“存了文件”说成“模块学会了”。",
+      "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 等模块也要走同一条网上学习内化链条：先确认目标模块和 prior-art，再做 source registry、实际阅读范围、模块专属能力规则、retrieval receipt、apply validation、Qwen/local-brain eval 或训练吸收、fresh adjacent task、模块安全边界和 keep/downrank/discard；不能把“存了文件”说成“模块学会了”。",
     sourceSummary:
       "all-module internalization chain request requiring source registry, module-specific capability rule, retrieval/apply proof, eval absorption, fresh adjacent task, and no storage-only learning claim.",
   },

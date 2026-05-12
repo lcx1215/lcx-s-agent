@@ -639,6 +639,20 @@ function looksLikeExternalKnowledgeInternalizationProtocol(text: string): boolea
 }
 
 function looksLikeAllModuleKnowledgeInternalizationChain(text: string): boolean {
+  if (
+    looksLikeBroadFinanceModuleCoverage(text) ||
+    looksLikeExternalKnowledgeInternalizationProtocol(text) ||
+    looksLikeExternalFinancialAgentPatternLearning(text)
+  ) {
+    return false;
+  }
+  const namesConcreteNonFactorModule =
+    /(期权|波动率|iv|gamma|skew|指数|index|indices|纳指|标普|沪深300|宏观|利率|基本面|财报|大宗商品|商品|原油|黄金|美元|外汇|fx|事件|event|技术面|technical|lark|feishu|飞书|记忆|memory|ops|skill|workflow)/iu.test(
+      text,
+    ) &&
+    /(也要|同样|等等|等模块|都要|都有|同一条|这种链条|这条链|same chain|same pipeline)/iu.test(
+      text,
+    );
   const namesModuleScope =
     /(所有模块|全部模块|其他模块|每个模块|跨模块|全模块|not just factor|not only factor|all modules|every module|module-wide)/iu.test(
       text,
@@ -646,9 +660,10 @@ function looksLikeAllModuleKnowledgeInternalizationChain(text: string): boolean 
     (/(因子模块|factor module|factor modules)/iu.test(text) &&
       /(其他模块|不止|不是只有|不只是|也要|同样|same chain|same pipeline|same internalization)/iu.test(
         text,
-      ));
+      )) ||
+    namesConcreteNonFactorModule;
   const namesInternalizationChain =
-    /(链条|流程|pipeline|protocol|合同|contract|内化|吸收|学习|沉淀|source registry|retrieval receipt|apply validation|eval|评测|训练吸收|capability card)/iu.test(
+    /(链条|内化链|学习链|吸收链|same chain|same pipeline|source registry.{0,80}(retrieval|apply|eval)|retrieval receipt|apply validation|qwen eval|eval 吸收|评测吸收|训练吸收|capability card)/iu.test(
       text,
     );
   return namesModuleScope && namesInternalizationChain;

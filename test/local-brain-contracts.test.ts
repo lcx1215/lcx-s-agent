@@ -1049,6 +1049,31 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("routes named non-factor modules into the same internalization chain", () => {
+    for (const ask of [
+      "还有期权、指数、宏观和基本面等模块，也要这种 source registry、retrieval receipt、apply validation、Qwen eval 吸收的链条。",
+      "Lark/Feishu 工作流、记忆模块、ops 模块和 skill 模块同样都要这条学习内化链，不能只给因子模块。",
+    ]) {
+      const plan = hardenLocalBrainPlanForAsk({}, { ask });
+
+      expect(plan.task_family).toBe("all_module_knowledge_internalization_chain");
+      expect(plan.missing_data).toEqual(
+        expect.arrayContaining([
+          "target_module_id_or_module_family",
+          "module_specific_capability_rule",
+          "application_validation_receipt",
+          "training_or_eval_absorption_evidence",
+        ]),
+      );
+      expect(plan.risk_boundaries).toEqual(
+        expect.arrayContaining([
+          "no_module_learning_claim_from_storage_only",
+          "no_model_internal_learning_claim_without_eval",
+        ]),
+      );
+    }
+  });
+
   it("turns a concrete example into an abstraction-transfer repair contract", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

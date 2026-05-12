@@ -91,10 +91,10 @@ module_specific_safety_boundary
 keep_downrank_or_discard_decision
 ```
 
-This applies to factor, macro, fundamentals, technical timing, options,
-commodities, Lark/Feishu workflow, agent workflow, memory, eval, ops, and skill
-modules. A stored source, summary, or dataset row is not enough to say the
-module learned it. Use `stored_only`, `retrieval_ready`,
+This applies to factor, options, indexes, macro, fundamentals, technical timing,
+commodities, FX, event-risk, Lark/Feishu workflow, agent workflow, memory, eval,
+ops, and skill modules. A stored source, summary, or dataset row is not enough
+to say the module learned it. Use `stored_only`, `retrieval_ready`,
 `application_ready`, or `eval_absorbed` style wording until the matching proof
 exists.
 
