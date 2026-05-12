@@ -731,6 +731,29 @@ function looksLikeTechnicalTimingNotStandalone(text: string): boolean {
   );
 }
 
+function looksLikeSeniorTraderRiskResearch(text: string): boolean {
+  const namesSeniorTradingFrame =
+    /(高级交易员|专业交易员|资深交易员|senior trader|pro trader|professional trader|trader[-_ ]?style|交易员式)/iu.test(
+      text,
+    );
+  const namesRiskProcess =
+    /(风险预算|risk budget|仓位调整|position sizing|position risk|回撤|drawdown|止损|stop[- ]?loss|对冲|hedg|期权|iv|skew|gamma|隔夜|跳空|gap risk|event risk|事件风险|流动性|liquidity|复盘|post[- ]?mortem|交易日志|trade journal)/iu.test(
+      text,
+    );
+  const namesMarketSurface =
+    /(qqq|spy|tlt|nvda|btc|crypto|a股|美股|指数|etf|股票|portfolio|组合|持仓|仓位|market)/iu.test(
+      text,
+    );
+  return (
+    !looksLikeCryptoLeverageBoundary(text) &&
+    namesSeniorTradingFrame &&
+    (namesRiskProcess || namesMarketSurface) &&
+    /(训练|变成|水平|分析|研究|拆|框架|流程|怎么|preflight|review|不要|不能|research|risk)/iu.test(
+      text,
+    )
+  );
+}
+
 export function hardenLocalBrainPlanForAsk(
   plan: Record<string, unknown>,
   input: LocalBrainContractInput,
@@ -840,6 +863,72 @@ export function hardenLocalBrainPlanForAsk(
         "current_example_only_success",
         "raw_internal_json_visible_reply",
         "unverified_generalization_claim",
+      ],
+    };
+  }
+
+  if (looksLikeSeniorTraderRiskResearch(text)) {
+    return {
+      ...safe,
+      task_family: "senior_trader_research_risk_packet",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "global_index_regime",
+        "etf_regime",
+        "company_fundamentals_value",
+        "options_volatility",
+        "technical_timing",
+        "event_driven",
+        "quant_math",
+        "portfolio_risk_gates",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "finance_learning_memory", "eval_harness_design"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_learning_capability_apply",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "current_positions_weights_cost_basis_and_time_horizon",
+        "position_weights_cost_basis_and_risk_limits",
+        "portfolio_weights_and_risk_limits",
+        "position_weights_and_return_series",
+        "risk_budget_drawdown_limit_and_liquidity_constraints",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "original_thesis_and_evidence_used",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "options_iv_skew_gamma_and_event_calendar",
+        "invalidation_condition_for_timing_signal",
+        "red_team_invalidation_evidence",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_current_market_data",
+        "technical_timing_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "red_team_invalidation_required",
+        "do_not_rewrite_past_mistakes",
+        "no_trade_advice",
+      ],
+      next_step: "build_research_only_risk_packet_before_any_position_language",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "execution_or_order_instruction",
+        "trade_recommendation_without_evidence",
+        "model_guessed_position_size",
+        "single_indicator_entry_or_exit_signal",
       ],
     };
   }

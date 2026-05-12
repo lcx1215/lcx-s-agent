@@ -119,6 +119,27 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
     sourceSummary: "quant math planning with missing weights and return series.",
   },
   {
+    id: "senior_trader_research_risk_packet",
+    userMessage:
+      "把本地 Qwen 强化成高级交易员式的研究脑：面对 QQQ、TLT、NVDA、BTC 或 A股指数，先做 research-only 风险包，拆仓位、风险预算、回撤、相关性、流动性、宏观、基本面、技术面、事件日历、期权 IV/skew/gamma、反方证据和数据缺口；不能给买卖点、止损价、目标价或下单语言。",
+    sourceSummary:
+      "senior-trader style risk packet curriculum requiring position/risk/liquidity/event/options inputs while preserving research-only and no execution authority.",
+  },
+  {
+    id: "event_gap_options_hedge_research_boundary",
+    userMessage:
+      "财报、FOMC 或 CPI 前，如果用户问能不能对冲 NVDA/QQQ 的隔夜跳空风险，训练本地大脑先拆 event risk、options IV/skew/gamma、流动性、仓位风险、失效条件和数据缺口；不要推荐具体期权合约、仓位比例或交易。",
+    sourceSummary:
+      "event-gap and options-hedge research preflight requiring IV/skew/gamma, liquidity, position risk, invalidation, and no contract recommendation.",
+  },
+  {
+    id: "trade_journal_post_mortem_learning",
+    userMessage:
+      "训练本地大脑做高级交易员式复盘：用户因为新闻追高亏损时，必须区分错误前提、证据不足、仓位过大、流动性误判、技术面误用、风险门缺失和事后诸葛亮偏差，沉淀成可复用规则；不要把复盘变成下一笔交易建议。",
+    sourceSummary:
+      "trade-journal post-mortem learning request requiring mistake-family classification, risk-control lesson, reusable rule, and no next-trade advice.",
+  },
+  {
     id: "external_source_missing",
     userMessage: "去学习这篇金融论文并沉淀成规则，但我还没给链接或本地文件。",
     sourceSummary: "external learning request without URL or local path.",
