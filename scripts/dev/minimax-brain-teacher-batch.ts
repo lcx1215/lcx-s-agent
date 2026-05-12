@@ -1488,6 +1488,7 @@ function findBalancedJsonObject(raw: string): string | null {
 function repairMissingCommas(candidate: string): string {
   return candidate
     .replace(/([}\]"])\s+("[A-Za-z0-9_$ -]+"\s*:)/gu, "$1,$2")
+    .replace(/\b(true|false|null|-?\d+(?:\.\d+)?)\s+("[A-Za-z0-9_$ -]+"\s*:)/gu, "$1,$2")
     .replace(/"\s+"/gu, '","');
 }
 

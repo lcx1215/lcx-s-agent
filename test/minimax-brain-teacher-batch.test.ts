@@ -203,6 +203,27 @@ describe("minimax brain teacher batch parsing", () => {
     expect(plan.required_tools).toEqual(["review_panel"]);
   });
 
+  it("repairs missing commas after primitive JSON property values", () => {
+    const plan = extractJson(`{
+      "task_family": "primitive_missing_comma"
+      "primary_modules": ["macro_rates_inflation"],
+      "supporting_modules": ["review_panel"],
+      "required_tools": ["review_panel"],
+      "missing_data": [],
+      "risk_boundaries": ["research_only"],
+      "next_step": "review",
+      "rejected_context": ["old_lark_conversation_history"],
+      "confidence": 0.7
+      "is_research_only": true
+      "notes": null
+      "source_count": 3
+      "final_field": "done"
+    }`);
+
+    expect(plan.task_family).toBe("primitive_missing_comma");
+    expect(plan.primary_modules).toEqual(["macro_rates_inflation"]);
+  });
+
   it("repairs MiniMax placeholder arrays before teacher-plan hardening", () => {
     const plan = normalizeTeacherPlan(
       extractJson(`{

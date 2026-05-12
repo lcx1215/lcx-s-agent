@@ -164,6 +164,7 @@ export function buildPromotionAudit(params: {
   const selectedEvalTotal = numberValue(selectedEval.total);
   const failedCaseIds = stringArray(selectedEval.failedCaseIds);
   const parseErrorCaseIds = stringArray(selectedEval.parseErrorCaseIds);
+  const parseRecoveredCaseIds = stringArray(selectedEval.parseRecoveredCaseIds);
   const parseErrorSamples = stringArray(selectedEval.parseErrorSamples);
   const resolverMatchesLatestEval =
     Boolean(selectedAdapter) && Boolean(latestEvalAdapter) && selectedAdapter === latestEvalAdapter;
@@ -207,6 +208,10 @@ export function buildPromotionAudit(params: {
     ...(latestEval.promotionReady === false
       ? ["latest_chronological_eval_not_promotion_ready"]
       : []),
+    ...(stringArray(latestEval.parseRecoveredCaseIds).length > 0
+      ? ["latest_chronological_eval_parse_recovered_present"]
+      : []),
+    ...(parseRecoveredCaseIds.length > 0 ? ["selected_eval_parse_recovered_present"] : []),
     ...(parseErrorSamples.length > 0 ? ["latest_eval_parse_error_samples_present"] : []),
   ];
 
@@ -229,6 +234,7 @@ export function buildPromotionAudit(params: {
       promotionReady: latestEval.promotionReady === true,
       failedCaseIds: stringArray(latestEval.failedCaseIds),
       parseErrorCaseIds: stringArray(latestEval.parseErrorCaseIds),
+      parseRecoveredCaseIds: stringArray(latestEval.parseRecoveredCaseIds),
     },
     selectedEval: {
       at: stringValue(selectedEval.at),
@@ -240,6 +246,7 @@ export function buildPromotionAudit(params: {
       promotionReady: selectedEvalPromotionReady,
       failedCaseIds,
       parseErrorCaseIds,
+      parseRecoveredCaseIds,
     },
     latestPassingEval: {
       at: stringValue(latestPassingEval.at),
@@ -249,6 +256,7 @@ export function buildPromotionAudit(params: {
       total: numberValue(latestPassingEval.total),
       passRate: numberValue(latestPassingEval.passRate),
       promotionReady: latestPassingEval.promotionReady === true,
+      parseRecoveredCaseIds: stringArray(latestPassingEval.parseRecoveredCaseIds),
     },
     resolverMatchesLatestEval,
     resolverMatchesLatestPassingEval,

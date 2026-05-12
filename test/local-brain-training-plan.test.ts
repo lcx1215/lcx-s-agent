@@ -208,6 +208,16 @@ describe("local-brain-training-plan", () => {
       promotionReady: false,
       parseRecoveredCaseIds: ["plain_recent_stock_market_brief_preflight"],
     });
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "eval_not_promotion_ready",
+          reason: expect.stringContaining(
+            "parseRecovered=plain_recent_stock_market_brief_preflight",
+          ),
+        }),
+      ]),
+    );
     expect(plan.latestPassingEval).toMatchObject({
       name: "stable_hardened_eval",
       adapterPath: "/tmp/adapter-r2",

@@ -382,6 +382,21 @@ function reasonText(value: unknown, fallback: string): string {
   }
 }
 
+function evalNonPromotionReason(snapshot: EvalSnapshot): string {
+  const reasons = [
+    snapshot.failedCaseIds.length > 0 ? `failed=${snapshot.failedCaseIds.join(",")}` : undefined,
+    snapshot.parseErrorCaseIds.length > 0
+      ? `parseErrors=${snapshot.parseErrorCaseIds.join(",")}`
+      : undefined,
+    snapshot.parseRecoveredCaseIds.length > 0
+      ? `parseRecovered=${snapshot.parseRecoveredCaseIds.join(",")}`
+      : undefined,
+  ].filter((entry): entry is string => Boolean(entry));
+  return `Latest ${snapshot.name} passed ${snapshot.passed}/${snapshot.total}; ${
+    reasons.join("; ") || "promotionReady=false without named failed or parse-recovered cases"
+  }.`;
+}
+
 function buildDecisions(params: {
   activeProcesses: JsonRecord[];
   latestGuardStart?: JsonRecord;
@@ -445,7 +460,7 @@ function buildDecisions(params: {
       lane: "training",
       severity: "P2",
       action: "continue_failure_focus_teacher_and_hold_promotion",
-      reason: `Latest ${params.latestEval.name} passed ${params.latestEval.passed}/${params.latestEval.total}; failed=${params.latestEval.failedCaseIds.join(",") || "unknown"}.`,
+      reason: evalNonPromotionReason(params.latestEval),
       codexRepairEligible: false,
     });
   }

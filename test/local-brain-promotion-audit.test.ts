@@ -139,6 +139,7 @@ describe("local-brain-promotion-audit", () => {
           promotionReady: false,
           failedCaseIds: [],
           parseErrorCaseIds: [],
+          parseRecoveredCaseIds: ["plain_recent_stock_market_brief_preflight"],
         },
         latestPassingEval: {
           name: "stable_hardened_eval",
@@ -168,7 +169,15 @@ describe("local-brain-promotion-audit", () => {
         resolverMatchesLatestEval: false,
         resolverMatchesLatestPassingEval: true,
         realBugsFound: [],
-        qualityLaneConcernsConsidered: ["latest_chronological_eval_not_promotion_ready"],
+        qualityLaneConcernsConsidered: [
+          "latest_chronological_eval_not_promotion_ready",
+          "latest_chronological_eval_parse_recovered_present",
+        ],
+      }),
+    );
+    expect(audit.latestEval).toEqual(
+      expect.objectContaining({
+        parseRecoveredCaseIds: ["plain_recent_stock_market_brief_preflight"],
       }),
     );
     expect(audit.selectedEval).toEqual(
