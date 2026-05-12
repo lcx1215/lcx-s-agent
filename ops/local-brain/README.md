@@ -114,6 +114,17 @@ task, and existing tool bridge. Finance research modules should reuse
 memory, and skill modules must keep module-specific receipts and must not be
 claimed as learned from storage alone.
 
+When `writeReceipt=true`, the tool writes a dev/local receipt under:
+
+```text
+memory/module-learning-pipeline-plan-receipts/<YYYY-MM-DD>/
+```
+
+The receipt status is evidence-derived: `missing_evidence`, `stored_only`,
+`retrieval_ready`, `application_ready`, or `eval_absorbed`. Do not upgrade a
+module beyond the returned status in summaries, Lark replies, or training
+handoffs.
+
 ## Codex Skills To Load
 
 When context is missing, load only the skills that match the current question. The most useful local skill files are:

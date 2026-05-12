@@ -311,7 +311,9 @@ export function createOpenClawTools(options?: {
     createFinanceLearningPipelineOrchestratorTool({
       workspaceDir,
     }),
-    createModuleLearningPipelinePlanTool(),
+    createModuleLearningPipelinePlanTool({
+      workspaceDir,
+    }),
     createFinanceLearningRetrievalReviewTool({
       workspaceDir,
     }),

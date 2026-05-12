@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { stringEnum } from "../schema/typebox.js";
+import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringArrayParam, readStringParam, ToolInputError } from "./common.js";
 
@@ -38,6 +42,15 @@ type ModuleLearningSchema = {
   };
 };
 
+const MODULE_LEARNING_DECISIONS = ["keep", "downrank", "discard", "not_decided"] as const;
+
+type ModuleLearningEvidenceStatus =
+  | "missing_evidence"
+  | "stored_only"
+  | "retrieval_ready"
+  | "application_ready"
+  | "eval_absorbed";
+
 const ModuleLearningPipelinePlanSchema = Type.Object({
   targetModule: stringEnum(MODULE_LEARNING_TARGETS),
   sourceUrlOrPath: Type.Optional(Type.String()),
@@ -45,6 +58,13 @@ const ModuleLearningPipelinePlanSchema = Type.Object({
   actualReadingScope: Type.Optional(Type.String()),
   applicationValidationTask: Type.Optional(Type.String()),
   existingArtifactPaths: Type.Optional(Type.Array(Type.String())),
+  sourceRegistryRecordPath: Type.Optional(Type.String()),
+  retrievalReceiptPath: Type.Optional(Type.String()),
+  applicationValidationReceiptPath: Type.Optional(Type.String()),
+  trainingOrEvalAbsorptionEvidencePath: Type.Optional(Type.String()),
+  freshAdjacentApplicationTask: Type.Optional(Type.String()),
+  keepDownrankDiscardDecision: Type.Optional(stringEnum(MODULE_LEARNING_DECISIONS)),
+  writeReceipt: Type.Optional(Type.Boolean()),
 });
 
 const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
@@ -476,14 +496,78 @@ function normalizeOptional(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-export function createModuleLearningPipelinePlanTool(): AnyAgentTool {
+function resolveEvidenceStatus(params: {
+  sourceUrlOrPath: string | null;
+  actualReadingScope: string | null;
+  sourceRegistryRecordPath: string | null;
+  retrievalReceiptPath: string | null;
+  applicationValidationReceiptPath: string | null;
+  trainingOrEvalAbsorptionEvidencePath: string | null;
+  freshAdjacentApplicationTask: string | null;
+  keepDownrankDiscardDecision: string | null;
+}): ModuleLearningEvidenceStatus {
+  const sourceReady =
+    Boolean(params.sourceUrlOrPath) &&
+    Boolean(params.actualReadingScope) &&
+    Boolean(params.sourceRegistryRecordPath);
+  if (!sourceReady) {
+    return "missing_evidence";
+  }
+  if (!params.retrievalReceiptPath) {
+    return "stored_only";
+  }
+  if (!params.applicationValidationReceiptPath) {
+    return "retrieval_ready";
+  }
+  if (
+    !params.trainingOrEvalAbsorptionEvidencePath ||
+    !params.freshAdjacentApplicationTask ||
+    !params.keepDownrankDiscardDecision ||
+    params.keepDownrankDiscardDecision === "not_decided"
+  ) {
+    return "application_ready";
+  }
+  return "eval_absorbed";
+}
+
+function buildModuleLearningReceiptPath(params: {
+  targetModule: string;
+  learningIntent: string;
+  toolCallId: string;
+}): string {
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const hash = createHash("sha256")
+    .update(`${params.toolCallId}\n${params.targetModule}\n${params.learningIntent}`)
+    .digest("hex")
+    .slice(0, 12);
+  const fileName = `${new Date().toISOString().replace(/[:.]/gu, "-")}__${hash}.json`;
+  return path
+    .join("memory", "module-learning-pipeline-plan-receipts", dateKey, fileName)
+    .split(path.sep)
+    .join("/");
+}
+
+async function writeModuleLearningPlanReceipt(params: {
+  workspaceDir: string;
+  receiptPath: string;
+  payload: Record<string, unknown>;
+}): Promise<void> {
+  const absolutePath = path.join(params.workspaceDir, params.receiptPath);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, `${JSON.stringify(params.payload, null, 2)}\n`, "utf8");
+}
+
+export function createModuleLearningPipelinePlanTool(options?: {
+  workspaceDir?: string;
+}): AnyAgentTool {
+  const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir);
   return {
     label: "Module Learning Pipeline Plan",
     name: "module_learning_pipeline_plan",
     description:
       "Plan one evidence-gated module learning run using the shared source, capability, retrieval, application, eval, and keep/downrank/discard chain. This is read-only and does not fetch remote content or mutate live/provider/protected-memory state.",
     parameters: ModuleLearningPipelinePlanSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const targetModule = readStringParam(params, "targetModule", { required: true });
       if (!MODULE_LEARNING_TARGETS.includes(targetModule as ModuleLearningTarget)) {
@@ -504,16 +588,56 @@ export function createModuleLearningPipelinePlanTool(): AnyAgentTool {
       const existingArtifactPaths = optionalList(
         readStringArrayParam(params, "existingArtifactPaths"),
       );
+      const sourceRegistryRecordPath = normalizeOptional(
+        readStringParam(params, "sourceRegistryRecordPath", { allowEmpty: true }),
+      );
+      const retrievalReceiptPath = normalizeOptional(
+        readStringParam(params, "retrievalReceiptPath", { allowEmpty: true }),
+      );
+      const applicationValidationReceiptPath = normalizeOptional(
+        readStringParam(params, "applicationValidationReceiptPath", { allowEmpty: true }),
+      );
+      const trainingOrEvalAbsorptionEvidencePath = normalizeOptional(
+        readStringParam(params, "trainingOrEvalAbsorptionEvidencePath", { allowEmpty: true }),
+      );
+      const freshAdjacentApplicationTask = normalizeOptional(
+        readStringParam(params, "freshAdjacentApplicationTask", { allowEmpty: true }),
+      );
+      const keepDownrankDiscardDecision = normalizeOptional(
+        readStringParam(params, "keepDownrankDiscardDecision", { allowEmpty: true }),
+      );
+      if (
+        keepDownrankDiscardDecision &&
+        !MODULE_LEARNING_DECISIONS.includes(
+          keepDownrankDiscardDecision as (typeof MODULE_LEARNING_DECISIONS)[number],
+        )
+      ) {
+        throw new ToolInputError(
+          `unsupported keepDownrankDiscardDecision: ${keepDownrankDiscardDecision}`,
+        );
+      }
+      const evidenceStatus = resolveEvidenceStatus({
+        sourceUrlOrPath,
+        actualReadingScope,
+        sourceRegistryRecordPath,
+        retrievalReceiptPath,
+        applicationValidationReceiptPath,
+        trainingOrEvalAbsorptionEvidencePath,
+        freshAdjacentApplicationTask,
+        keepDownrankDiscardDecision,
+      });
       const missingEvidence = [
         sourceUrlOrPath ? null : "source_url_or_local_source_path",
         actualReadingScope ? null : "actual_reading_scope",
         existingArtifactPaths.length > 0 ? null : "prior_art_or_existing_artifact_paths",
-        "source_registry_record",
-        "capability_card_or_retrieval_receipt",
-        "application_validation_receipt",
-        "training_or_eval_absorption_evidence",
-        "fresh_adjacent_application_task",
-        "keep_downrank_or_discard_decision",
+        sourceRegistryRecordPath ? null : "source_registry_record",
+        retrievalReceiptPath ? null : "capability_card_or_retrieval_receipt",
+        applicationValidationReceiptPath ? null : "application_validation_receipt",
+        trainingOrEvalAbsorptionEvidencePath ? null : "training_or_eval_absorption_evidence",
+        freshAdjacentApplicationTask ? null : "fresh_adjacent_application_task",
+        keepDownrankDiscardDecision && keepDownrankDiscardDecision !== "not_decided"
+          ? null
+          : "keep_downrank_or_discard_decision",
       ].filter((item): item is string => Boolean(item));
 
       const financePipelineArgs =
@@ -529,14 +653,28 @@ export function createModuleLearningPipelinePlanTool(): AnyAgentTool {
             }
           : null;
 
-      return jsonResult({
+      const receiptPath =
+        params.writeReceipt === true
+          ? buildModuleLearningReceiptPath({
+              targetModule: schema.targetModule,
+              learningIntent,
+              toolCallId,
+            })
+          : null;
+      const payload = {
         ok: true,
-        boundary: "dev_read_only_module_learning_plan",
+        boundary: "dev_module_learning_pipeline_plan",
         targetModule: schema.targetModule,
         moduleFamily: schema.moduleFamily,
-        status: missingEvidence.length === 0 ? "plan_ready" : "missing_evidence",
+        status: evidenceStatus,
         sourceUrlOrPath,
         actualReadingScope,
+        sourceRegistryRecordPath,
+        retrievalReceiptPath,
+        applicationValidationReceiptPath,
+        trainingOrEvalAbsorptionEvidencePath,
+        freshAdjacentApplicationTask,
+        keepDownrankDiscardDecision: keepDownrankDiscardDecision ?? "not_decided",
         existingArtifactPaths,
         moduleSpecificCapabilityRule: schema.moduleSpecificCapabilityRule,
         requiredInputs: schema.requiredInputs,
@@ -559,10 +697,20 @@ export function createModuleLearningPipelinePlanTool(): AnyAgentTool {
         financePipelineArgs,
         claimBoundary:
           "A module is not learned from storage alone. Claim stored_only, retrieval_ready, application_ready, or eval_absorbed only when the matching evidence exists.",
+        receiptPath,
+        receiptWritten: receiptPath !== null,
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
-      });
+      };
+      if (receiptPath) {
+        await writeModuleLearningPlanReceipt({
+          workspaceDir,
+          receiptPath,
+          payload,
+        });
+      }
+      return jsonResult(payload);
     },
   };
 }
