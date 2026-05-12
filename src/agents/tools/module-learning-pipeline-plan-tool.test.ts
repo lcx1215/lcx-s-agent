@@ -97,6 +97,70 @@ describe("module learning pipeline plan tool", () => {
     );
   });
 
+  it("plans advanced trader QC modules through the same evidence-gated memory chain", async () => {
+    const tool = createModuleLearningPipelinePlanTool();
+
+    const valuation = await tool.execute("valuation-qc-plan", {
+      targetModule: "financial_modeling_valuation_qc",
+      sourceUrlOrPath: "memory/research-sources/valuation-model-qc-note.md",
+      actualReadingScope:
+        "Read the DCF assumptions, comps, sensitivity, number provenance, and audit checklist sections.",
+      existingArtifactPaths: ["memory/research-sources/valuation-model-qc-note.md"],
+      learningIntent: "Learn a valuation-model QC workflow without target-price or trade advice.",
+    });
+    expect(valuation.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        targetModule: "financial_modeling_valuation_qc",
+        moduleFamily: "finance_research",
+        status: "missing_evidence",
+        financePipelineArgs: expect.objectContaining({
+          allowedActionAuthority: "research_only",
+        }),
+      }),
+    );
+    expect(valuation.details).toEqual(
+      expect.objectContaining({
+        requiredInputs: expect.arrayContaining([
+          "model_assumptions_sensitivity_and_audit_inputs",
+          "research_artifact_qc_and_number_provenance_checklist",
+        ]),
+        safetyBoundaries: expect.arrayContaining([
+          "no_model_math_guessing",
+          "cite_every_number_or_mark_unsourced",
+        ]),
+      }),
+    );
+
+    for (const targetModule of [
+      "thesis_catalyst_lifecycle",
+      "data_provenance_quality",
+      "research_artifact_qc",
+    ]) {
+      const result = await tool.execute(`${targetModule}-plan`, {
+        targetModule,
+        sourceUrlOrPath: `memory/research-sources/${targetModule}.md`,
+        actualReadingScope: `Read the ${targetModule} source and evidence checklist.`,
+        existingArtifactPaths: [`memory/research-sources/${targetModule}.md`],
+      });
+      expect(result.details).toEqual(
+        expect.objectContaining({
+          ok: true,
+          targetModule,
+          moduleFamily: "finance_research",
+          boundary: "dev_module_learning_pipeline_plan",
+          liveTouched: false,
+          providerConfigTouched: false,
+          protectedMemoryTouched: false,
+        }),
+      );
+      expect(result.details).toHaveProperty(
+        "claimBoundary",
+        expect.stringContaining("not learned from storage alone"),
+      );
+    }
+  });
+
   it("writes a receipt and upgrades status when evidence paths are present", async () => {
     const workspaceDir = await makeTempWorkspace("openclaw-module-learning-plan-");
     const tool = createModuleLearningPipelinePlanTool({ workspaceDir });

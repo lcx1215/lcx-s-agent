@@ -111,4 +111,49 @@ describe("module-learning-pipeline-plan CLI", () => {
     const receiptPath = String(parsed.receiptPath);
     await expect(fs.stat(path.join(workspaceDir, receiptPath))).resolves.toBeTruthy();
   });
+
+  it("accepts advanced trader QC module targets", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-module-plan-cli-"));
+
+    const result = runCli([
+      "--workspace",
+      workspaceDir,
+      "--target-module",
+      "research_artifact_qc",
+      "--source",
+      "ops/local-brain/README.md",
+      "--actual-reading-scope",
+      "Read artifact QC and number provenance workflow.",
+      "--existing-artifact",
+      "scripts/dev/local-brain-distill-eval.ts",
+      "--json",
+    ]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        ok: true,
+        boundary: "dev_module_learning_pipeline_plan",
+        targetModule: "research_artifact_qc",
+        moduleFamily: "finance_research",
+        receiptWritten: false,
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      }),
+    );
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        safetyBoundaries: expect.arrayContaining([
+          "cite_every_number_or_mark_unsourced",
+          "human_review_required_before_external_use",
+        ]),
+        missingEvidence: expect.arrayContaining([
+          "source_registry_record",
+          "capability_card_or_retrieval_receipt",
+        ]),
+      }),
+    );
+  });
 });

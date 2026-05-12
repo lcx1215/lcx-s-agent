@@ -13,6 +13,10 @@ export const MODULE_LEARNING_TARGETS = [
   "global_index_regime",
   "macro_rates_inflation",
   "company_fundamentals_value",
+  "financial_modeling_valuation_qc",
+  "thesis_catalyst_lifecycle",
+  "data_provenance_quality",
+  "research_artifact_qc",
   "technical_timing",
   "commodities_oil_gold",
   "fx_currency_liquidity",
@@ -236,6 +240,143 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
       supportTools: ["finance_learning_capability_apply", "source_registry_lookup", "review_panel"],
       bridgeStatus: "direct_finance_pipeline",
       closestExistingFinanceDomains: ["company_fundamentals_value", "portfolio_risk_gates"],
+    },
+  },
+  financial_modeling_valuation_qc: {
+    targetModule: "financial_modeling_valuation_qc",
+    moduleFamily: "finance_research",
+    requiredInputs: [
+      "latest_10q_10k_or_earnings_release",
+      "model_assumptions_sensitivity_and_audit_inputs",
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "research_artifact_qc_and_number_provenance_checklist",
+    ],
+    evidenceFamilies: [
+      "valuation_model_evidence",
+      "data_provenance_evidence",
+      "artifact_qc_evidence",
+    ],
+    moduleSpecificCapabilityRule:
+      "Valuation-model learning must keep filing sources, model assumptions, sensitivity checks, field definitions, number provenance, and artifact QC together before reuse.",
+    applicationValidationTask:
+      "Apply the valuation QC rule to a fresh DCF/comps or three-statement modeling question and refuse unsupported target-price or trade language.",
+    safetyBoundaries: [
+      "research_only",
+      "no_execution_authority",
+      "no_model_math_guessing",
+      "no_unverified_filing_claims",
+      "cite_every_number_or_mark_unsourced",
+      "no_trade_advice",
+    ],
+    existingToolBridge: {
+      primaryTool: "finance_learning_pipeline_orchestrator",
+      supportTools: ["finance_learning_capability_apply", "source_registry_lookup", "review_panel"],
+      bridgeStatus: "direct_finance_pipeline",
+      closestExistingFinanceDomains: [
+        "company_fundamentals_value",
+        "data_provenance_quality",
+        "research_artifact_qc",
+      ],
+    },
+  },
+  thesis_catalyst_lifecycle: {
+    targetModule: "thesis_catalyst_lifecycle",
+    moduleFamily: "finance_research",
+    requiredInputs: [
+      "original_thesis_and_evidence_used",
+      "thesis_catalyst_calendar_and_invalidation_evidence",
+      "event_source_timestamp_and_expected_vs_surprise_channel",
+      "portfolio_or_index_transmission_context",
+      "post_event_correction_note",
+    ],
+    evidenceFamilies: ["thesis_evidence", "event_catalyst_evidence", "portfolio_risk_evidence"],
+    moduleSpecificCapabilityRule:
+      "Thesis/catalyst learning must preserve the original thesis, catalyst calendar, invalidation evidence, post-event correction, and keep/downrank decision.",
+    applicationValidationTask:
+      "Apply the thesis lifecycle rule to a fresh earnings, product, macro, or regulatory catalyst question and include a red-team invalidation path.",
+    safetyBoundaries: [
+      "research_only",
+      "no_execution_authority",
+      "red_team_invalidation_required",
+      "do_not_rewrite_past_mistakes",
+      "no_trade_advice",
+    ],
+    existingToolBridge: {
+      primaryTool: "finance_learning_pipeline_orchestrator",
+      supportTools: ["finance_learning_capability_apply", "source_registry_lookup", "review_panel"],
+      bridgeStatus: "direct_finance_pipeline",
+      closestExistingFinanceDomains: ["event_driven", "company_fundamentals_value", "causal_map"],
+    },
+  },
+  data_provenance_quality: {
+    targetModule: "data_provenance_quality",
+    moduleFamily: "finance_research",
+    requiredInputs: [
+      "source_timestamp_and_vendor",
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "currency_adjustment_and_update_frequency_policy",
+      "outlier_missing_field_and_conflict_resolution_rule",
+      "validation_dataset_and_sample_out_plan",
+    ],
+    evidenceFamilies: [
+      "source_registry_evidence",
+      "data_quality_evidence",
+      "conflict_resolution_evidence",
+    ],
+    moduleSpecificCapabilityRule:
+      "Data-provenance learning must name vendor, timestamp, field definition, currency, adjustment, update cadence, conflicts, and trust priority before any sourced number is promoted.",
+    applicationValidationTask:
+      "Apply the provenance rule to a fresh conflicting ETF holdings, price, volume, IV, sentiment, or filing-field question and mark unresolved conflicts unverified.",
+    safetyBoundaries: [
+      "research_only",
+      "no_execution_authority",
+      "no_unverified_current_market_data",
+      "source_timestamp_required",
+      "cite_every_number_or_mark_unsourced",
+    ],
+    existingToolBridge: {
+      primaryTool: "finance_learning_pipeline_orchestrator",
+      supportTools: ["source_registry_lookup", "finance_learning_capability_apply", "review_panel"],
+      bridgeStatus: "direct_finance_pipeline",
+      closestExistingFinanceDomains: ["source_registry", "quant_math", "review_panel"],
+    },
+  },
+  research_artifact_qc: {
+    targetModule: "research_artifact_qc",
+    moduleFamily: "finance_research",
+    requiredInputs: [
+      "research_artifact_qc_and_number_provenance_checklist",
+      "source_timestamp_and_vendor",
+      "citation_and_provenance_rule",
+      "table_model_and_visible_summary_consistency_check",
+      "human_review_required_before_external_use",
+    ],
+    evidenceFamilies: [
+      "artifact_qc_evidence",
+      "number_provenance_evidence",
+      "visible_summary_evidence",
+    ],
+    moduleSpecificCapabilityRule:
+      "Research-artifact QC learning must audit every number, table/model consistency, unverified labels, citations, and human-review checkpoint before visible use.",
+    applicationValidationTask:
+      "Apply the artifact QC rule to a fresh report, table, valuation model, or control-room summary and list any numbers that must remain unverified.",
+    safetyBoundaries: [
+      "research_only",
+      "no_execution_authority",
+      "cite_every_number_or_mark_unsourced",
+      "human_review_required_before_external_use",
+      "no_raw_json_visible_reply",
+    ],
+    existingToolBridge: {
+      primaryTool: "finance_learning_pipeline_orchestrator",
+      supportTools: ["source_registry_lookup", "review_panel", "local_brain_eval"],
+      bridgeStatus: "direct_finance_pipeline",
+      closestExistingFinanceDomains: [
+        "data_provenance_quality",
+        "financial_modeling_valuation_qc",
+        "control_room_summary",
+      ],
     },
   },
   technical_timing: {

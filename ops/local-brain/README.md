@@ -163,9 +163,11 @@ node --import tsx scripts/dev/module-learning-pipeline-plan.ts \
 
 It maps `targetModule` values such as `options_volatility`,
 `global_index_regime`, `macro_rates_inflation`, `company_fundamentals_value`,
-`lark_feishu_workflow`, `ops_audit`, and `skill_pattern_distillation` onto the
-required evidence, module-specific capability rule, application-validation
-task, and existing tool bridge. Finance research modules should reuse
+`financial_modeling_valuation_qc`, `thesis_catalyst_lifecycle`,
+`data_provenance_quality`, `research_artifact_qc`, `lark_feishu_workflow`,
+`ops_audit`, and `skill_pattern_distillation` onto the required evidence,
+module-specific capability rule, application-validation task, and existing tool
+bridge. Finance research modules should reuse
 `finance_learning_pipeline_orchestrator` where possible. Lark/Feishu, ops,
 memory, and skill modules must keep module-specific receipts and must not be
 claimed as learned from storage alone.

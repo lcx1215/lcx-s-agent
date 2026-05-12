@@ -109,7 +109,7 @@ function buildMemorySection(params: {
       : []),
     ...(params.availableTools.has("module_learning_pipeline_review")
       ? [
-          "When checking whether module learning is usable across factors, options, indexes, macro, fundamentals, Lark/Feishu workflow, memory, ops, or skills, use module_learning_pipeline_review. It reads module-learning plan receipts, flags incomplete statuses, and keeps live, provider config, protected memory, and language corpus untouched.",
+          "When checking whether module learning is usable across factors, options, indexes, macro, fundamentals, valuation/modeling QC, thesis/catalyst lifecycle, data provenance, research artifact QC, Lark/Feishu workflow, memory, ops, or skills, use module_learning_pipeline_review. It reads module-learning plan receipts, flags incomplete statuses, and keeps live, provider config, protected memory, and language corpus untouched.",
         ]
       : []),
     ...(params.availableTools.has("finance_learning_capability_apply")

@@ -154,4 +154,60 @@ describe("module learning pipeline review tool", () => {
       fs.stat(path.join(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-12.json")),
     ).rejects.toThrow();
   });
+
+  it("keeps advanced trader QC module receipts in the same review loop", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-module-learning-review-");
+    await seedJson(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-12/advanced.json",
+      {
+        boundary: "dev_module_learning_pipeline_plan",
+        targetModule: "data_provenance_quality",
+        moduleFamily: "finance_research",
+        status: "eval_absorbed",
+        learningIntent: "Learn source provenance and field-quality gates.",
+        sourceUrlOrPath: "memory/research-sources/data.md",
+        actualReadingScope: "Read timestamp, vendor, field definition, and conflict sections.",
+        sourceRegistryRecordPath: "memory/research-sources/data.md",
+        retrievalReceiptPath: "memory/finance-learning-retrieval-receipts/2026-05-12/data.json",
+        applicationValidationReceiptPath:
+          "memory/finance-learning-apply-usage-receipts/2026-05-12/data.json",
+        trainingOrEvalAbsorptionEvidencePath: "ops/local-brain/eval/data.json",
+        freshAdjacentApplicationTask:
+          "Apply data provenance learning to a fresh conflicting macro data ask.",
+        keepDownrankDiscardDecision: "keep",
+        missingEvidence: [],
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      },
+    );
+    const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
+
+    const result = await tool.execute("review", {
+      dateKey: "2026-05-12",
+      targetModule: "data_provenance_quality",
+      writeReview: false,
+    });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        boundary: "module_learning_pipeline_review_only",
+        updated: false,
+        counts: expect.objectContaining({
+          validReceipts: 1,
+          evalAbsorbed: 1,
+          weakModuleLearning: 0,
+          boundaryViolations: 0,
+        }),
+        separationContract: expect.objectContaining({
+          languageCorpusUntouched: true,
+          protectedMemoryUntouched: true,
+          liveTouched: false,
+          providerConfigTouched: false,
+        }),
+      }),
+    );
+  });
 });
