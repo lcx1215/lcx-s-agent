@@ -229,6 +229,13 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "unified paper and open-source project internalization protocol requiring source, license, security, validation, capability, retrieval, application, eval absorption, and keep/downrank/discard decisions.",
   },
   {
+    id: "all_module_knowledge_internalization_chain",
+    userMessage:
+      "不止是因子模块，其他模块也要走同一条网上学习内化链条：先确认目标模块和 prior-art，再做 source registry、实际阅读范围、模块专属能力规则、retrieval receipt、apply validation、Qwen/local-brain eval 或训练吸收、fresh adjacent task、模块安全边界和 keep/downrank/discard；不能把“存了文件”说成“模块学会了”。",
+    sourceSummary:
+      "all-module internalization chain request requiring source registry, module-specific capability rule, retrieval/apply proof, eval absorption, fresh adjacent task, and no storage-only learning claim.",
+  },
+  {
     id: "abstraction_transfer_repair_protocol",
     userMessage:
       "训练本地大脑具备人类抽象能力：我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。必须抽象成问题族，并留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof；还要证明简单前置题和相邻非同类题都能过。",

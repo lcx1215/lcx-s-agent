@@ -164,6 +164,7 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "External knowledge internalization from papers or open-source projects must first check prior_art_search_terms_or_existing_artifact_paths and existing_contract_eval_skill_or_receipt_candidates, then choose reuse_extend_or_new_decision before creating a new path; it must use source_registry, actual_reading_scope, license_and_write_scope_review when code is involved, prompt-injection/security review, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, fresh adjacent application, and a keep/downrank/discard decision before claiming learning.",
   "Agent skill learning tasks must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
   "External financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision.",
+  "All module learning uses the same internalization chain, not only factor modules: every target module needs source registry, actual reading scope, module-specific capability rule, retrieval receipt, application validation, local-brain eval or training absorption evidence, fresh adjacent task, safety boundary, and keep/downrank/discard decision before anyone claims the module learned it.",
 ] as const;
 
 const BASE_CONTRACT_HINT_INDEXES = [0, 1, 2, 3, 4, 5] as const;
@@ -183,9 +184,9 @@ const CONTRACT_HINT_SELECTORS: Array<{
       /美股|a股|指数|加密|期权|大宗|商品|黄金|原油|美元|外汇|事件|技术|跨市场|crypto|option|commodity|gold|oil|dollar|fx|event|technical|cross-market/iu,
   },
   {
-    indexes: [11, 12],
+    indexes: [11, 12, 14],
     pattern:
-      /论文|arxiv|ssrn|github|huggingface|开源|source|capability|receipt|skill|paper|open-source|framework|dataset|eval/iu,
+      /论文|arxiv|ssrn|github|huggingface|开源|source|capability|receipt|skill|paper|open-source|framework|dataset|eval|内化链条|学习链条|吸收链条|所有模块|其他模块|因子模块/iu,
   },
   {
     indexes: [13],

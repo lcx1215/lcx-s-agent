@@ -91,6 +91,49 @@ describe("local-brain-distill-eval", () => {
     });
   });
 
+  it("covers all-module knowledge internalization as a generic chain", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "all_module_knowledge_internalization_chain",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary.promotionReady).toBe(true);
+    expect(payload.summary.passed).toBe(payload.summary.total);
+    expect(payload.hierarchy.requestedCaseIds).toEqual([
+      "all_module_knowledge_internalization_chain",
+    ]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "external_knowledge_internalization_protocol",
+        "local_memory_knowledge_activation",
+        "abstraction_transfer_repair_protocol",
+      ]),
+    );
+  });
+
   it("extracts the first balanced JSON object from noisy model output", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-json-"));
     const fakePython = path.join(tempDir, "python");

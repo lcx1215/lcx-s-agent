@@ -27,4 +27,13 @@ describe("local brain contract hint selection", () => {
     expect(text).toContain("Agent skill learning tasks");
     expect(text).toContain("External financial agent frameworks");
   });
+
+  it("adds all-module internalization rules when learning should not be factor-only", () => {
+    const hints = selectLocalBrainContractHints("不止是因子模块，其他模块也要有这种学习内化链条");
+    const text = hints.join(" ");
+
+    expect(text).toContain("All module learning uses the same internalization chain");
+    expect(text).toContain("retrieval receipt");
+    expect(text).toContain("fresh adjacent task");
+  });
 });

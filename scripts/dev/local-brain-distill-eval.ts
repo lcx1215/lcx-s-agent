@@ -422,6 +422,42 @@ const EVAL_CASES: EvalCase[] = [
     ],
   },
   {
+    id: "all_module_knowledge_internalization_chain",
+    userAsk:
+      "不止是因子模块，其他模块也要有这种从网上学习、source registry、实际阅读范围、能力卡、retrieval receipt、apply validation、Qwen eval 吸收、fresh adjacent task 和 keep/downrank/discard 的链条；不能把存了文件说成模块学会了。",
+    sourceSummary:
+      "all local-brain modules must share the source-to-capability-to-retrieval-to-application-to-eval internalization chain instead of keeping it factor-only.",
+    requiredModules: [
+      "agent_workflow_memory",
+      "source_registry",
+      "finance_learning_memory",
+      "skill_pattern_distillation",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 7,
+    requiredMissingData: [
+      "target_module_id_or_module_family",
+      "source_url_or_local_source_path",
+      "actual_reading_scope",
+      "source_registry_record",
+      "module_specific_capability_rule",
+      "capability_card_or_retrieval_receipt",
+      "application_validation_receipt",
+      "training_or_eval_absorption_evidence",
+      "fresh_adjacent_application_task",
+      "module_specific_safety_boundary",
+      "keep_downrank_or_discard_decision",
+    ],
+    requiredRiskBoundaries: [
+      "no_model_internal_learning_claim_without_eval",
+      "no_module_learning_claim_from_storage_only",
+      "no_parallel_module_pipeline_without_prior_art_check",
+      "no_protected_memory_write",
+    ],
+  },
+  {
     id: "abstraction_transfer_repair_protocol",
     userAsk:
       "以后我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。请把它抽象成问题族，留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract 和 regression proof，再证明简单前置题和相邻非同类题都能过。",
@@ -2116,6 +2152,14 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
       "agent_skill_distillation_safety",
       "paper_learning_internalization_absorption",
       "source_coverage_actual_reading_scope",
+    ],
+  ],
+  [
+    "all_module_knowledge_internalization_chain",
+    [
+      "external_knowledge_internalization_protocol",
+      "local_memory_knowledge_activation",
+      "abstraction_transfer_repair_protocol",
     ],
   ],
   ["company_filing_missing_evidence_gate", ["single_company_fundamental_risk"]],

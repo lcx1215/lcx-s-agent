@@ -638,6 +638,22 @@ function looksLikeExternalKnowledgeInternalizationProtocol(text: string): boolea
   return hasPaper && hasOpenSource && asksToInternalize;
 }
 
+function looksLikeAllModuleKnowledgeInternalizationChain(text: string): boolean {
+  const namesModuleScope =
+    /(所有模块|全部模块|其他模块|每个模块|跨模块|全模块|not just factor|not only factor|all modules|every module|module-wide)/iu.test(
+      text,
+    ) ||
+    (/(因子模块|factor module|factor modules)/iu.test(text) &&
+      /(其他模块|不止|不是只有|不只是|也要|同样|same chain|same pipeline|same internalization)/iu.test(
+        text,
+      ));
+  const namesInternalizationChain =
+    /(链条|流程|pipeline|protocol|合同|contract|内化|吸收|学习|沉淀|source registry|retrieval receipt|apply validation|eval|评测|训练吸收|capability card)/iu.test(
+      text,
+    );
+  return namesModuleScope && namesInternalizationChain;
+}
+
 function looksLikeAbstractionTransferProtocol(text: string): boolean {
   const namesAbstraction =
     /(抽象能力|人类的抽象|抽象迁移|问题族|failure family|problem family|同类问题|同类接口|shared contract|共享契约|original example|regression proof)/iu.test(
@@ -1198,6 +1214,65 @@ export function hardenLocalBrainPlanForAsk(
         "current_example_only_success",
         "unverified_generalization_claim",
         "old_lark_conversation_history",
+      ],
+    };
+  }
+
+  if (looksLikeAllModuleKnowledgeInternalizationChain(text)) {
+    return {
+      ...safe,
+      task_family: "all_module_knowledge_internalization_chain",
+      primary_modules: [
+        "agent_workflow_memory",
+        "source_registry",
+        "finance_learning_memory",
+        "skill_pattern_distillation",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "ops_audit", "quant_math", "portfolio_risk_gates"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_learning_capability_apply",
+        "artifact_memory_recall",
+        "local_brain_eval",
+        "l5_regression_batterer",
+        "review_panel",
+      ],
+      missing_data: [
+        "target_module_id_or_module_family",
+        "source_url_or_local_source_path",
+        "actual_reading_scope",
+        "source_registry_record",
+        "module_specific_capability_rule",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "fresh_adjacent_application_task",
+        "module_specific_safety_boundary",
+        "keep_downrank_or_discard_decision",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_model_internal_learning_claim_without_eval",
+        "no_module_learning_claim_from_storage_only",
+        "no_parallel_module_pipeline_without_prior_art_check",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+      ],
+      next_step:
+        "apply_source_registry_capability_retrieval_apply_eval_chain_to_each_target_module_before_claiming_module_internalized",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "factor_only_internalization_rule",
+        "stored_source_as_learned_module",
+        "module_claim_without_receipt_or_eval",
+        "new_parallel_protocol_without_prior_art_check",
+        "live_visible_claim_without_live_proof",
       ],
     };
   }

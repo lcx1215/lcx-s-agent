@@ -79,6 +79,7 @@ Do not rely on chat memory for these entrypoints. Prefer the runbook and current
 - Capability must be monotonic in normal difficulty order: if the local brain can handle a complex task, it must also handle the simpler prerequisite task. Do not allow a complex eval, promotion, or receipt to pass while the simple adjacent user ask fails.
 - For every new complex brain loop, add or reuse a simple prerequisite eval. Local-brain promotion must run the prerequisite together with the complex case, not as an optional separate check.
 - Convert learning into concise lessons, reusable decision rules, correction notes, follow-up items, and stale/downrank decisions.
+- Online learning internalization is module-wide, not factor-only: every module that claims to learn from an external source must leave the same source registry, actual reading scope, module-specific capability rule, retrieval receipt, apply validation, local-brain eval or training absorption evidence, fresh adjacent application task, safety boundary, and keep/downrank/discard decision. A stored file or summary alone is not module learning.
 - Daily progress must be concrete, not theatrical.
 
 ## Baseline-Hardening Mode

@@ -1001,6 +1001,54 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("generalizes the internalization chain beyond factor modules", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "不止是因子模块，其他模块也要有这种从网上学习、source registry、retrieval receipt、apply validation、Qwen eval 吸收的链条。",
+      },
+    );
+
+    expect(plan.task_family).toBe("all_module_knowledge_internalization_chain");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "agent_workflow_memory",
+        "source_registry",
+        "finance_learning_memory",
+        "skill_pattern_distillation",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "target_module_id_or_module_family",
+        "module_specific_capability_rule",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "fresh_adjacent_application_task",
+        "module_specific_safety_boundary",
+        "keep_downrank_or_discard_decision",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "no_model_internal_learning_claim_without_eval",
+        "no_module_learning_claim_from_storage_only",
+        "no_parallel_module_pipeline_without_prior_art_check",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining([
+        "factor_only_internalization_rule",
+        "stored_source_as_learned_module",
+        "module_claim_without_receipt_or_eval",
+      ]),
+    );
+  });
+
   it("turns a concrete example into an abstraction-transfer repair contract", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

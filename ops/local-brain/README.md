@@ -71,6 +71,33 @@ why_existing_path_was_insufficient=<short_reason>
 For papers, open-source projects, external skills, and finance research modules,
 this gate is mandatory before claiming anything was learned or internalized.
 
+## All-Module Internalization Chain
+
+Do not treat the source-to-learning chain as a factor-only mechanism. Any local
+brain module that claims it learned from the web, a paper, a repo, a tool, a
+skill, a transcript, or another external artifact must leave this evidence:
+
+```text
+target_module_id_or_module_family
+source_url_or_local_source_path
+actual_reading_scope
+source_registry_record
+module_specific_capability_rule
+capability_card_or_retrieval_receipt
+application_validation_receipt
+training_or_eval_absorption_evidence
+fresh_adjacent_application_task
+module_specific_safety_boundary
+keep_downrank_or_discard_decision
+```
+
+This applies to factor, macro, fundamentals, technical timing, options,
+commodities, Lark/Feishu workflow, agent workflow, memory, eval, ops, and skill
+modules. A stored source, summary, or dataset row is not enough to say the
+module learned it. Use `stored_only`, `retrieval_ready`,
+`application_ready`, or `eval_absorbed` style wording until the matching proof
+exists.
+
 ## Codex Skills To Load
 
 When context is missing, load only the skills that match the current question. The most useful local skill files are:
