@@ -149,6 +149,18 @@ learning pipeline:
 module_learning_pipeline_plan
 ```
 
+CLI wrapper:
+
+```bash
+node --import tsx scripts/dev/module-learning-pipeline-plan.ts \
+  --target-module options_volatility \
+  --source <source-url-or-local-path> \
+  --actual-reading-scope "<what was actually read>" \
+  --existing-artifact scripts/dev/local-brain-distill-eval.ts \
+  --write \
+  --json
+```
+
 It maps `targetModule` values such as `options_volatility`,
 `global_index_regime`, `macro_rates_inflation`, `company_fundamentals_value`,
 `lark_feishu_workflow`, `ops_audit`, and `skill_pattern_distillation` onto the
