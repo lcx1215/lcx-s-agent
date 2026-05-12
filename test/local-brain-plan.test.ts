@@ -154,6 +154,23 @@ describe("local-brain-plan adapter selection", () => {
           "position_weights_and_return_series",
         ]),
       );
+      const modules = [
+        ...payload.plan.primary_modules,
+        ...payload.plan.supporting_modules,
+        ...payload.plan.required_tools,
+      ];
+      expect(modules).toEqual(
+        expect.arrayContaining([
+          "finance_learning_memory",
+          "source_registry",
+          "causal_map",
+          "review_panel",
+          "control_room_summary",
+          "crypto_market_structure",
+        ]),
+      );
+      expect(modules).not.toContain("fx_dollar");
+      expect(payload.plan.next_step).toBe("collect_inputs_run_review_then_summarize");
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }

@@ -2405,6 +2405,11 @@ export function hardenLocalBrainPlanForAsk(
   }
 
   if (looksLikeFullStackFinanceStressTest(text)) {
+    const nonFinanceMisrouteModules = [
+      "skill_pattern_distillation",
+      "agent_workflow_memory",
+      "eval_harness_design",
+    ];
     return {
       ...safe,
       task_family: "full_stack_finance_stress_research_planning",
@@ -2414,23 +2419,36 @@ export function hardenLocalBrainPlanForAsk(
         "credit_liquidity",
         "cross_asset_liquidity",
         "fx_currency_liquidity",
-        "fx_dollar",
         "us_equity_market_structure",
+        "china_a_share_policy_flow",
         "global_index_regime",
-        "etf_regime",
-        "technical_timing",
+        "crypto_market_structure",
         "quant_math",
         "portfolio_risk_gates",
-        ...inferFinanceModulesFromLocalKnowledgeText(text),
-        ...arrayValue(safe.primary_modules),
-      ]),
-      supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
         "causal_map",
         "finance_learning_memory",
         "source_registry",
         "review_panel",
         "control_room_summary",
+        "etf_regime",
+        "technical_timing",
+        "commodities_oil_gold",
+        ...withoutValues(
+          inferFinanceModulesFromLocalKnowledgeText(text),
+          nonFinanceMisrouteModules,
+        ),
+        ...withoutValues(arrayValue(safe.primary_modules), nonFinanceMisrouteModules),
       ]),
+      supporting_modules: mergeUnique(
+        withoutValues(arrayValue(safe.supporting_modules), nonFinanceMisrouteModules),
+        [
+          "causal_map",
+          "finance_learning_memory",
+          "source_registry",
+          "review_panel",
+          "control_room_summary",
+        ],
+      ),
       required_tools: mergeUnique(arrayValue(safe.required_tools), [
         "artifact_memory_recall",
         "finance_learning_capability_apply",

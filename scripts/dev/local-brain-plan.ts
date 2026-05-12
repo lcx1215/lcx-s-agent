@@ -605,7 +605,24 @@ function compactPlanOutputBudget(plan: Record<string, unknown>): Record<string, 
       LOCAL_BRAIN_RISK_BOUNDARY_CAP,
     ),
     rejected_context: arrayValue(plan.rejected_context).slice(0, LOCAL_BRAIN_REJECTED_CONTEXT_CAP),
+    next_step: compactNextStep(plan.next_step),
   };
+}
+
+function compactNextStep(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) {
+    return "route_to_review";
+  }
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  const parts = normalized.split("_").filter(Boolean);
+  if (parts.length <= 8 && normalized.length <= 80) {
+    return normalized;
+  }
+  return "collect_inputs_run_review_then_summarize";
 }
 
 const options = parseArgs(process.argv.slice(2));

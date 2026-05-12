@@ -144,20 +144,33 @@ export function buildPromotionAudit(params: {
   resolver: { ok: true; details: JsonRecord } | { ok: false; error: string };
 }): JsonRecord {
   const latestEval = asRecord(params.plan.latestEval);
+  const latestPassingEval = asRecord(params.plan.latestPassingEval);
   const latestTeacher = asRecord(params.plan.latestTeacher);
   const moduleLearningReview = asRecord(params.plan.moduleLearningReview);
   const moduleLearningCounts = asRecord(moduleLearningReview.counts);
   const resolverDetails = params.resolver.ok ? params.resolver.details : {};
   const selectedAdapter = stringValue(resolverDetails.selectedAdapter);
+  const latestPassingEvalAdapter = stringValue(latestPassingEval.adapterPath);
+  const selectedEval =
+    Boolean(selectedAdapter) &&
+    Boolean(latestPassingEvalAdapter) &&
+    selectedAdapter === latestPassingEvalAdapter
+      ? latestPassingEval
+      : latestEval;
   const latestEvalAdapter = stringValue(latestEval.adapterPath);
-  const latestEvalPromotionReady = latestEval.promotionReady === true;
-  const latestEvalPassed = numberValue(latestEval.passed);
-  const latestEvalTotal = numberValue(latestEval.total);
-  const failedCaseIds = stringArray(latestEval.failedCaseIds);
-  const parseErrorCaseIds = stringArray(latestEval.parseErrorCaseIds);
-  const parseErrorSamples = stringArray(latestEval.parseErrorSamples);
+  const selectedEvalAdapter = stringValue(selectedEval.adapterPath);
+  const selectedEvalPromotionReady = selectedEval.promotionReady === true;
+  const selectedEvalPassed = numberValue(selectedEval.passed);
+  const selectedEvalTotal = numberValue(selectedEval.total);
+  const failedCaseIds = stringArray(selectedEval.failedCaseIds);
+  const parseErrorCaseIds = stringArray(selectedEval.parseErrorCaseIds);
+  const parseErrorSamples = stringArray(selectedEval.parseErrorSamples);
   const resolverMatchesLatestEval =
     Boolean(selectedAdapter) && Boolean(latestEvalAdapter) && selectedAdapter === latestEvalAdapter;
+  const resolverMatchesLatestPassingEval =
+    Boolean(selectedAdapter) &&
+    Boolean(latestPassingEvalAdapter) &&
+    selectedAdapter === latestPassingEvalAdapter;
   const teacherFailures = numberValue(latestTeacher.failures) ?? 0;
   const boundaryViolations = numberValue(moduleLearningCounts.boundaryViolations) ?? 0;
   const activeProcesses = Array.isArray(params.plan.activeProcesses)
@@ -173,15 +186,15 @@ export function buildPromotionAudit(params: {
     promotionDecision = "rejected";
     realBugsFound.push("no_selected_latest_passing_adapter");
   } else if (
-    !latestEvalPromotionReady ||
+    !selectedEvalPromotionReady ||
     failedCaseIds.length > 0 ||
     parseErrorCaseIds.length > 0
   ) {
     promotionDecision = "rejected";
-    realBugsFound.push("latest_eval_not_promotion_ready");
-  } else if (!resolverMatchesLatestEval) {
+    realBugsFound.push("selected_eval_not_promotion_ready");
+  } else if (!resolverMatchesLatestEval && !resolverMatchesLatestPassingEval) {
     promotionDecision = "ambiguous";
-    realBugsFound.push("resolver_adapter_differs_from_latest_eval_adapter");
+    realBugsFound.push("resolver_adapter_differs_from_latest_passing_eval_adapter");
   } else if (boundaryViolations > 0) {
     promotionDecision = "ambiguous";
     realBugsFound.push("module_learning_boundary_violation");
@@ -191,6 +204,9 @@ export function buildPromotionAudit(params: {
 
   const qualityLaneConcernsConsidered = [
     ...(teacherFailures > 0 ? ["latest_teacher_batch_has_failures"] : []),
+    ...(latestEval.promotionReady === false
+      ? ["latest_chronological_eval_not_promotion_ready"]
+      : []),
     ...(parseErrorSamples.length > 0 ? ["latest_eval_parse_error_samples_present"] : []),
   ];
 
@@ -207,14 +223,35 @@ export function buildPromotionAudit(params: {
       at: stringValue(latestEval.at),
       name: stringValue(latestEval.name),
       adapterPath: latestEvalAdapter,
-      passed: latestEvalPassed,
-      total: latestEvalTotal,
+      passed: numberValue(latestEval.passed),
+      total: numberValue(latestEval.total),
       passRate: numberValue(latestEval.passRate),
-      promotionReady: latestEvalPromotionReady,
+      promotionReady: latestEval.promotionReady === true,
+      failedCaseIds: stringArray(latestEval.failedCaseIds),
+      parseErrorCaseIds: stringArray(latestEval.parseErrorCaseIds),
+    },
+    selectedEval: {
+      at: stringValue(selectedEval.at),
+      name: stringValue(selectedEval.name),
+      adapterPath: selectedEvalAdapter,
+      passed: selectedEvalPassed,
+      total: selectedEvalTotal,
+      passRate: numberValue(selectedEval.passRate),
+      promotionReady: selectedEvalPromotionReady,
       failedCaseIds,
       parseErrorCaseIds,
     },
+    latestPassingEval: {
+      at: stringValue(latestPassingEval.at),
+      name: stringValue(latestPassingEval.name),
+      adapterPath: latestPassingEvalAdapter,
+      passed: numberValue(latestPassingEval.passed),
+      total: numberValue(latestPassingEval.total),
+      passRate: numberValue(latestPassingEval.passRate),
+      promotionReady: latestPassingEval.promotionReady === true,
+    },
     resolverMatchesLatestEval,
+    resolverMatchesLatestPassingEval,
     activeTraining: activeProcesses.length > 0,
     activeProcesses,
     latestTeacher,

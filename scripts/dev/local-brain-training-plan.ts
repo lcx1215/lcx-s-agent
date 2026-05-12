@@ -27,6 +27,7 @@ type EvalSnapshot = {
   promotionReady: boolean;
   failedCaseIds: string[];
   parseErrorCaseIds: string[];
+  parseRecoveredCaseIds: string[];
   parseErrorSamples: string[];
 };
 
@@ -216,6 +217,7 @@ function evalSnapshotFromEvent(event: JsonRecord): EvalSnapshot | undefined {
   const total = typeof summaryRecord.total === "number" ? summaryRecord.total : 0;
   const failedCaseIds = asStringArray(summaryRecord.failedCaseIds);
   const parseErrorCaseIds = asStringArray(summaryRecord.parseErrorCaseIds);
+  const parseRecoveredCaseIds = asStringArray(summaryRecord.parseRecoveredCaseIds);
   const parseErrorSamples = Array.isArray(resultRecord.cases)
     ? resultRecord.cases
         .map((entry) =>
@@ -243,6 +245,7 @@ function evalSnapshotFromEvent(event: JsonRecord): EvalSnapshot | undefined {
     promotionReady: summaryRecord.promotionReady === true && event.event === "step_ok",
     failedCaseIds,
     parseErrorCaseIds,
+    parseRecoveredCaseIds,
     parseErrorSamples,
   };
 }
@@ -251,6 +254,13 @@ function latestEvalSnapshot(events: JsonRecord[]): EvalSnapshot | undefined {
   return events
     .map(evalSnapshotFromEvent)
     .filter((entry): entry is EvalSnapshot => Boolean(entry))
+    .toSorted((left, right) => right.at.localeCompare(left.at))[0];
+}
+
+function latestPassingEvalSnapshot(events: JsonRecord[]): EvalSnapshot | undefined {
+  return events
+    .map(evalSnapshotFromEvent)
+    .filter((entry): entry is EvalSnapshot => Boolean(entry?.promotionReady))
     .toSorted((left, right) => right.at.localeCompare(left.at))[0];
 }
 
@@ -546,6 +556,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     (event) => event.name === "smoke" && event.event === "step_ok",
   );
   const latestEval = latestEvalSnapshot(guardEvents);
+  const latestPassingEval = latestPassingEvalSnapshot(guardEvents);
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const moduleLearningReview = await moduleLearningReviewSnapshot(worktree);
   const decisions = buildDecisions({
@@ -571,6 +582,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestDataset: datasetSummary(latestDataset),
     latestSmokeAt: eventTime(latestSmoke),
     latestEval,
+    latestPassingEval,
     latestEvalIsCurrentForGuardStart:
       Boolean(latestEval?.at) &&
       (!eventTime(latestGuardStart) || latestEval!.at >= eventTime(latestGuardStart)),

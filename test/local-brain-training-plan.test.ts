@@ -156,6 +156,65 @@ describe("local-brain-training-plan", () => {
     });
   });
 
+  it("keeps latest passing eval separate from a newer non-promoted candidate", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+      {
+        at: "2026-05-09T10:01:00.000Z",
+        event: "step_ok",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          summary: {
+            passed: 72,
+            total: 72,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T10:02:00.000Z",
+        event: "step_non_passing",
+        name: "candidate_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r8",
+          summary: {
+            passed: 72,
+            total: 72,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: ["plain_recent_stock_market_brief_preflight"],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.latestEval).toMatchObject({
+      name: "candidate_hardened_eval",
+      adapterPath: "/tmp/adapter-r8",
+      promotionReady: false,
+      parseRecoveredCaseIds: ["plain_recent_stock_market_brief_preflight"],
+    });
+    expect(plan.latestPassingEval).toMatchObject({
+      name: "stable_hardened_eval",
+      adapterPath: "/tmp/adapter-r2",
+      promotionReady: true,
+    });
+  });
+
   it("does not repair from stale eval failures before the latest guard start", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       {

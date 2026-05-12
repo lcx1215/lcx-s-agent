@@ -120,7 +120,61 @@ describe("local-brain-promotion-audit", () => {
       expect.objectContaining({
         promotionDecision: "ambiguous",
         resolverMatchesLatestEval: false,
-        realBugsFound: ["resolver_adapter_differs_from_latest_eval_adapter"],
+        realBugsFound: ["resolver_adapter_differs_from_latest_passing_eval_adapter"],
+      }),
+    );
+  });
+
+  it("keeps a stable selected latest-passing adapter safe when a newer candidate is not promoted", () => {
+    const stableAdapter = "/tmp/adapter-r2";
+    const candidateAdapter = "/tmp/adapter-r8";
+    const audit = buildPromotionAudit({
+      plan: {
+        activeProcesses: [{ pid: 123, role: "guard" }],
+        latestEval: {
+          name: "candidate_hardened_eval",
+          adapterPath: candidateAdapter,
+          passed: 72,
+          total: 72,
+          promotionReady: false,
+          failedCaseIds: [],
+          parseErrorCaseIds: [],
+        },
+        latestPassingEval: {
+          name: "stable_hardened_eval",
+          adapterPath: stableAdapter,
+          passed: 72,
+          total: 72,
+          promotionReady: true,
+          failedCaseIds: [],
+          parseErrorCaseIds: [],
+        },
+        moduleLearningReview: {
+          counts: { boundaryViolations: 0 },
+        },
+      },
+      resolver: {
+        ok: true,
+        details: {
+          selectedAdapter: stableAdapter,
+          selectionMode: "latest-passing",
+        },
+      },
+    });
+
+    expect(audit).toEqual(
+      expect.objectContaining({
+        promotionDecision: "safe",
+        resolverMatchesLatestEval: false,
+        resolverMatchesLatestPassingEval: true,
+        realBugsFound: [],
+        qualityLaneConcernsConsidered: ["latest_chronological_eval_not_promotion_ready"],
+      }),
+    );
+    expect(audit.selectedEval).toEqual(
+      expect.objectContaining({
+        adapterPath: stableAdapter,
+        promotionReady: true,
       }),
     );
   });

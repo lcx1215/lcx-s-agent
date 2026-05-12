@@ -89,6 +89,9 @@ export function normalizeLocalBrainModuleList(values: readonly string[]): LocalB
     if (!module || seen.has(module)) {
       continue;
     }
+    if (module === "fx_dollar" && seen.has("fx_currency_liquidity")) {
+      continue;
+    }
     seen.add(module);
     modules.push(module);
   }
