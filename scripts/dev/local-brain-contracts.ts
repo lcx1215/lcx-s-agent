@@ -1248,6 +1248,7 @@ export function hardenLocalBrainPlanForAsk(
       ],
       supporting_modules: ["causal_map", "ops_audit", "quant_math", "portfolio_risk_gates"],
       required_tools: [
+        "module_learning_pipeline_plan",
         "source_registry_lookup",
         "finance_learning_capability_apply",
         "artifact_memory_recall",

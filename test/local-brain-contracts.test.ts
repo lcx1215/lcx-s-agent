@@ -1033,6 +1033,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "keep_downrank_or_discard_decision",
       ]),
     );
+    expect(plan.required_tools).toContain("module_learning_pipeline_plan");
     expect(plan.risk_boundaries).toEqual(
       expect.arrayContaining([
         "no_model_internal_learning_claim_without_eval",
