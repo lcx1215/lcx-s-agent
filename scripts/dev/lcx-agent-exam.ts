@@ -190,6 +190,9 @@ function buildTrainingLane(planCommand: CommandResult): ExamLane {
   const activeProcesses = asArray(plan.activeProcesses);
   const latestEval = asRecord(plan.latestEval);
   const latestDataset = asRecord(plan.latestDataset);
+  const latestDatasetCounts = asRecord(latestDataset.counts);
+  const datasetExamples =
+    numberValue(latestDataset.examples) ?? numberValue(latestDatasetCounts.examples) ?? 0;
   const decisions = asArray(plan.decisions);
   const topDecision = asRecord(decisions[0]);
   const latestTeacher = asRecord(plan.latestTeacher);
@@ -204,7 +207,7 @@ function buildTrainingLane(planCommand: CommandResult): ExamLane {
       `activeProcesses=${activeProcesses.length}`,
       `nextDecision=${stringValue(topDecision.id, "unknown")}`,
       `latestEval=${stringValue(latestEval.name)} ${numberValue(latestEval.passed) ?? 0}/${numberValue(latestEval.total) ?? 0}`,
-      `datasetExamples=${numberValue(latestDataset.examples) ?? 0}`,
+      `datasetExamples=${datasetExamples}`,
       `teacherFailures=${teacherFailures}`,
     ],
     issue:

@@ -25,7 +25,7 @@ describe("lcx-agent-exam", () => {
       trainingPlan: okCommand("training-plan", {
         activeProcesses: [{ pid: 123, role: "guard" }],
         latestEval: { name: "stable_hardened_eval", passed: 72, total: 72 },
-        latestDataset: { examples: 9000 },
+        latestDataset: { counts: { examples: 9000 } },
         latestTeacher: { failures: 0 },
         decisions: [{ id: "continue_medium_training" }],
       }),
@@ -85,6 +85,11 @@ describe("lcx-agent-exam", () => {
       expect.objectContaining({
         status: "warn",
         issue: expect.stringContaining("今天没有模块学习 review 输入收据"),
+      }),
+    );
+    expect(report.lanes.find((lane) => lane.lane === "training_guard")).toEqual(
+      expect.objectContaining({
+        evidence: expect.arrayContaining(["datasetExamples=9000"]),
       }),
     );
   });
