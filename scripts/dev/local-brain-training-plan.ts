@@ -331,6 +331,7 @@ async function activeTrainingProcesses(enabled: boolean): Promise<JsonRecord[]> 
         line,
       ),
     )
+    .filter((line) => !line.includes("--resolve-current-adapter"))
     .filter((line) => !line.includes("rg "))
     .map((line) => {
       const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/u.exec(line);

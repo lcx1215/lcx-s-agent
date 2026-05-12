@@ -569,6 +569,9 @@ function summarizeTeacherEvent(
 }
 
 function isTrainingCommand(command: string): boolean {
+  if (command.includes("--resolve-current-adapter")) {
+    return false;
+  }
   return (
     /^(?:\S*\/)?node\s+--import(?:=tsx|\s+tsx)\s+scripts\/dev\/minimax-brain-training-guard\.ts(?:\s|$)/u.test(
       command.trim(),

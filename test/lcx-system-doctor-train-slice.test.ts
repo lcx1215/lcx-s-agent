@@ -44,6 +44,21 @@ describe("LCX system doctor train slice observability", () => {
     expect(saturatorIndex).toBeLessThan(guardIndex);
   });
 
+  it("does not count resolver-only adapter checks as active training guards", async () => {
+    const doctorSource = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      "utf8",
+    );
+    const trainingPlanSource = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/local-brain-training-plan.ts"),
+      "utf8",
+    );
+
+    expect(doctorSource).toContain('command.includes("--resolve-current-adapter")');
+    expect(doctorSource).toContain("return false");
+    expect(trainingPlanSource).toContain('!line.includes("--resolve-current-adapter")');
+  });
+
   it("bounds live Lark probes so a stuck channel check cannot look successful", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
