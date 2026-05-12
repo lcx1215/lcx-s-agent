@@ -150,6 +150,16 @@ provider config, or protected-memory mutation. Treat that review as dev/local
 status evidence only; it is not live-visible proof and it does not mean Qwen
 weights absorbed the lesson unless eval or training evidence is present.
 
+The default system doctor runs the same review in no-write mode:
+
+```bash
+node --import tsx scripts/dev/lcx-system-doctor.ts --json
+```
+
+Weak module-learning receipts appear in the `module-learning-pipeline-review`
+check. Ordinary in-progress statuses do not fail the doctor, but boundary
+violations do.
+
 ## Codex Skills To Load
 
 When context is missing, load only the skills that match the current question. The most useful local skill files are:

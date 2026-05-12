@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -871,6 +872,55 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function moduleLearningPipelineReviewCheck(): Promise<CheckResult> {
+  const startedAt = Date.now();
+  try {
+    const tool = createModuleLearningPipelineReviewTool({ workspaceDir: WORKTREE_CWD });
+    const result = await tool.execute("lcx-system-doctor-module-learning-review", {
+      writeReview: false,
+    });
+    const details = result.details as Record<string, unknown>;
+    const counts =
+      details.counts && typeof details.counts === "object"
+        ? (details.counts as Record<string, unknown>)
+        : {};
+    const boundaryViolations =
+      typeof counts.boundaryViolations === "number" ? counts.boundaryViolations : 0;
+    return {
+      name: "module-learning-pipeline-review",
+      ok: boundaryViolations === 0,
+      durationMs: Date.now() - startedAt,
+      summary: {
+        ok: details.ok,
+        boundary: details.boundary,
+        updated: details.updated,
+        reviewPath: details.reviewPath,
+        targetModule: details.targetModule,
+        counts,
+        weakModuleLearning: Array.isArray(details.weakModuleLearning)
+          ? details.weakModuleLearning.slice(0, 5)
+          : [],
+        invalidReceipts: Array.isArray(details.invalidReceipts)
+          ? details.invalidReceipts.slice(0, 5)
+          : [],
+        separationContract: details.separationContract,
+      },
+      error:
+        boundaryViolations > 0
+          ? "module learning receipt claims touched live/provider/protected-memory boundary"
+          : undefined,
+    };
+  } catch (error) {
+    return {
+      name: "module-learning-pipeline-review",
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      summary: {},
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function entrypointCheck(): Promise<CheckResult> {
   const startedAt = Date.now();
   const entries = [
@@ -883,6 +933,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/local-brain-distill-smoke.ts",
     "scripts/dev/local-brain-distill-eval.ts",
     "scripts/dev/local-brain-plan.ts",
+    "src/agents/tools/module-learning-pipeline-review-tool.ts",
     "src/commands/capabilities/lark-loop-diagnose.ts",
   ];
   const missing = [];
@@ -932,6 +983,7 @@ checks.push(
     parseJson: true,
   }),
 );
+checks.push(await moduleLearningPipelineReviewCheck());
 checks.push(await minimaxTrainingGuardStatusCheck());
 checks.push(await modelCouncilProviderEvidenceCheck());
 checks.push(

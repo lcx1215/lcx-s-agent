@@ -60,4 +60,17 @@ describe("LCX system doctor train slice observability", () => {
       /name: "lark-loop-diagnose"[\s\S]*timeoutMs: LIVE_LARK_DIAGNOSE_TIMEOUT_MS/u,
     );
   });
+
+  it("includes module-learning receipt review without writing review files by default", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("createModuleLearningPipelineReviewTool");
+    expect(source).toContain("async function moduleLearningPipelineReviewCheck");
+    expect(source).toContain('name: "module-learning-pipeline-review"');
+    expect(source).toContain("writeReview: false");
+    expect(source).toContain("boundaryViolations === 0");
+  });
 });
