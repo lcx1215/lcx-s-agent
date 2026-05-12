@@ -80,6 +80,25 @@ function nonPassingEval(
   };
 }
 
+function datasetEvent(
+  at: string,
+  counts: { sourceFiles: number; examples: number; train: number },
+) {
+  return {
+    at,
+    event: "step_ok",
+    name: "dataset",
+    result: {
+      ok: true,
+      counts: {
+        ...counts,
+        valid: 13,
+        test: 13,
+      },
+    },
+  };
+}
+
 async function resolveCurrentAdapter(
   fixture: Awaited<ReturnType<typeof makeGuardFixture>>,
   extraArgs: string[] = [],
@@ -550,5 +569,77 @@ describe("minimax brain training guard adapter resolution", () => {
     await expect(resolveCurrentAdapter(fixture)).rejects.toMatchObject({
       stderr: expect.stringContaining("no promotion-ready adapter found"),
     });
+  });
+
+  it("reports source-stable dataset shrink in latest-passing resolution", async () => {
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      const adapter = `${adapterPrefix}-2026-05-11T19-59-45-470Z-r2`;
+      return [
+        datasetEvent("2026-05-11T20:00:00.000Z", {
+          sourceFiles: 403,
+          examples: 4104,
+          train: 4078,
+        }),
+        passingEval("2026-05-11T20:12:34.085Z", "candidate_hardened_eval", adapter, 72),
+        {
+          at: "2026-05-11T20:12:34.089Z",
+          event: "adapter_promoted_for_guard_session",
+          adapterPath: adapter,
+        },
+        datasetEvent("2026-05-12T03:34:35.887Z", {
+          sourceFiles: 403,
+          examples: 3162,
+          train: 3136,
+        }),
+        passingEval("2026-05-12T03:10:38.207Z", "stable_hardened_eval", adapter, 72),
+      ];
+    });
+
+    const { stdout } = await resolveCurrentAdapter(fixture);
+    const parsed = JSON.parse(stdout) as {
+      selectedAdapter?: string;
+      datasetPromotionRisk?: {
+        status?: string;
+        previousMaxTrain?: number;
+        train?: number;
+      };
+    };
+    expect(parsed.selectedAdapter).toContain("2026-05-11T19-59-45-470Z-r2");
+    expect(parsed.datasetPromotionRisk).toMatchObject({
+      status: "source_stable_dataset_shrink",
+      previousMaxTrain: 4078,
+      train: 3136,
+    });
+  });
+
+  it("ignores malformed guard log lines when checking dataset promotion risk", async () => {
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      const adapter = `${adapterPrefix}-2026-05-11T19-59-45-470Z-r2`;
+      return [
+        "{not-json",
+        datasetEvent("2026-05-11T20:00:00.000Z", {
+          sourceFiles: 403,
+          examples: 4104,
+          train: 4078,
+        }),
+        passingEval("2026-05-11T20:12:34.085Z", "candidate_hardened_eval", adapter, 72),
+        datasetEvent("2026-05-12T03:34:35.887Z", {
+          sourceFiles: 403,
+          examples: 3162,
+          train: 3136,
+        }),
+      ];
+    });
+
+    const raw = await fs.readFile(fixture.logPath, "utf8");
+    await fs.writeFile(fixture.logPath, raw.replace('"{not-json"', "{not-json"));
+
+    const { stdout } = await resolveCurrentAdapter(fixture);
+    const parsed = JSON.parse(stdout) as {
+      datasetPromotionRisk?: {
+        status?: string;
+      };
+    };
+    expect(parsed.datasetPromotionRisk?.status).toBe("source_stable_dataset_shrink");
   });
 });

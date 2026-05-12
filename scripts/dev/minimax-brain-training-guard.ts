@@ -698,6 +698,17 @@ type EvalVerdict = {
   source: string;
 };
 
+type DatasetPromotionRisk = {
+  status: "ok" | "unknown" | "source_stable_dataset_shrink";
+  at?: string;
+  sourceFiles?: number;
+  examples?: number;
+  train?: number;
+  previousMaxExamples?: number;
+  previousMaxTrain?: number;
+  reason?: string;
+};
+
 function evalSummaryFromPayload(payload: Record<string, unknown>):
   | {
       promotionReady: boolean;
@@ -819,6 +830,54 @@ function failedStableEvalVerdictFromGuardFailure(
 
 function isPassingEvalEvent(payload: Record<string, unknown>): boolean {
   return evalVerdictFromPayload(payload)?.promotionReady === true;
+}
+
+function numericField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function parseJsonRecordLine(line: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function datasetCountsFromPayload(payload: Record<string, unknown>):
+  | {
+      at: string;
+      sourceFiles: number;
+      examples: number;
+      train: number;
+    }
+  | undefined {
+  if (payload.event !== "step_ok" || payload.name !== "dataset") {
+    return undefined;
+  }
+  const result = payload.result;
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const counts = (result as { counts?: unknown }).counts;
+  if (!counts || typeof counts !== "object") {
+    return undefined;
+  }
+  const sourceFiles = numericField((counts as { sourceFiles?: unknown }).sourceFiles);
+  const examples = numericField((counts as { examples?: unknown }).examples);
+  const train = numericField((counts as { train?: unknown }).train);
+  if (sourceFiles === undefined || examples === undefined || train === undefined) {
+    return undefined;
+  }
+  return {
+    at: typeof payload.at === "string" ? payload.at : "",
+    sourceFiles,
+    examples,
+    train,
+  };
 }
 
 function adapterPathFromEvalEvent(payload: Record<string, unknown>): string | undefined {
@@ -1094,6 +1153,61 @@ async function resolveCatastrophicTrainingSeedBackoffs(
   return suspended;
 }
 
+async function resolveDatasetPromotionRisk(): Promise<DatasetPromotionRisk> {
+  let logFiles: string[];
+  try {
+    logFiles = (await fs.readdir(DEFAULT_GUARD_LOG_DIR))
+      .filter((entry) => /^minimax-brain-training-guard.*\.jsonl$/u.test(entry))
+      .map((entry) => path.join(DEFAULT_GUARD_LOG_DIR, entry));
+  } catch {
+    return { status: "unknown", reason: "guard_log_dir_unavailable" };
+  }
+  const datasets: Array<{
+    at: string;
+    sourceFiles: number;
+    examples: number;
+    train: number;
+  }> = [];
+  for (const logFile of logFiles.toSorted()) {
+    const raw = await fs.readFile(logFile, "utf8").catch(() => "");
+    for (const line of raw.split(/\r?\n/u)) {
+      if (!line.trim()) {
+        continue;
+      }
+      const payload = parseJsonRecordLine(line);
+      if (!payload) {
+        continue;
+      }
+      const dataset = datasetCountsFromPayload(payload);
+      if (dataset) {
+        datasets.push(dataset);
+      }
+    }
+  }
+  const latest = datasets.toSorted((left, right) => right.at.localeCompare(left.at))[0];
+  if (!latest) {
+    return { status: "unknown", reason: "no_dataset_evidence" };
+  }
+  const sameSourceHistory = datasets.filter(
+    (entry) => entry.sourceFiles === latest.sourceFiles && entry.at <= latest.at,
+  );
+  const previousMaxExamples = Math.max(...sameSourceHistory.map((entry) => entry.examples));
+  const previousMaxTrain = Math.max(...sameSourceHistory.map((entry) => entry.train));
+  const shrinking = latest.examples < previousMaxExamples || latest.train < previousMaxTrain;
+  return {
+    status: shrinking ? "source_stable_dataset_shrink" : "ok",
+    at: latest.at,
+    sourceFiles: latest.sourceFiles,
+    examples: latest.examples,
+    train: latest.train,
+    previousMaxExamples,
+    previousMaxTrain,
+    reason: shrinking
+      ? "sourceFiles unchanged while examples or train count declined; hold future promotion until explained"
+      : undefined,
+  };
+}
+
 async function resolveLatestPassingAdapter(adapterPrefix: string): Promise<string | undefined> {
   let logFiles: string[];
   try {
@@ -1109,12 +1223,15 @@ async function resolveLatestPassingAdapter(adapterPrefix: string): Promise<strin
   const completed: Array<{ at: string; adapterPath: string }> = [];
   const stableFallback: Array<{ at: string; adapterPath: string }> = [];
   for (const logFile of logFiles.toSorted()) {
-    const raw = await fs.readFile(logFile, "utf8");
+    const raw = await fs.readFile(logFile, "utf8").catch(() => "");
     for (const line of raw.split(/\r?\n/u)) {
       if (!line.trim()) {
         continue;
       }
-      const payload = JSON.parse(line) as Record<string, unknown>;
+      const payload = parseJsonRecordLine(line);
+      if (!payload) {
+        continue;
+      }
       const at = typeof payload.at === "string" ? payload.at : "";
       const evalVerdict =
         evalVerdictFromPayload(payload) ?? failedStableEvalVerdictFromGuardFailure(payload);
@@ -1623,6 +1740,7 @@ function adapterPathForRound(options: CliOptions, round: number): string {
 const options = parseArgs(process.argv.slice(2));
 if (options.resolveCurrentAdapterOnly) {
   const selectedAdapter = await resolveCurrentAdapter(options);
+  const datasetPromotionRisk = await resolveDatasetPromotionRisk();
   const catastrophicTrainingSeedBackoffs = await resolveCatastrophicTrainingSeedBackoffs(
     options.logPath,
     options.adapterPrefix,
@@ -1663,6 +1781,7 @@ if (options.resolveCurrentAdapterOnly) {
         localTrainingPauseReason: localTrainingPaused
           ? "repeated_catastrophic_training_seed_backoff"
           : undefined,
+        datasetPromotionRisk,
         model: options.model,
         adapterPrefix: options.adapterPrefix,
         bootstrapIfMissing: options.bootstrapIfMissing,
@@ -2086,7 +2205,11 @@ try {
           idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS,
         },
       );
-      if (promotionEvalPassed(candidateEval)) {
+      const datasetPromotionRisk = await resolveDatasetPromotionRisk();
+      const promotionBlockedByDatasetShrink =
+        promotionEvalPassed(candidateEval) &&
+        datasetPromotionRisk.status === "source_stable_dataset_shrink";
+      if (promotionEvalPassed(candidateEval) && !promotionBlockedByDatasetShrink) {
         currentAdapter = candidateAdapter;
         trainingSeedAdapter = candidateAdapter;
         trainingResumeAdapter = candidateAdapter;
@@ -2099,6 +2222,18 @@ try {
           liveTouched: false,
         });
       } else {
+        if (promotionBlockedByDatasetShrink) {
+          await appendLog(options.logPath, {
+            event: "candidate_promotion_blocked_dataset_shrink",
+            round,
+            adapterPath: candidateAdapter,
+            datasetPromotionRisk,
+            reason: "source_stable_dataset_shrink",
+            strictPromotionUnchanged: true,
+            liveTouched: false,
+            providerConfigTouched: false,
+          });
+        }
         const candidateSeed = trainingSeedFromEvalResult(candidateAdapter, candidateEval);
         if (isCatastrophicCandidateScore(candidateSeed)) {
           const failedSeedAdapter = resumeAdapter ?? currentAdapter ?? trainingSeedAdapter;

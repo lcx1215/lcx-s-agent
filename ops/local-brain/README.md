@@ -48,13 +48,14 @@ node --import tsx scripts/dev/lcx-agent-exam.ts --json
 ```
 
 This is read-only by default. It combines doctor, training-plan, promotion
-audit, module-learning review, automation coordination, Lark/Feishu boundary,
-and optional L5 evidence into one table-like verdict. It does not start
-training, does not run heavy MLX eval, does not touch provider config, and does
-not prove live-visible-fixed. Use `--live` only when you intentionally want
-channel/Lark probe evidence, and still require fresh real inbound plus visible
-reply before claiming live-visible-fixed. Use `--l5` for the heavier local L5
-regression battery.
+audit, module-learning review, thinking-hierarchy integrity, work-status
+boundary integrity, memory-sedimentation integrity, automation coordination,
+Lark/Feishu boundary, and optional L5 evidence into one table-like verdict. It
+does not start training, does not run heavy MLX eval, does not touch provider
+config, and does not prove live-visible-fixed. Use `--live` only when you
+intentionally want channel/Lark probe evidence, and still require fresh real
+inbound plus visible reply before claiming live-visible-fixed. Use `--l5` for
+the heavier local L5 regression battery.
 
 The default system doctor includes a doctrine-consistency gate. It fails when
 active entrypoints drift back toward stale stage wording, tiny symptom-patch

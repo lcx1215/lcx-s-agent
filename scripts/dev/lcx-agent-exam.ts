@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
@@ -57,6 +58,16 @@ type ExamReport = {
     notRun: number;
     nextBlocker: string;
   };
+};
+
+type CognitiveIntegritySources = {
+  doctrine: string;
+  localBrainEval: string;
+  localBrainEvalTests: string;
+  systemPrompt: string;
+  moduleLearningReviewTool: string;
+  larkSurfaces: string;
+  localBrainRunbook: string;
 };
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -300,6 +311,155 @@ function buildModuleLearningLane(moduleCommand: CommandResult): ExamLane {
   };
 }
 
+function hasAll(source: string, patterns: readonly (string | RegExp)[]): boolean {
+  return patterns.every((pattern) =>
+    typeof pattern === "string" ? source.includes(pattern) : pattern.test(source),
+  );
+}
+
+function buildThinkingHierarchyLane(sources?: CognitiveIntegritySources): ExamLane {
+  if (!sources) {
+    return {
+      lane: "thinking_hierarchy_integrity",
+      status: "not_run",
+      severity: "P2",
+      boundary: "static_contract_sources_missing",
+      evidence: ["sourceAudit=false"],
+      issue: "没有读取思考层契约源码，不能判断复杂题是否会绕过简单前置题。",
+      nextAction: "重新跑 lcx-agent-exam，让它读取本地源码契约。",
+    };
+  }
+  const doctrineOk = hasAll(sources.doctrine, [
+    "Capability must be monotonic",
+    "simple prerequisite eval",
+  ]);
+  const evalOk = hasAll(sources.localBrainEval, [
+    "EVAL_CASE_PREREQUISITES",
+    "expandEvalCasesWithPrerequisites",
+    "autoIncludedPrerequisiteCaseIds",
+    "registeredPrerequisiteRuleCount",
+  ]);
+  const regressionOk = hasAll(sources.localBrainEvalTests, [
+    "runs simple prerequisite cases before complex commodity evals",
+    "gates all-domain finance learning behind simple prerequisite evals",
+    "requires abstraction-transfer evals to include adjacent prerequisites",
+  ]);
+  const status = doctrineOk && evalOk && regressionOk ? "pass" : "fail";
+  return {
+    lane: "thinking_hierarchy_integrity",
+    status,
+    severity: status === "pass" ? "info" : "P1",
+    boundary: "dev_static_cognitive_contract",
+    evidence: [
+      `doctrineMonotonic=${String(doctrineOk)}`,
+      `evalPrerequisiteExpansion=${String(evalOk)}`,
+      `regressionProof=${String(regressionOk)}`,
+    ],
+    issue:
+      status === "pass"
+        ? "复杂金融/学习/抽象题有简单前置题门禁和回归证据，不能只靠大题分数冒充能力。"
+        : "复杂题前置门禁缺失，可能出现大题会说、小题不会做的假聪明。",
+    nextAction:
+      status === "pass"
+        ? "以后新增复杂 eval 时继续强制加 simple prerequisite。"
+        : "补 prerequisite 映射和相邻简单题回归，再允许 promotion。",
+  };
+}
+
+function buildWorkStatusBoundaryLane(sources?: CognitiveIntegritySources): ExamLane {
+  if (!sources) {
+    return {
+      lane: "work_status_boundary_integrity",
+      status: "not_run",
+      severity: "P2",
+      boundary: "static_contract_sources_missing",
+      evidence: ["sourceAudit=false"],
+      issue: "没有读取工作状态契约源码，不能判断 dev/live/started/completed 是否会混说。",
+      nextAction: "重新跑 lcx-agent-exam，让它读取 Lark/status 契约。",
+    };
+  }
+  const larkOk = hasAll(sources.larkSurfaces, [
+    "dev-fixed means local implementation or tests only",
+    "live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
+    "started, running, completed, blocked, or unproven",
+  ]);
+  const runbookOk = hasAll(sources.localBrainRunbook, [
+    "live-visible-fixed",
+    "fresh real Lark inbound plus visible reply",
+    "Do not call local training or synthetic replay `live-visible-fixed`",
+  ]);
+  const status = larkOk && runbookOk ? "pass" : "fail";
+  return {
+    lane: "work_status_boundary_integrity",
+    status,
+    severity: status === "pass" ? "info" : "P1",
+    boundary: "dev_static_workflow_contract",
+    evidence: [`larkSurfaceBoundary=${String(larkOk)}`, `runbookBoundary=${String(runbookOk)}`],
+    issue:
+      status === "pass"
+        ? "工作状态有明确边界：dev、probe、live-visible、started/completed 不能混成一个成功词。"
+        : "工作状态边界缺失，智能体可能把本地修好、探针通过、真实用户可见混说。",
+    nextAction:
+      status === "pass"
+        ? "继续用真实证据层级汇报，不从聊天记忆直接报成功。"
+        : "补 Lark/status/readback 契约和回归，禁止 fake live-fixed。",
+  };
+}
+
+function buildMemorySedimentationLane(sources?: CognitiveIntegritySources): ExamLane {
+  if (!sources) {
+    return {
+      lane: "memory_sedimentation_integrity",
+      status: "not_run",
+      severity: "P2",
+      boundary: "static_contract_sources_missing",
+      evidence: ["sourceAudit=false"],
+      issue: "没有读取记忆沉淀契约源码，不能判断未证实学习是否会被写成已学会。",
+      nextAction: "重新跑 lcx-agent-exam，让它读取记忆/学习工具契约。",
+    };
+  }
+  const promptOk = hasAll(sources.systemPrompt, [
+    "do not describe a run as learned/internalized when the status is not application_ready",
+    "retrievalFirstLearning.failedReason",
+    "weakLearningIntents.failedReason",
+    "usageReceiptPath",
+  ]);
+  const moduleReviewOk = hasAll(sources.moduleLearningReviewTool, [
+    "weakModuleLearning",
+    "boundaryViolation",
+    "languageCorpusUntouched",
+    "protectedMemoryUntouched",
+    "providerConfigTouched: false",
+  ]);
+  const runbookOk = hasAll(sources.localBrainRunbook, [
+    "A stored source, summary, or dataset row is not enough",
+    "stored_only",
+    "application_ready",
+    "eval_absorbed",
+    "Do not claim Qwen model-internal learning without retained artifacts and eval evidence",
+  ]);
+  const status = promptOk && moduleReviewOk && runbookOk ? "pass" : "fail";
+  return {
+    lane: "memory_sedimentation_integrity",
+    status,
+    severity: status === "pass" ? "info" : "P1",
+    boundary: "dev_static_memory_contract",
+    evidence: [
+      `systemPromptLearningGate=${String(promptOk)}`,
+      `moduleReviewBoundary=${String(moduleReviewOk)}`,
+      `runbookAbsorptionLabels=${String(runbookOk)}`,
+    ],
+    issue:
+      status === "pass"
+        ? "记忆沉淀有分层：存了、可检索、可应用、eval 吸收不能混说，也不能碰 protected memory/live/provider。"
+        : "记忆沉淀契约缺失，可能把存储、摘要、检索误写成模型已经学会。",
+    nextAction:
+      status === "pass"
+        ? "继续要求 receipt、failedReason、fresh adjacent application 和 eval/training 证据。"
+        : "补 source->receipt->apply->eval_absorbed 的 fail-closed 契约。",
+  };
+}
+
 function buildLarkLane(larkCommand: CommandResult | undefined, live: boolean): ExamLane {
   if (!live) {
     return {
@@ -473,6 +633,7 @@ export function buildAgentExamReport(params: {
   trainingPlan: CommandResult;
   promotionAudit: CommandResult;
   moduleLearningReview: CommandResult;
+  cognitiveIntegritySources?: CognitiveIntegritySources;
   larkDiagnose?: CommandResult;
   channelProbe?: CommandResult;
   l5Battery?: CommandResult;
@@ -482,6 +643,9 @@ export function buildAgentExamReport(params: {
     buildTrainingLane(params.trainingPlan),
     buildPromotionLane(params.promotionAudit),
     buildModuleLearningLane(params.moduleLearningReview),
+    buildThinkingHierarchyLane(params.cognitiveIntegritySources),
+    buildWorkStatusBoundaryLane(params.cognitiveIntegritySources),
+    buildMemorySedimentationLane(params.cognitiveIntegritySources),
     buildAutomationLane(params.trainingPlan, params.doctor),
     buildLarkLane(params.larkDiagnose, params.live),
     buildLiveBoundaryLane(params.live, params.channelProbe),
@@ -619,43 +783,76 @@ function runCommand(params: {
   });
 }
 
-export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
-  const [doctor, trainingPlan, promotionAudit, moduleLearningReview] = await Promise.all([
-    runCommand({
-      name: "lcx-system-doctor",
-      command: process.execPath,
-      args: ["--import", "tsx", "scripts/dev/lcx-system-doctor.ts", "--json"],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
-    runCommand({
-      name: "local-brain-training-plan",
-      command: process.execPath,
-      args: ["--import", "tsx", "scripts/dev/local-brain-training-plan.ts", "--json"],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
-    runCommand({
-      name: "local-brain-promotion-audit",
-      command: process.execPath,
-      args: ["--import", "tsx", "scripts/dev/local-brain-promotion-audit.ts", "--json"],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
-    runCommand({
-      name: "module-learning-pipeline-review",
-      command: process.execPath,
-      args: [
-        "--import",
-        "tsx",
-        "scripts/dev/module-learning-pipeline-review.ts",
-        "--no-write",
-        "--json",
-      ],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
+async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySources> {
+  const read = async (relativePath: string): Promise<string> =>
+    fs.readFile(path.join(WORKTREE_CWD, relativePath), "utf8");
+  const [
+    doctrine,
+    localBrainEval,
+    localBrainEvalTests,
+    systemPrompt,
+    moduleLearningReviewTool,
+    larkSurfaces,
+    localBrainRunbook,
+  ] = await Promise.all([
+    read("AGENTS.md"),
+    read("scripts/dev/local-brain-distill-eval.ts"),
+    read("test/local-brain-distill-eval.test.ts"),
+    read("src/agents/system-prompt.ts"),
+    read("src/agents/tools/module-learning-pipeline-review-tool.ts"),
+    read("extensions/feishu/src/surfaces.ts"),
+    read("ops/local-brain/README.md"),
   ]);
+  return {
+    doctrine,
+    localBrainEval,
+    localBrainEvalTests,
+    systemPrompt,
+    moduleLearningReviewTool,
+    larkSurfaces,
+    localBrainRunbook,
+  };
+}
+
+export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
+  const [doctor, trainingPlan, promotionAudit, moduleLearningReview, cognitiveIntegritySources] =
+    await Promise.all([
+      runCommand({
+        name: "lcx-system-doctor",
+        command: process.execPath,
+        args: ["--import", "tsx", "scripts/dev/lcx-system-doctor.ts", "--json"],
+        parseJson: true,
+        timeoutMs: options.timeoutMs,
+      }),
+      runCommand({
+        name: "local-brain-training-plan",
+        command: process.execPath,
+        args: ["--import", "tsx", "scripts/dev/local-brain-training-plan.ts", "--json"],
+        parseJson: true,
+        timeoutMs: options.timeoutMs,
+      }),
+      runCommand({
+        name: "local-brain-promotion-audit",
+        command: process.execPath,
+        args: ["--import", "tsx", "scripts/dev/local-brain-promotion-audit.ts", "--json"],
+        parseJson: true,
+        timeoutMs: options.timeoutMs,
+      }),
+      runCommand({
+        name: "module-learning-pipeline-review",
+        command: process.execPath,
+        args: [
+          "--import",
+          "tsx",
+          "scripts/dev/module-learning-pipeline-review.ts",
+          "--no-write",
+          "--json",
+        ],
+        parseJson: true,
+        timeoutMs: options.timeoutMs,
+      }),
+      readCognitiveIntegritySources(),
+    ]);
 
   const [larkDiagnose, channelProbe] = options.live
     ? await Promise.all([
@@ -693,6 +890,7 @@ export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
     trainingPlan,
     promotionAudit,
     moduleLearningReview,
+    cognitiveIntegritySources,
     larkDiagnose,
     channelProbe,
     l5Battery,
