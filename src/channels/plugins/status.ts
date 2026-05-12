@@ -32,5 +32,7 @@ export async function buildChannelAccountSnapshot<ResolvedAccount>(params: {
     accountId: params.accountId,
     enabled,
     configured,
+    probe: params.probe,
+    audit: params.audit,
   };
 }

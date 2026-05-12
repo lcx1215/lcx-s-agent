@@ -32,11 +32,18 @@ const LEARNING_COUNCIL_DIR = path.join(WORKSPACE_DIR, "bank", "knowledge", "lear
 const REVIEW_PANEL_RECEIPT_DIR = path.join(WORKSPACE_DIR, "memory", "review-panel-receipts");
 const MODEL_COUNCIL_AUDIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const LIVE_LARK_DIAGNOSE_TIMEOUT_MS = 30_000;
-const DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS = 30_000;
+const DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS = 90_000;
 const LIVE_CHANNEL_PROBE_TIMEOUT_MS = resolvePositiveTimeout(
   process.env.LIVE_CHANNEL_PROBE_TIMEOUT_MS,
   DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS,
 );
+const LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS = resolvePositiveTimeout(
+  process.env.LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS,
+  5_000,
+);
+const LIVE_SIDECAR_REPO =
+  process.env.LCX_LIVE_SIDECAR ?? path.join(HOME, ".openclaw", "live-sidecars", "lcx-s-openclaw");
+const LIVE_SIDECAR_DIST_ENTRY = path.join(LIVE_SIDECAR_REPO, "dist", "index.js");
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 
@@ -875,6 +882,28 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function liveOpenClawInvocation(args: string[]): Promise<{
+  command: string;
+  args: string[];
+  cwd: string;
+  source: "live-sidecar-dist" | "dev-pnpm-fallback";
+}> {
+  if (await fileExists(LIVE_SIDECAR_DIST_ENTRY)) {
+    return {
+      command: process.execPath,
+      args: [LIVE_SIDECAR_DIST_ENTRY, ...args],
+      cwd: LIVE_SIDECAR_REPO,
+      source: "live-sidecar-dist",
+    };
+  }
+  return {
+    command: "pnpm",
+    args: ["--silent", "openclaw", ...args],
+    cwd: WORKTREE_CWD,
+    source: "dev-pnpm-fallback",
+  };
+}
+
 async function moduleLearningPipelineReviewCheck(): Promise<CheckResult> {
   const startedAt = Date.now();
   try {
@@ -1098,11 +1127,25 @@ if (options.deep) {
 }
 
 if (options.live) {
+  const liveLarkDiagnose = await liveOpenClawInvocation([
+    "capabilities",
+    "lark-loop-diagnose",
+    "--json",
+  ]);
+  const liveChannelProbe = await liveOpenClawInvocation([
+    "channels",
+    "status",
+    "--probe",
+    "--json",
+    "--timeout",
+    String(LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS),
+  ]);
   checks.push(
     await runCommand({
       name: "lark-loop-diagnose",
-      command: "pnpm",
-      args: ["--silent", "openclaw", "capabilities", "lark-loop-diagnose", "--json"],
+      command: liveLarkDiagnose.command,
+      args: liveLarkDiagnose.args,
+      cwd: liveLarkDiagnose.cwd,
       parseJson: true,
       timeoutMs: LIVE_LARK_DIAGNOSE_TIMEOUT_MS,
     }),
@@ -1110,8 +1153,9 @@ if (options.live) {
   checks.push(
     await runCommand({
       name: "channels-status-probe",
-      command: "pnpm",
-      args: ["--silent", "openclaw", "channels", "status", "--probe", "--json"],
+      command: liveChannelProbe.command,
+      args: liveChannelProbe.args,
+      cwd: liveChannelProbe.cwd,
       parseJson: true,
       timeoutMs: LIVE_CHANNEL_PROBE_TIMEOUT_MS,
     }),

@@ -131,6 +131,79 @@ describe("gateway server channels", () => {
     expect(signal?.lastProbeAt).toBeNull();
   });
 
+  test("channels.status reports a timed-out channel probe without hanging the RPC", async () => {
+    setRegistry(
+      createRegistry([
+        {
+          pluginId: "telegram",
+          source: "test",
+          plugin: {
+            ...createChannelTestPluginBase({
+              id: "telegram",
+              label: "Telegram",
+              config: { isConfigured: async () => true },
+            }),
+            status: {
+              probeAccount: async () => await new Promise<never>(() => {}),
+              buildChannelSummary: async (params: { snapshot: { probe?: unknown } }) => ({
+                configured: true,
+                probe: params.snapshot.probe,
+              }),
+            },
+          },
+        },
+      ]),
+    );
+
+    const startedAt = Date.now();
+    const res = await rpcReq<{
+      channelAccounts?: { telegram?: Array<{ probe?: { ok?: boolean; error?: string } }> };
+    }>(ws, "channels.status", { probe: true, timeoutMs: 50 });
+
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    expect(res.ok).toBe(true);
+    const probe = res.payload?.channelAccounts?.telegram?.[0]?.probe;
+    expect(probe?.ok).toBe(false);
+    expect(probe?.error).toContain("telegram:default:probeAccount timed out after 50ms");
+  });
+
+  test("channels.status reports a timed-out account snapshot without hanging the RPC", async () => {
+    setRegistry(
+      createRegistry([
+        {
+          pluginId: "telegram",
+          source: "test",
+          plugin: {
+            ...createChannelTestPluginBase({
+              id: "telegram",
+              label: "Telegram",
+              config: { isConfigured: async () => true },
+            }),
+            status: {
+              buildAccountSnapshot: async () => await new Promise<never>(() => {}),
+              buildChannelSummary: async (params: { snapshot: { lastError?: unknown } }) => ({
+                configured: false,
+                snapshotError: params.snapshot.lastError,
+              }),
+            },
+          },
+        },
+      ]),
+    );
+
+    const startedAt = Date.now();
+    const res = await rpcReq<{
+      channels?: { telegram?: { snapshotError?: string } };
+      channelAccounts?: { telegram?: Array<{ lastError?: string }> };
+    }>(ws, "channels.status", { probe: false, timeoutMs: 50 });
+
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    expect(res.ok).toBe(true);
+    const lastError = res.payload?.channelAccounts?.telegram?.[0]?.lastError;
+    expect(lastError).toContain("telegram:default:buildAccountSnapshot timed out after 50ms");
+    expect(res.payload?.channels?.telegram?.snapshotError).toBe(lastError);
+  });
+
   test("channels.logout reports no session when missing", async () => {
     setRegistry(defaultRegistry);
     const res = await rpcReq<{ cleared?: boolean; channel?: string }>(ws, "channels.logout", {

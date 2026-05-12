@@ -30,6 +30,29 @@ type ChannelLogoutPayload = {
   [key: string]: unknown;
 };
 
+async function withStatusStepTimeout<T>(
+  label: string,
+  timeoutMs: number,
+  run: () => Promise<T>,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 export async function logoutChannelAccount(params: {
   channelId: ChannelId;
   accountId?: string | null;
@@ -81,7 +104,7 @@ export const channelsHandlers: GatewayRequestHandlers = {
     }
     const probe = (params as { probe?: boolean }).probe === true;
     const timeoutMsRaw = (params as { timeoutMs?: unknown }).timeoutMs;
-    const timeoutMs = typeof timeoutMsRaw === "number" ? Math.max(1000, timeoutMsRaw) : 10_000;
+    const timeoutMs = typeof timeoutMsRaw === "number" ? Math.max(50, timeoutMsRaw) : 10_000;
     const cfg = loadConfig();
     const runtime = context.getRuntimeSnapshot();
     const plugins = listChannelPlugins();
@@ -136,43 +159,91 @@ export const channelsHandlers: GatewayRequestHandlers = {
         let probeResult: unknown;
         let lastProbeAt: number | null = null;
         if (probe && enabled && plugin.status?.probeAccount) {
-          let configured = true;
-          if (plugin.config.isConfigured) {
-            configured = await plugin.config.isConfigured(account, cfg);
-          }
-          if (configured) {
-            probeResult = await plugin.status.probeAccount({
-              account,
-              timeoutMs,
-              cfg,
-            });
+          try {
+            let configured = true;
+            if (plugin.config.isConfigured) {
+              configured = Boolean(
+                await withStatusStepTimeout(
+                  `${channelId}:${accountId}:isConfigured`,
+                  timeoutMs,
+                  async () => await plugin.config.isConfigured?.(account, cfg),
+                ),
+              );
+            }
+            if (configured) {
+              probeResult = await withStatusStepTimeout(
+                `${channelId}:${accountId}:probeAccount`,
+                timeoutMs,
+                async () =>
+                  await plugin.status?.probeAccount?.({
+                    account,
+                    timeoutMs,
+                    cfg,
+                  }),
+              );
+              lastProbeAt = Date.now();
+            }
+          } catch (err) {
+            probeResult = { ok: false, error: err instanceof Error ? err.message : String(err) };
             lastProbeAt = Date.now();
           }
         }
         let auditResult: unknown;
         if (probe && enabled && plugin.status?.auditAccount) {
-          let configured = true;
-          if (plugin.config.isConfigured) {
-            configured = await plugin.config.isConfigured(account, cfg);
-          }
-          if (configured) {
-            auditResult = await plugin.status.auditAccount({
-              account,
-              timeoutMs,
-              cfg,
-              probe: probeResult,
-            });
+          try {
+            let configured = true;
+            if (plugin.config.isConfigured) {
+              configured = Boolean(
+                await withStatusStepTimeout(
+                  `${channelId}:${accountId}:isConfigured`,
+                  timeoutMs,
+                  async () => await plugin.config.isConfigured?.(account, cfg),
+                ),
+              );
+            }
+            if (configured) {
+              auditResult = await withStatusStepTimeout(
+                `${channelId}:${accountId}:auditAccount`,
+                timeoutMs,
+                async () =>
+                  await plugin.status?.auditAccount?.({
+                    account,
+                    timeoutMs,
+                    cfg,
+                    probe: probeResult,
+                  }),
+              );
+            }
+          } catch (err) {
+            auditResult = { ok: false, error: err instanceof Error ? err.message : String(err) };
           }
         }
         const runtimeSnapshot = resolveRuntimeSnapshot(channelId, accountId, defaultAccountId);
-        const snapshot = await buildChannelAccountSnapshot({
-          plugin,
-          cfg,
-          accountId,
-          runtime: runtimeSnapshot,
-          probe: probeResult,
-          audit: auditResult,
-        });
+        let snapshot: ChannelAccountSnapshot;
+        try {
+          snapshot = await withStatusStepTimeout(
+            `${channelId}:${accountId}:buildAccountSnapshot`,
+            timeoutMs,
+            async () =>
+              await buildChannelAccountSnapshot({
+                plugin,
+                cfg,
+                accountId,
+                runtime: runtimeSnapshot,
+                probe: probeResult,
+                audit: auditResult,
+              }),
+          );
+        } catch (err) {
+          snapshot = {
+            accountId,
+            enabled,
+            configured: undefined,
+            lastError: err instanceof Error ? err.message : String(err),
+            probe: probeResult,
+            audit: auditResult,
+          };
+        }
         if (lastProbeAt) {
           snapshot.lastProbeAt = lastProbeAt;
         }
@@ -213,20 +284,34 @@ export const channelsHandlers: GatewayRequestHandlers = {
         await buildChannelAccounts(plugin.id);
       const fallbackAccount =
         resolvedAccounts[defaultAccountId] ?? plugin.config.resolveAccount(cfg, defaultAccountId);
-      const summary = plugin.status?.buildChannelSummary
-        ? await plugin.status.buildChannelSummary({
-            account: fallbackAccount,
-            cfg,
-            defaultAccountId,
-            snapshot:
-              defaultAccount ??
-              ({
-                accountId: defaultAccountId,
-              } as ChannelAccountSnapshot),
-          })
-        : {
-            configured: defaultAccount?.configured ?? false,
-          };
+      let summary: unknown;
+      try {
+        summary = plugin.status?.buildChannelSummary
+          ? await withStatusStepTimeout(
+              `${plugin.id}:${defaultAccountId}:buildChannelSummary`,
+              timeoutMs,
+              async () =>
+                await plugin.status?.buildChannelSummary?.({
+                  account: fallbackAccount,
+                  cfg,
+                  defaultAccountId,
+                  snapshot:
+                    defaultAccount ??
+                    ({
+                      accountId: defaultAccountId,
+                    } as ChannelAccountSnapshot),
+                }),
+            )
+          : {
+              configured: defaultAccount?.configured ?? false,
+            };
+      } catch (err) {
+        summary = {
+          configured: defaultAccount?.configured ?? false,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
       channelsMap[plugin.id] = summary;
       accountsMap[plugin.id] = accounts;
       defaultAccountIdMap[plugin.id] = defaultAccountId;
