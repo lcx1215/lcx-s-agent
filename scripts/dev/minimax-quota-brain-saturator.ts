@@ -199,6 +199,62 @@ const TASK_TEMPLATES = [
       "company event, ETF/index exposure, options volatility, technical timing, and portfolio-risk loop without options advice.",
   },
   {
+    family: "index_etf_constituent_concentration_chain",
+    message:
+      "训练本地大脑分析 {assetA}/{assetB}/{assetC} 这类指数、ETF 或大盘代理时，先要 constituents、权重、再平衡规则、行业/因子暴露、前十大集中度、Mag7 或单一主题拥挤度、汇率/流动性传导和用户组合重叠；没有 holdings/weight 来源就只能列缺口和 research-only 风险框架。",
+    summary:
+      "index and ETF constituent-concentration chain with holdings evidence, rebalance rules, factor overlap, portfolio transmission, and no allocation advice.",
+  },
+  {
+    family: "options_iv_skew_event_risk_preflight",
+    message:
+      "用户问 {assetA} 财报、FOMC、CPI、监管或产品事件附近要不要用期权。训练本地大脑必须先做期权研究前置：IV term structure、skew、gamma/open interest、流动性、bid-ask、事件日历、持仓权重、最大损失、替代风险控制和失效条件；不要给具体合约、方向或执行建议。",
+    summary:
+      "options IV/skew/event-risk preflight that gathers volatility, liquidity, event, and portfolio inputs without options recommendations.",
+  },
+  {
+    family: "macro_liquidity_credit_fx_dashboard",
+    message:
+      "把 {theme} 放进宏观仪表盘：名义利率、实际利率、收益率曲线、信用利差、美元指数、CNH、财政/流动性、油金铜、通胀预期、风险偏好和 {assetA}/{assetB}/{assetC} 的传导都要拆；没有 timestamped source 就不能说当前，只能列数据缺口。",
+    summary:
+      "macro liquidity, credit, FX, rates, commodities, inflation, and risk-appetite dashboard with timestamped-source discipline.",
+  },
+  {
+    family: "company_fundamental_filing_dossier",
+    message:
+      "训练本地大脑给 {assetA} 做公司基本面 dossier：先要 10-K/10-Q、earnings release、call transcript 或可靠本地 artifact，再拆收入质量、毛利率/经营杠杆、FCF、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、thesis invalidation 和指数/ETF 权重传导；缺来源不编财报细节。",
+    summary:
+      "company fundamental filing dossier with source-gated revenue quality, FCF, ROIC, balance sheet, moat, valuation, invalidation, and index transmission.",
+  },
+  {
+    family: "portfolio_risk_budget_stress_packet",
+    message:
+      "用户给 {assetA}/{assetB}/{assetC} 组合但没给完整仓位。训练本地大脑先要求权重、成本、时间尺度、收益率序列、相关性、波动、最大回撤、流动性和现金需求；然后做情景压力、集中度、相关性断裂、利率/美元/信用冲击和风险预算框架。没有输入不能编百分比或止损。",
+    summary:
+      "portfolio risk-budget and stress packet requiring weights, return series, liquidity, drawdown definition, scenario stress, and no invented sizing.",
+  },
+  {
+    family: "event_risk_calendar_research_loop",
+    message:
+      "训练本地大脑处理 {theme} 事件风险：先建事件日历，区分财报、监管、宏观数据、FOMC、地缘和产品发布；每个事件要有来源、时间戳、影响路径、反方证据、可观察触发条件、post-event correction note 和 review panel，不能把新闻热度当结论。",
+    summary:
+      "event-risk calendar loop with source timestamps, causal paths, red-team evidence, observable triggers, correction notes, and review.",
+  },
+  {
+    family: "quant_factor_strategy_absorption_gate",
+    message:
+      "训练本地大脑学习 {theme} 因子或量化策略时，必须先问经济含义、公式定义、数据字段、复权口径、交易成本、容量、换手、拥挤、样本外、walk-forward、幸存者偏差和失效 regime；只把通过 source registry、capability card、apply validation 和 eval absorption 的规则进入本地能力。",
+    summary:
+      "quant factor strategy absorption gate with economic rationale, data definitions, costs, capacity, crowding, sample-out checks, and eval absorption.",
+  },
+  {
+    family: "multi_source_market_data_conflict_reconciliation",
+    message:
+      "如果 {assetA}/{assetB}/{assetC} 的价格、估值、持仓、成交量、期权 IV、新闻情绪或财报字段在不同来源冲突，训练本地大脑先列供应商、字段定义、时间戳、币种、复权、更新频率、异常值和可信优先级；冲突未解决前只能输出 unverified，不写确定结论。",
+    summary:
+      "multi-source market-data conflict reconciliation across price, valuation, holdings, volume, options, sentiment, and filings before conclusions.",
+  },
+  {
     family: "sentiment_quant_validation_layer",
     message:
       "如果新闻情绪、社媒情绪和价格动量都指向 {theme}，训练本地大脑不要把情绪当 alpha：要拆 source/vendor timestamp、样本外验证、过拟合、量化验证、反方论证和风险门。",
@@ -563,6 +619,21 @@ function buildPrompts(start: number, count: number): TeacherPrompt[] {
   return Array.from({ length: count }, (_unused, offset) => buildPrompt(start + offset));
 }
 
+function familyFromPromptId(id: string): string {
+  if (id.startsWith("failure_focus_")) {
+    return id.replace(/_\d{5}$/u, "");
+  }
+  return id.replace(/^quota_/u, "").replace(/_\d{5}$/u, "");
+}
+
+function promptFamilyCounts(prompts: TeacherPrompt[]): Record<string, number> {
+  return prompts.reduce<Record<string, number>>((counts, prompt) => {
+    const family = familyFromPromptId(prompt.id);
+    counts[family] = (counts[family] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
 async function buildBatchPrompts(
   options: CliOptions,
   start: number,
@@ -726,6 +797,7 @@ if (!options.write) {
             preview: {
               promptCount: preview.prompts.length,
               failureFocusPrompts: preview.failureFocusPrompts,
+              familyCounts: promptFamilyCounts(preview.prompts),
               prompts: preview.prompts.map((prompt) => ({
                 id: prompt.id,
                 sourceSummary: prompt.sourceSummary,
@@ -911,6 +983,15 @@ try {
     const remaining = calls - attempted;
     const batchSize = Math.min(currentBatchLimit, remaining);
     const { prompts, failureFocusPrompts } = await buildBatchPrompts(options, attempted, batchSize);
+    await appendLog(options.logPath, {
+      event: "curriculum_family_mix",
+      round,
+      totalPrompts: prompts.length,
+      failureFocusPrompts,
+      familyCounts: promptFamilyCounts(prompts),
+      liveTouched: false,
+      providerConfigTouched: false,
+    });
     if (failureFocusPrompts > 0) {
       await appendLog(options.logPath, {
         event: "failure_curriculum_prompts_selected",

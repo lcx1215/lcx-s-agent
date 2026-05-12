@@ -82,6 +82,60 @@ describe("minimax quota brain saturator preview", () => {
     expect(promptText).toContain("research-only");
   });
 
+  it("keeps surplus MiniMax quota pointed at broad senior-trader capability lanes", async () => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/minimax-quota-brain-saturator.ts",
+        "--profile",
+        "minimax-plus-brain",
+        "--no-failure-focus",
+        "--max-calls",
+        "32",
+        "--duration-minutes",
+        "1",
+        "--preview-prompts",
+        "32",
+      ],
+      {
+        cwd: path.resolve(import.meta.dirname, ".."),
+        timeout: 20_000,
+        env: {
+          ...process.env,
+          PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}`,
+        },
+      },
+    );
+
+    const payload = JSON.parse(stdout) as {
+      preview?: {
+        familyCounts?: Record<string, number>;
+        prompts: Array<{ id: string; sourceSummary: string; userMessage: string }>;
+      };
+    };
+    const promptText = payload.preview?.prompts
+      .map((prompt) => `${prompt.id}\n${prompt.sourceSummary}\n${prompt.userMessage}`)
+      .join("\n");
+
+    expect(payload.preview?.familyCounts).toMatchObject({
+      index_etf_constituent_concentration_chain: 1,
+      options_iv_skew_event_risk_preflight: 1,
+      macro_liquidity_credit_fx_dashboard: 1,
+      company_fundamental_filing_dossier: 1,
+      portfolio_risk_budget_stress_packet: 1,
+      event_risk_calendar_research_loop: 1,
+      quant_factor_strategy_absorption_gate: 1,
+      multi_source_market_data_conflict_reconciliation: 1,
+    });
+    expect(promptText).toContain("constituents");
+    expect(promptText).toContain("IV term structure");
+    expect(promptText).toContain("10-K/10-Q");
+    expect(promptText).toContain("walk-forward");
+    expect(promptText).toContain("unverified");
+  });
+
   it("shows failure-focused prompts in dry-run output without calling the provider", async () => {
     const guardLogPath = await makeGuardLog();
     const { stdout } = await execFileAsync(
