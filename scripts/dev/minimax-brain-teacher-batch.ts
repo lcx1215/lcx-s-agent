@@ -231,9 +231,9 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
   {
     id: "all_module_knowledge_internalization_chain",
     userMessage:
-      "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 等模块也要走同一条网上学习内化链条：先确认目标模块和 prior-art，再做 source registry、实际阅读范围、模块专属能力规则、retrieval receipt、apply validation、Qwen/local-brain eval 或训练吸收、fresh adjacent task、模块安全边界和 keep/downrank/discard；不能把“存了文件”说成“模块学会了”。",
+      "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 等模块也要走同一条网上学习内化链条：先确认目标模块和 prior-art，再做 source registry、实际阅读范围、模块专属能力规则、retrieval receipt、apply validation、Qwen/local-brain eval 或训练吸收、fresh adjacent task、module_learning_pipeline_review 状态、模块安全边界和 keep/downrank/discard；不能把“存了文件”或 plan receipt 说成“模块学会了”。",
     sourceSummary:
-      "all-module internalization chain request requiring source registry, module-specific capability rule, retrieval/apply proof, eval absorption, fresh adjacent task, and no storage-only learning claim.",
+      "all-module internalization chain request requiring source registry, module-specific capability rule, retrieval/apply proof, eval absorption, fresh adjacent task, module-learning review status, and no storage-only or plan-only learning claim.",
   },
   {
     id: "abstraction_transfer_repair_protocol",
@@ -430,7 +430,8 @@ export function buildTeacherSystemPrompt(): string {
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
     "- external financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision",
     "- before creating any new mechanism, check prior_art_search_terms_or_existing_artifact_paths and existing_contract_eval_skill_or_receipt_candidates, then choose reuse_extend_or_new_decision; prefer reuse or extension over a parallel V2 path",
-    "- papers and open-source project internalization must check prior related contracts/evals/skills/receipts first, classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, then keep, downrank, or discard",
+    "- papers and open-source project internalization must check prior related contracts/evals/skills/receipts first, classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, run module_learning_pipeline_review, then keep, downrank, or discard",
+    "- all-module source learning must use module_learning_pipeline_plan and module_learning_pipeline_review; a plan receipt or stored source is not module absorption",
     "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
     "- crypto work is research-only; include no_high_leverage_crypto and never imply execution approval",
     "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
@@ -1703,6 +1704,7 @@ const TEACHER_MISSING_DATA_PRIORITY = [
   "application_validation_receipt",
   "training_or_eval_absorption_evidence",
   "fresh_adjacent_application_task",
+  "module_learning_pipeline_review_status",
   "keep_downrank_or_discard_decision",
   "human_signoff_checkpoint",
   "visible_summary_contract",
@@ -1875,6 +1877,10 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     /(内化|吸收|学进去|学习|沉淀|变成能力|可复用|协议|怎么思考|internali[sz]e|absorb|distill|learn)/iu.test(
       ask,
     );
+  const isAllModuleKnowledgeInternalization =
+    /(不止是因子|所有模块|全部模块|all[- ]?module|target module|目标模块).{0,120}(内化|吸收|学习|learn|internalization|source registry|retrieval receipt|apply validation)/iu.test(
+      ask,
+    ) || /(期权|指数|宏观|基本面|Lark|Feishu|记忆|ops|skill).{0,120}(同一条|内化链)/iu.test(ask);
   const isAbstractionTransfer =
     /(抽象能力|人类的抽象|抽象迁移|问题族|failure family|problem family|同类问题|同类接口|shared contract|共享契约|original example|regression proof|adjacent non-identical|相邻非同类)/iu.test(
       ask,
@@ -2210,6 +2216,45 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ]);
     nextStep =
       "Check prior similar contracts/evals/skills/receipts, reuse or extend the existing path, verify license and safety, prove reading scope, validate application, add eval evidence, then keep or downrank.";
+  }
+
+  if (!isContextReset && isAllModuleKnowledgeInternalization) {
+    taskFamily = "all_module_knowledge_internalization_chain";
+    ensurePrimary([
+      "agent_workflow_memory",
+      "source_registry",
+      "finance_learning_memory",
+      "skill_pattern_distillation",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    ensureMissing([
+      "target_module_id_or_module_family",
+      "source_url_or_local_source_path",
+      "actual_reading_scope",
+      "source_registry_record",
+      "module_specific_capability_rule",
+      "capability_card_or_retrieval_receipt",
+      "application_validation_receipt",
+      "training_or_eval_absorption_evidence",
+      "fresh_adjacent_application_task",
+      "module_learning_pipeline_review_status",
+      "keep_downrank_or_discard_decision",
+    ]);
+    ensureRisk([
+      "no_model_internal_learning_claim_without_eval",
+      "no_module_learning_claim_from_storage_only",
+      "no_parallel_module_pipeline_without_prior_art_check",
+    ]);
+    ensureRejected([
+      "factor_only_internalization_rule",
+      "stored_source_as_learned_module",
+      "plan_receipt_as_module_absorption",
+      "module_claim_without_receipt_or_eval",
+    ]);
+    nextStep =
+      "Plan the target module learning chain, require retrieval/apply/eval evidence, review module-learning status, then keep or downrank.";
   }
 
   if (!isContextReset && isAbstractionTransfer) {

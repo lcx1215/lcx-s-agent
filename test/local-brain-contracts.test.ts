@@ -1029,11 +1029,13 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "application_validation_receipt",
         "training_or_eval_absorption_evidence",
         "fresh_adjacent_application_task",
+        "module_learning_pipeline_review_status",
         "module_specific_safety_boundary",
         "keep_downrank_or_discard_decision",
       ]),
     );
     expect(plan.required_tools).toContain("module_learning_pipeline_plan");
+    expect(plan.required_tools).toContain("module_learning_pipeline_review");
     expect(plan.risk_boundaries).toEqual(
       expect.arrayContaining([
         "no_model_internal_learning_claim_without_eval",
@@ -1064,6 +1066,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
           "module_specific_capability_rule",
           "application_validation_receipt",
           "training_or_eval_absorption_evidence",
+          "module_learning_pipeline_review_status",
         ]),
       );
       expect(plan.risk_boundaries).toEqual(

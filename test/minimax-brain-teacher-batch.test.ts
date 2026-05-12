@@ -23,6 +23,7 @@ describe("minimax brain teacher batch parsing", () => {
     expect(prompt).toContain("never copy the full user prompt into JSON values");
     expect(prompt).toContain("prefer 3-5 items per array");
     expect(prompt).toContain("Do not copy or enumerate the full module taxonomy");
+    expect(prompt).toContain("module_learning_pipeline_review");
   });
 
   it("keeps MiniMax direct API instructions in system prompt form", () => {
@@ -740,6 +741,38 @@ describe("minimax brain teacher batch parsing", () => {
     );
     expect(plan.rejected_context).toEqual(
       expect.arrayContaining(["unverified_paper_summary", "untrusted_external_skill"]),
+    );
+  });
+
+  it("keeps all-module learning from stopping at plan receipts", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "all_module_knowledge_internalization_chain",
+        userMessage:
+          "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 模块都要同一条内化链条，不能把 plan receipt 当成模块学会。",
+        sourceSummary: "all-module internalization chain.",
+      },
+      normalizeTeacherPlan({
+        task_family: "module_learning",
+        primary_modules: [],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: [],
+        next_step: "write_plan",
+        rejected_context: [],
+      }),
+    );
+
+    expect(plan.task_family).toBe("all_module_knowledge_internalization_chain");
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "module_learning_pipeline_review_status",
+        "training_or_eval_absorption_evidence",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining(["plan_receipt_as_module_absorption"]),
     );
   });
 

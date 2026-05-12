@@ -92,9 +92,9 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
     caseId: "all_module_knowledge_internalization_chain",
     priority: 109,
     userMessage:
-      "训练本地大脑把网上学习内化链条推广到所有模块，不只因子模块，也包括期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 模块。每个目标模块都必须有 source registry、actual reading scope、模块专属能力规则、retrieval receipt、apply validation、eval/training absorption、fresh adjacent task、安全边界和 keep/downrank/discard；不能把存档说成模块学会。",
+      "训练本地大脑把网上学习内化链条推广到所有模块，不只因子模块，也包括期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 模块。每个目标模块都必须有 source registry、actual reading scope、模块专属能力规则、retrieval receipt、apply validation、eval/training absorption、fresh adjacent task、module_learning_pipeline_review 状态、安全边界和 keep/downrank/discard；不能把存档或 plan receipt 说成模块学会。",
     sourceSummary:
-      "targeted repair for all-module internalization chain; prevents factor-only learning gates and storage-only module learning claims.",
+      "targeted repair for all-module internalization chain; prevents factor-only gates, plan-only gates, and storage-only module learning claims.",
   },
   {
     caseId: "a_share_policy_flow_us_tech_spillover",

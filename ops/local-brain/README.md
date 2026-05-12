@@ -171,6 +171,11 @@ decision before claiming cross-module learning improved. This keeps automation
 from confusing "training is active" with "every module-learning source has been
 absorbed."
 
+The local-brain contracts, eval case, and MiniMax teacher curriculum also require
+`module_learning_pipeline_review_status` for all-module source learning. A
+`module_learning_pipeline_plan` receipt is therefore only a planning artifact
+until review, application, and eval/training evidence close the loop.
+
 ## Codex Skills To Load
 
 When context is missing, load only the skills that match the current question. The most useful local skill files are:

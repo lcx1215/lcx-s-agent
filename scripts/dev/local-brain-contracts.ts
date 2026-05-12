@@ -1249,6 +1249,7 @@ export function hardenLocalBrainPlanForAsk(
       supporting_modules: ["causal_map", "ops_audit", "quant_math", "portfolio_risk_gates"],
       required_tools: [
         "module_learning_pipeline_plan",
+        "module_learning_pipeline_review",
         "source_registry_lookup",
         "finance_learning_capability_apply",
         "artifact_memory_recall",
@@ -1266,6 +1267,7 @@ export function hardenLocalBrainPlanForAsk(
         "application_validation_receipt",
         "training_or_eval_absorption_evidence",
         "fresh_adjacent_application_task",
+        "module_learning_pipeline_review_status",
         "module_specific_safety_boundary",
         "keep_downrank_or_discard_decision",
       ],
@@ -1281,7 +1283,7 @@ export function hardenLocalBrainPlanForAsk(
         "no_live_sender_change",
       ],
       next_step:
-        "apply_source_registry_capability_retrieval_apply_eval_chain_to_each_target_module_before_claiming_module_internalized",
+        "apply_source_registry_capability_retrieval_apply_eval_chain_then_review_each_target_module_before_claiming_internalized",
       rejected_context: [
         "old_lark_conversation_history",
         "factor_only_internalization_rule",

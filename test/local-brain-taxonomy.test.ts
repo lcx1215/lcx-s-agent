@@ -35,5 +35,6 @@ describe("local brain contract hint selection", () => {
     expect(text).toContain("All module learning uses the same internalization chain");
     expect(text).toContain("retrieval receipt");
     expect(text).toContain("fresh adjacent task");
+    expect(text).toContain("module_learning_pipeline_review status");
   });
 });

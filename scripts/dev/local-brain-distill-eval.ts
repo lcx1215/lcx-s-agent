@@ -424,9 +424,9 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "all_module_knowledge_internalization_chain",
     userAsk:
-      "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 等模块也要有这种从网上学习、source registry、实际阅读范围、能力卡、retrieval receipt、apply validation、Qwen eval 吸收、fresh adjacent task 和 keep/downrank/discard 的链条；不能把存了文件说成模块学会了。",
+      "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 等模块也要有这种从网上学习、source registry、实际阅读范围、能力卡、retrieval receipt、apply validation、Qwen eval 吸收、fresh adjacent task、module learning review 状态和 keep/downrank/discard 的链条；不能把存了文件说成模块学会了。",
     sourceSummary:
-      "all local-brain modules must share the source-to-capability-to-retrieval-to-application-to-eval internalization chain instead of keeping it factor-only.",
+      "all local-brain modules must share the source-to-capability-to-retrieval-to-application-to-eval-to-review internalization chain instead of keeping it factor-only or plan-only.",
     requiredModules: [
       "agent_workflow_memory",
       "source_registry",
@@ -447,6 +447,7 @@ const EVAL_CASES: EvalCase[] = [
       "application_validation_receipt",
       "training_or_eval_absorption_evidence",
       "fresh_adjacent_application_task",
+      "module_learning_pipeline_review_status",
       "module_specific_safety_boundary",
       "keep_downrank_or_discard_decision",
     ],

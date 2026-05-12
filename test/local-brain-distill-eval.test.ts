@@ -46,6 +46,13 @@ describe("local-brain-distill-eval", () => {
         requestedCaseIds: string[];
         autoIncludedPrerequisiteCaseIds: string[];
       };
+      cases: Array<{
+        id: string;
+        parsed: {
+          required_tools: string[];
+          missing_data: string[];
+        };
+      }>;
     };
     expect(payload.ok).toBe(true);
     expect(payload.summary).toMatchObject({ passed: 2, total: 2, promotionReady: true });
@@ -101,7 +108,6 @@ describe("local-brain-distill-eval", () => {
         "--contract-only",
         "--case-id",
         "all_module_knowledge_internalization_chain",
-        "--summary-only",
         "--json",
       ],
       {
@@ -132,6 +138,10 @@ describe("local-brain-distill-eval", () => {
         "abstraction_transfer_repair_protocol",
       ]),
     );
+    const targetCase = payload.cases.find(
+      (entry) => entry.id === "all_module_knowledge_internalization_chain",
+    );
+    expect(targetCase?.parsed.missing_data).toContain("module_learning_pipeline_review_status");
   });
 
   it("extracts the first balanced JSON object from noisy model output", () => {
