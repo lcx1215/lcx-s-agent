@@ -93,11 +93,11 @@ describe("minimax quota brain saturator preview", () => {
         "minimax-plus-brain",
         "--no-failure-focus",
         "--max-calls",
-        "32",
+        "36",
         "--duration-minutes",
         "1",
         "--preview-prompts",
-        "32",
+        "36",
       ],
       {
         cwd: path.resolve(import.meta.dirname, ".."),
@@ -128,11 +128,19 @@ describe("minimax quota brain saturator preview", () => {
       event_risk_calendar_research_loop: 1,
       quant_factor_strategy_absorption_gate: 1,
       multi_source_market_data_conflict_reconciliation: 1,
+      financial_modeling_valuation_qc_chain: 1,
+      thesis_catalyst_lifecycle_review: 1,
+      data_provenance_quality_gate: 1,
+      research_artifact_qc_gate: 1,
     });
     expect(promptText).toContain("constituents");
     expect(promptText).toContain("IV term structure");
     expect(promptText).toContain("10-K/10-Q");
     expect(promptText).toContain("walk-forward");
+    expect(promptText).toContain("DCF/comps");
+    expect(promptText).toContain("post-event correction note");
+    expect(promptText).toContain("field definition");
+    expect(promptText).toContain("number provenance");
     expect(promptText).toContain("unverified");
   });
 

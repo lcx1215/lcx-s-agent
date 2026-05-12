@@ -780,6 +780,48 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary.promotionReady).toBe(true);
   });
 
+  it("covers valuation QC, thesis lifecycle, data provenance, and artifact QC gates", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "financial_modeling_valuation_qc_chain,thesis_catalyst_lifecycle_review,data_provenance_quality_gate,research_artifact_qc_gate",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { promotionReady: boolean; total: number };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual([
+      "financial_modeling_valuation_qc_chain",
+      "thesis_catalyst_lifecycle_review",
+      "data_provenance_quality_gate",
+      "research_artifact_qc_gate",
+    ]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining(["single_company_fundamental_risk", "external_source_missing_url"]),
+    );
+    expect(payload.summary.total).toBeGreaterThanOrEqual(6);
+    expect(payload.summary.promotionReady).toBe(true);
+  });
+
   it("does not let hardened diagnostic fallback pass an empty generation", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-"));
     const fakePython = path.join(tempDir, "python");

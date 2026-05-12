@@ -255,6 +255,34 @@ const TASK_TEMPLATES = [
       "multi-source market-data conflict reconciliation across price, valuation, holdings, volume, options, sentiment, and filings before conclusions.",
   },
   {
+    family: "financial_modeling_valuation_qc_chain",
+    message:
+      "训练本地大脑做 {assetA} 的 DCF/comps/三表财务模型和估值敏感性 QC：每个数字要有 filing/source、字段口径、时间戳和假设说明，spreadsheet 或表格要过 artifact QC；不能凭模型编目标价、不能给买卖建议。",
+    summary:
+      "financial modeling and valuation QC chain with DCF, comps, three-statement assumptions, sensitivity, number provenance, artifact review, and no trade advice.",
+  },
+  {
+    family: "thesis_catalyst_lifecycle_review",
+    message:
+      "训练本地大脑把 {assetA}/{theme} 的研究 thesis 做成生命周期：原始论点、关键催化剂、事件日历、反方证据、失效条件、post-event correction note 和 review panel 都要在同一条链；不能把新闻热度当结论。",
+    summary:
+      "thesis and catalyst lifecycle review with original thesis, catalysts, event calendar, invalidation, post-event correction, and review.",
+  },
+  {
+    family: "data_provenance_quality_gate",
+    message:
+      "如果 {assetA}/{assetB}/{assetC} 的价格、成交量、财报字段、ETF 权重、期权 IV 或情绪数据来自不同供应商，训练本地大脑先做 data provenance quality gate：field definition、timestamp、币种、复权、更新频率、异常值和可信优先级；未解决前只能标 unverified。",
+    summary:
+      "data provenance quality gate for vendor field definitions, timestamps, currency, adjustments, update cadence, outliers, and trust priority.",
+  },
+  {
+    family: "research_artifact_qc_gate",
+    message:
+      "训练本地大脑生成研报、表格、估值模型或控制室总结前，必须做 research artifact QC：number provenance、citation、表格和文字一致性、未验证标记、人类审阅点和 visible summary boundary 都要齐。",
+    summary:
+      "research artifact QC gate for reports, tables, valuation models, visible summaries, citations, number provenance, and human review.",
+  },
+  {
     family: "sentiment_quant_validation_layer",
     message:
       "如果新闻情绪、社媒情绪和价格动量都指向 {theme}，训练本地大脑不要把情绪当 alpha：要拆 source/vendor timestamp、样本外验证、过拟合、量化验证、反方论证和风险门。",

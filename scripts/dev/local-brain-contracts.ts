@@ -271,7 +271,11 @@ function looksLikeCommodityFrameworkLearning(text: string): boolean {
 }
 
 function looksLikeBroadFinanceModuleCoverage(text: string): boolean {
-  if (looksLikeFullStackFinanceStressTest(text)) {
+  if (
+    looksLikeFullStackFinanceStressTest(text) ||
+    (looksLikeLocalKnowledgeActivation(text) &&
+      !/(全领域|全部金融|完整金融|金融模块|模块地图|模块体系)/iu.test(text))
+  ) {
     return false;
   }
   const asksForModuleMap =
@@ -324,6 +328,76 @@ function looksLikeValueInvestingFundamentalCore(text: string): boolean {
   return asksForValueInvesting || namesValueEvidence;
 }
 
+function looksLikeFinancialModelingValuationQc(text: string): boolean {
+  if (looksLikeExternalFinancialAgentPatternLearning(text)) {
+    return false;
+  }
+  if (/(research artifact|产物|研报|报告|控制室总结|visible summary)/iu.test(text)) {
+    return false;
+  }
+  if (
+    looksLikePaperLearningWithSource(text) ||
+    looksLikeExternalKnowledgeInternalizationProtocol(text)
+  ) {
+    return false;
+  }
+  return (
+    /(dcf|comps?|三表|财务模型|估值模型|敏感性|sensitivity|valuation model|financial model|model builder|audit[- ]?xls|spreadsheet)/iu.test(
+      text,
+    ) &&
+    /(估值|valuation|现金流|fcf|multiple|倍数|假设|assumption|source|来源|审计|qc|核对)/iu.test(
+      text,
+    )
+  );
+}
+
+function looksLikeThesisCatalystLifecycle(text: string): boolean {
+  if (
+    looksLikeExternalFinancialAgentPatternLearning(text) ||
+    looksLikeFullStackFinanceStressTest(text) ||
+    looksLikeCrossMarketFinance(text) ||
+    looksLikeMacroEventRiskPreflight(text) ||
+    looksLikeBacktestOverfitStrategyLearning(text) ||
+    looksLikeCompanyToPortfolioRisk(text)
+  ) {
+    return false;
+  }
+  return (
+    /(thesis|投资论点|研究论点|催化|catalyst|失效|invalidation|反方|red[- ]?team|post[- ]?event|事件后|复盘|correction note)/iu.test(
+      text,
+    ) && /(基本面|valuation|估值|event|事件|财报|portfolio|组合|风险|学习|沉淀)/iu.test(text)
+  );
+}
+
+function looksLikeDataProvenanceQuality(text: string): boolean {
+  if (looksLikeExternalFinancialAgentPatternLearning(text)) {
+    return false;
+  }
+  return /(data provenance|vendor|供应商|字段定义|field definition|口径|时间戳|timestamp|币种|复权|adjusted|更新频率|source quality|数据质量|数据源.*质量)/iu.test(
+    text,
+  );
+}
+
+function looksLikeResearchArtifactQc(text: string): boolean {
+  if (looksLikeExternalFinancialAgentPatternLearning(text)) {
+    return false;
+  }
+  if (
+    looksLikePaperLearningWithSource(text) ||
+    looksLikeExternalKnowledgeInternalizationProtocol(text)
+  ) {
+    return false;
+  }
+  return (
+    /(artifact|产物|研报|报告|表格|spreadsheet|模型输出|model output|number provenance|数字来源|cite every number|citation|QC)/iu.test(
+      text,
+    ) &&
+    /(金融|finance|market|估值|valuation|财报|source|来源|数字|number|模型|model|summary|总结)/iu.test(
+      text,
+    )
+  );
+}
+
 function looksLikePortfolioMathMissingInputs(text: string): boolean {
   return (
     /(数学|量化|波动|相关|回撤|var|dv01|beta|correlation|volatility|drawdown|利率敏感)/iu.test(
@@ -359,6 +433,7 @@ function looksLikeSourceGroundingAudit(text: string): boolean {
     !looksLikeFullStackFinanceStressTest(text) &&
     !looksLikePortfolioMacroRisk(text) &&
     !looksLikeCompanyToPortfolioRisk(text) &&
+    !looksLikeResearchArtifactQc(text) &&
     !looksLikeExternalCoverage(text) &&
     !looksLikeFilingResearchMissingEvidence(text) &&
     !looksLikeSentimentMarketModuleLearning(text) &&
@@ -376,6 +451,7 @@ function looksLikeDataConflictReconciliation(text: string): boolean {
   return (
     !looksLikeCurrentMarketDataFreshnessGap(text) &&
     !looksLikePaperLearningWithSource(text) &&
+    !looksLikeFinancialModelingValuationQc(text) &&
     /(不同数据源|数据源.*不一致|vendor|data source|conflict|冲突|口径|时间戳|timestamp)/iu.test(
       text,
     ) &&
@@ -1315,6 +1391,10 @@ export function hardenLocalBrainPlanForAsk(
         "event_driven",
         "technical_timing",
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "data_provenance_quality",
+        "research_artifact_qc",
         "quant_math",
         "portfolio_risk_gates",
       ],
@@ -1344,8 +1424,12 @@ export function hardenLocalBrainPlanForAsk(
         "price_volume_breadth_and_technical_regime_inputs",
         "latest_company_fundamental_inputs",
         "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
         "valuation_range_and_margin_of_safety_inputs",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
         "value_trap_risks_and_thesis_invalidation_evidence",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "research_artifact_qc_and_number_provenance_checklist",
       ],
       risk_boundaries: [
         "research_only",
@@ -1509,8 +1593,10 @@ export function hardenLocalBrainPlanForAsk(
       ...safe,
       task_family: "data_vendor_conflict_reconciliation",
       primary_modules: [
+        "data_provenance_quality",
         "source_registry",
         "quant_math",
+        "research_artifact_qc",
         "eval_harness_design",
         "review_panel",
         "control_room_summary",
@@ -1524,8 +1610,10 @@ export function hardenLocalBrainPlanForAsk(
       ],
       missing_data: [
         "source_timestamp_and_vendor",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
         "index_constituents_weights_and_technical_regime_inputs",
         "validation_dataset_and_sample_out_plan",
+        "research_artifact_qc_and_number_provenance_checklist",
       ],
       risk_boundaries: [
         "research_only",
@@ -1586,6 +1674,7 @@ export function hardenLocalBrainPlanForAsk(
         "source_registry",
         "options_volatility",
         "event_driven",
+        "thesis_catalyst_lifecycle",
         "company_fundamentals_value",
         "macro_rates_inflation",
         "etf_regime",
@@ -1593,7 +1682,12 @@ export function hardenLocalBrainPlanForAsk(
         "portfolio_risk_gates",
         "review_panel",
       ],
-      supporting_modules: ["finance_learning_memory", "causal_map", "control_room_summary"],
+      supporting_modules: [
+        "finance_learning_memory",
+        "causal_map",
+        "data_provenance_quality",
+        "control_room_summary",
+      ],
       required_tools: [
         "source_registry_lookup",
         "finance_framework_options_volatility_producer",
@@ -1608,6 +1702,8 @@ export function hardenLocalBrainPlanForAsk(
       missing_data: [
         "options_iv_skew_gamma_and_event_calendar",
         "latest_filing_or_event_source",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
         "target_etf_price_and_regime_inputs",
         "position_weights_and_return_series",
         "portfolio_weights_and_risk_limits",
@@ -1626,6 +1722,175 @@ export function hardenLocalBrainPlanForAsk(
         "old_lark_conversation_history",
         "options_strategy_recommendation",
         "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeFinancialModelingValuationQc(text)) {
+    return {
+      ...safe,
+      task_family: "financial_modeling_valuation_qc",
+      primary_modules: [
+        "financial_modeling_valuation_qc",
+        "company_fundamentals_value",
+        "data_provenance_quality",
+        "research_artifact_qc",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: [
+        "thesis_catalyst_lifecycle",
+        "causal_map",
+        "portfolio_risk_gates",
+        "finance_learning_memory",
+      ],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_framework_company_fundamentals_value_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "latest_10q_10k_or_earnings_release",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "research_artifact_qc_and_number_provenance_checklist",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_model_math_guessing",
+        "no_unverified_filing_claims",
+        "no_trade_advice",
+      ],
+      next_step:
+        "collect filing sources model assumptions and provenance then audit valuation sensitivity before summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "valuation_without_source_evidence",
+        "spreadsheet_number_without_provenance",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeThesisCatalystLifecycle(text)) {
+    return {
+      ...safe,
+      task_family: "thesis_catalyst_lifecycle_review",
+      primary_modules: [
+        "thesis_catalyst_lifecycle",
+        "event_driven",
+        "company_fundamentals_value",
+        "causal_map",
+        "portfolio_risk_gates",
+        "finance_learning_memory",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["source_registry", "data_provenance_quality", "research_artifact_qc"],
+      required_tools: ["source_registry_lookup", "artifact_memory_recall", "review_panel"],
+      missing_data: [
+        "original_thesis_and_evidence_used",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
+        "fresh_market_data_snapshot",
+        "post_event_correction_note",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "red_team_invalidation_required",
+        "do_not_rewrite_past_mistakes",
+        "no_trade_advice",
+      ],
+      next_step:
+        "map thesis catalysts invalidation evidence and post-event correction path before any durable lesson",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "thesis_without_invalidation",
+        "news_heat_as_conclusion",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeDataProvenanceQuality(text)) {
+    return {
+      ...safe,
+      task_family: "data_provenance_quality_gate",
+      primary_modules: [
+        "data_provenance_quality",
+        "source_registry",
+        "research_artifact_qc",
+        "quant_math",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["finance_learning_memory", "causal_map", "portfolio_risk_gates"],
+      required_tools: [
+        "source_registry_lookup",
+        "data_timestamp_and_vendor_compare",
+        "review_panel",
+      ],
+      missing_data: [
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "source_timestamp_and_vendor",
+        "validation_dataset_and_sample_out_plan",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_current_market_data",
+      ],
+      next_step:
+        "compare field definitions vendors timestamps and update policy before promoting any sourced number",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "single_vendor_unverified_claim",
+        "field_definition_missing",
+      ],
+    };
+  }
+
+  if (looksLikeResearchArtifactQc(text)) {
+    return {
+      ...safe,
+      task_family: "research_artifact_qc_gate",
+      primary_modules: [
+        "research_artifact_qc",
+        "data_provenance_quality",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: [
+        "financial_modeling_valuation_qc",
+        "company_fundamentals_value",
+        "finance_learning_memory",
+      ],
+      required_tools: ["source_registry_lookup", "review_panel"],
+      missing_data: [
+        "research_artifact_qc_and_number_provenance_checklist",
+        "source_timestamp_and_vendor",
+        "citation_and_provenance_rule",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "cite_every_number_or_mark_unsourced",
+        "human_review_required_before_external_use",
+      ],
+      next_step:
+        "audit every number source table model output and visible summary before artifact use",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "raw_artifact_without_qc",
+        "number_without_provenance",
       ],
     };
   }
@@ -1774,6 +2039,10 @@ export function hardenLocalBrainPlanForAsk(
         "review_panel",
         "control_room_summary",
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "research_artifact_qc",
+        "data_provenance_quality",
+        "thesis_catalyst_lifecycle",
         "portfolio_risk_gates",
       ],
       supporting_modules: ["causal_map", "quant_math", "technical_timing"],
@@ -1800,6 +2069,9 @@ export function hardenLocalBrainPlanForAsk(
         "citation_and_provenance_rule",
         "artifact_qc_gate_mapping",
         "artifact_qc_gate_sequence",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "research_artifact_qc_and_number_provenance_checklist",
         "human_signoff_checkpoint",
         "visible_summary_contract",
         "application_validation_receipt",
@@ -2174,13 +2446,21 @@ export function hardenLocalBrainPlanForAsk(
       task_family: "value_investing_fundamental_research_planning",
       primary_modules: [
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
         "source_registry",
+        "data_provenance_quality",
         "causal_map",
         "portfolio_risk_gates",
         "review_panel",
         "control_room_summary",
       ],
-      supporting_modules: ["finance_learning_memory", "macro_rates_inflation", "quant_math"],
+      supporting_modules: [
+        "finance_learning_memory",
+        "macro_rates_inflation",
+        "quant_math",
+        "research_artifact_qc",
+      ],
       required_tools: [
         "finance_framework_company_fundamentals_value_producer",
         "source_registry_lookup",
@@ -2191,8 +2471,11 @@ export function hardenLocalBrainPlanForAsk(
         "latest_10q_10k_or_earnings_release",
         "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
         "moat_management_and_capital_allocation_evidence",
+        "model_assumptions_sensitivity_and_audit_inputs",
         "valuation_range_and_margin_of_safety_inputs",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
         "value_trap_risks_and_thesis_invalidation_evidence",
+        "research_artifact_qc_and_number_provenance_checklist",
         "portfolio_weights_and_risk_limits",
       ],
       risk_boundaries: [
@@ -2781,6 +3064,8 @@ export function hardenLocalBrainPlanForAsk(
       primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
         ...inferFinanceModulesFromLocalKnowledgeText(text),
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
         "causal_map",
         "portfolio_risk_gates",
       ]),
@@ -2797,6 +3082,8 @@ export function hardenLocalBrainPlanForAsk(
       ]),
       missing_data: mergeUnique(arrayValue(safe.missing_data), [
         "latest_company_fundamental_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
         "portfolio_weights_and_risk_limits",
         "company_to_portfolio_exposure_map",
       ]),
@@ -2939,6 +3226,34 @@ function inferFinanceModulesFromLocalKnowledgeText(text: string): string[] {
   }
   if (/(事件|催化|财报日|fomc|cpi|ppi|earnings|event|catalyst|policy|地缘|突发)/iu.test(text)) {
     modules.push("event_driven");
+  }
+  if (
+    /(dcf|comps?|三表|财务模型|估值模型|敏感性|valuation model|financial model|model builder|audit[- ]?xls|spreadsheet)/iu.test(
+      text,
+    )
+  ) {
+    modules.push("financial_modeling_valuation_qc");
+  }
+  if (
+    /(thesis|投资论点|研究论点|催化|catalyst|失效|invalidation|post[- ]?event|correction note|反方证据)/iu.test(
+      text,
+    )
+  ) {
+    modules.push("thesis_catalyst_lifecycle");
+  }
+  if (
+    /(provenance|vendor|供应商|字段定义|field definition|口径|时间戳|timestamp|source quality|数据质量|币种|复权)/iu.test(
+      text,
+    )
+  ) {
+    modules.push("data_provenance_quality");
+  }
+  if (
+    /(artifact|产物|研报|报告|表格|spreadsheet|number provenance|数字来源|cite every number|citation|QC|审阅|核对)/iu.test(
+      text,
+    )
+  ) {
+    modules.push("research_artifact_qc");
   }
   if (/(美股|us equities|us stocks?|nasdaq|s&p|spx|spy|qqq|iwm|nvda|msft|aapl)/iu.test(text)) {
     modules.push("us_equity_market_structure");

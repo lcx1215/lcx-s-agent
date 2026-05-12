@@ -132,6 +132,10 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "event_driven",
         "technical_timing",
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "data_provenance_quality",
+        "research_artifact_qc",
         "quant_math",
         "portfolio_risk_gates",
       ]),
@@ -151,6 +155,10 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "options_iv_skew_gamma_and_event_calendar",
         "price_volume_breadth_and_technical_regime_inputs",
         "latest_company_fundamental_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "research_artifact_qc_and_number_provenance_checklist",
       ]),
     );
     expect(plan.risk_boundaries).toEqual(
@@ -843,6 +851,8 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.primary_modules).toEqual(
       expect.arrayContaining([
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
         "macro_rates_inflation",
         "etf_regime",
         "causal_map",
@@ -852,10 +862,63 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.missing_data).toEqual(
       expect.arrayContaining([
         "latest_company_fundamental_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
         "portfolio_weights_and_risk_limits",
         "company_to_portfolio_exposure_map",
       ]),
     );
+  });
+
+  it("routes valuation models, thesis lifecycle, provenance, and artifact QC into dedicated modules", () => {
+    const valuationPlan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "帮 NVDA 做 DCF/comps/三表财务模型和估值敏感性 QC，每个数字要有来源、字段口径和时间戳。",
+      },
+    );
+    expect(valuationPlan.task_family).toBe("financial_modeling_valuation_qc");
+    expect(valuationPlan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "financial_modeling_valuation_qc",
+        "data_provenance_quality",
+        "research_artifact_qc",
+        "source_registry",
+      ]),
+    );
+
+    const thesisPlan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "把一个科技股研究 thesis 做成生命周期：催化剂、失效条件、事件后复盘和 correction note 都要有。",
+      },
+    );
+    expect(thesisPlan.task_family).toBe("thesis_catalyst_lifecycle_review");
+    expect(thesisPlan.primary_modules).toContain("thesis_catalyst_lifecycle");
+
+    const provenancePlan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "两个 vendor 对 ETF 权重字段定义、时间戳、币种和复权口径不一致，先做 data provenance quality gate。",
+      },
+    );
+    expect(provenancePlan.primary_modules).toEqual(
+      expect.arrayContaining(["data_provenance_quality", "source_registry"]),
+    );
+    expect(provenancePlan.missing_data).toContain(
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+    );
+
+    const artifactPlan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "生成研报、表格和控制室总结前，先做 research artifact QC：number provenance、citation 和未验证标记。",
+      },
+    );
+    expect(artifactPlan.primary_modules).toEqual(
+      expect.arrayContaining(["research_artifact_qc", "data_provenance_quality"]),
+    );
+    expect(artifactPlan.risk_boundaries).toContain("cite_every_number_or_mark_unsourced");
   });
 
   it("prioritizes fundamentals for value-investing asks before timing", () => {
@@ -870,6 +933,9 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.primary_modules).toEqual(
       expect.arrayContaining([
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "data_provenance_quality",
         "source_registry",
         "causal_map",
         "portfolio_risk_gates",
@@ -881,7 +947,9 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "latest_10q_10k_or_earnings_release",
         "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
         "moat_management_and_capital_allocation_evidence",
+        "model_assumptions_sensitivity_and_audit_inputs",
         "valuation_range_and_margin_of_safety_inputs",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
         "value_trap_risks_and_thesis_invalidation_evidence",
       ]),
     );
@@ -1277,6 +1345,10 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "review_panel",
         "control_room_summary",
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "research_artifact_qc",
+        "data_provenance_quality",
+        "thesis_catalyst_lifecycle",
         "portfolio_risk_gates",
       ]),
     );
@@ -1294,6 +1366,9 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "citation_and_provenance_rule",
         "artifact_qc_gate_mapping",
         "artifact_qc_gate_sequence",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "research_artifact_qc_and_number_provenance_checklist",
         "human_signoff_checkpoint",
         "visible_summary_contract",
         "application_validation_receipt",

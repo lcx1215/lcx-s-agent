@@ -37,4 +37,16 @@ describe("local brain contract hint selection", () => {
     expect(text).toContain("fresh adjacent task");
     expect(text).toContain("module_learning_pipeline_review status");
   });
+
+  it("adds advanced trader QC module rules for valuation and artifact asks", () => {
+    const hints = selectLocalBrainContractHints(
+      "DCF comps 财务模型 估值 研报 QC 数据口径 catalyst",
+    );
+    const text = hints.join(" ");
+
+    expect(text).toContain("financial_modeling_valuation_qc");
+    expect(text).toContain("thesis_catalyst_lifecycle");
+    expect(text).toContain("data_provenance_quality");
+    expect(text).toContain("research_artifact_qc");
+  });
 });

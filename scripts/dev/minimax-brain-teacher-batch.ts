@@ -106,6 +106,34 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "fundamentals-first value-investing research loop requiring source evidence, business quality, valuation range, margin of safety, value-trap invalidation, and portfolio risk boundaries.",
   },
   {
+    id: "financial_modeling_valuation_qc",
+    userMessage:
+      "训练本地大脑做 DCF/comps/三表财务模型和估值敏感性 QC：每个数字必须有来源、字段口径和时间戳，模型假设要能审计，spreadsheet/表格要过 artifact QC；不能凭模型编目标价或给买卖建议。",
+    sourceSummary:
+      "financial modeling and valuation QC curriculum requiring source-gated filings, assumptions, sensitivity, data provenance, artifact review, and no trade advice.",
+  },
+  {
+    id: "thesis_catalyst_lifecycle",
+    userMessage:
+      "训练本地大脑把研究 thesis 做成生命周期：原始论点、催化剂日历、反方证据、失效条件、事件后复盘和 correction note 都要进入链条；不能把新闻热度当结论。",
+    sourceSummary:
+      "thesis and catalyst lifecycle curriculum requiring invalidation, event calendar, post-event correction, evidence, and no trade advice.",
+  },
+  {
+    id: "data_provenance_quality",
+    userMessage:
+      "训练本地大脑遇到价格、成交量、财报字段、ETF 权重、期权 IV 或情绪数据时，先做 data provenance quality gate：供应商、字段定义、时间戳、币种、复权、更新频率、异常值和可信优先级都要核对。",
+    sourceSummary:
+      "data provenance and quality curriculum requiring vendor, field-definition, timestamp, currency, adjustment, update cadence, outlier, and trust-priority checks.",
+  },
+  {
+    id: "research_artifact_qc",
+    userMessage:
+      "训练本地大脑生成研报、表格、估值模型或控制室总结前，必须做 research artifact QC：每个数字有出处，表格和结论一致，未验证标 unverified，外发前人工审阅。",
+    sourceSummary:
+      "research artifact QC curriculum for reports, tables, model outputs, visible summaries, citations, and number provenance.",
+  },
+  {
     id: "multi_asset_macro_portfolio_risk",
     userMessage:
       "我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex、美元流动性，先拆内部模块，不要给交易建议。",
@@ -425,6 +453,10 @@ export function buildTeacherSystemPrompt(): string {
     "- ops audit must not become finance analysis",
     "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
     "- fundamentals and value-investing asks must prioritize company_fundamentals_value before technical timing; require filing/source evidence, revenue quality, margin durability, free cash flow, ROIC, balance sheet, moat, management capital allocation, valuation range, margin of safety, value-trap risk, and thesis invalidation",
+    "- DCF, comps, three-statement, spreadsheet, or valuation-model asks must include financial_modeling_valuation_qc, data_provenance_quality, research_artifact_qc, source evidence, assumptions, sensitivity, and no_model_math_guessing",
+    "- thesis, catalyst, invalidation, event-calendar, post-event, or correction-note asks must include thesis_catalyst_lifecycle and red_team_invalidation_required",
+    "- vendor, field-definition, timestamp, currency, adjustment, data-source conflict, or sourced-number quality asks must include data_provenance_quality and source_registry",
+    "- report, spreadsheet, table, model-output, citation, or visible-summary artifact asks must include research_artifact_qc and cite_every_number_or_mark_unsourced",
     "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
@@ -1666,6 +1698,7 @@ const TEACHER_RISK_PRIORITY = [
   "evidence_required",
   "no_trade_advice",
   "no_model_math_guessing",
+  "cite_every_number_or_mark_unsourced",
   "no_unverified_cross_market_claims",
   "no_high_leverage_crypto",
   "risk_gate_before_action_language",
@@ -1863,6 +1896,31 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     /价值投资|基本面优先|value investing|intrinsic value|内在价值|安全边际|margin of safety|护城河|moat|自由现金流|roic|价值陷阱/iu.test(
       ask,
     );
+  const isFinancialModelingValuationQc =
+    /(dcf|comps?|三表|财务模型|估值模型|敏感性|valuation model|financial model|model builder|audit[- ]?xls|spreadsheet).{0,80}(估值|valuation|假设|assumption|source|来源|qc|审计|核对)/iu.test(
+      ask,
+    ) ||
+    /(估值|valuation|假设|assumption|source|来源|qc|审计|核对).{0,80}(dcf|comps?|三表|财务模型|估值模型|敏感性|valuation model|financial model|model builder|audit[- ]?xls|spreadsheet)/iu.test(
+      ask,
+    );
+  const isThesisCatalystLifecycle =
+    /(thesis|投资论点|研究论点|催化|catalyst|失效|invalidation|post[- ]?event|事件后|correction note|反方证据).{0,80}(基本面|valuation|估值|event|事件|财报|portfolio|组合|风险|学习|沉淀)/iu.test(
+      ask,
+    ) ||
+    /(基本面|valuation|估值|event|事件|财报|portfolio|组合|风险|学习|沉淀).{0,80}(thesis|投资论点|研究论点|催化|catalyst|失效|invalidation|post[- ]?event|事件后|correction note|反方证据)/iu.test(
+      ask,
+    );
+  const isDataProvenanceQuality =
+    /provenance|vendor|供应商|字段定义|field definition|口径|时间戳|timestamp|币种|复权|adjusted|更新频率|source quality|数据质量|数据源.*质量/iu.test(
+      ask,
+    );
+  const isResearchArtifactQc =
+    /(artifact|产物|研报|报告|表格|spreadsheet|模型输出|model output|number provenance|数字来源|cite every number|citation|QC).{0,80}(金融|finance|market|估值|valuation|财报|source|来源|数字|number|模型|model|summary|总结)/iu.test(
+      ask,
+    ) ||
+    /(金融|finance|market|估值|valuation|财报|source|来源|数字|number|模型|model|summary|总结).{0,80}(artifact|产物|研报|报告|表格|spreadsheet|模型输出|model output|number provenance|数字来源|cite every number|citation|QC)/iu.test(
+      ask,
+    );
   const isExternalFinancialAgentPattern =
     /(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository).{0,80}(金融|financial|finance|equity research|investment banking|wealth management|market researcher|earnings reviewer|model builder|valuation reviewer).{0,80}(agent|agents|智能体|插件|plugins?|workflow|工作流)/iu.test(
       ask,
@@ -2008,9 +2066,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     replacePrimary([
       "macro_rates_inflation",
       "credit_liquidity",
-      "cross_asset_liquidity",
       "fx_currency_liquidity",
-      "fx_dollar",
       "us_equity_market_structure",
       "china_a_share_policy_flow",
       "global_index_regime",
@@ -2019,13 +2075,15 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "commodities_oil_gold",
       "options_volatility",
       "crypto_market_structure",
-      "event_driven",
       "quant_math",
       "portfolio_risk_gates",
-      "causal_map",
       "finance_learning_memory",
       "source_registry",
       "review_panel",
+      "financial_modeling_valuation_qc",
+      "thesis_catalyst_lifecycle",
+      "data_provenance_quality",
+      "research_artifact_qc",
     ]);
     replaceSupporting([]);
     replaceRequiredTools([]);
@@ -2038,8 +2096,12 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "index_constituents_weights_and_technical_regime_inputs",
       "latest_company_fundamental_inputs",
       "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+      "model_assumptions_sensitivity_and_audit_inputs",
       "valuation_range_and_margin_of_safety_inputs",
+      "thesis_catalyst_calendar_and_invalidation_evidence",
       "value_trap_risks_and_thesis_invalidation_evidence",
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "research_artifact_qc_and_number_provenance_checklist",
       "commodity_curve_roll_yield_and_inventory_inputs",
       "options_iv_skew_gamma_and_event_calendar",
       "crypto_liquidity_volatility_custody_and_regulatory_inputs",
@@ -2065,13 +2127,21 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   if (!isContextReset && isValueInvestingFundamental) {
     ensurePrimary([
       "company_fundamentals_value",
+      "financial_modeling_valuation_qc",
+      "thesis_catalyst_lifecycle",
       "source_registry",
+      "data_provenance_quality",
       "causal_map",
       "portfolio_risk_gates",
       "review_panel",
       "control_room_summary",
     ]);
-    for (const module of ["finance_learning_memory", "macro_rates_inflation", "quant_math"]) {
+    for (const module of [
+      "finance_learning_memory",
+      "macro_rates_inflation",
+      "quant_math",
+      "research_artifact_qc",
+    ]) {
       if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
         supportingModules.push(module);
       }
@@ -2080,8 +2150,11 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "latest_10q_10k_or_earnings_release",
       "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
       "moat_management_and_capital_allocation_evidence",
+      "model_assumptions_sensitivity_and_audit_inputs",
       "valuation_range_and_margin_of_safety_inputs",
+      "thesis_catalyst_calendar_and_invalidation_evidence",
       "value_trap_risks_and_thesis_invalidation_evidence",
+      "research_artifact_qc_and_number_provenance_checklist",
       "portfolio_weights_and_risk_limits",
     ]);
     ensureRisk([
@@ -2100,6 +2173,134 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "Read source filings first, score business quality and cash flows, test valuation and margin of safety, then review risk.";
   }
 
+  if (!isContextReset && isFinancialModelingValuationQc && !isExternalFinancialAgentPattern) {
+    taskFamily = "financial_modeling_valuation_qc";
+    ensurePrimary([
+      "financial_modeling_valuation_qc",
+      "company_fundamentals_value",
+      "data_provenance_quality",
+      "research_artifact_qc",
+      "source_registry",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of [
+      "thesis_catalyst_lifecycle",
+      "causal_map",
+      "portfolio_risk_gates",
+      "finance_learning_memory",
+    ]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "latest_10q_10k_or_earnings_release",
+      "model_assumptions_sensitivity_and_audit_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "research_artifact_qc_and_number_provenance_checklist",
+    ]);
+    ensureRisk([
+      "no_model_math_guessing",
+      "no_unverified_filing_claims",
+      "cite_every_number_or_mark_unsourced",
+      "no_trade_advice",
+    ]);
+    ensureRejected([
+      "valuation_without_source_evidence",
+      "spreadsheet_number_without_provenance",
+      "trade_recommendation_without_evidence",
+    ]);
+    nextStep =
+      "Collect filing sources, audit assumptions and sensitivity, verify number provenance, then review the artifact.";
+  }
+
+  if (!isContextReset && isThesisCatalystLifecycle && !isExternalFinancialAgentPattern) {
+    taskFamily = "thesis_catalyst_lifecycle_review";
+    ensurePrimary([
+      "thesis_catalyst_lifecycle",
+      "event_driven",
+      "company_fundamentals_value",
+      "causal_map",
+      "portfolio_risk_gates",
+      "finance_learning_memory",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of ["source_registry", "data_provenance_quality", "research_artifact_qc"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "original_thesis_and_evidence_used",
+      "thesis_catalyst_calendar_and_invalidation_evidence",
+      "post_event_correction_note",
+    ]);
+    ensureRisk([
+      "red_team_invalidation_required",
+      "do_not_rewrite_past_mistakes",
+      "no_trade_advice",
+    ]);
+    ensureRejected(["thesis_without_invalidation", "news_heat_as_conclusion"]);
+    nextStep =
+      "Map thesis, catalysts, invalidation, event evidence, and post-event correction before durable memory.";
+  }
+
+  if (!isContextReset && isDataProvenanceQuality && !isExternalFinancialAgentPattern) {
+    taskFamily = "data_provenance_quality_gate";
+    ensurePrimary([
+      "data_provenance_quality",
+      "source_registry",
+      "research_artifact_qc",
+      "quant_math",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    ensureMissing([
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "source_timestamp_and_vendor",
+      "validation_dataset_and_sample_out_plan",
+    ]);
+    ensureRisk(["no_unverified_current_market_data", "evidence_required"]);
+    ensureRejected(["single_vendor_unverified_claim", "field_definition_missing"]);
+    nextStep =
+      "Compare vendors, field definitions, timestamps and update cadence before promoting sourced numbers.";
+  }
+
+  if (!isContextReset && isResearchArtifactQc && !isExternalFinancialAgentPattern) {
+    taskFamily = "research_artifact_qc_gate";
+    ensurePrimary([
+      "research_artifact_qc",
+      "data_provenance_quality",
+      "source_registry",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of [
+      "financial_modeling_valuation_qc",
+      "company_fundamentals_value",
+      "finance_learning_memory",
+    ]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "research_artifact_qc_and_number_provenance_checklist",
+      "source_timestamp_and_vendor",
+      "citation_and_provenance_rule",
+    ]);
+    ensureRisk([
+      "cite_every_number_or_mark_unsourced",
+      "human_review_required_before_external_use",
+    ]);
+    ensureRejected(["raw_artifact_without_qc", "number_without_provenance"]);
+    nextStep =
+      "Audit number provenance, table consistency, unverified labels, and human review before visible use.";
+  }
+
   if (!isContextReset && isExternalFinancialAgentPattern) {
     taskFamily = "external_financial_agent_pattern_distillation";
     ensurePrimary([
@@ -2111,6 +2312,10 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "review_panel",
       "control_room_summary",
       "company_fundamentals_value",
+      "financial_modeling_valuation_qc",
+      "research_artifact_qc",
+      "data_provenance_quality",
+      "thesis_catalyst_lifecycle",
       "portfolio_risk_gates",
     ]);
     for (const module of ["causal_map", "quant_math", "technical_timing"]) {
@@ -2133,6 +2338,9 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "citation_and_provenance_rule",
       "artifact_qc_gate_mapping",
       "artifact_qc_gate_sequence",
+      "model_assumptions_sensitivity_and_audit_inputs",
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "research_artifact_qc_and_number_provenance_checklist",
       "human_signoff_checkpoint",
       "visible_summary_contract",
       "application_validation_receipt",
@@ -2147,7 +2355,6 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "no_live_sender_change",
       "no_protected_memory_write",
       "no_distribution_or_publication",
-      "cite_every_number_or_mark_unsourced",
       "human_review_required_before_external_use",
       "no_hidden_tool_authority",
       "no_direct_external_agent_install",

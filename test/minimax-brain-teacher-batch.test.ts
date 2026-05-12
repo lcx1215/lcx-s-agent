@@ -525,9 +525,13 @@ describe("minimax brain teacher batch parsing", () => {
       }),
     );
 
-    expect(plan.primary_modules).toEqual(
+    expect([...plan.primary_modules, ...plan.supporting_modules]).toEqual(
       expect.arrayContaining([
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "data_provenance_quality",
+        "research_artifact_qc",
         "source_registry",
         "causal_map",
         "portfolio_risk_gates",
@@ -539,7 +543,9 @@ describe("minimax brain teacher batch parsing", () => {
         "latest_10q_10k_or_earnings_release",
         "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
         "moat_management_and_capital_allocation_evidence",
+        "model_assumptions_sensitivity_and_audit_inputs",
         "valuation_range_and_margin_of_safety_inputs",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
         "value_trap_risks_and_thesis_invalidation_evidence",
       ]),
     );
@@ -552,6 +558,47 @@ describe("minimax brain teacher batch parsing", () => {
       ]),
     );
     expect(plan.rejected_context).toContain("technical_timing_before_fundamentals");
+  });
+
+  it("hardens valuation, thesis, provenance, and artifact QC teacher samples", () => {
+    const plan = hardenTeacherPlanForPrompt(
+      {
+        id: "financial_modeling_valuation_qc",
+        userMessage:
+          "训练本地大脑做 DCF/comps/三表财务模型和估值敏感性 QC，每个数字有来源、字段口径和时间戳。",
+        sourceSummary: "financial modeling valuation QC.",
+      },
+      normalizeTeacherPlan({
+        task_family: "finance",
+        primary_modules: [],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: [],
+        next_step: "build model",
+        rejected_context: [],
+      }),
+    );
+
+    expect([...plan.primary_modules, ...plan.supporting_modules]).toEqual(
+      expect.arrayContaining([
+        "financial_modeling_valuation_qc",
+        "company_fundamentals_value",
+        "data_provenance_quality",
+        "research_artifact_qc",
+        "thesis_catalyst_lifecycle",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "research_artifact_qc_and_number_provenance_checklist",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["no_model_math_guessing", "cite_every_number_or_mark_unsourced"]),
+    );
   });
 
   it("rewrites current market data collection overclaims in teacher next steps", () => {
@@ -897,6 +944,10 @@ describe("minimax brain teacher batch parsing", () => {
         "review_panel",
         "control_room_summary",
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "research_artifact_qc",
+        "data_provenance_quality",
+        "thesis_catalyst_lifecycle",
         "portfolio_risk_gates",
       ]),
     );

@@ -14,6 +14,10 @@ export const LOCAL_BRAIN_MODULE_TAXONOMY = [
   "fx_dollar",
   "event_driven",
   "company_fundamentals_value",
+  "financial_modeling_valuation_qc",
+  "thesis_catalyst_lifecycle",
+  "data_provenance_quality",
+  "research_artifact_qc",
   "quant_math",
   "portfolio_risk_gates",
   "causal_map",
@@ -168,6 +172,7 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "Agent skill learning tasks must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, and no_protected_memory_write.",
   "External financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision.",
   "All module learning uses the same internalization chain, not only factor modules: every target module needs source registry, actual reading scope, module-specific capability rule, retrieval receipt, application validation, local-brain eval or training absorption evidence, fresh adjacent task, module_learning_pipeline_review status, safety boundary, and keep/downrank/discard decision before anyone claims the module learned it.",
+  "Advanced trader research chains must not stop at broad fundamentals: DCF/comps/modeling asks use financial_modeling_valuation_qc, thesis/catalyst/invalidation asks use thesis_catalyst_lifecycle, vendor/field/timestamp conflicts use data_provenance_quality, and reports/spreadsheets/tables/narrative artifacts use research_artifact_qc before a visible control-room summary.",
 ] as const;
 
 const BASE_CONTRACT_HINT_INDEXES = [0, 1, 2, 3, 4, 5] as const;
@@ -182,9 +187,9 @@ const CONTRACT_HINT_SELECTORS: Array<{
       /短|口语|看不懂|lark|feishu|飞书|最近股市|持仓|拿|买|卖|大宗商品|plain|recent stock|buy|hold|position sizing|visible reply/iu,
   },
   {
-    indexes: [8, 9, 10],
+    indexes: [8, 9, 10, 15],
     pattern:
-      /美股|a股|指数|加密|期权|大宗|商品|黄金|原油|美元|外汇|事件|技术|跨市场|crypto|option|commodity|gold|oil|dollar|fx|event|technical|cross-market/iu,
+      /美股|a股|指数|加密|期权|大宗|商品|黄金|原油|美元|外汇|事件|技术|跨市场|估值|DCF|comps|模型|财务模型|研报|口径|字段|时间戳|催化|失效|crypto|option|commodity|gold|oil|dollar|fx|event|technical|cross-market|valuation|modeling|thesis|catalyst|provenance|timestamp|artifact|spreadsheet|report/iu,
   },
   {
     indexes: [11, 12, 14],
