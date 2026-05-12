@@ -62,6 +62,34 @@ active entrypoints drift back toward stale stage wording, tiny symptom-patch
 rules, static brain adapters, invalid eval commands, upstream package identity,
 or missing L5 regression skill wiring.
 
+## Context Recovery And Daily Continuity
+
+When Codex context is missing, do not reconstruct the system from memory. Use
+the durable local operator state first:
+
+```bash
+sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json
+tail -n 5 /Users/liuchengxu/.openclaw/workspace/logs/lcx-local-operator-loop.jsonl
+tail -n 5 /Users/liuchengxu/.openclaw/workspace/logs/codex-archive-lcx-automation-threads.log
+```
+
+The intended daily structure is:
+
+- Local launchd automation runs the lightweight operator loop and Codex-thread
+  cleanup without opening new Codex conversations.
+- The single visible Codex automation is `LCX Agent Operator Digest`; it reads
+  the local operator state and reports only the most important blocker or next
+  action.
+- Small repairs must name their master lane before coding: Qwen training,
+  MiniMax teacher, adapter promotion, Lark/Feishu reply, local automation,
+  memory sedimentation, finance capability, or dev/live boundary.
+- Durable proof beats chat memory. Prefer tests, smoke/eval output,
+  `lcx-system-doctor`, `local-brain-training-plan`, local automation receipts,
+  log anchors, and git commits.
+- Keep evidence labels strict: dev/local proof is not live-visible proof;
+  source storage is not learning; system-level internalization is not Qwen
+  weight absorption; `parseRecovered` is not a clean promotion pass.
+
 ## Prior-Work Reuse Gate
 
 Before adding a new local-brain contract, eval, teacher prompt, skill, receipt,

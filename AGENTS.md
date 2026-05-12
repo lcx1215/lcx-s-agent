@@ -10,6 +10,8 @@ When a new Codex coding window enters this repo without prior chat context, star
 sed -n '1,220p' ops/local-brain/README.md
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
+test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && \
+  sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json
 ```
 
 That runbook points to the current local-brain training commands, MiniMax teacher loop, Qwen adapter selection, eval commands, launchd/log paths, and the most relevant local Codex skills under `/Users/liuchengxu/.codex/skills/`.
@@ -37,6 +39,36 @@ Use the matching skill before acting:
 - `skill-harvester` for evaluating and isolating new external/local skills.
 
 Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.
+
+## Context-Limited Continuity Doctrine
+
+Codex context is finite. Do not rely on a long chat transcript to preserve the
+engineering state. Recover state from durable files, logs, receipts, and git
+before making claims or changes.
+
+- Start every non-trivial LCX Agent session from fixed evidence: `AGENTS.md`,
+  `ops/local-brain/README.md`, `lcx-system-doctor`, `local-brain-training-plan`,
+  and `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
+- Classify every small fix into one current master lane before coding:
+  Qwen training, MiniMax teacher, adapter promotion, Lark/Feishu visible reply,
+  local automation, memory sedimentation, finance research capability, or
+  dev/live boundary. If a change cannot be attached to a master lane, do not
+  make it unless the user explicitly asks for unrelated cleanup.
+- Every fix must leave a durable proof surface: focused test, smoke/eval,
+  doctor or training-plan output, local automation receipt, log anchor, or
+  commit. Avoid "I remember" as evidence.
+- Keep the global picture compact: local launchd automation writes the hourly
+  machine truth to `lcx-local-operator-latest.json`; Codex should keep only one
+  visible high-level automation, `LCX Agent Operator Digest`, which reads local
+  state and reports concise blockers rather than opening one chat per lane.
+- Do not upgrade evidence across boundaries: `dev-fixed` is not
+  `live-visible-fixed`, a receipt is not model-weight absorption, a stored
+  source is not learned knowledge, and `parseRecovered` is not a fully clean
+  promotion pass.
+- Before adding a new module, prompt, eval, receipt, automation, or memory lane,
+  search existing repo and local skill machinery first. Prefer extending the
+  existing source-registry, capability-card, retrieval/apply, eval, runbook,
+  skill, and automation surfaces over creating a parallel path.
 
 ## Mission
 
