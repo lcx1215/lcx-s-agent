@@ -160,6 +160,16 @@ Weak module-learning receipts appear in the `module-learning-pipeline-review`
 check. Ordinary in-progress statuses do not fail the doctor, but boundary
 violations do.
 
+For the automation lane that should leave a daily dev/local receipt, run:
+
+```bash
+node --import tsx scripts/dev/module-learning-pipeline-review.ts --json
+```
+
+Use `--no-write` for a dry run. The script writes only
+`memory/module-learning-pipeline-reviews/<YYYY-MM-DD>.json`; it must not be
+used as live proof or model-weight absorption proof by itself.
+
 The training coordinator also includes the same no-write review in its JSON:
 
 ```bash

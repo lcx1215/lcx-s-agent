@@ -71,6 +71,7 @@ describe("LCX system doctor train slice observability", () => {
     expect(source).toContain("createModuleLearningPipelineReviewTool");
     expect(source).toContain("async function moduleLearningPipelineReviewCheck");
     expect(source).toContain('name: "module-learning-pipeline-review"');
+    expect(source).toContain("scripts/dev/module-learning-pipeline-review.ts");
     expect(source).toContain("writeReview: false");
     expect(source).toContain("boundaryViolations === 0");
   });

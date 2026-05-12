@@ -933,6 +933,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/local-brain-distill-smoke.ts",
     "scripts/dev/local-brain-distill-eval.ts",
     "scripts/dev/local-brain-plan.ts",
+    "scripts/dev/module-learning-pipeline-review.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
     "src/commands/capabilities/lark-loop-diagnose.ts",
   ];
