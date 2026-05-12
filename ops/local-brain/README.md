@@ -396,6 +396,23 @@ promotionReady=true
 failedCaseIds=[]
 ```
 
+For a lightweight read-only promotion audit that resolves `latest-passing`,
+checks it against the latest guard-log eval, and reports a standardized
+decision without moving/deleting/promoting adapters, run:
+
+```bash
+node --import tsx scripts/dev/local-brain-promotion-audit.ts --json
+```
+
+Expected boundary:
+
+```text
+dev_local_brain_promotion_audit_only
+```
+
+Treat `promotionDecision=safe` as dev promotion-audit evidence only. It does not
+promote an adapter by itself and it is not live-visible proof.
+
 ### Capability Hierarchy Gate
 
 Local-brain evals must preserve a simple-to-complex hierarchy. A complex case may
