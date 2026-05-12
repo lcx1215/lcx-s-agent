@@ -518,6 +518,21 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("application_ready");
   });
 
+  it("includes module learning pipeline guidance when the tools are available", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["module_learning_pipeline_plan", "module_learning_pipeline_review"],
+    });
+
+    expect(prompt).toContain("module_learning_pipeline_plan");
+    expect(prompt).toContain("source registry");
+    expect(prompt).toContain("fresh adjacent application");
+    expect(prompt).toContain("do not describe storage or a summary alone as module learning");
+    expect(prompt).toContain("module_learning_pipeline_review");
+    expect(prompt).toContain("flags incomplete statuses");
+    expect(prompt).toContain("protected memory");
+  });
+
   it("includes per-apply usage automation guidance when the finance apply tool is available", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

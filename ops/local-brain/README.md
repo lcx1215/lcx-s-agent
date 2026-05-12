@@ -125,6 +125,31 @@ The receipt status is evidence-derived: `missing_evidence`, `stored_only`,
 module beyond the returned status in summaries, Lark replies, or training
 handoffs.
 
+Use the review tool to inspect same-day module-learning proof before claiming
+cross-module learning progress:
+
+```text
+module_learning_pipeline_review
+```
+
+It reads only:
+
+```text
+memory/module-learning-pipeline-plan-receipts/<YYYY-MM-DD>/
+```
+
+When `writeReview` is not false, it writes:
+
+```text
+memory/module-learning-pipeline-reviews/<YYYY-MM-DD>.json
+```
+
+The review flags weak module-learning receipts that are still `stored_only`,
+`retrieval_ready`, or `application_ready`, plus any receipt that claims live,
+provider config, or protected-memory mutation. Treat that review as dev/local
+status evidence only; it is not live-visible proof and it does not mean Qwen
+weights absorbed the lesson unless eval or training evidence is present.
+
 ## Codex Skills To Load
 
 When context is missing, load only the skills that match the current question. The most useful local skill files are:

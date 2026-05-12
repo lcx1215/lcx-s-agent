@@ -7,7 +7,7 @@ import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringArrayParam, readStringParam, ToolInputError } from "./common.js";
 
-const MODULE_LEARNING_TARGETS = [
+export const MODULE_LEARNING_TARGETS = [
   "factor_research",
   "options_volatility",
   "global_index_regime",
@@ -42,7 +42,7 @@ type ModuleLearningSchema = {
   };
 };
 
-const MODULE_LEARNING_DECISIONS = ["keep", "downrank", "discard", "not_decided"] as const;
+export const MODULE_LEARNING_DECISIONS = ["keep", "downrank", "discard", "not_decided"] as const;
 
 type ModuleLearningEvidenceStatus =
   | "missing_evidence"
@@ -50,6 +50,14 @@ type ModuleLearningEvidenceStatus =
   | "retrieval_ready"
   | "application_ready"
   | "eval_absorbed";
+
+export const MODULE_LEARNING_EVIDENCE_STATUSES: ModuleLearningEvidenceStatus[] = [
+  "missing_evidence",
+  "stored_only",
+  "retrieval_ready",
+  "application_ready",
+  "eval_absorbed",
+];
 
 const ModuleLearningPipelinePlanSchema = Type.Object({
   targetModule: stringEnum(MODULE_LEARNING_TARGETS),

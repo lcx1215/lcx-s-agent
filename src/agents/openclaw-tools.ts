@@ -47,6 +47,7 @@ import { createLocalMemoryRecordTool } from "./tools/local-memory-record-tool.js
 import { createMcpContextTool } from "./tools/mcp-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createModuleLearningPipelinePlanTool } from "./tools/module-learning-pipeline-plan-tool.js";
+import { createModuleLearningPipelineReviewTool } from "./tools/module-learning-pipeline-review-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
 import { createQuantMathTool } from "./tools/quant-math-tool.js";
@@ -312,6 +313,9 @@ export function createOpenClawTools(options?: {
       workspaceDir,
     }),
     createModuleLearningPipelinePlanTool({
+      workspaceDir,
+    }),
+    createModuleLearningPipelineReviewTool({
       workspaceDir,
     }),
     createFinanceLearningRetrievalReviewTool({

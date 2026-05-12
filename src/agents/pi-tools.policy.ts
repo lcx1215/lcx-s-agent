@@ -60,6 +60,8 @@ const SUBAGENT_TOOL_DENY_ALWAYS = [
   "finance_article_source_registry_record",
   "finance_external_source_adapter",
   "finance_learning_pipeline_orchestrator",
+  "module_learning_pipeline_plan",
+  "module_learning_pipeline_review",
   "finance_research_source_workbench",
   "finance_learning_capability_attach",
   "finance_learning_capability_apply",

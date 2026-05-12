@@ -132,6 +132,16 @@
       "title": "Learning Pipeline",
       "detailKeys": ["sourceName", "adapterType", "sourceType"]
     },
+    "module_learning_pipeline_plan": {
+      "emoji": "🧠",
+      "title": "Module Learning Plan",
+      "detailKeys": ["targetModule", "status"]
+    },
+    "module_learning_pipeline_review": {
+      "emoji": "🧭",
+      "title": "Module Learning Review",
+      "detailKeys": ["dateKey", "targetModule"]
+    },
     "finance_research_source_workbench": {
       "emoji": "🗂️",
       "title": "Research Source Workbench",

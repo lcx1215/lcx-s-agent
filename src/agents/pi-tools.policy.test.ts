@@ -132,6 +132,8 @@ describe("resolveSubagentToolPolicy depth awareness", () => {
     expect(isToolAllowedByPolicyName("finance_article_source_registry_record", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("finance_external_source_adapter", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("finance_learning_pipeline_orchestrator", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("module_learning_pipeline_plan", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("module_learning_pipeline_review", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("finance_research_source_workbench", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("finance_learning_capability_attach", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("finance_learning_capability_apply", policy)).toBe(false);

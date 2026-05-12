@@ -102,6 +102,16 @@ function buildMemorySection(params: {
           "When finance learning runs need same-day quality inspection, use finance_learning_retrieval_review. It reads finance-learning retrieval receipts, writes a finance-only retrieval review, links apply usage receipts/reviews when present, flags weak learning that did not become retrievable or did not become application-ready, and does not touch Lark language corpus, protected memory, doctrine cards, or execution authority.",
         ]
       : []),
+    ...(params.availableTools.has("module_learning_pipeline_plan")
+      ? [
+          "When any module claims it should learn from an outside source, use module_learning_pipeline_plan to map the module to the shared source registry, actual reading scope, retrieval receipt, application validation, local-brain eval or training absorption evidence, fresh adjacent application, and keep/downrank/discard decision. Do not describe storage or a summary alone as module learning.",
+        ]
+      : []),
+    ...(params.availableTools.has("module_learning_pipeline_review")
+      ? [
+          "When checking whether module learning is usable across factors, options, indexes, macro, fundamentals, Lark/Feishu workflow, memory, ops, or skills, use module_learning_pipeline_review. It reads module-learning plan receipts, flags incomplete statuses, and keeps live, provider config, protected memory, and language corpus untouched.",
+        ]
+      : []),
     ...(params.availableTools.has("finance_learning_capability_apply")
       ? [
           "When answering a finance research question from retained learning, use finance_learning_capability_apply before drafting the answer. It retrieves capability cards through inspect, returns applicationStatus plus failedReason, reuse guidance, required inputs, causal checks, risk checks, answer scaffolds, and multi-capability synthesis plans; every non-dry apply writes a usage receipt and refreshes the same-day usage review immediately, including refusal/no-match cases. It keeps the answer research-only without execution approval or doctrine mutation.",
@@ -678,6 +688,10 @@ export function buildAgentSystemPrompt(params: {
       "Run one bounded finance learning pipeline from safe source intake through extraction, capability attachment, evidence-gated retention, inspect-ready output, a retrieval receipt, an auto-refreshed same-day retrieval review, and optional read-only apply validation proving whether learning became retrievable and application-ready; pass learningIntent for retrieval-first capability-card recall, pass applicationValidationQuery when the user expects proof the capability can shape a bounded research answer, surface learningInternalizationStatus plus retrievalFirstLearning.failedReason, applicationReadyCandidateCount, applicationValidationStatus, weakLearningIntents.failedReason, usageReceiptPath, and usageReviewPath in replies, only call it internalized when status is application_ready, fail closed on the first broken step, and never fetch remote content automatically",
     finance_learning_retrieval_review:
       "Summarize finance learning retrieval receipts into a same-day per-run quality review, link apply usage receipts/reviews when present, flag weak learning that did not become retrievable or application-ready, and keep Lark language corpus plus protected memory untouched",
+    module_learning_pipeline_plan:
+      "Plan and optionally receipt one evidence-gated module-learning chain across source registry, reading scope, retrieval, application validation, eval/training absorption, fresh adjacent application, and keep/downrank/discard decision; do not describe storage or a summary alone as module learning",
+    module_learning_pipeline_review:
+      "Summarize module-learning plan receipts by evidence status, flags incomplete statuses and boundary-violating module-learning claims, and keep live, provider config, protected memory, language corpus, and execution authority untouched",
     finance_learning_capability_apply:
       "Apply retained finance learning capability cards to one bounded research question by surfacing applicationStatus, failedReason, reuse guidance, required inputs, causal checks, risk checks, answer scaffolds, and multi-capability synthesis plans; writes a usage receipt and refreshes the same-day usage review on every non-dry apply, including no-match refusals; read-only and never creates trading advice, execution approval, or doctrine mutation",
     github_project_capability_intake:
@@ -766,6 +780,8 @@ export function buildAgentSystemPrompt(params: {
     "finance_external_source_adapter",
     "finance_learning_pipeline_orchestrator",
     "finance_learning_retrieval_review",
+    "module_learning_pipeline_plan",
+    "module_learning_pipeline_review",
     "finance_research_source_workbench",
     "finance_article_extract_capability_input",
     "github_project_capability_intake",
