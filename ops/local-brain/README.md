@@ -160,6 +160,17 @@ Weak module-learning receipts appear in the `module-learning-pipeline-review`
 check. Ordinary in-progress statuses do not fail the doctor, but boundary
 violations do.
 
+The training coordinator also includes the same no-write review in its JSON:
+
+```bash
+node --import tsx scripts/dev/local-brain-training-plan.ts --json
+```
+
+Look at `moduleLearningReview` and the `module_learning_incomplete_evidence`
+decision before claiming cross-module learning improved. This keeps automation
+from confusing "training is active" with "every module-learning source has been
+absorbed."
+
 ## Codex Skills To Load
 
 When context is missing, load only the skills that match the current question. The most useful local skill files are:

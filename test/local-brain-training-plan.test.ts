@@ -11,6 +11,16 @@ async function writeJsonl(prefix: string, lines: unknown[]): Promise<string> {
   return logPath;
 }
 
+async function writeJson(
+  workspaceDir: string,
+  relativePath: string,
+  payload: unknown,
+): Promise<void> {
+  const targetPath = path.join(workspaceDir, relativePath);
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
 describe("local-brain-training-plan", () => {
   it("turns eval output-contract failures into a Codex repair decision", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
@@ -242,5 +252,63 @@ describe("local-brain-training-plan", () => {
       eligible: true,
       repairDecisionIds: ["output_contract_or_parser_failure"],
     });
+  });
+
+  it("surfaces incomplete module-learning receipts for automation without writing reviews", async () => {
+    const worktree = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-worktree-"));
+    const dateKey = new Date().toISOString().slice(0, 10);
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+    await writeJson(
+      worktree,
+      `memory/module-learning-pipeline-plan-receipts/${dateKey}/incomplete.json`,
+      {
+        boundary: "dev_module_learning_pipeline_plan",
+        targetModule: "options_volatility",
+        moduleFamily: "finance_research",
+        status: "retrieval_ready",
+        learningIntent: "Learn an options IV event-risk source.",
+        missingEvidence: ["application_validation_receipt", "training_or_eval_absorption_evidence"],
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      },
+    );
+
+    try {
+      const plan = await buildLocalBrainTrainingPlan({
+        guardLogPath,
+        quotaLogPath,
+        worktree,
+        json: true,
+        processCheck: false,
+      });
+
+      expect(plan.moduleLearningReview).toMatchObject({
+        boundary: "module_learning_pipeline_review_only",
+        updated: false,
+        counts: expect.objectContaining({
+          weakModuleLearning: 1,
+          retrievalReady: 1,
+          boundaryViolations: 0,
+        }),
+      });
+      expect(plan.decisions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "module_learning_incomplete_evidence",
+            lane: "module_learning",
+            codexRepairEligible: false,
+          }),
+        ]),
+      );
+      await expect(
+        fs.stat(path.join(worktree, `memory/module-learning-pipeline-reviews/${dateKey}.json`)),
+      ).rejects.toThrow();
+    } finally {
+      await fs.rm(worktree, { recursive: true, force: true });
+    }
   });
 });

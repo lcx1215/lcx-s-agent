@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
 
 type CliOptions = {
   guardLogPath: string;
@@ -38,6 +39,16 @@ type TeacherSnapshot = {
   failureErrors: string[];
   providerSkippedPromptIds: string[];
   failureFocusPrompts?: number;
+};
+
+type ModuleLearningReviewSnapshot = {
+  ok?: unknown;
+  boundary?: unknown;
+  updated?: unknown;
+  counts?: Record<string, unknown>;
+  weakModuleLearning?: unknown[];
+  invalidReceipts?: unknown[];
+  separationContract?: unknown;
 };
 
 type TrainingDecision = {
@@ -366,6 +377,7 @@ function buildDecisions(params: {
   latestGuardFailure?: JsonRecord;
   latestEval?: EvalSnapshot;
   latestTeacher?: TeacherSnapshot;
+  moduleLearningReview?: ModuleLearningReviewSnapshot;
   guardLogPath: string;
   worktree: string;
 }): TrainingDecision[] {
@@ -458,6 +470,27 @@ function buildDecisions(params: {
     });
   }
 
+  const moduleLearningCounts = params.moduleLearningReview?.counts ?? {};
+  const weakModuleLearning =
+    typeof moduleLearningCounts.weakModuleLearning === "number"
+      ? moduleLearningCounts.weakModuleLearning
+      : 0;
+  const boundaryViolations =
+    typeof moduleLearningCounts.boundaryViolations === "number"
+      ? moduleLearningCounts.boundaryViolations
+      : 0;
+  if (weakModuleLearning > 0) {
+    decisions.push({
+      id: "module_learning_incomplete_evidence",
+      lane: "module_learning",
+      severity: "P2",
+      action: "complete_module_learning_evidence_before_claiming_absorption",
+      reason: `${weakModuleLearning} module-learning receipt(s) are not eval_absorbed yet.`,
+      codexRepairEligible: boundaryViolations > 0,
+      nextCommand: boundaryViolations > 0 ? buildRepairLockCommand(params.worktree) : undefined,
+    });
+  }
+
   if (params.latestEval?.promotionReady && latestEvalIsAfterStart) {
     decisions.push({
       id: "promotion_candidate_ready",
@@ -470,6 +503,29 @@ function buildDecisions(params: {
   }
 
   return decisions;
+}
+
+async function moduleLearningReviewSnapshot(
+  worktree: string,
+): Promise<ModuleLearningReviewSnapshot> {
+  const tool = createModuleLearningPipelineReviewTool({ workspaceDir: worktree });
+  const result = await tool.execute("local-brain-training-plan-module-learning-review", {
+    writeReview: false,
+  });
+  const details = result.details as ModuleLearningReviewSnapshot;
+  return {
+    ok: details.ok,
+    boundary: details.boundary,
+    updated: details.updated,
+    counts: details.counts,
+    weakModuleLearning: Array.isArray(details.weakModuleLearning)
+      ? details.weakModuleLearning.slice(0, 5)
+      : [],
+    invalidReceipts: Array.isArray(details.invalidReceipts)
+      ? details.invalidReceipts.slice(0, 5)
+      : [],
+    separationContract: details.separationContract,
+  };
 }
 
 export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<JsonRecord> {
@@ -490,12 +546,14 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   );
   const latestEval = latestEvalSnapshot(guardEvents);
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
+  const moduleLearningReview = await moduleLearningReviewSnapshot(worktree);
   const decisions = buildDecisions({
     activeProcesses,
     latestGuardStart,
     latestGuardFailure,
     latestEval,
     latestTeacher,
+    moduleLearningReview,
     guardLogPath: options.guardLogPath,
     worktree,
   });
@@ -516,6 +574,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
       Boolean(latestEval?.at) &&
       (!eventTime(latestGuardStart) || latestEval!.at >= eventTime(latestGuardStart)),
     latestTeacher,
+    moduleLearningReview,
     decisions,
     codexAutoRepair: {
       eligible: repairDecisions.length > 0,
@@ -530,6 +589,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
       "minimax-brain-training-guard",
       "teacher-quality-gate",
       "brain-health-digest",
+      "module-learning-pipeline-review",
       "local-brain-promotion-audit",
       "dev-full-loop-acceptance",
       "paper-learning-upgrade-reminder",

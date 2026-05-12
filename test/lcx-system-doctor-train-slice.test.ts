@@ -52,6 +52,7 @@ describe("LCX system doctor train slice observability", () => {
 
     expect(source).toContain("LIVE_LARK_DIAGNOSE_TIMEOUT_MS");
     expect(source).toContain("LIVE_CHANNEL_PROBE_TIMEOUT_MS");
+    expect(source).toContain("DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS = 30_000");
     expect(source).toContain("error: `${params.name} timed out after ${params.timeoutMs}ms`");
     expect(source).toMatch(
       /name: "channels-status-probe"[\s\S]*timeoutMs: LIVE_CHANNEL_PROBE_TIMEOUT_MS/u,
