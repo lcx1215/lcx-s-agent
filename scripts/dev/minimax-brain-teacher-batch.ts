@@ -1487,8 +1487,8 @@ function findBalancedJsonObject(raw: string): string | null {
 
 function repairMissingCommas(candidate: string): string {
   return candidate
-    .replace(/([}\]"])\s*\n\s*("[A-Za-z0-9_$ -]+"\s*:)/gu, "$1,\n$2")
-    .replace(/"\s*\n\s*"/gu, '",\n"');
+    .replace(/([}\]"])\s+("[A-Za-z0-9_$ -]+"\s*:)/gu, "$1,$2")
+    .replace(/"\s+"/gu, '","');
 }
 
 function parseTeacherPlanCandidate(candidate: string): TeacherPlan {
