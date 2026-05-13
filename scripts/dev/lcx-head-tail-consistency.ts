@@ -33,6 +33,7 @@ const HEAD_SURFACE_FILES = [
 ] as const;
 
 const TAIL_SURFACE_FILES = [
+  "scripts/dev/lcx-change-impact-plan.ts",
   "scripts/dev/local-brain-taxonomy.ts",
   "scripts/dev/local-brain-contracts.ts",
   "scripts/dev/local-brain-distill-eval.ts",
@@ -40,8 +41,10 @@ const TAIL_SURFACE_FILES = [
   "scripts/dev/minimax-quota-brain-saturator.ts",
   "scripts/dev/local-brain-training-plan.ts",
   "scripts/dev/lcx-system-doctor.ts",
+  "scripts/dev/lcx-agent-exam.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
+  "src/commands/capabilities/lark-loop-diagnose.ts",
 ] as const;
 
 const MODULE_LEARNING_TARGET_EXEMPTIONS: Record<string, string> = {
@@ -117,6 +120,39 @@ const CRITICAL_MODULE_CONTRACTS: CriticalModuleContract[] = [
     id: "eval_review_output_tail",
     headTerms: ["eval", "review", "summary"],
     tailTerms: ["eval_harness_design", "review_panel", "control_room_summary"],
+  },
+];
+
+const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
+  {
+    id: "change_impact_planning",
+    headTerms: ["lcx-change-impact-plan", "small repairs", "master lane"],
+    tailTerms: ["PATH_RULES", "recommendedFastCommands"],
+  },
+  {
+    id: "dev_live_boundary",
+    headTerms: ["dev-fixed", "live-visible-fixed"],
+    tailTerms: ["liveTouched", "providerConfigTouched"],
+  },
+  {
+    id: "protected_memory_boundary",
+    headTerms: ["protected memory", "memory/current-research-line.md"],
+    tailTerms: ["protectedMemoryTouched", "protectedMemoryUntouched"],
+  },
+  {
+    id: "local_automation_boundary",
+    headTerms: ["local automation", "LCX Agent Operator Digest"],
+    tailTerms: ["local_automation", "automation_or_operator_loop"],
+  },
+  {
+    id: "lark_feishu_boundary",
+    headTerms: ["Lark/Feishu", "live-visible-fixed"],
+    tailTerms: ["lark_loop_diagnose", "liveTouched"],
+  },
+  {
+    id: "memory_sedimentation_boundary",
+    headTerms: ["memory sedimentation", "source storage is not learning"],
+    tailTerms: ["memory_sedimentation", "module_learning_memory"],
   },
 ];
 
@@ -248,6 +284,26 @@ function criticalModuleCheck(headText: string, tailText: string): HeadTailCheck 
   };
 }
 
+function engineeringMicroContractCheck(headText: string, tailText: string): HeadTailCheck {
+  const missing = ENGINEERING_MICRO_CONTRACTS.flatMap((contract) => {
+    const misses: string[] = [];
+    if (!termsPresent(headText, contract.headTerms)) {
+      misses.push(`head missing ${contract.id}: ${contract.headTerms.join(" + ")}`);
+    }
+    if (!termsPresent(tailText, contract.tailTerms)) {
+      misses.push(`tail missing ${contract.id}: ${contract.tailTerms.join(" + ")}`);
+    }
+    return misses;
+  });
+  return {
+    id: "engineering_micro_contracts_head_tail_present",
+    ok: missing.length === 0,
+    summary:
+      "non-module micro-change rules must also appear at both macro doctrine and executable tail",
+    evidence: missing,
+  };
+}
+
 function fullChainPhrasesCheck(headText: string, tailText: string): HeadTailCheck {
   const required = [
     "source registry",
@@ -295,6 +351,7 @@ async function main() {
     extraTargetsCheck(),
     runbookListsTargetsCheck(runbookText),
     criticalModuleCheck(headText, tailText),
+    engineeringMicroContractCheck(headText, tailText),
     fullChainPhrasesCheck(headText, tailText),
   ];
 

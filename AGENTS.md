@@ -69,6 +69,13 @@ before making claims or changes.
   search existing repo and local skill machinery first. Prefer extending the
   existing source-registry, capability-card, retrieval/apply, eval, runbook,
   skill, and automation surfaces over creating a parallel path.
+- Before any non-trivial small engineering change, run or mentally apply the
+  fast impact planner:
+  `node --import tsx scripts/dev/lcx-change-impact-plan.ts --json`. Every small
+  repair must keep a master lane, touched files, required checks, and
+  recommendedFastCommands together. Use the planner to avoid full-repo work on
+  every step; reserve full `lcx-system-doctor` for elevated-risk lanes,
+  head-tail-required changes, and checkpoint verification.
 - After any micro-level change to modules, prompts, eval cases, teacher
   curriculum, `finance_learning_memory`, source registry, review panel, or
   visible summaries, especially changes that affect learned rules, run the
@@ -77,6 +84,9 @@ before making claims or changes.
   `node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json`. The
   check must fail if macro doctrine/prompt/runbook language and micro
   taxonomy/eval/teacher/module-learning schema stop supervising each other.
+  This rule is not limited to modules: dev/live boundary, protected memory,
+  Lark/Feishu visible reply, local automation, memory sedimentation, and
+  finance capability changes must also have a head rule and a tail proof path.
 
 ## Mission
 

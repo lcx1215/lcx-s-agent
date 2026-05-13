@@ -4,6 +4,28 @@ Use this when the chat context is gone and you need to quickly resume LCX local-
 
 This runbook is dev/local only. It does not prove live Lark visibility, does not touch live sender config, does not edit provider config, and does not write protected memory.
 
+## Fast Micro-Change Loop
+
+For a small engineering change, do not start by scanning the whole repo or
+running every gate. First classify the changed files and get the smallest useful
+verification set:
+
+```bash
+node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
+```
+
+The planner reads the current git diff/status, assigns every touched file to a
+master lane, and returns `recommendedFastCommands`. Use it before routine edits
+to keep small work fast. It is dev/local only and reports `liveTouched=false`,
+`providerConfigTouched=false`, and `protectedMemoryTouched=false`.
+
+Run the heavier checkpoint after the focused checks, or immediately when the
+planner reports elevated risk:
+
+```bash
+node --import tsx scripts/dev/lcx-system-doctor.ts --json
+```
+
 ## First Command
 
 Start here:
@@ -61,10 +83,11 @@ The default system doctor includes doctrine-consistency and head-tail
 consistency gates. Doctrine consistency fails when active entrypoints drift back
 toward stale stage wording, tiny symptom-patch rules, static brain adapters,
 invalid eval commands, upstream package identity, or missing L5 regression skill
-wiring. Head-tail consistency fails when a macro doctrine/prompt/runbook change
-and a micro taxonomy/eval/teacher/module-learning change no longer supervise
-each other, for example when a new module can be selected by the local brain but
-cannot enter the module-learning memory chain.
+wiring. Head-tail consistency fails when macro doctrine/prompt/runbook changes
+and micro implementation tails no longer supervise each other. It covers module
+learning and broader engineering details: dev/live boundary, protected memory,
+Lark/Feishu visible reply, local automation, memory sedimentation, finance
+capability, eval/review output, and fast change-impact planning.
 
 ## Context Recovery And Daily Continuity
 

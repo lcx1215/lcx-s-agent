@@ -967,6 +967,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/local-brain-plan.ts",
     "scripts/dev/local-brain-promotion-audit.ts",
     "scripts/dev/lcx-agent-exam.ts",
+    "scripts/dev/lcx-change-impact-plan.ts",
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/module-learning-pipeline-review.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
