@@ -2468,7 +2468,20 @@ function compactHint(hint: string): string {
   if (hint.length <= LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET) {
     return hint;
   }
-  return `${hint.slice(0, LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET - 1).trimEnd()}.`;
+  const clipped = hint.slice(0, LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET).trimEnd();
+  const sentenceEnd = Math.max(
+    clipped.lastIndexOf(". "),
+    clipped.lastIndexOf("; "),
+    clipped.lastIndexOf(": "),
+  );
+  if (sentenceEnd >= 120) {
+    return clipped.slice(0, sentenceEnd + 1).trimEnd();
+  }
+  const wordSafe = clipped
+    .replace(/\s+\S*$/u, "")
+    .replace(/[,:;/-]+$/u, "")
+    .trimEnd();
+  return wordSafe ? `${wordSafe}.` : clipped;
 }
 
 function scoreEvalContractHint(evalCase: EvalCase, hint: string): number {

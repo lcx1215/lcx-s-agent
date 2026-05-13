@@ -521,6 +521,8 @@ describe("local-brain-distill-eval", () => {
       expect(targetPrompt).toContain("Relevant compact contract hints");
       expect(targetPrompt).toContain("All module learning uses the same internalization chain");
       expect(targetPrompt).not.toContain("External financial agent frameworks such as Anthropic");
+      expect(targetPrompt).not.toContain("when code is i.");
+      expect(targetPrompt).not.toContain("and keep.");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
