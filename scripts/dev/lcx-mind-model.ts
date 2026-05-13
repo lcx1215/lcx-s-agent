@@ -123,6 +123,8 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "doctrine-consistency",
       "head-tail-consistency",
       "compressedContextRecovered",
+      "local_operator_latest_is_fresh",
+      "maxOperatorStateAgeMs",
     ],
     boundaryTerms: ["dev_observability_only", "live-visible-fixed"],
     nextAction:

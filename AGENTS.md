@@ -121,6 +121,10 @@ surface, and boundary flag.
   `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`,
   so the single `LCX Agent Operator Digest` can report global architecture
   drift without opening more automation chats.
+- The local operator latest state must be fresh. A readable but stale
+  `lcx-local-operator-latest.json` is not valid compressed-context recovery
+  evidence; the context recovery exam must fail stale operator state instead of
+  letting future agents rely on old machine truth.
 - The mind model is dev_mind_model_only: it reports `liveTouched=false`,
   `providerConfigTouched=false`, and `protectedMemoryTouched=false`. It cannot
   prove live-visible-fixed or model-weight absorption.

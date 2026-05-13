@@ -15,6 +15,7 @@ const LOCAL_OPERATOR_LATEST = path.join(
   "state",
   "lcx-local-operator-latest.json",
 );
+const MAX_OPERATOR_STATE_AGE_MS = 3 * 60 * 60 * 1000;
 
 type RecoveryCheck = {
   id: string;
@@ -73,6 +74,17 @@ function nestedBoolean(value: unknown, key: string): boolean | undefined {
   return typeof record[key] === "boolean" ? record[key] : undefined;
 }
 
+function isoAgeMs(value: unknown, nowMs = Date.now()): number | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) {
+    return undefined;
+  }
+  return nowMs - time;
+}
+
 async function mindModelCheck(): Promise<RecoveryCheck> {
   try {
     const { stdout } = await execFileAsync(
@@ -117,6 +129,7 @@ async function main() {
   const latestMindModel = latestState?.mindModel as Record<string, unknown> | undefined;
   const latestContextRecovery = latestState?.contextRecovery as Record<string, unknown> | undefined;
   const latestTrainingPlan = latestState?.trainingPlan as Record<string, unknown> | undefined;
+  const latestOperatorAgeMs = isoAgeMs(latestState?.checkedAt);
 
   const checks: RecoveryCheck[] = [
     {
@@ -157,6 +170,22 @@ async function main() {
             boundary: latestState.boundary,
             hasMindModel: latestMindModel !== undefined,
             hasContextRecovery: latestContextRecovery !== undefined,
+          }
+        : { path: LOCAL_OPERATOR_LATEST, missing: true },
+    },
+    {
+      id: "local_operator_latest_is_fresh",
+      ok:
+        latestState !== undefined &&
+        latestOperatorAgeMs !== undefined &&
+        latestOperatorAgeMs >= 0 &&
+        latestOperatorAgeMs <= MAX_OPERATOR_STATE_AGE_MS,
+      summary: "local operator latest state must be fresh enough for compressed recovery",
+      evidence: latestState
+        ? {
+            checkedAt: latestState.checkedAt,
+            operatorStateAgeMs: latestOperatorAgeMs,
+            maxOperatorStateAgeMs: MAX_OPERATOR_STATE_AGE_MS,
           }
         : { path: LOCAL_OPERATOR_LATEST, missing: true },
     },

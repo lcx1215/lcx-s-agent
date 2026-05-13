@@ -50,6 +50,8 @@ durable files, the latest local operator state, and the mind model instead of
 needing the old chat transcript. The local operator loop should keep
 `mindModel` and `contextRecovery` fields in
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
+The latest state must also be fresh; a stale but readable JSON file is treated
+as a failed recovery signal.
 
 ## First Command
 

@@ -53,7 +53,7 @@ describe("LCX compressed context recovery exam", () => {
       }),
     );
     expect(payload.summary.failed).toBe(0);
-    expect(payload.summary.total).toBeGreaterThanOrEqual(6);
+    expect(payload.summary.total).toBeGreaterThanOrEqual(7);
     expect(payload.requiredRecoveryCommands).toEqual(
       expect.arrayContaining([
         "node --import tsx scripts/dev/lcx-mind-model.ts --json",
@@ -64,16 +64,19 @@ describe("LCX compressed context recovery exam", () => {
   });
 
   it("keeps the recovery exam visible in durable doctrine and local automation", async () => {
-    const [agents, runbook, doctorSource, localOperator] = await Promise.all([
+    const [agents, runbook, doctorSource, recoverySource, localOperator] = await Promise.all([
       fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
       fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-context-recovery-exam.ts"), "utf8"),
       fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
     ]);
 
     expect(agents).toContain("lcx-context-recovery-exam");
     expect(runbook).toContain("compressed-window proof");
     expect(doctorSource).toContain("context-recovery-exam");
+    expect(recoverySource).toContain("local_operator_latest_is_fresh");
+    expect(recoverySource).toContain("MAX_OPERATOR_STATE_AGE_MS");
     expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
     expect(localOperator).toContain("compressedContextRecovered");
   });
