@@ -109,6 +109,16 @@ surface, and boundary flag.
   or one model answer looks good. The god-view must ask whether the head rule,
   the executable workflow, the proof/eval surface, and the boundary wording all
   still point to the same loop.
+- The mind model must also keep a small invariant registry for repeated
+  failure families. If a new workflow or content rule is added, the invariant
+  must name the exact head/workflow/proof/boundary terms that would catch future
+  drift. This includes small workflow details, visible content mistakes,
+  temporary test-HOME drift, stale receipts, stored-only learning claims,
+  unverified market claims, and dev/live wording mistakes.
+- Do not start overlapping training. If Qwen, MiniMax teacher, MLX eval, or the
+  guard is already active, the training plan must return
+  `training_already_active` and `do_not_start_overlapping_guard`; doctor must
+  keep overlapping local-brain training visible instead of hiding it.
 - The system doctor should include `mind-model-consistency`; if it fails, treat
   it as a P2 architecture blind spot before expanding features.
 - A compressed or newly opened coding window should also pass the context

@@ -34,8 +34,16 @@ describe("LCX mind model god-view architecture check", () => {
     const payload = JSON.parse(stdout) as {
       ok: boolean;
       boundary: string;
-      summary: { failed: number; total: number; masterLanes: string[] };
+      summary: {
+        failed: number;
+        total: number;
+        laneTotal: number;
+        invariantTotal: number;
+        masterLanes: string[];
+        invariantCategories: string[];
+      };
       lanes: Array<{ id: string; ok: boolean; missing: unknown[] }>;
+      invariants: Array<{ id: string; ok: boolean; category: string; missing: unknown[] }>;
       missingSurfaceFiles: string[];
       liveTouched: boolean;
       providerConfigTouched: boolean;
@@ -52,7 +60,9 @@ describe("LCX mind model god-view architecture check", () => {
       }),
     );
     expect(payload.summary.failed).toBe(0);
-    expect(payload.summary.total).toBeGreaterThanOrEqual(9);
+    expect(payload.summary.laneTotal).toBeGreaterThanOrEqual(9);
+    expect(payload.summary.invariantTotal).toBeGreaterThanOrEqual(8);
+    expect(payload.summary.total).toBe(payload.summary.laneTotal + payload.summary.invariantTotal);
     expect(payload.missingSurfaceFiles).toEqual([]);
     expect(payload.summary.masterLanes).toEqual(
       expect.arrayContaining([
@@ -62,12 +72,35 @@ describe("LCX mind model god-view architecture check", () => {
         "dev_live_boundary",
       ]),
     );
+    expect(payload.summary.invariantCategories).toEqual(
+      expect.arrayContaining(["workflow", "content", "boundary", "automation", "testing"]),
+    );
     expect(payload.lanes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "mind_model_self_supervision", ok: true }),
         expect.objectContaining({ id: "local_brain_training", ok: true }),
         expect.objectContaining({ id: "module_learning_memory", ok: true }),
         expect.objectContaining({ id: "lark_feishu_live_boundary", ok: true }),
+      ]),
+    );
+    expect(payload.invariants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "compressed_recovery_requires_fresh_operator_state",
+          ok: true,
+        }),
+        expect.objectContaining({
+          id: "test_home_drift_cannot_hide_real_operator_state",
+          ok: true,
+        }),
+        expect.objectContaining({
+          id: "content_claims_need_source_or_unverified_flag",
+          ok: true,
+        }),
+        expect.objectContaining({
+          id: "module_learning_cannot_be_stored_only",
+          ok: true,
+        }),
       ]),
     );
   });
@@ -94,5 +127,42 @@ describe("LCX mind model god-view architecture check", () => {
     expect(localOperator).toContain("context_recovery_file");
     expect(localOperator).toContain("mindModel");
     expect(localOperator).toContain("contextRecovery");
+  });
+
+  it("does not let a temporary HOME hide the real operator files", async () => {
+    const testHome = path.join(repoRoot, ".tmp", "openclaw-test-home");
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-mind-model.ts", "--json"],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: testHome },
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+    const payload = JSON.parse(stdout) as {
+      ok: boolean;
+      missingSurfaceFiles: string[];
+      invariants: Array<{ id: string; ok: boolean }>;
+      surfaceFiles: { workflow: string[] };
+    };
+
+    expect(payload.ok).toBe(true);
+    expect(payload.missingSurfaceFiles).toEqual([]);
+    expect(payload.surfaceFiles.workflow).toEqual(
+      expect.arrayContaining([
+        "/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh",
+        "/Users/liuchengxu/.openclaw/bin/codex-archive-lcx-automation-threads.sh",
+      ]),
+    );
+    expect(payload.surfaceFiles.workflow.join("\n")).not.toContain("openclaw-test-home");
+    expect(payload.invariants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "test_home_drift_cannot_hide_real_operator_state",
+          ok: true,
+        }),
+      ]),
+    );
   });
 });

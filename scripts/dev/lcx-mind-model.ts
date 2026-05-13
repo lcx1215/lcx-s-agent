@@ -15,6 +15,14 @@ type MindModelLane = {
   nextAction: string;
 };
 
+type MindModelInvariant = {
+  id: string;
+  category: "workflow" | "content" | "boundary" | "automation" | "testing";
+  objective: string;
+  termsBySurface: Partial<Record<MindModelSurfaceGroup, string[]>>;
+  nextAction: string;
+};
+
 type LaneVerdict = {
   id: string;
   masterLane: string;
@@ -23,6 +31,16 @@ type LaneVerdict = {
   objective: string;
   missing: Array<{ surface: MindModelSurfaceGroup; term: string }>;
   evidence: string[];
+  nextAction: string;
+};
+
+type InvariantVerdict = {
+  id: string;
+  category: MindModelInvariant["category"];
+  ok: boolean;
+  severity: "info" | "P2";
+  objective: string;
+  missing: Array<{ surface: MindModelSurfaceGroup; term: string }>;
   nextAction: string;
 };
 
@@ -50,6 +68,7 @@ const HEAD_SURFACES = [
 ] as const;
 
 const WORKFLOW_SURFACES = [
+  "scripts/dev/lcx-mind-model.ts",
   "scripts/dev/lcx-change-impact-plan.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/lcx-head-tail-consistency.ts",
@@ -243,6 +262,127 @@ const MIND_MODEL_LANES: MindModelLane[] = [
   },
 ];
 
+const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
+  {
+    id: "surface_file_existence_is_hard_failure",
+    category: "workflow",
+    objective:
+      "Referenced workflow, proof, and local operator files must exist, not only be named.",
+    termsBySurface: {
+      workflow: ["missingSurfaceFiles", "resolveSurfaceFile"],
+      proof: ["missingSurfaceFiles", "surface_missing"],
+    },
+    nextAction:
+      "Keep missingSurfaceFiles as a hard mind-model failure when adding any surface file.",
+  },
+  {
+    id: "compressed_recovery_requires_fresh_operator_state",
+    category: "automation",
+    objective:
+      "A readable old local operator receipt must not be accepted as current machine truth.",
+    termsBySurface: {
+      head: ["operator latest state must be fresh", "stale"],
+      workflow: [
+        "local_operator_latest_is_fresh",
+        "MAX_OPERATOR_STATE_AGE_MS",
+        "operatorStateAgeMs",
+      ],
+      proof: ["local_operator_latest_is_fresh", "MAX_OPERATOR_STATE_AGE_MS"],
+    },
+    nextAction:
+      "Fail compressed recovery when lcx-local-operator-latest.json is stale or missing checkedAt.",
+  },
+  {
+    id: "test_home_drift_cannot_hide_real_operator_state",
+    category: "testing",
+    objective:
+      "Temporary test HOME values must not make the mind model look at the wrong operator state.",
+    termsBySurface: {
+      workflow: ["LCX_USER_HOME", "/Users/liuchengxu", "LOCAL_OPERATOR_LATEST"],
+      proof: ["LCX_USER_HOME", "openclaw-test-home", "missingSurfaceFiles"],
+    },
+    nextAction:
+      "Use LCX_USER_HOME for user-specific operator state and test the temporary-HOME case.",
+  },
+  {
+    id: "heavy_eval_overlap_remains_visible",
+    category: "workflow",
+    objective: "Doctor and training plan must prevent accidental overlapping MLX/eval work.",
+    termsBySurface: {
+      head: ["do not start overlapping training", "overlapping local-brain training"],
+      workflow: [
+        "overlappingHeavyEval",
+        "training_already_active",
+        "do_not_start_overlapping_guard",
+      ],
+      proof: ["overlappingHeavyEval", "training_already_active"],
+    },
+    nextAction:
+      "Never run heavy eval and doctor in ways that hide overlap; keep overlap as a hard visible failure.",
+  },
+  {
+    id: "dev_live_status_words_stay_separate",
+    category: "boundary",
+    objective: "Dev proof, live runtime update, and real Lark user proof must stay separate.",
+    termsBySurface: {
+      head: ["dev-ready", "live-runtime-updated", "live-user-seen"],
+      workflow: ["liveRuntimeUpdated", "liveUserSeen", "liveNeedsPromotion"],
+      proof: ["acceptancePhrase", "freshInboundCount", "acceptanceMatched"],
+    },
+    nextAction:
+      "Do not claim live-user-seen unless live status has fresh inbound and matched acceptance evidence.",
+  },
+  {
+    id: "content_claims_need_source_or_unverified_flag",
+    category: "content",
+    objective:
+      "Finance and macro content claims must require source evidence or be marked unverified.",
+    termsBySurface: {
+      head: ["speculative market claims", "re-verification"],
+      workflow: [
+        "unverified_macro_claim_source_audit",
+        "source_url_or_local_source_path",
+        "no_unverified_current_market_data",
+      ],
+      proof: [
+        "unverified_macro_claim_source_audit",
+        "source_url_or_local_source_path",
+        "no_unverified_current_market_data",
+      ],
+      boundary: ["no_trade_advice", "no_unverified_current_market_data"],
+    },
+    nextAction:
+      "Add or reuse an invariant whenever a new content claim family could be stated without evidence.",
+  },
+  {
+    id: "module_learning_cannot_be_stored_only",
+    category: "content",
+    objective:
+      "A stored source, summary, or dataset row must not be treated as learned module capability.",
+    termsBySurface: {
+      head: [
+        "A stored source, summary, or dataset row is not enough",
+        "All-Module Internalization Chain",
+      ],
+      workflow: ["storedOnly", "retrievalReady", "applicationReady", "evalAbsorbed"],
+      proof: ["weakModuleLearning", "boundaryViolations", "evalAbsorbed"],
+    },
+    nextAction:
+      "Require source registry, retrieval/apply receipt, eval/training evidence, and review status.",
+  },
+  {
+    id: "mind_model_changes_have_targeted_tests",
+    category: "testing",
+    objective: "Every mind-model or recovery change must be backed by targeted tests.",
+    termsBySurface: {
+      workflow: ["test/lcx-mind-model.test.ts", "test/lcx-context-recovery-exam.test.ts"],
+      proof: ["passes current macro workflow closure surfaces", "compressed context recovery exam"],
+    },
+    nextAction:
+      "Add a regression test when adding any invariant, lane, recovery check, or boundary rule.",
+  },
+];
+
 function usage(): never {
   throw new Error(
     [
@@ -353,6 +493,28 @@ function laneVerdict(params: {
   };
 }
 
+function invariantVerdict(params: {
+  invariant: MindModelInvariant;
+  surfaceText: Record<MindModelSurfaceGroup, string>;
+}): InvariantVerdict {
+  const missing = Object.entries(params.invariant.termsBySurface).flatMap(([surface, terms]) =>
+    missingTerms({
+      text: params.surfaceText[surface as MindModelSurfaceGroup],
+      terms: terms ?? [],
+      surface: surface as MindModelSurfaceGroup,
+    }),
+  );
+  return {
+    id: params.invariant.id,
+    category: params.invariant.category,
+    ok: missing.length === 0,
+    severity: missing.length === 0 ? "info" : "P2",
+    objective: params.invariant.objective,
+    missing,
+    nextAction: params.invariant.nextAction,
+  };
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const [headText, workflowText, proofText, boundaryText] = await Promise.all([
@@ -370,24 +532,44 @@ async function main() {
   const lanes = MIND_MODEL_LANES.map((lane) =>
     laneVerdict({ lane, headText, workflowText, proofText, boundaryText }),
   );
+  const surfaceText = {
+    head: headText,
+    workflow: workflowText,
+    proof: proofText,
+    boundary: boundaryText,
+  };
+  const invariants = MIND_MODEL_INVARIANTS.map((invariant) =>
+    invariantVerdict({ invariant, surfaceText }),
+  );
   const failed = lanes.filter((lane) => !lane.ok);
+  const failedInvariants = invariants.filter((invariant) => !invariant.ok);
   const result = {
-    ok: failed.length === 0 && missingFiles.length === 0,
+    ok: failed.length === 0 && failedInvariants.length === 0 && missingFiles.length === 0,
     boundary: "dev_mind_model_only",
     checkedAt: new Date().toISOString(),
     summary: {
-      passed: lanes.length - failed.length,
-      failed: failed.length,
-      total: lanes.length,
+      passed: lanes.length - failed.length + invariants.length - failedInvariants.length,
+      failed: failed.length + failedInvariants.length,
+      total: lanes.length + invariants.length,
+      laneTotal: lanes.length,
+      invariantTotal: invariants.length,
       masterLanes: [...new Set(lanes.map((lane) => lane.masterLane))].toSorted(),
+      invariantCategories: [
+        ...new Set(invariants.map((invariant) => invariant.category)),
+      ].toSorted(),
     },
     lanes,
+    invariants,
     missingSurfaceFiles: missingFiles,
     actionableFailures: [
       ...missingFiles.map((file) => `surface_missing: ${file}`),
       ...failed.map(
         (lane) =>
           `${lane.id}: missing ${lane.missing.map((entry) => `${entry.surface}:${entry.term}`).join(", ")}`,
+      ),
+      ...failedInvariants.map(
+        (invariant) =>
+          `${invariant.id}: missing ${invariant.missing.map((entry) => `${entry.surface}:${entry.term}`).join(", ")}`,
       ),
     ],
     surfaceFiles: {
@@ -406,8 +588,9 @@ async function main() {
       ? `${JSON.stringify(result, null, 2)}\n`
       : [
           `lcx mind model ${result.ok ? "ok" : "failed"}`,
-          `passed=${result.summary.passed} failed=${result.summary.failed} total=${result.summary.total}`,
+          `passed=${result.summary.passed} failed=${result.summary.failed} total=${result.summary.total} invariants=${result.summary.invariantTotal}`,
           ...failed.map((lane) => `- ${lane.id}: ${lane.nextAction}`),
+          ...failedInvariants.map((invariant) => `- ${invariant.id}: ${invariant.nextAction}`),
         ].join("\n") + "\n",
   );
   process.exitCode = result.ok ? 0 : 1;

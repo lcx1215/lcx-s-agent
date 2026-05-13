@@ -43,6 +43,12 @@ promotion, Lark/Feishu live boundary, local automation, memory sedimentation,
 finance research capability, and protected-memory/provider/live-sender
 boundaries. It reports `liveTouched=false`, `providerConfigTouched=false`, and
 `protectedMemoryTouched=false`; it does not prove live-visible-fixed.
+It also checks the invariant registry for repeated failure families: surface
+files must exist, local operator state must be fresh, temporary test HOME values
+must not hide the real operator files, overlapping local-brain training must
+stay visible, dev/live wording must stay separate, content claims need source
+or unverified flags, and stored sources must not be treated as learned module
+capability.
 
 The context recovery exam is the compressed-window proof. It verifies that a
 future Codex or Claude Code session can recover the agent's global workflow from
