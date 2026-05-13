@@ -81,6 +81,7 @@ describe("LCX mind model god-view architecture check", () => {
         expect.objectContaining({ id: "local_brain_training", ok: true }),
         expect.objectContaining({ id: "module_learning_memory", ok: true }),
         expect.objectContaining({ id: "lark_feishu_live_boundary", ok: true }),
+        expect.objectContaining({ id: "flow_graph_waterflow_supervision", ok: true }),
       ]),
     );
     expect(payload.invariants).toEqual(
@@ -101,6 +102,10 @@ describe("LCX mind model god-view architecture check", () => {
           id: "module_learning_cannot_be_stored_only",
           ok: true,
         }),
+        expect.objectContaining({
+          id: "task_waterflows_have_filters_and_receipts",
+          ok: true,
+        }),
       ]),
     );
   });
@@ -114,13 +119,17 @@ describe("LCX mind model god-view architecture check", () => {
     ]);
 
     expect(doctorSource).toContain('name: "mind-model-consistency"');
+    expect(doctorSource).toContain('name: "flow-graph-exam"');
     expect(doctorSource).toContain('name: "context-recovery-exam"');
     expect(doctorSource).toContain("scripts/dev/lcx-mind-model.ts");
+    expect(doctorSource).toContain("scripts/dev/lcx-flow-graph.ts");
     expect(doctorSource).toContain("scripts/dev/lcx-context-recovery-exam.ts");
     expect(headTailSource).toContain("mind_model_boundary");
+    expect(headTailSource).toContain("flow_graph_boundary");
     expect(headTailSource).toContain("MIND_MODEL_LANES");
     expect(headTailSource).toContain("compressedContextRecovered");
     expect(runbook).toContain("LCX Agent Mind Model");
+    expect(runbook).toContain("LCX Agent Flow Graph");
     expect(runbook).toContain("workflow closure");
     expect(runbook).toContain("lcx-context-recovery-exam");
     expect(localOperator).toContain("mind_file");

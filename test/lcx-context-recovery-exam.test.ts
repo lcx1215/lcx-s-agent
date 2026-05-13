@@ -57,6 +57,7 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.requiredRecoveryCommands).toEqual(
       expect.arrayContaining([
         "node --import tsx scripts/dev/lcx-mind-model.ts --json",
+        "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
         "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
         "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
       ]),
@@ -75,9 +76,12 @@ describe("LCX compressed context recovery exam", () => {
     expect(agents).toContain("lcx-context-recovery-exam");
     expect(runbook).toContain("compressed-window proof");
     expect(doctorSource).toContain("context-recovery-exam");
+    expect(doctorSource).toContain("flow-graph-exam");
     expect(recoverySource).toContain("local_operator_latest_is_fresh");
     expect(recoverySource).toContain("MAX_OPERATOR_STATE_AGE_MS");
+    expect(recoverySource).toContain("flow_graph_recovers_task_waterflows");
     expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
+    expect(localOperator).toContain("NODE_FLOW_FILE");
     expect(localOperator).toContain("compressedContextRecovered");
   });
 });

@@ -43,6 +43,7 @@ const TAIL_SURFACE_FILES = [
   "scripts/dev/lcx-system-doctor.ts",
   "scripts/dev/lcx-agent-exam.ts",
   "scripts/dev/lcx-mind-model.ts",
+  "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
@@ -165,6 +166,18 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
       "lcx-context-recovery-exam",
       "compressedContextRecovered",
       "MIND_MODEL_LANES",
+    ],
+  },
+  {
+    id: "flow_graph_boundary",
+    headTerms: ["LCX Agent Flow Graph", "waterflow", "filter valve"],
+    tailTerms: [
+      "lcx-flow-graph",
+      "flow-graph-exam",
+      "FLOW_SCENARIOS",
+      "requiredFilters",
+      "feedbackEdges",
+      "ILLEGAL_EDGES",
     ],
   },
 ];

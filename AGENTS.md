@@ -139,6 +139,30 @@ surface, and boundary flag.
   `providerConfigTouched=false`, and `protectedMemoryTouched=false`. It cannot
   prove live-visible-fixed or model-weight absorption.
 
+## LCX Agent Flow Graph Doctrine
+
+LCX Agent must also keep a dev-only flow graph of its task waterflow. Think of
+every user task as water entering a complex pipe system: it must be classified,
+filtered, routed through the right modules, leave receipts, and sometimes flow
+back through bounded feedback. The goal is not for every task to touch every
+module. The goal is that each task family touches the modules, filter valve,
+receipts, and review gates it actually needs, without wrong-flow or silent
+shortcuts.
+
+- Run the flow graph exam when a workflow change could alter task routing,
+  filters, receipts, feedback loops, module learning, Lark/Feishu replies,
+  Qwen/MiniMax training, local automation, or dev/live proof:
+  `node --import tsx scripts/dev/lcx-flow-graph.ts --json`.
+- Every supported waterflow must name its start node, terminal node, required
+  modules, required filters, receipts, and any bounded feedback edges.
+- Wrong-flow is a P2 class issue. Examples: dev proof jumps to
+  `live-user-seen`, stored source jumps to learned capability, hardened eval
+  skips the promotion gate, or a failed eval loops back into teacher/training
+  without overlap guards and visible timeout/error receipts.
+- Flow graph checks are dev_flow_graph_only. They can prove architecture
+  closure, but not live-user-seen, provider success, protected-memory writes, or
+  model-weight absorption.
+
 ## Mission
 
 - Build and operate LCX Agent / OpenClaw as a low-frequency research operating system for one real user.

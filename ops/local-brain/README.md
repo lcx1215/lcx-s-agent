@@ -32,6 +32,7 @@ god-view check:
 
 ```bash
 node --import tsx scripts/dev/lcx-mind-model.ts --json
+node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 ```
 
@@ -50,11 +51,19 @@ stay visible, dev/live wording must stay separate, content claims need source
 or unverified flags, and stored sources must not be treated as learned module
 capability.
 
+The LCX Agent Flow Graph is the waterflow exam. It verifies that each task
+family has a start node, terminal node, required modules, filter valve list,
+receipts, and bounded feedback edges. It is designed to catch wrong-flow before
+it becomes a visible bug: dev proof must not jump to live-user-seen, stored
+source must not jump to learned capability, hardened eval must not skip
+promotion gate, and training/eval loops must not recirculate without overlap
+guards or timeout/error receipts. Its proof surface is `flow_graph_exam`.
+
 The context recovery exam is the compressed-window proof. It verifies that a
 future Codex or Claude Code session can recover the agent's global workflow from
 durable files, the latest local operator state, and the mind model instead of
 needing the old chat transcript. The local operator loop should keep
-`mindModel` and `contextRecovery` fields in
+`mindModel`, `flowGraph`, and `contextRecovery` fields in
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
 The latest state must also be fresh; a stale but readable JSON file is treated
 as a failed recovery signal.

@@ -69,6 +69,7 @@ const HEAD_SURFACES = [
 
 const WORKFLOW_SURFACES = [
   "scripts/dev/lcx-mind-model.ts",
+  "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-change-impact-plan.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/lcx-head-tail-consistency.ts",
@@ -93,6 +94,7 @@ const WORKFLOW_SURFACES = [
 const PROOF_SURFACES = [
   ...WORKFLOW_SURFACES,
   "test/lcx-context-recovery-exam.test.ts",
+  "test/lcx-flow-graph.test.ts",
   "test/lcx-head-tail-consistency.test.ts",
   "test/lcx-mind-model.test.ts",
   "test/lcx-agent-exam.test.ts",
@@ -113,6 +115,7 @@ const BOUNDARY_SURFACES = [
   "ops/local-brain/README.md",
   "src/agents/system-prompt.ts",
   "scripts/dev/lcx-promote-live.ts",
+  "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-system-doctor.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/local-brain-training-plan.ts",
@@ -260,6 +263,18 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     nextAction:
       "Run lcx-mind-model when a future edit risks forgetting adjacent workflows or proof surfaces.",
   },
+  {
+    id: "flow_graph_waterflow_supervision",
+    masterLane: "global_doctrine_and_runbook",
+    objective:
+      "Make task waterflows explicit so future small workflow edits cannot skip filters, receipts, or bounded feedback gates.",
+    headTerms: ["LCX Agent Flow Graph", "waterflow", "filter valve"],
+    workflowTerms: ["lcx-flow-graph", "FLOW_SCENARIOS", "requiredFilters"],
+    proofTerms: ["flow_graph_exam", "missingRequiredFilters", "test/lcx-flow-graph.test.ts"],
+    boundaryTerms: ["dev_flow_graph_only", "liveTouched", "providerConfigTouched"],
+    nextAction:
+      "Run lcx-flow-graph when a task family could wrong-flow, skip a filter, or recirculate without a guard.",
+  },
 ];
 
 const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
@@ -380,6 +395,20 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Add a regression test when adding any invariant, lane, recovery check, or boundary rule.",
+  },
+  {
+    id: "task_waterflows_have_filters_and_receipts",
+    category: "workflow",
+    objective:
+      "Complex task waterflows must name their required filters, receipts, and bounded feedback gates.",
+    termsBySurface: {
+      head: ["LCX Agent Flow Graph", "wrong-flow", "bounded feedback"],
+      workflow: ["requiredFilters", "feedbackEdges", "ILLEGAL_EDGES"],
+      proof: ["flow_graph_exam", "flow_graph_illegal_shortcuts_absent"],
+      boundary: ["dev_flow_graph_only", "protectedMemoryTouched"],
+    },
+    nextAction:
+      "Add or update a flow-graph scenario whenever a new task family can skip filters or recirculate.",
   },
 ];
 

@@ -116,17 +116,50 @@ async function mindModelCheck(): Promise<RecoveryCheck> {
   }
 }
 
+async function flowGraphCheck(): Promise<RecoveryCheck> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-flow-graph.ts", "--json"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    const payload = JSON.parse(stdout) as Record<string, unknown>;
+    const summary = payload.summary as Record<string, unknown> | undefined;
+    return {
+      id: "flow_graph_recovers_task_waterflows",
+      ok: payload.ok === true,
+      summary: "lcx-flow-graph must pass without chat context",
+      evidence: {
+        boundary: payload.boundary,
+        passed: summary?.passed,
+        failed: summary?.failed,
+        scenarios: summary?.scenarios,
+        actionableFailures: payload.actionableFailures,
+      },
+    };
+  } catch (error) {
+    return {
+      id: "flow_graph_recovers_task_waterflows",
+      ok: false,
+      summary: "lcx-flow-graph must pass without chat context",
+      evidence: String(error),
+    };
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const [agents, runbook, changeImpact, latestState, mindModel] = await Promise.all([
+  const [agents, runbook, changeImpact, latestState, mindModel, flowGraph] = await Promise.all([
     readText(path.join(repoRoot, "AGENTS.md")),
     readText(path.join(repoRoot, "ops/local-brain/README.md")),
     readText(path.join(repoRoot, "scripts/dev/lcx-change-impact-plan.ts")),
     readJson(LOCAL_OPERATOR_LATEST),
     mindModelCheck(),
+    flowGraphCheck(),
   ]);
 
   const latestMindModel = latestState?.mindModel as Record<string, unknown> | undefined;
+  const latestFlowGraph = latestState?.flowGraph as Record<string, unknown> | undefined;
   const latestContextRecovery = latestState?.contextRecovery as Record<string, unknown> | undefined;
   const latestTrainingPlan = latestState?.trainingPlan as Record<string, unknown> | undefined;
   const latestOperatorAgeMs = isoAgeMs(latestState?.checkedAt);
@@ -140,6 +173,7 @@ async function main() {
         "local-brain-training-plan",
         "lcx-local-operator-latest.json",
         "lcx-mind-model",
+        "lcx-flow-graph",
       ]),
       summary: "AGENTS and runbook must tell a new window how to recover state",
     },
@@ -154,6 +188,7 @@ async function main() {
       summary: "micro changes must still map into a master lane and proof set",
     },
     mindModel,
+    flowGraph,
     {
       id: "local_operator_latest_is_readable",
       ok:
@@ -169,6 +204,7 @@ async function main() {
             ok: latestState.ok,
             boundary: latestState.boundary,
             hasMindModel: latestMindModel !== undefined,
+            hasFlowGraph: latestFlowGraph !== undefined,
             hasContextRecovery: latestContextRecovery !== undefined,
           }
         : { path: LOCAL_OPERATOR_LATEST, missing: true },
@@ -196,10 +232,15 @@ async function main() {
         (latestMindModel?.boundary === "dev_mind_model_only" &&
           typeof latestMindModel.passed === "number" &&
           typeof latestMindModel.failed === "number" &&
+          ((latestFlowGraph?.boundary === "dev_flow_graph_only" &&
+            typeof latestFlowGraph.passed === "number" &&
+            typeof latestFlowGraph.failed === "number") ||
+            flowGraph.ok) &&
           latestContextRecovery?.boundary === "dev_context_recovery_exam_only"),
-      summary: "operator digest should expose mind-model and context-recovery status",
+      summary: "operator digest should expose mind-model, flow-graph, and context-recovery status",
       evidence: {
         mindModel: latestMindModel,
+        flowGraph: latestFlowGraph,
         contextRecovery: latestContextRecovery,
       },
     },
@@ -228,6 +269,7 @@ async function main() {
     requiredRecoveryCommands: [
       "sed -n '1,220p' ops/local-brain/README.md",
       "node --import tsx scripts/dev/lcx-mind-model.ts --json",
+      "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
       "test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json",
