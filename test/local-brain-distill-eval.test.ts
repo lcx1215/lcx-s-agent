@@ -453,6 +453,79 @@ describe("local-brain-distill-eval", () => {
     }
   });
 
+  it("keeps eval prompts compact for broad internalization cases", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-prompt-"));
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        "fs.appendFileSync(process.env.EVAL_FAKE_PYTHON_LOG, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        "console.log(JSON.stringify({",
+        "task_family: 'module_learning_internalization',",
+        "primary_modules: ['agent_workflow_memory','source_registry','finance_learning_memory','skill_pattern_distillation','eval_harness_design','review_panel','control_room_summary'],",
+        "supporting_modules: [],",
+        "required_tools: [],",
+        "missing_data: ['source_url_or_local_source_path','actual_reading_scope','module_learning_pipeline_review_status'],",
+        "risk_boundaries: ['research_only','no_protected_memory_write'],",
+        "next_step: 'route_to_review',",
+        "rejected_context: ['old_lark_conversation_history']",
+        "}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--case-id",
+          "all_module_knowledge_internalization_chain",
+          "--summary-only",
+          "--json",
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            EVAL_FAKE_PYTHON_LOG: argLog,
+          },
+        },
+      );
+
+      const records = readFileSync(argLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      const prompts = records
+        .map((args) => {
+          const promptIndex = args.indexOf("--prompt");
+          return promptIndex >= 0 ? (args[promptIndex + 1] ?? "") : "";
+        })
+        .filter(Boolean);
+      const targetPrompt = prompts.find((prompt) =>
+        prompt.includes("source-to-capability-to-retrieval-to-application-to-eval-to-review"),
+      );
+
+      expect(targetPrompt).toBeTruthy();
+      expect(targetPrompt?.length).toBeLessThan(5_500);
+      expect(targetPrompt).toContain("Relevant compact contract hints");
+      expect(targetPrompt).toContain("All module learning uses the same internalization chain");
+      expect(targetPrompt).not.toContain("External financial agent frameworks such as Anthropic");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("cleans up the active mlx child when the eval wrapper receives a termination signal", async () => {
     const source = readFileSync(
       path.resolve(__dirname, "..", "scripts/dev/local-brain-distill-eval.ts"),

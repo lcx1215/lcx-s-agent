@@ -81,6 +81,9 @@ const DEFAULT_GUARD_LOG = path.join(
   "minimax-brain-training-guard-medium.jsonl",
 );
 const LOCAL_BRAIN_EVAL_MAX_TOKENS = "700";
+const LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT = 5;
+const LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET = 1_600;
+const LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET = 360;
 const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
@@ -2461,10 +2464,91 @@ function expandEvalCasesWithPrerequisites(caseIds: string[]): {
   return { evalCases: expanded, autoIncludedPrerequisiteCaseIds };
 }
 
+function compactHint(hint: string): string {
+  if (hint.length <= LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET) {
+    return hint;
+  }
+  return `${hint.slice(0, LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET - 1).trimEnd()}.`;
+}
+
+function scoreEvalContractHint(evalCase: EvalCase, hint: string): number {
+  const caseText = [
+    evalCase.id,
+    evalCase.userAsk,
+    evalCase.sourceSummary,
+    ...evalCase.requiredModules,
+    ...(evalCase.requiredMissingData ?? []),
+    ...(evalCase.requiredRiskBoundaries ?? []),
+  ]
+    .join(" ")
+    .toLowerCase();
+  const lowerHint = hint.toLowerCase();
+  let score = 0;
+  const topicScores: Array<[RegExp, RegExp, number]> = [
+    [
+      /data_provenance|timestamp|vendor|field|artifact|report|spreadsheet/u,
+      /data_provenance|artifact|timestamp|vendor|field|DCF|comps|spreadsheet|report/iu,
+      5,
+    ],
+    [
+      /all_module|module_learning|internalization|source_registry|capability|retrieval|receipt|skill|paper|open-source|github|huggingface/u,
+      /module learning|internalization|source_registry|capability|retrieval|receipt|skill|paper|open-source|github|huggingface/iu,
+      5,
+    ],
+    [
+      /anthropic|financial_agent|workflow_owner|leaf_worker|handoff|permission/u,
+      /anthropic|financial agent|workflow owner|leaf worker|handoff|permission/iu,
+      5,
+    ],
+    [
+      /value|fundamental|filing|company|valuation|dcf|comps/u,
+      /value|fundamental|filing|company|valuation|DCF|comps|ROIC|free cash flow/iu,
+      4,
+    ],
+    [
+      /option|commodity|fx|cross_market|crypto|technical|event|index|etf/u,
+      /option|commodity|fx|cross-market|crypto|technical|event|index|ETF/iu,
+      4,
+    ],
+    [
+      /lark|feishu|plain|visible|short|position|buy|hold/u,
+      /plain|short|Lark|Feishu|visible|position|buy|hold/iu,
+      3,
+    ],
+    [/memory|review|causal|receipt/u, /memory|learned rules|receipts|causal|review/iu, 3],
+    [/source_url|local_source_path|source_registry/u, /source URL|local file|source_registry/iu, 2],
+  ];
+  for (const [casePattern, hintPattern, value] of topicScores) {
+    if (casePattern.test(caseText) && hintPattern.test(lowerHint)) {
+      score += value;
+    }
+  }
+  return score;
+}
+
+function selectCompactEvalContractHints(evalCase: EvalCase): string[] {
+  const selected = selectLocalBrainContractHints(`${evalCase.userAsk}\n${evalCase.sourceSummary}`);
+  const ranked = selected
+    .map((hint, index) => ({ hint, index, score: scoreEvalContractHint(evalCase, hint) }))
+    .toSorted((left, right) => right.score - left.score || left.index - right.index);
+  const chosen = ranked
+    .filter((entry, index) => entry.score > 0 || index < 2)
+    .slice(0, LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT)
+    .map((entry) => compactHint(entry.hint));
+  const compacted: string[] = [];
+  let usedChars = 0;
+  for (const hint of chosen) {
+    if (usedChars + hint.length > LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET) {
+      break;
+    }
+    compacted.push(hint);
+    usedChars += hint.length;
+  }
+  return compacted.length > 0 ? compacted : selected.slice(0, 2).map(compactHint);
+}
+
 function buildPrompt(evalCase: EvalCase): string {
-  const contractHints = selectLocalBrainContractHints(
-    `${evalCase.userAsk}\n${evalCase.sourceSummary}`,
-  ).join(" ");
+  const contractHints = selectCompactEvalContractHints(evalCase).join(" ");
   const promptModuleIds = normalizeLocalBrainModuleList([
     ...evalCase.requiredModules,
     ...CORE_PROMPT_MODULES,
@@ -2483,7 +2567,7 @@ function buildPrompt(evalCase: EvalCase): string {
     `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`,
     "primary_modules, supporting_modules, and required_tools must use exact recommended module ids only; do not invent prefixes like finance_framework_*.",
     "For finance tasks, choose concrete recommended module ids instead of generic finance labels or the full taxonomy.",
-    `Planning contract hints: ${contractHints}`,
+    `Relevant compact contract hints: ${contractHints}`,
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
     "",
     "source_kind: clean_eval",
