@@ -967,6 +967,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/local-brain-plan.ts",
     "scripts/dev/local-brain-promotion-audit.ts",
     "scripts/dev/lcx-agent-exam.ts",
+    "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/module-learning-pipeline-review.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
     "src/commands/capabilities/lark-loop-diagnose.ts",
@@ -1015,6 +1016,14 @@ checks.push(
     name: "doctrine-consistency",
     command: process.execPath,
     args: ["--import", "tsx", "scripts/dev/lcx-doctrine-consistency.ts", "--json"],
+    parseJson: true,
+  }),
+);
+checks.push(
+  await runCommand({
+    name: "head-tail-consistency",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-head-tail-consistency.ts", "--json"],
     parseJson: true,
   }),
 );

@@ -69,6 +69,14 @@ before making claims or changes.
   search existing repo and local skill machinery first. Prefer extending the
   existing source-registry, capability-card, retrieval/apply, eval, runbook,
   skill, and automation surfaces over creating a parallel path.
+- After any micro-level change to modules, prompts, eval cases, teacher
+  curriculum, `finance_learning_memory`, source registry, review panel, or
+  visible summaries, especially changes that affect learned rules, run the
+  head-tail consistency check through
+  `lcx-system-doctor` or directly:
+  `node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json`. The
+  check must fail if macro doctrine/prompt/runbook language and micro
+  taxonomy/eval/teacher/module-learning schema stop supervising each other.
 
 ## Mission
 

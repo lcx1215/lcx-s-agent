@@ -57,10 +57,14 @@ intentionally want channel/Lark probe evidence, and still require fresh real
 inbound plus visible reply before claiming live-visible-fixed. Use `--l5` for
 the heavier local L5 regression battery.
 
-The default system doctor includes a doctrine-consistency gate. It fails when
-active entrypoints drift back toward stale stage wording, tiny symptom-patch
-rules, static brain adapters, invalid eval commands, upstream package identity,
-or missing L5 regression skill wiring.
+The default system doctor includes doctrine-consistency and head-tail
+consistency gates. Doctrine consistency fails when active entrypoints drift back
+toward stale stage wording, tiny symptom-patch rules, static brain adapters,
+invalid eval commands, upstream package identity, or missing L5 regression skill
+wiring. Head-tail consistency fails when a macro doctrine/prompt/runbook change
+and a micro taxonomy/eval/teacher/module-learning change no longer supervise
+each other, for example when a new module can be selected by the local brain but
+cannot enter the module-learning memory chain.
 
 ## Context Recovery And Daily Continuity
 
@@ -161,16 +165,35 @@ node --import tsx scripts/dev/module-learning-pipeline-plan.ts \
   --json
 ```
 
-It maps `targetModule` values such as `options_volatility`,
-`global_index_regime`, `macro_rates_inflation`, `company_fundamentals_value`,
-`financial_modeling_valuation_qc`, `thesis_catalyst_lifecycle`,
-`data_provenance_quality`, `research_artifact_qc`, `lark_feishu_workflow`,
-`ops_audit`, and `skill_pattern_distillation` onto the required evidence,
+It maps every supported `targetModule` onto the required evidence,
 module-specific capability rule, application-validation task, and existing tool
-bridge. Finance research modules should reuse
+bridge:
+
+```text
+factor_research
+options_volatility
+global_index_regime
+macro_rates_inflation
+company_fundamentals_value
+financial_modeling_valuation_qc
+thesis_catalyst_lifecycle
+data_provenance_quality
+research_artifact_qc
+technical_timing
+commodities_oil_gold
+fx_currency_liquidity
+event_driven
+portfolio_risk_gates
+lark_feishu_workflow
+agent_workflow_memory
+ops_audit
+skill_pattern_distillation
+```
+
+Finance research modules should reuse
 `finance_learning_pipeline_orchestrator` where possible. Lark/Feishu, ops,
-memory, and skill modules must keep module-specific receipts and must not be
-claimed as learned from storage alone.
+`finance_learning_memory`, and skill modules must keep module-specific receipts
+and must not be claimed as learned from storage alone.
 
 When `writeReceipt=true`, the tool writes a dev/local receipt under:
 
