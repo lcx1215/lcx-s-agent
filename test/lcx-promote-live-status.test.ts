@@ -119,6 +119,51 @@ function runStatus(sourceRoot: string, targetRoot: string): string {
 }
 
 describe("lcx-promote-live status", () => {
+  it("blocks overlapping live promotion runs before touching the target", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    const lockDir = path.join(targetRoot, "branches/_system/live-promotion.lock");
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(lockDir, "owner.json"),
+      `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
+      "utf8",
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        scriptPath,
+        "--apply",
+        "--source-root",
+        sourceRoot,
+        "--target-root",
+        targetRoot,
+        "--skip-source-checks",
+        "--skip-install",
+        "--skip-target-build",
+        "--skip-gateway-install",
+        "--skip-restart",
+        "--skip-probe",
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("live promotion already running");
+    expect(result.stderr).toContain(`pid=${process.pid}`);
+    expect(fs.existsSync(lockDir)).toBe(true);
+    expect(
+      fs.existsSync(path.join(targetRoot, "branches/_system/live-promotion-manifest.json")),
+    ).toBe(false);
+  });
+
   it("shows when current dev commit differs from the last live promotion", () => {
     const sourceRoot = tempDir("promote-live-source");
     const targetRoot = tempDir("promote-live-target");

@@ -10,6 +10,7 @@ const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_RECEIPT_SUBDIR = "branches/_system/promotions";
 const MANIFEST_PATH = "branches/_system/live-promotion-manifest.json";
 const PROMOTION_STATE_PATH = "branches/_system/live-promotion-state.json";
+const PROMOTION_LOCK_DIR = "branches/_system/live-promotion.lock";
 const DEFAULT_PORT = 18789;
 const DEFAULT_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const RESTART_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
@@ -178,6 +179,22 @@ type PromotionManifest = {
   sourceCommit: string;
   managedFiles: string[];
 };
+
+type PromotionLock =
+  | {
+      acquired: true;
+      lockDir: string;
+      release: () => void;
+    }
+  | {
+      acquired: false;
+      lockDir: string;
+      message: string;
+    };
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
 
 function parseArgs(argv: string[]): Args {
   const argsList = argv.filter((value) => value !== "--");
@@ -394,6 +411,85 @@ function readJsonIfExists<T>(filePath: string): T | null {
   } catch {
     return null;
   }
+}
+
+function readLockPid(lockDir: string): number | null {
+  const owner = readJsonIfExists<{ pid?: unknown }>(path.join(lockDir, "owner.json"));
+  return typeof owner?.pid === "number" && Number.isInteger(owner.pid) && owner.pid > 0
+    ? owner.pid
+    : null;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ESRCH") {
+      return false;
+    }
+    return true;
+  }
+}
+
+function acquirePromotionLock(targetRoot: string): PromotionLock {
+  const lockDir = path.join(targetRoot, PROMOTION_LOCK_DIR);
+  fs.mkdirSync(path.dirname(lockDir), { recursive: true });
+  const tryAcquire = (): PromotionLock | null => {
+    try {
+      fs.mkdirSync(lockDir);
+      writeJson(path.join(lockDir, "owner.json"), {
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+      });
+      return {
+        acquired: true,
+        lockDir,
+        release: () => {
+          try {
+            if (readLockPid(lockDir) === process.pid) {
+              fs.rmSync(lockDir, { force: true, recursive: true });
+            }
+          } catch {
+            // Best-effort cleanup only; stale locks are handled by the next run.
+          }
+        },
+      };
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "EEXIST") {
+        return null;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        acquired: false,
+        lockDir,
+        message: `live promotion lock failed: ${message}`,
+      };
+    }
+  };
+
+  const acquired = tryAcquire();
+  if (acquired) {
+    return acquired;
+  }
+
+  const ownerPid = readLockPid(lockDir);
+  if (ownerPid && processIsAlive(ownerPid)) {
+    return {
+      acquired: false,
+      lockDir,
+      message: `live promotion already running: pid=${ownerPid} lock=${lockDir}`,
+    };
+  }
+
+  fs.rmSync(lockDir, { force: true, recursive: true });
+  return (
+    tryAcquire() ?? {
+      acquired: false,
+      lockDir,
+      message: `live promotion lock could not be acquired after stale cleanup: lock=${lockDir}`,
+    }
+  );
 }
 
 function assertInsideTarget(targetRoot: string, candidatePath: string): boolean {
@@ -886,6 +982,20 @@ export function main(argv = process.argv.slice(2)): number {
     return probe?.status === "failed" ? 1 : 0;
   }
 
+  const promotionLock = initialArgs.apply ? acquirePromotionLock(initialArgs.targetRoot) : null;
+  if (promotionLock && !promotionLock.acquired) {
+    process.stderr.write(`${promotionLock.message}\n`);
+    return 1;
+  }
+  const releasePromotionLock = promotionLock?.release ?? null;
+  try {
+    return runPromotion(initialArgs);
+  } finally {
+    releasePromotionLock?.();
+  }
+}
+
+function runPromotion(initialArgs: Args): number {
   const prepared = prepareSourceSnapshot(initialArgs);
   const args = prepared.args;
   const generatedAt = new Date().toISOString();
