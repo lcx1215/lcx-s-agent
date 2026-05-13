@@ -48,6 +48,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/minimax-quota-brain-saturator\.ts$/u,
       /^scripts\/dev\/lcx-change-impact-plan\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
+      /^scripts\/dev\/lcx-mind-model\.ts$/u,
       /^scripts\/dev\/lcx-system-doctor\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "targeted-local-brain-tests"],

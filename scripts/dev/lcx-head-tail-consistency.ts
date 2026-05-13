@@ -42,6 +42,7 @@ const TAIL_SURFACE_FILES = [
   "scripts/dev/local-brain-training-plan.ts",
   "scripts/dev/lcx-system-doctor.ts",
   "scripts/dev/lcx-agent-exam.ts",
+  "scripts/dev/lcx-mind-model.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
   "src/commands/capabilities/lark-loop-diagnose.ts",
@@ -153,6 +154,11 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
     id: "memory_sedimentation_boundary",
     headTerms: ["memory sedimentation", "source storage is not learning"],
     tailTerms: ["memory_sedimentation", "module_learning_memory"],
+  },
+  {
+    id: "mind_model_boundary",
+    headTerms: ["LCX Agent Mind Model", "god-view", "workflow closure"],
+    tailTerms: ["lcx-mind-model", "mind-model-consistency", "MIND_MODEL_LANES"],
   },
 ];
 

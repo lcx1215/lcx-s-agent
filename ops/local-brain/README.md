@@ -26,6 +26,23 @@ planner reports elevated risk:
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 ```
 
+When a change may cause Codex, Claude Code, or another future agent to see only
+one local detail while missing the larger workflow, run the LCX Agent Mind Model
+god-view check:
+
+```bash
+node --import tsx scripts/dev/lcx-mind-model.ts --json
+```
+
+This is a read-only `dev_mind_model_only` architecture audit. It checks whether
+each main lane still has workflow closure across four surfaces: macro rule,
+workflow entrypoint, proof/eval surface, and boundary flag. It covers context
+recovery, change-impact planning, Qwen training, MiniMax teacher, adapter
+promotion, Lark/Feishu live boundary, local automation, memory sedimentation,
+finance research capability, and protected-memory/provider/live-sender
+boundaries. It reports `liveTouched=false`, `providerConfigTouched=false`, and
+`protectedMemoryTouched=false`; it does not prove live-visible-fixed.
+
 ## First Command
 
 Start here:

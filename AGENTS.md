@@ -88,6 +88,33 @@ before making claims or changes.
   Lark/Feishu visible reply, local automation, memory sedimentation, and
   finance capability changes must also have a head rule and a tail proof path.
 
+## LCX Agent Mind Model Doctrine
+
+LCX Agent must keep a durable god-view of its own architecture because future
+Codex or Claude Code sessions will not remember every workflow closure from
+chat context. The mind model is not a new brain, provider, memory layer, or
+trading authority. It is a dev-only architecture audit that checks whether each
+main lane still has four things at once: macro rule, workflow entrypoint, proof
+surface, and boundary flag.
+
+- Run the mind model when a change could affect more than one loop, when a
+  future agent may only see one file, or when the user asks for macro/micro
+  alignment:
+  `node --import tsx scripts/dev/lcx-mind-model.ts --json`.
+- The mind model must cover workflow closure for context recovery, change
+  impact planning, Qwen training, MiniMax teacher, adapter promotion, Lark/Feishu
+  live boundary, local automation, memory sedimentation, finance research
+  capability, and protected-memory/provider/live-sender boundaries.
+- A lane is not globally healthy just because one file, one receipt, one test,
+  or one model answer looks good. The god-view must ask whether the head rule,
+  the executable workflow, the proof/eval surface, and the boundary wording all
+  still point to the same loop.
+- The system doctor should include `mind-model-consistency`; if it fails, treat
+  it as a P2 architecture blind spot before expanding features.
+- The mind model is dev_mind_model_only: it reports `liveTouched=false`,
+  `providerConfigTouched=false`, and `protectedMemoryTouched=false`. It cannot
+  prove live-visible-fixed or model-weight absorption.
+
 ## Mission
 
 - Build and operate LCX Agent / OpenClaw as a low-frequency research operating system for one real user.
