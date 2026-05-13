@@ -81,6 +81,12 @@ function stringArrayValue(value: unknown): string[] {
     : [];
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function normalizeTargetModule(value?: string): string | undefined {
   const normalized = value?.trim();
   if (!normalized) {
@@ -175,7 +181,16 @@ export function buildModuleLearningPipelineReview(params: {
   const rows = validReceipts.map((result) => {
     const receipt = result.receipt;
     const status = statusKey(receipt.status);
-    const weak = status !== "eval_absorbed";
+    const financePipelineArgs = recordValue(receipt.financePipelineArgs);
+    const structuredDataReviewTargetViolation =
+      receipt.targetModule === "data_provenance_quality" &&
+      !(
+        financePipelineArgs?.expectedNextReviewTarget === "data_provenance_quality_review_input" &&
+        (financePipelineArgs.sourceType === "official_data_source" ||
+          financePipelineArgs.sourceType === "market_data_snapshot_source" ||
+          financePipelineArgs.sourceType === "vendor_data_source")
+      );
+    const weak = status !== "eval_absorbed" || structuredDataReviewTargetViolation;
     const boundaryViolation =
       receipt.liveTouched === true ||
       receipt.providerConfigTouched === true ||
@@ -196,8 +211,13 @@ export function buildModuleLearningPipelineReview(params: {
       keepDownrankDiscardDecision: receipt.keepDownrankDiscardDecision ?? "not_decided",
       missingEvidence: stringArrayValue(receipt.missingEvidence),
       weak,
-      failedReason: weak ? status : null,
+      failedReason: structuredDataReviewTargetViolation
+        ? "data_provenance_receipt_missing_structured_review_target"
+        : weak
+          ? status
+          : null,
       boundaryViolation,
+      structuredDataReviewTargetViolation,
       safetyBoundaries: stringArrayValue(receipt.safetyBoundaries),
       existingToolBridge: receipt.existingToolBridge ?? null,
       financePipelineArgs: receipt.financePipelineArgs ?? null,
@@ -218,10 +238,13 @@ export function buildModuleLearningPipelineReview(params: {
       status: row.status,
       failedReason: row.boundaryViolation
         ? "receipt_boundary_violation"
-        : (row.missingEvidence[0] ?? row.status),
+        : row.structuredDataReviewTargetViolation
+          ? "data_provenance_receipt_missing_structured_review_target"
+          : (row.missingEvidence[0] ?? row.status),
       missingEvidence: row.missingEvidence,
-      action:
-        row.status === "missing_evidence" || row.status === "stored_only"
+      action: row.structuredDataReviewTargetViolation
+        ? "Route data_provenance_quality receipts through official_data_source, market_data_snapshot_source, or vendor_data_source with data_provenance_quality_review_input before claiming absorption."
+        : row.status === "missing_evidence" || row.status === "stored_only"
           ? "Add source registry, actual reading scope, and retrieval receipt before claiming this module learned the source."
           : row.status === "retrieval_ready"
             ? "Run module-specific application validation on a fresh adjacent task before claiming application-ready learning."
@@ -244,6 +267,9 @@ export function buildModuleLearningPipelineReview(params: {
       evalAbsorbed: countsByStatus.eval_absorbed,
       weakModuleLearning: weakModuleLearning.length,
       boundaryViolations: rows.filter((row) => row.boundaryViolation).length,
+      structuredDataReviewTargetViolations: rows.filter(
+        (row) => row.structuredDataReviewTargetViolation,
+      ).length,
     },
     countsByStatus,
     rows,

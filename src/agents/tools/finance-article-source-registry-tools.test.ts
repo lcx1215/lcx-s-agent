@@ -85,6 +85,56 @@ describe("finance article source registry tools", () => {
     );
   });
 
+  it("accepts structured finance data sources only with provenance-quality notes", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-article-source-registry-");
+    const recordTool = createFinanceArticleSourceRegistryRecordTool({ workspaceDir });
+    const preflightTool = createFinanceArticleSourceCollectionPreflightTool({ workspaceDir });
+
+    await expect(
+      recordTool.execute("record-weak-data-source", {
+        sourceName: "Weak data source",
+        sourceType: "official_data_source",
+        sourceUrlOrIdentifier: "https://fred.stlouisfed.org/series/CPIAUCSL",
+        allowedCollectionMethods: ["user_provided_url"],
+        requiresManualInput: true,
+        complianceNotes: "Use safe public source references only.",
+        rateLimitNotes: "Stay low-frequency and operator-driven.",
+        freshnessExpectation: "manual check required",
+        reliabilityNotes: "Useful as research input only.",
+        extractionTarget: "data_provenance_quality_review_input",
+        allowedActionAuthority: "research_only",
+      }),
+    ).rejects.toThrow("structured finance data sources must state timestamp");
+
+    await recordTool.execute("record-fred-data-source", {
+      sourceName: "FRED CPI data source",
+      sourceType: "official_data_source",
+      sourceUrlOrIdentifier: "https://fred.stlouisfed.org/series/CPIAUCSL",
+      allowedCollectionMethods: ["user_provided_url"],
+      requiresManualInput: true,
+      complianceNotes:
+        "Use official public FRED pages only and preserve vendor, timestamp, field definition, units, frequency, and revision notes.",
+      rateLimitNotes: "Stay low-frequency and operator-driven.",
+      freshnessExpectation: "manual timestamp check required before use",
+      reliabilityNotes:
+        "Research input only; verify source timestamp, update cadence, field definition, and revision history before sourced numbers appear in analysis.",
+      extractionTarget: "data_provenance_quality_review_input",
+      allowedActionAuthority: "research_only",
+    });
+
+    const preflightResult = await preflightTool.execute("preflight-fred-data-source", {
+      sourceName: "FRED CPI data source",
+    });
+    expect(preflightResult.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        preflightStatus: "manual_only",
+        reason: "structured_data_url_requires_manual_snapshot_capture",
+        extractionToolTarget: null,
+      }),
+    );
+  });
+
   it("accepts RSS/public feed sources only when marked public", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-article-source-registry-");
     const recordTool = createFinanceArticleSourceRegistryRecordTool({ workspaceDir });

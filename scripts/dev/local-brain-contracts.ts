@@ -1604,6 +1604,7 @@ export function hardenLocalBrainPlanForAsk(
       supporting_modules: ["finance_learning_memory", "causal_map", "portfolio_risk_gates"],
       required_tools: [
         "source_registry_lookup",
+        "data_provenance_quality_review_input",
         "data_timestamp_and_vendor_compare",
         "local_brain_eval",
         "review_panel",
@@ -1832,6 +1833,7 @@ export function hardenLocalBrainPlanForAsk(
       supporting_modules: ["finance_learning_memory", "causal_map", "portfolio_risk_gates"],
       required_tools: [
         "source_registry_lookup",
+        "data_provenance_quality_review_input",
         "data_timestamp_and_vendor_compare",
         "review_panel",
       ],

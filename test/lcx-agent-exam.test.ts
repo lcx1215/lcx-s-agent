@@ -183,6 +183,66 @@ describe("lcx-agent-exam", () => {
     );
   });
 
+  it("treats non-promotion-ready adapters as hold instead of a resolver failure", () => {
+    const report = buildAgentExamReport({
+      live: false,
+      l5: false,
+      doctor: okCommand("doctor", {
+        ok: true,
+        boundary: "dev_observability_only",
+        liveTouched: false,
+        summary: { passed: 12, failed: 0, skipped: 5 },
+      }),
+      trainingPlan: okCommand("training-plan", {
+        activeProcesses: [{ pid: 123, role: "guard" }],
+        latestEval: { name: "training_seed_hardened_eval", passed: 65, total: 76 },
+        latestDataset: { examples: 9000 },
+        latestTeacher: { failures: 0 },
+        decisions: [{ id: "eval_not_promotion_ready" }],
+      }),
+      promotionAudit: okCommand("promotion-audit", {
+        boundary: "dev_local_brain_promotion_audit_only",
+        promotionDecision: "hold",
+        resolverMatchesLatestEval: true,
+        resolverMatchesLatestPassingEval: false,
+        realBugsFound: [],
+        latestEval: {
+          name: "training_seed_hardened_eval",
+          passed: 65,
+          total: 76,
+          promotionReady: false,
+        },
+        selectedEval: {
+          name: "training_seed_hardened_eval",
+          passed: 65,
+          total: 76,
+          promotionReady: false,
+        },
+      }),
+      moduleLearningReview: okCommand("module-review", {
+        boundary: "module_learning_pipeline_review_only",
+        updated: false,
+        counts: {
+          receiptFiles: 1,
+          weakModuleLearning: 0,
+          invalidReceipts: 0,
+          boundaryViolations: 0,
+        },
+      }),
+      cognitiveIntegritySources: cognitiveSources,
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.lanes.find((lane) => lane.lane === "qwen_adapter_promotion")).toEqual(
+      expect.objectContaining({
+        status: "warn",
+        severity: "P2",
+        issue: expect.stringContaining("正确暂停"),
+        evidence: expect.arrayContaining(["promotionDecision=hold", "realBugsFound=none"]),
+      }),
+    );
+  });
+
   it("treats live probes as probe evidence, not live-visible-fixed", () => {
     const report = buildAgentExamReport({
       live: true,

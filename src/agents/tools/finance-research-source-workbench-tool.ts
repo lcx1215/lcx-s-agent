@@ -15,8 +15,12 @@ import { jsonResult, readStringParam, ToolInputError } from "./common.js";
 import {
   ensureNoForbiddenFinanceArticleSourceSignals,
   evaluateFinanceArticleSourcePreflight,
+  isFinanceStructuredDataSourceType,
   validateFinanceArticleSourceEntry,
 } from "./finance-article-source-collection.js";
+
+const FINANCE_ARTICLE_EXTRACTION_TARGET = "finance_article_extract_capability_input";
+const FINANCE_DATA_PROVENANCE_REVIEW_TARGET = "data_provenance_quality_review_input";
 
 const FINANCE_RESEARCH_SOURCE_FAMILIES = [
   "official_filing",
@@ -24,6 +28,7 @@ const FINANCE_RESEARCH_SOURCE_FAMILIES = [
   "academic_preprint",
   "github_repository",
   "official_macro_data",
+  "market_data_snapshot",
   "company_ir",
   "etf_issuer",
   "news",
@@ -62,7 +67,7 @@ const GENERIC_FILLER_PATTERNS = [
   /^random note\b/iu,
 ] as const;
 
-const TEXT_LIKE_EXTENSIONS = new Set([".txt", ".md", ".html", ".htm"]);
+const TEXT_LIKE_EXTENSIONS = new Set([".txt", ".md", ".html", ".htm", ".csv", ".json"]);
 
 function normalizeRequiredText(value: string | undefined, label: string): string {
   const normalized = (value ?? "").trim().replace(/\r\n/gu, "\n");
@@ -136,6 +141,29 @@ function inferSourceFamily(params: {
   pastedText?: string;
   retrievalNotes: string;
 }) {
+  if (params.sourceType === "market_data_snapshot_source") {
+    return "market_data_snapshot" as const;
+  }
+  if (params.sourceType === "official_data_source") {
+    const haystack = [
+      params.sourceName,
+      params.title,
+      params.userProvidedUrl ?? "",
+      params.localFilePath ?? "",
+      params.retrievalNotes,
+    ].join("\n");
+    if (
+      /(fred|bls\.gov|bea\.gov|treasury\.gov|fiscaldata\.treasury|cpi|pce|payroll|fed|macro)/iu.test(
+        haystack,
+      )
+    ) {
+      return "official_macro_data" as const;
+    }
+    return "official_reference" as const;
+  }
+  if (params.sourceType === "vendor_data_source") {
+    return "market_data_snapshot" as const;
+  }
   if (params.sourceType === "wechat_public_account_source") {
     return "wechat_public_account" as const;
   }
@@ -222,6 +250,59 @@ function inferSourceFamily(params: {
   return "public_web_reference" as const;
 }
 
+function inferInlineSourceType(params: {
+  sourceType?: string;
+  sourceName: string;
+  userProvidedUrl?: string;
+  localFilePath?: string;
+  pastedText?: string;
+}) {
+  if (params.sourceType) {
+    return params.sourceType as FinanceArticleSourceRegistryArtifact["sources"][number]["sourceType"];
+  }
+  const haystack = [
+    params.sourceName,
+    params.userProvidedUrl ?? "",
+    params.localFilePath ?? "",
+    params.pastedText?.slice(0, 300) ?? "",
+  ].join("\n");
+  if (
+    /(fred|bls\.gov|bea\.gov|treasury\.gov|fiscaldata\.treasury|cpi|pce|payroll|official macro data)/iu.test(
+      haystack,
+    )
+  ) {
+    return "official_data_source";
+  }
+  if (
+    /(market data snapshot|current price|latest price|price snapshot|volume snapshot|etf holdings|etf weight|行情|价格快照|成交量|权重)/iu.test(
+      haystack,
+    )
+  ) {
+    return "market_data_snapshot_source";
+  }
+  return (
+    (params.userProvidedUrl?.includes("wechat") ? "wechat_public_account_source" : undefined) ??
+    (params.userProvidedUrl ? "public_web_source" : undefined) ??
+    (params.localFilePath ? "manual_article_source" : undefined) ??
+    (params.pastedText ? "manual_article_source" : undefined)
+  );
+}
+
+function selectNextReviewTarget(params: {
+  sourceType: string;
+  sourceFamily: (typeof FINANCE_RESEARCH_SOURCE_FAMILIES)[number];
+}) {
+  if (
+    isFinanceStructuredDataSourceType(params.sourceType) ||
+    params.sourceFamily === "official_macro_data" ||
+    params.sourceFamily === "market_data_snapshot" ||
+    params.sourceFamily === "etf_issuer"
+  ) {
+    return FINANCE_DATA_PROVENANCE_REVIEW_TARGET;
+  }
+  return FINANCE_ARTICLE_EXTRACTION_TARGET;
+}
+
 function inferInlineSourceEntry(params: {
   sourceName: string;
   sourceType?: string;
@@ -231,14 +312,7 @@ function inferInlineSourceEntry(params: {
   allowedActionAuthority: FinanceArticleSourceRegistryArtifact["sources"][number]["allowedActionAuthority"];
   isPubliclyAccessible: boolean;
 }): FinanceArticleSourceRegistryArtifact["sources"][number] {
-  const sourceType =
-    (params.sourceType as
-      | FinanceArticleSourceRegistryArtifact["sources"][number]["sourceType"]
-      | undefined) ??
-    (params.userProvidedUrl?.includes("wechat") ? "wechat_public_account_source" : undefined) ??
-    (params.userProvidedUrl ? "public_web_source" : undefined) ??
-    (params.localFilePath ? "manual_article_source" : undefined) ??
-    (params.pastedText ? "manual_article_source" : undefined);
+  const sourceType = inferInlineSourceType(params);
   if (!sourceType) {
     throw new ToolInputError(
       "sourceType is required when the source is not already in the registry",
@@ -270,10 +344,15 @@ function inferInlineSourceEntry(params: {
       "Use only operator-provided local/manual/public paths. Do not bypass login, paywalls, anti-bot controls, hidden APIs, robots restrictions, or platform restrictions.",
     rateLimitNotes:
       "No automated remote collection. Keep any future collection operator-paced and low-frequency.",
-    freshnessExpectation: "manual_check_required",
-    reliabilityNotes:
-      "Treat this source as research input only until the operator validates the captured content and evidence quality.",
-    extractionTarget: "finance_article_extract_capability_input",
+    freshnessExpectation: isFinanceStructuredDataSourceType(sourceType)
+      ? "manual timestamp and update cadence check required"
+      : "manual_check_required",
+    reliabilityNotes: isFinanceStructuredDataSourceType(sourceType)
+      ? "Treat this structured data source as research input only until vendor, timestamp, field definition, currency, adjustment, update cadence, outliers, and source conflicts are reviewed."
+      : "Treat this source as research input only until the operator validates the captured content and evidence quality.",
+    extractionTarget: isFinanceStructuredDataSourceType(sourceType)
+      ? FINANCE_DATA_PROVENANCE_REVIEW_TARGET
+      : FINANCE_ARTICLE_EXTRACTION_TARGET,
     allowedActionAuthority: params.allowedActionAuthority,
     isPubliclyAccessible: params.isPubliclyAccessible,
   } satisfies FinanceArticleSourceRegistryArtifact["sources"][number];
@@ -370,7 +449,7 @@ async function normalizeLocalContent(params: {
   return {
     retrievalMethod: "user_provided_url",
     localContent:
-      "Metadata-only reference. No remote content was fetched. Prepare a local/manual article artifact before running finance_article_extract_capability_input.",
+      "Metadata-only reference. No remote content was fetched. Prepare a local/manual source artifact before running extraction or data provenance review.",
     contentKind: "metadata_only_reference",
     sourceIdentifierForAudit: "user_provided_url",
   } as const;
@@ -401,6 +480,7 @@ function renderResearchSourceArtifact(params: {
   publishDate?: string;
   retrievalNotes: string;
   extractionTarget: string | null;
+  nextReviewTarget: string | null;
   contentKind: string;
   sourceContent: string;
 }) {
@@ -421,6 +501,7 @@ function renderResearchSourceArtifact(params: {
     `- **Publish Date**: ${params.publishDate ?? ""}`,
     `- **Retrieval Notes**: ${params.retrievalNotes}`,
     `- **Extraction Target**: ${params.extractionTarget ?? ""}`,
+    `- **Next Review Target**: ${params.nextReviewTarget ?? ""}`,
     `- **Content Kind**: ${params.contentKind}`,
     "",
     "## Source Content",
@@ -517,16 +598,6 @@ export function createFinanceResearchSourceWorkbenchTool(options?: {
         });
       }
 
-      const normalizedContent = await normalizeLocalContent({
-        workspaceDir,
-        localFilePath: localFilePath ?? undefined,
-        pastedText: pastedText ?? undefined,
-      });
-      const extractionReadyNow = normalizedContent.contentKind === "normalized_local_content";
-      const extractionToolTarget = extractionReadyNow
-        ? "finance_article_extract_capability_input"
-        : null;
-
       const sourceFamily = inferSourceFamily({
         sourceName,
         sourceType: sourceEntry.sourceType,
@@ -536,6 +607,22 @@ export function createFinanceResearchSourceWorkbenchTool(options?: {
         pastedText: pastedText ?? undefined,
         retrievalNotes,
       });
+      const nextReviewTarget = selectNextReviewTarget({
+        sourceType: sourceEntry.sourceType,
+        sourceFamily,
+      });
+      const normalizedContent = await normalizeLocalContent({
+        workspaceDir,
+        localFilePath: localFilePath ?? undefined,
+        pastedText: pastedText ?? undefined,
+      });
+      const hasLocalContent = normalizedContent.contentKind === "normalized_local_content";
+      const extractionReadyNow =
+        hasLocalContent && nextReviewTarget === FINANCE_ARTICLE_EXTRACTION_TARGET;
+      const dataProvenanceReviewReadyNow =
+        hasLocalContent && nextReviewTarget === FINANCE_DATA_PROVENANCE_REVIEW_TARGET;
+      const extractionToolTarget = extractionReadyNow ? FINANCE_ARTICLE_EXTRACTION_TARGET : null;
+      const currentNextReviewTarget = hasLocalContent ? nextReviewTarget : null;
 
       const artifactRelPath = buildResearchArtifactRelPath({
         sourceFamily,
@@ -563,6 +650,7 @@ export function createFinanceResearchSourceWorkbenchTool(options?: {
           publishDate: publishDate ?? undefined,
           retrievalNotes,
           extractionTarget: extractionToolTarget,
+          nextReviewTarget: currentNextReviewTarget,
           contentKind: normalizedContent.contentKind,
           sourceContent: normalizedContent.localContent,
         }),
@@ -583,13 +671,18 @@ export function createFinanceResearchSourceWorkbenchTool(options?: {
         sourceUrlOrIdentifier,
         metadataPreservedForAudit: true,
         extractionReadyNow,
+        dataProvenanceReviewReadyNow,
         requiresManualCaptureBeforeExtraction: !extractionReadyNow,
         extractionToolTarget,
-        extractionToolTargetAfterManualCapture: "finance_article_extract_capability_input",
+        nextReviewTarget: currentNextReviewTarget,
+        nextReviewTargetAfterManualCapture: nextReviewTarget,
+        extractionToolTargetAfterManualCapture: nextReviewTarget,
         noRemoteFetchOccurred: true,
-        action: extractionReadyNow
-          ? "This workbench created a local finance research source artifact from local/manual content only. It did not fetch remote content automatically, did not create trading rules, and did not mutate doctrine cards."
-          : "This workbench created a metadata-only finance research source artifact. It did not fetch remote content automatically; capture local/manual article content before extraction, capability attachment, or doctrine review.",
+        action: dataProvenanceReviewReadyNow
+          ? "This workbench created a local finance data source artifact from local/manual content only. Send it through data provenance review before using sourced numbers in analysis."
+          : extractionReadyNow
+            ? "This workbench created a local finance research source artifact from local/manual content only. It did not fetch remote content automatically, did not create trading rules, and did not mutate doctrine cards."
+            : "This workbench created a metadata-only finance research source artifact. It did not fetch remote content automatically; capture local/manual source content before extraction, data provenance review, capability attachment, or doctrine review.",
       });
     },
   };

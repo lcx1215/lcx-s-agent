@@ -792,4 +792,26 @@ describe("normalizeFeishuDisplayText", () => {
       ].join("\n"),
     );
   });
+
+  it("turns structured data intake fields into readable Lark text", () => {
+    expect(
+      normalizeFeishuDisplayText(
+        [
+          "sourceType: market_data_snapshot_source",
+          "sourceFamily: market_data_snapshot",
+          "nextReviewTarget: data_provenance_quality_review_input",
+          "extractionToolTarget: finance_article_extract_capability_input",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "先说结论：这是一条系统状态或证据回复，我先把它转成人能读懂的版本；下面的条目是可核验细节。",
+        "",
+        "- 来源类型: 市场数据快照源 (market_data_snapshot_source)",
+        "- 来源类别: 市场数据快照 (market_data_snapshot)",
+        "- 下一步审阅入口: 数据来源、时间戳和字段口径审阅入口 (data_provenance_quality_review_input)",
+        "- 抽取入口: 文章能力抽取入口 (finance_article_extract_capability_input)",
+      ].join("\n"),
+    );
+  });
 });

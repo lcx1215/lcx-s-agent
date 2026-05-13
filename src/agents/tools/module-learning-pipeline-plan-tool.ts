@@ -645,6 +645,22 @@ function normalizeOptional(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+function chooseFinancePipelineSourceType(params: {
+  targetModule: ModuleLearningTarget;
+  sourceUrlOrPath: string | null;
+}): "manual_article_source" | "official_data_source" | "market_data_snapshot_source" {
+  if (params.targetModule !== "data_provenance_quality") {
+    return "manual_article_source";
+  }
+  const source = params.sourceUrlOrPath ?? "";
+  if (
+    /(fred|bls\.gov|bea\.gov|treasury\.gov|fiscaldata\.treasury|cpi|pce|payroll)/iu.test(source)
+  ) {
+    return "official_data_source";
+  }
+  return "market_data_snapshot_source";
+}
+
 function resolveEvidenceStatus(params: {
   sourceUrlOrPath: string | null;
   actualReadingScope: string | null;
@@ -793,12 +809,19 @@ export function createModuleLearningPipelinePlanTool(options?: {
         schema.existingToolBridge.bridgeStatus === "direct_finance_pipeline"
           ? {
               sourceName: sourceUrlOrPath ?? `${schema.targetModule} local/manual source`,
-              sourceType: "manual_article_source",
+              sourceType: chooseFinancePipelineSourceType({
+                targetModule: schema.targetModule,
+                sourceUrlOrPath,
+              }),
               retrievalNotes:
                 "Operator-provided local/manual source. Do not fetch remote content in the orchestrator step; preserve provenance and actual reading scope.",
               allowedActionAuthority: "research_only",
               learningIntent,
               applicationValidationQuery: applicationValidationTask,
+              expectedNextReviewTarget:
+                schema.targetModule === "data_provenance_quality"
+                  ? "data_provenance_quality_review_input"
+                  : "finance_article_extract_capability_input",
             }
           : null;
 

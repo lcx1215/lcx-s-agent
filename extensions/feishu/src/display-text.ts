@@ -61,6 +61,15 @@ function humanizeFeishuStatusValue(value: string): string {
     fundamental_research: "基本面研究工作面 (fundamental_research)",
     watchtower: "系统观察工作面 (watchtower)",
     protocol_truth_surface: "协议真相检查入口 (protocol_truth_surface)",
+    data_provenance_quality_review_input:
+      "数据来源、时间戳和字段口径审阅入口 (data_provenance_quality_review_input)",
+    finance_article_extract_capability_input:
+      "文章能力抽取入口 (finance_article_extract_capability_input)",
+    official_data_source: "官方结构化数据源 (official_data_source)",
+    market_data_snapshot_source: "市场数据快照源 (market_data_snapshot_source)",
+    vendor_data_source: "第三方数据供应商源 (vendor_data_source)",
+    official_macro_data: "官方宏观数据 (official_macro_data)",
+    market_data_snapshot: "市场数据快照 (market_data_snapshot)",
   };
   if (known[trimmed]) {
     if (known[trimmed].includes(`(${trimmed})`)) {
@@ -127,6 +136,10 @@ function humanizeFeishuInlineText(text: string): string {
     .replace(/\bapplication_ready\b/giu, "已通过验证，可作为研究能力使用")
     .replace(/\bnot_application_ready\b/giu, "还没证明学进去了")
     .replace(/\bfailedReason\b/gu, "失败原因")
+    .replace(/\bnextReviewTarget\b/gu, "下一步审阅入口")
+    .replace(/\bextractionToolTarget\b/gu, "抽取入口")
+    .replace(/\bsourceType\b/gu, "来源类型")
+    .replace(/\bsourceFamily\b/gu, "来源类别")
     .replace(/\btargetSurface\b/gu, "目标工作面")
     .replace(/\beffectiveSurface\b/gu, "实际工作面")
     .replace(/\bhandoff receipt\b/giu, "交接回执");
@@ -222,7 +235,7 @@ function humanizeFeishuVisibleLine(line: string): string {
   }
 
   const keyValueMatch = trimmed.match(
-    /^(?:-\s*)?(failedReason|foregroundStatus|originalMessageId|messageId|family|targetSurface|effectiveSurface|source_required|learningInternalizationStatus|handoff receipt|proof|next step|boundary|Boundary|primary_run_failed|run_failed|rescue_coverage|status)\s*[:=]\s*(.+)$/iu,
+    /^(?:-\s*)?(failedReason|foregroundStatus|originalMessageId|messageId|family|sourceType|sourceFamily|nextReviewTarget|extractionToolTarget|targetSurface|effectiveSurface|source_required|learningInternalizationStatus|handoff receipt|proof|next step|boundary|Boundary|primary_run_failed|run_failed|rescue_coverage|status)\s*[:=]\s*(.+)$/iu,
   );
   if (keyValueMatch) {
     const rawKey = keyValueMatch[1]!.toLowerCase();
@@ -233,6 +246,10 @@ function humanizeFeishuVisibleLine(line: string): string {
       originalmessageid: "原消息",
       messageid: "消息",
       family: "任务类型",
+      sourcetype: "来源类型",
+      sourcefamily: "来源类别",
+      nextreviewtarget: "下一步审阅入口",
+      extractiontooltarget: "抽取入口",
       targetsurface: "目标工作面",
       effectivesurface: "实际工作面",
       source_required: "还缺来源",
@@ -287,7 +304,7 @@ function needsFeishuHumanReadableLead(text: string): boolean {
   if (/^[{[]/u.test(firstLine)) {
     return true;
   }
-  return /^[-*]\s*(任务类型|目标工作面|实际工作面|还缺来源|学习内化状态|交接回执|证据|下一步|边界|失败原因|原消息|消息|前台状态|状态)\s*[:：]/u.test(
+  return /^[-*]\s*(任务类型|来源类型|来源类别|下一步审阅入口|抽取入口|目标工作面|实际工作面|还缺来源|学习内化状态|交接回执|证据|下一步|边界|失败原因|原消息|消息|前台状态|状态)\s*[:：]/u.test(
     firstLine,
   );
 }

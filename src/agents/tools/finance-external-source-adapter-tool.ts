@@ -33,6 +33,7 @@ const FINANCE_EXTERNAL_SOURCE_ADAPTER_COLLECTION_METHODS = [
 const FINANCE_EXTERNAL_SOURCE_FAMILIES = [
   "official_filing",
   "official_macro_data",
+  "market_data_snapshot",
   "company_ir",
   "etf_issuer",
   "news",
@@ -208,8 +209,15 @@ function inferSourceTypeFromFamily(
   | "wechat_public_account_source"
   | "rss_public_feed_source"
   | "manual_article_source"
+  | "official_data_source"
+  | "market_data_snapshot_source"
   | "public_web_source" {
   switch (sourceFamily) {
+    case "official_macro_data":
+    case "etf_issuer":
+      return "official_data_source";
+    case "market_data_snapshot":
+      return "market_data_snapshot_source";
     case "wechat_public_account":
       return "wechat_public_account_source";
     case "public_feed":

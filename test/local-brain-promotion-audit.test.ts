@@ -90,6 +90,72 @@ describe("local-brain-promotion-audit", () => {
     );
   });
 
+  it("uses the resolver training seed adapter and holds promotion when the current eval is not ready", () => {
+    const adapterPath = "/tmp/adapter-training-seed-r2";
+    const audit = buildPromotionAudit({
+      plan: {
+        activeProcesses: [{ pid: 123, role: "guard" }],
+        latestEval: {
+          name: "training_seed_hardened_eval",
+          adapterPath,
+          passed: 65,
+          total: 76,
+          passRate: 0.855,
+          promotionReady: false,
+          failedCaseIds: ["current_market_data_freshness_boundary"],
+          parseErrorCaseIds: [],
+          parseRecoveredCaseIds: ["full_stack_finance_stress_with_red_team"],
+        },
+        latestPassingEval: {
+          name: "stable_hardened_eval",
+          adapterPath: "/tmp/older-promoted-adapter",
+          passed: 72,
+          total: 72,
+          passRate: 1,
+          promotionReady: true,
+          failedCaseIds: [],
+          parseErrorCaseIds: [],
+        },
+        moduleLearningReview: {
+          counts: { boundaryViolations: 0 },
+        },
+      },
+      resolver: {
+        ok: true,
+        details: {
+          trainingSeedAdapter: adapterPath,
+          trainingSeed: {
+            adapterPath,
+            passed: 72,
+            total: 72,
+            passRate: 1,
+            parseRecoveredCount: 1,
+            source: "candidate_hardened_eval",
+          },
+          selectionMode: "latest-passing",
+        },
+      },
+    });
+
+    expect(audit).toEqual(
+      expect.objectContaining({
+        promotionDecision: "hold",
+        latestPassingAdapter: adapterPath,
+        resolverMatchesLatestEval: true,
+        resolverMatchesLatestPassingEval: false,
+        realBugsFound: [],
+      }),
+    );
+    expect(audit.resolverTrainingSeed).toEqual(
+      expect.objectContaining({
+        adapterPath,
+        passed: 72,
+        total: 72,
+        parseRecoveredCount: 1,
+      }),
+    );
+  });
+
   it("keeps adapter mismatch ambiguous instead of safe", () => {
     const audit = buildPromotionAudit({
       plan: {

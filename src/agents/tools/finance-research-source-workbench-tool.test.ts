@@ -260,6 +260,8 @@ This article lays out a bounded research method using funding spreads, liquidity
         ok: true,
         sourceFamily: "official_macro_data",
         collectionPosture: "manual_only",
+        extractionToolTarget: null,
+        nextReviewTargetAfterManualCapture: "data_provenance_quality_review_input",
       }),
     );
 
@@ -278,6 +280,48 @@ This article lays out a bounded research method using funding spreads, liquidity
         collectionPosture: "manual_only",
       }),
     );
+  });
+
+  it("routes local structured market data snapshots to data provenance review instead of article extraction", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-research-workbench-");
+    await seedFile(
+      workspaceDir,
+      "memory/data/qqq-holdings-snapshot.csv",
+      [
+        "vendor,timestamp,field_definition,symbol,weight,currency,adjustment_note",
+        "Issuer public holdings page,2026-05-13T13:30:00Z,ETF holding weight percent,NVDA,8.12,USD,issuer published portfolio snapshot",
+        "Issuer public holdings page,2026-05-13T13:30:00Z,ETF holding weight percent,AAPL,7.25,USD,issuer published portfolio snapshot",
+      ].join("\n"),
+    );
+    const tool = createFinanceResearchSourceWorkbenchTool({ workspaceDir });
+
+    const result = await tool.execute("structured-data-snapshot", {
+      sourceName: "QQQ holdings market data snapshot",
+      sourceType: "market_data_snapshot_source",
+      localFilePath: "memory/data/qqq-holdings-snapshot.csv",
+      title: "QQQ holdings snapshot",
+      retrievalNotes:
+        "Operator saved a local ETF holdings market data snapshot with explicit vendor, timestamp, field definition, currency, and adjustment notes for provenance review.",
+    });
+
+    expect(detailsOf(result)).toEqual(
+      expect.objectContaining({
+        ok: true,
+        sourceFamily: "market_data_snapshot",
+        sourceType: "market_data_snapshot_source",
+        retrievalMethod: "local_file",
+        collectionPosture: "allowed",
+        extractionReadyNow: false,
+        dataProvenanceReviewReadyNow: true,
+        extractionToolTarget: null,
+        nextReviewTarget: "data_provenance_quality_review_input",
+        nextReviewTargetAfterManualCapture: "data_provenance_quality_review_input",
+      }),
+    );
+
+    const artifact = await readArtifact(workspaceDir, detailsOf(result).artifactPath);
+    expect(artifact).toContain("**Next Review Target**: data_provenance_quality_review_input");
+    expect(artifact).toContain("vendor,timestamp,field_definition");
   });
 
   it("keeps WeChat/public-account sources manual_only unless a safe public feed is explicitly registered", async () => {

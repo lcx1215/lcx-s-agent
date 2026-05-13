@@ -161,6 +161,40 @@ describe("module learning pipeline plan tool", () => {
     }
   });
 
+  it("routes data provenance module learning through structured data review targets", async () => {
+    const tool = createModuleLearningPipelinePlanTool();
+
+    const result = await tool.execute("macro-data-provenance-plan", {
+      targetModule: "data_provenance_quality",
+      sourceUrlOrPath: "https://fred.stlouisfed.org/series/CPIAUCSL",
+      actualReadingScope:
+        "Read the FRED series notes, units, frequency, timestamp, revision policy, and field-definition notes.",
+      existingArtifactPaths: ["memory/research-sources/fred-cpi-series.md"],
+      learningIntent:
+        "Learn a macro data provenance review rule for timestamped official data without inventing current market facts.",
+    });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        targetModule: "data_provenance_quality",
+        requiredInputs: expect.arrayContaining([
+          "source_timestamp_and_vendor",
+          "currency_adjustment_and_update_frequency_policy",
+        ]),
+        financePipelineArgs: expect.objectContaining({
+          sourceType: "official_data_source",
+          expectedNextReviewTarget: "data_provenance_quality_review_input",
+          allowedActionAuthority: "research_only",
+        }),
+        safetyBoundaries: expect.arrayContaining([
+          "no_unverified_current_market_data",
+          "source_timestamp_required",
+        ]),
+      }),
+    );
+  });
+
   it("writes a receipt and upgrades status when evidence paths are present", async () => {
     const workspaceDir = await makeTempWorkspace("openclaw-module-learning-plan-");
     const tool = createModuleLearningPipelinePlanTool({ workspaceDir });

@@ -43,7 +43,20 @@ const FORBIDDEN_AUTHORITY_PATTERNS = [
   /rewrite doctrine card/iu,
 ];
 
+const STRUCTURED_DATA_QUALITY_PATTERN =
+  /timestamp|source timestamp|vendor|field definition|field[- ]?definition|currency|adjustment|adjusted|update cadence|update frequency|字段|时间戳|供应商|币种|复权|更新频率|异常值|口径/iu;
+
+export const FINANCE_STRUCTURED_DATA_SOURCE_TYPES = [
+  "official_data_source",
+  "market_data_snapshot_source",
+  "vendor_data_source",
+] as const;
+
 type FinanceArticleSourceEntry = FinanceArticleSourceRegistryArtifact["sources"][number];
+
+export function isFinanceStructuredDataSourceType(sourceType: string): boolean {
+  return (FINANCE_STRUCTURED_DATA_SOURCE_TYPES as readonly string[]).includes(sourceType);
+}
 
 export function ensureNoForbiddenFinanceArticleSourceSignals(params: {
   texts: string[];
@@ -102,6 +115,19 @@ export function validateFinanceArticleSourceEntry(entry: FinanceArticleSourceEnt
       `allowedCollectionMethods must stay inside the safe collection contract: ${FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS.join(", ")}`,
     );
   }
+  if (isFinanceStructuredDataSourceType(entry.sourceType)) {
+    const qualityNotes = [
+      entry.complianceNotes,
+      entry.rateLimitNotes,
+      entry.freshnessExpectation,
+      entry.reliabilityNotes,
+    ].join("\n");
+    if (!STRUCTURED_DATA_QUALITY_PATTERN.test(qualityNotes)) {
+      throw new ToolInputError(
+        "structured finance data sources must state timestamp, vendor, field-definition, currency, adjustment, update-cadence, or data-quality notes",
+      );
+    }
+  }
 }
 
 export function evaluateFinanceArticleSourcePreflight(params: {
@@ -121,6 +147,44 @@ export function evaluateFinanceArticleSourcePreflight(params: {
   }
 
   const methods = requestedMethod ? [requestedMethod] : params.entry.allowedCollectionMethods;
+
+  if (isFinanceStructuredDataSourceType(params.entry.sourceType)) {
+    if (methods.includes("local_file")) {
+      return {
+        status: "allowed" as const,
+        reason: "structured_data_local_snapshot_is_allowed_for_provenance_review",
+        extractionToolTarget: params.entry.extractionTarget,
+      };
+    }
+    if (methods.includes("manual_paste")) {
+      return {
+        status: "manual_only" as const,
+        reason: "structured_data_manual_snapshot_requires_provenance_review",
+        extractionToolTarget: params.entry.extractionTarget,
+      };
+    }
+    if (
+      methods.includes("user_provided_url") ||
+      methods.includes("browser_assisted_manual_collection")
+    ) {
+      return {
+        status: "manual_only" as const,
+        reason: "structured_data_url_requires_manual_snapshot_capture",
+        extractionToolTarget: null,
+      };
+    }
+    if (methods.includes("rss_or_public_feed_if_available")) {
+      return {
+        status: params.entry.isPubliclyAccessible ? ("allowed" as const) : ("blocked" as const),
+        reason: params.entry.isPubliclyAccessible
+          ? "structured_public_feed_collection_is_allowed_for_provenance_review"
+          : "structured_data_public_feed_sources_must_be_marked_public",
+        extractionToolTarget: params.entry.isPubliclyAccessible
+          ? params.entry.extractionTarget
+          : null,
+      };
+    }
+  }
 
   if (
     params.entry.sourceType === "wechat_public_account_source" &&

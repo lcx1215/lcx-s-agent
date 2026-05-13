@@ -245,10 +245,16 @@ function buildPromotionLane(auditCommand: CommandResult): ExamLane {
   const selectedEval = asRecord(audit.selectedEval);
   const decision = stringValue(audit.promotionDecision, "unknown");
   const bugs = asArray(audit.realBugsFound);
+  const status =
+    decision === "safe"
+      ? "pass"
+      : decision === "hold" || decision === "ambiguous"
+        ? "warn"
+        : "fail";
   return {
     lane: "qwen_adapter_promotion",
-    status: decision === "safe" ? "pass" : decision === "ambiguous" ? "warn" : "fail",
-    severity: decision === "safe" ? "info" : decision === "ambiguous" ? "P2" : "P1",
+    status,
+    severity: status === "pass" ? "info" : status === "warn" ? "P2" : "P1",
     boundary: stringValue(audit.boundary, "dev_local_brain_promotion_audit_only"),
     evidence: [
       `promotionDecision=${decision}`,
@@ -262,11 +268,15 @@ function buildPromotionLane(auditCommand: CommandResult): ExamLane {
     issue:
       decision === "safe"
         ? "当前 dev 证据支持选择 latest-passing adapter；这不是 live 证明，也不是强行 promotion。"
-        : "当前 adapter 选择不能安全升级，原因在 realBugsFound 里。",
+        : decision === "hold"
+          ? "当前训练种子可用于续训，但最新 hardened eval 没放行 strict promotion；这是正确暂停，不是 resolver 崩坏。"
+          : "当前 adapter 选择不能安全升级，原因在 realBugsFound 里。",
     nextAction:
       decision === "safe"
         ? "继续保留 promotion audit，后续只在同等 hardened eval 通过时升级。"
-        : "先修 resolver/eval/module boundary 的具体 blocker，不要手动提升 adapter。",
+        : decision === "hold"
+          ? "继续 failure-focus teacher 和 Qwen 训练，等同等 hardened eval 通过后再 promotion。"
+          : "先修 resolver/eval/module boundary 的具体 blocker，不要手动提升 adapter。",
   };
 }
 

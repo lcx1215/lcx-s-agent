@@ -101,6 +101,7 @@ describe("module learning pipeline review tool", () => {
           evalAbsorbed: 1,
           weakModuleLearning: 1,
           boundaryViolations: 0,
+          structuredDataReviewTargetViolations: 0,
         },
         weakModuleLearning: expect.arrayContaining([
           expect.objectContaining({
@@ -177,6 +178,10 @@ describe("module learning pipeline review tool", () => {
           "Apply data provenance learning to a fresh conflicting macro data ask.",
         keepDownrankDiscardDecision: "keep",
         missingEvidence: [],
+        financePipelineArgs: {
+          sourceType: "official_data_source",
+          expectedNextReviewTarget: "data_provenance_quality_review_input",
+        },
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -200,6 +205,7 @@ describe("module learning pipeline review tool", () => {
           evalAbsorbed: 1,
           weakModuleLearning: 0,
           boundaryViolations: 0,
+          structuredDataReviewTargetViolations: 0,
         }),
         separationContract: expect.objectContaining({
           languageCorpusUntouched: true,
@@ -207,6 +213,63 @@ describe("module learning pipeline review tool", () => {
           liveTouched: false,
           providerConfigTouched: false,
         }),
+      }),
+    );
+  });
+
+  it("flags data provenance receipts that skip the structured data review target", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-module-learning-review-");
+    await seedJson(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-12/bad-data.json",
+      {
+        boundary: "dev_module_learning_pipeline_plan",
+        targetModule: "data_provenance_quality",
+        moduleFamily: "finance_research",
+        status: "eval_absorbed",
+        learningIntent: "Learn source provenance but accidentally use article extraction.",
+        sourceUrlOrPath: "memory/research-sources/data.md",
+        actualReadingScope: "Read timestamp, vendor, and field definition sections.",
+        sourceRegistryRecordPath: "memory/research-sources/data.md",
+        retrievalReceiptPath: "memory/finance-learning-retrieval-receipts/2026-05-12/data.json",
+        applicationValidationReceiptPath:
+          "memory/finance-learning-apply-usage-receipts/2026-05-12/data.json",
+        trainingOrEvalAbsorptionEvidencePath: "ops/local-brain/eval/data.json",
+        freshAdjacentApplicationTask: "Apply to a fresh conflicting macro data ask.",
+        keepDownrankDiscardDecision: "keep",
+        missingEvidence: [],
+        financePipelineArgs: {
+          sourceType: "manual_article_source",
+          expectedNextReviewTarget: "finance_article_extract_capability_input",
+        },
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      },
+    );
+    const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
+
+    const result = await tool.execute("review", {
+      dateKey: "2026-05-12",
+      targetModule: "data_provenance_quality",
+      writeReview: false,
+    });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        counts: expect.objectContaining({
+          validReceipts: 1,
+          evalAbsorbed: 1,
+          weakModuleLearning: 1,
+          structuredDataReviewTargetViolations: 1,
+        }),
+        weakModuleLearning: [
+          expect.objectContaining({
+            targetModule: "data_provenance_quality",
+            failedReason: "data_provenance_receipt_missing_structured_review_target",
+          }),
+        ],
       }),
     );
   });

@@ -16,6 +16,7 @@ type CliOptions = {
 };
 
 type JsonRecord = Record<string, unknown>;
+type PromotionDecision = "safe" | "hold" | "ambiguous" | "rejected";
 
 const execFileAsync = promisify(execFile);
 const HOME = process.env.HOME ?? os.homedir();
@@ -149,7 +150,11 @@ export function buildPromotionAudit(params: {
   const moduleLearningReview = asRecord(params.plan.moduleLearningReview);
   const moduleLearningCounts = asRecord(moduleLearningReview.counts);
   const resolverDetails = params.resolver.ok ? params.resolver.details : {};
-  const selectedAdapter = stringValue(resolverDetails.selectedAdapter);
+  const selectedAdapter =
+    stringValue(resolverDetails.selectedAdapter) ??
+    stringValue(resolverDetails.trainingSeedAdapter) ??
+    stringValue(resolverDetails.trainingResumeAdapter);
+  const resolverTrainingSeed = asRecord(resolverDetails.trainingSeed);
   const latestPassingEvalAdapter = stringValue(latestPassingEval.adapterPath);
   const selectedEval =
     Boolean(selectedAdapter) &&
@@ -178,7 +183,7 @@ export function buildPromotionAudit(params: {
     ? params.plan.activeProcesses
     : [];
 
-  let promotionDecision: "safe" | "ambiguous" | "rejected";
+  let promotionDecision: PromotionDecision;
   const realBugsFound: string[] = [];
   if (!params.resolver.ok) {
     promotionDecision = "rejected";
@@ -186,19 +191,18 @@ export function buildPromotionAudit(params: {
   } else if (!selectedAdapter) {
     promotionDecision = "rejected";
     realBugsFound.push("no_selected_latest_passing_adapter");
+  } else if (boundaryViolations > 0) {
+    promotionDecision = "ambiguous";
+    realBugsFound.push("module_learning_boundary_violation");
   } else if (
     !selectedEvalPromotionReady ||
     failedCaseIds.length > 0 ||
     parseErrorCaseIds.length > 0
   ) {
-    promotionDecision = "rejected";
-    realBugsFound.push("selected_eval_not_promotion_ready");
+    promotionDecision = "hold";
   } else if (!resolverMatchesLatestEval && !resolverMatchesLatestPassingEval) {
     promotionDecision = "ambiguous";
     realBugsFound.push("resolver_adapter_differs_from_latest_passing_eval_adapter");
-  } else if (boundaryViolations > 0) {
-    promotionDecision = "ambiguous";
-    realBugsFound.push("module_learning_boundary_violation");
   } else {
     promotionDecision = "safe";
   }
@@ -224,6 +228,15 @@ export function buildPromotionAudit(params: {
     resolverStatus: params.resolver.ok ? "ok" : "failed",
     resolverError: params.resolver.ok ? undefined : params.resolver.error,
     resolverSelectionMode: stringValue(resolverDetails.selectionMode),
+    resolverTrainingSeed: {
+      adapterPath: stringValue(resolverTrainingSeed.adapterPath),
+      at: stringValue(resolverTrainingSeed.at),
+      passed: numberValue(resolverTrainingSeed.passed),
+      total: numberValue(resolverTrainingSeed.total),
+      passRate: numberValue(resolverTrainingSeed.passRate),
+      parseRecoveredCount: numberValue(resolverTrainingSeed.parseRecoveredCount),
+      source: stringValue(resolverTrainingSeed.source),
+    },
     latestEval: {
       at: stringValue(latestEval.at),
       name: stringValue(latestEval.name),
@@ -274,7 +287,9 @@ export function buildPromotionAudit(params: {
     suggestedNewEvalCase:
       promotionDecision === "safe"
         ? "keep a lightweight adapter-backed regression for module-learning-review and strict JSON parser stability"
-        : "rerun hardened eval after the named blocker is repaired; do not promote from ambiguous or rejected audit state",
+        : promotionDecision === "hold"
+          ? "keep the current training seed for resume only; continue failure-focus teacher and rerun hardened eval before any strict promotion"
+          : "rerun hardened eval after the named blocker is repaired; do not promote from ambiguous or rejected audit state",
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

@@ -125,7 +125,7 @@ function buildMemorySection(params: {
       : []),
     ...(params.availableTools.has("finance_research_source_workbench")
       ? [
-          "When a finance research source arrives as pasted text, a local file, or a safe manual URL reference and needs to become a local audit artifact before extraction, use finance_research_source_workbench. It runs the collection preflight, preserves source metadata for audit, never fetches remote content automatically, and returns finance_article_extract_capability_input as the next step when the posture is safe.",
+          "When a finance research source or structured market/macro data source arrives as pasted text, a local file, or a safe manual URL reference and needs to become a local audit artifact, use finance_research_source_workbench. It runs the collection preflight, preserves source metadata for audit, never fetches remote content automatically, returns finance_article_extract_capability_input for article learning, and returns data_provenance_quality_review_input for structured data snapshots before sourced numbers are used.",
         ]
       : []),
     ...(params.availableTools.has("finance_article_extract_capability_input")
@@ -697,7 +697,7 @@ export function buildAgentSystemPrompt(params: {
     github_project_capability_intake:
       "Map one GitHub project feature into an LCX Agent capability family, existing internal embryos, and a bounded adoption decision; optionally writes a receipt and never fetches remote content, installs dependencies, executes repo code, touches live surfaces, or mutates protected memory",
     finance_research_source_workbench:
-      "Normalize safe finance research sources from manual paste, local files, or manual URL references into local audit artifacts, preserve source metadata, and return finance_article_extract_capability_input as the next step without fetching remote content automatically",
+      "Normalize safe finance research sources or structured finance data snapshots from manual paste, local files, or manual URL references into local audit artifacts, preserve source metadata, and return either finance_article_extract_capability_input or data_provenance_quality_review_input without fetching remote content automatically",
     finance_article_extract_capability_input:
       "Extract one attach-ready finance learning capability payload from a local txt, markdown, or simple html article artifact; read-only and never creates trading rules, auto-promotion, or doctrine mutation",
     finance_promotion_candidates:

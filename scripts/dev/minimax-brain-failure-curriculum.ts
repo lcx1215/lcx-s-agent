@@ -143,6 +143,14 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
       "targeted repair for current market data freshness boundary; no current-market claims without timestamped evidence.",
   },
   {
+    caseId: "data_provenance_quality_gate",
+    priority: 97,
+    userMessage:
+      "训练本地大脑遇到价格、成交量、宏观序列、ETF 权重、期权 IV 或 vendor 数据冲突时，不能把结构化数据当文章抽取。必须先走 source registry，再进入 data_provenance_quality_review_input，核对 vendor、source timestamp、field definition、currency、adjustment、update cadence、异常值和冲突优先级；没过 review 前所有数字都标 unverified。",
+    sourceSummary:
+      "targeted repair for structured data provenance routing; prevents market or macro data snapshots from bypassing data_provenance_quality_review_input into article extraction.",
+  },
+  {
     caseId: "rate_shock_duration_equity_chain",
     priority: 96,
     userMessage:

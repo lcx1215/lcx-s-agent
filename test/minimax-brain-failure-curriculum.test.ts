@@ -128,6 +128,36 @@ describe("minimax brain failure curriculum", () => {
     expect(promptText).toContain("数据供应商冲突");
   });
 
+  it("teaches structured data provenance failures to use the data review target", async () => {
+    const logPath = await makeGuardLog([
+      {
+        at: "2026-05-13T15:20:00.000Z",
+        event: "step_non_passing",
+        name: "candidate_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r12",
+          summary: {
+            passed: 75,
+            total: 76,
+            passRate: 0.987,
+            failedCaseIds: ["data_provenance_quality_gate"],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+
+    const prompts = await buildFailureCurriculumPrompts({
+      guardLogPath: logPath,
+      maxPrompts: 1,
+      startIndex: 0,
+    });
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].userMessage).toContain("data_provenance_quality_review_input");
+    expect(prompts[0].userMessage).toContain("不能把结构化数据当文章抽取");
+  });
+
   it("returns no prompts when no failed eval evidence exists", async () => {
     const logPath = await makeGuardLog([
       {
