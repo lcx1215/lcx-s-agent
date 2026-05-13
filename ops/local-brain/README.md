@@ -396,14 +396,18 @@ Some useful skills are not LCX-specific, but future coding windows should still 
 /Users/liuchengxu/.codex/skills/semantic-family-miner/SKILL.md
 /Users/liuchengxu/.codex/skills/security-best-practices/SKILL.md
 /Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md
+/Users/liuchengxu/.codex/skills/security-ownership-map/SKILL.md
 /Users/liuchengxu/.codex/skills/playwright/SKILL.md
 /Users/liuchengxu/.codex/skills/playwright-interactive/SKILL.md
+/Users/liuchengxu/.codex/skills/jupyter-notebook/SKILL.md
 /Users/liuchengxu/.codex/skills/gh-fix-ci/SKILL.md
 /Users/liuchengxu/.codex/skills/gh-address-comments/SKILL.md
 /Users/liuchengxu/.codex/skills/yeet/SKILL.md
 /Users/liuchengxu/.codex/skills/pdf/SKILL.md
 /Users/liuchengxu/.codex/skills/doc/SKILL.md
 /Users/liuchengxu/.codex/skills/transcribe/SKILL.md
+/Users/liuchengxu/.codex/skills/screenshot/SKILL.md
+/Users/liuchengxu/.codex/skills/self-improving-for-codex/SKILL.md
 ```
 
 Use these as support tools, not as LCX doctrine:
@@ -413,10 +417,24 @@ Use these as support tools, not as LCX doctrine:
 - `live-sidecar-sync-doctor`: dev/live-sidecar drift checks and bounded sync planning.
 - `repo-migration-cleaner`: OpenClaw/lobster to LCX naming cleanup.
 - `semantic-family-miner`: batch-mining historical semantics for regression only, not as the main natural-language brain.
-- `security-best-practices` and `security-threat-model`: security review and trust-boundary checks.
+- `security-best-practices`, `security-threat-model`, and `security-ownership-map`: security review, trust-boundary checks, and security ownership topology when explicitly requested.
 - `playwright` and `playwright-interactive`: browser verification for UI or localhost work.
+- `jupyter-notebook`: finance research, data experiments, and tutorials that need a notebook artifact; do not treat notebooks as trading execution.
 - `gh-fix-ci`, `gh-address-comments`, and `yeet`: GitHub/CI/publish workflows when explicitly needed.
 - `pdf`, `doc`, and `transcribe`: local document and audio workflows.
+- `screenshot`: desktop or Lark/Feishu visual evidence capture when the user asks or when a visible UI proof is needed.
+- `self-improving-for-codex`: Codex-global memory loop maintenance only; do not use it to replace LCX Agent's repo-local operator, doctor, memory, or training receipts.
+
+Keep deployment, external service, and content-production skills such as
+`cloudflare-deploy`, `netlify-deploy`, `render-deploy`, `vercel-deploy`,
+`notion-*`, `linear`, `sentry`, `figma`, `imagegen`, `speech`, and platform
+publishing workflows in Codex global scope unless the user explicitly asks for
+that tool. They are not default LCX Agent runtime capabilities and must not
+become finance-brain, Lark, provider, or live-sender authority.
+
+Do not migrate `chronicle` into LCX Agent. Treat it as a Codex-session
+observation aid with sensitive context boundaries, not as durable agent memory
+or runtime workflow.
 
 Plugin-provided skills may also appear in a Codex session, for example Hugging Face, GitHub, browser, or web-app skills. Treat those as session capabilities, not repo-pinned guarantees. If an external skill is missing, use `skill-harvester` to evaluate and install it in an isolated folder before relying on it.
 

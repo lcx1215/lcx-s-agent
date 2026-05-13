@@ -124,6 +124,7 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 11. 用压缩上下文恢复考试确认新 Codex/Claude Code 窗口不靠聊天历史也能恢复全局：本地 operator latest state 必须写入 `mindModel` 和 `contextRecovery` 摘要。
 12. Mind Model 还要检查 invariant registry：小 workflow、内容口径、训练重叠、临时 HOME 漂移、stored-only learning、未验证市场数据、dev/live 文案这些容易反复犯的错，都必须有头部规则、脚下入口、测试或 receipt 证据和边界字段。
 13. 用 LCX Agent Flow Graph 检查 task waterflow：任务进来以后不能 wrong-flow、漏 filter valve、跳过 receipt、无限回流或把 dev 证据升级成 live-user-seen；每类任务只流过该流过的模块，但必须经过该经过的过滤阀和 bounded feedback。
+14. 本机 Codex skills 分层使用：LCX 核心 skills 进入本仓 runbook，通用开发/部署/外部服务 skills 留在 Codex 全局按需调用；本地大脑只学习 `skill_pattern_distillation` 这种可复用工作流，不把每个 skill 原文或外部服务权限吞进 runtime。
 
 上帝视角检查命令：
 

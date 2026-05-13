@@ -38,6 +38,11 @@ Use the matching skill before acting:
 - `l4-regression-batterer` only as a legacy compatibility alias that should forward to the L5 battery.
 - `skill-harvester` for evaluating and isolating new external/local skills.
 
+Keep skill placement explicit: core LCX skills guide this repo's operator work;
+general Codex skills stay global support tools unless the runbook classifies
+them as auxiliary. LCX Agent should learn reusable workflow patterns through
+`skill_pattern_distillation`, not ingest every Codex skill as runtime authority.
+
 Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.
 
 ## Context-Limited Continuity Doctrine
