@@ -7,6 +7,12 @@ type FlowNodeId =
   | "intent_classifier"
   | "local_brain_planner"
   | "finance_research_modules"
+  | "finance_data_gateway"
+  | "primary_market_data_provider"
+  | "cross_check_market_data_provider"
+  | "official_reference_data_provider"
+  | "normalized_data_snapshot"
+  | "data_provenance_quality_review"
   | "source_registry"
   | "finance_learning_memory"
   | "causal_map"
@@ -95,6 +101,10 @@ type FlowFilterId =
   | "provider_evidence_required"
   | "no_provider_config_change"
   | "source_conflict_visible"
+  | "fresh_timestamp_required"
+  | "field_definition_required"
+  | "three_source_reconciliation_required"
+  | "conflicted_data_blocks_conclusion"
   | "memory_write_freshness_gate"
   | "correction_note_required"
   | "prior_work_reuse_required"
@@ -145,6 +155,12 @@ const NODE_IDS: FlowNodeId[] = [
   "intent_classifier",
   "local_brain_planner",
   "finance_research_modules",
+  "finance_data_gateway",
+  "primary_market_data_provider",
+  "cross_check_market_data_provider",
+  "official_reference_data_provider",
+  "normalized_data_snapshot",
+  "data_provenance_quality_review",
   "source_registry",
   "finance_learning_memory",
   "causal_map",
@@ -234,6 +250,10 @@ const FILTER_IDS: FlowFilterId[] = [
   "provider_evidence_required",
   "no_provider_config_change",
   "source_conflict_visible",
+  "fresh_timestamp_required",
+  "field_definition_required",
+  "three_source_reconciliation_required",
+  "conflicted_data_blocks_conclusion",
   "memory_write_freshness_gate",
   "correction_note_required",
   "prior_work_reuse_required",
@@ -554,6 +574,50 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     receipts: ["correction_note", "stale_memory_rule_downrank", "review_panel"],
   },
   {
+    id: "finance_data_gateway_waterflow",
+    family: "timestamped_finance_data_reconciliation",
+    objective:
+      "Finance answers that use current, priced, fundamental, macro, ETF, options, or vendor numbers must pass through one data gateway that preserves timestamps, field definitions, and provider conflicts before Qwen, Lark, or memory can use the numbers.",
+    start: "finance_research_modules",
+    end: "control_room_summary",
+    requiredNodes: [
+      "finance_research_modules",
+      "finance_data_gateway",
+      "primary_market_data_provider",
+      "cross_check_market_data_provider",
+      "official_reference_data_provider",
+      "normalized_data_snapshot",
+      "data_provenance_quality_review",
+      "causal_map",
+      "review_panel",
+      "control_room_summary",
+    ],
+    requiredFilters: [
+      "fresh_timestamp_required",
+      "field_definition_required",
+      "three_source_reconciliation_required",
+      "conflicted_data_blocks_conclusion",
+      "source_evidence_gate",
+      "source_conflict_visible",
+      "no_unverified_current_market_data",
+      "no_trade_advice",
+    ],
+    edges: [
+      ["finance_research_modules", "finance_data_gateway"],
+      ["primary_market_data_provider", "finance_data_gateway"],
+      ["cross_check_market_data_provider", "finance_data_gateway"],
+      ["official_reference_data_provider", "finance_data_gateway"],
+      ["finance_data_gateway", "normalized_data_snapshot"],
+      ["finance_data_gateway", "data_provenance_quality_review"],
+      ["normalized_data_snapshot", "causal_map"],
+      ["data_provenance_quality_review", "review_panel"],
+      ["causal_map", "review_panel"],
+      ["review_panel", "control_room_summary"],
+    ],
+    feedbackEdges: [["review_panel", "finance_data_gateway"]],
+    receipts: ["finance-data-gateway", "data_provenance_quality_review", "control_room_summary"],
+  },
+  {
     id: "similar_engineering_consolidation_waterflow",
     family: "same_philosophy_engineering_merge",
     objective:
@@ -676,6 +740,11 @@ const ILLEGAL_EDGES: Array<[string, string, string]> = [
     "source registry alone is not learned memory without the module-learning flow",
   ],
   [
+    "finance_data_gateway",
+    "visible_reply",
+    "current finance data must pass normalized snapshot, causal map, review, and summary before visible reply",
+  ],
+  [
     "dev_change",
     "flow_graph",
     "small dev changes must pass change-impact and prior-work search first",
@@ -751,6 +820,24 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     sameClassTerms: ["skill_pattern_distillation", "agent_workflow_memory", "license"],
     mergeFilters: ["license_scope_required", "untrusted_source_isolation"],
   },
+  {
+    id: "finance_data_quality_cluster",
+    philosophy:
+      "market data APIs, fundamentals APIs, official sources, and model-visible finance numbers are one provenance contract",
+    ownerScenario: "finance_data_gateway_waterflow",
+    ownerNode: "finance_data_gateway",
+    sameClassTerms: [
+      "finance_data_gateway_snapshot",
+      "data_provenance_quality",
+      "fresh_market_data",
+    ],
+    mergeFilters: [
+      "fresh_timestamp_required",
+      "field_definition_required",
+      "three_source_reconciliation_required",
+      "conflicted_data_blocks_conclusion",
+    ],
+  },
 ];
 
 const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
@@ -761,6 +848,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-system-doctor.ts",
+    "scripts/dev/finance-data-gateway-smoke.ts",
     "scripts/dev/local-brain-training-plan.ts",
     "scripts/dev/local-brain-distill-eval.ts",
     "scripts/dev/minimax-brain-training-guard.ts",
@@ -769,6 +857,8 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/module-learning-pipeline-review.ts",
     "scripts/dev/lcx-promote-live.ts",
     "src/commands/capabilities/lark-loop-diagnose.ts",
+    "src/agents/finance-data-gateway.ts",
+    "src/agents/tools/finance-data-gateway-tool.ts",
   ],
   proof: [
     "scripts/dev/lcx-flow-graph.ts",
@@ -948,6 +1038,8 @@ function feedbackCheck(): FlowCheck {
           "retrieval_apply_eval_review_required",
           "fresh_operator_state_required",
           "source_evidence_gate",
+          "three_source_reconciliation_required",
+          "conflicted_data_blocks_conclusion",
           "reply_flow_audit_required",
           "provider_evidence_required",
           "same_philosophy_merge_required",

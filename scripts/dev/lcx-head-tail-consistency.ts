@@ -45,8 +45,12 @@ const TAIL_SURFACE_FILES = [
   "scripts/dev/lcx-mind-model.ts",
   "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
+  "scripts/dev/finance-data-gateway-smoke.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
+  "src/agents/finance-brain-orchestration.ts",
+  "src/agents/finance-data-gateway.ts",
+  "src/agents/tools/finance-data-gateway-tool.ts",
   "src/commands/capabilities/lark-loop-diagnose.ts",
 ] as const;
 
@@ -68,6 +72,8 @@ const MODULE_LEARNING_TARGET_EXEMPTIONS: Record<string, string> = {
     "causal_map is an orchestration primitive checked through eval and review-panel contracts",
   finance_learning_memory:
     "finance_learning_memory is the retrieval/apply substrate checked through finance-learning receipts",
+  finance_data_gateway:
+    "finance_data_gateway is the shared source-normalization substrate checked through flow graph, tool tests, and data provenance contracts",
   source_registry:
     "source_registry is the source-intake substrate required by every module-learning target",
   eval_harness_design:
@@ -98,6 +104,15 @@ const CRITICAL_MODULE_CONTRACTS: CriticalModuleContract[] = [
     id: "data_provenance_quality",
     headTerms: ["data_provenance_quality", "data provenance"],
     tailTerms: ["data_provenance_quality", "data_provenance_quality_gate"],
+  },
+  {
+    id: "finance_data_gateway",
+    headTerms: ["finance_data_gateway_snapshot", "金融数据网关"],
+    tailTerms: [
+      "finance_data_gateway_snapshot",
+      "three_source_reconciliation_required",
+      "conflicted_data_blocks_conclusion",
+    ],
   },
   {
     id: "research_artifact_qc",

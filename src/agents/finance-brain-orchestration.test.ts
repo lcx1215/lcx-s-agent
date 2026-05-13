@@ -28,6 +28,7 @@ describe("planFinanceBrainOrchestration", () => {
       expect.arrayContaining([
         "finance_framework_core_inspect",
         "finance_learning_capability_apply",
+        "finance_data_gateway_snapshot",
         "quant_math",
         "review_tier",
         "review_panel",
@@ -76,6 +77,7 @@ describe("planFinanceBrainOrchestration", () => {
       expect.arrayContaining([
         "finance_framework_core_inspect",
         "finance_framework_fx_dollar_producer",
+        "finance_data_gateway_snapshot",
         "finance_learning_capability_apply",
         "review_panel",
       ]),

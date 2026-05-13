@@ -133,7 +133,9 @@ node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 ```
 
-它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图至少覆盖 12 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock。
+它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图至少覆盖 13 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock、金融数据网关对账。
+
+金融数据不能散落在各模块里直接给 Qwen 或 Lark 用。凡是当前行情、价格、财报、宏观、ETF、期权、指数权重、vendor 字段、仓位风险里会出现数字的路径，先走 `finance_data_gateway_snapshot`：每个字段必须带 provider role、source timestamp、timezone、field definition、unit/currency、adjusted status、source URL/artifact；主源、交叉校验源和官方/issuer 慢源不一致时进入 `data_provenance_quality`，不能硬写结论。
 
 ## 系统提升和问题族修复纪律
 

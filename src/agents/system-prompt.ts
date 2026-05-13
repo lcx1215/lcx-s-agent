@@ -82,6 +82,11 @@ function buildMemorySection(params: {
           "When you need to inspect the current shared finance framework contract across domains or for one exact domain, use finance_framework_core_inspect instead of opening the framework artifact manually.",
         ]
       : []),
+    ...(params.availableTools.has("finance_data_gateway_snapshot")
+      ? [
+          "When a finance answer needs current, timestamped, priced, fundamental, macro, ETF, options, or vendor-sourced numbers, use finance_data_gateway_snapshot before drafting numeric conclusions. It normalizes primary, cross-check, and official/issuer evidence into one research-only snapshot, makes source timestamp, field definition, currency/unit, adjusted status, freshness, and provider conflicts visible, and blocks or routes conflicted data to data_provenance_quality review instead of letting the model guess.",
+        ]
+      : []),
     ...(params.availableTools.has("finance_article_source_collection_preflight")
       ? [
           "When a finance article source or collection request needs compliance screening before any collection attempt, use finance_article_source_collection_preflight. It returns allowed, blocked, or manual_only and only points to finance_article_extract_capability_input when safe local/manual collection is allowed.",
@@ -676,6 +681,8 @@ export function buildAgentSystemPrompt(params: {
       "Create or refresh one bounded finance framework core entry for a single domain; writes shared finance cognition only and never grants execution authority",
     finance_framework_core_inspect:
       "Inspect the durable finance framework core contract across domains or for one exact domain; read-only",
+    finance_data_gateway_snapshot:
+      "Normalize one research-only finance data snapshot from primary, cross-check, and official/issuer evidence; requires timestamps, field definitions, units/currency, freshness, and conflict visibility before sourced numbers are used",
     finance_article_source_registry_record:
       "Create or refresh one retained finance article source registry entry using only safe collection methods; never fetches remote content automatically",
     finance_article_source_collection_preflight:
@@ -774,6 +781,7 @@ export function buildAgentSystemPrompt(params: {
     "local_memory_record",
     "finance_framework_core_inspect",
     "finance_framework_core_record",
+    "finance_data_gateway_snapshot",
     "finance_article_source_registry_record",
     "finance_article_source_collection_preflight",
     "finance_article_source_registry_inspect",

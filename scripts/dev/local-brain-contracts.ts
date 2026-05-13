@@ -2222,6 +2222,7 @@ export function hardenLocalBrainPlanForAsk(
       task_family: "current_market_data_research_preflight",
       primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
         "source_registry",
+        "finance_data_gateway",
         "macro_rates_inflation",
         "credit_liquidity",
         "cross_asset_liquidity",
@@ -2236,6 +2237,7 @@ export function hardenLocalBrainPlanForAsk(
       ]),
       required_tools: mergeUnique(arrayValue(safe.required_tools), [
         "source_registry_lookup",
+        "finance_data_gateway_snapshot",
         "fresh_market_data_collection_preflight",
         "artifact_memory_recall",
         "review_panel",

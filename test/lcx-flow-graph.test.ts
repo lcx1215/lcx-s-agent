@@ -66,10 +66,10 @@ describe("LCX flow graph exam", () => {
     );
     expect(payload.summary.failed).toBe(0);
     expect(payload.summary.total).toBeGreaterThanOrEqual(8);
-    expect(payload.summary.scenarios).toBeGreaterThanOrEqual(12);
-    expect(payload.summary.nodes).toBeGreaterThanOrEqual(60);
-    expect(payload.summary.filters).toBeGreaterThanOrEqual(30);
-    expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(5);
+    expect(payload.summary.scenarios).toBeGreaterThanOrEqual(13);
+    expect(payload.summary.nodes).toBeGreaterThanOrEqual(70);
+    expect(payload.summary.filters).toBeGreaterThanOrEqual(35);
+    expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(6);
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "flow_graph_integrity", ok: true }),
@@ -134,6 +134,15 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "finance_data_gateway_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "fresh_timestamp_required",
+            "field_definition_required",
+            "three_source_reconciliation_required",
+            "conflicted_data_blocks_conclusion",
+          ]),
+        }),
+        expect.objectContaining({
           id: "similar_engineering_consolidation_waterflow",
           requiredFilters: expect.arrayContaining([
             "prior_work_reuse_required",
@@ -171,6 +180,14 @@ describe("LCX flow graph exam", () => {
           id: "learning_internalization_cluster",
           ownerScenario: "module_learning_internalization_waterflow",
         }),
+        expect.objectContaining({
+          id: "finance_data_quality_cluster",
+          ownerScenario: "finance_data_gateway_waterflow",
+          mergeFilters: expect.arrayContaining([
+            "three_source_reconciliation_required",
+            "conflicted_data_blocks_conclusion",
+          ]),
+        }),
       ]),
     );
   });
@@ -191,8 +208,10 @@ describe("LCX flow graph exam", () => {
     expect(agents).toContain("LCX Agent Flow Graph");
     expect(agents).toContain("wrong-flow");
     expect(agents).toContain("same_philosophy_merge_required");
+    expect(agents).toContain("finance_data_gateway_snapshot");
     expect(runbook).toContain("LCX Agent Flow Graph");
     expect(runbook).toContain("flow_graph_exam");
     expect(runbook).toContain("same-philosophy");
+    expect(runbook).toContain("finance_data_gateway_snapshot");
   });
 });

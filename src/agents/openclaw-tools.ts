@@ -14,6 +14,7 @@ import { createFinanceArticleExtractCapabilityInputTool } from "./tools/finance-
 import { createFinanceArticleSourceCollectionPreflightTool } from "./tools/finance-article-source-collection-preflight-tool.js";
 import { createFinanceArticleSourceRegistryInspectTool } from "./tools/finance-article-source-registry-inspect-tool.js";
 import { createFinanceArticleSourceRegistryRecordTool } from "./tools/finance-article-source-registry-record-tool.js";
+import { createFinanceDataGatewaySnapshotTool } from "./tools/finance-data-gateway-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationStatusTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-status-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-reconciliation-tool.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReviewTool } from "./tools/finance-doctrine-teacher-feedback-candidate-input-review-tool.js";
@@ -295,6 +296,9 @@ export function createOpenClawTools(options?: {
       workspaceDir,
     }),
     createFinanceFrameworkCoreInspectTool({
+      workspaceDir,
+    }),
+    createFinanceDataGatewaySnapshotTool({
       workspaceDir,
     }),
     createFinanceArticleSourceRegistryRecordTool({

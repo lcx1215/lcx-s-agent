@@ -1201,6 +1201,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.primary_modules).toEqual(
       expect.arrayContaining([
         "source_registry",
+        "finance_data_gateway",
         "macro_rates_inflation",
         "credit_liquidity",
         "cross_asset_liquidity",
@@ -1211,6 +1212,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.missing_data).toEqual(
       expect.arrayContaining(["fresh_market_data_snapshot", "source_timestamp_and_vendor"]),
     );
+    expect(plan.required_tools).toContain("finance_data_gateway_snapshot");
     expect(plan.risk_boundaries).toEqual(
       expect.arrayContaining(["no_unverified_current_market_data", "no_trade_advice"]),
     );

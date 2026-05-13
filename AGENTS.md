@@ -160,8 +160,14 @@ shortcuts.
   finance research, module learning, training feedback, dev/live proof,
   compressed-context recovery, local automation digest, Lark visible language,
   provider council evidence, memory correction/downrank, same-philosophy
-  engineering consolidation, external skill/agent distillation, and automation
-  repair locks.
+  engineering consolidation, external skill/agent distillation, automation
+  repair locks, and finance data gateway reconciliation.
+- Finance data waterflow is mandatory before using current, priced,
+  fundamental, macro, ETF, options, or vendor-sourced numbers. It must pass
+  `finance_data_gateway_snapshot` or an equivalent future owner, preserve source
+  timestamp, field definition, unit/currency, adjusted status, provider role,
+  and official/issuer reference scope, and route conflicted values to
+  `data_provenance_quality` instead of letting Qwen or Lark infer numbers.
 - Philosophically similar engineering mechanisms must merge into a named
   consolidation cluster with one owner scenario, one owner node, and merge
   filters such as `same_philosophy_merge_required` and

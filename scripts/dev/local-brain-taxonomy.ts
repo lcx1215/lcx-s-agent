@@ -16,6 +16,7 @@ export const LOCAL_BRAIN_MODULE_TAXONOMY = [
   "company_fundamentals_value",
   "financial_modeling_valuation_qc",
   "thesis_catalyst_lifecycle",
+  "finance_data_gateway",
   "data_provenance_quality",
   "research_artifact_qc",
   "quant_math",
@@ -53,6 +54,7 @@ const LEGACY_TOOL_TO_MODULE: Record<string, LocalBrainModuleId> = {
   doctrine_consistency_doctor: "agent_workflow_memory",
   finance_article_source_collection_preflight: "source_registry",
   finance_article_source_registry_record: "source_registry",
+  finance_data_gateway_snapshot: "finance_data_gateway",
   finance_framework_core_inspect: "source_registry",
   finance_learning_capability_apply: "finance_learning_memory",
   l5_regression_batterer: "eval_harness_design",
@@ -166,6 +168,7 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "Plain-language hidden-complexity intake is a generic failure family: when a user gives a short example, first identify original example, abstracted failure family, adjacent non-identical scenario, shared contract, and regression proof; expand the request into scope, evidence, modules, memory, review, and user-visible summary instead of answering only the literal phrase.",
   "Plain short finance asks such as analyzing recent stock market, deciding how much of a stock to hold, or asking whether to buy or keep holding are not simple answers: expand them into market scope, timestamped data, user constraints, fundamentals, valuation, technical timing, portfolio risk gates, source registry, review panel, and a plain research-only summary; never invent current market facts, position percentages, buy/sell points, or trade advice.",
   "All-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel; do not let a harder task bypass simpler prerequisite modules.",
+  "Current market, price, fundamental, macro, ETF, options, index-weight, vendor, or portfolio-risk numbers must go through finance_data_gateway before Qwen or Lark uses them: require primary source, cross-check source, official or issuer reference when applicable, source timestamp, timezone, field definition, unit/currency, adjusted status, and conflict routing to data_provenance_quality.",
   "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
   "Options, commodities, FX, event risk, and technical timing must use their dedicated modules when mentioned; do not collapse them into generic macro or ETF labels.",
   "External knowledge internalization from papers or open-source projects must first check prior_art_search_terms_or_existing_artifact_paths and existing_contract_eval_skill_or_receipt_candidates, then choose reuse_extend_or_new_decision before creating a new path; it must use source_registry, actual_reading_scope, license_and_write_scope_review when code is involved, prompt-injection/security review, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, fresh adjacent application, and a keep/downrank/discard decision before claiming learning.",
@@ -187,17 +190,22 @@ const CONTRACT_HINT_SELECTORS: Array<{
       /短|口语|看不懂|lark|feishu|飞书|最近股市|持仓|拿|买|卖|大宗商品|plain|recent stock|buy|hold|position sizing|visible reply/iu,
   },
   {
-    indexes: [8, 9, 10, 15],
+    indexes: [8, 9, 10, 16],
     pattern:
       /美股|a股|指数|加密|期权|大宗|商品|黄金|原油|美元|外汇|事件|技术|跨市场|估值|DCF|comps|模型|财务模型|研报|口径|字段|时间戳|催化|失效|crypto|option|commodity|gold|oil|dollar|fx|event|technical|cross-market|valuation|modeling|thesis|catalyst|provenance|timestamp|artifact|spreadsheet|report/iu,
   },
   {
-    indexes: [11, 12, 14],
+    indexes: [9],
+    pattern:
+      /当前|最新|今天|现在|价格|行情|报价|市场数据|实时|vendor|供应商|source timestamp|field definition|指数权重|成分股|current|latest|today|price|quote|market data|fresh data|index weight|constituent/iu,
+  },
+  {
+    indexes: [12, 13, 15],
     pattern:
       /论文|arxiv|ssrn|github|huggingface|开源|source|capability|receipt|skill|paper|open-source|framework|dataset|eval|内化链条|学习链条|吸收链条|所有模块|其他模块|因子模块/iu,
   },
   {
-    indexes: [13],
+    indexes: [14],
     pattern:
       /anthropic|financial agent|financial-services|hermes|harness|外部.*agent|金融.*agent|架构哲学/iu,
   },

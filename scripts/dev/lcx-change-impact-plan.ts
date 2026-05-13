@@ -31,7 +31,12 @@ const PATH_RULES: PathRule[] = [
   {
     id: "doctrine_or_runbook",
     lane: "global_doctrine_and_runbook",
-    patterns: [/^AGENTS\.md$/u, /^README\.md$/u, /^ops\/local-brain\/README\.md$/u],
+    patterns: [
+      /^AGENTS\.md$/u,
+      /^README\.md$/u,
+      /^ops\/local-brain\/README\.md$/u,
+      /^docs\/tools\/finance-learning-pipeline-runbook\.md$/u,
+    ],
     requiredChecks: ["doctrine-consistency", "head-tail-consistency"],
     commands: [
       "node --import tsx scripts/dev/lcx-doctrine-consistency.ts --json",
@@ -48,6 +53,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/minimax-quota-brain-saturator\.ts$/u,
       /^scripts\/dev\/lcx-change-impact-plan\.ts$/u,
       /^scripts\/dev\/lcx-context-recovery-exam\.ts$/u,
+      /^scripts\/dev\/finance-data-gateway-smoke\.ts$/u,
       /^scripts\/dev\/lcx-flow-graph\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
       /^scripts\/dev\/lcx-mind-model\.ts$/u,
@@ -78,7 +84,13 @@ const PATH_RULES: PathRule[] = [
   {
     id: "system_prompt_or_agent_tools",
     lane: "agent_workflow_memory",
-    patterns: [/^src\/agents\/system-prompt\.ts$/u, /^src\/agents\/tools\//u],
+    patterns: [
+      /^src\/agents\/system-prompt\.ts$/u,
+      /^src\/agents\/openclaw-tools\.ts$/u,
+      /^src\/agents\/finance-brain-orchestration\.ts$/u,
+      /^src\/agents\/finance-data-gateway\.ts$/u,
+      /^src\/agents\/tools\//u,
+    ],
     requiredChecks: ["head-tail-consistency", "system-prompt-tests"],
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",

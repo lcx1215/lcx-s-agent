@@ -74,6 +74,21 @@ Run the full dev system loop when the Lark language system, finance learning bra
 pnpm exec tsx scripts/dev/agent-system-loop-smoke.ts
 ```
 
+Run the finance data gateway smoke when sourced market, fundamental, macro, ETF,
+options, index, or vendor numbers need a timestamped reconciliation contract
+before Qwen, Lark, memory, or visible summaries can use them:
+
+```bash
+node --import tsx scripts/dev/finance-data-gateway-smoke.ts --json
+node --import tsx scripts/dev/finance-data-gateway-smoke.ts --conflict --json
+```
+
+The gateway is the shared owner for primary/cross-check/official or issuer data
+coordination. Every normalized field must keep provider role, source timestamp,
+timezone, field definition, unit/currency, adjusted status, and source
+URL/artifact. Conflicted values route to `data_provenance_quality_review_input`;
+they must not become unstated model assumptions.
+
 Supported smoke cases:
 
 - `manual-paste`

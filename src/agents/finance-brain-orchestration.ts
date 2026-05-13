@@ -250,6 +250,12 @@ function hasFinanceTaskSignal(text: string): boolean {
   );
 }
 
+function needsFinanceDataGateway(text: string): boolean {
+  return /\b(?:current|latest|today|now|price|quote|market data|fresh|timestamp|vendor|as of|holdings?|position|portfolio|earnings?|financials?|options?|iv|index weights?|constituents?)\b|当前|最新|今天|现在|价格|行情|报价|市场数据|实时|时间戳|供应商|截至|持仓|仓位|财报|财务数据|期权|隐含波动率|指数权重|成分股/u.test(
+    text,
+  );
+}
+
 export function planFinanceBrainOrchestration(
   input: FinanceBrainOrchestrationInput,
 ): FinanceBrainOrchestrationPlan {
@@ -283,7 +289,14 @@ export function planFinanceBrainOrchestration(
   const supportingModules = seeded.filter((id) => id === "finance_learning_memory");
   const moduleById = new Map(FINANCE_BRAIN_MODULES.map((module) => [module.id, module]));
   const moduleTools: string[] = seeded.flatMap((id) => moduleById.get(id)?.requiredTools ?? []);
-  const requiredTools = unique([...moduleTools, "review_tier"]);
+  const dataGatewayTools =
+    financeTask &&
+    (needsFinanceDataGateway(text) ||
+      input.hasHoldingsOrPortfolioContext === true ||
+      input.highStakesConclusion === true)
+      ? ["finance_data_gateway_snapshot"]
+      : [];
+  const requiredTools = unique([...moduleTools, ...dataGatewayTools, "review_tier"]);
   const needsPanel =
     input.highStakesConclusion ||
     input.writesDurableMemory ||
@@ -299,6 +312,7 @@ export function planFinanceBrainOrchestration(
     handoffOrder: [
       "language_intake",
       "finance_learning_memory",
+      "finance_data_gateway_snapshot_when_fresh_or_vendor_numbers_are_needed",
       "finance_framework_core_inspect",
       "domain_modules",
       "quant_math_when_needed",
