@@ -121,14 +121,16 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 8. 对 live migration 留下可追踪证据，不把 dev-ready 说成 live-visible-fixed。
 9. 做新模块、新技能、新 eval、新 receipt 或新 workflow 前，先查仓库和本地 skills 里有没有类似工程；能复用或扩展就不要另造一套。
 10. 用 LCX Agent Mind Model 做 god-view 架构自检：每条主线必须同时有宏观规则、workflow 入口、proof/eval 面和边界字段，避免未来 Codex 或 Claude Code 只改一个小点却忘掉全局 workflow closure。
+11. 用压缩上下文恢复考试确认新 Codex/Claude Code 窗口不靠聊天历史也能恢复全局：本地 operator latest state 必须写入 `mindModel` 和 `contextRecovery` 摘要。
 
 上帝视角检查命令：
 
 ```bash
 node --import tsx scripts/dev/lcx-mind-model.ts --json
+node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 ```
 
-它是 `dev_mind_model_only`：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。
+它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。
 
 ## 系统提升和问题族修复纪律
 

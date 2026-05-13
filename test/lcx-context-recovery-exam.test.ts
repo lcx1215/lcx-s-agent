@@ -1,0 +1,80 @@
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+import { describe, expect, it } from "vitest";
+
+const execFileAsync = promisify(execFile);
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const EXEC_MAX_BUFFER = 20 * 1024 * 1024;
+
+async function runJsonScript(script: string) {
+  try {
+    return await execFileAsync(process.execPath, ["--import", "tsx", script, "--json"], {
+      cwd: repoRoot,
+      env: process.env,
+      maxBuffer: EXEC_MAX_BUFFER,
+    });
+  } catch (error) {
+    const details = error as { stdout?: string; stderr?: string; message?: string };
+    throw new Error(
+      [
+        details.message ?? String(error),
+        `stdout=${details.stdout ?? ""}`,
+        `stderr=${details.stderr ?? ""}`,
+      ].join("\n"),
+      { cause: error },
+    );
+  }
+}
+
+describe("LCX compressed context recovery exam", () => {
+  it("proves a new coding window can recover from durable evidence", async () => {
+    const { stdout } = await runJsonScript("scripts/dev/lcx-context-recovery-exam.ts");
+    const payload = JSON.parse(stdout) as {
+      ok: boolean;
+      boundary: string;
+      compressedContextRecovered: boolean;
+      summary: { failed: number; total: number };
+      requiredRecoveryCommands: string[];
+      liveTouched: boolean;
+      providerConfigTouched: boolean;
+      protectedMemoryTouched: boolean;
+    };
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: true,
+        boundary: "dev_context_recovery_exam_only",
+        compressedContextRecovered: true,
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      }),
+    );
+    expect(payload.summary.failed).toBe(0);
+    expect(payload.summary.total).toBeGreaterThanOrEqual(6);
+    expect(payload.requiredRecoveryCommands).toEqual(
+      expect.arrayContaining([
+        "node --import tsx scripts/dev/lcx-mind-model.ts --json",
+        "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
+        "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+      ]),
+    );
+  });
+
+  it("keeps the recovery exam visible in durable doctrine and local automation", async () => {
+    const [agents, runbook, doctorSource, localOperator] = await Promise.all([
+      fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
+      fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
+    ]);
+
+    expect(agents).toContain("lcx-context-recovery-exam");
+    expect(runbook).toContain("compressed-window proof");
+    expect(doctorSource).toContain("context-recovery-exam");
+    expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
+    expect(localOperator).toContain("compressedContextRecovered");
+  });
+});

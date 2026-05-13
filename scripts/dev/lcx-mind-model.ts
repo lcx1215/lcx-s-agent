@@ -28,6 +28,19 @@ type LaneVerdict = {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
+const LCX_USER_HOME = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
+const LOCAL_OPERATOR_LOOP = path.join(
+  LCX_USER_HOME,
+  ".openclaw",
+  "bin",
+  "lcx-local-operator-loop.sh",
+);
+const LOCAL_CODEX_ARCHIVE = path.join(
+  LCX_USER_HOME,
+  ".openclaw",
+  "bin",
+  "codex-archive-lcx-automation-threads.sh",
+);
 
 const HEAD_SURFACES = [
   "AGENTS.md",
@@ -38,6 +51,7 @@ const HEAD_SURFACES = [
 
 const WORKFLOW_SURFACES = [
   "scripts/dev/lcx-change-impact-plan.ts",
+  "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/lcx-head-tail-consistency.ts",
   "scripts/dev/lcx-system-doctor.ts",
   "scripts/dev/lcx-agent-exam.ts",
@@ -49,8 +63,8 @@ const WORKFLOW_SURFACES = [
   "scripts/dev/local-brain-promotion-audit.ts",
   "scripts/dev/module-learning-pipeline-plan.ts",
   "scripts/dev/module-learning-pipeline-review.ts",
-  "scripts/dev/lcx-local-operator-loop.sh",
-  "scripts/dev/codex-archive-lcx-automation-threads.sh",
+  LOCAL_OPERATOR_LOOP,
+  LOCAL_CODEX_ARCHIVE,
   "scripts/dev/lcx-promote-live.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
@@ -59,6 +73,7 @@ const WORKFLOW_SURFACES = [
 
 const PROOF_SURFACES = [
   ...WORKFLOW_SURFACES,
+  "test/lcx-context-recovery-exam.test.ts",
   "test/lcx-head-tail-consistency.test.ts",
   "test/lcx-mind-model.test.ts",
   "test/lcx-agent-exam.test.ts",
@@ -80,6 +95,7 @@ const BOUNDARY_SURFACES = [
   "src/agents/system-prompt.ts",
   "scripts/dev/lcx-promote-live.ts",
   "scripts/dev/lcx-system-doctor.ts",
+  "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/local-brain-training-plan.ts",
   "scripts/dev/minimax-brain-teacher-batch.ts",
   "scripts/dev/lcx-automation-repair-lock.ts",
@@ -96,8 +112,18 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "fixed evidence",
       "lcx-local-operator-latest.json",
     ],
-    workflowTerms: ["lcx-system-doctor", "local-brain-training-plan", "lcx-agent-exam"],
-    proofTerms: ["observability-entrypoints", "doctrine-consistency", "head-tail-consistency"],
+    workflowTerms: [
+      "lcx-system-doctor",
+      "local-brain-training-plan",
+      "lcx-agent-exam",
+      "lcx-context-recovery-exam",
+    ],
+    proofTerms: [
+      "observability-entrypoints",
+      "doctrine-consistency",
+      "head-tail-consistency",
+      "compressedContextRecovered",
+    ],
     boundaryTerms: ["dev_observability_only", "live-visible-fixed"],
     nextAction:
       "Start from AGENTS, runbook, doctor, training-plan, and local operator state before coding.",
@@ -174,9 +200,19 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "local automation",
       "one visible high-level automation",
     ],
-    workflowTerms: ["lcx-local-operator-loop", "codex-archive", "automation_or_operator_loop"],
-    proofTerms: ["local_automation", "automation_or_operator_loop"],
-    boundaryTerms: ["dev_automation_coordination_only", "liveTouched"],
+    workflowTerms: [
+      "lcx-local-operator-loop",
+      "codex-archive",
+      "automation_or_operator_loop",
+      "lcx-context-recovery-exam",
+      "mind_file",
+    ],
+    proofTerms: ["local_automation", "automation_or_operator_loop", "mindModel", "contextRecovery"],
+    boundaryTerms: [
+      "dev_automation_coordination_only",
+      "dev_context_recovery_exam_only",
+      "liveTouched",
+    ],
     nextAction: "Read local operator receipts first; keep Codex visible automation as one digest.",
   },
   {
@@ -234,11 +270,29 @@ async function readText(filePath: string): Promise<string> {
   return fs.readFile(filePath, "utf8").catch(() => "");
 }
 
+function resolveSurfaceFile(file: string): string {
+  return path.isAbsolute(file) ? file : path.join(repoRoot, file);
+}
+
 async function joinedSurfaceText(files: readonly string[]): Promise<string> {
   const chunks = await Promise.all(
-    files.map(async (file) => `${file}\n${await readText(path.join(repoRoot, file))}`),
+    files.map(async (file) => `${file}\n${await readText(resolveSurfaceFile(file))}`),
   );
   return chunks.join("\n").replace(/\s+/gu, " ").toLowerCase();
+}
+
+async function missingSurfaceFiles(files: readonly string[]): Promise<string[]> {
+  const statuses = await Promise.all(
+    files.map(async (file) => {
+      try {
+        await fs.access(resolveSurfaceFile(file));
+        return undefined;
+      } catch {
+        return file;
+      }
+    }),
+  );
+  return statuses.filter((file): file is string => typeof file === "string");
 }
 
 function termPresent(text: string, term: string): boolean {
@@ -305,12 +359,18 @@ async function main() {
     joinedSurfaceText(PROOF_SURFACES),
     joinedSurfaceText(BOUNDARY_SURFACES),
   ]);
+  const missingFiles = await missingSurfaceFiles([
+    ...HEAD_SURFACES,
+    ...WORKFLOW_SURFACES,
+    ...PROOF_SURFACES,
+    ...BOUNDARY_SURFACES,
+  ]);
   const lanes = MIND_MODEL_LANES.map((lane) =>
     laneVerdict({ lane, headText, workflowText, proofText, boundaryText }),
   );
   const failed = lanes.filter((lane) => !lane.ok);
   const result = {
-    ok: failed.length === 0,
+    ok: failed.length === 0 && missingFiles.length === 0,
     boundary: "dev_mind_model_only",
     checkedAt: new Date().toISOString(),
     summary: {
@@ -320,10 +380,14 @@ async function main() {
       masterLanes: [...new Set(lanes.map((lane) => lane.masterLane))].toSorted(),
     },
     lanes,
-    actionableFailures: failed.map(
-      (lane) =>
-        `${lane.id}: missing ${lane.missing.map((entry) => `${entry.surface}:${entry.term}`).join(", ")}`,
-    ),
+    missingSurfaceFiles: missingFiles,
+    actionableFailures: [
+      ...missingFiles.map((file) => `surface_missing: ${file}`),
+      ...failed.map(
+        (lane) =>
+          `${lane.id}: missing ${lane.missing.map((entry) => `${entry.surface}:${entry.term}`).join(", ")}`,
+      ),
+    ],
     surfaceFiles: {
       head: [...HEAD_SURFACES],
       workflow: [...WORKFLOW_SURFACES],

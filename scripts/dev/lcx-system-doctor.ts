@@ -997,6 +997,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/local-brain-promotion-audit.ts",
     "scripts/dev/lcx-agent-exam.ts",
     "scripts/dev/lcx-change-impact-plan.ts",
+    "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/lcx-mind-model.ts",
     "scripts/dev/module-learning-pipeline-review.ts",
@@ -1063,6 +1064,14 @@ checks.push(
     name: "mind-model-consistency",
     command: process.execPath,
     args: ["--import", "tsx", "scripts/dev/lcx-mind-model.ts", "--json"],
+    parseJson: true,
+  }),
+);
+checks.push(
+  await runCommand({
+    name: "context-recovery-exam",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-context-recovery-exam.ts", "--json"],
     parseJson: true,
   }),
 );

@@ -6,22 +6,37 @@ import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
+const EXEC_MAX_BUFFER = 20 * 1024 * 1024;
+
+async function runJsonScript(script: string) {
+  try {
+    return await execFileAsync(process.execPath, ["--import", "tsx", script, "--json"], {
+      cwd: repoRoot,
+      env: process.env,
+      maxBuffer: EXEC_MAX_BUFFER,
+    });
+  } catch (error) {
+    const details = error as { stdout?: string; stderr?: string; message?: string };
+    throw new Error(
+      [
+        details.message ?? String(error),
+        `stdout=${details.stdout ?? ""}`,
+        `stderr=${details.stderr ?? ""}`,
+      ].join("\n"),
+      { cause: error },
+    );
+  }
+}
 
 describe("LCX mind model god-view architecture check", () => {
   it("passes current macro workflow closure surfaces", async () => {
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      ["--import", "tsx", "scripts/dev/lcx-mind-model.ts", "--json"],
-      {
-        cwd: repoRoot,
-        env: process.env,
-      },
-    );
+    const { stdout } = await runJsonScript("scripts/dev/lcx-mind-model.ts");
     const payload = JSON.parse(stdout) as {
       ok: boolean;
       boundary: string;
       summary: { failed: number; total: number; masterLanes: string[] };
       lanes: Array<{ id: string; ok: boolean; missing: unknown[] }>;
+      missingSurfaceFiles: string[];
       liveTouched: boolean;
       providerConfigTouched: boolean;
       protectedMemoryTouched: boolean;
@@ -38,6 +53,7 @@ describe("LCX mind model god-view architecture check", () => {
     );
     expect(payload.summary.failed).toBe(0);
     expect(payload.summary.total).toBeGreaterThanOrEqual(9);
+    expect(payload.missingSurfaceFiles).toEqual([]);
     expect(payload.summary.masterLanes).toEqual(
       expect.arrayContaining([
         "global_doctrine_and_runbook",
@@ -57,17 +73,26 @@ describe("LCX mind model god-view architecture check", () => {
   });
 
   it("is wired into the main doctor and head-tail gate", async () => {
-    const [doctorSource, headTailSource, runbook] = await Promise.all([
+    const [doctorSource, headTailSource, runbook, localOperator] = await Promise.all([
       fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
       fs.readFile(path.join(repoRoot, "scripts/dev/lcx-head-tail-consistency.ts"), "utf8"),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
+      fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
     ]);
 
     expect(doctorSource).toContain('name: "mind-model-consistency"');
+    expect(doctorSource).toContain('name: "context-recovery-exam"');
     expect(doctorSource).toContain("scripts/dev/lcx-mind-model.ts");
+    expect(doctorSource).toContain("scripts/dev/lcx-context-recovery-exam.ts");
     expect(headTailSource).toContain("mind_model_boundary");
     expect(headTailSource).toContain("MIND_MODEL_LANES");
+    expect(headTailSource).toContain("compressedContextRecovered");
     expect(runbook).toContain("LCX Agent Mind Model");
     expect(runbook).toContain("workflow closure");
+    expect(runbook).toContain("lcx-context-recovery-exam");
+    expect(localOperator).toContain("mind_file");
+    expect(localOperator).toContain("context_recovery_file");
+    expect(localOperator).toContain("mindModel");
+    expect(localOperator).toContain("contextRecovery");
   });
 });

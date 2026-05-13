@@ -111,6 +111,16 @@ surface, and boundary flag.
   still point to the same loop.
 - The system doctor should include `mind-model-consistency`; if it fails, treat
   it as a P2 architecture blind spot before expanding features.
+- A compressed or newly opened coding window should also pass the context
+  recovery exam:
+  `node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json`.
+  This is the proof that durable files, local operator state, and the mind model
+  can coordinate Codex/Claude Code after chat context is lost.
+- The local operator loop must write the latest `mindModel` and
+  `contextRecovery` summaries into
+  `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`,
+  so the single `LCX Agent Operator Digest` can report global architecture
+  drift without opening more automation chats.
 - The mind model is dev_mind_model_only: it reports `liveTouched=false`,
   `providerConfigTouched=false`, and `protectedMemoryTouched=false`. It cannot
   prove live-visible-fixed or model-weight absorption.

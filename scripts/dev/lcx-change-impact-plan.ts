@@ -47,6 +47,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/minimax-brain-/u,
       /^scripts\/dev\/minimax-quota-brain-saturator\.ts$/u,
       /^scripts\/dev\/lcx-change-impact-plan\.ts$/u,
+      /^scripts\/dev\/lcx-context-recovery-exam\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
       /^scripts\/dev\/lcx-mind-model\.ts$/u,
       /^scripts\/dev\/lcx-system-doctor\.ts$/u,
@@ -54,7 +55,7 @@ const PATH_RULES: PathRule[] = [
     requiredChecks: ["head-tail-consistency", "targeted-local-brain-tests"],
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
-      "pnpm vitest run test/local-brain-distill-eval.test.ts test/local-brain-contracts.test.ts",
+      "pnpm vitest run test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/local-brain-distill-eval.test.ts test/local-brain-contracts.test.ts",
     ],
     headTailRequired: true,
   },

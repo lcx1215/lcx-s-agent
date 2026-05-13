@@ -32,6 +32,7 @@ god-view check:
 
 ```bash
 node --import tsx scripts/dev/lcx-mind-model.ts --json
+node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 ```
 
 This is a read-only `dev_mind_model_only` architecture audit. It checks whether
@@ -42,6 +43,13 @@ promotion, Lark/Feishu live boundary, local automation, memory sedimentation,
 finance research capability, and protected-memory/provider/live-sender
 boundaries. It reports `liveTouched=false`, `providerConfigTouched=false`, and
 `protectedMemoryTouched=false`; it does not prove live-visible-fixed.
+
+The context recovery exam is the compressed-window proof. It verifies that a
+future Codex or Claude Code session can recover the agent's global workflow from
+durable files, the latest local operator state, and the mind model instead of
+needing the old chat transcript. The local operator loop should keep
+`mindModel` and `contextRecovery` fields in
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
 
 ## First Command
 
