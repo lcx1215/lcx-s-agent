@@ -46,7 +46,30 @@ type FlowNodeId =
   | "automation_cleanup"
   | "system_doctor"
   | "operator_latest_receipt"
-  | "operator_digest";
+  | "operator_digest"
+  | "language_router"
+  | "display_text_normalizer"
+  | "reply_flow_audit"
+  | "readability_review"
+  | "provider_evidence"
+  | "model_council"
+  | "provider_boundary"
+  | "source_conflict_review"
+  | "memory_recall"
+  | "memory_write_gate"
+  | "correction_note"
+  | "stale_memory_downrank"
+  | "prior_work_search"
+  | "similar_mechanism_merge"
+  | "single_owner_contract"
+  | "parallel_path_reject"
+  | "external_agent_source"
+  | "license_scope_review"
+  | "workflow_distillation"
+  | "local_skill_candidate"
+  | "acceptance_eval"
+  | "schedule_gate"
+  | "repair_lock";
 
 type FlowFilterId =
   | "source_evidence_gate"
@@ -66,7 +89,22 @@ type FlowFilterId =
   | "real_lark_inbound_required"
   | "fresh_operator_state_required"
   | "single_digest_only"
-  | "error_receipt_required";
+  | "error_receipt_required"
+  | "visible_text_no_internal_labels"
+  | "reply_flow_audit_required"
+  | "provider_evidence_required"
+  | "no_provider_config_change"
+  | "source_conflict_visible"
+  | "memory_write_freshness_gate"
+  | "correction_note_required"
+  | "prior_work_reuse_required"
+  | "same_philosophy_merge_required"
+  | "single_owner_required"
+  | "license_scope_required"
+  | "untrusted_source_isolation"
+  | "human_signoff_checkpoint"
+  | "automation_schedule_gate"
+  | "repair_lock_required";
 
 type SurfaceGroup = "head" | "workflow" | "proof" | "boundary";
 
@@ -88,6 +126,15 @@ type FlowCheck = {
   ok: boolean;
   summary: string;
   evidence?: unknown;
+};
+
+type ConsolidationCluster = {
+  id: string;
+  philosophy: string;
+  ownerScenario: string;
+  ownerNode: FlowNodeId;
+  sameClassTerms: string[];
+  mergeFilters: FlowFilterId[];
 };
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -138,6 +185,29 @@ const NODE_IDS: FlowNodeId[] = [
   "system_doctor",
   "operator_latest_receipt",
   "operator_digest",
+  "language_router",
+  "display_text_normalizer",
+  "reply_flow_audit",
+  "readability_review",
+  "provider_evidence",
+  "model_council",
+  "provider_boundary",
+  "source_conflict_review",
+  "memory_recall",
+  "memory_write_gate",
+  "correction_note",
+  "stale_memory_downrank",
+  "prior_work_search",
+  "similar_mechanism_merge",
+  "single_owner_contract",
+  "parallel_path_reject",
+  "external_agent_source",
+  "license_scope_review",
+  "workflow_distillation",
+  "local_skill_candidate",
+  "acceptance_eval",
+  "schedule_gate",
+  "repair_lock",
 ];
 
 const FILTER_IDS: FlowFilterId[] = [
@@ -159,6 +229,21 @@ const FILTER_IDS: FlowFilterId[] = [
   "fresh_operator_state_required",
   "single_digest_only",
   "error_receipt_required",
+  "visible_text_no_internal_labels",
+  "reply_flow_audit_required",
+  "provider_evidence_required",
+  "no_provider_config_change",
+  "source_conflict_visible",
+  "memory_write_freshness_gate",
+  "correction_note_required",
+  "prior_work_reuse_required",
+  "same_philosophy_merge_required",
+  "single_owner_required",
+  "license_scope_required",
+  "untrusted_source_isolation",
+  "human_signoff_checkpoint",
+  "automation_schedule_gate",
+  "repair_lock_required",
 ];
 
 const FLOW_SCENARIOS: FlowScenario[] = [
@@ -366,6 +451,219 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
     receipts: ["lcx-local-operator-loop", "lcx-local-operator-latest", "LCX Agent Operator Digest"],
   },
+  {
+    id: "lark_visible_language_waterflow",
+    family: "visible_lark_readability_and_language_boundary",
+    objective:
+      "Lark/Feishu visible replies must route language, normalize display text, audit reply flow, and hide internal labels from the user.",
+    start: "ingress_lark_feishu",
+    end: "visible_reply",
+    requiredNodes: [
+      "ingress_lark_feishu",
+      "intent_classifier",
+      "language_router",
+      "local_brain_planner",
+      "control_room_summary",
+      "display_text_normalizer",
+      "readability_review",
+      "reply_flow_audit",
+      "visible_reply",
+    ],
+    requiredFilters: [
+      "visible_text_no_internal_labels",
+      "reply_flow_audit_required",
+      "dev_ready_not_live_user_seen",
+    ],
+    edges: [
+      ["ingress_lark_feishu", "intent_classifier"],
+      ["intent_classifier", "language_router"],
+      ["language_router", "local_brain_planner"],
+      ["local_brain_planner", "control_room_summary"],
+      ["control_room_summary", "display_text_normalizer"],
+      ["display_text_normalizer", "readability_review"],
+      ["readability_review", "reply_flow_audit"],
+      ["reply_flow_audit", "visible_reply"],
+    ],
+    feedbackEdges: [["readability_review", "display_text_normalizer"]],
+    receipts: ["feishu-reply-flow", "normalizeFeishuDisplayText", "lark-loop-diagnose"],
+  },
+  {
+    id: "provider_council_evidence_waterflow",
+    family: "multi_model_provider_evidence_review",
+    objective:
+      "Model council or external-provider review must keep provider evidence, source conflicts, and provider-config boundaries separate from local deterministic review.",
+    start: "model_council",
+    end: "review_panel",
+    requiredNodes: [
+      "model_council",
+      "provider_boundary",
+      "provider_evidence",
+      "source_registry",
+      "source_conflict_review",
+      "review_panel",
+      "control_room_summary",
+    ],
+    requiredFilters: [
+      "provider_evidence_required",
+      "no_provider_config_change",
+      "source_conflict_visible",
+      "research_only_boundary",
+    ],
+    edges: [
+      ["model_council", "provider_boundary"],
+      ["provider_boundary", "provider_evidence"],
+      ["provider_evidence", "source_registry"],
+      ["source_registry", "source_conflict_review"],
+      ["source_conflict_review", "review_panel"],
+      ["review_panel", "control_room_summary"],
+    ],
+    feedbackEdges: [["review_panel", "source_conflict_review"]],
+    receipts: ["learning-council", "model-council-provider-evidence", "review_panel"],
+  },
+  {
+    id: "memory_correction_downrank_waterflow",
+    family: "memory_recall_correction_and_downrank",
+    objective:
+      "Memory recall must mark stale or wrong premises, write correction notes when allowed, and downrank stale memory without touching protected summaries.",
+    start: "memory_recall",
+    end: "stale_memory_downrank",
+    requiredNodes: [
+      "memory_recall",
+      "source_registry",
+      "source_conflict_review",
+      "memory_write_gate",
+      "correction_note",
+      "stale_memory_downrank",
+      "review_panel",
+    ],
+    requiredFilters: [
+      "memory_write_freshness_gate",
+      "correction_note_required",
+      "protected_memory_guard",
+      "source_evidence_gate",
+    ],
+    edges: [
+      ["memory_recall", "source_registry"],
+      ["source_registry", "source_conflict_review"],
+      ["source_conflict_review", "memory_write_gate"],
+      ["memory_write_gate", "correction_note"],
+      ["correction_note", "stale_memory_downrank"],
+      ["stale_memory_downrank", "review_panel"],
+    ],
+    feedbackEdges: [["review_panel", "memory_recall"]],
+    receipts: ["correction_note", "stale_memory_rule_downrank", "review_panel"],
+  },
+  {
+    id: "similar_engineering_consolidation_waterflow",
+    family: "same_philosophy_engineering_merge",
+    objective:
+      "Same-class system engineering mechanisms must first search prior work, merge into an existing owner, and reject parallel paths unless the old owner is insufficient.",
+    start: "dev_change",
+    end: "single_owner_contract",
+    requiredNodes: [
+      "dev_change",
+      "change_impact_plan",
+      "prior_work_search",
+      "similar_mechanism_merge",
+      "single_owner_contract",
+      "parallel_path_reject",
+      "mind_model",
+      "flow_graph",
+      "system_doctor",
+    ],
+    requiredFilters: [
+      "prior_work_reuse_required",
+      "same_philosophy_merge_required",
+      "single_owner_required",
+      "error_receipt_required",
+    ],
+    edges: [
+      ["dev_change", "change_impact_plan"],
+      ["change_impact_plan", "prior_work_search"],
+      ["prior_work_search", "similar_mechanism_merge"],
+      ["similar_mechanism_merge", "single_owner_contract"],
+      ["similar_mechanism_merge", "parallel_path_reject"],
+      ["single_owner_contract", "mind_model"],
+      ["mind_model", "flow_graph"],
+      ["flow_graph", "system_doctor"],
+    ],
+    feedbackEdges: [["system_doctor", "change_impact_plan"]],
+    receipts: ["lcx-change-impact-plan", "mind-model-consistency", "flow_graph_exam"],
+  },
+  {
+    id: "external_agent_skill_distillation_waterflow",
+    family: "external_agent_or_skill_learning",
+    objective:
+      "External agent, skill, or open-source workflow learning must be isolated, licensed, distilled into LCX workflow patterns, and proven by eval before use.",
+    start: "external_agent_source",
+    end: "acceptance_eval",
+    requiredNodes: [
+      "external_agent_source",
+      "source_registry",
+      "license_scope_review",
+      "actual_reading_scope",
+      "workflow_distillation",
+      "local_skill_candidate",
+      "review_panel",
+      "acceptance_eval",
+    ],
+    requiredFilters: [
+      "license_scope_required",
+      "untrusted_source_isolation",
+      "human_signoff_checkpoint",
+      "no_provider_config_change",
+      "protected_memory_guard",
+    ],
+    edges: [
+      ["external_agent_source", "source_registry"],
+      ["source_registry", "license_scope_review"],
+      ["license_scope_review", "actual_reading_scope"],
+      ["actual_reading_scope", "workflow_distillation"],
+      ["workflow_distillation", "local_skill_candidate"],
+      ["local_skill_candidate", "review_panel"],
+      ["review_panel", "acceptance_eval"],
+    ],
+    feedbackEdges: [["acceptance_eval", "workflow_distillation"]],
+    receipts: ["skill_pattern_distillation", "agent_workflow_memory", "local-brain-distill-eval"],
+  },
+  {
+    id: "automation_repair_lock_waterflow",
+    family: "codex_auto_repair_and_schedule_guard",
+    objective:
+      "Automation repair must run through schedule gates, repair lock, doctor evidence, and operator receipt instead of spawning duplicate or silent jobs.",
+    start: "training_plan",
+    end: "operator_latest_receipt",
+    requiredNodes: [
+      "training_plan",
+      "schedule_gate",
+      "repair_lock",
+      "dev_change",
+      "dev_tests",
+      "system_doctor",
+      "operator_latest_receipt",
+    ],
+    requiredFilters: [
+      "automation_schedule_gate",
+      "repair_lock_required",
+      "single_digest_only",
+      "training_overlap_guard",
+      "error_receipt_required",
+    ],
+    edges: [
+      ["training_plan", "schedule_gate"],
+      ["schedule_gate", "repair_lock"],
+      ["repair_lock", "dev_change"],
+      ["dev_change", "dev_tests"],
+      ["dev_tests", "system_doctor"],
+      ["system_doctor", "operator_latest_receipt"],
+    ],
+    feedbackEdges: [["system_doctor", "training_plan"]],
+    receipts: [
+      "lcx-automation-repair-lock",
+      "local-brain-training-plan",
+      "lcx-local-operator-latest",
+    ],
+  },
 ];
 
 const ILLEGAL_EDGES: Array<[string, string, string]> = [
@@ -377,6 +675,82 @@ const ILLEGAL_EDGES: Array<[string, string, string]> = [
     "finance_learning_memory",
     "source registry alone is not learned memory without the module-learning flow",
   ],
+  [
+    "dev_change",
+    "flow_graph",
+    "small dev changes must pass change-impact and prior-work search first",
+  ],
+  [
+    "memory_recall",
+    "correction_note",
+    "memory correction must pass source conflict and write gates",
+  ],
+  [
+    "external_agent_source",
+    "local_skill_candidate",
+    "external skills must pass license and reading scope",
+  ],
+  ["training_plan", "dev_change", "automation repair must pass schedule gate and repair lock"],
+];
+
+const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
+  {
+    id: "architecture_supervision_cluster",
+    philosophy:
+      "god-view, head-tail, flow-graph, context recovery, and doctor are one supervision stack",
+    ownerScenario: "compressed_context_recovery_waterflow",
+    ownerNode: "mind_model",
+    sameClassTerms: [
+      "lcx-mind-model",
+      "lcx-flow-graph",
+      "lcx-head-tail-consistency",
+      "lcx-system-doctor",
+    ],
+    mergeFilters: ["same_philosophy_merge_required", "single_owner_required"],
+  },
+  {
+    id: "learning_internalization_cluster",
+    philosophy:
+      "source storage, capability cards, retrieval, apply, eval, and review are one learning chain",
+    ownerScenario: "module_learning_internalization_waterflow",
+    ownerNode: "module_learning_review",
+    sameClassTerms: [
+      "module_learning_pipeline_plan",
+      "module_learning_pipeline_review",
+      "evalAbsorbed",
+    ],
+    mergeFilters: ["stored_only_is_not_learning", "retrieval_apply_eval_review_required"],
+  },
+  {
+    id: "dev_live_evidence_cluster",
+    philosophy: "dev-ready, live-runtime-updated, and live-user-seen are one boundary model",
+    ownerScenario: "dev_to_live_lark_waterflow",
+    ownerNode: "live_migration",
+    sameClassTerms: ["dev-ready", "live-runtime-updated", "live-user-seen"],
+    mergeFilters: ["dev_ready_not_live_user_seen", "real_lark_inbound_required"],
+  },
+  {
+    id: "automation_digest_cluster",
+    philosophy:
+      "operator loop, cleanup, doctor, training plan, and digest must produce one local truth",
+    ownerScenario: "local_automation_digest_waterflow",
+    ownerNode: "operator_latest_receipt",
+    sameClassTerms: [
+      "lcx-local-operator-loop",
+      "LCX Agent Operator Digest",
+      "lcx-local-operator-latest",
+    ],
+    mergeFilters: ["single_digest_only", "error_receipt_required"],
+  },
+  {
+    id: "external_skill_learning_cluster",
+    philosophy:
+      "external agent and skill ideas are learned as bounded workflow patterns, not installed authority",
+    ownerScenario: "external_agent_skill_distillation_waterflow",
+    ownerNode: "workflow_distillation",
+    sameClassTerms: ["skill_pattern_distillation", "agent_workflow_memory", "license"],
+    mergeFilters: ["license_scope_required", "untrusted_source_isolation"],
+  },
 ];
 
 const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
@@ -425,6 +799,7 @@ const SURFACE_TERMS: Record<SurfaceGroup, string[]> = {
     "liveTouched",
     "providerConfigTouched",
     "protectedMemoryTouched",
+    "same_philosophy_merge_required",
   ],
 };
 
@@ -573,6 +948,11 @@ function feedbackCheck(): FlowCheck {
           "retrieval_apply_eval_review_required",
           "fresh_operator_state_required",
           "source_evidence_gate",
+          "reply_flow_audit_required",
+          "provider_evidence_required",
+          "same_philosophy_merge_required",
+          "license_scope_required",
+          "repair_lock_required",
         ].includes(filter),
       ),
   ).map((scenario) => scenario.id);
@@ -614,6 +994,40 @@ function receiptCheck(): FlowCheck {
   };
 }
 
+function consolidationClusterCheck(surfaceTexts: Record<SurfaceGroup, string>): FlowCheck {
+  const scenarioIds = new Set(FLOW_SCENARIOS.map((scenario) => scenario.id));
+  const nodeIds = new Set(NODE_IDS);
+  const filterIds = new Set(FILTER_IDS);
+  const missing = CONSOLIDATION_CLUSTERS.flatMap((cluster) => {
+    const problems: string[] = [];
+    if (!scenarioIds.has(cluster.ownerScenario)) {
+      problems.push(`${cluster.id}:missing_owner_scenario:${cluster.ownerScenario}`);
+    }
+    if (!nodeIds.has(cluster.ownerNode)) {
+      problems.push(`${cluster.id}:missing_owner_node:${cluster.ownerNode}`);
+    }
+    for (const filter of cluster.mergeFilters) {
+      if (!filterIds.has(filter)) {
+        problems.push(`${cluster.id}:missing_merge_filter:${filter}`);
+      }
+    }
+    for (const term of cluster.sameClassTerms) {
+      const lower = term.toLowerCase();
+      if (!surfaceTexts.head.includes(lower) && !surfaceTexts.workflow.includes(lower)) {
+        problems.push(`${cluster.id}:missing_same_class_term:${term}`);
+      }
+    }
+    return problems;
+  });
+  return {
+    id: "flow_graph_consolidation_clusters_merged",
+    ok: missing.length === 0,
+    summary:
+      "same-philosophy mechanisms must name one owner scenario, one owner node, and merge filters instead of becoming parallel systems",
+    evidence: { clusters: CONSOLIDATION_CLUSTERS.length, missing },
+  };
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const [head, workflow, proof, boundary, missingFiles] = await Promise.all([
@@ -636,6 +1050,7 @@ async function main() {
     feedbackCheck(),
     illegalEdgeCheck(),
     receiptCheck(),
+    consolidationClusterCheck({ head, workflow, proof, boundary }),
   ];
   const failed = checks.filter((check) => !check.ok);
   const result = {
@@ -649,6 +1064,7 @@ async function main() {
       scenarios: FLOW_SCENARIOS.length,
       nodes: NODE_IDS.length,
       filters: FILTER_IDS.length,
+      consolidationClusters: CONSOLIDATION_CLUSTERS.length,
     },
     checks,
     scenarios: FLOW_SCENARIOS.map((scenario) => ({
@@ -662,6 +1078,7 @@ async function main() {
       feedbackEdgeCount: scenario.feedbackEdges?.length ?? 0,
       receipts: scenario.receipts,
     })),
+    consolidationClusters: CONSOLIDATION_CLUSTERS,
     actionableFailures: failed.map((check) => `${check.id}: ${check.summary}`),
     liveTouched: false,
     providerConfigTouched: false,

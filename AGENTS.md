@@ -155,6 +155,19 @@ shortcuts.
   `node --import tsx scripts/dev/lcx-flow-graph.ts --json`.
 - Every supported waterflow must name its start node, terminal node, required
   modules, required filters, receipts, and any bounded feedback edges.
+- Waterflow coverage must keep expanding toward real task families instead of
+  only the first six obvious paths. Current core families include visible
+  finance research, module learning, training feedback, dev/live proof,
+  compressed-context recovery, local automation digest, Lark visible language,
+  provider council evidence, memory correction/downrank, same-philosophy
+  engineering consolidation, external skill/agent distillation, and automation
+  repair locks.
+- Philosophically similar engineering mechanisms must merge into a named
+  consolidation cluster with one owner scenario, one owner node, and merge
+  filters such as `same_philosophy_merge_required` and
+  `single_owner_required`. Do not let head-tail, mind model, flow graph,
+  context recovery, doctor, operator digest, learning internalization, or
+  dev/live proof become competing parallel systems.
 - Wrong-flow is a P2 class issue. Examples: dev proof jumps to
   `live-user-seen`, stored source jumps to learned capability, hardened eval
   skips the promotion gate, or a failed eval loops back into teacher/training

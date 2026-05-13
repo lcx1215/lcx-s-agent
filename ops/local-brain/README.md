@@ -58,6 +58,12 @@ it becomes a visible bug: dev proof must not jump to live-user-seen, stored
 source must not jump to learned capability, hardened eval must not skip
 promotion gate, and training/eval loops must not recirculate without overlap
 guards or timeout/error receipts. Its proof surface is `flow_graph_exam`.
+It should not stay at only six obvious waterflows. The current minimum is 12
+core waterflows, including Lark visible language, provider council evidence,
+memory correction/downrank, same-philosophy engineering consolidation, external
+skill or agent distillation, and automation repair locks. The same-philosophy
+consolidation clusters enforce that related mechanisms merge into one owner
+scenario instead of becoming parallel systems.
 
 The context recovery exam is the compressed-window proof. It verifies that a
 future Codex or Claude Code session can recover the agent's global workflow from

@@ -133,7 +133,7 @@ node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 ```
 
-它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt 和回流规则没有断。
+它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图至少覆盖 12 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock。
 
 ## 系统提升和问题族修复纪律
 
@@ -149,7 +149,7 @@ LCX Agent 不把 baseline hardening 理解成“只把当前触发样例补过�
 6. 用户给的例子只是问题族入口，不是修复边界。例如“大宗商品”要抽象成简单前置题、复杂题、相邻非同类题都能复用的通用规则。
 7. 抽象迁移必须留下五段式证据：`original example`、`abstracted failure family`、`adjacent non-identical scenario`、`shared contract`、`regression proof`。
 8. 短口语不是短逻辑。像“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”“Lark 回复看不懂”这类表层很短的话，默认先抽象成 `plain-language hidden-complexity intake`：确认范围、证据、模块、记忆、审阅、人话总结和回归证明，再决定具体工作流。
-9. 新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口之前，先查已有相似工程；优先复用、合并或扩展旧路径，确实要新建时说明旧路径为什么不够。
+9. 新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口之前，先查已有相似工程；优先复用、合并或扩展旧路径。哲学上一致的系统工程必须合并到一个 owner/cluster，不要开平行系统；确实要新建时说明旧路径为什么不够。
 10. 允许为了 L5 能力提升主动新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口。
 11. 大脑能力必须单调：难题会做，简单前置题必须更会做。复杂评测、训练 promotion 和学习 receipt 不能绕过对应的简单用户入口。
 12. 仍然禁止无关 provider、交易执行层、假 live-visible-fixed、保护记忆覆盖，以及没有验证指标的炫技式扩张。

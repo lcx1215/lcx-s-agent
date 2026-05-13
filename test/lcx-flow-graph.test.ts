@@ -40,6 +40,7 @@ describe("LCX flow graph exam", () => {
         scenarios: number;
         nodes: number;
         filters: number;
+        consolidationClusters: number;
       };
       checks: Array<{ id: string; ok: boolean; evidence?: unknown }>;
       scenarios: Array<{
@@ -48,6 +49,7 @@ describe("LCX flow graph exam", () => {
         feedbackEdgeCount: number;
         receipts: string[];
       }>;
+      consolidationClusters: Array<{ id: string; ownerScenario: string; mergeFilters: string[] }>;
       liveTouched: boolean;
       providerConfigTouched: boolean;
       protectedMemoryTouched: boolean;
@@ -63,16 +65,18 @@ describe("LCX flow graph exam", () => {
       }),
     );
     expect(payload.summary.failed).toBe(0);
-    expect(payload.summary.total).toBeGreaterThanOrEqual(7);
-    expect(payload.summary.scenarios).toBeGreaterThanOrEqual(6);
-    expect(payload.summary.nodes).toBeGreaterThanOrEqual(40);
-    expect(payload.summary.filters).toBeGreaterThanOrEqual(18);
+    expect(payload.summary.total).toBeGreaterThanOrEqual(8);
+    expect(payload.summary.scenarios).toBeGreaterThanOrEqual(12);
+    expect(payload.summary.nodes).toBeGreaterThanOrEqual(60);
+    expect(payload.summary.filters).toBeGreaterThanOrEqual(30);
+    expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(5);
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "flow_graph_integrity", ok: true }),
         expect.objectContaining({ id: "flow_graph_filters_required", ok: true }),
         expect.objectContaining({ id: "flow_graph_feedback_is_bounded", ok: true }),
         expect.objectContaining({ id: "flow_graph_illegal_shortcuts_absent", ok: true }),
+        expect.objectContaining({ id: "flow_graph_consolidation_clusters_merged", ok: true }),
       ]),
     );
     expect(payload.scenarios).toEqual(
@@ -108,6 +112,65 @@ describe("LCX flow graph exam", () => {
             "real_lark_inbound_required",
           ]),
         }),
+        expect.objectContaining({
+          id: "lark_visible_language_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "visible_text_no_internal_labels",
+            "reply_flow_audit_required",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "provider_council_evidence_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "provider_evidence_required",
+            "no_provider_config_change",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "memory_correction_downrank_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "memory_write_freshness_gate",
+            "protected_memory_guard",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "similar_engineering_consolidation_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "prior_work_reuse_required",
+            "same_philosophy_merge_required",
+            "single_owner_required",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "external_agent_skill_distillation_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "license_scope_required",
+            "untrusted_source_isolation",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "automation_repair_lock_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "automation_schedule_gate",
+            "repair_lock_required",
+          ]),
+        }),
+      ]),
+    );
+    expect(payload.consolidationClusters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_cluster",
+          ownerScenario: "compressed_context_recovery_waterflow",
+          mergeFilters: expect.arrayContaining([
+            "same_philosophy_merge_required",
+            "single_owner_required",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "learning_internalization_cluster",
+          ownerScenario: "module_learning_internalization_waterflow",
+        }),
       ]),
     );
   });
@@ -127,7 +190,9 @@ describe("LCX flow graph exam", () => {
     expect(headTailSource).toContain("flow_graph_boundary");
     expect(agents).toContain("LCX Agent Flow Graph");
     expect(agents).toContain("wrong-flow");
+    expect(agents).toContain("same_philosophy_merge_required");
     expect(runbook).toContain("LCX Agent Flow Graph");
     expect(runbook).toContain("flow_graph_exam");
+    expect(runbook).toContain("same-philosophy");
   });
 });
