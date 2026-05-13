@@ -134,7 +134,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/lcx-change-impact-plan.ts [--json] [--changed PATH ...]",
       "",
       "Fast path-based impact plan for micro changes. When --changed is omitted,",
-      "reads git status/diff and recommends the smallest useful verification set.",
+      "reads git status/diff and recommends the impact-appropriate verification set.",
     ].join("\n"),
   );
 }

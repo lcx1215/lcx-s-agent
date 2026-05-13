@@ -75,7 +75,7 @@ describe("LCX head-tail consistency doctor", () => {
     ).toBe(true);
   });
 
-  it("plans fast verification for micro changes without forcing a full scan first", async () => {
+  it("plans required verification for micro changes without forcing a full scan first", async () => {
     const { stdout } = await execFileAsync(
       process.execPath,
       [

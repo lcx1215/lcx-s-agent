@@ -7,8 +7,8 @@ This runbook is dev/local only. It does not prove live Lark visibility, does not
 ## Fast Micro-Change Loop
 
 For a small engineering change, do not start by scanning the whole repo or
-running every gate. First classify the changed files and get the smallest useful
-verification set:
+running every gate. First classify the changed files and get the required
+verification set for the affected lanes:
 
 ```bash
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
