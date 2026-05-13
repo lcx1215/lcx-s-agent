@@ -89,6 +89,24 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
 
+class LocalBrainGenerateError extends Error {
+  readonly rawOutput: string;
+  readonly stderrOutput: string;
+
+  constructor(message: string, rawOutput: string, stderrOutput = "") {
+    super(message);
+    this.name = "LocalBrainGenerateError";
+    this.rawOutput = rawOutput;
+    this.stderrOutput = stderrOutput;
+  }
+}
+
+function rawOutputFromError(error: unknown): string | undefined {
+  return error instanceof LocalBrainGenerateError && error.rawOutput.trim().length > 0
+    ? error.rawOutput
+    : undefined;
+}
+
 function terminateActiveGenerateChild(): void {
   const child = activeGenerateChild;
   if (child && !child.killed) {
@@ -2560,12 +2578,24 @@ function selectCompactEvalContractHints(evalCase: EvalCase): string[] {
   return compacted.length > 0 ? compacted : selected.slice(0, 2).map(compactHint);
 }
 
+function outputContractHintsFor(evalCase: EvalCase): string[] {
+  const missingDataCap = Math.max(8, evalCase.requiredMissingData?.length ?? 0);
+  const riskBoundaryCap = Math.max(6, (evalCase.requiredRiskBoundaries?.length ?? 0) + 1);
+  return LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.map((hint) =>
+    hint.startsWith("Hard output budget:")
+      ? `Hard output budget: primary_modules <= 8, supporting_modules <= 6, required_tools <= 6, missing_data <= ${missingDataCap}, risk_boundaries <= ${riskBoundaryCap}, rejected_context <= 3.`
+      : hint,
+  );
+}
+
 function buildPrompt(evalCase: EvalCase): string {
   const contractHints = selectCompactEvalContractHints(evalCase).join(" ");
   const promptModuleIds = normalizeLocalBrainModuleList([
     ...evalCase.requiredModules,
     ...CORE_PROMPT_MODULES,
   ]);
+  const requiredMissingData = evalCase.requiredMissingData ?? [];
+  const requiredRiskBoundaries = evalCase.requiredRiskBoundaries ?? [];
   return [
     "You are the LCX Agent local auxiliary thought-flow model.",
     "Task: produce a concise control-room planning packet for the main agent.",
@@ -2573,12 +2603,18 @@ function buildPrompt(evalCase: EvalCase): string {
     "/no_think",
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
     "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 8 words, and always close the final brace.",
-    `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
+    `Output contract: ${outputContractHintsFor(evalCase).join(" ")}`,
     'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`,
     "primary_modules, supporting_modules, and required_tools must use exact recommended module ids only; do not invent prefixes like finance_framework_*.",
+    requiredMissingData.length > 0
+      ? `Required missing_data ids for this case: ${requiredMissingData.join(", ")}. Include these ids exactly; do not paraphrase or expand them.`
+      : "If no concrete input is missing, keep missing_data compact and do not invent data gaps.",
+    requiredRiskBoundaries.length > 0
+      ? `Required risk_boundaries for this case: ${requiredRiskBoundaries.join(", ")}. Include research_only plus these ids exactly; do not paraphrase.`
+      : "Always include research_only; add only directly relevant compact risk boundary ids.",
     "For finance tasks, choose concrete recommended module ids instead of generic finance labels or the full taxonomy.",
     `Relevant compact contract hints: ${contractHints}`,
     "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
@@ -2615,10 +2651,36 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
     activeGenerateChild = child;
     let stdout = "";
     let stderr = "";
-    const timeout = setTimeout(() => {
+    let settled = false;
+    let timeout: NodeJS.Timeout;
+    function finish(error: Error | null, value?: string): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (activeGenerateChild === child) {
+        activeGenerateChild = undefined;
+      }
+      if (error) {
+        reject(error);
+      } else {
+        resolve(value ?? "");
+      }
+    }
+    timeout = setTimeout(() => {
       child.kill("SIGTERM");
-      reject(
-        new Error(`mlx_lm generate timed out after ${options.timeoutMs}ms for ${evalCase.id}`),
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, 750).unref();
+      finish(
+        new LocalBrainGenerateError(
+          `mlx_lm generate timed out after ${options.timeoutMs}ms for ${evalCase.id}`,
+          stdout,
+          stderr,
+        ),
       );
     }, options.timeoutMs);
     child.stdout.setEncoding("utf8");
@@ -2629,16 +2691,16 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", reject);
+    child.on("error", (error) => {
+      finish(new LocalBrainGenerateError(String(error), stdout, stderr));
+    });
     child.on("close", (code) => {
-      if (activeGenerateChild === child) {
-        activeGenerateChild = undefined;
-      }
-      clearTimeout(timeout);
       if (code === 0) {
-        resolve(stdout);
+        finish(null, stdout);
       } else {
-        reject(new Error(`mlx_lm generate exited ${code}\n${stderr}`));
+        finish(
+          new LocalBrainGenerateError(`mlx_lm generate exited ${code}\n${stderr}`, stdout, stderr),
+        );
       }
     });
   });
@@ -3063,6 +3125,7 @@ for (const evalCase of evalCases) {
     }
   } catch (error) {
     const parseError = String(error);
+    rawOutput = rawOutput || rawOutputFromError(error) || "";
     const recoveredRawParsed =
       options.hardened && !resolvedOptions.contractOnly ? recoverPartialJsonPlan(rawOutput) : null;
     if (recoveredRawParsed) {

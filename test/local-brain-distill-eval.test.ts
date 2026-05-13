@@ -519,6 +519,8 @@ describe("local-brain-distill-eval", () => {
       expect(targetPrompt).toBeTruthy();
       expect(targetPrompt?.length).toBeLessThan(5_500);
       expect(targetPrompt).toContain("Relevant compact contract hints");
+      expect(targetPrompt).toContain("missing_data <= 12");
+      expect(targetPrompt).toContain("risk_boundaries <= 6");
       expect(targetPrompt).toContain("All module learning uses the same internalization chain");
       expect(targetPrompt).not.toContain("External financial agent frameworks such as Anthropic");
       expect(targetPrompt).not.toContain("when code is i.");
@@ -526,6 +528,148 @@ describe("local-brain-distill-eval", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("pins exact required data and risk ids in complex eval prompts", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-prompt-ids-"));
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        "fs.appendFileSync(process.env.EVAL_FAKE_PYTHON_LOG, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        "console.log(JSON.stringify({",
+        "task_family: 'crypto_liquidity_research_planning',",
+        "primary_modules: ['cross_asset_liquidity','crypto_market_structure','global_index_regime','portfolio_risk_gates','source_registry','review_panel'],",
+        "supporting_modules: [],",
+        "required_tools: [],",
+        "missing_data: ['crypto_liquidity_volatility_custody_and_regulatory_inputs','fresh_market_data_snapshot','portfolio_weights_and_risk_limits'],",
+        "risk_boundaries: ['research_only','no_high_leverage_crypto','no_unverified_cross_market_claims'],",
+        "next_step: 'route_to_review',",
+        "rejected_context: ['old_lark_conversation_history']",
+        "}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--case-id",
+          "stablecoin_liquidity_crypto_equity_bridge",
+          "--summary-only",
+          "--json",
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            EVAL_FAKE_PYTHON_LOG: argLog,
+          },
+        },
+      );
+
+      expect(result.stdout).toBeTruthy();
+      const records = readFileSync(argLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      const prompts = records
+        .map((args) => {
+          const promptIndex = args.indexOf("--prompt");
+          return promptIndex >= 0 ? (args[promptIndex + 1] ?? "") : "";
+        })
+        .filter(Boolean);
+      const targetPrompt = prompts.find((prompt) =>
+        prompt.includes("stablecoin and exchange reserve signal"),
+      );
+
+      expect(targetPrompt).toBeTruthy();
+      expect(targetPrompt).toContain("Required missing_data ids for this case");
+      expect(targetPrompt).toContain("crypto_liquidity_volatility_custody_and_regulatory_inputs");
+      expect(targetPrompt).toContain("Required risk_boundaries for this case");
+      expect(targetPrompt).toContain("no_unverified_cross_market_claims");
+      expect(targetPrompt).toContain("Include these ids exactly; do not paraphrase");
+      expect(targetPrompt?.length).toBeLessThan(5_500);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers partial JSON emitted before a local MLX timeout without allowing promotion", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-timeout-"));
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        'process.stdout.write(\'{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":["company_fundamentals_value","portfolio_risk_gates"],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_lark_conversation_history"]\');',
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--no-adapter",
+        "--python",
+        fakePython,
+        "--hardened",
+        "--case-id",
+        "portfolio_mixed_q_t_nvda",
+        "--timeout-ms",
+        "500",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: {
+        passed: number;
+        total: number;
+        promotionReady: boolean;
+        parseErrorCaseIds: string[];
+        parseRecoveredCaseIds: string[];
+      };
+      cases: Array<{
+        id: string;
+        parseRecovered?: boolean;
+        parseError?: string;
+        acceptance: { ok: boolean };
+      }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary).toMatchObject({
+      passed: 1,
+      total: 1,
+      promotionReady: false,
+      parseErrorCaseIds: [],
+      parseRecoveredCaseIds: ["portfolio_mixed_q_t_nvda"],
+    });
+    const targetCase = payload.cases.find((entry) => entry.id === "portfolio_mixed_q_t_nvda");
+    expect(targetCase?.acceptance.ok).toBe(true);
+    expect(targetCase?.parseRecovered).toBe(true);
+    expect(targetCase?.parseError).toContain("timed out after 500ms");
   });
 
   it("cleans up the active mlx child when the eval wrapper receives a termination signal", async () => {
