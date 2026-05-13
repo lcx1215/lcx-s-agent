@@ -42,6 +42,18 @@ type TeacherSnapshot = {
   failureFocusPrompts?: number;
 };
 
+type QuotaStatusSnapshot = {
+  at: string;
+  event: string;
+  active: boolean;
+  stopReason?: string;
+  targetCalls?: number;
+  attempted?: number;
+  completedRounds?: number;
+  finalBatchLimit?: number;
+  finalConcurrency?: number;
+};
+
 type ModuleLearningReviewSnapshot = {
   ok?: unknown;
   boundary?: unknown;
@@ -327,6 +339,41 @@ function latestTeacherSnapshot(events: JsonRecord[]): TeacherSnapshot | undefine
     .toSorted((left, right) => right.at.localeCompare(left.at))[0];
 }
 
+function quotaStatusSnapshotFromEvent(event: JsonRecord): QuotaStatusSnapshot | undefined {
+  if (event.event === "quota_saturator_start") {
+    const plan = event.plan && typeof event.plan === "object" ? (event.plan as JsonRecord) : {};
+    return {
+      at: eventTime(event),
+      event: String(event.event),
+      active: true,
+      targetCalls: typeof plan.targetCalls === "number" ? plan.targetCalls : undefined,
+    };
+  }
+  if (event.event === "quota_saturator_complete") {
+    return {
+      at: eventTime(event),
+      event: String(event.event),
+      active: false,
+      stopReason: typeof event.stopReason === "string" ? event.stopReason : undefined,
+      attempted: typeof event.attempted === "number" ? event.attempted : undefined,
+      completedRounds:
+        typeof event.completedRounds === "number" ? event.completedRounds : undefined,
+      finalBatchLimit:
+        typeof event.finalBatchLimit === "number" ? event.finalBatchLimit : undefined,
+      finalConcurrency:
+        typeof event.finalConcurrency === "number" ? event.finalConcurrency : undefined,
+    };
+  }
+  return undefined;
+}
+
+function latestQuotaStatusSnapshot(events: JsonRecord[]): QuotaStatusSnapshot | undefined {
+  return events
+    .map(quotaStatusSnapshotFromEvent)
+    .filter((entry): entry is QuotaStatusSnapshot => Boolean(entry))
+    .toSorted((left, right) => right.at.localeCompare(left.at))[0];
+}
+
 async function activeTrainingProcesses(enabled: boolean): Promise<JsonRecord[]> {
   if (!enabled) {
     return [];
@@ -403,6 +450,7 @@ function buildDecisions(params: {
   latestGuardFailure?: JsonRecord;
   latestEval?: EvalSnapshot;
   latestTeacher?: TeacherSnapshot;
+  latestQuotaStatus?: QuotaStatusSnapshot;
   moduleLearningReview?: ModuleLearningReviewSnapshot;
   guardLogPath: string;
   worktree: string;
@@ -496,6 +544,20 @@ function buildDecisions(params: {
     });
   }
 
+  if (
+    params.latestQuotaStatus?.event === "quota_saturator_complete" &&
+    params.latestQuotaStatus.stopReason === "target_calls_reached"
+  ) {
+    decisions.push({
+      id: "teacher_quota_target_reached",
+      lane: "teacher_quality",
+      severity: "info",
+      action: "do_not_treat_minimax_idle_as_provider_failure",
+      reason: `MiniMax sidecar completed normally after ${params.latestQuotaStatus.attempted ?? "unknown"} attempted call(s).`,
+      codexRepairEligible: false,
+    });
+  }
+
   const moduleLearningCounts = params.moduleLearningReview?.counts ?? {};
   const weakModuleLearning =
     typeof moduleLearningCounts.weakModuleLearning === "number"
@@ -573,6 +635,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const latestEval = latestEvalSnapshot(guardEvents);
   const latestPassingEval = latestPassingEvalSnapshot(guardEvents);
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
+  const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
   const moduleLearningReview = await moduleLearningReviewSnapshot(worktree);
   const decisions = buildDecisions({
     activeProcesses,
@@ -580,6 +643,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestGuardFailure,
     latestEval,
     latestTeacher,
+    latestQuotaStatus,
     moduleLearningReview,
     guardLogPath: options.guardLogPath,
     worktree,
@@ -602,6 +666,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
       Boolean(latestEval?.at) &&
       (!eventTime(latestGuardStart) || latestEval!.at >= eventTime(latestGuardStart)),
     latestTeacher,
+    latestQuotaStatus,
     moduleLearningReview,
     decisions,
     codexAutoRepair: {

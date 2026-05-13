@@ -225,6 +225,51 @@ describe("local-brain-training-plan", () => {
     });
   });
 
+  it("surfaces MiniMax quota completion as normal idle instead of provider failure", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", [
+      {
+        at: "2026-05-09T10:01:00.000Z",
+        event: "quota_saturator_start",
+        plan: { targetCalls: 900 },
+      },
+      {
+        at: "2026-05-09T13:41:00.000Z",
+        event: "quota_saturator_complete",
+        attempted: 900,
+        completedRounds: 25,
+        stopReason: "target_calls_reached",
+        finalBatchLimit: 36,
+        finalConcurrency: 8,
+      },
+    ]);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.latestQuotaStatus).toMatchObject({
+      event: "quota_saturator_complete",
+      active: false,
+      stopReason: "target_calls_reached",
+      attempted: 900,
+      completedRounds: 25,
+    });
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "teacher_quota_target_reached",
+          action: "do_not_treat_minimax_idle_as_provider_failure",
+        }),
+      ]),
+    );
+  });
+
   it("does not repair from stale eval failures before the latest guard start", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       {

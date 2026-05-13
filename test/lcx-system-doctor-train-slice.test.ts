@@ -18,6 +18,20 @@ describe("LCX system doctor train slice observability", () => {
     expect(source).toContain("policy: result.policy");
   });
 
+  it("surfaces MiniMax quota sidecar status separately from teacher quality", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("function summarizeQuotaStatusEvent");
+    expect(source).toContain('event.event === "quota_saturator_start"');
+    expect(source).toContain('event.event === "quota_saturator_complete"');
+    expect(source).toContain("latestQuotaStatus: summarizeQuotaStatusEvent(latestQuotaStatus)");
+    expect(source).toContain("stopReason: payload.stopReason");
+    expect(source).toContain("targetCalls: plan.targetCalls");
+  });
+
   it("reads enough guard history to keep latestGuardStart visible during long runs", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),

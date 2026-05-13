@@ -575,6 +575,29 @@ function summarizeTeacherEvent(
   };
 }
 
+function summarizeQuotaStatusEvent(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!payload) {
+    return {};
+  }
+  const plan =
+    payload.plan && typeof payload.plan === "object"
+      ? (payload.plan as Record<string, unknown>)
+      : {};
+  return {
+    at: eventTime(payload),
+    event: payload.event,
+    active: payload.event === "quota_saturator_start",
+    stopReason: payload.stopReason,
+    targetCalls: plan.targetCalls,
+    attempted: payload.attempted,
+    completedRounds: payload.completedRounds,
+    finalBatchLimit: payload.finalBatchLimit,
+    finalConcurrency: payload.finalConcurrency,
+  };
+}
+
 function isTrainingCommand(command: string): boolean {
   if (command.includes("--resolve-current-adapter")) {
     return false;
@@ -654,6 +677,11 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
     const latestTeacher =
       latestEvent(quotaEvents, (event) => event.name === "minimax_teacher_batch") ??
       latestEvent(quotaEvents, (event) => event.event === "teacher_batch_partial_ok");
+    const latestQuotaStatus = latestEvent(
+      quotaEvents,
+      (event) =>
+        event.event === "quota_saturator_start" || event.event === "quota_saturator_complete",
+    );
 
     const failedAfterStart =
       eventTime(latestGuardFailure) > eventTime(latestGuardStart) &&
@@ -701,6 +729,7 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
         latestPromotionAt: eventTime(latestPromotion),
         latestPromotedAdapter: latestPromotion?.adapterPath,
         latestTeacher: summarizeTeacherEvent(latestTeacher),
+        latestQuotaStatus: summarizeQuotaStatusEvent(latestQuotaStatus),
         logPaths: {
           guard: MINIMAX_GUARD_LOG,
           quota: quotaLogPath,
