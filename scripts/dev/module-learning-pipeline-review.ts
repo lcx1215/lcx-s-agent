@@ -1,6 +1,6 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
+import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
 type CliOptions = {
   dateKey?: string;
@@ -11,15 +11,12 @@ type CliOptions = {
   json: boolean;
 };
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WORKTREE_DIR = path.resolve(__dirname, "../..");
-
 function usage(): never {
   throw new Error(
     [
       "Usage: node --import tsx scripts/dev/module-learning-pipeline-review.ts [--date YYYY-MM-DD] [--target-module NAME] [--max-files N] [--workspace DIR] [--no-write] [--json]",
       "",
-      "Default writes memory/module-learning-pipeline-reviews/<date>.json.",
+      "Default reads/writes under ~/.openclaw/workspace/memory/module-learning-pipeline-*.",
       "Use --no-write for a dry run. This is dev/local review only and does not touch live/provider/protected-memory state.",
     ].join("\n"),
   );
@@ -43,7 +40,7 @@ function readPositiveInteger(value: string): number {
 
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
-    workspaceDir: WORKTREE_DIR,
+    workspaceDir: DEFAULT_WORKSPACE_DIR,
     writeReview: true,
     json: false,
   };

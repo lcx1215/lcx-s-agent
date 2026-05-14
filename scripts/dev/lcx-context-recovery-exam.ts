@@ -3,23 +3,23 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { LOCAL_OPERATOR_LATEST_PATH } from "./lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
-const LCX_USER_HOME = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
-const LOCAL_OPERATOR_LATEST = path.join(
-  LCX_USER_HOME,
-  ".openclaw",
-  "workspace",
-  "state",
-  "lcx-local-operator-latest.json",
-);
+const LOCAL_OPERATOR_LATEST = LOCAL_OPERATOR_LATEST_PATH;
 const MAX_OPERATOR_STATE_AGE_MS = 3 * 60 * 60 * 1000;
 
 type RecoveryCheck = {
   id: string;
   ok: boolean;
+  summary: string;
+  evidence?: unknown;
+};
+
+type RecoveryWarning = {
+  id: string;
   summary: string;
   evidence?: unknown;
 };
@@ -74,6 +74,139 @@ function nestedBoolean(value: unknown, key: string): boolean | undefined {
   return typeof record[key] === "boolean" ? record[key] : undefined;
 }
 
+function numberField(value: unknown, key: string): number | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return typeof record[key] === "number" ? record[key] : undefined;
+}
+
+function decisionIds(value: unknown): string[] {
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  const decisions = (value as Record<string, unknown>).decisions;
+  if (!Array.isArray(decisions)) {
+    return [];
+  }
+  return decisions
+    .map((decision) => {
+      if (!decision || typeof decision !== "object") {
+        return undefined;
+      }
+      const id = (decision as Record<string, unknown>).id;
+      return typeof id === "string" ? id : undefined;
+    })
+    .filter((id): id is string => id !== undefined)
+    .toSorted();
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function compactTrainingPlan(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const latestEval = record.latestEval as Record<string, unknown> | undefined;
+  const moduleLearningReview = record.moduleLearningReview as Record<string, unknown> | undefined;
+  return {
+    ok: record.ok,
+    boundary: record.boundary,
+    workspaceDir: record.workspaceDir,
+    latestGuardStartAt: record.latestGuardStartAt,
+    activeProcessCount: Array.isArray(record.activeProcesses) ? record.activeProcesses.length : 0,
+    decisionIds: decisionIds(record),
+    latestEval: latestEval
+      ? {
+          name: latestEval.name,
+          passed: latestEval.passed,
+          total: latestEval.total,
+          promotionReady: latestEval.promotionReady,
+          parseRecoveredCaseIds: latestEval.parseRecoveredCaseIds,
+        }
+      : undefined,
+    moduleLearningCounts: moduleLearningReview?.counts,
+  };
+}
+
+function compactOperatorTraining(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const latestStableEval = record.latestStableEval as Record<string, unknown> | undefined;
+  const latestCandidateEval = record.latestCandidateEval as Record<string, unknown> | undefined;
+  return {
+    active: record.active,
+    activeProcessCount: Array.isArray(record.activeProcesses) ? record.activeProcesses.length : 0,
+    overlappingHeavyEval: record.overlappingHeavyEval,
+    latestGuardStart: record.latestGuardStart,
+    latestStableEval: latestStableEval
+      ? {
+          passed: latestStableEval.passed,
+          total: latestStableEval.total,
+          promotionReady: latestStableEval.promotionReady,
+          adapterPath: latestStableEval.adapterPath,
+        }
+      : undefined,
+    latestCandidateEval: latestCandidateEval
+      ? {
+          passed: latestCandidateEval.passed,
+          total: latestCandidateEval.total,
+          promotionReady: latestCandidateEval.promotionReady,
+          adapterPath: latestCandidateEval.adapterPath,
+        }
+      : undefined,
+    datasetCounts: record.datasetCounts,
+  };
+}
+
+function compactCurrentTrainingVolatile(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const latestEval = record.latestEval as Record<string, unknown> | undefined;
+  return {
+    activeProcessCount: Array.isArray(record.activeProcesses) ? record.activeProcesses.length : 0,
+    latestGuardStart: record.latestGuardStartAt,
+    latestEval: latestEval
+      ? {
+          passed: latestEval.passed,
+          total: latestEval.total,
+          promotionReady: latestEval.promotionReady,
+          adapterPath: latestEval.adapterPath,
+        }
+      : undefined,
+    datasetCounts:
+      record.latestDataset && typeof record.latestDataset === "object"
+        ? (record.latestDataset as Record<string, unknown>).counts
+        : undefined,
+  };
+}
+
+function operatorTrainingVolatileMatches(
+  operatorSnapshot: ReturnType<typeof compactOperatorTraining>,
+  currentSnapshot: ReturnType<typeof compactCurrentTrainingVolatile>,
+): boolean {
+  if (!operatorSnapshot || !currentSnapshot) {
+    return true;
+  }
+  const operatorActive = operatorSnapshot.active === true;
+  const currentActive = (currentSnapshot.activeProcessCount ?? 0) > 0;
+  return (
+    operatorActive === currentActive &&
+    operatorSnapshot.latestGuardStart === currentSnapshot.latestGuardStart &&
+    JSON.stringify(operatorSnapshot.latestStableEval) ===
+      JSON.stringify(currentSnapshot.latestEval) &&
+    JSON.stringify(operatorSnapshot.datasetCounts) === JSON.stringify(currentSnapshot.datasetCounts)
+  );
+}
+
 function isoAgeMs(value: unknown, nowMs = Date.now()): number | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -83,6 +216,23 @@ function isoAgeMs(value: unknown, nowMs = Date.now()): number | undefined {
     return undefined;
   }
   return nowMs - time;
+}
+
+async function currentTrainingPlanSnapshot(): Promise<{
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: string;
+}> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/local-brain-training-plan.ts", "--json"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
 }
 
 async function mindModelCheck(): Promise<RecoveryCheck> {
@@ -134,6 +284,8 @@ async function flowGraphCheck(): Promise<RecoveryCheck> {
         passed: summary?.passed,
         failed: summary?.failed,
         scenarios: summary?.scenarios,
+        nodes: summary?.nodes,
+        filters: summary?.filters,
         actionableFailures: payload.actionableFailures,
       },
     };
@@ -149,20 +301,42 @@ async function flowGraphCheck(): Promise<RecoveryCheck> {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const [agents, runbook, changeImpact, latestState, mindModel, flowGraph] = await Promise.all([
-    readText(path.join(repoRoot, "AGENTS.md")),
-    readText(path.join(repoRoot, "ops/local-brain/README.md")),
-    readText(path.join(repoRoot, "scripts/dev/lcx-change-impact-plan.ts")),
-    readJson(LOCAL_OPERATOR_LATEST),
-    mindModelCheck(),
-    flowGraphCheck(),
-  ]);
+  const [agents, runbook, changeImpact, latestState, mindModel, flowGraph, currentTrainingPlan] =
+    await Promise.all([
+      readText(path.join(repoRoot, "AGENTS.md")),
+      readText(path.join(repoRoot, "ops/local-brain/README.md")),
+      readText(path.join(repoRoot, "scripts/dev/lcx-change-impact-plan.ts")),
+      readJson(LOCAL_OPERATOR_LATEST),
+      mindModelCheck(),
+      flowGraphCheck(),
+      currentTrainingPlanSnapshot(),
+    ]);
 
   const latestMindModel = latestState?.mindModel as Record<string, unknown> | undefined;
   const latestFlowGraph = latestState?.flowGraph as Record<string, unknown> | undefined;
   const latestContextRecovery = latestState?.contextRecovery as Record<string, unknown> | undefined;
+  const latestTraining = latestState?.training as Record<string, unknown> | undefined;
   const latestTrainingPlan = latestState?.trainingPlan as Record<string, unknown> | undefined;
   const latestOperatorAgeMs = isoAgeMs(latestState?.checkedAt);
+  const currentFlowEvidence = flowGraph.evidence as Record<string, unknown> | undefined;
+  const operatorFlowMatchesCurrent =
+    latestState !== undefined &&
+    latestFlowGraph?.boundary === "dev_flow_graph_only" &&
+    numberField(latestFlowGraph, "nodes") === numberField(currentFlowEvidence, "nodes") &&
+    numberField(latestFlowGraph, "filters") === numberField(currentFlowEvidence, "filters") &&
+    numberField(latestFlowGraph, "scenarios") === numberField(currentFlowEvidence, "scenarios");
+  const currentTrainingDecisionIds = decisionIds(currentTrainingPlan.payload);
+  const latestTrainingDecisionIds = decisionIds(latestTrainingPlan);
+  const operatorTrainingPlanMatchesCurrent =
+    latestTrainingPlan === undefined ||
+    sameStringSet(latestTrainingDecisionIds, currentTrainingDecisionIds);
+  const operatorTrainingSnapshot = compactOperatorTraining(latestTraining);
+  const currentTrainingVolatileSnapshot = compactCurrentTrainingVolatile(
+    currentTrainingPlan.payload,
+  );
+  const operatorTrainingVolatileMatchesCurrent =
+    latestTraining === undefined ||
+    operatorTrainingVolatileMatches(operatorTrainingSnapshot, currentTrainingVolatileSnapshot);
 
   const checks: RecoveryCheck[] = [
     {
@@ -226,6 +400,27 @@ async function main() {
         : { path: LOCAL_OPERATOR_LATEST, missing: true },
     },
     {
+      id: "local_operator_latest_matches_current_workflow_surface",
+      ok: latestState === undefined || operatorFlowMatchesCurrent,
+      summary:
+        "local operator latest flow graph must match the current worktree flow graph, not only be fresh by timestamp",
+      evidence: latestState
+        ? {
+            checkedAt: latestState.checkedAt,
+            latestFlowGraph: {
+              scenarios: latestFlowGraph?.scenarios,
+              nodes: latestFlowGraph?.nodes,
+              filters: latestFlowGraph?.filters,
+            },
+            currentFlowGraph: {
+              scenarios: currentFlowEvidence?.scenarios,
+              nodes: currentFlowEvidence?.nodes,
+              filters: currentFlowEvidence?.filters,
+            },
+          }
+        : { path: LOCAL_OPERATOR_LATEST, missing: true },
+    },
+    {
       id: "local_operator_digest_contains_mind_model",
       ok:
         latestState === undefined ||
@@ -245,15 +440,45 @@ async function main() {
       },
     },
     {
-      id: "training_plan_decision_visible_after_recovery",
+      id: "fresh_training_plan_decision_visible_after_recovery",
       ok:
-        latestState === undefined ||
-        latestTrainingPlan === undefined ||
-        Array.isArray(latestTrainingPlan.decisions),
-      summary: "compressed recovery must keep the training-plan next decision visible",
-      evidence: latestTrainingPlan,
+        currentTrainingPlan.ok &&
+        currentTrainingPlan.payload?.boundary === "dev_local_brain_training_plan_only" &&
+        currentTrainingDecisionIds.length > 0,
+      summary:
+        "compressed recovery must use fresh local-brain-training-plan for volatile training decisions, not only operator latest",
+      evidence: {
+        currentTrainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
+        operatorTrainingPlanSnapshot: compactTrainingPlan(latestTrainingPlan),
+        operatorDecisionIdsMatchCurrent: operatorTrainingPlanMatchesCurrent,
+        error: currentTrainingPlan.error,
+      },
     },
   ];
+
+  const warnings: RecoveryWarning[] = [];
+  if (!operatorTrainingPlanMatchesCurrent) {
+    warnings.push({
+      id: "operator_training_plan_snapshot_differs_from_current",
+      summary:
+        "local operator latest training-plan snapshot is not authoritative for volatile decisions; use fresh local-brain-training-plan",
+      evidence: {
+        operatorTrainingPlanSnapshot: compactTrainingPlan(latestTrainingPlan),
+        currentTrainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
+      },
+    });
+  }
+  if (!operatorTrainingVolatileMatchesCurrent) {
+    warnings.push({
+      id: "operator_training_state_snapshot_differs_from_current",
+      summary:
+        "local operator latest training runtime snapshot differs from fresh process/eval truth; use fresh local-brain-training-plan before acting",
+      evidence: {
+        operatorTrainingSnapshot,
+        currentTrainingVolatileSnapshot,
+      },
+    });
+  }
 
   const failed = checks.filter((check) => !check.ok);
   const result = {
@@ -276,6 +501,8 @@ async function main() {
     ],
     checks,
     actionableFailures: failed.map((check) => `${check.id}: ${check.summary}`),
+    actionableWarnings: warnings.map((warning) => `${warning.id}: ${warning.summary}`),
+    warnings,
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

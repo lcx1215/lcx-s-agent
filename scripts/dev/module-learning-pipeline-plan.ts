@@ -1,6 +1,6 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createModuleLearningPipelinePlanTool } from "../../src/agents/tools/module-learning-pipeline-plan-tool.ts";
+import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
 type CliOptions = {
   targetModule?: string;
@@ -15,13 +15,11 @@ type CliOptions = {
   trainingOrEvalAbsorptionEvidencePath?: string;
   freshAdjacentApplicationTask?: string;
   keepDownrankDiscardDecision?: string;
+  supersedesReceiptPath?: string;
   workspaceDir: string;
   writeReceipt: boolean;
   json: boolean;
 };
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WORKTREE_DIR = path.resolve(__dirname, "../..");
 
 function usage(): never {
   throw new Error(
@@ -29,7 +27,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/module-learning-pipeline-plan.ts --target-module NAME [--source PATH_OR_URL] [--learning-intent TEXT] [--actual-reading-scope TEXT] [--existing-artifact PATH] [--source-registry-record PATH] [--retrieval-receipt PATH] [--application-validation-receipt PATH] [--training-or-eval-absorption-evidence PATH] [--fresh-adjacent-application-task TEXT] [--keep-downrank-discard-decision keep|downrank|discard|not_decided] [--write] [--json]",
       "",
       "Plans one module-learning run through the existing source -> capability -> retrieval/apply -> eval/training absorption chain.",
-      "Default is dry-run. Use --write to create memory/module-learning-pipeline-plan-receipts/<date>/*.json.",
+      "Default is dry-run under ~/.openclaw/workspace. Use --write to create memory/module-learning-pipeline-plan-receipts/<date>/*.json.",
       "This is dev/local only and does not fetch remote content or touch live/provider/protected-memory state.",
     ].join("\n"),
   );
@@ -46,7 +44,7 @@ function readValue(args: string[], index: number): string {
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     existingArtifactPaths: [],
-    workspaceDir: WORKTREE_DIR,
+    workspaceDir: DEFAULT_WORKSPACE_DIR,
     writeReceipt: false,
     json: false,
   };
@@ -87,6 +85,9 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--keep-downrank-discard-decision") {
       options.keepDownrankDiscardDecision = readValue(args, index);
+      index += 1;
+    } else if (arg === "--supersedes-receipt") {
+      options.supersedesReceiptPath = readValue(args, index);
       index += 1;
     } else if (arg === "--workspace" || arg === "--worktree") {
       options.workspaceDir = path.resolve(readValue(args, index));
@@ -150,6 +151,7 @@ const result = await tool.execute("module-learning-pipeline-plan-cli", {
   trainingOrEvalAbsorptionEvidencePath: options.trainingOrEvalAbsorptionEvidencePath,
   freshAdjacentApplicationTask: options.freshAdjacentApplicationTask,
   keepDownrankDiscardDecision: options.keepDownrankDiscardDecision,
+  supersedesReceiptPath: options.supersedesReceiptPath,
   writeReceipt: options.writeReceipt,
 });
 const details = result.details as Record<string, unknown>;

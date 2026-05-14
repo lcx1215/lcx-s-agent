@@ -1,5 +1,9 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildAgentExamReport } from "../scripts/dev/lcx-agent-exam.js";
+
+const repoRoot = path.resolve(import.meta.dirname, "..");
 
 const okCommand = (name: string, json: Record<string, unknown>) =>
   ({
@@ -179,6 +183,13 @@ describe("lcx-agent-exam", () => {
       expect.objectContaining({
         status: "fail",
         evidence: expect.arrayContaining(["realBugsFound=latest_eval_not_promotion_ready"]),
+      }),
+    );
+    expect(report.lanes.find((lane) => lane.lane === "module_learning_internalization")).toEqual(
+      expect.objectContaining({
+        status: "warn",
+        severity: "P2",
+        nextAction: expect.stringContaining("per-receipt eval/training"),
       }),
     );
   });
@@ -382,5 +393,13 @@ describe("lcx-agent-exam", () => {
         issue: expect.stringContaining("可能把存储、摘要、检索误写成模型已经学会"),
       }),
     );
+  });
+
+  it("runs module-learning review against the local OpenClaw workspace", async () => {
+    const source = await fs.readFile(path.join(repoRoot, "scripts/dev/lcx-agent-exam.ts"), "utf8");
+
+    expect(source).toContain("DEFAULT_WORKSPACE_DIR");
+    expect(source).toContain("scripts/dev/module-learning-pipeline-review.ts");
+    expect(source).toContain("--workspace");
   });
 });

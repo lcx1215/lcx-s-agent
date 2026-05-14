@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -299,7 +300,7 @@ function buildModuleLearningLane(moduleCommand: CommandResult): ExamLane {
   return {
     lane: "module_learning_internalization",
     status,
-    severity: status === "pass" ? "info" : status === "warn" ? "P3" : "P1",
+    severity: status === "pass" ? "info" : status === "warn" && weak > 0 ? "P2" : "P3",
     boundary: stringValue(review.boundary, "module_learning_pipeline_review_only"),
     evidence: [
       `receiptFiles=${receiptFiles}`,
@@ -317,7 +318,9 @@ function buildModuleLearningLane(moduleCommand: CommandResult): ExamLane {
     nextAction:
       status === "pass"
         ? "保留 no-write review 作为每日检查，继续要求 fresh adjacent application。"
-        : "补真实 module_learning_pipeline_plan/application/eval 证据，再写 review receipt。",
+        : weak > 0
+          ? "补 per-receipt eval/training、fresh adjacent application、keep/downrank/discard 证据，再允许 eval_absorbed。"
+          : "补真实 module_learning_pipeline_plan/application/eval 证据，再写 review receipt。",
   };
 }
 
@@ -855,6 +858,8 @@ export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
           "--import",
           "tsx",
           "scripts/dev/module-learning-pipeline-review.ts",
+          "--workspace",
+          DEFAULT_WORKSPACE_DIR,
           "--no-write",
           "--json",
         ],

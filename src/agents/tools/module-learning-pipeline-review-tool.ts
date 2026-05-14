@@ -39,6 +39,7 @@ type ModuleLearningPlanReceipt = {
   trainingOrEvalAbsorptionEvidencePath?: string | null;
   freshAdjacentApplicationTask?: string | null;
   keepDownrankDiscardDecision?: string | null;
+  supersedesReceiptPath?: string | null;
   missingEvidence?: unknown;
   safetyBoundaries?: unknown;
   existingToolBridge?: unknown;
@@ -107,6 +108,25 @@ function statusKey(status: unknown): string {
     : "invalid_or_missing_status";
 }
 
+function statusRank(status: unknown): number {
+  const ordered = MODULE_LEARNING_EVIDENCE_STATUSES;
+  const key = statusKey(status);
+  const index = ordered.indexOf(key as (typeof ordered)[number]);
+  return index >= 0 ? index : -1;
+}
+
+function newerReceipt(
+  left: Extract<ReceiptReadResult, { ok: true }>,
+  right: Extract<ReceiptReadResult, { ok: true }>,
+): Extract<ReceiptReadResult, { ok: true }> {
+  const leftRank = statusRank(left.receipt.status);
+  const rightRank = statusRank(right.receipt.status);
+  if (leftRank !== rightRank) {
+    return leftRank > rightRank ? left : right;
+  }
+  return left.path.localeCompare(right.path) >= 0 ? left : right;
+}
+
 async function readReceiptFile(receiptPath: string): Promise<ReceiptReadResult> {
   try {
     const parsed = JSON.parse(await fs.readFile(receiptPath, "utf8")) as ModuleLearningPlanReceipt;
@@ -166,6 +186,17 @@ async function readDailyReceipts(params: {
   );
 }
 
+function activeReceiptKey(receipt: ModuleLearningPlanReceipt): string {
+  return [
+    receipt.targetModule ?? "unknown",
+    receipt.sourceUrlOrPath ?? "unknown_source",
+    receipt.applicationValidationReceiptPath ??
+      receipt.retrievalReceiptPath ??
+      receipt.actualReadingScope ??
+      "unknown_application",
+  ].join("\n");
+}
+
 export function buildModuleLearningPipelineReview(params: {
   workspaceDir: string;
   dateKey: string;
@@ -178,8 +209,36 @@ export function buildModuleLearningPipelineReview(params: {
   const invalidReceipts = params.receiptResults.filter(
     (result): result is Extract<ReceiptReadResult, { ok: false }> => !result.ok,
   );
-  const rows = validReceipts.map((result) => {
+  const latestByKey = new Map<string, Extract<ReceiptReadResult, { ok: true }>>();
+  for (const result of validReceipts) {
+    const key = activeReceiptKey(result.receipt);
+    const previous = latestByKey.get(key);
+    if (!previous) {
+      latestByKey.set(key, result);
+    } else {
+      latestByKey.set(key, newerReceipt(result, previous));
+    }
+  }
+  const supersededByPath = new Map<string, string>();
+  for (const result of validReceipts) {
+    const superseded = result.receipt.supersedesReceiptPath;
+    if (superseded && typeof superseded === "string") {
+      supersededByPath.set(
+        superseded,
+        normalizeRelativePath(path.relative(params.workspaceDir, result.path)),
+      );
+    }
+  }
+  const allRows = validReceipts.map((result) => {
     const receipt = result.receipt;
+    const receiptPath = normalizeRelativePath(path.relative(params.workspaceDir, result.path));
+    const latestForKey = latestByKey.get(activeReceiptKey(receipt))?.path;
+    const supersededByReceiptPath =
+      supersededByPath.get(receiptPath) ??
+      (latestForKey && latestForKey !== result.path
+        ? normalizeRelativePath(path.relative(params.workspaceDir, latestForKey))
+        : null);
+    const superseded = supersededByReceiptPath !== null;
     const status = statusKey(receipt.status);
     const financePipelineArgs = recordValue(receipt.financePipelineArgs);
     const structuredDataReviewTargetViolation =
@@ -196,7 +255,7 @@ export function buildModuleLearningPipelineReview(params: {
       receipt.providerConfigTouched === true ||
       receipt.protectedMemoryTouched === true;
     return {
-      receiptPath: normalizeRelativePath(path.relative(params.workspaceDir, result.path)),
+      receiptPath,
       targetModule: receipt.targetModule,
       moduleFamily: receipt.moduleFamily ?? null,
       status,
@@ -209,6 +268,9 @@ export function buildModuleLearningPipelineReview(params: {
       trainingOrEvalAbsorptionEvidencePath: receipt.trainingOrEvalAbsorptionEvidencePath ?? null,
       freshAdjacentApplicationTask: receipt.freshAdjacentApplicationTask ?? null,
       keepDownrankDiscardDecision: receipt.keepDownrankDiscardDecision ?? "not_decided",
+      supersedesReceiptPath: receipt.supersedesReceiptPath ?? null,
+      superseded,
+      supersededByReceiptPath,
       missingEvidence: stringArrayValue(receipt.missingEvidence),
       weak,
       failedReason: structuredDataReviewTargetViolation
@@ -223,6 +285,16 @@ export function buildModuleLearningPipelineReview(params: {
       financePipelineArgs: receipt.financePipelineArgs ?? null,
     };
   });
+  const rows = allRows.filter((row) => !row.superseded);
+  const supersededRows = allRows
+    .filter((row) => row.superseded)
+    .map((row) => ({
+      receiptPath: row.receiptPath,
+      targetModule: row.targetModule,
+      sourceUrlOrPath: row.sourceUrlOrPath,
+      supersededByReceiptPath: row.supersededByReceiptPath,
+      status: row.status,
+    }));
   const countsByStatus = Object.fromEntries(
     [...MODULE_LEARNING_EVIDENCE_STATUSES, "invalid_or_missing_status"].map((status) => [
       status,
@@ -257,7 +329,9 @@ export function buildModuleLearningPipelineReview(params: {
     dateKey: params.dateKey,
     targetModule: params.targetModule ?? null,
     counts: {
-      receiptFiles: params.receiptResults.length,
+      receiptFiles: rows.length,
+      rawReceiptFiles: params.receiptResults.length,
+      supersededReceiptFiles: supersededRows.length,
       validReceipts: validReceipts.length,
       invalidReceipts: invalidReceipts.length,
       missingEvidence: countsByStatus.missing_evidence,
@@ -273,6 +347,7 @@ export function buildModuleLearningPipelineReview(params: {
     },
     countsByStatus,
     rows,
+    supersededRows,
     weakModuleLearning,
     invalidReceipts: invalidReceipts.map((result) => ({
       receiptPath: normalizeRelativePath(path.relative(params.workspaceDir, result.path)),

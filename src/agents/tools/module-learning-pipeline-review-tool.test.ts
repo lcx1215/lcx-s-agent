@@ -91,7 +91,9 @@ describe("module learning pipeline review tool", () => {
         updated: true,
         reviewPath: "memory/module-learning-pipeline-reviews/2026-05-12.json",
         counts: {
-          receiptFiles: 3,
+          receiptFiles: 2,
+          rawReceiptFiles: 3,
+          supersededReceiptFiles: 0,
           validReceipts: 2,
           invalidReceipts: 1,
           missingEvidence: 0,

@@ -3,6 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
+import {
+  DEFAULT_GUARD_LOG_PATH,
+  DEFAULT_WORKSPACE_DIR,
+  DEFAULT_WORKSPACE_LOG_DIR,
+  LCX_USER_HOME,
+} from "./lcx-local-paths.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -21,10 +27,9 @@ type CheckResult = {
   error?: string;
 };
 
-const HOME = process.env.HOME ?? ".";
-const WORKSPACE_DIR = path.join(HOME, ".openclaw", "workspace");
-const WORKSPACE_LOG_DIR = path.join(HOME, ".openclaw", "workspace", "logs");
-const MINIMAX_GUARD_LOG = path.join(WORKSPACE_LOG_DIR, "minimax-brain-training-guard-medium.jsonl");
+const WORKSPACE_DIR = DEFAULT_WORKSPACE_DIR;
+const WORKSPACE_LOG_DIR = DEFAULT_WORKSPACE_LOG_DIR;
+const MINIMAX_GUARD_LOG = DEFAULT_GUARD_LOG_PATH;
 const MINIMAX_QUOTA_LOG_PATTERN = /^minimax-quota-brain-saturator-\d{4}-\d{2}-\d{2}\.jsonl$/u;
 const MINIMAX_GUARD_LOG_TAIL_LINES = 5_000;
 const MINIMAX_QUOTA_LOG_TAIL_LINES = 500;
@@ -42,7 +47,8 @@ const LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS = resolvePositiveTimeout(
   5_000,
 );
 const LIVE_SIDECAR_REPO =
-  process.env.LCX_LIVE_SIDECAR ?? path.join(HOME, ".openclaw", "live-sidecars", "lcx-s-openclaw");
+  process.env.LCX_LIVE_SIDECAR ??
+  path.join(LCX_USER_HOME, ".openclaw", "live-sidecars", "lcx-s-openclaw");
 const LIVE_SIDECAR_DIST_ENTRY = path.join(LIVE_SIDECAR_REPO, "dist", "index.js");
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
@@ -347,6 +353,90 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       ok: payload.ok,
       summary: payload.summary,
       actionableFailures: payload.actionableFailures,
+    };
+  }
+  if (name === "learning-sedimentation-audit") {
+    return {
+      ok: payload.ok,
+      assessment: payload.assessment,
+      sufficientForCurrentUse: payload.sufficientForCurrentUse,
+      chains: payload.chains,
+      gaps: payload.gaps,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+  if (name === "learning-sedimentation-map") {
+    return {
+      ok: payload.ok,
+      summary: payload.summary,
+      lanes: Array.isArray(payload.lanes)
+        ? payload.lanes.map((lane) => {
+            const record =
+              lane && typeof lane === "object" && !Array.isArray(lane)
+                ? (lane as Record<string, unknown>)
+                : {};
+            return {
+              id: record.id,
+              category: record.category,
+              status: record.status,
+              counts: record.counts,
+              nextGate: record.nextGate,
+            };
+          })
+        : [],
+      riskyConflations: payload.riskyConflations,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+      languageCorpusTouched: payload.languageCorpusTouched,
+    };
+  }
+  if (name === "learning-sedimentation-bridge") {
+    return {
+      ok: payload.ok,
+      candidateCount: payload.candidateCount,
+      writePlanReceipts: payload.writePlanReceipts,
+      nextAction: payload.nextAction,
+      notPromoted: payload.notPromoted,
+      candidates: Array.isArray(payload.candidates) ? payload.candidates.slice(0, 5) : [],
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+  if (name === "module-learning-absorption-gate") {
+    return {
+      ok: payload.ok,
+      absorptionReady: payload.absorptionReady,
+      gateDecision: payload.gateDecision,
+      counts: payload.counts,
+      latestEval: payload.latestEval,
+      blockers: payload.blockers,
+      notPromoted: payload.notPromoted,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+  if (name === "system-memory-sedimentation-gate") {
+    return {
+      ok: payload.ok,
+      recallReady: payload.recallReady,
+      recallClaimReady: payload.recallClaimReady,
+      freshEnoughForRecallClaim: payload.freshEnoughForRecallClaim,
+      moduleLearningClaimAllowed: payload.moduleLearningClaimAllowed,
+      protectedMemoryClean: payload.protectedMemoryClean,
+      counts: payload.counts,
+      latestSystemMemory: payload.latestSystemMemory,
+      claimBoundaries: payload.claimBoundaries,
+      blockers: payload.blockers,
+      warnings: payload.warnings,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+      languageCorpusTouched: payload.languageCorpusTouched,
     };
   }
   if (name === "local-brain-plan") {
@@ -936,7 +1026,7 @@ async function liveOpenClawInvocation(args: string[]): Promise<{
 async function moduleLearningPipelineReviewCheck(): Promise<CheckResult> {
   const startedAt = Date.now();
   try {
-    const tool = createModuleLearningPipelineReviewTool({ workspaceDir: WORKTREE_CWD });
+    const tool = createModuleLearningPipelineReviewTool({ workspaceDir: WORKSPACE_DIR });
     const result = await tool.execute("lcx-system-doctor-module-learning-review", {
       writeReview: false,
     });
@@ -997,9 +1087,15 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/local-brain-promotion-audit.ts",
     "scripts/dev/lcx-agent-exam.ts",
     "scripts/dev/lcx-change-impact-plan.ts",
+    "scripts/dev/lcx-local-paths.ts",
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-flow-graph.ts",
     "scripts/dev/lcx-head-tail-consistency.ts",
+    "scripts/dev/lcx-learning-sedimentation-bridge.ts",
+    "scripts/dev/lcx-learning-sedimentation-audit.ts",
+    "scripts/dev/lcx-learning-sedimentation-map.ts",
+    "scripts/dev/lcx-module-learning-absorption-gate.ts",
+    "scripts/dev/lcx-system-memory-sedimentation-gate.ts",
     "scripts/dev/lcx-mind-model.ts",
     "scripts/dev/module-learning-pipeline-review.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
@@ -1085,6 +1181,46 @@ checks.push(
   }),
 );
 checks.push(await moduleLearningPipelineReviewCheck());
+checks.push(
+  await runCommand({
+    name: "learning-sedimentation-audit",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-learning-sedimentation-audit.ts", "--json"],
+    parseJson: true,
+  }),
+);
+checks.push(
+  await runCommand({
+    name: "learning-sedimentation-map",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-learning-sedimentation-map.ts", "--json"],
+    parseJson: true,
+  }),
+);
+checks.push(
+  await runCommand({
+    name: "learning-sedimentation-bridge",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-learning-sedimentation-bridge.ts", "--json"],
+    parseJson: true,
+  }),
+);
+checks.push(
+  await runCommand({
+    name: "module-learning-absorption-gate",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-module-learning-absorption-gate.ts", "--json"],
+    parseJson: true,
+  }),
+);
+checks.push(
+  await runCommand({
+    name: "system-memory-sedimentation-gate",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-system-memory-sedimentation-gate.ts", "--json"],
+    parseJson: true,
+  }),
+);
 checks.push(await minimaxTrainingGuardStatusCheck());
 checks.push(await modelCouncilProviderEvidenceCheck());
 checks.push(

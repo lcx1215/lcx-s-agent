@@ -34,6 +34,11 @@ god-view check:
 node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
+node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
+node --import tsx scripts/dev/lcx-learning-sedimentation-audit.ts --json
+node --import tsx scripts/dev/lcx-learning-sedimentation-map.ts --json
+node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json
+node --import tsx scripts/dev/lcx-system-memory-sedimentation-gate.ts --json
 ```
 
 This is a read-only `dev_mind_model_only` architecture audit. It checks whether
@@ -118,6 +123,64 @@ failure-focus curriculum, run teacher-quality repair, run promotion audit, or
 enter Codex auto-repair mode through the repo repair lock. Use this plan before
 creating a new training script, eval lane, automation prompt, or one-off fix.
 It is dev/local only and must not be used to claim live Lark success.
+It reads module-learning receipts from `~/.openclaw/workspace` by default, not
+from the repo worktree. Use `--workspace PATH` only for isolated tests or an
+explicit alternate workspace. The plan must surface
+`module_learning_incomplete_evidence` when module-learning receipts are
+reviewable but not `eval_absorbed`.
+
+For learning sedimentation specifically, run:
+
+```bash
+node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
+node --import tsx scripts/dev/lcx-learning-sedimentation-audit.ts --json
+node --import tsx scripts/dev/lcx-learning-sedimentation-map.ts --json
+node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json
+node --import tsx scripts/dev/lcx-system-memory-sedimentation-gate.ts --json
+```
+
+The bridge is a dry-run `dev_learning_sedimentation_bridge_only` check by
+default. It reads existing finance retrieval/apply receipts and turns them into
+module-learning plan candidates with status such as `application_ready`; it does
+not claim `eval_absorbed`. Use `--write-plan-receipts` only when the operator
+intentionally wants local weak plan receipts to be reviewed by
+`module-learning-pipeline-review`.
+
+This is a read-only `dev_learning_sedimentation_audit_only` check. It audits the
+existing non-module learning surfaces together: finance source/capability,
+retrieval/apply receipts, brain distillation reviews, review-panel receipts,
+correction/downrank notes, and module-learning plan/review receipts. If general
+learning evidence exists but module plan/review is empty, it reports
+`usable_but_module_specific_certification_gap` instead of pretending there is no
+learning sedimentation at all. If bridge-generated module receipts are only
+`application_ready`, it reports
+`usable_with_module_review_but_no_eval_absorption`; that means the chain is
+reviewable but still must not be claimed as Qwen/model-weight absorbed.
+
+The sedimentation map is a read-only
+`dev_learning_sedimentation_map_only` check. It separates the learning lanes:
+finance source/capability sedimentation, local module learning
+plan/review/absorption, brain-distillation training material, system
+memory/correction/downrank notes, review-panel arbitration, operator runtime
+continuity memory, and the language-routing corpus boundary. Use it when the
+question is "what kind of learning evidence do we actually have?" A finance
+source apply receipt, a system memory note, and accepted brain-distillation
+training material are not the same thing as module `eval_absorbed`.
+
+The system-memory sedimentation gate is a read-only
+`dev_system_memory_sedimentation_gate_only` check. It looks only at local system
+memory/correction/downrank evidence and protected repo memory cleanliness. It
+may report `system_memory_recall_ready`, but it always keeps
+`moduleLearningClaimAllowed=false`; system recall is not module learning, Qwen
+weight absorption, or live-visible proof.
+
+The absorption gate is a read-only
+`dev_module_learning_absorption_gate_only` check. It joins the latest
+module-learning review with hardened-eval evidence and blocks promotion of a
+learning receipt from `application_ready` to `eval_absorbed` unless each receipt
+has per-receipt eval/training evidence, a fresh adjacent application task, and a
+keep/downrank/discard decision. A clean global hardened eval is useful evidence,
+but by itself it is not per-module absorption proof.
 
 For a judge-style all-lane exam, run:
 
@@ -277,8 +340,12 @@ and must not be claimed as learned from storage alone.
 When `writeReceipt=true`, the tool writes a dev/local receipt under:
 
 ```text
-memory/module-learning-pipeline-plan-receipts/<YYYY-MM-DD>/
+~/.openclaw/workspace/memory/module-learning-pipeline-plan-receipts/<YYYY-MM-DD>/
 ```
+
+Use `--workspace PATH` only for isolated tests or an explicit alternate local
+workspace. Do not write these receipts into repo `memory/`; the review,
+training-plan, doctor, and agent exam all read the local OpenClaw workspace.
 
 The receipt status is evidence-derived: `missing_evidence`, `stored_only`,
 `retrieval_ready`, `application_ready`, or `eval_absorbed`. Do not upgrade a
@@ -295,7 +362,7 @@ module_learning_pipeline_review
 It reads only:
 
 ```text
-memory/module-learning-pipeline-plan-receipts/<YYYY-MM-DD>/
+~/.openclaw/workspace/memory/module-learning-pipeline-plan-receipts/<YYYY-MM-DD>/
 ```
 
 When `writeReview` is not false, it writes:
@@ -314,11 +381,33 @@ The default system doctor runs the same review in no-write mode:
 
 ```bash
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
+node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json
 ```
 
 Weak module-learning receipts appear in the `module-learning-pipeline-review`
 check. Ordinary in-progress statuses do not fail the doctor, but boundary
 violations do.
+
+The absorption gate should report `hold_at_application_ready` while same-day
+receipts are still weak. That is expected and prevents `dev-ready` learning
+evidence from being overstated as model-weight absorption.
+
+When clean hardened eval evidence exists and the operator intentionally wants to
+close the same-day module-learning lane, the absorption gate can write dev/local
+evidence and superseding `eval_absorbed` plan receipts:
+
+```bash
+node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts \
+  --write-absorbed-plan-receipts --json
+node --import tsx scripts/dev/module-learning-pipeline-review.ts --json
+node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json
+```
+
+The review uses active receipts for `receiptFiles`, `applicationReady`,
+`evalAbsorbed`, and `weakModuleLearning`. `rawReceiptFiles` includes historical
+receipts too, and `supersededReceiptFiles` names old `application_ready`
+receipts replaced by newer `eval_absorbed` receipts. Do not delete the old
+receipts to make the count look clean; they are the audit trail.
 
 For the automation lane that should leave a daily dev/local receipt, run:
 
@@ -327,8 +416,10 @@ node --import tsx scripts/dev/module-learning-pipeline-review.ts --json
 ```
 
 Use `--no-write` for a dry run. The script writes only
-`memory/module-learning-pipeline-reviews/<YYYY-MM-DD>.json`; it must not be
-used as live proof or model-weight absorption proof by itself.
+`~/.openclaw/workspace/memory/module-learning-pipeline-reviews/<YYYY-MM-DD>.json`
+by default; it must not be used as live proof or model-weight absorption proof
+by itself. Use `--workspace PATH` only for isolated tests or an explicit
+alternate local workspace.
 
 The training coordinator also includes the same no-write review in its JSON:
 
@@ -340,6 +431,14 @@ Look at `moduleLearningReview` and the `module_learning_incomplete_evidence`
 decision before claiming cross-module learning improved. This keeps automation
 from confusing "training is active" with "every module-learning source has been
 absorbed."
+If `lcx-context-recovery-exam` reports
+`local_operator_latest_matches_current_workflow_surface` as false, refresh the
+local operator receipt before trusting compressed-context recovery; a recent
+timestamp alone is not enough when the current worktree's flow graph changed.
+Training state is more volatile than the hourly operator receipt. The recovery
+exam now runs a fresh `local-brain-training-plan` and exposes
+`operatorDecisionIdsMatchCurrent`; use the fresh plan for active guard,
+candidate, promotion, and module-learning decisions when that flag is false.
 
 The local-brain contracts, eval case, and MiniMax teacher curriculum also require
 `module_learning_pipeline_review_status` for all-module source learning. A

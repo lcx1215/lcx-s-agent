@@ -370,13 +370,14 @@ describe("local-brain-training-plan", () => {
 
   it("surfaces incomplete module-learning receipts for automation without writing reviews", async () => {
     const worktree = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-worktree-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-workspace-"));
     const dateKey = new Date().toISOString().slice(0, 10);
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
     ]);
     const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
     await writeJson(
-      worktree,
+      workspaceDir,
       `memory/module-learning-pipeline-plan-receipts/${dateKey}/incomplete.json`,
       {
         boundary: "dev_module_learning_pipeline_plan",
@@ -396,6 +397,7 @@ describe("local-brain-training-plan", () => {
         guardLogPath,
         quotaLogPath,
         worktree,
+        workspaceDir,
         json: true,
         processCheck: false,
       });
@@ -421,8 +423,12 @@ describe("local-brain-training-plan", () => {
       await expect(
         fs.stat(path.join(worktree, `memory/module-learning-pipeline-reviews/${dateKey}.json`)),
       ).rejects.toThrow();
+      await expect(
+        fs.stat(path.join(workspaceDir, `memory/module-learning-pipeline-reviews/${dateKey}.json`)),
+      ).rejects.toThrow();
     } finally {
       await fs.rm(worktree, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
     }
   });
 });

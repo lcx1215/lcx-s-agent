@@ -23,6 +23,22 @@ function runCli(args: string[]) {
   });
 }
 
+function runCliWithDefaultWorkspace(args: string[], userHome: string) {
+  return spawnSync(process.execPath, ["--import", "tsx", scriptPath, ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      LCX_USER_HOME: userHome,
+    },
+    timeout: 20_000,
+    input: "",
+    shell: false,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
 describe("module-learning-pipeline-plan CLI", () => {
   let workspaceDir: string | undefined;
 
@@ -110,6 +126,41 @@ describe("module-learning-pipeline-plan CLI", () => {
     );
     const receiptPath = String(parsed.receiptPath);
     await expect(fs.stat(path.join(workspaceDir, receiptPath))).resolves.toBeTruthy();
+  });
+
+  it("defaults writes to the local OpenClaw workspace instead of the repo worktree", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-module-plan-home-"));
+
+    const result = runCliWithDefaultWorkspace(
+      [
+        "--target-module",
+        "portfolio_risk_gates",
+        "--source",
+        "ops/local-brain/README.md",
+        "--actual-reading-scope",
+        "Read module learning workspace default rules.",
+        "--existing-artifact",
+        "scripts/dev/module-learning-pipeline-plan.ts",
+        "--write",
+        "--json",
+      ],
+      workspaceDir,
+    );
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    const receiptPath = String(parsed.receiptPath);
+    const defaultWorkspaceDir = path.join(workspaceDir, ".openclaw", "workspace");
+
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        ok: true,
+        targetModule: "portfolio_risk_gates",
+        receiptWritten: true,
+      }),
+    );
+    await expect(fs.stat(path.join(defaultWorkspaceDir, receiptPath))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(repoRoot, receiptPath))).rejects.toBeTruthy();
   });
 
   it("accepts advanced trader QC module targets", async () => {

@@ -76,6 +76,7 @@ const ModuleLearningPipelinePlanSchema = Type.Object({
   trainingOrEvalAbsorptionEvidencePath: Type.Optional(Type.String()),
   freshAdjacentApplicationTask: Type.Optional(Type.String()),
   keepDownrankDiscardDecision: Type.Optional(stringEnum(MODULE_LEARNING_DECISIONS)),
+  supersedesReceiptPath: Type.Optional(Type.String()),
   writeReceipt: Type.Optional(Type.Boolean()),
 });
 
@@ -771,6 +772,9 @@ export function createModuleLearningPipelinePlanTool(options?: {
       const keepDownrankDiscardDecision = normalizeOptional(
         readStringParam(params, "keepDownrankDiscardDecision", { allowEmpty: true }),
       );
+      const supersedesReceiptPath = normalizeOptional(
+        readStringParam(params, "supersedesReceiptPath", { allowEmpty: true }),
+      );
       if (
         keepDownrankDiscardDecision &&
         !MODULE_LEARNING_DECISIONS.includes(
@@ -840,6 +844,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
         moduleFamily: schema.moduleFamily,
         status: evidenceStatus,
         sourceUrlOrPath,
+        learningIntent,
         actualReadingScope,
         sourceRegistryRecordPath,
         retrievalReceiptPath,
@@ -847,6 +852,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
         trainingOrEvalAbsorptionEvidencePath,
         freshAdjacentApplicationTask,
         keepDownrankDiscardDecision: keepDownrankDiscardDecision ?? "not_decided",
+        supersedesReceiptPath,
         existingArtifactPaths,
         moduleSpecificCapabilityRule: schema.moduleSpecificCapabilityRule,
         requiredInputs: schema.requiredInputs,

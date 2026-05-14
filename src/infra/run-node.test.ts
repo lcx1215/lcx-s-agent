@@ -126,4 +126,78 @@ describe("run-node script", () => {
       });
     },
   );
+
+  it.runIf(process.platform !== "win32")(
+    "does not treat a parent git repository as a dirty sidecar build",
+    async () => {
+      await withTempDir(async (tmp) => {
+        const sidecar = path.join(tmp, "live-sidecar");
+        const srcIndex = path.join(sidecar, "src", "index.ts");
+        const distEntry = path.join(sidecar, "dist", "entry.js");
+        const buildStamp = path.join(sidecar, "dist", ".buildstamp");
+
+        await fs.mkdir(path.dirname(srcIndex), { recursive: true });
+        await fs.mkdir(path.dirname(distEntry), { recursive: true });
+        await fs.writeFile(srcIndex, "export {};\n", "utf-8");
+        await fs.writeFile(path.join(sidecar, "package.json"), "{}\n", "utf-8");
+        await fs.writeFile(path.join(sidecar, "tsconfig.json"), "{}\n", "utf-8");
+        await fs.writeFile(distEntry, "#!/usr/bin/env node\n", "utf-8");
+        await fs.writeFile(buildStamp, `${JSON.stringify({ head: "parent-head" })}\n`, "utf-8");
+
+        const oldTime = new Date(Date.now() - 30_000);
+        const freshTime = new Date();
+        await fs.utimes(srcIndex, oldTime, oldTime);
+        await fs.utimes(path.join(sidecar, "package.json"), oldTime, oldTime);
+        await fs.utimes(path.join(sidecar, "tsconfig.json"), oldTime, oldTime);
+        await fs.utimes(distEntry, freshTime, freshTime);
+        await fs.utimes(buildStamp, freshTime, freshTime);
+
+        const spawned: string[][] = [];
+        const gitCalls: string[][] = [];
+        const spawn = (cmd: string, args: string[]) => {
+          spawned.push([cmd, ...args]);
+          if (cmd === "pnpm") {
+            throw new Error("unexpected rebuild");
+          }
+          return {
+            on: (event: string, cb: (code: number | null, signal: string | null) => void) => {
+              if (event === "exit") {
+                queueMicrotask(() => cb(0, null));
+              }
+              return undefined;
+            },
+          };
+        };
+        const spawnSync = (cmd: string, args: string[]) => {
+          if (cmd === "git") {
+            gitCalls.push(args);
+            if (args.join(" ") === "rev-parse --show-toplevel") {
+              return { status: 0, stdout: `${tmp}\n` };
+            }
+          }
+          return { status: 1, stdout: "" };
+        };
+
+        const { runNodeMain } = await import("../../scripts/run-node.mjs");
+        const exitCode = await runNodeMain({
+          cwd: sidecar,
+          args: ["channels", "status", "--probe"],
+          env: {
+            ...process.env,
+            OPENCLAW_RUNNER_LOG: "0",
+          },
+          spawn,
+          spawnSync,
+          execPath: process.execPath,
+          platform: process.platform,
+        });
+
+        expect(exitCode).toBe(0);
+        expect(spawned).toEqual([
+          [process.execPath, "openclaw.mjs", "channels", "status", "--probe"],
+        ]);
+        expect(gitCalls).toEqual([["rev-parse", "--show-toplevel"]]);
+      });
+    },
+  );
 });

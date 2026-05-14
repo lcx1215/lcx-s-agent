@@ -25,6 +25,7 @@ type FlowNodeId =
   | "retrieval_receipt"
   | "apply_validation"
   | "local_brain_eval_absorption"
+  | "module_learning_absorption_gate"
   | "module_learning_review"
   | "keep_downrank_discard"
   | "teacher_quota"
@@ -62,6 +63,7 @@ type FlowNodeId =
   | "provider_boundary"
   | "source_conflict_review"
   | "memory_recall"
+  | "system_memory_sedimentation_gate"
   | "memory_write_gate"
   | "correction_note"
   | "stale_memory_downrank"
@@ -86,6 +88,7 @@ type FlowFilterId =
   | "protected_memory_guard"
   | "language_corpus_separation"
   | "retrieval_apply_eval_review_required"
+  | "per_receipt_absorption_evidence_required"
   | "training_overlap_guard"
   | "parse_recovered_no_promotion"
   | "promotion_ready_required"
@@ -106,6 +109,7 @@ type FlowFilterId =
   | "three_source_reconciliation_required"
   | "conflicted_data_blocks_conclusion"
   | "memory_write_freshness_gate"
+  | "system_memory_not_module_learning"
   | "correction_note_required"
   | "prior_work_reuse_required"
   | "same_philosophy_merge_required"
@@ -173,6 +177,7 @@ const NODE_IDS: FlowNodeId[] = [
   "retrieval_receipt",
   "apply_validation",
   "local_brain_eval_absorption",
+  "module_learning_absorption_gate",
   "module_learning_review",
   "keep_downrank_discard",
   "teacher_quota",
@@ -210,6 +215,7 @@ const NODE_IDS: FlowNodeId[] = [
   "provider_boundary",
   "source_conflict_review",
   "memory_recall",
+  "system_memory_sedimentation_gate",
   "memory_write_gate",
   "correction_note",
   "stale_memory_downrank",
@@ -235,6 +241,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "protected_memory_guard",
   "language_corpus_separation",
   "retrieval_apply_eval_review_required",
+  "per_receipt_absorption_evidence_required",
   "training_overlap_guard",
   "parse_recovered_no_promotion",
   "promotion_ready_required",
@@ -255,6 +262,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "three_source_reconciliation_required",
   "conflicted_data_blocks_conclusion",
   "memory_write_freshness_gate",
+  "system_memory_not_module_learning",
   "correction_note_required",
   "prior_work_reuse_required",
   "same_philosophy_merge_required",
@@ -322,6 +330,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "retrieval_receipt",
       "apply_validation",
       "local_brain_eval_absorption",
+      "module_learning_absorption_gate",
       "module_learning_review",
       "keep_downrank_discard",
     ],
@@ -330,6 +339,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "protected_memory_guard",
       "language_corpus_separation",
       "retrieval_apply_eval_review_required",
+      "per_receipt_absorption_evidence_required",
     ],
     edges: [
       ["source_intake", "source_registry"],
@@ -338,11 +348,19 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["capability_card", "retrieval_receipt"],
       ["retrieval_receipt", "apply_validation"],
       ["apply_validation", "local_brain_eval_absorption"],
-      ["local_brain_eval_absorption", "module_learning_review"],
+      ["local_brain_eval_absorption", "module_learning_absorption_gate"],
+      ["module_learning_absorption_gate", "module_learning_review"],
       ["module_learning_review", "keep_downrank_discard"],
     ],
     feedbackEdges: [["module_learning_review", "capability_card"]],
-    receipts: ["module_learning_pipeline_plan", "module_learning_pipeline_review"],
+    receipts: [
+      "module_learning_pipeline_plan",
+      "module_learning_pipeline_review",
+      "learning_sedimentation_bridge",
+      "learning_sedimentation_audit",
+      "learning_sedimentation_map",
+      "module_learning_absorption_gate",
+    ],
   },
   {
     id: "training_failure_feedback_waterflow",
@@ -549,6 +567,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     end: "stale_memory_downrank",
     requiredNodes: [
       "memory_recall",
+      "system_memory_sedimentation_gate",
       "source_registry",
       "source_conflict_review",
       "memory_write_gate",
@@ -558,12 +577,14 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
     requiredFilters: [
       "memory_write_freshness_gate",
+      "system_memory_not_module_learning",
       "correction_note_required",
       "protected_memory_guard",
       "source_evidence_gate",
     ],
     edges: [
-      ["memory_recall", "source_registry"],
+      ["memory_recall", "system_memory_sedimentation_gate"],
+      ["system_memory_sedimentation_gate", "source_registry"],
       ["source_registry", "source_conflict_review"],
       ["source_conflict_review", "memory_write_gate"],
       ["memory_write_gate", "correction_note"],
@@ -571,7 +592,12 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["stale_memory_downrank", "review_panel"],
     ],
     feedbackEdges: [["review_panel", "memory_recall"]],
-    receipts: ["correction_note", "stale_memory_rule_downrank", "review_panel"],
+    receipts: [
+      "system_memory_sedimentation_gate",
+      "correction_note",
+      "stale_memory_rule_downrank",
+      "review_panel",
+    ],
   },
   {
     id: "finance_data_gateway_waterflow",
@@ -851,6 +877,11 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     sameClassTerms: [
       "module_learning_pipeline_plan",
       "module_learning_pipeline_review",
+      "lcx-learning-sedimentation-bridge",
+      "lcx-learning-sedimentation-audit",
+      "lcx-learning-sedimentation-map",
+      "lcx-module-learning-absorption-gate",
+      "lcx-system-memory-sedimentation-gate",
       "evalAbsorbed",
     ],
     mergeFilters: ["stored_only_is_not_learning", "retrieval_apply_eval_review_required"],
@@ -930,6 +961,11 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-system-doctor.ts",
+    "scripts/dev/lcx-learning-sedimentation-bridge.ts",
+    "scripts/dev/lcx-learning-sedimentation-audit.ts",
+    "scripts/dev/lcx-learning-sedimentation-map.ts",
+    "scripts/dev/lcx-module-learning-absorption-gate.ts",
+    "scripts/dev/lcx-system-memory-sedimentation-gate.ts",
     "scripts/dev/finance-data-gateway-smoke.ts",
     "scripts/dev/local-brain-training-plan.ts",
     "scripts/dev/local-brain-distill-eval.ts",
@@ -947,6 +983,11 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "test/lcx-flow-graph.test.ts",
     "test/lcx-mind-model.test.ts",
     "test/lcx-context-recovery-exam.test.ts",
+    "test/lcx-learning-sedimentation-bridge.test.ts",
+    "test/lcx-learning-sedimentation-audit.test.ts",
+    "test/lcx-learning-sedimentation-map.test.ts",
+    "test/lcx-module-learning-absorption-gate.test.ts",
+    "test/lcx-system-memory-sedimentation-gate.test.ts",
     "test/local-brain-distill-eval.test.ts",
     "test/local-brain-contracts.test.ts",
     "test/lcx-promote-live-status.test.ts",

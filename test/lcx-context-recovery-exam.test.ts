@@ -37,6 +37,8 @@ describe("LCX compressed context recovery exam", () => {
       compressedContextRecovered: boolean;
       summary: { failed: number; total: number };
       requiredRecoveryCommands: string[];
+      actionableWarnings: string[];
+      warnings: Array<{ id: string; summary: string }>;
       liveTouched: boolean;
       providerConfigTouched: boolean;
       protectedMemoryTouched: boolean;
@@ -62,6 +64,8 @@ describe("LCX compressed context recovery exam", () => {
         "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
       ]),
     );
+    expect(Array.isArray(payload.actionableWarnings)).toBe(true);
+    expect(Array.isArray(payload.warnings)).toBe(true);
   });
 
   it("keeps the recovery exam visible in durable doctrine and local automation", async () => {
@@ -78,6 +82,12 @@ describe("LCX compressed context recovery exam", () => {
     expect(doctorSource).toContain("context-recovery-exam");
     expect(doctorSource).toContain("flow-graph-exam");
     expect(recoverySource).toContain("local_operator_latest_is_fresh");
+    expect(recoverySource).toContain("local_operator_latest_matches_current_workflow_surface");
+    expect(recoverySource).toContain("fresh_training_plan_decision_visible_after_recovery");
+    expect(recoverySource).toContain("operatorDecisionIdsMatchCurrent");
+    expect(recoverySource).toContain("operator_training_plan_snapshot_differs_from_current");
+    expect(recoverySource).toContain("operator_training_state_snapshot_differs_from_current");
+    expect(recoverySource).toContain("actionableWarnings");
     expect(recoverySource).toContain("MAX_OPERATOR_STATE_AGE_MS");
     expect(recoverySource).toContain("flow_graph_recovers_task_waterflows");
     expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");

@@ -1,15 +1,20 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
+import {
+  DEFAULT_GUARD_LOG_PATH,
+  DEFAULT_WORKSPACE_DIR,
+  DEFAULT_WORKSPACE_LOG_DIR,
+} from "./lcx-local-paths.ts";
 
 type CliOptions = {
   guardLogPath: string;
   quotaLogPath?: string;
   worktree?: string;
+  workspaceDir?: string;
   json: boolean;
   processCheck: boolean;
 };
@@ -74,22 +79,17 @@ type TrainingDecision = {
   nextCommand?: string;
 };
 
-const HOME = process.env.HOME ?? os.homedir();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT_REPO_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 const DEFAULT_WORKTREE = process.env.LCX_REPO_WORKTREE ?? SCRIPT_REPO_CWD;
-const DEFAULT_GUARD_LOG = path.join(
-  HOME,
-  ".openclaw",
-  "workspace",
-  "logs",
-  "minimax-brain-training-guard-medium.jsonl",
-);
-const DEFAULT_QUOTA_LOG_DIR = path.join(HOME, ".openclaw", "workspace", "logs");
 const quoteShellArg = (value: string): string => `'${value.replaceAll("'", "'\"'\"'")}'`;
 const normalizeWorktree = (value?: string): string => {
   const trimmed = typeof value === "string" ? value.trim() : "";
   return trimmed.length > 0 ? path.resolve(trimmed) : SCRIPT_REPO_CWD;
+};
+const normalizeWorkspaceDir = (value?: string): string => {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed.length > 0 ? path.resolve(trimmed) : DEFAULT_WORKSPACE_DIR;
 };
 const buildRepairLockCommand = (worktree: string): string =>
   `node --import tsx scripts/dev/lcx-automation-repair-lock.ts --mode acquire --lane local-brain-training-plan --worktree ${quoteShellArg(worktree)} --json`;
@@ -112,6 +112,7 @@ function usage(): never {
       "  --quota-log PATH  default latest minimax-quota-brain-saturator-*.jsonl",
       "  --no-process-check  skip ps-based active process detection",
       "  --worktree PATH  default script directory's repo root",
+      "  --workspace PATH  default ~/.openclaw/workspace for local learning receipts",
       "  --json            print JSON, default true",
     ].join("\n"),
   );
@@ -127,7 +128,7 @@ function readValue(args: string[], index: number): string {
 
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
-    guardLogPath: DEFAULT_GUARD_LOG,
+    guardLogPath: DEFAULT_GUARD_LOG_PATH,
     worktree: DEFAULT_WORKTREE,
     json: true,
     processCheck: true,
@@ -142,6 +143,9 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--worktree") {
       options.worktree = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--workspace" || arg === "--workspace-dir") {
+      options.workspaceDir = path.resolve(readValue(args, index));
       index += 1;
     } else if (arg === "--no-process-check") {
       options.processCheck = false;
@@ -285,10 +289,10 @@ function datasetSummary(event: JsonRecord | undefined): JsonRecord | undefined {
 }
 
 async function latestQuotaLogPath(): Promise<string | undefined> {
-  const entries = await fs.readdir(DEFAULT_QUOTA_LOG_DIR).catch(() => []);
+  const entries = await fs.readdir(DEFAULT_WORKSPACE_LOG_DIR).catch(() => []);
   return entries
     .filter((entry) => /^minimax-quota-brain-saturator-\d{4}-\d{2}-\d{2}\.jsonl$/u.test(entry))
-    .map((entry) => path.join(DEFAULT_QUOTA_LOG_DIR, entry))
+    .map((entry) => path.join(DEFAULT_WORKSPACE_LOG_DIR, entry))
     .toSorted()
     .at(-1);
 }
@@ -594,9 +598,9 @@ function buildDecisions(params: {
 }
 
 async function moduleLearningReviewSnapshot(
-  worktree: string,
+  workspaceDir: string,
 ): Promise<ModuleLearningReviewSnapshot> {
-  const tool = createModuleLearningPipelineReviewTool({ workspaceDir: worktree });
+  const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
   const result = await tool.execute("local-brain-training-plan-module-learning-review", {
     writeReview: false,
   });
@@ -621,6 +625,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const quotaLogPath = options.quotaLogPath ?? (await latestQuotaLogPath());
   const quotaEvents = await readJsonl(quotaLogPath);
   const worktree = normalizeWorktree(options.worktree);
+  const workspaceDir = normalizeWorkspaceDir(options.workspaceDir);
   const activeProcesses = await activeTrainingProcesses(options.processCheck);
   const latestGuardStart = latestEvent(guardEvents, (event) => event.event === "guard_start");
   const latestGuardFailure = latestEvent(guardEvents, (event) => event.event === "guard_failed");
@@ -636,7 +641,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const latestPassingEval = latestPassingEvalSnapshot(guardEvents);
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
-  const moduleLearningReview = await moduleLearningReviewSnapshot(worktree);
+  const moduleLearningReview = await moduleLearningReviewSnapshot(workspaceDir);
   const decisions = buildDecisions({
     activeProcesses,
     latestGuardStart,
@@ -654,6 +659,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     boundary: "dev_local_brain_training_plan_only",
     planVersion: "local_brain_training_plan_v1",
     cwd: worktree,
+    workspaceDir,
     guardLogPath: options.guardLogPath,
     quotaLogPath: quotaLogPath ?? "",
     activeProcesses,

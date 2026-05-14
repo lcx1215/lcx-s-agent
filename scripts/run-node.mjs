@@ -84,12 +84,28 @@ const runGit = (gitArgs, deps) => {
   }
 };
 
+const normalizePath = (candidate) => path.resolve(candidate);
+
+const isCwdGitToplevel = (deps) => {
+  const toplevel = runGit(["rev-parse", "--show-toplevel"], deps);
+  if (!toplevel) {
+    return false;
+  }
+  return normalizePath(toplevel) === normalizePath(deps.cwd);
+};
+
 const resolveGitHead = (deps) => {
+  if (!isCwdGitToplevel(deps)) {
+    return null;
+  }
   const head = runGit(["rev-parse", "HEAD"], deps);
   return head || null;
 };
 
 const hasDirtySourceTree = (deps) => {
+  if (!isCwdGitToplevel(deps)) {
+    return null;
+  }
   const output = runGit(
     ["status", "--porcelain", "--untracked-files=normal", "--", ...runNodeWatchedPaths],
     deps,
