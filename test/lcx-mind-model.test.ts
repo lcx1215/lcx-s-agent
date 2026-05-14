@@ -82,6 +82,7 @@ describe("LCX mind model god-view architecture check", () => {
         expect.objectContaining({ id: "module_learning_memory", ok: true }),
         expect.objectContaining({ id: "lark_feishu_live_boundary", ok: true }),
         expect.objectContaining({ id: "flow_graph_waterflow_supervision", ok: true }),
+        expect.objectContaining({ id: "world_class_agent_architecture", ok: true }),
       ]),
     );
     expect(payload.invariants).toEqual(
@@ -104,6 +105,10 @@ describe("LCX mind model god-view architecture check", () => {
         }),
         expect.objectContaining({
           id: "task_waterflows_have_filters_and_receipts",
+          ok: true,
+        }),
+        expect.objectContaining({
+          id: "world_class_agent_architecture_is_operational_not_slogan",
           ok: true,
         }),
       ]),
@@ -130,6 +135,8 @@ describe("LCX mind model god-view architecture check", () => {
     expect(headTailSource).toContain("compressedContextRecovered");
     expect(runbook).toContain("LCX Agent Mind Model");
     expect(runbook).toContain("LCX Agent Flow Graph");
+    expect(runbook).toContain("World-class agent architecture");
+    expect(runbook).toContain("single factual owner");
     expect(runbook).toContain("workflow closure");
     expect(runbook).toContain("lcx-context-recovery-exam");
     expect(localOperator).toContain("mind_file");

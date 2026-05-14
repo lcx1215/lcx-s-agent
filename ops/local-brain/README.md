@@ -79,6 +79,16 @@ active process, eval, promotion, quota, and overlap truth is owned by
 should not carry a second independent ps/log parser or a separate promotion
 decision.
 
+World-class agent architecture is the target standard for future work, but it is
+operational, not a slogan. In this repo it means: single factual owner per volatile
+state family, simple control-room UX, specialized internal roles, source/eval
+proof before durable claims, bounded feedback instead of open-ended loops,
+recoverable state after context loss, and strict dev/live/protected-memory
+boundaries. Use `lcx-mind-model`, `lcx-flow-graph`,
+`lcx-head-tail-consistency`, `lcx-system-doctor`, `local-brain-training-plan`,
+`lcx-context-recovery-exam`, and live probes as the governance stack. If these
+surfaces disagree, treat it as architecture debt before expanding features.
+
 The finance data gateway owner is `finance_data_gateway_snapshot`. Use it before
 current market, price, fundamentals, macro, ETF, options, index-weight, vendor,
 or portfolio-risk numbers reach Qwen, Lark, memory, or a visible summary. The

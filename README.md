@@ -127,6 +127,7 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 14. 本机 Codex skills 分层使用：LCX 核心 skills 进入本仓 runbook，通用开发/部署/外部服务 skills 留在 Codex 全局按需调用；本地大脑只学习 `skill_pattern_distillation` 这种可复用工作流，不把每个 skill 原文或外部服务权限吞进 runtime。
 15. Qwen 训练由 `lcx-qwen-training-operator` 这类 operator skill 监督：先查 active PID、overlap、guard log 新鲜度、teacher quota、dataset 和 promotion truth；24 小时进化指训练/eval/backoff/安全拉起闭环，不是 24 小时满负载硬烧。
 16. 复杂工程变更由 `lcx-workflow-waterflow-auditor` 这类 god-view skill 监督：小改动必须能回到水路图、head-tail、一头一尾 proof、记忆沉淀和 dev/live 边界，不能只修局部忘掉全局。
+17. 未来目标是世界级 agent 架构，但验收标准不是口号：用户入口简单，内部角色专业，volatile 状态只有一个事实 owner，学习沉淀有 source/retrieval/apply/eval/review 证据，所有回流有边界，dev/live/protected memory 不混，架构变更能被 mind model、flow graph、head-tail、doctor、training-plan、context recovery 和 live probe 共同解释。
 
 上帝视角检查命令：
 
@@ -136,7 +137,7 @@ node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 ```
 
-它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图至少覆盖 13 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock、金融数据网关对账。
+它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图至少覆盖 14 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock、金融数据网关对账、高级交易员失败族闭环。
 
 金融数据不能散落在各模块里直接给 Qwen 或 Lark 用。凡是当前行情、价格、财报、宏观、ETF、期权、指数权重、vendor 字段、仓位风险里会出现数字的路径，先走 `finance_data_gateway_snapshot`：每个字段必须带 provider role、source timestamp、timezone、field definition、unit/currency、adjusted status、source URL/artifact；主源、交叉校验源和官方/issuer 慢源不一致时进入 `data_provenance_quality`，不能硬写结论。
 

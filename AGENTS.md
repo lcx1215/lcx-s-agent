@@ -216,6 +216,35 @@ state family, no duplicate hidden diagnostics, no false alarms during expected
 in-progress training, and no loss of the specialized entrypoints a real operator
 needs.
 
+## World-Class Agent Architecture Doctrine
+
+Future LCX Agent architecture should be world-class, but this must mean
+operator-grade engineering quality rather than a slogan. A world-class agent
+architecture is measured by whether it keeps improving while staying clear,
+recoverable, auditable, and honest under real use.
+
+- World-class does not mean one giant brain or one giant command. It means
+  product surfaces are simple for the user, internal roles are specialized, and
+  duplicated authority is merged into one factual owner per volatile state.
+- Every major capability must have an intake path, routing rule, source or state
+  evidence, module selection, receipt/eval proof, bounded feedback, and a visible
+  boundary. If any segment is missing, treat it as architecture debt.
+- Every durable claim must be downgradeable or falsifiable: stale memory can be
+  downranked, weak eval can block promotion, source conflicts can stop a finance
+  conclusion, and live proof can fail independently from dev proof.
+- The agent should learn workflow patterns, not blindly absorb tools, providers,
+  papers, prompts, or chat history as authority.
+- User-facing quality must stay boring and dependable: concise control-room
+  summary first, specialist detail on demand, no internal labels, no raw JSON
+  leaks, no fake live-user-seen, and no hidden execution authority.
+- Architecture changes must be judged by measured capability and operational
+  cleanliness: fewer duplicate truth sources, clearer recovery, stronger evals,
+  cleaner receipts, lower false-positive alarms, and no protected-memory,
+  provider-config, or live-sender drift.
+- Mind model, flow graph, head-tail, doctor, training plan, context recovery, and
+  live probe are the governance stack for this standard. If they disagree, the
+  disagreement is a P2 architecture issue before feature expansion.
+
 ## Mission
 
 - Build and operate LCX Agent / OpenClaw as a low-frequency research operating system for one real user.

@@ -302,6 +302,37 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     nextAction:
       "Run lcx-flow-graph when a task family could wrong-flow, skip a filter, or recirculate without a guard.",
   },
+  {
+    id: "world_class_agent_architecture",
+    masterLane: "global_doctrine_and_runbook",
+    objective:
+      "Keep world-class agent architecture as an operational standard instead of a slogan.",
+    headTerms: [
+      "World-Class Agent Architecture Doctrine",
+      "world-class agent architecture",
+      "operator-grade engineering quality",
+    ],
+    workflowTerms: [
+      "single factual owner",
+      "local-brain-training-plan",
+      "lcx-flow-graph",
+      "lcx-context-recovery-exam",
+    ],
+    proofTerms: [
+      "world_class_agent_architecture_is_operational_not_slogan",
+      "flow_graph_exam",
+      "mind-model-consistency",
+      "actionableFailures",
+    ],
+    boundaryTerms: [
+      "no fake live-user-seen",
+      "protectedMemoryTouched",
+      "providerConfigTouched",
+      "liveTouched",
+    ],
+    nextAction:
+      "Judge future architecture work by factual owners, recovery, eval proof, bounded feedback, and boundary honesty.",
+  },
 ];
 
 const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
@@ -454,6 +485,38 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Add or update a flow-graph scenario whenever a new task family can skip filters or recirculate.",
+  },
+  {
+    id: "world_class_agent_architecture_is_operational_not_slogan",
+    category: "workflow",
+    objective:
+      "World-class agent architecture must be proven through product surfaces, factual owners, recovery, eval proof, and boundaries.",
+    termsBySurface: {
+      head: [
+        "World-Class Agent Architecture Doctrine",
+        "operator-grade engineering quality",
+        "measured capability and operational cleanliness",
+      ],
+      workflow: [
+        "world_class_agent_architecture",
+        "single factual owner",
+        "MIND_MODEL_LANES",
+        "CONSOLIDATION_CLUSTERS",
+      ],
+      proof: [
+        "world_class_agent_architecture",
+        "world_class_agent_architecture_is_operational_not_slogan",
+        "test/lcx-mind-model.test.ts",
+      ],
+      boundary: [
+        "no fake live-user-seen",
+        "protectedMemoryTouched",
+        "providerConfigTouched",
+        "liveTouched",
+      ],
+    },
+    nextAction:
+      "Reject architecture changes that add slogans, duplicate truth owners, or unverified live/provider/protected-memory claims.",
   },
 ];
 
