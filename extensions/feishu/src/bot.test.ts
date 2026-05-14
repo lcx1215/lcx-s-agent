@@ -52,6 +52,7 @@ const {
   mockCreateGatewayLarkApiRouteProvider,
   mockPeekFeishuLearningTimeboxSession,
   mockStartFeishuLearningTimeboxSession,
+  mockRecordFeishuReplyFlowEvent,
 } = vi.hoisted(() => ({
   createMockDispatcher: () => ({
     sendToolResult: vi.fn(() => false),
@@ -108,10 +109,15 @@ const {
   mockStartFeishuLearningTimeboxSession: vi.fn(
     async () => ({ status: "not_requested" as const }) as unknown,
   ),
+  mockRecordFeishuReplyFlowEvent: vi.fn(),
 }));
 
 vi.mock("./reply-dispatcher.js", () => ({
   createFeishuReplyDispatcher: mockCreateFeishuReplyDispatcher,
+}));
+
+vi.mock("./reply-flow-audit.js", () => ({
+  recordFeishuReplyFlowEvent: mockRecordFeishuReplyFlowEvent,
 }));
 
 vi.mock("./send.js", () => ({
@@ -273,6 +279,7 @@ async function seedCurrentResearchLine(params: {
 beforeEach(() => {
   delete process.env.OPENCLAW_FEISHU_LEARNING_COUNCIL_REPLY_TIMEOUT_MS;
   mockRecordOperationalAnomaly.mockReset();
+  mockRecordFeishuReplyFlowEvent.mockReset();
   mockRunFeishuLearningCouncil.mockReset();
   mockRunFeishuMarketIntelligencePacket.mockReset();
   mockCreateGatewayLarkApiRouteProvider.mockReset();
@@ -6778,19 +6785,21 @@ describe("learning council routing", () => {
     expect(mockStartFeishuLearningTimeboxSession).not.toHaveBeenCalled();
     expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining(
-        "失败原因: 学习审阅超过前台等待时间 (learning_council_reply_timeout_after_5ms)",
-      ),
+      text: expect.stringContaining("前台等待超时：5ms"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("不能说已经学完，也不会写入 已通过验证，可作为研究能力使用"),
+      text: expect.stringContaining("不能说已经学完，也不会写成可复用能力"),
     });
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("大模型拆解: learning_external_source"),
-    });
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("本地大脑模块计划:"),
-    });
+    const timeoutReplyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(timeoutReplyText).toContain("任务理解:");
+    expect(timeoutReplyText).toContain("处理重点:");
+    expect(timeoutReplyText).not.toContain("大模型拆解:");
+    expect(timeoutReplyText).not.toContain("本地大脑模块计划:");
+    expect(timeoutReplyText).not.toContain("回交大模型审阅:");
+    expect(timeoutReplyText).not.toContain("failedReason:");
+    expect(timeoutReplyText).not.toContain("application_ready");
   });
 
   it("keeps short learning timeout replies readable for commodity learning requests", async () => {
@@ -6890,19 +6899,20 @@ describe("learning council routing", () => {
       text: expect.stringContaining("收到，已开始学：大宗商品的知识。"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("大模型拆解: learning_external_source"),
+      text: expect.stringContaining("处理重点: 商品供需、库存/期限结构"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining(
-        "本地大脑模块计划: commodities_oil_gold, causal_map, finance_learning_memory",
-      ),
+      text: expect.stringContaining("处理方式: 先拆商品供需和宏观传导"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("本地大脑会先拆商品供需"),
+      text: expect.stringContaining("审阅方式: 先核对材料、证据和边界"),
     });
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("回交大模型审阅: review_tier"),
-    });
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).not.toContain("大模型拆解:");
+    expect(replyText).not.toContain("本地大脑模块计划:");
+    expect(replyText).not.toContain("回交大模型审阅:");
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: expect.stringContaining("后台如果完成，会再补发完成版"),
     });
@@ -7006,24 +7016,36 @@ describe("learning council routing", () => {
       },
     });
 
+    expect(mockRecordFeishuReplyFlowEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "inbound",
+        correlationId: "msg-stock-learning-timeout",
+        messageId: "msg-stock-learning-timeout",
+        chatId: "oc-learning",
+        chatType: "p2p",
+        agentId: "main",
+        contentType: "text",
+        textPreview: "学习股市分析知识",
+      }),
+    );
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("我识别到这是金融能力学习入口，但还缺安全 source"),
+      text: expect.stringContaining("可以学，但现在还缺可核验材料"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("已识别: 金融能力学习入口"),
+      text: expect.stringContaining("识别结果：金融能力学习入口"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("本地大脑模块计划: global_index_regime, causal_map"),
+      text: expect.stringContaining("当前状态：还没开始学习；没有学习回执"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("finance_learning_memory"),
+      text: expect.stringContaining("memory/articles/options-basics.md"),
     });
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("失败原因: 缺少安全的本地文件或完整原文"),
-    });
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("未产生学习回执；不会说成已经学会"),
-    });
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).not.toContain("本地大脑模块计划");
+    expect(replyText).not.toContain("回交大模型审阅");
+    expect(replyText).not.toContain("失败原因:");
     expect(baseDispatcher.sendFinalReply).not.toHaveBeenCalledWith({
       text: expect.stringContaining("当前大脑状态：已有"),
     });
@@ -7130,7 +7152,10 @@ describe("learning council routing", () => {
     });
 
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("learning_council_reply_timeout_after_5ms"),
+      text: expect.stringContaining("前台等待超时：5ms"),
+    });
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.not.stringContaining("learning_council_reply_timeout_after_5ms"),
     });
 
     resolveCouncil(
@@ -7142,6 +7167,13 @@ describe("learning council routing", () => {
       cfg,
       to: "chat:oc-learning",
       text: expect.stringContaining("后台学习审阅完成，补发完成版。"),
+      replyToMessageId: "msg-learning-delayed",
+      accountId: "default",
+    });
+    expect(mockSendMessageFeishu).toHaveBeenCalledWith({
+      cfg,
+      to: "chat:oc-learning",
+      text: expect.stringContaining("前台状态：已经先回复过等待超时。"),
       replyToMessageId: "msg-learning-delayed",
       accountId: "default",
     });
@@ -8491,10 +8523,13 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("大师清单");
+    expect(replyText).toContain("明确对象清单");
     expect(replyText).not.toContain("已识别: market_capability_learning_intake");
-    expect(replyText).toContain("已识别: 外部材料学习入口");
-    expect(replyText).toContain("失败原因: 缺少安全的本地文件或完整原文");
+    expect(replyText).toContain("识别结果：外部材料学习入口");
+    expect(replyText).toContain("当前状态：还没开始学习");
+    expect(replyText).not.toContain("失败原因:");
+    expect(replyText).not.toContain("本地大脑模块计划");
+    expect(replyText).not.toContain("回交大模型审阅");
     expect(replyText).not.toContain("source intake");
     expect(replyText).not.toContain("extract");
     await expect(
@@ -8730,9 +8765,11 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("学习状态: 还没开始，因为缺少可核验材料");
-    expect(replyText).toContain("失败原因: 缺少安全的本地文件或完整原文");
-    expect(replyText).toContain("未产生学习回执；不会说成已经学会");
+    expect(replyText).toContain("当前状态：还没开始学习");
+    expect(replyText).toContain("没有学习回执");
+    expect(replyText).not.toContain("失败原因:");
+    expect(replyText).not.toContain("本地大脑模块计划");
+    expect(replyText).not.toContain("回交大模型审阅");
     expect(replyText).not.toContain("🦐");
     expect(replyText).not.toContain("source intake");
     expect(replyText).not.toContain("retrieval review");

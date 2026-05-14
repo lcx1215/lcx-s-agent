@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 export type FeishuReplyFlowStage =
+  | "inbound"
   | "dispatch_start"
   | "outbound_attempt"
   | "outbound_result"
@@ -15,7 +16,9 @@ export type FeishuReplyFlowRecord = {
   accountId?: string;
   messageId?: string;
   chatId?: string;
+  chatType?: string;
   agentId?: string;
+  contentType?: string;
   replyKind?: string;
   sendMode?: string;
   textPreview?: string;

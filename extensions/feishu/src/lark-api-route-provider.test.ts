@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createGatewayLarkApiRouteProvider } from "./lark-api-route-provider.js";
-import { LARK_ROUTING_FAMILY_CONTRACTS, type LarkRoutingFamily } from "./lark-routing-corpus.js";
+import {
+  LARK_ROUTING_FAMILY_CONTRACTS,
+  resolveLarkAgentInstructionHandoff,
+  type LarkRoutingFamily,
+} from "./lark-routing-corpus.js";
+import type { FeishuConfig } from "./types.js";
 
 const { mockCallGateway } = vi.hoisted(() => ({
   mockCallGateway: vi.fn(),
@@ -155,5 +160,63 @@ describe("createGatewayLarkApiRouteProvider", () => {
         outputContract: ["learningInternalizationStatus", "failedReason"],
       },
     });
+  });
+});
+
+describe("resolveLarkAgentInstructionHandoff planner audit", () => {
+  it("keeps plain options learning on options modules instead of unrequested fundamentals", async () => {
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg: {
+        surfaces: {
+          learning_command: { chatId: "oc-learning" },
+        },
+      } as FeishuConfig,
+      chatId: "oc-learning",
+      utterance: "学习期权基础知识",
+      apiProvider: async () => ({
+        family: "market_capability_learning_intake",
+        confidence: 0.82,
+        rationale: "options basics learning intake",
+        workOrder: {
+          objective: "build options basics capability",
+          requiredModules: ["options_volatility", "company_fundamentals_value"],
+          backendTool: "finance_learning_capability_attach",
+          evidenceRequired: ["capability card"],
+          safetyBoundaries: ["research_only"],
+          outputContract: ["attach-ready capability"],
+        },
+      }),
+    });
+
+    expect(handoff.family).toBe("market_capability_learning_intake");
+    expect(handoff.workOrder?.requiredModules).toEqual([
+      "options_volatility",
+      "causal_map",
+      "finance_learning_memory",
+    ]);
+    expect(handoff.workOrder?.requiredModules).not.toContain("company_fundamentals_value");
+    expect(handoff.workOrder?.validation.notes).toContain(
+      "removed_unrequested_company_fundamentals_module",
+    );
+    expect(handoff.workOrder?.validation.candidateLayer).toBe("model_candidate_local_audit");
+    expect(handoff.workOrder?.validation.learningStage).toBe("intake_plan_only");
+    expect(handoff.workOrder?.validation.rejectedCandidateReasons).toContain(
+      "company_fundamentals_value_not_requested_for_plain_options_learning",
+    );
+    expect(handoff.workOrder?.validation.localOverrideReasons).toContain(
+      "plain_options_learning_should_not_auto_add_company_fundamentals",
+    );
+    expect(handoff.workOrder?.validation.qwenChallenge).toEqual({
+      status: "recommended",
+      reason: "qwen_should_challenge_model_plan_after_local_audit_override",
+    });
+    expect(handoff.notice).toContain("candidateLayer=model_candidate_local_audit");
+    expect(handoff.notice).toContain("learningStage=intake_plan_only");
+    expect(handoff.notice).toContain(
+      "rejected=company_fundamentals_value_not_requested_for_plain_options_learning",
+    );
+    expect(handoff.notice).toContain(
+      "qwenChallenge=recommended:qwen_should_challenge_model_plan_after_local_audit_override",
+    );
   });
 });

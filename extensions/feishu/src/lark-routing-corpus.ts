@@ -109,6 +109,17 @@ export type LarkApiPlannerWorkOrder = {
   outputContract?: readonly string[];
 };
 
+export type LarkLearningExecutionStage =
+  | "not_learning_task"
+  | "intake_plan_only"
+  | "source_verified_execution_ready"
+  | "review_only";
+
+export type LarkQwenPlannerChallenge = {
+  status: "not_run" | "recommended" | "blocked";
+  reason: string;
+};
+
 export type LarkValidatedAgentWorkOrder = {
   schemaVersion: 1;
   family: LarkRoutingFamily;
@@ -125,6 +136,12 @@ export type LarkValidatedAgentWorkOrder = {
     apiFamilyAccepted: boolean;
     familyContractMatched: true;
     deterministicSurface?: FeishuChatSurfaceName;
+    candidateLayer: "model_candidate_local_audit";
+    acceptedCandidateReason: string;
+    rejectedCandidateReasons: readonly string[];
+    localOverrideReasons: readonly string[];
+    learningStage: LarkLearningExecutionStage;
+    qwenChallenge: LarkQwenPlannerChallenge;
     notes: readonly string[];
   };
 };
@@ -1849,6 +1866,146 @@ function defaultWorkOrderEvidence(
   }
 }
 
+function looksLikeOptionsLearningTopic(utterance: string): boolean {
+  return /(期权|options?|波动率|volatility|greeks?|希腊字母|call|put|衍生品|derivatives?)/iu.test(
+    utterance,
+  );
+}
+
+function looksLikeCompanyFundamentalsLearningTopic(utterance: string): boolean {
+  return /(基本面|fundamental|财报|估值|valuation|company|公司|nvda|msft|aapl|googl|meta|amzn|tsla|个股|单家公司)/iu.test(
+    utterance,
+  );
+}
+
+function auditMarketCapabilityLearningModules(params: {
+  utterance: string;
+  modules: readonly string[];
+}): {
+  modules: readonly string[];
+  notes: readonly string[];
+  rejectedCandidateReasons: readonly string[];
+  localOverrideReasons: readonly string[];
+} {
+  if (!looksLikeOptionsLearningTopic(params.utterance)) {
+    return {
+      modules: params.modules,
+      notes: [],
+      rejectedCandidateReasons: [],
+      localOverrideReasons: [],
+    };
+  }
+
+  const keepCompanyFundamentals = looksLikeCompanyFundamentalsLearningTopic(params.utterance);
+  const removedUnrequestedFundamentals =
+    !keepCompanyFundamentals &&
+    params.modules.some(
+      (module) => module === "company_fundamentals_value" || module === "fundamental_research",
+    );
+  const filtered = keepCompanyFundamentals
+    ? [...params.modules]
+    : params.modules.filter(
+        (module) => module !== "company_fundamentals_value" && module !== "fundamental_research",
+      );
+  const modules = mergeUniqueWorkOrderItems(filtered, [
+    "options_volatility",
+    "causal_map",
+    "finance_learning_memory",
+  ]);
+  const notes = ["options_learning_modules_deterministically_audited"];
+  if (!keepCompanyFundamentals && filtered.length !== params.modules.length) {
+    notes.push("removed_unrequested_company_fundamentals_module");
+  }
+  return {
+    modules,
+    notes,
+    rejectedCandidateReasons: removedUnrequestedFundamentals
+      ? ["company_fundamentals_value_not_requested_for_plain_options_learning"]
+      : [],
+    localOverrideReasons: [
+      "options_learning_requires_options_causal_map_and_finance_learning_memory",
+      ...(removedUnrequestedFundamentals
+        ? ["plain_options_learning_should_not_auto_add_company_fundamentals"]
+        : []),
+    ],
+  };
+}
+
+function hasExplicitLearningSource(utterance: string): boolean {
+  return /(https?:\/\/|github\.com|arxiv|ssrn|nber|source\s+[\w./-]+|memory\/|test\/fixtures\/|\.pdf\b|\.md\b|本地文件|文件路径|链接|url|这篇|这份|这段|原文)/iu.test(
+    utterance,
+  );
+}
+
+function resolveLearningExecutionStage(params: {
+  family: LarkRoutingFamily;
+  utterance: string;
+  backendToolContract?: LarkAgentInstructionHandoff["backendToolContract"];
+}): LarkLearningExecutionStage {
+  if (params.family === "api_reply_distillation") {
+    return "review_only";
+  }
+  if (
+    params.family !== "market_capability_learning_intake" &&
+    params.family !== "learning_external_source" &&
+    params.family !== "learning_capability_maintenance" &&
+    params.family !== "knowledge_internalization_audit"
+  ) {
+    return "not_learning_task";
+  }
+  if (
+    params.backendToolContract?.sourceRequirement &&
+    hasExplicitLearningSource(params.utterance)
+  ) {
+    return "source_verified_execution_ready";
+  }
+  return "intake_plan_only";
+}
+
+function resolveQwenPlannerChallenge(params: {
+  family: LarkRoutingFamily;
+  source: "api" | "deterministic_fallback";
+  rejectedCandidateReasons: readonly string[];
+  localOverrideReasons: readonly string[];
+  learningStage: LarkLearningExecutionStage;
+}): LarkQwenPlannerChallenge {
+  const learningOrReview =
+    params.learningStage !== "not_learning_task" || params.family === "api_reply_distillation";
+  if (params.source === "api" && (learningOrReview || params.localOverrideReasons.length > 0)) {
+    return {
+      status: "recommended",
+      reason:
+        params.rejectedCandidateReasons.length > 0 || params.localOverrideReasons.length > 0
+          ? "qwen_should_challenge_model_plan_after_local_audit_override"
+          : "qwen_should_challenge_model_plan_before_learning_execution",
+    };
+  }
+  if (learningOrReview && params.source === "deterministic_fallback") {
+    return {
+      status: "blocked",
+      reason: "no_api_planner_candidate_available_for_qwen_challenge",
+    };
+  }
+  return {
+    status: "not_run",
+    reason: "not_a_model_planner_learning_candidate",
+  };
+}
+
+function renderValidatedWorkOrderLine(workOrder: LarkValidatedAgentWorkOrder): string {
+  return `Validated work order: source=${workOrder.source}; modules=${workOrder.requiredModules.join(
+    ",",
+  )}; evidence=${workOrder.evidenceRequired.join(",")}; validation=${workOrder.validation.notes.join(
+    ",",
+  )}; candidateLayer=${workOrder.validation.candidateLayer}; learningStage=${
+    workOrder.validation.learningStage
+  }; rejected=${workOrder.validation.rejectedCandidateReasons.join(",") || "none"}; overrides=${
+    workOrder.validation.localOverrideReasons.join(",") || "none"
+  }; qwenChallenge=${workOrder.validation.qwenChallenge.status}:${
+    workOrder.validation.qwenChallenge.reason
+  }.`;
+}
+
 function buildValidatedAgentWorkOrder(params: {
   family: LarkRoutingFamily;
   utterance: string;
@@ -1875,6 +2032,14 @@ function buildValidatedAgentWorkOrder(params: {
       ? undefined
       : planner?.backendTool;
   const backendTool = params.backendToolContract?.toolName ?? plannerBackendTool;
+  const plannerModules = planner ? mergeUniqueWorkOrderItems(planner.requiredModules) : undefined;
+  const auditedPlannerModules =
+    plannerModules && params.family === "market_capability_learning_intake"
+      ? auditMarketCapabilityLearningModules({
+          utterance: params.utterance,
+          modules: plannerModules,
+        })
+      : undefined;
   const notes = [
     planner
       ? "api_planner_is_primary_task_decomposer"
@@ -1887,9 +2052,29 @@ function buildValidatedAgentWorkOrder(params: {
     params.source === "deterministic_fallback"
       ? "local_semantic_fallback_not_primary_decomposer"
       : "no_local_semantic_live_decomposition",
+    ...(auditedPlannerModules?.notes ?? []),
   ].filter((note): note is string => Boolean(note));
+  const rejectedCandidateReasons = auditedPlannerModules?.rejectedCandidateReasons ?? [];
+  const localOverrideReasons = auditedPlannerModules?.localOverrideReasons ?? [];
+  const learningStage = resolveLearningExecutionStage({
+    family: params.family,
+    utterance: params.utterance,
+    backendToolContract: params.backendToolContract,
+  });
+  const qwenChallenge = resolveQwenPlannerChallenge({
+    family: params.family,
+    source: params.source,
+    rejectedCandidateReasons,
+    localOverrideReasons,
+    learningStage,
+  });
+  const acceptedCandidateReason = planner
+    ? "api_candidate_accepted_after_family_contract_and_local_module_audit"
+    : apiRouteOnly
+      ? "api_route_candidate_accepted_but_work_order_built_by_local_contract"
+      : "deterministic_candidate_used_because_api_planner_was_absent_or_below_threshold";
   const requiredModules = planner
-    ? mergeUniqueWorkOrderItems(planner.requiredModules)
+    ? (auditedPlannerModules?.modules ?? plannerModules ?? [])
     : params.family === "market_capability_learning_intake" && !params.backendToolContract
       ? ["model_planner_review", "finance_learning_intent_gate"]
       : defaultWorkOrderModules(params.family);
@@ -1904,6 +2089,8 @@ function buildValidatedAgentWorkOrder(params: {
     ? mergeUniqueWorkOrderItems(planner.outputContract, [
         "model-review-ready draft",
         "explicit failedReason when required inputs are missing",
+        "visible reply uses product language, not internal labels",
+        "learning execution is source/review gated; intake plan is not learned capability",
       ])
     : params.backendToolContract
       ? [
@@ -1943,6 +2130,12 @@ function buildValidatedAgentWorkOrder(params: {
       apiFamilyAccepted,
       familyContractMatched: true,
       deterministicSurface: params.deterministicSurface,
+      candidateLayer: "model_candidate_local_audit",
+      acceptedCandidateReason,
+      rejectedCandidateReasons,
+      localOverrideReasons,
+      learningStage,
+      qwenChallenge,
       notes,
     },
   };
@@ -1978,11 +2171,7 @@ export async function resolveLarkAgentInstructionHandoff(params: {
     const deterministicLine = deterministicSurface
       ? `Deterministic surface=${deterministicSurface}.`
       : "Deterministic surface=unresolved.";
-    const workOrderLine = `Validated work order: source=${workOrder.source}; modules=${workOrder.requiredModules.join(
-      ",",
-    )}; evidence=${workOrder.evidenceRequired.join(",")}; validation=${workOrder.validation.notes.join(
-      ",",
-    )}.`;
+    const workOrderLine = renderValidatedWorkOrderLine(workOrder);
 
     return {
       family,
@@ -2084,11 +2273,7 @@ export async function resolveLarkAgentInstructionHandoff(params: {
     deterministicSurface,
     backendToolContract,
   });
-  const workOrderLine = `Validated work order: source=${workOrder.source}; modules=${workOrder.requiredModules.join(
-    ",",
-  )}; evidence=${workOrder.evidenceRequired.join(",")}; validation=${workOrder.validation.notes.join(
-    ",",
-  )}.`;
+  const workOrderLine = renderValidatedWorkOrderLine(workOrder);
 
   return {
     family: selected.family,

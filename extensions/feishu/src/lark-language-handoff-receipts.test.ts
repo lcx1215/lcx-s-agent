@@ -53,6 +53,16 @@ describe("lark language handoff receipts", () => {
             apiFamilyAccepted: true,
             familyContractMatched: true,
             deterministicSurface: "learning_command",
+            candidateLayer: "model_candidate_local_audit",
+            acceptedCandidateReason:
+              "api_candidate_accepted_after_family_contract_and_local_module_audit",
+            rejectedCandidateReasons: [],
+            localOverrideReasons: [],
+            learningStage: "intake_plan_only",
+            qwenChallenge: {
+              status: "recommended",
+              reason: "qwen_should_challenge_model_plan_before_learning_execution",
+            },
             notes: ["no_local_semantic_live_decomposition"],
           },
         },
@@ -221,6 +231,16 @@ describe("lark language handoff receipts", () => {
         apiFamilyAccepted: false,
         familyContractMatched: true,
         deterministicSurface: "technical_daily",
+        candidateLayer: "model_candidate_local_audit",
+        acceptedCandidateReason:
+          "api_route_candidate_accepted_but_work_order_built_by_local_contract",
+        rejectedCandidateReasons: [],
+        localOverrideReasons: [],
+        learningStage: "not_learning_task",
+        qwenChallenge: {
+          status: "not_run",
+          reason: "not_a_model_planner_learning_candidate",
+        },
         notes: ["no_local_semantic_live_decomposition"],
       },
     });

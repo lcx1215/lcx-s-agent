@@ -133,6 +133,16 @@ describe("lark context packets", () => {
             apiFamilyAccepted: true,
             familyContractMatched: true,
             deterministicSurface: "learning_command",
+            candidateLayer: "model_candidate_local_audit",
+            acceptedCandidateReason:
+              "api_candidate_accepted_after_family_contract_and_local_module_audit",
+            rejectedCandidateReasons: [],
+            localOverrideReasons: [],
+            learningStage: "intake_plan_only",
+            qwenChallenge: {
+              status: "recommended",
+              reason: "qwen_should_challenge_model_plan_before_learning_execution",
+            },
             notes: ["api workOrder accepted"],
           },
         },

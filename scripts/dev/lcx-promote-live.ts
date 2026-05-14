@@ -17,6 +17,8 @@ const RESTART_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 const LIVE_RESTART_HEALTH_TIMEOUT_MS = 180_000;
 const PROBE_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_REPLY_FLOW_LOG = path.join(os.homedir(), ".openclaw/logs/feishu-reply-flow.jsonl");
+const LARK_POST_MIGRATION_PROBE_SCRIPT =
+  "/Users/liuchengxu/.codex/skills/lark-post-migration-probe/scripts/lark-post-migration-probe.sh";
 
 type StepStatus = "skipped" | "passed" | "failed";
 
@@ -59,6 +61,10 @@ type LiveVisibleProof = {
     | "reply_failed";
   logPath: string;
   since: string;
+  acceptancePhrase: string;
+  acceptanceMessage: string;
+  postMigrationProbeCommand: string;
+  replyFlowProbeCommand: string;
   freshInboundCount: number;
   freshOutboundResultCount: number;
   acceptanceMatched: boolean;
@@ -587,6 +593,18 @@ function makeAcceptancePhrase(commit: string): string {
   return `lark-live-visible-fixed-${shortSha}`;
 }
 
+function makeAcceptanceMessage(acceptancePhrase: string): string {
+  return `live验收：请只回复 ${acceptancePhrase}，并说明这是重启后的真实链路。`;
+}
+
+function makePostMigrationProbeCommand(since: string): string {
+  return `${LARK_POST_MIGRATION_PROBE_SCRIPT} --since ${since}`;
+}
+
+function makeReplyFlowProbeCommand(): string {
+  return "node --import tsx scripts/dev/lcx-promote-live.ts --status --with-probe";
+}
+
 function summarizeReplyFlowRecord(record: Record<string, unknown>): ReplyFlowSummary {
   return {
     recordedAt: typeof record.recordedAt === "string" ? record.recordedAt : null,
@@ -605,11 +623,18 @@ function readLiveVisibleProof(params: {
 }): LiveVisibleProof {
   const logPath = params.logPath ?? DEFAULT_REPLY_FLOW_LOG;
   const sinceMs = Date.parse(params.since);
+  const acceptanceMessage = makeAcceptanceMessage(params.acceptancePhrase);
+  const postMigrationProbeCommand = makePostMigrationProbeCommand(params.since);
+  const replyFlowProbeCommand = makeReplyFlowProbeCommand();
   if (!fs.existsSync(logPath)) {
     return {
       status: "reply_flow_missing",
       logPath,
       since: params.since,
+      acceptancePhrase: params.acceptancePhrase,
+      acceptanceMessage,
+      postMigrationProbeCommand,
+      replyFlowProbeCommand,
       freshInboundCount: 0,
       freshOutboundResultCount: 0,
       acceptanceMatched: false,
@@ -660,6 +685,10 @@ function readLiveVisibleProof(params: {
     status,
     logPath,
     since: params.since,
+    acceptancePhrase: params.acceptancePhrase,
+    acceptanceMessage,
+    postMigrationProbeCommand,
+    replyFlowProbeCommand,
     freshInboundCount: inbound.length,
     freshOutboundResultCount: outboundResult.length,
     acceptanceMatched,
@@ -731,6 +760,10 @@ function buildReceipt(params: {
           status: "not_checked",
           logPath: DEFAULT_REPLY_FLOW_LOG,
           since: params.generatedAt,
+          acceptancePhrase,
+          acceptanceMessage: makeAcceptanceMessage(acceptancePhrase),
+          postMigrationProbeCommand: makePostMigrationProbeCommand(params.generatedAt),
+          replyFlowProbeCommand: makeReplyFlowProbeCommand(),
           freshInboundCount: 0,
           freshOutboundResultCount: 0,
           acceptanceMatched: false,
@@ -745,8 +778,11 @@ function buildReceipt(params: {
     commands: params.commands,
     acceptancePhrase,
     nextLiveProof: [
-      `Send a real Lark/Feishu message after this promotion: live验收：请只回复 ${acceptancePhrase}，并说明这是重启后的真实链路。`,
-      "Then inspect ~/.openclaw/logs/feishu-reply-flow.jsonl for a fresh inbound plus outbound_result after generatedAt.",
+      `Send this exact real Lark/Feishu message after this promotion: ${makeAcceptanceMessage(
+        acceptancePhrase,
+      )}`,
+      `Then run: ${makePostMigrationProbeCommand(params.generatedAt)}`,
+      `Status/probe command: ${makeReplyFlowProbeCommand()}`,
       "Only mark live-visible-fixed after the visible reply matches the acceptance phrase or the requested semantic acceptance condition.",
     ],
     boundary: [
@@ -845,6 +881,9 @@ function renderStatus(params: {
   }
   if (params.visibleProof) {
     lines.push(`liveVisibleStatus=${params.visibleProof.status}`);
+    lines.push(`acceptanceMessage=${params.visibleProof.acceptanceMessage}`);
+    lines.push(`postMigrationProbeCommand=${params.visibleProof.postMigrationProbeCommand}`);
+    lines.push(`replyFlowProbeCommand=${params.visibleProof.replyFlowProbeCommand}`);
     lines.push(`freshInboundCount=${params.visibleProof.freshInboundCount}`);
     lines.push(`freshOutboundResultCount=${params.visibleProof.freshOutboundResultCount}`);
     lines.push(`acceptanceMatched=${params.visibleProof.acceptanceMatched}`);

@@ -227,6 +227,18 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveRuntimeUpdated=true");
     expect(stdout).toContain("liveUserSeen=false");
     expect(stdout).toContain("nextHumanStep=send_real_lark_acceptance");
+    expect(stdout).toContain(
+      `acceptanceMessage=live验收：请只回复 lark-live-visible-fixed-${currentCommit.slice(
+        0,
+        10,
+      )}，并说明这是重启后的真实链路。`,
+    );
+    expect(stdout).toContain(
+      "postMigrationProbeCommand=/Users/liuchengxu/.codex/skills/lark-post-migration-probe/scripts/lark-post-migration-probe.sh --since 2099-01-01T00:00:00.000Z",
+    );
+    expect(stdout).toContain(
+      "replyFlowProbeCommand=node --import tsx scripts/dev/lcx-promote-live.ts --status --with-probe",
+    );
     expect(stdout).toContain("liveMatchesCurrentDev=true");
     expect(stdout).toContain("liveNeedsPromotion=false");
     expect(stdout).toContain("devLiveDrift=live_matches_current_dev");

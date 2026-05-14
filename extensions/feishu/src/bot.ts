@@ -15,7 +15,6 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
 } from "openclaw/plugin-sdk";
 import { resolveAgentWorkspaceDir } from "../../../src/agents/agent-scope.js";
-import { planFinanceBrainOrchestration } from "../../../src/agents/finance-brain-orchestration.js";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../../src/agents/tools/finance-learning-pipeline-orchestrator-tool.js";
 import { resolveProtocolInfoQuestionKind } from "../../../src/auto-reply/reply/commands-protocol-families.js";
 import { buildProtocolInfoReply } from "../../../src/auto-reply/reply/commands-protocol-info.js";
@@ -122,6 +121,7 @@ import {
 } from "./policy.js";
 import { parsePostContent } from "./post.js";
 import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
+import { recordFeishuReplyFlowEvent } from "./reply-flow-audit.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { getMessageFeishu, sendMessageFeishu } from "./send.js";
 import {
@@ -1145,14 +1145,14 @@ function renderFeishuLearningCouncilVisibleTimeoutReply(params: {
   return [
     `收到，已开始学：${topic}。`,
     "",
-    "这次前台回复必须按链路交代清楚，不再甩内部状态：",
+    "我会先把任务拆清楚，再等材料和审阅结果，不会把“开始处理”说成“已经学会”。",
     ...chain,
     "",
     "当前结果：拆解和本地大脑计划入口已经形成，但大模型审阅还没在前台等待时间内完成。",
-    "所以我不能说已经学完，也不会写入 application_ready。后台如果完成，会再补发完成版；如果失败，会留下失败原因。",
+    "所以我不能说已经学完，也不会写成可复用能力。后台如果完成，会再补发完成版；如果失败，会说明卡在哪一步。",
     "",
     "## 证据",
-    `- failedReason: learning_council_reply_timeout_after_${params.timeoutMs}ms`,
+    `- 前台等待超时：${params.timeoutMs}ms`,
     `- messageId: ${params.messageId}`,
     "",
     "边界：这是 research-only 学习任务，没有交易建议，也没有执行权限。",
@@ -1167,25 +1167,25 @@ function renderFeishuLearningBrainChainSummary(params: {
   const orchestration = params.handoffReceiptArtifact?.financeBrainOrchestration;
   const objective = workOrder?.objective?.trim();
   const primaryModules = orchestration?.primaryModules ?? [];
-  const supportingModules = orchestration?.supportingModules ?? [];
-  const reviewTools = orchestration?.reviewTools ?? [];
-  const boundaries = orchestration?.boundaries ?? [];
   const sourceRequirement = handoff?.backendToolContract?.sourceRequirement;
   const expectedProof = handoff?.expectedProof ?? [];
+  const focus = primaryModules.includes("commodities_oil_gold")
+    ? "商品供需、库存/期限结构、美元利率、通胀、地缘风险和组合风险。"
+    : primaryModules.includes("options_volatility")
+      ? "期权基础概念、波动率、希腊字母、基础策略、失效条件和风险边界。"
+      : "任务目标、已有记忆、因果链、缺失证据、风险边界和可复用规则。";
   const domainPlan = primaryModules.includes("commodities_oil_gold")
-    ? "本地大脑会先拆商品供需、库存/期限结构、原油/黄金/铜、美元利率、通胀、地缘风险，再接组合风险门。"
-    : "本地大脑会先拆任务目标、已有记忆、因果链、缺失证据、风险边界，再交给审阅。";
+    ? "先拆商品供需和宏观传导，再接组合风险门。"
+    : "先拆清目标和缺失证据，再做审阅，不直接生成学习结论。";
   const lines = [
-    `- 大模型拆解: ${handoff?.family ?? "learning_command"}${objective ? `；目标=${objective}` : ""}`,
-    `- 本地大脑模块计划: ${[...primaryModules, ...supportingModules].join(", ") || "pending"}`,
-    `- 本地大脑处理方式: ${domainPlan}`,
-    `- 回交大模型审阅: ${reviewTools.join(", ") || "review_tier"}`,
-    `- 边界: ${boundaries.join(", ") || "research_only, no_execution_authority"}`,
+    `- 任务理解: ${objective ?? "先建立可复用学习规则，再等材料验证。"}`,
+    `- 处理重点: ${focus}`,
+    `- 处理方式: ${domainPlan}`,
+    "- 审阅方式: 先核对材料、证据和边界，再决定是否写入能力卡。",
+    "- 边界: 只做研究学习，不给交易建议，也不生成执行指令。",
   ];
   if (sourceRequirement || expectedProof.length > 0) {
-    lines.push(
-      `- 学习证据门: ${sourceRequirement ?? "source_required"}；proof=${expectedProof.join(", ") || "receipt/review required"}`,
-    );
+    lines.push("- 学习证据: 需要可核验材料、学习回执和审阅结果；缺任何一项都不能说已经学会。");
   }
   return lines;
 }
@@ -1230,12 +1230,12 @@ async function runFeishuLearningCouncilWithVisibleTimeout(
       (error): FeishuLearningCouncilCompletedVisibleRun => ({
         status: "failed",
         text: [
-          "Learning council run: failed before a final council reply was available.",
+          "学习审阅没有产出可用结论。",
           "",
-          `failedReason: ${String(error)}`,
-          `messageId: ${params.messageId}`,
+          `原因：${String(error)}`,
+          `消息：${params.messageId}`,
           "",
-          "Boundary: do not treat this turn as application_ready or durable learning.",
+          "边界：这次不能算已经学会，也不能写成可复用能力。",
         ].join("\n"),
       }),
     )
@@ -1274,8 +1274,8 @@ function renderFeishuLearningCouncilDelayedCompletionReply(params: {
   return [
     header,
     "",
-    `originalMessageId: ${params.originalMessageId}`,
-    "foregroundStatus: timeout_already_reported",
+    `原消息：${params.originalMessageId}`,
+    "前台状态：已经先回复过等待超时。",
     "",
     params.run.text,
   ].join("\n");
@@ -1682,36 +1682,29 @@ function renderFeishuFinanceLearningPipelineMissingSourceReply(params?: {
   const family = params?.handoff?.family ?? "market_capability_learning_intake";
   const objective = params?.handoff?.workOrder?.objective;
   const isExternalSourceLearning = family === "learning_external_source";
-  const plan = params?.userMessage
-    ? planFinanceBrainOrchestration({
-        text: params.userMessage,
-        writesDurableMemory: true,
-      })
-    : undefined;
-  const plannedModules = plan
-    ? [...plan.primaryModules, ...plan.supportingModules].join(", ")
-    : undefined;
   const visibleObjective = humanizeFeishuLearningObjectiveForVisibleReply(objective);
   const intro = isExternalSourceLearning
-    ? "我识别到这是外部材料提炼成 skills 的学习任务，但还缺安全 source，所以没有假装已经学完。"
-    : "我识别到这是金融能力学习入口，但还缺安全 source，所以没有假装已经学完。";
+    ? "可以做外部材料提炼，但现在还缺可核验材料，所以我不会说已经读完或学会。"
+    : "可以学，但现在还缺可核验材料，所以我不会说已经学会。";
+  const learningPlanLine = visibleObjective
+    ? `- 我会按这个目标处理：${visibleObjective}`
+    : isExternalSourceLearning
+      ? "- 我会先确认材料范围，再提炼成可复用的研究规则或能力卡。"
+      : "- 我会按基础概念、核心机制、常见误区、风险边界和可复用规则来处理。";
   const missingSourceLine = isExternalSourceLearning
-    ? "- 还缺: 明确的大师清单 + 可核验来源，或 workspace-relative `.md` / `.txt` / `.html` source 文件，或直接粘贴/引用完整原文材料"
-    : "- 还缺: workspace-relative `.md` / `.txt` / `.html` 文件路径，或直接粘贴/引用一段完整金融研究材料";
+    ? "- 现在缺：明确对象清单和可核验来源；可以给本地 `.md` / `.txt` / `.html` 文件路径，也可以直接贴完整原文。"
+    : "- 现在缺：本地 `.md` / `.txt` / `.html` 材料路径，或直接粘贴一段完整金融研究材料。";
   const nextStep = isExternalSourceLearning
-    ? "下一步给出大师名单和本地材料文件/原文摘录；我会先读材料，再提炼成待审能力卡，最后给你一条可检查的学习回执。"
-    : "下一步把本地材料路径发来，例如 `memory/articles/example.md`，或直接粘贴一段完整文章；我会先读材料，再提炼成待审能力卡，最后给你一条可检查的学习回执。";
+    ? "下一步给出名单和材料后，我会先读材料，再输出待审规则和可检查回执。"
+    : "下一步把材料路径发来，例如 `memory/articles/options-basics.md`，或直接粘贴原文；我会先读材料，再输出待审能力卡和可检查回执。";
   return [
     intro,
     "",
-    `- 已识别: ${humanizeFeishuLearningFamilyForVisibleReply(family)}`,
-    ...(plannedModules ? [`- 本地大脑模块计划: ${plannedModules}`] : []),
-    ...(plan ? [`- 回交大模型审阅: ${plan.reviewTools.join(", ")}`] : []),
-    "- 学习状态: 还没开始，因为缺少可核验材料",
-    "- 失败原因: 缺少安全的本地文件或完整原文",
-    ...(visibleObjective ? [`- 目标: ${visibleObjective}`] : []),
+    `- 识别结果：${humanizeFeishuLearningFamilyForVisibleReply(family)}`,
+    learningPlanLine,
     missingSourceLine,
-    "- 未产生学习回执；不会说成已经学会",
+    "- 当前状态：还没开始学习；没有学习回执，也没有写成能力卡。",
+    "- 边界：只做研究学习，不给交易建议，也不生成执行指令。",
     "",
     nextStep,
   ].join("\n");
@@ -5770,6 +5763,17 @@ export async function handleFeishuMessage(params: {
     // System events are prepended to future prompts and can be misread as
     // authoritative transcript turns.
     log(`feishu[${account.accountId}]: ${inboundLabel}: ${preview}`);
+    void recordFeishuReplyFlowEvent({
+      correlationId: ctx.messageId,
+      stage: "inbound",
+      accountId: account.accountId,
+      messageId: ctx.messageId,
+      chatId: ctx.chatId,
+      chatType: ctx.chatType,
+      agentId: route.agentId,
+      contentType: event.message.message_type,
+      textPreview: ctx.content,
+    });
 
     // Resolve media from message
     const mediaMaxBytes = (feishuCfg?.mediaMaxMb ?? 30) * 1024 * 1024; // 30MB default
