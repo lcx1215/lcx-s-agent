@@ -150,6 +150,8 @@ export function buildPromotionAudit(params: {
   const moduleLearningReview = asRecord(params.plan.moduleLearningReview);
   const moduleLearningCounts = asRecord(moduleLearningReview.counts);
   const resolverDetails = params.resolver.ok ? params.resolver.details : {};
+  const datasetPromotionRisk = asRecord(resolverDetails.datasetPromotionRisk);
+  const datasetPromotionRiskStatus = stringValue(datasetPromotionRisk.status);
   const selectedAdapter =
     stringValue(resolverDetails.selectedAdapter) ??
     stringValue(resolverDetails.trainingSeedAdapter) ??
@@ -194,6 +196,8 @@ export function buildPromotionAudit(params: {
   } else if (boundaryViolations > 0) {
     promotionDecision = "ambiguous";
     realBugsFound.push("module_learning_boundary_violation");
+  } else if (datasetPromotionRiskStatus === "source_stable_dataset_shrink") {
+    promotionDecision = "hold";
   } else if (
     !selectedEvalPromotionReady ||
     failedCaseIds.length > 0 ||
@@ -217,6 +221,9 @@ export function buildPromotionAudit(params: {
       : []),
     ...(parseRecoveredCaseIds.length > 0 ? ["selected_eval_parse_recovered_present"] : []),
     ...(parseErrorSamples.length > 0 ? ["latest_eval_parse_error_samples_present"] : []),
+    ...(datasetPromotionRiskStatus === "source_stable_dataset_shrink"
+      ? ["dataset_promotion_risk_source_stable_shrink"]
+      : []),
   ];
 
   return {
@@ -228,6 +235,20 @@ export function buildPromotionAudit(params: {
     resolverStatus: params.resolver.ok ? "ok" : "failed",
     resolverError: params.resolver.ok ? undefined : params.resolver.error,
     resolverSelectionMode: stringValue(resolverDetails.selectionMode),
+    datasetPromotionRisk: {
+      status: datasetPromotionRiskStatus,
+      at: stringValue(datasetPromotionRisk.at),
+      sourceFiles: numberValue(datasetPromotionRisk.sourceFiles),
+      examples: numberValue(datasetPromotionRisk.examples),
+      train: numberValue(datasetPromotionRisk.train),
+      valid: numberValue(datasetPromotionRisk.valid),
+      test: numberValue(datasetPromotionRisk.test),
+      previousMaxExamples: numberValue(datasetPromotionRisk.previousMaxExamples),
+      previousMaxTrain: numberValue(datasetPromotionRisk.previousMaxTrain),
+      ignoredIncompatibleHistory: numberValue(datasetPromotionRisk.ignoredIncompatibleHistory),
+      datasetSignature: stringValue(datasetPromotionRisk.datasetSignature),
+      reason: stringValue(datasetPromotionRisk.reason),
+    },
     resolverTrainingSeed: {
       adapterPath: stringValue(resolverTrainingSeed.adapterPath),
       at: stringValue(resolverTrainingSeed.at),

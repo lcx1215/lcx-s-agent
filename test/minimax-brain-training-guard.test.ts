@@ -83,6 +83,7 @@ function nonPassingEval(
 function datasetEvent(
   at: string,
   counts: { sourceFiles: number; examples: number; train: number },
+  sourceKinds?: Record<string, number>,
 ) {
   return {
     at,
@@ -95,6 +96,7 @@ function datasetEvent(
         valid: 13,
         test: 13,
       },
+      ...(sourceKinds ? { sourceKinds } : {}),
     },
   };
 }
@@ -641,5 +643,97 @@ describe("minimax brain training guard adapter resolution", () => {
       };
     };
     expect(parsed.datasetPromotionRisk?.status).toBe("source_stable_dataset_shrink");
+  });
+
+  it("ignores incompatible legacy dataset history when checking dataset promotion risk", async () => {
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      const adapter = `${adapterPrefix}-2026-05-14T01-59-00-824Z-r10`;
+      return [
+        datasetEvent("2026-05-09T00:00:00.000Z", {
+          sourceFiles: 403,
+          examples: 9238,
+          train: 71792,
+        }),
+        datasetEvent("2026-05-14T00:00:00.000Z", {
+          sourceFiles: 403,
+          examples: 4629,
+          train: 4603,
+        }),
+        passingEval("2026-05-14T02:10:00.000Z", "candidate_hardened_eval", adapter, 77),
+      ];
+    });
+
+    const { stdout } = await resolveCurrentAdapter(fixture);
+    const parsed = JSON.parse(stdout) as {
+      datasetPromotionRisk?: {
+        status?: string;
+        previousMaxTrain?: number;
+        train?: number;
+        ignoredIncompatibleHistory?: number;
+      };
+    };
+    expect(parsed.datasetPromotionRisk).toMatchObject({
+      status: "ok",
+      previousMaxTrain: 4603,
+      train: 4603,
+      ignoredIncompatibleHistory: 1,
+    });
+  });
+
+  it("does not report shrink across different dataset source-kind windows", async () => {
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      const adapter = `${adapterPrefix}-2026-05-14T01-59-00-824Z-r10`;
+      return [
+        datasetEvent(
+          "2026-05-10T02:35:00.000Z",
+          {
+            sourceFiles: 403,
+            examples: 9289,
+            train: 9263,
+          },
+          {
+            lark_language_handoff_receipt: 63,
+            finance_learning_capability_apply_receipt: 14,
+            feishu_work_receipt: 61,
+            brain_distillation_review: 8991,
+            curated_seed: 160,
+          },
+        ),
+        datasetEvent(
+          "2026-05-14T02:42:51.711Z",
+          {
+            sourceFiles: 403,
+            examples: 4629,
+            train: 4603,
+          },
+          {
+            lark_language_handoff_receipt: 63,
+            finance_learning_capability_apply_receipt: 14,
+            feishu_work_receipt: 61,
+            brain_distillation_review: 4331,
+            curated_seed: 160,
+          },
+        ),
+        passingEval("2026-05-14T02:28:51.088Z", "candidate_hardened_eval", adapter, 77),
+      ];
+    });
+
+    const { stdout } = await resolveCurrentAdapter(fixture);
+    const parsed = JSON.parse(stdout) as {
+      datasetPromotionRisk?: {
+        status?: string;
+        previousMaxTrain?: number;
+        train?: number;
+        datasetSignature?: string;
+      };
+    };
+    expect(parsed.datasetPromotionRisk).toMatchObject({
+      status: "ok",
+      previousMaxTrain: 4603,
+      train: 4603,
+    });
+    expect(parsed.datasetPromotionRisk?.datasetSignature).toContain(
+      "brain_distillation_review:4331",
+    );
   });
 });

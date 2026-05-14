@@ -34,6 +34,8 @@ Use the matching skill before acting:
 - `finance-learning-researcher` for finance, ETF, quant, source-gated learning.
 - `lark-live-loop-debugger` and `lark-post-migration-probe` for Feishu/Lark proof.
 - `agent-runtime-drift-auditor` for dev/live/runtime drift.
+- `lcx-qwen-training-operator` for Qwen 24-hour training supervision, overlap prevention, launchd/operator checks, and promotion truth.
+- `lcx-workflow-waterflow-auditor` for god-view workflow, waterflow, head-tail, memory sedimentation, and macro/micro consistency checks.
 - `l5-regression-batterer` for L5 baseline pressure tests with realistic user/Lark prompts.
 - `l4-regression-batterer` only as a legacy compatibility alias that should forward to the L5 battery.
 - `skill-harvester` for evaluating and isolating new external/local skills.

@@ -253,4 +253,66 @@ describe("local-brain-promotion-audit", () => {
       }),
     );
   });
+
+  it("holds promotion when resolver reports source-stable dataset shrink", () => {
+    const adapterPath = "/tmp/adapter-r10";
+    const audit = buildPromotionAudit({
+      plan: {
+        activeProcesses: [{ pid: 123, role: "guard" }],
+        latestEval: {
+          name: "candidate_hardened_eval",
+          adapterPath,
+          passed: 77,
+          total: 77,
+          passRate: 1,
+          promotionReady: true,
+          failedCaseIds: [],
+          parseErrorCaseIds: [],
+        },
+        moduleLearningReview: {
+          counts: { boundaryViolations: 0 },
+        },
+      },
+      resolver: {
+        ok: true,
+        details: {
+          selectedAdapter: adapterPath,
+          selectionMode: "latest-passing",
+          datasetPromotionRisk: {
+            status: "source_stable_dataset_shrink",
+            at: "2026-05-14T00:00:00.000Z",
+            sourceFiles: 403,
+            examples: 4629,
+            train: 4603,
+            valid: 13,
+            test: 13,
+            previousMaxExamples: 9294,
+            previousMaxTrain: 71792,
+            ignoredIncompatibleHistory: 0,
+            reason:
+              "sourceFiles unchanged while examples or train count declined; hold future promotion until explained",
+          },
+        },
+      },
+    });
+
+    expect(audit).toEqual(
+      expect.objectContaining({
+        promotionDecision: "hold",
+        resolverMatchesLatestEval: true,
+        realBugsFound: [],
+      }),
+    );
+    expect(audit.qualityLaneConcernsConsidered).toContain(
+      "dataset_promotion_risk_source_stable_shrink",
+    );
+    expect(audit.datasetPromotionRisk).toEqual(
+      expect.objectContaining({
+        status: "source_stable_dataset_shrink",
+        sourceFiles: 403,
+        train: 4603,
+        previousMaxTrain: 71792,
+      }),
+    );
+  });
 });

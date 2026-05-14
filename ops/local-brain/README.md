@@ -358,6 +358,8 @@ When context is missing, load only the skills that match the current question. T
 /Users/liuchengxu/.codex/skills/lark-live-loop-debugger/SKILL.md
 /Users/liuchengxu/.codex/skills/lark-post-migration-probe/SKILL.md
 /Users/liuchengxu/.codex/skills/agent-runtime-drift-auditor/SKILL.md
+/Users/liuchengxu/.codex/skills/lcx-qwen-training-operator/SKILL.md
+/Users/liuchengxu/.codex/skills/lcx-workflow-waterflow-auditor/SKILL.md
 /Users/liuchengxu/.codex/skills/l5-regression-batterer/SKILL.md
 /Users/liuchengxu/.codex/skills/l4-regression-batterer/SKILL.md
 /Users/liuchengxu/.codex/skills/skill-harvester/SKILL.md
@@ -378,6 +380,8 @@ Use them like this:
 - `lark-live-loop-debugger`: Feishu/Lark live message, reply flow, routing, and visible reply diagnosis.
 - `lark-post-migration-probe`: prove post-migration real Lark inbound plus visible reply.
 - `agent-runtime-drift-auditor`: compare dev repo, live sidecar, daemon/runtime, and receipts for drift.
+- `lcx-qwen-training-operator`: check Qwen 24-hour training/eval/backoff/restart supervision without creating overlap.
+- `lcx-workflow-waterflow-auditor`: check god-view workflow closure, waterflow routing, head-tail consistency, and memory sedimentation gaps.
 - `l5-regression-batterer`: L5 baseline pressure tests with realistic Chinese finance/control-room prompts.
 - `l4-regression-batterer`: legacy compatibility alias only; prefer the L5 skill in new work.
 - `skill-harvester`: evaluate and isolate new external or local skills before letting them affect the agent.

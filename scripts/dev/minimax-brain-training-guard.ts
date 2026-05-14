@@ -704,8 +704,12 @@ type DatasetPromotionRisk = {
   sourceFiles?: number;
   examples?: number;
   train?: number;
+  valid?: number;
+  test?: number;
   previousMaxExamples?: number;
   previousMaxTrain?: number;
+  ignoredIncompatibleHistory?: number;
+  datasetSignature?: string;
   reason?: string;
 };
 
@@ -853,6 +857,9 @@ function datasetCountsFromPayload(payload: Record<string, unknown>):
       sourceFiles: number;
       examples: number;
       train: number;
+      valid: number;
+      test: number;
+      datasetSignature?: string;
     }
   | undefined {
   if (payload.event !== "step_ok" || payload.name !== "dataset") {
@@ -869,15 +876,44 @@ function datasetCountsFromPayload(payload: Record<string, unknown>):
   const sourceFiles = numericField((counts as { sourceFiles?: unknown }).sourceFiles);
   const examples = numericField((counts as { examples?: unknown }).examples);
   const train = numericField((counts as { train?: unknown }).train);
+  const valid = numericField((counts as { valid?: unknown }).valid) ?? 0;
+  const test = numericField((counts as { test?: unknown }).test) ?? 0;
   if (sourceFiles === undefined || examples === undefined || train === undefined) {
     return undefined;
   }
+  const sourceKinds = (result as { sourceKinds?: unknown }).sourceKinds;
+  const datasetSignature =
+    sourceKinds && typeof sourceKinds === "object" && !Array.isArray(sourceKinds)
+      ? Object.entries(sourceKinds as Record<string, unknown>)
+          .filter((entry): entry is [string, number] => typeof entry[1] === "number")
+          .toSorted(([left], [right]) => left.localeCompare(right))
+          .map(([kind, count]) => `${kind}:${count}`)
+          .join("|")
+      : undefined;
   return {
     at: typeof payload.at === "string" ? payload.at : "",
     sourceFiles,
     examples,
     train,
+    valid,
+    test,
+    datasetSignature,
   };
+}
+
+function datasetCountsAreComparable(entry: {
+  examples: number;
+  train: number;
+  valid: number;
+  test: number;
+}): boolean {
+  return (
+    entry.examples > 0 &&
+    entry.train >= 0 &&
+    entry.valid >= 0 &&
+    entry.test >= 0 &&
+    entry.train + entry.valid + entry.test <= entry.examples
+  );
 }
 
 function adapterPathFromEvalEvent(payload: Record<string, unknown>): string | undefined {
@@ -1167,6 +1203,9 @@ async function resolveDatasetPromotionRisk(): Promise<DatasetPromotionRisk> {
     sourceFiles: number;
     examples: number;
     train: number;
+    valid: number;
+    test: number;
+    datasetSignature?: string;
   }> = [];
   for (const logFile of logFiles.toSorted()) {
     const raw = await fs.readFile(logFile, "utf8").catch(() => "");
@@ -1188,9 +1227,29 @@ async function resolveDatasetPromotionRisk(): Promise<DatasetPromotionRisk> {
   if (!latest) {
     return { status: "unknown", reason: "no_dataset_evidence" };
   }
-  const sameSourceHistory = datasets.filter(
-    (entry) => entry.sourceFiles === latest.sourceFiles && entry.at <= latest.at,
+  if (!datasetCountsAreComparable(latest)) {
+    return {
+      status: "unknown",
+      at: latest.at,
+      sourceFiles: latest.sourceFiles,
+      examples: latest.examples,
+      train: latest.train,
+      valid: latest.valid,
+      test: latest.test,
+      datasetSignature: latest.datasetSignature,
+      reason: "latest_dataset_counts_are_not_structurally_comparable",
+    };
+  }
+  const sameSourceHistoryRaw = datasets.filter(
+    (entry) =>
+      entry.sourceFiles === latest.sourceFiles &&
+      entry.at <= latest.at &&
+      (!latest.datasetSignature ||
+        !entry.datasetSignature ||
+        entry.datasetSignature === latest.datasetSignature),
   );
+  const sameSourceHistory = sameSourceHistoryRaw.filter(datasetCountsAreComparable);
+  const ignoredIncompatibleHistory = sameSourceHistoryRaw.length - sameSourceHistory.length;
   const previousMaxExamples = Math.max(...sameSourceHistory.map((entry) => entry.examples));
   const previousMaxTrain = Math.max(...sameSourceHistory.map((entry) => entry.train));
   const shrinking = latest.examples < previousMaxExamples || latest.train < previousMaxTrain;
@@ -1200,8 +1259,12 @@ async function resolveDatasetPromotionRisk(): Promise<DatasetPromotionRisk> {
     sourceFiles: latest.sourceFiles,
     examples: latest.examples,
     train: latest.train,
+    valid: latest.valid,
+    test: latest.test,
     previousMaxExamples,
     previousMaxTrain,
+    ignoredIncompatibleHistory,
+    datasetSignature: latest.datasetSignature,
     reason: shrinking
       ? "sourceFiles unchanged while examples or train count declined; hold future promotion until explained"
       : undefined,

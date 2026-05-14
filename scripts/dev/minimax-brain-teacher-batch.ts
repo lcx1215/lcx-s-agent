@@ -99,6 +99,13 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "all-domain finance research loop requiring broad module coverage, simple-prerequisite monotonicity, evidence gates, review handoff, and no trade advice.",
   },
   {
+    id: "senior_trader_failure_focus_promotion_chain",
+    userMessage:
+      "把最近本地 Qwen 没过 promotion 的高级交易员失败族集中教一遍：当前行情新鲜度、公司财报证据、NVDA AI capex 二阶传导、市场宽度只能做 timing context、未验证宏观 claim、模型分歧、旧记忆降权、估值压缩、券商研报学习、错误复盘、情绪 vendor 冲突。要求全部走同一条 source -> finance_data_gateway -> data_provenance_quality -> capability -> retrieval/apply -> eval/training -> review 链；research-only，不给交易建议。",
+    sourceSummary:
+      "failure-focused senior-trader promotion repair curriculum tying current data, filings, valuation, memory, sentiment validation, and review gates into one reusable chain.",
+  },
+  {
     id: "value_investing_fundamental_core",
     userMessage:
       "以后价值投资很重要。训练本地大脑先做基本面和企业价值判断：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、反方证据和组合风险都要拆清楚；技术面只能后置做 timing context，不要给买卖建议。",
@@ -459,6 +466,7 @@ export function buildTeacherSystemPrompt(): string {
     "- vendor, field-definition, timestamp, currency, adjustment, data-source conflict, or sourced-number quality asks must include finance_data_gateway, data_provenance_quality, and source_registry",
     "- report, spreadsheet, table, model-output, citation, or visible-summary artifact asks must include research_artifact_qc and cite_every_number_or_mark_unsourced",
     "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
+    "- senior-trader promotion failure focus must connect current data freshness, filing evidence, NVDA capex second-order risk, breadth as timing context only, unverified macro claims, model disagreement, stale memory downrank, valuation compression, analyst report learning, post-mortems, sentiment vendor conflict, finance_data_gateway, data_provenance_quality, eval_harness_design, and review_panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
     "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
     "- external financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision",
@@ -1264,6 +1272,68 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
     };
   }
   if (
+    /promotion|失败族|没过|未过|candidate|当前行情新鲜度|二阶传导|vendor 冲突|senior.trader|高级交易员/iu.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "senior_trader_failure_focus_promotion_chain",
+      primary_modules: [
+        "source_registry",
+        "finance_data_gateway",
+        "data_provenance_quality",
+        "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "macro_rates_inflation",
+        "credit_liquidity",
+      ],
+      supporting_modules: [
+        "us_equity_market_structure",
+        "etf_regime",
+        "technical_timing",
+        "quant_math",
+        "finance_learning_memory",
+        "causal_map",
+      ],
+      required_tools: [
+        "portfolio_risk_gates",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      missing_data: [
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "latest_company_fundamental_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "memory_recall_scope_or_relevant_receipts",
+        "validation_dataset_and_sample_out_plan",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_current_market_data",
+        "no_unverified_filing_claims",
+        "technical_timing_not_standalone_alpha",
+        "do_not_promote_unverified_memory_claims",
+        "sentiment_signal_not_standalone_alpha",
+        "no_trade_advice",
+      ],
+      next_step:
+        "route_failure_family_through_source_gateway_capability_apply_eval_review_before_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "parallel_failure_pipeline",
+        "stored_source_as_learned_module",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+  if (
     /全领域|全部金融|完整金融|金融研究.*(美股|A股|指数|ETF).*大宗商品.*期权|source registry.*review panel/u.test(
       text,
     )
@@ -1281,6 +1351,10 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "global_index_regime",
         "etf_regime",
         "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "finance_data_gateway",
+        "data_provenance_quality",
         "commodities_oil_gold",
         "options_volatility",
         "crypto_market_structure",
@@ -1309,10 +1383,12 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "memory_recall_scope_or_relevant_receipts",
         "fresh_market_data_snapshot",
         "source_timestamp_and_vendor",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
         "macro_rates_inflation_credit_fx_inputs",
         "china_a_share_policy_liquidity_and_northbound_inputs",
         "index_constituents_weights_and_technical_regime_inputs",
         "latest_company_fundamental_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
         "commodity_curve_roll_yield_and_inventory_inputs",
         "options_iv_skew_gamma_and_event_calendar",
         "crypto_liquidity_volatility_custody_and_regulatory_inputs",
@@ -1326,6 +1402,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "evidence_required",
         "no_model_math_guessing",
         "no_unverified_current_market_data",
+        "cite_every_number_or_mark_unsourced",
         "no_unverified_cross_market_claims",
         "technical_timing_not_standalone_alpha",
         "sentiment_signal_not_standalone_alpha",

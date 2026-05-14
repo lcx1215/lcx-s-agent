@@ -143,6 +143,15 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "senior_trader_failure_focus_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "fresh_timestamp_required",
+            "retrieval_apply_eval_review_required",
+            "parse_recovered_no_promotion",
+            "promotion_ready_required",
+          ]),
+        }),
+        expect.objectContaining({
           id: "similar_engineering_consolidation_waterflow",
           requiredFilters: expect.arrayContaining([
             "prior_work_reuse_required",
@@ -186,6 +195,14 @@ describe("LCX flow graph exam", () => {
           mergeFilters: expect.arrayContaining([
             "three_source_reconciliation_required",
             "conflicted_data_blocks_conclusion",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "senior_trader_failure_focus_cluster",
+          ownerScenario: "senior_trader_failure_focus_waterflow",
+          mergeFilters: expect.arrayContaining([
+            "retrieval_apply_eval_review_required",
+            "promotion_ready_required",
           ]),
         }),
       ]),
