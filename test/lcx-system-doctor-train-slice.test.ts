@@ -11,11 +11,16 @@ describe("LCX system doctor train slice observability", () => {
       "utf8",
     );
 
-    expect(source).toContain("function summarizeTrainSliceEvent");
-    expect(source).toContain('event.name === "train_slice"');
-    expect(source).toContain("latestTrainSlice: summarizeTrainSliceEvent(latestTrainSlice)");
-    expect(source).toContain("sourceDataDir: result.sourceDataDir");
-    expect(source).toContain("policy: result.policy");
+    const trainingPlanSource = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/local-brain-training-plan.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('owner: "local-brain-training-plan"');
+    expect(source).toContain("latestTrainSlice: plan.latestTrainSlice");
+    expect(trainingPlanSource).toContain('event.name === "train_slice"');
+    expect(trainingPlanSource).toContain("sourceDataDir: record.sourceDataDir");
+    expect(trainingPlanSource).toContain("policy: record.policy");
   });
 
   it("surfaces MiniMax quota sidecar status separately from teacher quality", async () => {
@@ -23,35 +28,38 @@ describe("LCX system doctor train slice observability", () => {
       path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
       "utf8",
     );
+    const trainingPlanSource = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/local-brain-training-plan.ts"),
+      "utf8",
+    );
 
-    expect(source).toContain("function summarizeQuotaStatusEvent");
-    expect(source).toContain('event.event === "quota_saturator_start"');
-    expect(source).toContain('event.event === "quota_saturator_complete"');
-    expect(source).toContain("latestQuotaStatus: summarizeQuotaStatusEvent(latestQuotaStatus)");
-    expect(source).toContain("stopReason: payload.stopReason");
-    expect(source).toContain("targetCalls: plan.targetCalls");
+    expect(source).toContain("latestQuotaStatus: plan.latestQuotaStatus");
+    expect(trainingPlanSource).toContain('event.event === "quota_saturator_start"');
+    expect(trainingPlanSource).toContain('event.event === "quota_saturator_complete"');
+    expect(trainingPlanSource).toContain("stopReason: typeof event.stopReason");
+    expect(trainingPlanSource).toContain("targetCalls: typeof plan.targetCalls");
   });
 
-  it("reads enough guard history to keep latestGuardStart visible during long runs", async () => {
+  it("delegates local-brain runtime truth to local-brain-training-plan", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
       "utf8",
     );
 
-    expect(source).toContain("MINIMAX_GUARD_LOG_TAIL_LINES = 5_000");
-    expect(source).toContain("readJsonlTail(MINIMAX_GUARD_LOG, MINIMAX_GUARD_LOG_TAIL_LINES)");
+    expect(source).toContain("buildLocalBrainTrainingPlan");
+    expect(source).toContain("planBoundary: plan.boundary");
+    expect(source).toContain("decisionIds");
+    expect(source).not.toContain("readJsonlTail(MINIMAX_GUARD_LOG");
   });
 
   it("classifies the MiniMax saturator before matching its guard-log argument", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"),
+      path.join(repoRoot, "scripts/dev/local-brain-training-plan.ts"),
       "utf8",
     );
-    const roleMap = source.slice(source.indexOf(".map((entry) => ({"));
-    const saturatorIndex = roleMap.indexOf(
-      'entry.command.includes("minimax-quota-brain-saturator")',
-    );
-    const guardIndex = roleMap.indexOf('entry.command.includes("minimax-brain-training-guard")');
+    const roleMap = source.slice(source.indexOf("function activeTrainingRole"));
+    const saturatorIndex = roleMap.indexOf('command.includes("minimax-quota-brain-saturator")');
+    const guardIndex = roleMap.indexOf('command.includes("minimax-brain-training-guard")');
 
     expect(saturatorIndex).toBeGreaterThanOrEqual(0);
     expect(guardIndex).toBeGreaterThanOrEqual(0);
@@ -68,8 +76,8 @@ describe("LCX system doctor train slice observability", () => {
       "utf8",
     );
 
-    expect(doctorSource).toContain('command.includes("--resolve-current-adapter")');
-    expect(doctorSource).toContain("return false");
+    expect(doctorSource).toContain("buildLocalBrainTrainingPlan");
+    expect(doctorSource).not.toContain('command.includes("--resolve-current-adapter")');
     expect(trainingPlanSource).toContain('!line.includes("--resolve-current-adapter")');
   });
 

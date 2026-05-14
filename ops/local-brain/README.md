@@ -63,12 +63,21 @@ it becomes a visible bug: dev proof must not jump to live-user-seen, stored
 source must not jump to learned capability, hardened eval must not skip
 promotion gate, and training/eval loops must not recirculate without overlap
 guards or timeout/error receipts. Its proof surface is `flow_graph_exam`.
-It should not stay at only six obvious waterflows. The current minimum is 13
+It should not stay at only six obvious waterflows. The current minimum is 14
 core waterflows, including Lark visible language, provider council evidence,
 memory correction/downrank, same-philosophy engineering consolidation, external
 skill or agent distillation, automation repair locks, and finance data gateway
 reconciliation. The same-philosophy consolidation clusters enforce that related
 mechanisms merge into one owner scenario instead of becoming parallel systems.
+
+Commercial-grade convergence does not mean deleting useful entrypoints. Keep
+separate product/operator surfaces for the control room, doctor, training plan,
+promotion audit, context recovery, flow graph, head-tail, live probe, and
+module-learning review. Converge duplicated authority instead: Qwen/MiniMax
+active process, eval, promotion, quota, and overlap truth is owned by
+`local-brain-training-plan`; doctor and context recovery can report it, but they
+should not carry a second independent ps/log parser or a separate promotion
+decision.
 
 The finance data gateway owner is `finance_data_gateway_snapshot`. Use it before
 current market, price, fundamentals, macro, ETF, options, index-weight, vendor,
@@ -436,9 +445,12 @@ If `lcx-context-recovery-exam` reports
 local operator receipt before trusting compressed-context recovery; a recent
 timestamp alone is not enough when the current worktree's flow graph changed.
 Training state is more volatile than the hourly operator receipt. The recovery
-exam now runs a fresh `local-brain-training-plan` and exposes
+exam runs a fresh `local-brain-training-plan` and exposes
 `operatorDecisionIdsMatchCurrent`; use the fresh plan for active guard,
 candidate, promotion, and module-learning decisions when that flag is false.
+Expected in-progress candidate movement should not become an actionable warning
+when the stable operator fields still match; the fresh training plan is the
+commercial runtime owner for volatile training facts.
 
 The local-brain contracts, eval case, and MiniMax teacher curriculum also require
 `module_learning_pipeline_review_status` for all-module source learning. A

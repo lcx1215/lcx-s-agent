@@ -59,6 +59,14 @@ type QuotaStatusSnapshot = {
   finalConcurrency?: number;
 };
 
+type ActiveTrainingProcess = {
+  pid?: number;
+  ppid?: number;
+  elapsed?: string;
+  command: string;
+  role: "guard" | "saturator" | "teacher_batch" | "local_brain_eval" | "mlx" | "other";
+};
+
 type ModuleLearningReviewSnapshot = {
   ok?: unknown;
   boundary?: unknown;
@@ -288,6 +296,22 @@ function datasetSummary(event: JsonRecord | undefined): JsonRecord | undefined {
   return result as JsonRecord;
 }
 
+function trainSliceSummary(event: JsonRecord | undefined): JsonRecord | undefined {
+  const result = event?.result;
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+  const record = result as JsonRecord;
+  return {
+    at: eventTime(event),
+    sourceDataDir: record.sourceDataDir,
+    outDir: record.outDir,
+    policy: record.policy,
+    counts: record.counts,
+    notTouched: record.notTouched,
+  };
+}
+
 async function latestQuotaLogPath(): Promise<string | undefined> {
   const entries = await fs.readdir(DEFAULT_WORKSPACE_LOG_DIR).catch(() => []);
   return entries
@@ -378,7 +402,26 @@ function latestQuotaStatusSnapshot(events: JsonRecord[]): QuotaStatusSnapshot | 
     .toSorted((left, right) => right.at.localeCompare(left.at))[0];
 }
 
-async function activeTrainingProcesses(enabled: boolean): Promise<JsonRecord[]> {
+function activeTrainingRole(command: string): ActiveTrainingProcess["role"] {
+  if (command.includes("minimax-quota-brain-saturator")) {
+    return "saturator";
+  }
+  if (command.includes("minimax-brain-teacher-batch")) {
+    return "teacher_batch";
+  }
+  if (command.includes("minimax-brain-training-guard")) {
+    return "guard";
+  }
+  if (command.includes("local-brain-distill-eval")) {
+    return "local_brain_eval";
+  }
+  if (command.includes("mlx_lm")) {
+    return "mlx";
+  }
+  return "other";
+}
+
+async function activeTrainingProcesses(enabled: boolean): Promise<ActiveTrainingProcess[]> {
   if (!enabled) {
     return [];
   }
@@ -396,10 +439,46 @@ async function activeTrainingProcesses(enabled: boolean): Promise<JsonRecord[]> 
     .filter((line) => !line.includes("rg "))
     .map((line) => {
       const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/u.exec(line);
-      return match
-        ? { pid: Number(match[1]), ppid: Number(match[2]), elapsed: match[3], command: match[4] }
-        : { command: line.trim() };
+      if (match) {
+        const command = match[4];
+        return {
+          pid: Number(match[1]),
+          ppid: Number(match[2]),
+          elapsed: match[3],
+          command,
+          role: activeTrainingRole(command),
+        };
+      }
+      const command = line.trim();
+      return { command, role: activeTrainingRole(command) };
     });
+}
+
+function activeHeavyEvalSummary(activeProcesses: ActiveTrainingProcess[]) {
+  const guardPids = new Set(
+    activeProcesses
+      .filter((process) => process.role === "guard" && typeof process.pid === "number")
+      .map((process) => process.pid as number),
+  );
+  const localBrainEvalCount = activeProcesses.filter(
+    (process) => process.role === "local_brain_eval",
+  ).length;
+  const externalLocalBrainEvalCount = activeProcesses.filter(
+    (process) =>
+      process.role === "local_brain_eval" &&
+      (typeof process.ppid !== "number" || !guardPids.has(process.ppid)),
+  ).length;
+  const mlxCount = activeProcesses.filter((process) => process.role === "mlx").length;
+  const guardActive = guardPids.size > 0;
+  return {
+    counts: {
+      localBrainEval: localBrainEvalCount,
+      externalLocalBrainEval: externalLocalBrainEvalCount,
+      mlx: mlxCount,
+    },
+    overlappingHeavyEval:
+      guardActive && (localBrainEvalCount > 1 || mlxCount > 1 || externalLocalBrainEvalCount > 0),
+  };
 }
 
 function hasOutputContractSignals(
@@ -449,7 +528,8 @@ function evalNonPromotionReason(snapshot: EvalSnapshot): string {
 }
 
 function buildDecisions(params: {
-  activeProcesses: JsonRecord[];
+  activeProcesses: ActiveTrainingProcess[];
+  overlappingHeavyEval: boolean;
   latestGuardStart?: JsonRecord;
   latestGuardFailure?: JsonRecord;
   latestEval?: EvalSnapshot;
@@ -472,6 +552,18 @@ function buildDecisions(params: {
     codexRepairEligible: false,
     nextCommand: active ? undefined : buildMediumTrainingCommand(params.guardLogPath),
   });
+
+  if (params.overlappingHeavyEval) {
+    decisions.push({
+      id: "overlapping_heavy_eval_detected",
+      lane: "training_guard",
+      severity: "P1",
+      action: "hold_new_training_and_debug_overlap",
+      reason:
+        "local-brain-training-plan detected overlapping heavy local-brain eval while the guard is active.",
+      codexRepairEligible: false,
+    });
+  }
 
   const guardStartAt = eventTime(params.latestGuardStart);
   const failedAfterStart =
@@ -637,13 +729,32 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     guardEvents,
     (event) => event.name === "smoke" && event.event === "step_ok",
   );
+  const latestTrainSlice = latestEvent(
+    guardEvents,
+    (event) => event.name === "train_slice" && event.event === "step_ok",
+  );
   const latestEval = latestEvalSnapshot(guardEvents);
   const latestPassingEval = latestPassingEvalSnapshot(guardEvents);
+  const latestStableEval = latestEvalSnapshot(
+    guardEvents.filter((event) => event.name === "stable_hardened_eval"),
+  );
+  const latestTrainingSeedEval = latestEvalSnapshot(
+    guardEvents.filter((event) => event.name === "training_seed_hardened_eval"),
+  );
+  const latestCandidateEval = latestEvalSnapshot(
+    guardEvents.filter((event) => event.name === "candidate_hardened_eval"),
+  );
+  const latestPromotion = latestEvent(
+    guardEvents,
+    (event) => event.event === "adapter_promoted_for_guard_session",
+  );
+  const activeHeavyEval = activeHeavyEvalSummary(activeProcesses);
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
   const moduleLearningReview = await moduleLearningReviewSnapshot(workspaceDir);
   const decisions = buildDecisions({
     activeProcesses,
+    overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
     latestGuardStart,
     latestGuardFailure,
     latestEval,
@@ -663,11 +774,20 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     guardLogPath: options.guardLogPath,
     quotaLogPath: quotaLogPath ?? "",
     activeProcesses,
+    activeHeavyEvalCounts: activeHeavyEval.counts,
+    overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
     latestGuardStartAt: eventTime(latestGuardStart),
     latestDataset: datasetSummary(latestDataset),
+    latestTrainSlice: trainSliceSummary(latestTrainSlice),
     latestSmokeAt: eventTime(latestSmoke),
     latestEval,
     latestPassingEval,
+    latestStableEval,
+    latestTrainingSeedEval,
+    latestCandidateEval,
+    latestPromotionAt: eventTime(latestPromotion),
+    latestPromotedAdapter:
+      typeof latestPromotion?.adapterPath === "string" ? latestPromotion.adapterPath : undefined,
     latestEvalIsCurrentForGuardStart:
       Boolean(latestEval?.at) &&
       (!eventTime(latestGuardStart) || latestEval!.at >= eventTime(latestGuardStart)),

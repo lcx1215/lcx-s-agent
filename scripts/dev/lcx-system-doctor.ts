@@ -3,12 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
-import {
-  DEFAULT_GUARD_LOG_PATH,
-  DEFAULT_WORKSPACE_DIR,
-  DEFAULT_WORKSPACE_LOG_DIR,
-  LCX_USER_HOME,
-} from "./lcx-local-paths.ts";
+import { DEFAULT_GUARD_LOG_PATH, DEFAULT_WORKSPACE_DIR, LCX_USER_HOME } from "./lcx-local-paths.ts";
+import { buildLocalBrainTrainingPlan } from "./local-brain-training-plan.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -28,11 +24,7 @@ type CheckResult = {
 };
 
 const WORKSPACE_DIR = DEFAULT_WORKSPACE_DIR;
-const WORKSPACE_LOG_DIR = DEFAULT_WORKSPACE_LOG_DIR;
 const MINIMAX_GUARD_LOG = DEFAULT_GUARD_LOG_PATH;
-const MINIMAX_QUOTA_LOG_PATTERN = /^minimax-quota-brain-saturator-\d{4}-\d{2}-\d{2}\.jsonl$/u;
-const MINIMAX_GUARD_LOG_TAIL_LINES = 5_000;
-const MINIMAX_QUOTA_LOG_TAIL_LINES = 500;
 const LEARNING_COUNCIL_DIR = path.join(WORKSPACE_DIR, "bank", "knowledge", "learning-councils");
 const REVIEW_PANEL_RECEIPT_DIR = path.join(WORKSPACE_DIR, "memory", "review-panel-receipts");
 const MODEL_COUNCIL_AUDIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -461,22 +453,6 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
   return payload;
 }
 
-async function readJsonlTail(
-  filePath: string,
-  maxLines: number,
-): Promise<Array<Record<string, unknown>>> {
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    return raw
-      .split(/\r?\n/u)
-      .filter((line) => line.trim())
-      .slice(-maxLines)
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-  } catch {
-    return [];
-  }
-}
-
 async function listRecentFiles(params: {
   root: string;
   suffix: string;
@@ -537,292 +513,66 @@ function relativeRuntimePath(filePath: string): string {
   return path.relative(WORKSPACE_DIR, filePath) || filePath;
 }
 
-async function latestMinimaxQuotaLogPath(): Promise<string | undefined> {
-  try {
-    const entries = await fs.readdir(WORKSPACE_LOG_DIR, { withFileTypes: true });
-    const candidates = await Promise.all(
-      entries
-        .filter((entry) => entry.isFile() && MINIMAX_QUOTA_LOG_PATTERN.test(entry.name))
-        .map(async (entry) => {
-          const filePath = path.join(WORKSPACE_LOG_DIR, entry.name);
-          const stats = await fs.stat(filePath);
-          return { filePath, mtimeMs: stats.mtimeMs };
-        }),
-    );
-    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs || b.filePath.localeCompare(a.filePath));
-    return candidates[0]?.filePath;
-  } catch {
-    return undefined;
-  }
-}
-
-function eventTime(payload: Record<string, unknown> | undefined): string {
-  return typeof payload?.at === "string" ? payload.at : "";
-}
-
-function summarizeUnknownError(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value instanceof Error) {
-    return value.message;
-  }
-  if (value && typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return "object_error";
-    }
-  }
-  return "unknown";
-}
-
-function latestEvent(
-  events: Array<Record<string, unknown>>,
-  predicate: (payload: Record<string, unknown>) => boolean,
-): Record<string, unknown> | undefined {
-  return events.toReversed().find(predicate);
-}
-
-function summarizeEvalEvent(payload: Record<string, unknown> | undefined): Record<string, unknown> {
-  const result =
-    payload?.result && typeof payload.result === "object"
-      ? (payload.result as Record<string, unknown>)
-      : {};
-  const summary =
-    result.summary && typeof result.summary === "object"
-      ? (result.summary as Record<string, unknown>)
-      : undefined;
-  return {
-    at: eventTime(payload),
-    model: result.model,
-    adapterPath: result.adapterPath,
-    summary,
-  };
-}
-
-function summarizeDatasetEvent(
-  payload: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  const result =
-    payload?.result && typeof payload.result === "object"
-      ? (payload.result as Record<string, unknown>)
-      : {};
-  return {
-    at: eventTime(payload),
-    counts: result.counts,
-    sourceKinds: result.sourceKinds,
-    notTouched: result.notTouched,
-  };
-}
-
-function summarizeTrainSliceEvent(
-  payload: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  const result =
-    payload?.result && typeof payload.result === "object"
-      ? (payload.result as Record<string, unknown>)
-      : {};
-  return {
-    at: eventTime(payload),
-    sourceDataDir: result.sourceDataDir,
-    outDir: result.outDir,
-    policy: result.policy,
-    counts: result.counts,
-    notTouched: result.notTouched,
-  };
-}
-
-function summarizeTeacherEvent(
-  payload: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  const result =
-    payload?.result && typeof payload.result === "object"
-      ? (payload.result as Record<string, unknown>)
-      : {};
-  const failures = Array.isArray(result.failures) ? result.failures : [];
-  return {
-    at: eventTime(payload),
-    attempted: result.attempted,
-    acceptedCandidates: result.acceptedCandidates ?? payload?.acceptedCandidates,
-    failures: failures.length,
-    failureKinds: failures
-      .map((failure) =>
-        failure && typeof failure === "object"
-          ? summarizeUnknownError((failure as Record<string, unknown>).error)
-          : "unknown",
-      )
-      .map((error) =>
-        error.includes("missing text content")
-          ? "missing_text_content"
-          : error.startsWith("SyntaxError")
-            ? "json_syntax"
-            : error.startsWith("TypeError")
-              ? "provider_or_network"
-              : "other",
-      )
-      .slice(0, 8),
-  };
-}
-
-function summarizeQuotaStatusEvent(
-  payload: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  if (!payload) {
-    return {};
-  }
-  const plan =
-    payload.plan && typeof payload.plan === "object"
-      ? (payload.plan as Record<string, unknown>)
-      : {};
-  return {
-    at: eventTime(payload),
-    event: payload.event,
-    active: payload.event === "quota_saturator_start",
-    stopReason: payload.stopReason,
-    targetCalls: plan.targetCalls,
-    attempted: payload.attempted,
-    completedRounds: payload.completedRounds,
-    finalBatchLimit: payload.finalBatchLimit,
-    finalConcurrency: payload.finalConcurrency,
-  };
-}
-
-function isTrainingCommand(command: string): boolean {
-  if (command.includes("--resolve-current-adapter")) {
-    return false;
-  }
-  return (
-    /^(?:\S*\/)?node\s+--import(?:=tsx|\s+tsx)\s+scripts\/dev\/minimax-brain-training-guard\.ts(?:\s|$)/u.test(
-      command.trim(),
-    ) ||
-    command.includes("scripts/dev/minimax-quota-brain-saturator.ts") ||
-    command.includes("scripts/dev/minimax-brain-teacher-batch.ts") ||
-    command.includes("scripts/dev/local-brain-distill-eval.ts") ||
-    command.includes(" -m mlx_lm ")
-  );
-}
-
 async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
   const startedAt = Date.now();
-  const quotaLogPath = await latestMinimaxQuotaLogPath();
   try {
-    const [psResult, guardEvents, quotaEvents] = await Promise.all([
-      runQuietCommand("ps", ["-axo", "pid=,ppid=,command="]),
-      readJsonlTail(MINIMAX_GUARD_LOG, MINIMAX_GUARD_LOG_TAIL_LINES),
-      quotaLogPath
-        ? readJsonlTail(quotaLogPath, MINIMAX_QUOTA_LOG_TAIL_LINES)
-        : Promise.resolve([]),
-    ]);
-    const activeProcesses = psResult.stdout
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const match = /^(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
-        return match
-          ? { pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }
-          : undefined;
-      })
-      .filter((entry): entry is { pid: number; ppid: number; command: string } =>
-        Boolean(entry && entry.pid !== process.pid && isTrainingCommand(entry.command)),
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath: MINIMAX_GUARD_LOG,
+      worktree: WORKTREE_CWD,
+      workspaceDir: WORKSPACE_DIR,
+      json: true,
+      processCheck: true,
+    });
+    const decisions = Array.isArray(plan.decisions) ? plan.decisions : [];
+    const errorReasons = decisions
+      .filter((decision): decision is Record<string, unknown> =>
+        Boolean(
+          decision &&
+          typeof decision === "object" &&
+          (decision.id === "guard_failed_after_latest_start" ||
+            decision.id === "overlapping_heavy_eval_detected"),
+        ),
       )
-      .map((entry) => ({
-        pid: entry.pid,
-        ppid: entry.ppid,
-        role: entry.command.includes("minimax-quota-brain-saturator")
-          ? "saturator"
-          : entry.command.includes("minimax-brain-teacher-batch")
-            ? "teacher_batch"
-            : entry.command.includes("minimax-brain-training-guard")
-              ? "guard"
-              : entry.command.includes("local-brain-distill-eval")
-                ? "local_brain_eval"
-                : entry.command.includes("mlx_lm")
-                  ? "mlx"
-                  : "other",
-      }));
-
-    const latestGuardStart = latestEvent(guardEvents, (event) => event.event === "guard_start");
-    const latestGuardFailure = latestEvent(guardEvents, (event) => event.event === "guard_failed");
-    const latestDataset = latestEvent(guardEvents, (event) => event.name === "dataset");
-    const latestTrainSlice = latestEvent(guardEvents, (event) => event.name === "train_slice");
-    const latestSmoke = latestEvent(guardEvents, (event) => event.name === "smoke");
-    const latestStableEval = latestEvent(
-      guardEvents,
-      (event) => event.name === "stable_hardened_eval",
-    );
-    const latestTrainingSeedEval = latestEvent(
-      guardEvents,
-      (event) => event.name === "training_seed_hardened_eval",
-    );
-    const latestCandidateEval = latestEvent(
-      guardEvents,
-      (event) => event.name === "candidate_hardened_eval",
-    );
-    const latestPromotion = latestEvent(
-      guardEvents,
-      (event) => event.event === "adapter_promoted_for_guard_session",
-    );
-    const latestTeacher =
-      latestEvent(quotaEvents, (event) => event.name === "minimax_teacher_batch") ??
-      latestEvent(quotaEvents, (event) => event.event === "teacher_batch_partial_ok");
-    const latestQuotaStatus = latestEvent(
-      quotaEvents,
-      (event) =>
-        event.event === "quota_saturator_start" || event.event === "quota_saturator_complete",
-    );
-
-    const failedAfterStart =
-      eventTime(latestGuardFailure) > eventTime(latestGuardStart) &&
-      eventTime(latestGuardFailure) !== "";
-    const guardActive = activeProcesses.some((process) => process.role === "guard");
-    const guardPids = new Set(
-      activeProcesses.filter((process) => process.role === "guard").map((process) => process.pid),
-    );
-    const localBrainEvalCount = activeProcesses.filter(
-      (process) => process.role === "local_brain_eval",
-    ).length;
-    const externalLocalBrainEvalCount = activeProcesses.filter(
-      (process) => process.role === "local_brain_eval" && !guardPids.has(process.ppid),
-    ).length;
-    const mlxCount = activeProcesses.filter((process) => process.role === "mlx").length;
-    const overlappingHeavyEval =
-      guardActive && (localBrainEvalCount > 1 || mlxCount > 1 || externalLocalBrainEvalCount > 0);
-    const errorReasons = [
-      failedAfterStart ? "latest guard_failed is newer than latest guard_start" : undefined,
-      overlappingHeavyEval
-        ? `overlapping heavy local-brain eval while guard is active: local_brain_eval=${localBrainEvalCount}, external_local_brain_eval=${externalLocalBrainEvalCount}, mlx=${mlxCount}`
-        : undefined,
-    ].filter((reason): reason is string => Boolean(reason));
+      .map((decision) => {
+        if (typeof decision.reason === "string") {
+          return decision.reason;
+        }
+        return typeof decision.id === "string" ? decision.id : "unknown_training_decision";
+      });
     return {
       name: "minimax-brain-training-guard",
       ok: errorReasons.length === 0,
       durationMs: Date.now() - startedAt,
       summary: {
-        active: activeProcesses.length > 0,
-        activeProcesses,
-        activeHeavyEvalCounts: {
-          localBrainEval: localBrainEvalCount,
-          externalLocalBrainEval: externalLocalBrainEvalCount,
-          mlx: mlxCount,
-        },
-        overlappingHeavyEval,
-        latestGuardStart: eventTime(latestGuardStart),
-        latestGuardFailure: failedAfterStart ? eventTime(latestGuardFailure) : undefined,
-        latestDataset: summarizeDatasetEvent(latestDataset),
-        latestTrainSlice: summarizeTrainSliceEvent(latestTrainSlice),
-        latestSmokeAt: eventTime(latestSmoke),
-        latestStableEval: summarizeEvalEvent(latestStableEval),
-        latestTrainingSeedEval: summarizeEvalEvent(latestTrainingSeedEval),
-        latestCandidateEval: summarizeEvalEvent(latestCandidateEval),
-        latestPromotionAt: eventTime(latestPromotion),
-        latestPromotedAdapter: latestPromotion?.adapterPath,
-        latestTeacher: summarizeTeacherEvent(latestTeacher),
-        latestQuotaStatus: summarizeQuotaStatusEvent(latestQuotaStatus),
+        owner: "local-brain-training-plan",
+        planBoundary: plan.boundary,
+        active: Array.isArray(plan.activeProcesses) && plan.activeProcesses.length > 0,
+        activeProcesses: plan.activeProcesses,
+        activeHeavyEvalCounts: plan.activeHeavyEvalCounts,
+        overlappingHeavyEval: plan.overlappingHeavyEval,
+        latestGuardStart: plan.latestGuardStartAt,
+        latestDataset: plan.latestDataset,
+        latestTrainSlice: plan.latestTrainSlice,
+        latestSmokeAt: plan.latestSmokeAt,
+        latestEval: plan.latestEval,
+        latestPassingEval: plan.latestPassingEval,
+        latestStableEval: plan.latestStableEval,
+        latestTrainingSeedEval: plan.latestTrainingSeedEval,
+        latestCandidateEval: plan.latestCandidateEval,
+        latestPromotionAt: plan.latestPromotionAt,
+        latestPromotedAdapter: plan.latestPromotedAdapter,
+        latestTeacher: plan.latestTeacher,
+        latestQuotaStatus: plan.latestQuotaStatus,
+        decisionIds: decisions
+          .map((decision) =>
+            decision && typeof decision === "object"
+              ? (decision as Record<string, unknown>).id
+              : undefined,
+          )
+          .filter((id): id is string => typeof id === "string"),
         logPaths: {
-          guard: MINIMAX_GUARD_LOG,
-          quota: quotaLogPath,
+          guard: plan.guardLogPath,
+          quota: plan.quotaLogPath,
         },
         liveTouched: false,
         providerConfigTouched: false,

@@ -198,11 +198,12 @@ function operatorTrainingVolatileMatches(
   }
   const operatorActive = operatorSnapshot.active === true;
   const currentActive = (currentSnapshot.activeProcessCount ?? 0) > 0;
+  // The operator digest is a compressed recovery artifact, not the owner for volatile
+  // eval progress. Treat training-plan as the realtime owner and only warn here when
+  // stable operational fields drift.
   return (
     operatorActive === currentActive &&
     operatorSnapshot.latestGuardStart === currentSnapshot.latestGuardStart &&
-    JSON.stringify(operatorSnapshot.latestStableEval) ===
-      JSON.stringify(currentSnapshot.latestEval) &&
     JSON.stringify(operatorSnapshot.datasetCounts) === JSON.stringify(currentSnapshot.datasetCounts)
   );
 }

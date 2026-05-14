@@ -189,6 +189,33 @@ shortcuts.
   closure, but not live-user-seen, provider success, protected-memory writes, or
   model-weight absorption.
 
+## Commercial-Grade Entrypoint Convergence
+
+LCX Agent can have multiple user and operator entrypoints when they serve
+different product jobs: control-room use, doctor observability, training plan,
+promotion audit, context recovery, flow graph, head-tail, live probe, and
+module-learning review. Do not flatten these into one oversized command.
+
+What must converge is duplicated authority. Every volatile fact must have one
+owner and the other entrypoints must consume or reference that owner:
+
+- Qwen/MiniMax active process, eval, promotion, quota, and overlap truth belongs
+  to `local-brain-training-plan`; doctor and context recovery may surface it,
+  but should not maintain a second ps/log parser with separate conclusions.
+- Context recovery owns compressed-window readiness, not live truth or training
+  promotion.
+- Flow graph owns waterflow coverage and same-philosophy merge policy, not
+  runtime process truth.
+- System doctor owns one operator health report, not separate business logic for
+  every lane.
+- Lark live proof owns live-user-seen status; dev tests and channel probes must
+  not upgrade themselves into that state.
+
+Commercial quality means clear product surfaces, one factual owner per volatile
+state family, no duplicate hidden diagnostics, no false alarms during expected
+in-progress training, and no loss of the specialized entrypoints a real operator
+needs.
+
 ## Mission
 
 - Build and operate LCX Agent / OpenClaw as a low-frequency research operating system for one real user.

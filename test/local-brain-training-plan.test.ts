@@ -223,6 +223,22 @@ describe("local-brain-training-plan", () => {
       adapterPath: "/tmp/adapter-r2",
       promotionReady: true,
     });
+    expect(plan.latestStableEval).toMatchObject({
+      name: "stable_hardened_eval",
+      adapterPath: "/tmp/adapter-r2",
+      promotionReady: true,
+    });
+    expect(plan.latestCandidateEval).toMatchObject({
+      name: "candidate_hardened_eval",
+      adapterPath: "/tmp/adapter-r8",
+      promotionReady: false,
+    });
+    expect(plan.activeHeavyEvalCounts).toEqual({
+      localBrainEval: 0,
+      externalLocalBrainEval: 0,
+      mlx: 0,
+    });
+    expect(plan.overlappingHeavyEval).toBe(false);
   });
 
   it("surfaces MiniMax quota completion as normal idle instead of provider failure", async () => {
