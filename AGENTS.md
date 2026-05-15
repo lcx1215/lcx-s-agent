@@ -8,6 +8,7 @@ When a new Codex coding window enters this repo without prior chat context, star
 
 ```bash
 sed -n '1,220p' ops/local-brain/README.md
+node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && \
@@ -15,6 +16,12 @@ test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.js
 ```
 
 That runbook points to the current local-brain training commands, MiniMax teacher loop, Qwen adapter selection, eval commands, launchd/log paths, and the most relevant local Codex skills under `/Users/liuchengxu/.codex/skills/`.
+The `lcx-context-recovery-exam --handoff` command is the fast one-screen
+handoff for future windows. It is owned by the existing context-recovery exam,
+not a parallel memory lane. It must show dirty files, affected lanes,
+unmatched-file checks, fresh training-plan truth, module-learning blockers,
+flow-graph counts, and strict dev/live/protected-memory boundaries before a
+new agent starts modifying files.
 The training plan command is the shared coordinator for repeated training
 failures: it classifies whether the next step is continue training,
 failure-focus sample generation, teacher-quality repair, promotion audit, or
@@ -54,8 +61,9 @@ engineering state. Recover state from durable files, logs, receipts, and git
 before making claims or changes.
 
 - Start every non-trivial LCX Agent session from fixed evidence: `AGENTS.md`,
-  `ops/local-brain/README.md`, `lcx-system-doctor`, `local-brain-training-plan`,
-  and `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
+  `ops/local-brain/README.md`, `lcx-context-recovery-exam --handoff`,
+  `lcx-system-doctor`, `local-brain-training-plan`, and
+  `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
 - Classify every small fix into one current master lane before coding:
   Qwen training, MiniMax teacher, adapter promotion, Lark/Feishu visible reply,
   local automation, memory sedimentation, finance research capability, or
