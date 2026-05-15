@@ -90,6 +90,8 @@ describe("feishu intent matchers", () => {
       "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
       "去学完全部理解交易股市所需要的数学和物理知识",
       "你自己学理解股市需要的概率统计、时间序列、随机过程和优化",
+      "学k线图分析技术",
+      "学习蜡烛图和成交量确认规则",
       "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
       "让它学习 credit liquidity regime 框架，留下 receipt 和 retrieval review",
       "去学期权全知识",
