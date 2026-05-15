@@ -68,6 +68,9 @@ export function looksLikeFundamentalRiskApplicationAsk(text: string): boolean {
 
 export function looksLikeFinanceLearningPipelineAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
+  if (looksLikeOnlineSourceLearningAsk(normalized)) {
+    return false;
+  }
   const hasExplicitPipelineExecutionCue =
     /(finance[_\s-]?learning[_\s-]?pipeline[_\s-]?orchestrator|source intake|extract|attach|retrieval review|retrieval receipt|learninginternalizationstatus|application[_\s-]?ready|failedreason|usable answer contract|usable answer lines)/iu.test(
       normalized,
@@ -151,6 +154,47 @@ export function looksLikeExternalSkillInternalizationAsk(text: string): boolean 
       normalized,
     );
   return hasLearningIntent && hasSkillOrCapabilityCue && hasExternalAuthorityCue && !asksAuditOnly;
+}
+
+export function looksLikeOnlineSourceLearningAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  if (
+    looksLikeLearningInternalizationAuditAsk(normalized) ||
+    looksLikeLearningWorkflowAuditAsk(normalized)
+  ) {
+    return false;
+  }
+  const hasLearningIntent =
+    /(开始学|开始学习|去学|去学习|学习|学一下|学学|研究|研究一下|研究明白|搞懂|内化|吸收|提炼|沉淀|让你学|你去学|自己学|learn|study|internalize)/iu.test(
+      normalized,
+    );
+  const hasExplicitOnlineSourceCue =
+    /(google|web|网上|互联网|联网|搜索|搜一下|去搜|查一下|去查|公开网页|公开课程|课程材料|syllabus|google scholar|ssrn|nber|open web|public web)/iu.test(
+      normalized,
+    );
+  const hasBroadImplicitOnlineCue =
+    /(高级|系统|系统性|全套|完整|深入|前沿|顶级|世界级|专业|权威).{0,20}(图线|k\s*线|蜡烛图|图表分析|技术分析|成交量|量价|趋势线|均线|macd|rsi)|(?:图线|k\s*线|蜡烛图|图表分析|技术分析|成交量|量价|趋势线|均线|macd|rsi).{0,20}(高级|系统|系统性|全套|完整|深入|前沿|顶级|世界级|专业|权威)/iu.test(
+      normalized,
+    );
+  const hasLearningTopic =
+    /(金融|finance|股市|股票|美股|a股|港股|市场|etf|指数|资产配置|组合|portfolio|基本面|fundamental|技术面|technical|技术分析|图表分析|k\s*线|图线|蜡烛图|成交量|量价|趋势线|均线|macd|rsi|择时|timing|风控|risk control|期权|options?|波动率|volatility|greeks?|希腊字母|衍生品|derivatives?|智能体|agent|workflow|工作流|记忆|memory)/iu.test(
+      normalized,
+    );
+  const asksPipelineExecution =
+    /(finance[_\s-]?learning[_\s-]?pipeline[_\s-]?orchestrator|source intake|extract|attach|retrieval receipt|retrieval review|learninginternalizationstatus|application[_\s-]?ready|failedreason|本地安全\s*source|valid source|\.md|\.txt|\.html|本地文件|文件路径)/iu.test(
+      normalized,
+    );
+  const asksSearchHealthOnly =
+    /(搜索|联网|web|google).{0,12}(能用|可用|状态|坏了|正常吗|可以用吗|接上了吗)/iu.test(
+      normalized,
+    );
+  return (
+    hasLearningIntent &&
+    hasLearningTopic &&
+    (hasExplicitOnlineSourceCue || hasBroadImplicitOnlineCue) &&
+    !asksPipelineExecution &&
+    !asksSearchHealthOnly
+  );
 }
 
 export function looksLikeGitHubProjectCapabilityIntakeAsk(text: string): boolean {
@@ -256,6 +300,7 @@ export function looksLikeStrategicLearningAsk(text: string): boolean {
     );
   return (
     looksLikeSourceCoverageScopeAsk(normalized) ||
+    looksLikeOnlineSourceLearningAsk(normalized) ||
     (hasSourceBoundaryCue && (hasLearningIntent || hasSourceDirectedLearning)) ||
     ((hasLearningIntent || hasSourceDirectedLearning) &&
       (hasExternalLearningSource || hasStrategicLearningTopic) &&

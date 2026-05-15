@@ -463,7 +463,7 @@ describe("lark routing candidate corpus", () => {
     ]);
   });
 
-  it("does not expose deterministic route failures as accepted promotion cases", () => {
+  it("accepts online-source learning utterances after deterministic routing can prove the lane", () => {
     const corpus = buildLarkPendingRoutingCandidateCorpus({
       source: "api_reply",
       generatedAt: "2026-04-27T00:00:00.000Z",
@@ -477,17 +477,18 @@ describe("lark routing candidate corpus", () => {
     });
 
     expect(evaluation.evaluations[0]).toMatchObject({
-      reason: "deterministic_route_failed",
+      reason: "accepted_language_case",
       acceptedCase: expect.objectContaining({
-        family: "external_source_coverage_honesty",
+        family: "learning_external_source",
+        expectedSurface: "learning_command",
       }),
     });
     expect(evaluation).toMatchObject({
-      acceptedCases: [],
+      acceptedCases: [expect.objectContaining({ family: "learning_external_source" })],
       counts: {
         total: 1,
-        accepted: 0,
-        rejected: 1,
+        accepted: 1,
+        rejected: 0,
         discarded: 0,
       },
     });

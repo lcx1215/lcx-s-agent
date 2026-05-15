@@ -14,6 +14,7 @@ import {
   looksLikeFundamentalRiskApplicationAsk,
   looksLikeGitHubProjectCapabilityIntakeAsk,
   looksLikeHighStakesRiskScopeAsk,
+  looksLikeOnlineSourceLearningAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikePositionRiskApplicationAsk,
   looksLikeProgressStatusScopeAsk,
@@ -1449,6 +1450,15 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
     );
   }
 
+  if (looksLikeOnlineSourceLearningAsk(normalized)) {
+    return buildHighSignalSemanticCandidate(
+      looksLikeSourceCoverageScopeAsk(normalized)
+        ? "external_source_coverage_honesty"
+        : "learning_external_source",
+      "online_source_learning_family",
+    );
+  }
+
   const hasFinanceLearningPipelineResult =
     /(financelearningpipelineorchestrator|financelearningpipeline|learninginternalizationstatus|retrievalreceiptpath|retrievalreviewpath|finance-learning-retrieval|usable answer contract|usable answer lines|local_source_not_found)/iu.test(
       normalized,
@@ -1859,6 +1869,8 @@ function defaultWorkOrderEvidence(
     case "position_risk_adjustment":
     case "fundamental_research":
       return ["explicit missing-data list", "research-only checklist", "risk boundary"];
+    case "learning_external_source":
+      return ["source list with links", "coverage limits", "adoption or discard decision"];
     case "api_reply_distillation":
       return ["normalized sample", "candidate corpus entry", "routing eval result"];
     default:
@@ -2025,7 +2037,9 @@ function buildValidatedAgentWorkOrder(params: {
     planner?.objective ??
     (params.backendToolContract
       ? `Run ${params.backendToolContract.toolName} for the user request.`
-      : `Ask the model planner to clarify or answer the user request as ${params.family}.`);
+      : params.family === "learning_external_source"
+        ? "Run a bounded external-source learning pass for the user request."
+        : `Ask the model planner to clarify or answer the user request as ${params.family}.`);
   const plannerBackendTool =
     planner?.backendTool === "finance_learning_pipeline_orchestrator" &&
     !looksLikeFinanceLearningPipelineAsk(params.utterance)
@@ -2098,10 +2112,18 @@ function buildValidatedAgentWorkOrder(params: {
           "name missing source requirement when source is absent",
           "do not claim internalized or application_ready before retrieval review",
         ]
-      : [
-          "ask for clarification or provide bounded failedReason",
-          "do not invent backend execution",
-        ];
+      : params.family === "learning_external_source"
+        ? [
+            "plain-language external-source learning status first",
+            "use web/search/source grounding when available",
+            "list actual source coverage and limits",
+            "retain, discard, replay trigger, next eval, and compatibility risk",
+            "do not claim internalized or application_ready before review evidence",
+          ]
+        : [
+            "ask for clarification or provide bounded failedReason",
+            "do not invent backend execution",
+          ];
   const safeOutputContract =
     params.family === "position_risk_adjustment"
       ? sanitizePositionRiskOutputContract(outputContract)

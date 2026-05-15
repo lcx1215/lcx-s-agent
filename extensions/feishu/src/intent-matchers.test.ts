@@ -25,6 +25,7 @@ import {
   looksLikeLearningWorkflowAuditAsk,
   looksLikeMarketIntelligencePacketAsk,
   looksLikeNegatedScopeCorrectionAsk,
+  looksLikeOnlineSourceLearningAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikePositionRiskApplicationAsk,
   looksLikeProgressStatusScopeAsk,
@@ -91,7 +92,6 @@ describe("feishu intent matchers", () => {
       "去学完全部理解交易股市所需要的数学和物理知识",
       "你自己学理解股市需要的概率统计、时间序列、随机过程和优化",
       "学k线图分析技术",
-      "学习高级图线分析技术",
       "学习蜡烛图和成交量确认规则",
       "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
       "让它学习 credit liquidity regime 框架，留下 receipt 和 retrieval review",
@@ -108,6 +108,8 @@ describe("feishu intent matchers", () => {
     expect(looksLikeFinanceLearningPipelineAsk("finance learning pipeline 是 dev 还是 live")).toBe(
       false,
     );
+    expect(looksLikeFinanceLearningPipelineAsk("学习高级图线分析技术")).toBe(false);
+    expect(looksLikeFinanceLearningPipelineAsk("去网上学习高级图线分析技术")).toBe(false);
     expect(looksLikeFinanceLearningPipelineAsk("QQQ 现在还能拿吗")).toBe(false);
     expect(
       looksLikeFinanceLearningPipelineAsk(
@@ -139,6 +141,28 @@ describe("feishu intent matchers", () => {
 
     expect(looksLikeExternalSkillInternalizationAsk("刚才大师理念学会了吗，证据在哪")).toBe(false);
     expect(looksLikeExternalSkillInternalizationAsk("给我讲讲巴菲特是谁")).toBe(false);
+  });
+
+  it("detects online-source learning asks before local-source finance pipeline intake", () => {
+    const positiveCases = [
+      "学习高级图线分析技术",
+      "去网上学习高级图线分析技术",
+      "网上学习高级图线分析技术，只留下能改以后判断的规则",
+      "从 Google Scholar 和公开课程里找 ETF 风控做法，只沉淀可复用规则",
+    ];
+
+    for (const phrase of positiveCases) {
+      expect(looksLikeOnlineSourceLearningAsk(phrase), phrase).toBe(true);
+      expect(looksLikeStrategicLearningAsk(phrase), phrase).toBe(true);
+    }
+
+    expect(looksLikeOnlineSourceLearningAsk("学k线图分析技术")).toBe(false);
+    expect(looksLikeOnlineSourceLearningAsk("搜索现在能用吗")).toBe(false);
+    expect(
+      looksLikeOnlineSourceLearningAsk(
+        "真实学习任务端到端验收：请用本地安全 source test/fixtures/finance-learning-pipeline/valid-finance-article.md 跑 finance_learning_pipeline_orchestrator，learningIntent=学习 ETF event triage workflow，必须在回复里明确显示 learningInternalizationStatus=application_ready 或 failedReason。",
+      ),
+    ).toBe(false);
   });
 
   it("detects position-risk application asks without treating output contract words as learning", () => {

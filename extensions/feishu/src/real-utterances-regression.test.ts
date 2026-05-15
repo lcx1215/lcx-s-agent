@@ -1456,7 +1456,6 @@ describe("real daily utterance regression", () => {
       "学习美股分析知识",
       "学一下 A 股指数分析框架",
       "学k线图分析技术",
-      "学习高级图线分析技术",
       "学习蜡烛图和成交量确认规则",
       "补强 ETF 风控知识",
       "学习期权波动率分析框架",
@@ -1531,6 +1530,68 @@ describe("real daily utterance regression", () => {
       );
       expect(receipt.financeBrainOrchestration?.supportingModules, utterance).toContain(
         "finance_learning_memory",
+      );
+    }
+  });
+
+  it("routes online or broad advanced chart learning to external-source learning, not local-source-only pipeline", async () => {
+    const utterances = [
+      "学习高级图线分析技术",
+      "去网上学习高级图线分析技术",
+      "网上学习高级图线分析技术，只留下能改以后判断的规则",
+    ];
+
+    for (const utterance of utterances) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg,
+        chatId: "oc-control",
+        content: utterance,
+      });
+      const plan = resolveFeishuControlRoomOrchestration({
+        currentSurface: routing.currentSurface,
+        targetSurface: routing.targetSurface,
+        content: utterance,
+      });
+
+      expect(routing.targetSurface, utterance).toBe("learning_command");
+      expect(plan, utterance).toMatchObject({
+        mode: "aggregate",
+        specialistSurfaces: ["learning_command"],
+      });
+      expect(looksLikeStrategicLearningAsk(utterance), utterance).toBe(true);
+      expect(looksLikeFinanceLearningPipelineAsk(utterance), utterance).toBe(false);
+
+      const handoff = await resolveLarkAgentInstructionHandoff({
+        cfg,
+        chatId: "oc-control",
+        utterance,
+        apiProvider: async () => {
+          throw new Error("gateway timeout after 35000ms");
+        },
+      });
+      expect(handoff.family, utterance).toBe("learning_external_source");
+      expect(handoff.source, utterance).toBe("deterministic_fallback");
+      expect(handoff.targetSurface, utterance).toBe("learning_command");
+      expect(handoff.backendToolContract, utterance).toBeUndefined();
+      expect(handoff.workOrder?.evidenceRequired, utterance).toEqual([
+        "source list with links",
+        "coverage limits",
+        "adoption or discard decision",
+      ]);
+      expect(handoff.workOrder?.requiredModules, utterance).toEqual([
+        "source_grounding",
+        "capability_intake",
+        "existing_embryo_scan",
+        "review_panel",
+      ]);
+      expect(handoff.workOrder?.outputContract, utterance).toContain(
+        "use web/search/source grounding when available",
+      );
+      expect(handoff.workOrder?.outputContract, utterance).toContain(
+        "list actual source coverage and limits",
+      );
+      expect(handoff.workOrder?.outputContract, utterance).not.toContain(
+        "name missing source requirement when source is absent",
       );
     }
   });
