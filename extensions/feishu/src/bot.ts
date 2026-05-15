@@ -5894,6 +5894,28 @@ export async function handleFeishuMessage(params: {
       financeBrainOrchestration: larkHandoffReceipt?.artifact.financeBrainOrchestration,
       handoffReceiptPath: larkHandoffReceipt?.relativePath,
     });
+    const larkAnswerAuditPolicy = larkContextPacket?.artifact.answerAuditPolicy;
+    if (larkAnswerAuditPolicy) {
+      void recordFeishuReplyFlowEvent({
+        correlationId: ctx.messageId,
+        stage: "answer_audit",
+        accountId: account.accountId,
+        messageId: ctx.messageId,
+        chatId: ctx.chatId,
+        chatType: ctx.chatType,
+        agentId: route.agentId,
+        contentType: event.message.message_type,
+        textPreview: ctx.content,
+        answerAuditBoundary: larkAnswerAuditPolicy.boundary,
+        answerAuditOwner: larkAnswerAuditPolicy.owner,
+        answerAuditCandidateAuthority: larkAnswerAuditPolicy.candidateAuthority,
+        answerAuditQwenRole: larkAnswerAuditPolicy.qwenRole,
+        answerAuditMaxTotalReviewRounds: larkAnswerAuditPolicy.maxTotalReviewRounds,
+        answerAuditTerminalDecision: larkAnswerAuditPolicy.terminalDecision,
+        answerAuditHandoffReceiptPath: larkHandoffReceipt?.relativePath,
+        answerAuditContextPacketPath: larkContextPacket.relativePath,
+      });
+    }
     const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
     const surfaceNotice = [
       buildFeishuPromptSurfaceNotice({

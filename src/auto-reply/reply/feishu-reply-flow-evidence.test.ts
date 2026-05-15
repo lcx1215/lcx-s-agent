@@ -23,6 +23,19 @@ describe("summarizeRecentFeishuReplyFlowEvidence", () => {
       JSON.stringify({ correlationId: "new-corr", stage: "inbound", recordedAtMs: 11 }),
       JSON.stringify({ correlationId: "new-corr", stage: "route", recordedAtMs: 12 }),
       JSON.stringify({ correlationId: "new-corr", stage: "dispatch_start", recordedAtMs: 13 }),
+      JSON.stringify({
+        correlationId: "new-corr",
+        stage: "answer_audit",
+        recordedAtMs: 13.5,
+        answerAuditBoundary: "bounded_answer_review",
+        answerAuditOwner: "existing_lark_handoff_context_packet_review_panel",
+        answerAuditCandidateAuthority: "model_candidate_not_final_authority",
+        answerAuditQwenRole: "challenger_only_not_final_authority",
+        answerAuditMaxTotalReviewRounds: 4,
+        answerAuditTerminalDecision: "adopt_visible_reply_or_return_failed_reason",
+        answerAuditHandoffReceiptPath: "memory/lark-language-handoff-receipts/2026-05-15/msg.json",
+        answerAuditContextPacketPath: "memory/lark-context-packets/2026-05-15/msg.json",
+      }),
       JSON.stringify({ correlationId: "new-corr", stage: "outbound_attempt", recordedAtMs: 14 }),
       JSON.stringify({
         correlationId: "new-corr",
@@ -45,9 +58,17 @@ describe("summarizeRecentFeishuReplyFlowEvidence", () => {
 
     expect(summary).toContain("Latest completed correlationId: new-corr");
     expect(summary).toContain(
-      "Observed stage chain: inbound -> route -> dispatch_start -> outbound_attempt -> outbound_result -> dispatch_complete",
+      "Observed stage chain: inbound -> route -> dispatch_start -> answer_audit -> outbound_attempt -> outbound_result -> dispatch_complete",
     );
     expect(summary).toContain("Reply-path status evidence: visible_reply_delivered");
+    expect(summary).toContain("Latest answer_audit: boundary=bounded_answer_review");
+    expect(summary).toContain("owner=existing_lark_handoff_context_packet_review_panel");
+    expect(summary).toContain("candidateAuthority=model_candidate_not_final_authority");
+    expect(summary).toContain("qwenRole=challenger_only_not_final_authority");
+    expect(summary).toContain("maxTotalReviewRounds=4");
+    expect(summary).toContain("terminalDecision=adopt_visible_reply_or_return_failed_reason");
+    expect(summary).toContain("handoffReceiptPath=memory/lark-language-handoff-receipts");
+    expect(summary).toContain("contextPacketPath=memory/lark-context-packets");
     expect(summary).toContain("deliveryStatus=success");
     expect(summary).toContain("feishuCode=0");
     expect(summary).toContain("feishuMsg=success");

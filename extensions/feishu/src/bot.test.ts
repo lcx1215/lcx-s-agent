@@ -2831,6 +2831,18 @@ confidence: high
     expect(handoffText).not.toMatch(
       /finance_learning|finance-learning|memory\/local-memory|capability card/u,
     );
+    expect(mockRecordFeishuReplyFlowEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "msg-language-capture",
+        stage: "answer_audit",
+        answerAuditBoundary: "bounded_answer_review",
+        answerAuditOwner: "existing_lark_handoff_context_packet_review_panel",
+        answerAuditCandidateAuthority: "model_candidate_not_final_authority",
+        answerAuditTerminalDecision: "adopt_visible_reply_or_return_failed_reason",
+        answerAuditHandoffReceiptPath: expect.stringContaining("lark-language-handoff-receipts"),
+        answerAuditContextPacketPath: expect.stringContaining("lark-context-packets"),
+      }),
+    );
 
     await expect(
       fs.access(path.join(tempDir, "memory", "local-memory", "msg-language-capture.json")),

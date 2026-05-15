@@ -9,6 +9,14 @@ type FeishuReplyFlowRecord = {
   deliveryStatus?: string;
   feishuCode?: number;
   feishuMsg?: string;
+  answerAuditBoundary?: string;
+  answerAuditOwner?: string;
+  answerAuditCandidateAuthority?: string;
+  answerAuditQwenRole?: string;
+  answerAuditMaxTotalReviewRounds?: number;
+  answerAuditTerminalDecision?: string;
+  answerAuditHandoffReceiptPath?: string;
+  answerAuditContextPacketPath?: string;
   outboundMessageType?: string;
   receiveIdType?: string;
   usedReplyTarget?: boolean;
@@ -34,6 +42,7 @@ const FEISHU_REPLY_FLOW_STAGE_ORDER = [
   "inbound",
   "route",
   "dispatch_start",
+  "answer_audit",
   "outbound_attempt",
   "outbound_result",
   "dispatch_error",
@@ -100,6 +109,8 @@ async function summarizeJsonlReplyFlowEvidence(
       latestRecordedAtMs: number;
       completedAtMs?: number;
       stages: Set<string>;
+      answerAudit?: FeishuReplyFlowRecord;
+      answerAuditAtMs?: number;
       outboundResult?: FeishuReplyFlowRecord;
       outboundResultAtMs?: number;
     }
@@ -135,6 +146,10 @@ async function summarizeJsonlReplyFlowEvidence(
     if (parsed.stage === "dispatch_complete") {
       entry.completedAtMs = recordedAtMs;
     }
+    if (parsed.stage === "answer_audit") {
+      entry.answerAudit = parsed;
+      entry.answerAuditAtMs = recordedAtMs;
+    }
     if (parsed.stage === "outbound_result") {
       entry.outboundResult = parsed;
       entry.outboundResultAtMs = recordedAtMs;
@@ -158,6 +173,7 @@ async function summarizeJsonlReplyFlowEvidence(
 
   const [correlationId, entry] = latestCompleted;
   const observedStages = FEISHU_REPLY_FLOW_STAGE_ORDER.filter((stage) => entry.stages.has(stage));
+  const answerAudit = entry.answerAudit;
   const outbound = entry.outboundResult;
   const outboundSucceeded = outbound?.deliveryStatus === "success" && outbound.feishuCode === 0;
   const replyPathStatus = outboundSucceeded
@@ -179,6 +195,26 @@ async function summarizeJsonlReplyFlowEvidence(
       : null,
     outbound?.deliveryMessageId ? `deliveryMessageId=${outbound.deliveryMessageId}` : null,
   ].filter(Boolean);
+  const answerAuditFields = [
+    answerAudit?.answerAuditBoundary ? `boundary=${answerAudit.answerAuditBoundary}` : null,
+    answerAudit?.answerAuditOwner ? `owner=${answerAudit.answerAuditOwner}` : null,
+    answerAudit?.answerAuditCandidateAuthority
+      ? `candidateAuthority=${answerAudit.answerAuditCandidateAuthority}`
+      : null,
+    answerAudit?.answerAuditQwenRole ? `qwenRole=${answerAudit.answerAuditQwenRole}` : null,
+    typeof answerAudit?.answerAuditMaxTotalReviewRounds === "number"
+      ? `maxTotalReviewRounds=${answerAudit.answerAuditMaxTotalReviewRounds}`
+      : null,
+    answerAudit?.answerAuditTerminalDecision
+      ? `terminalDecision=${answerAudit.answerAuditTerminalDecision}`
+      : null,
+    answerAudit?.answerAuditHandoffReceiptPath
+      ? `handoffReceiptPath=${answerAudit.answerAuditHandoffReceiptPath}`
+      : null,
+    answerAudit?.answerAuditContextPacketPath
+      ? `contextPacketPath=${answerAudit.answerAuditContextPacketPath}`
+      : null,
+  ].filter(Boolean);
 
   return {
     completedAtMs: entry.completedAtMs ?? entry.outboundResultAtMs ?? entry.latestRecordedAtMs,
@@ -189,6 +225,9 @@ async function summarizeJsonlReplyFlowEvidence(
       `Latest completed correlationId: ${correlationId}`,
       `Observed stage chain: ${observedStages.join(" -> ") || "(none)"}`,
       `Reply-path status evidence: ${replyPathStatus}`,
+      answerAuditFields.length > 0
+        ? `Latest answer_audit: ${answerAuditFields.join(", ")}`
+        : "Latest answer_audit: unavailable",
       outboundFields.length > 0
         ? `Latest outbound_result: ${outboundFields.join(", ")}`
         : "Latest outbound_result: unavailable",

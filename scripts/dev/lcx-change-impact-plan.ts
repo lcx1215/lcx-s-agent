@@ -113,7 +113,11 @@ const PATH_RULES: PathRule[] = [
   {
     id: "lark_feishu_visible_surface",
     lane: "lark_feishu_visible_reply",
-    patterns: [/^extensions\/feishu\//u, /^src\/commands\/capabilities\/lark-/u],
+    patterns: [
+      /^extensions\/feishu\//u,
+      /^src\/auto-reply\/reply\/feishu-reply-flow-evidence\.ts$/u,
+      /^src\/commands\/capabilities\/lark-/u,
+    ],
     requiredChecks: ["lark-regression-tests", "dev-live-boundary-check"],
     commands: [
       "pnpm vitest run extensions/feishu/src/bot.test.ts extensions/feishu/src/lark-api-route-provider.test.ts extensions/feishu/src/real-utterances-regression.test.ts",

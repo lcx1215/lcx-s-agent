@@ -41,8 +41,21 @@ describe("LCX flow graph exam", () => {
         nodes: number;
         filters: number;
         consolidationClusters: number;
+        consolidatedEntrypointFamilies: number;
+        sharedEntrypointOwnerRules: number;
       };
-      checks: Array<{ id: string; ok: boolean; evidence?: unknown }>;
+      checks: Array<{
+        id: string;
+        ok: boolean;
+        evidence?: {
+          missing?: string[];
+          staleAllowedPaths?: string[];
+          staleSharedOwnerRules?: string[];
+          unapprovedSharedAllowedPaths?: string[];
+          uncoveredClusters?: string[];
+          orphanEntrypoints?: string[];
+        };
+      }>;
       scenarios: Array<{
         id: string;
         requiredFilters: string[];
@@ -50,6 +63,17 @@ describe("LCX flow graph exam", () => {
         receipts: string[];
       }>;
       consolidationClusters: Array<{ id: string; ownerScenario: string; mergeFilters: string[] }>;
+      consolidatedEntrypointFamilies: Array<{
+        id: string;
+        ownerCluster: string;
+        ownerPath: string;
+        watchedPathTerms: string[];
+      }>;
+      sharedEntrypointOwnerRules: Array<{
+        path: string;
+        familyIds: string[];
+        reason: string;
+      }>;
       liveTouched: boolean;
       providerConfigTouched: boolean;
       protectedMemoryTouched: boolean;
@@ -70,6 +94,8 @@ describe("LCX flow graph exam", () => {
     expect(payload.summary.nodes).toBeGreaterThanOrEqual(70);
     expect(payload.summary.filters).toBeGreaterThanOrEqual(35);
     expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(6);
+    expect(payload.summary.consolidatedEntrypointFamilies).toBeGreaterThanOrEqual(8);
+    expect(payload.summary.sharedEntrypointOwnerRules).toBeGreaterThanOrEqual(2);
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "flow_graph_integrity", ok: true }),
@@ -77,8 +103,21 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({ id: "flow_graph_feedback_is_bounded", ok: true }),
         expect.objectContaining({ id: "flow_graph_illegal_shortcuts_absent", ok: true }),
         expect.objectContaining({ id: "flow_graph_consolidation_clusters_merged", ok: true }),
+        expect.objectContaining({
+          id: "flow_graph_consolidated_entrypoints_registered",
+          ok: true,
+        }),
       ]),
     );
+    const entrypointCheck = payload.checks.find(
+      (check) => check.id === "flow_graph_consolidated_entrypoints_registered",
+    );
+    expect(entrypointCheck?.evidence?.missing).toEqual([]);
+    expect(entrypointCheck?.evidence?.staleAllowedPaths).toEqual([]);
+    expect(entrypointCheck?.evidence?.staleSharedOwnerRules).toEqual([]);
+    expect(entrypointCheck?.evidence?.unapprovedSharedAllowedPaths).toEqual([]);
+    expect(entrypointCheck?.evidence?.uncoveredClusters).toEqual([]);
+    expect(entrypointCheck?.evidence?.orphanEntrypoints).toEqual([]);
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -116,6 +155,7 @@ describe("LCX flow graph exam", () => {
           id: "lark_visible_language_waterflow",
           requiredFilters: expect.arrayContaining([
             "visible_text_no_internal_labels",
+            "bounded_answer_review",
             "reply_flow_audit_required",
           ]),
         }),
@@ -203,6 +243,67 @@ describe("LCX flow graph exam", () => {
           mergeFilters: expect.arrayContaining([
             "retrieval_apply_eval_review_required",
             "promotion_ready_required",
+          ]),
+        }),
+      ]),
+    );
+    expect(payload.consolidatedEntrypointFamilies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_entrypoints",
+          ownerCluster: "architecture_supervision_cluster",
+          ownerPath: "scripts/dev/lcx-mind-model.ts",
+          watchedPathTerms: expect.arrayContaining(["lcx-flow-graph", "lcx-head-tail-consistency"]),
+        }),
+        expect.objectContaining({
+          id: "learning_sedimentation_entrypoints",
+          ownerCluster: "learning_internalization_cluster",
+          watchedPathTerms: expect.arrayContaining(["module-learning", "learning-sedimentation"]),
+        }),
+        expect.objectContaining({
+          id: "lark_visible_reply_audit_entrypoints",
+          ownerCluster: "dev_live_evidence_cluster",
+          watchedPathTerms: expect.arrayContaining(["reply-flow-audit"]),
+        }),
+        expect.objectContaining({
+          id: "qwen_training_operation_entrypoints",
+          ownerCluster: "senior_trader_failure_focus_cluster",
+          watchedPathTerms: expect.arrayContaining([
+            "local-brain-training-plan",
+            "minimax-quota-brain-saturator",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "automation_digest_entrypoints",
+          ownerCluster: "automation_digest_cluster",
+          watchedPathTerms: expect.arrayContaining(["automation-repair"]),
+        }),
+        expect.objectContaining({
+          id: "external_skill_learning_entrypoints",
+          ownerCluster: "external_skill_learning_cluster",
+          watchedPathTerms: expect.arrayContaining(["learning-council"]),
+        }),
+        expect.objectContaining({
+          id: "finance_data_quality_entrypoints",
+          ownerCluster: "finance_data_quality_cluster",
+          watchedPathTerms: expect.arrayContaining(["finance-data-gateway"]),
+        }),
+      ]),
+    );
+    expect(payload.sharedEntrypointOwnerRules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "src/commands/capabilities/lark-loop-diagnose.ts",
+          familyIds: expect.arrayContaining([
+            "dev_live_evidence_entrypoints",
+            "lark_visible_reply_audit_entrypoints",
+          ]),
+        }),
+        expect.objectContaining({
+          path: "src/commands/capabilities.lark-loop-diagnose.test.ts",
+          familyIds: expect.arrayContaining([
+            "dev_live_evidence_entrypoints",
+            "lark_visible_reply_audit_entrypoints",
           ]),
         }),
       ]),

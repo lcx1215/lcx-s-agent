@@ -28,6 +28,26 @@ async function runJsonScript(script: string) {
   }
 }
 
+async function runJsonScriptWithArgs(script: string, args: string[]) {
+  try {
+    return await execFileAsync(process.execPath, ["--import", "tsx", script, ...args], {
+      cwd: repoRoot,
+      env: process.env,
+      maxBuffer: EXEC_MAX_BUFFER,
+    });
+  } catch (error) {
+    const details = error as { stdout?: string; stderr?: string; message?: string };
+    throw new Error(
+      [
+        details.message ?? String(error),
+        `stdout=${details.stdout ?? ""}`,
+        `stderr=${details.stderr ?? ""}`,
+      ].join("\n"),
+      { cause: error },
+    );
+  }
+}
+
 describe("LCX compressed context recovery exam", () => {
   it("proves a new coding window can recover from durable evidence", async () => {
     const { stdout } = await runJsonScript("scripts/dev/lcx-context-recovery-exam.ts");
@@ -66,6 +86,46 @@ describe("LCX compressed context recovery exam", () => {
     );
     expect(Array.isArray(payload.actionableWarnings)).toBe(true);
     expect(Array.isArray(payload.warnings)).toBe(true);
+  });
+
+  it("can emit a compact new-window handoff from the existing recovery owner", async () => {
+    const { stdout } = await runJsonScriptWithArgs("scripts/dev/lcx-context-recovery-exam.ts", [
+      "--handoff",
+      "--json",
+    ]);
+    const payload = JSON.parse(stdout) as {
+      ok: boolean;
+      handoffForNewWindow: {
+        boundary: string;
+        owner: string;
+        purpose: string;
+        changeImpact: {
+          changedFiles: string[];
+          affectedLanes: string[];
+          unmatchedFiles: string[];
+        };
+        trainingPlan: { decisionIds: string[] };
+        moduleAbsorption: { blockers: string[] };
+        text: string;
+      };
+    };
+
+    expect(payload.ok).toBe(true);
+    expect(payload.handoffForNewWindow).toEqual(
+      expect.objectContaining({
+        boundary: "dev_context_recovery_handoff_only",
+        owner: "lcx-context-recovery-exam",
+      }),
+    );
+    expect(payload.handoffForNewWindow.purpose).toContain("parallel memory lane");
+    expect(Array.isArray(payload.handoffForNewWindow.changeImpact.changedFiles)).toBe(true);
+    expect(Array.isArray(payload.handoffForNewWindow.changeImpact.affectedLanes)).toBe(true);
+    expect(Array.isArray(payload.handoffForNewWindow.changeImpact.unmatchedFiles)).toBe(true);
+    expect(Array.isArray(payload.handoffForNewWindow.trainingPlan.decisionIds)).toBe(true);
+    expect(Array.isArray(payload.handoffForNewWindow.moduleAbsorption.blockers)).toBe(true);
+    expect(payload.handoffForNewWindow.text).toContain("# LCX New-Window Handoff");
+    expect(payload.handoffForNewWindow.text).toContain("do not start overlapping");
+    expect(payload.handoffForNewWindow.text).toContain("dev/local handoff only");
   });
 
   it("keeps the recovery exam visible in durable doctrine and local automation", async () => {

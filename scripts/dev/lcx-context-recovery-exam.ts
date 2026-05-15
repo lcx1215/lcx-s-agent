@@ -27,19 +27,24 @@ type RecoveryWarning = {
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/dev/lcx-context-recovery-exam.ts [--json]",
+      "Usage: node --import tsx scripts/dev/lcx-context-recovery-exam.ts [--json] [--handoff]",
       "",
       "Read-only compressed-context recovery exam. It verifies a future Codex or Claude",
       "window can recover LCX Agent state from durable files instead of chat memory.",
+      "",
+      "--handoff prints or returns a compact new-window handoff snapshot using the same",
+      "context-recovery owner; it is not a separate memory lane.",
     ].join("\n"),
   );
 }
 
 function parseArgs(args: string[]) {
-  const options = { json: false };
+  const options = { json: false, handoff: false };
   for (const arg of args) {
     if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--handoff") {
+      options.handoff = true;
     } else if (arg === "--help" || arg === "-h") {
       usage();
     } else {
@@ -236,6 +241,178 @@ async function currentTrainingPlanSnapshot(): Promise<{
   }
 }
 
+async function currentChangeImpactSnapshot(): Promise<{
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: string;
+}> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-change-impact-plan.ts", "--json"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
+async function currentModuleAbsorptionGateSnapshot(): Promise<{
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: string;
+}> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-module-learning-absorption-gate.ts", "--json"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
+function compactChangeImpact(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    ok: record.ok,
+    boundary: record.boundary,
+    changedFiles: record.changedFiles,
+    affectedLanes: record.affectedLanes,
+    unmatchedFiles: record.unmatchedFiles,
+    recommendedFastCommands: record.recommendedFastCommands,
+    escalation: record.escalation,
+    liveTouched: record.liveTouched,
+    providerConfigTouched: record.providerConfigTouched,
+    protectedMemoryTouched: record.protectedMemoryTouched,
+  };
+}
+
+function compactModuleAbsorptionGate(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const latestEval = record.latestEval as Record<string, unknown> | undefined;
+  return {
+    ok: record.ok,
+    boundary: record.boundary,
+    dateKey: record.dateKey,
+    absorptionReady: record.absorptionReady,
+    gateDecision: record.gateDecision,
+    counts: record.counts,
+    latestEval: latestEval
+      ? {
+          passed: latestEval.passed,
+          total: latestEval.total,
+          promotionReady: latestEval.promotionReady,
+          failedCaseIds: latestEval.failedCaseIds,
+          parseErrorCaseIds: latestEval.parseErrorCaseIds,
+          parseRecoveredCaseIds: latestEval.parseRecoveredCaseIds,
+        }
+      : undefined,
+    blockers: record.blockers,
+    nextActions: record.nextActions,
+    liveTouched: record.liveTouched,
+    providerConfigTouched: record.providerConfigTouched,
+    protectedMemoryTouched: record.protectedMemoryTouched,
+    languageCorpusTouched: record.languageCorpusTouched,
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function scalarText(value: unknown, fallback = "unknown"): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+}
+
+function buildNewWindowHandoffText(params: {
+  result: {
+    ok: boolean;
+    checkedAt: string;
+    compressedContextRecovered: boolean;
+    summary: { passed: number; failed: number; total: number };
+    actionableFailures: string[];
+    actionableWarnings: string[];
+    requiredRecoveryCommands: string[];
+  };
+  changeImpact?: ReturnType<typeof compactChangeImpact>;
+  trainingPlan?: ReturnType<typeof compactTrainingPlan>;
+  moduleAbsorption?: ReturnType<typeof compactModuleAbsorptionGate>;
+  flowGraphEvidence?: Record<string, unknown>;
+}): string {
+  const changedFiles = stringArray(params.changeImpact?.changedFiles);
+  const affectedLanes = stringArray(params.changeImpact?.affectedLanes);
+  const unmatchedFiles = stringArray(params.changeImpact?.unmatchedFiles);
+  const blockers = stringArray(params.moduleAbsorption?.blockers);
+  const nextActions = stringArray(params.moduleAbsorption?.nextActions);
+  const trainingDecisionIds = stringArray(
+    (params.trainingPlan as Record<string, unknown> | undefined)?.decisionIds,
+  );
+  const latestEval = params.trainingPlan?.latestEval;
+  const moduleLatestEval = params.moduleAbsorption?.latestEval;
+  const lines = [
+    "# LCX New-Window Handoff",
+    "",
+    `checkedAt=${params.result.checkedAt}`,
+    `cwd=${repoRoot}`,
+    `compressedContextRecovered=${params.result.compressedContextRecovered}`,
+    `recoveryChecks=${params.result.summary.passed}/${params.result.summary.total}`,
+    "",
+    "## Boundaries",
+    "- dev/local handoff only; not live-runtime-updated and not live-user-seen",
+    "- liveTouched=false; providerConfigTouched=false; protectedMemoryTouched=false",
+    "- do not start overlapping Qwen/MiniMax/MLX training; trust fresh local-brain-training-plan",
+    "- do not touch memory/current-research-line.md or memory/unified-risk-view.md",
+    "",
+    "## Dirty Worktree",
+    `changedFiles=${changedFiles.length}`,
+    ...changedFiles.map((file) => `- ${file}`),
+    `affectedLanes=${affectedLanes.join(",") || "none"}`,
+    `unmatchedFiles=${unmatchedFiles.join(",") || "none"}`,
+    "",
+    "## Training Truth",
+    `activeProcessCount=${scalarText(params.trainingPlan?.activeProcessCount)}`,
+    `latestEval=${scalarText(latestEval?.passed)}/${scalarText(latestEval?.total)} promotionReady=${scalarText(latestEval?.promotionReady)}`,
+    `latestEvalParseRecovered=${stringArray(latestEval?.parseRecoveredCaseIds).join(",") || "none"}`,
+    `decisionIds=${trainingDecisionIds.join(",") || "none"}`,
+    "",
+    "## Module Learning Truth",
+    `absorptionReady=${scalarText(params.moduleAbsorption?.absorptionReady)}`,
+    `gateDecision=${scalarText(params.moduleAbsorption?.gateDecision)}`,
+    `moduleGateLatestEval=${scalarText(moduleLatestEval?.passed)}/${scalarText(moduleLatestEval?.total)} promotionReady=${scalarText(moduleLatestEval?.promotionReady)}`,
+    `blockers=${blockers.join(",") || "none"}`,
+    `nextActions=${nextActions.join(" | ") || "none"}`,
+    "",
+    "## Architecture Truth",
+    `flowGraphScenarios=${scalarText(params.flowGraphEvidence?.scenarios)}`,
+    `flowGraphNodes=${scalarText(params.flowGraphEvidence?.nodes)}`,
+    `flowGraphFilters=${scalarText(params.flowGraphEvidence?.filters)}`,
+    `actionableFailures=${params.result.actionableFailures.join(" | ") || "none"}`,
+    `actionableWarnings=${params.result.actionableWarnings.join(" | ") || "none"}`,
+    "",
+    "## Recovery Commands",
+    ...params.result.requiredRecoveryCommands.map((command) => `- ${command}`),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
 async function mindModelCheck(): Promise<RecoveryCheck> {
   try {
     const { stdout } = await execFileAsync(
@@ -302,16 +479,23 @@ async function flowGraphCheck(): Promise<RecoveryCheck> {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const [agents, runbook, changeImpact, latestState, mindModel, flowGraph, currentTrainingPlan] =
-    await Promise.all([
-      readText(path.join(repoRoot, "AGENTS.md")),
-      readText(path.join(repoRoot, "ops/local-brain/README.md")),
-      readText(path.join(repoRoot, "scripts/dev/lcx-change-impact-plan.ts")),
-      readJson(LOCAL_OPERATOR_LATEST),
-      mindModelCheck(),
-      flowGraphCheck(),
-      currentTrainingPlanSnapshot(),
-    ]);
+  const [
+    agents,
+    runbook,
+    changeImpactSource,
+    latestState,
+    mindModel,
+    flowGraph,
+    currentTrainingPlan,
+  ] = await Promise.all([
+    readText(path.join(repoRoot, "AGENTS.md")),
+    readText(path.join(repoRoot, "ops/local-brain/README.md")),
+    readText(path.join(repoRoot, "scripts/dev/lcx-change-impact-plan.ts")),
+    readJson(LOCAL_OPERATOR_LATEST),
+    mindModelCheck(),
+    flowGraphCheck(),
+    currentTrainingPlanSnapshot(),
+  ]);
 
   const latestMindModel = latestState?.mindModel as Record<string, unknown> | undefined;
   const latestFlowGraph = latestState?.flowGraph as Record<string, unknown> | undefined;
@@ -354,7 +538,7 @@ async function main() {
     },
     {
       id: "micro_change_planner_keeps_master_lane",
-      ok: includesAll(changeImpact, [
+      ok: includesAll(changeImpactSource, [
         "PATH_RULES",
         "recommendedFastCommands",
         "headTailRequired",
@@ -508,15 +692,49 @@ async function main() {
     providerConfigTouched: false,
     protectedMemoryTouched: false,
   };
+  const handoffSources = options.handoff
+    ? await Promise.all([currentChangeImpactSnapshot(), currentModuleAbsorptionGateSnapshot()])
+    : undefined;
+  const handoffChangeImpact = handoffSources
+    ? compactChangeImpact(handoffSources[0].payload)
+    : undefined;
+  const moduleAbsorption = handoffSources
+    ? compactModuleAbsorptionGate(handoffSources[1].payload)
+    : undefined;
+  const handoffForNewWindow = options.handoff
+    ? {
+        boundary: "dev_context_recovery_handoff_only",
+        owner: "lcx-context-recovery-exam",
+        purpose:
+          "compact current-state snapshot for future Codex windows; reuses context recovery instead of creating a parallel memory lane",
+        changeImpact: handoffChangeImpact,
+        trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
+        moduleAbsorption,
+        text: buildNewWindowHandoffText({
+          result,
+          changeImpact: handoffChangeImpact,
+          trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
+          moduleAbsorption,
+          flowGraphEvidence: currentFlowEvidence,
+        }),
+        errors: {
+          changeImpact: handoffSources?.[0].error,
+          moduleAbsorption: handoffSources?.[1].error,
+        },
+      }
+    : undefined;
+  const outputResult = options.handoff ? { ...result, handoffForNewWindow } : result;
 
   process.stdout.write(
     options.json
-      ? `${JSON.stringify(result, null, 2)}\n`
-      : [
-          `lcx context recovery ${result.ok ? "ok" : "failed"}`,
-          `passed=${result.summary.passed} failed=${result.summary.failed} total=${result.summary.total}`,
-          ...failed.map((check) => `- ${check.id}: ${check.summary}`),
-        ].join("\n") + "\n",
+      ? `${JSON.stringify(outputResult, null, 2)}\n`
+      : options.handoff
+        ? (handoffForNewWindow?.text ?? "")
+        : [
+            `lcx context recovery ${result.ok ? "ok" : "failed"}`,
+            `passed=${result.summary.passed} failed=${result.summary.failed} total=${result.summary.total}`,
+            ...failed.map((check) => `- ${check.id}: ${check.summary}`),
+          ].join("\n") + "\n",
   );
   process.exitCode = result.ok ? 0 : 1;
 }

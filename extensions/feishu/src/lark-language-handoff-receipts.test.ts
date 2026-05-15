@@ -84,6 +84,21 @@ describe("lark language handoff receipts", () => {
       noFinanceLearningArtifact: true,
       noExecutionApproval: true,
       noLiveProbeProof: true,
+      answerAuditPolicy: {
+        boundary: "bounded_answer_review",
+        owner: "existing_lark_handoff_context_packet_review_panel",
+        candidateAuthority: "model_candidate_not_final_authority",
+        qwenRole: "challenger_only_not_final_authority",
+        qwenChallengeRounds: 1,
+        modelRewriteBudget: 2,
+        maxTotalReviewRounds: 4,
+        terminalDecision: "adopt_visible_reply_or_return_failed_reason",
+        receiptSurfaces: expect.arrayContaining([
+          "lark_language_handoff_receipt",
+          "lark_context_packet",
+          "feishu_reply_flow",
+        ]),
+      },
       handoff: {
         family: "learning_external_source",
         source: "api",
@@ -105,6 +120,7 @@ describe("lark language handoff receipts", () => {
     const written = await fs.readFile(path.join(workspaceDir, result.relativePath), "utf8");
     expect(written).toContain('"boundary": "language_handoff_only"');
     expect(written).toContain('"github_project_capability_intake"');
+    expect(written).toContain('"answerAuditPolicy"');
     expect(written).not.toContain("financeBrainOrchestration");
   });
 
@@ -248,6 +264,11 @@ describe("lark language handoff receipts", () => {
     expect(notice).toContain("Lark answer composer contract");
     expect(notice).toContain("answer the user's real question first in plain language");
     expect(notice).toContain("do not lead with family, route, modules, receipts");
+    expect(notice).toContain("Answer audit budget");
+    expect(notice).toContain("model answer is only a candidate");
+    expect(notice).toContain("Qwen is not_requested");
+    expect(notice).toContain("return failedReason/blockedReason");
+    expect(notice).toContain("do not keep regenerating");
     expect(notice).toContain("concise judgment");
     expect(notice).toContain("failedReason");
   });

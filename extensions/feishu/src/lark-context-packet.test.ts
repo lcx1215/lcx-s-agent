@@ -173,6 +173,18 @@ describe("lark context packets", () => {
         primaryModules: ["etf_regime", "causal_map"],
       },
     });
+    expect(result.artifact.answerAuditPolicy).toMatchObject({
+      boundary: "bounded_answer_review",
+      candidateAuthority: "model_candidate_not_final_authority",
+      qwenRole: "challenger_only_not_final_authority",
+      qwenChallengeRounds: 1,
+      modelRewriteBudget: 2,
+      maxTotalReviewRounds: 4,
+      terminalDecision: "adopt_visible_reply_or_return_failed_reason",
+    });
+    const notice = renderLarkContextPacketNotice(result.artifact);
+    expect(notice).toContain("answerAudit=maxTotalReviewRounds:4");
+    expect(notice).toContain("candidateAuthority:model_candidate_not_final_authority");
   });
 
   it("persists unknown continuation packets without injecting a model-facing notice", async () => {

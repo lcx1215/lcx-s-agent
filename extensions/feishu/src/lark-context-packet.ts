@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FinanceBrainOrchestrationPlan } from "../../../src/agents/finance-brain-orchestration.js";
+import {
+  buildLarkAnswerAuditPolicy,
+  type LarkAnswerAuditPolicy,
+} from "./lark-language-handoff-receipts.js";
 import type { LarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
 import type { FeishuChatSurfaceName } from "./surfaces.js";
 
@@ -45,6 +49,7 @@ export type LarkContextPacketArtifact = {
     outputContract: readonly string[];
     financeBrainOrchestration?: FinanceBrainOrchestrationPlan;
   };
+  answerAuditPolicy: LarkAnswerAuditPolicy;
   memoryPolicy: {
     languageCorpusUntouched: true;
     protectedMemoryUntouched: true;
@@ -177,6 +182,7 @@ export function buildLarkContextPacketArtifact(params: {
       outputContract: params.handoff.workOrder?.outputContract ?? [],
       financeBrainOrchestration: params.financeBrainOrchestration,
     },
+    answerAuditPolicy: buildLarkAnswerAuditPolicy(params.handoff),
     memoryPolicy: {
       languageCorpusUntouched: true,
       protectedMemoryUntouched: true,
@@ -204,6 +210,7 @@ export function renderLarkContextPacketNotice(
     `inheritanceReason=${packet.contextInheritance.reason}`,
     `effectiveSurface=${packet.surfaces.effectiveSurface ?? "none"}`,
     `backendTool=${packet.brainDispatch.targetBackendTool ?? "none"}`,
+    `answerAudit=maxTotalReviewRounds:${packet.answerAuditPolicy.maxTotalReviewRounds}; terminal:${packet.answerAuditPolicy.terminalDecision}; candidateAuthority:${packet.answerAuditPolicy.candidateAuthority}`,
     `blockedContext=${packet.contextInheritance.blockedContext.join(",") || "none"}`,
     "Execution rule: use only allowedContext; if inheritanceMode is forbid_previous_task or explicit_continuation_required, ask for a concrete subject instead of continuing an old task.",
   ].join("\n");

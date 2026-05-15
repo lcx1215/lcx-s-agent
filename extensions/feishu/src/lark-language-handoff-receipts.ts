@@ -28,6 +28,7 @@ export type LarkLanguageHandoffReceiptArtifact = {
   noExecutionApproval: true;
   noLiveProbeProof: true;
   financeBrainOrchestration?: FinanceBrainOrchestrationPlan;
+  answerAuditPolicy: LarkAnswerAuditPolicy;
   handoff: {
     family: LarkAgentInstructionHandoff["family"];
     source: LarkAgentInstructionHandoff["source"];
@@ -41,6 +42,73 @@ export type LarkLanguageHandoffReceiptArtifact = {
     missingBeforeExecution: readonly string[];
   };
 };
+
+export type LarkAnswerAuditPolicy = {
+  boundary: "bounded_answer_review";
+  owner: "existing_lark_handoff_context_packet_review_panel";
+  candidateAuthority: "model_candidate_not_final_authority";
+  qwenRole: "challenger_only_not_final_authority" | "not_requested" | "blocked_by_local_contract";
+  localContractAuditRounds: 1;
+  qwenChallengeRounds: 0 | 1;
+  modelRewriteBudget: 0 | 2;
+  maxTotalReviewRounds: number;
+  terminalDecision: "adopt_visible_reply_or_return_failed_reason";
+  stopConditions: readonly string[];
+  receiptSurfaces: readonly string[];
+};
+
+export function buildLarkAnswerAuditPolicy(
+  handoff: Pick<LarkAgentInstructionHandoff, "workOrder">,
+): LarkAnswerAuditPolicy {
+  const qwenStatus = handoff.workOrder?.validation.qwenChallenge.status;
+  const qwenChallengeRounds = qwenStatus === "recommended" ? 1 : 0;
+  const qwenRole =
+    qwenStatus === "recommended"
+      ? "challenger_only_not_final_authority"
+      : qwenStatus === "blocked"
+        ? "blocked_by_local_contract"
+        : "not_requested";
+  const modelRewriteBudget = handoff.workOrder ? 2 : 0;
+  return {
+    boundary: "bounded_answer_review",
+    owner: "existing_lark_handoff_context_packet_review_panel",
+    candidateAuthority: "model_candidate_not_final_authority",
+    qwenRole,
+    localContractAuditRounds: 1,
+    qwenChallengeRounds,
+    modelRewriteBudget,
+    maxTotalReviewRounds: 1 + qwenChallengeRounds + modelRewriteBudget,
+    terminalDecision: "adopt_visible_reply_or_return_failed_reason",
+    stopConditions: [
+      "missing_required_evidence",
+      "source_conflict_unresolved",
+      "unsafe_or_execution_authority_request",
+      "wrong_surface_or_family",
+      "rewrite_budget_exhausted",
+    ],
+    receiptSurfaces: [
+      "lark_language_handoff_receipt",
+      "lark_context_packet",
+      "feishu_reply_flow",
+      "surface_line_or_brain_distillation_candidate",
+    ],
+  };
+}
+
+function renderAnswerAuditPolicyLines(
+  workOrder: LarkAgentInstructionHandoff["workOrder"],
+): readonly string[] {
+  const policy = buildLarkAnswerAuditPolicy({ workOrder });
+  return [
+    `Answer audit budget: localContractAudit=${policy.localContractAuditRounds}; qwenChallenge=${policy.qwenChallengeRounds}; modelRewriteBudget<=${policy.modelRewriteBudget}; maxTotalReviewRounds=${policy.maxTotalReviewRounds}.`,
+    `Authority rule: model answer is only a candidate; local contracts and review_panel decide final adoption; Qwen is ${
+      policy.qwenRole === "challenger_only_not_final_authority"
+        ? "challenger/helper, not final authority"
+        : policy.qwenRole
+    }.`,
+    "Stop rule: if required evidence is missing, sources conflict, safety boundary is hit, wrong surface/family is detected, or rewrite budget is exhausted, return failedReason/blockedReason; do not keep regenerating.",
+  ];
+}
 
 export function renderLarkFinanceBrainOrchestrationNotice(
   plan: FinanceBrainOrchestrationPlan | undefined,
@@ -75,6 +143,7 @@ export function renderLarkAnswerComposerNotice(
     `evidenceRequired=${evidence}`,
     `outputContract=${outputContract}`,
     "Visible reply rule: answer the user's real question first in plain language; do not lead with family, route, modules, receipts, JSON, or backend labels unless the user explicitly asks for protocol proof.",
+    ...renderAnswerAuditPolicyLines(workOrder),
     "Required visible shape for finance/research tasks: concise judgment, key reasons, missing inputs or failedReason, research-only next checklist, and proof path only at the end if useful.",
     "If evidence is missing, say what cannot be concluded and what data would change the answer; do not fill gaps with model guesses.",
   ].join("\n");
@@ -181,6 +250,7 @@ export function buildLarkLanguageHandoffReceiptArtifact(params: {
     noExecutionApproval: true,
     noLiveProbeProof: true,
     ...(financeBrainOrchestration ? { financeBrainOrchestration } : {}),
+    answerAuditPolicy: buildLarkAnswerAuditPolicy(params.handoff),
     handoff: {
       family: params.handoff.family,
       source: params.handoff.source,

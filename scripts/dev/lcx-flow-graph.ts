@@ -56,6 +56,8 @@ type FlowNodeId =
   | "operator_digest"
   | "language_router"
   | "display_text_normalizer"
+  | "answer_audit_budget"
+  | "visible_answer_adoption_gate"
   | "reply_flow_audit"
   | "readability_review"
   | "provider_evidence"
@@ -100,6 +102,7 @@ type FlowFilterId =
   | "single_digest_only"
   | "error_receipt_required"
   | "visible_text_no_internal_labels"
+  | "bounded_answer_review"
   | "reply_flow_audit_required"
   | "provider_evidence_required"
   | "no_provider_config_change"
@@ -149,6 +152,20 @@ type ConsolidationCluster = {
   ownerNode: FlowNodeId;
   sameClassTerms: string[];
   mergeFilters: FlowFilterId[];
+};
+
+type ConsolidatedEntrypointFamily = {
+  id: string;
+  ownerCluster: string;
+  ownerPath: string;
+  watchedPathTerms: readonly string[];
+  allowedPaths: readonly string[];
+};
+
+type SharedEntrypointOwner = {
+  path: string;
+  familyIds: readonly string[];
+  reason: string;
 };
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -208,6 +225,8 @@ const NODE_IDS: FlowNodeId[] = [
   "operator_digest",
   "language_router",
   "display_text_normalizer",
+  "answer_audit_budget",
+  "visible_answer_adoption_gate",
   "reply_flow_audit",
   "readability_review",
   "provider_evidence",
@@ -253,6 +272,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "single_digest_only",
   "error_receipt_required",
   "visible_text_no_internal_labels",
+  "bounded_answer_review",
   "reply_flow_audit_required",
   "provider_evidence_required",
   "no_provider_config_change",
@@ -502,13 +522,16 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "language_router",
       "local_brain_planner",
       "control_room_summary",
+      "answer_audit_budget",
       "display_text_normalizer",
       "readability_review",
+      "visible_answer_adoption_gate",
       "reply_flow_audit",
       "visible_reply",
     ],
     requiredFilters: [
       "visible_text_no_internal_labels",
+      "bounded_answer_review",
       "reply_flow_audit_required",
       "dev_ready_not_live_user_seen",
     ],
@@ -517,13 +540,21 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["intent_classifier", "language_router"],
       ["language_router", "local_brain_planner"],
       ["local_brain_planner", "control_room_summary"],
-      ["control_room_summary", "display_text_normalizer"],
+      ["control_room_summary", "answer_audit_budget"],
+      ["answer_audit_budget", "display_text_normalizer"],
       ["display_text_normalizer", "readability_review"],
-      ["readability_review", "reply_flow_audit"],
+      ["readability_review", "visible_answer_adoption_gate"],
+      ["visible_answer_adoption_gate", "reply_flow_audit"],
       ["reply_flow_audit", "visible_reply"],
     ],
     feedbackEdges: [["readability_review", "display_text_normalizer"]],
-    receipts: ["feishu-reply-flow", "normalizeFeishuDisplayText", "lark-loop-diagnose"],
+    receipts: [
+      "lark-language-handoff-receipt",
+      "lark-context-packet",
+      "feishu-reply-flow",
+      "normalizeFeishuDisplayText",
+      "lark-loop-diagnose",
+    ],
   },
   {
     id: "provider_council_evidence_waterflow",
@@ -953,6 +984,189 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
   },
 ];
 
+const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
+  {
+    id: "architecture_supervision_entrypoints",
+    ownerCluster: "architecture_supervision_cluster",
+    ownerPath: "scripts/dev/lcx-mind-model.ts",
+    watchedPathTerms: [
+      "lcx-mind-model",
+      "lcx-flow-graph",
+      "lcx-head-tail-consistency",
+      "lcx-context-recovery-exam",
+      "lcx-change-impact-plan",
+      "lcx-system-doctor",
+      "lcx-agent-exam",
+    ],
+    allowedPaths: [
+      "scripts/dev/lcx-agent-exam.ts",
+      "scripts/dev/lcx-change-impact-plan.ts",
+      "scripts/dev/lcx-context-recovery-exam.ts",
+      "scripts/dev/lcx-flow-graph.ts",
+      "scripts/dev/lcx-head-tail-consistency.ts",
+      "scripts/dev/lcx-mind-model.ts",
+      "scripts/dev/lcx-system-doctor.ts",
+      "test/lcx-agent-exam.test.ts",
+      "test/lcx-context-recovery-exam.test.ts",
+      "test/lcx-flow-graph.test.ts",
+      "test/lcx-head-tail-consistency.test.ts",
+      "test/lcx-mind-model.test.ts",
+      "test/lcx-system-doctor-train-slice.test.ts",
+    ],
+  },
+  {
+    id: "learning_sedimentation_entrypoints",
+    ownerCluster: "learning_internalization_cluster",
+    ownerPath: "scripts/dev/module-learning-pipeline-review.ts",
+    watchedPathTerms: ["module-learning", "learning-sedimentation", "system-memory-sedimentation"],
+    allowedPaths: [
+      "scripts/dev/lcx-learning-sedimentation-audit.ts",
+      "scripts/dev/lcx-learning-sedimentation-bridge.ts",
+      "scripts/dev/lcx-learning-sedimentation-map.ts",
+      "scripts/dev/lcx-module-learning-absorption-gate.ts",
+      "scripts/dev/lcx-system-memory-sedimentation-gate.ts",
+      "scripts/dev/module-learning-pipeline-plan.ts",
+      "scripts/dev/module-learning-pipeline-review.ts",
+      "src/agents/openclaw-tools.module-learning-pipeline-plan-registration.test.ts",
+      "src/agents/tools/module-learning-pipeline-plan-tool.test.ts",
+      "src/agents/tools/module-learning-pipeline-plan-tool.ts",
+      "src/agents/tools/module-learning-pipeline-review-tool.test.ts",
+      "src/agents/tools/module-learning-pipeline-review-tool.ts",
+      "test/lcx-learning-sedimentation-audit.test.ts",
+      "test/lcx-learning-sedimentation-bridge.test.ts",
+      "test/lcx-learning-sedimentation-map.test.ts",
+      "test/lcx-module-learning-absorption-gate.test.ts",
+      "test/lcx-system-memory-sedimentation-gate.test.ts",
+      "test/module-learning-pipeline-plan-cli.test.ts",
+      "test/module-learning-pipeline-review-cli.test.ts",
+    ],
+  },
+  {
+    id: "lark_visible_reply_audit_entrypoints",
+    ownerCluster: "dev_live_evidence_cluster",
+    ownerPath: "src/commands/capabilities/lark-loop-diagnose.ts",
+    watchedPathTerms: [
+      "lark-context-packet",
+      "lark-language-handoff",
+      "reply-flow-audit",
+      "feishu-reply-flow-evidence",
+      "lark-loop-diagnose",
+    ],
+    allowedPaths: [
+      "extensions/feishu/src/lark-context-packet.test.ts",
+      "extensions/feishu/src/lark-context-packet.ts",
+      "extensions/feishu/src/lark-language-handoff-receipts.test.ts",
+      "extensions/feishu/src/lark-language-handoff-receipts.ts",
+      "extensions/feishu/src/reply-flow-audit.ts",
+      "src/auto-reply/reply/feishu-reply-flow-evidence.test.ts",
+      "src/auto-reply/reply/feishu-reply-flow-evidence.ts",
+      "src/commands/capabilities.lark-loop-diagnose.test.ts",
+      "src/commands/capabilities/lark-loop-diagnose.ts",
+    ],
+  },
+  {
+    id: "qwen_training_operation_entrypoints",
+    ownerCluster: "senior_trader_failure_focus_cluster",
+    ownerPath: "scripts/dev/local-brain-training-plan.ts",
+    watchedPathTerms: [
+      "local-brain-distill-eval",
+      "local-brain-promotion-audit",
+      "local-brain-training-plan",
+      "minimax-brain-training-guard",
+      "minimax-brain-teacher-batch",
+      "minimax-quota-brain-saturator",
+    ],
+    allowedPaths: [
+      "scripts/dev/local-brain-distill-eval.ts",
+      "scripts/dev/local-brain-promotion-audit.ts",
+      "scripts/dev/local-brain-training-plan.ts",
+      "scripts/dev/minimax-brain-teacher-batch.ts",
+      "scripts/dev/minimax-brain-training-guard.ts",
+      "scripts/dev/minimax-quota-brain-saturator.ts",
+      "test/local-brain-distill-eval.test.ts",
+      "test/local-brain-promotion-audit.test.ts",
+      "test/local-brain-training-plan.test.ts",
+      "test/minimax-brain-teacher-batch.test.ts",
+      "test/minimax-brain-training-guard.test.ts",
+      "test/minimax-quota-brain-saturator-preview.test.ts",
+    ],
+  },
+  {
+    id: "dev_live_evidence_entrypoints",
+    ownerCluster: "dev_live_evidence_cluster",
+    ownerPath: "scripts/dev/lcx-promote-live.ts",
+    watchedPathTerms: ["lcx-promote-live", "live-promotion", "lark-loop-diagnose"],
+    allowedPaths: [
+      "scripts/dev/lcx-promote-live.ts",
+      "src/commands/capabilities.lark-loop-diagnose.test.ts",
+      "src/commands/capabilities/lark-loop-diagnose.ts",
+      "test/lcx-promote-live-status.test.ts",
+    ],
+  },
+  {
+    id: "automation_digest_entrypoints",
+    ownerCluster: "automation_digest_cluster",
+    ownerPath: "scripts/dev/lcx-automation-repair-lock.ts",
+    watchedPathTerms: [
+      "automation-repair",
+      "codex-archive",
+      "lcx-local-operator",
+      "operator-digest",
+    ],
+    allowedPaths: [
+      "scripts/dev/lcx-automation-repair-lock.ts",
+      "test/lcx-automation-repair-lock.test.ts",
+    ],
+  },
+  {
+    id: "external_skill_learning_entrypoints",
+    ownerCluster: "external_skill_learning_cluster",
+    ownerPath: "extensions/feishu/src/learning-council.ts",
+    watchedPathTerms: ["agent-workflow", "learning-council", "skill-pattern"],
+    allowedPaths: [
+      "extensions/feishu/src/learning-council.test.ts",
+      "extensions/feishu/src/learning-council.ts",
+    ],
+  },
+  {
+    id: "finance_data_quality_entrypoints",
+    ownerCluster: "finance_data_quality_cluster",
+    ownerPath: "src/agents/finance-data-gateway.ts",
+    watchedPathTerms: [
+      "finance-article-source-registry",
+      "finance-data-gateway",
+      "source-registry",
+    ],
+    allowedPaths: [
+      "scripts/dev/finance-data-gateway-smoke.ts",
+      "src/agents/finance-data-gateway.ts",
+      "src/agents/openclaw-tools.finance-article-source-registry-registration.test.ts",
+      "src/agents/openclaw-tools.finance-data-gateway-registration.test.ts",
+      "src/agents/tools/finance-article-source-registry-inspect-tool.ts",
+      "src/agents/tools/finance-article-source-registry-record-tool.ts",
+      "src/agents/tools/finance-article-source-registry-tools.test.ts",
+      "src/agents/tools/finance-data-gateway-tool.test.ts",
+      "src/agents/tools/finance-data-gateway-tool.ts",
+      "src/hooks/bundled/lobster-brain-registry.finance-article-source-registry.test.ts",
+    ],
+  },
+];
+
+const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
+  {
+    path: "src/commands/capabilities/lark-loop-diagnose.ts",
+    familyIds: ["dev_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
+    reason:
+      "lark-loop-diagnose is the intentional bridge between visible reply audit and dev/live evidence.",
+  },
+  {
+    path: "src/commands/capabilities.lark-loop-diagnose.test.ts",
+    familyIds: ["dev_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
+    reason:
+      "the lark-loop-diagnose test is the shared proof surface for visible reply audit and dev/live evidence.",
+  },
+];
+
 const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
   head: ["AGENTS.md", "README.md", "ops/local-brain/README.md", "src/agents/system-prompt.ts"],
   workflow: [
@@ -1045,6 +1259,10 @@ function edgeKey(edge: readonly [string, string]): string {
   return `${edge[0]}->${edge[1]}`;
 }
 
+function familyKey(familyIds: readonly string[]): string {
+  return familyIds.toSorted().join(",");
+}
+
 function hasPath(
   edges: ReadonlyArray<readonly [FlowNodeId, FlowNodeId]>,
   start: FlowNodeId,
@@ -1092,6 +1310,35 @@ async function missingSurfaceFiles(): Promise<string[]> {
     }),
   );
   return statuses.filter((file): file is string => typeof file === "string");
+}
+
+async function listRepoFiles(relativeDir: string): Promise<string[]> {
+  const root = path.join(repoRoot, relativeDir);
+  try {
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    const nested = await Promise.all(
+      entries.map(async (entry) => {
+        const absolutePath = path.join(root, entry.name);
+        const repoPath = path.relative(repoRoot, absolutePath).split(path.sep).join("/");
+        if (entry.isDirectory()) {
+          if ([".git", "coverage", "dist", "node_modules"].includes(entry.name)) {
+            return [];
+          }
+          return listRepoFiles(repoPath);
+        }
+        return [repoPath];
+      }),
+    );
+    return nested.flat();
+  } catch {
+    return [];
+  }
+}
+
+async function discoverCodeEntrypoints(): Promise<string[]> {
+  const roots = ["scripts", "src", "extensions", "test"];
+  const files = (await Promise.all(roots.map((root) => listRepoFiles(root)))).flat();
+  return files.filter((file) => /\.(?:cts|js|mjs|mts|ts|tsx)$/u.test(file)).toSorted();
 }
 
 function surfaceTermCheck(surfaceTexts: Record<SurfaceGroup, string>): FlowCheck {
@@ -1163,6 +1410,7 @@ function feedbackCheck(): FlowCheck {
           "source_evidence_gate",
           "three_source_reconciliation_required",
           "conflicted_data_blocks_conclusion",
+          "bounded_answer_review",
           "reply_flow_audit_required",
           "provider_evidence_required",
           "same_philosophy_merge_required",
@@ -1243,15 +1491,113 @@ function consolidationClusterCheck(surfaceTexts: Record<SurfaceGroup, string>): 
   };
 }
 
+async function consolidatedEntrypointCheck(): Promise<FlowCheck> {
+  const files = await discoverCodeEntrypoints();
+  const fileSet = new Set(files);
+  const clusterIds = new Set(CONSOLIDATION_CLUSTERS.map((cluster) => cluster.id));
+  const familyIds = new Set(CONSOLIDATED_ENTRYPOINT_FAMILIES.map((family) => family.id));
+  const coveredClusterIds = new Set(
+    CONSOLIDATED_ENTRYPOINT_FAMILIES.map((family) => family.ownerCluster),
+  );
+  const allowedSharedOwners = new Map(
+    SHARED_ENTRYPOINT_OWNERS.map((owner) => [owner.path, familyKey(owner.familyIds)]),
+  );
+  const uncoveredClusters = CONSOLIDATION_CLUSTERS.filter(
+    (cluster) => !coveredClusterIds.has(cluster.id),
+  ).map((cluster) => cluster.id);
+  const missing = CONSOLIDATED_ENTRYPOINT_FAMILIES.flatMap((family) => {
+    const problems: string[] = [];
+    if (!clusterIds.has(family.ownerCluster)) {
+      problems.push(`${family.id}:missing_owner_cluster:${family.ownerCluster}`);
+    }
+    if (!fileSet.has(family.ownerPath)) {
+      problems.push(`${family.id}:missing_owner_path:${family.ownerPath}`);
+    }
+    if (!family.allowedPaths.includes(family.ownerPath)) {
+      problems.push(`${family.id}:owner_path_not_allowed:${family.ownerPath}`);
+    }
+    if (family.watchedPathTerms.length === 0) {
+      problems.push(`${family.id}:empty_watched_path_terms`);
+    }
+    if (family.allowedPaths.length === 0) {
+      problems.push(`${family.id}:empty_allowed_paths`);
+    }
+    return problems;
+  });
+  const staleAllowedPaths = CONSOLIDATED_ENTRYPOINT_FAMILIES.flatMap((family) =>
+    family.allowedPaths.filter((file) => !fileSet.has(file)).map((file) => `${family.id}:${file}`),
+  );
+  const familyIdsByAllowedPath = new Map<string, string[]>();
+  for (const family of CONSOLIDATED_ENTRYPOINT_FAMILIES) {
+    for (const file of family.allowedPaths) {
+      familyIdsByAllowedPath.set(file, [...(familyIdsByAllowedPath.get(file) ?? []), family.id]);
+    }
+  }
+  const unapprovedSharedAllowedPaths = [...familyIdsByAllowedPath.entries()]
+    .filter(([, owners]) => owners.length > 1)
+    .filter(([file, owners]) => allowedSharedOwners.get(file) !== familyKey(owners))
+    .map(([file, owners]) => `${file}:${familyKey(owners)}`);
+  const staleSharedOwnerRules = SHARED_ENTRYPOINT_OWNERS.flatMap((owner) => {
+    const problems: string[] = [];
+    if (!fileSet.has(owner.path)) {
+      problems.push(`${owner.path}:missing_shared_path`);
+    }
+    for (const familyId of owner.familyIds) {
+      if (!familyIds.has(familyId)) {
+        problems.push(`${owner.path}:missing_shared_family:${familyId}`);
+      }
+    }
+    const actualOwners = familyIdsByAllowedPath.get(owner.path) ?? [];
+    if (actualOwners.length > 1 && familyKey(actualOwners) !== familyKey(owner.familyIds)) {
+      problems.push(`${owner.path}:shared_owner_mismatch:${familyKey(actualOwners)}`);
+    }
+    if (actualOwners.length <= 1) {
+      problems.push(`${owner.path}:shared_rule_without_shared_allowed_path`);
+    }
+    return problems;
+  });
+  const orphanEntrypoints = CONSOLIDATED_ENTRYPOINT_FAMILIES.flatMap((family) => {
+    const allowed = new Set(family.allowedPaths);
+    const terms = family.watchedPathTerms.map((term) => term.toLowerCase());
+    return files
+      .filter((file) => terms.some((term) => file.toLowerCase().includes(term)))
+      .filter((file) => !allowed.has(file))
+      .map((file) => `${family.id}:${file}`);
+  });
+  return {
+    id: "flow_graph_consolidated_entrypoints_registered",
+    ok:
+      missing.length === 0 &&
+      staleAllowedPaths.length === 0 &&
+      unapprovedSharedAllowedPaths.length === 0 &&
+      staleSharedOwnerRules.length === 0 &&
+      orphanEntrypoints.length === 0 &&
+      uncoveredClusters.length === 0,
+    summary:
+      "same-class workflow files must register under an existing owner cluster instead of becoming parallel V2 systems",
+    evidence: {
+      families: CONSOLIDATED_ENTRYPOINT_FAMILIES.length,
+      missing,
+      staleAllowedPaths,
+      unapprovedSharedAllowedPaths,
+      staleSharedOwnerRules,
+      orphanEntrypoints,
+      uncoveredClusters,
+    },
+  };
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const [head, workflow, proof, boundary, missingFiles] = await Promise.all([
-    joinedSurfaceText(SURFACE_FILES.head),
-    joinedSurfaceText(SURFACE_FILES.workflow),
-    joinedSurfaceText(SURFACE_FILES.proof),
-    joinedSurfaceText(SURFACE_FILES.boundary),
-    missingSurfaceFiles(),
-  ]);
+  const [head, workflow, proof, boundary, missingFiles, consolidatedEntrypoints] =
+    await Promise.all([
+      joinedSurfaceText(SURFACE_FILES.head),
+      joinedSurfaceText(SURFACE_FILES.workflow),
+      joinedSurfaceText(SURFACE_FILES.proof),
+      joinedSurfaceText(SURFACE_FILES.boundary),
+      missingSurfaceFiles(),
+      consolidatedEntrypointCheck(),
+    ]);
   const checks = [
     {
       id: "flow_graph_surfaces_readable",
@@ -1266,6 +1612,7 @@ async function main() {
     illegalEdgeCheck(),
     receiptCheck(),
     consolidationClusterCheck({ head, workflow, proof, boundary }),
+    consolidatedEntrypoints,
   ];
   const failed = checks.filter((check) => !check.ok);
   const result = {
@@ -1280,6 +1627,8 @@ async function main() {
       nodes: NODE_IDS.length,
       filters: FILTER_IDS.length,
       consolidationClusters: CONSOLIDATION_CLUSTERS.length,
+      consolidatedEntrypointFamilies: CONSOLIDATED_ENTRYPOINT_FAMILIES.length,
+      sharedEntrypointOwnerRules: SHARED_ENTRYPOINT_OWNERS.length,
     },
     checks,
     scenarios: FLOW_SCENARIOS.map((scenario) => ({
@@ -1294,6 +1643,8 @@ async function main() {
       receipts: scenario.receipts,
     })),
     consolidationClusters: CONSOLIDATION_CLUSTERS,
+    consolidatedEntrypointFamilies: CONSOLIDATED_ENTRYPOINT_FAMILIES,
+    sharedEntrypointOwnerRules: SHARED_ENTRYPOINT_OWNERS,
     actionableFailures: failed.map((check) => `${check.id}: ${check.summary}`),
     liveTouched: false,
     providerConfigTouched: false,

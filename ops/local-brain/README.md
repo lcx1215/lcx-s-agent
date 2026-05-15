@@ -106,6 +106,20 @@ needing the old chat transcript. The local operator loop should keep
 The latest state must also be fresh; a stale but readable JSON file is treated
 as a failed recovery signal.
 
+For a new coding window that needs a one-screen current-state handoff, use the
+same recovery owner instead of creating a separate handoff lane:
+
+```bash
+node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff
+node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff --json
+```
+
+The handoff snapshot includes dirty files, affected lanes, unmatched-file
+checks, fresh training-plan decisions, module-learning absorption blockers,
+flow-graph counts, strict dev/live/protected-memory boundaries, and the exact
+recovery commands. It is still dev/local evidence only; it does not prove
+`live-runtime-updated`, `live-user-seen`, or Qwen model-weight absorption.
+
 ## First Command
 
 Start here:

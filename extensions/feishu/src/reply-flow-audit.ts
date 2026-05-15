@@ -5,6 +5,7 @@ import path from "node:path";
 export type FeishuReplyFlowStage =
   | "inbound"
   | "dispatch_start"
+  | "answer_audit"
   | "outbound_attempt"
   | "outbound_result"
   | "dispatch_error"
@@ -26,6 +27,14 @@ export type FeishuReplyFlowRecord = {
   deliveryStatus?: "success" | "failed";
   feishuCode?: number;
   feishuMsg?: string;
+  answerAuditBoundary?: string;
+  answerAuditOwner?: string;
+  answerAuditCandidateAuthority?: string;
+  answerAuditQwenRole?: string;
+  answerAuditMaxTotalReviewRounds?: number;
+  answerAuditTerminalDecision?: string;
+  answerAuditHandoffReceiptPath?: string;
+  answerAuditContextPacketPath?: string;
   outboundMessageType?: string;
   receiveIdType?: string;
   usedReplyTarget?: boolean;
