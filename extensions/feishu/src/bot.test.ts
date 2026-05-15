@@ -7902,6 +7902,57 @@ describe("learning council routing", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("answers live acceptance phrase probes without appending distribution status", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-live-acceptance-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-user" } },
+      message: {
+        message_id: "msg-live-acceptance",
+        chat_id: "oc-status",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({
+          text: "live验收：请只回复 lark-live-visible-fixed-agent-architecture-20260514，并说明这是重启后的真实链路。",
+        }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).toBe(
+      "lark-live-visible-fixed-agent-architecture-20260514（这是重启后的真实链路。）",
+    );
+    expect(replyText).not.toContain("分发状态");
+    expect(replyText).not.toContain("Distribution:");
+    expect(replyText).not.toContain("交接回执:");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("answers protocol truth surface asks directly instead of silently dispatching zero replies", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),

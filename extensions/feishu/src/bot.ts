@@ -1537,8 +1537,18 @@ function shouldUseFeishuProtocolTruthIdentityReply(text: string): boolean {
 
 function shouldUseFeishuProtocolStatusReadbackReply(text: string): boolean {
   return (
-    resolveProtocolInfoQuestionKind(text) === "status_readback" &&
-    /(status audit|current evidence|probe-fixed|dev-fixed|live-visible-fixed|live-fixed|unverified|acceptance code|proof|failedreason|what did you just fix|自检|当前状态|当前证据|当前 proof|刚才.*修|修了什么)/iu.test(
+    isFeishuLiveAcceptanceReadbackAsk(text) ||
+    (resolveProtocolInfoQuestionKind(text) === "status_readback" &&
+      /(status audit|current evidence|probe-fixed|dev-fixed|live-visible-fixed|live-fixed|unverified|acceptance code|acceptance phrase|proof|failedreason|what did you just fix|自检|验收短语|当前状态|当前证据|当前 proof|刚才.*修|修了什么)/iu.test(
+        text,
+      ))
+  );
+}
+
+function isFeishuLiveAcceptanceReadbackAsk(text: string): boolean {
+  return (
+    /\blark-live-visible-fixed-[A-Za-z0-9_-]+\b/u.test(text) &&
+    /(live\s*验收|验收短语|验收 phrase|acceptance phrase|acceptance code|真实链路|重启后的真实链路)/iu.test(
       text,
     )
   );
@@ -3934,10 +3944,25 @@ function shouldUseConciseFeishuStatusReadback(userMessage: string): boolean {
   return /一句人话|一句话|一行|简短|不要输出\s*json|不要\s*json/iu.test(userMessage);
 }
 
+function renderFeishuLiveAcceptanceReadbackReply(userMessage: string): string | undefined {
+  const phrase = userMessage.match(/\blark-live-visible-fixed-[A-Za-z0-9_-]+\b/u)?.[0];
+  if (!phrase || !isFeishuLiveAcceptanceReadbackAsk(userMessage)) {
+    return undefined;
+  }
+  if (/(说明|真实链路|重启|restart)/iu.test(userMessage)) {
+    return `${phrase}（这是重启后的真实链路。）`;
+  }
+  return phrase;
+}
+
 function renderFeishuProtocolStatusReadbackReply(params: {
   userMessage: string;
   protocolText?: string;
 }): string {
+  const liveAcceptanceReply = renderFeishuLiveAcceptanceReadbackReply(params.userMessage);
+  if (liveAcceptanceReply) {
+    return liveAcceptanceReply;
+  }
   if (shouldUseConciseFeishuStatusReadback(params.userMessage)) {
     return [
       "当前状态：dev-fixed 只代表本地代码和测试通过；probe-fixed 只代表 gateway/channel 探活通过；live-visible-fixed 必须等真实 Lark 入站和发送成功回执都落账后才算，不能提前混成完成。",
