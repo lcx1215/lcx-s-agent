@@ -63,6 +63,16 @@ describe("planFinanceBrainOrchestration", () => {
     expect(plan.boundaries).toContain("research_only");
   });
 
+  it("routes advanced chart-line learning into technical timing", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "学习高级图线分析技术",
+    });
+
+    expect(plan.primaryModules).toEqual(expect.arrayContaining(["technical_timing", "causal_map"]));
+    expect(plan.supportingModules).toContain("finance_learning_memory");
+    expect(plan.requiredTools).toContain("finance_learning_capability_apply");
+  });
+
   it("keeps cross-market modules available at runtime without fake producer tools", () => {
     const plan = planFinanceBrainOrchestration({
       text: "美元流动性和人民币汇率变化时，我想同时看美股、A股、全球指数、BTC、稳定币、QQQ 和高 beta 科技股的跨资产风险偏好外溢，research-only。",

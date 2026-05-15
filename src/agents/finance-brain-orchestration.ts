@@ -134,7 +134,7 @@ export const FINANCE_BRAIN_MODULES = [
     requiredTools: ["finance_learning_capability_apply"],
     triggerPatterns: [
       /\b(?:technical|timing|trend|momentum|moving average|rsi|breakout|entry|exit|support|resistance)\b/u,
-      /技术|技术分析|图表分析|K线|k线|蜡烛图|择时|趋势|动量|均线|突破|入场|出场|支撑|阻力/u,
+      /技术|技术分析|图表分析|K线|k线|图线|蜡烛图|择时|趋势|动量|均线|突破|入场|出场|支撑|阻力/u,
     ],
   },
   {
@@ -245,7 +245,7 @@ function moduleMatches(module: FinanceBrainModuleDefinition, text: string): bool
 }
 
 function hasFinanceTaskSignal(text: string): boolean {
-  return /\b(finance|market|stock|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment|candlestick)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资|K线|k线|蜡烛图/u.test(
+  return /\b(finance|market|stock|equity|etf|portfolio|macro|earnings|valuation|quant|trading|investing|investment|candlestick)\b|金融|市场|股市|股票|美股|A股|a股|指数|基金|组合|持仓|宏观|财报|估值|量化|投资|K线|k线|图线|蜡烛图/u.test(
     text,
   );
 }
