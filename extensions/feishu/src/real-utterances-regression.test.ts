@@ -1450,7 +1450,7 @@ describe("real daily utterance regression", () => {
     }
   });
 
-  it("routes simple finance learning asks to learning_command before generic knowledge maintenance", async () => {
+  it("routes simple finance learning asks to external-source learning before local-source pipeline", async () => {
     const utterances = [
       "学习股市分析知识",
       "学习美股分析知识",
@@ -1479,7 +1479,8 @@ describe("real daily utterance regression", () => {
         mode: "aggregate",
         specialistSurfaces: ["learning_command"],
       });
-      expect(looksLikeFinanceLearningPipelineAsk(utterance), utterance).toBe(true);
+      expect(looksLikeStrategicLearningAsk(utterance), utterance).toBe(true);
+      expect(looksLikeFinanceLearningPipelineAsk(utterance), utterance).toBe(false);
 
       const handoff = await resolveLarkAgentInstructionHandoff({
         cfg,
@@ -1489,21 +1490,24 @@ describe("real daily utterance regression", () => {
           throw new Error("gateway timeout after 35000ms");
         },
       });
-      expect(handoff.family, utterance).toBe("market_capability_learning_intake");
+      expect(handoff.family, utterance).toBe("learning_external_source");
       expect(handoff.source, utterance).toBe("deterministic_fallback");
       expect(handoff.targetSurface, utterance).toBe("learning_command");
-      expect(handoff.backendToolContract?.toolName, utterance).toBe(
-        "finance_learning_pipeline_orchestrator",
-      );
+      expect(handoff.backendToolContract, utterance).toBeUndefined();
       expect(handoff.workOrder?.source, utterance).toBe("deterministic_fallback_audited");
+      expect(handoff.workOrder?.evidenceRequired, utterance).toEqual([
+        "source list with links",
+        "coverage limits",
+        "adoption or discard decision",
+      ]);
       expect(handoff.workOrder?.outputContract, utterance).toContain(
-        "plain-language learning intake status first",
+        "plain-language external-source learning status first",
       );
       expect(handoff.workOrder?.outputContract, utterance).toContain(
-        "name missing source requirement when source is absent",
+        "use web/search/source grounding when available",
       );
       expect(handoff.workOrder?.outputContract, utterance).toContain(
-        "do not claim internalized or application_ready before retrieval review",
+        "do not claim internalized or application_ready before review evidence",
       );
       expect(handoff.notice, utterance).toContain("API planner was unavailable");
 
@@ -1520,21 +1524,20 @@ describe("real daily utterance regression", () => {
       });
       expect(receipt.targetSurface, utterance).toBe("learning_command");
       expect(receipt.effectiveSurface, utterance).toBe("learning_command");
-      expect(receipt.handoff.family, utterance).toBe("market_capability_learning_intake");
-      expect(receipt.handoff.expectedProof, utterance).toEqual([
-        "retrievalReceiptPath",
-        "retrievalReviewPath",
+      expect(receipt.handoff.family, utterance).toBe("learning_external_source");
+      expect(receipt.handoff.workOrder?.evidenceRequired, utterance).toEqual([
+        "source list with links",
+        "coverage limits",
+        "adoption or discard decision",
       ]);
-      expect(receipt.financeBrainOrchestration?.primaryModules.length, utterance).toBeGreaterThan(
-        0,
-      );
+      expect(receipt.handoff.backendToolContract, utterance).toBeUndefined();
       expect(receipt.financeBrainOrchestration?.supportingModules, utterance).toContain(
         "finance_learning_memory",
       );
     }
   });
 
-  it("routes online or broad advanced chart learning to external-source learning, not local-source-only pipeline", async () => {
+  it("routes explicit online or broad advanced chart learning to external-source learning, not local-source-only pipeline", async () => {
     const utterances = [
       "学习高级图线分析技术",
       "去网上学习高级图线分析技术",

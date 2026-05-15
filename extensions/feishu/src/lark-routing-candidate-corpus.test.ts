@@ -96,7 +96,7 @@ describe("lark routing candidate corpus", () => {
     expect(candidate.boundary).toBe("language_routing_only");
   });
 
-  it("accepts broad options knowledge learning as finance capability intake", () => {
+  it("accepts broad options knowledge learning as external-source learning by default", () => {
     const candidate = createLarkPendingRoutingCandidate({
       source: "lark_user_utterance",
       payload: "去学期权全知识",
@@ -108,11 +108,11 @@ describe("lark routing candidate corpus", () => {
       reason: "accepted_language_case",
       candidate: expect.objectContaining({
         semantic: expect.objectContaining({
-          family: "market_capability_learning_intake",
+          family: "learning_external_source",
         }),
       }),
       acceptedCase: expect.objectContaining({
-        family: "market_capability_learning_intake",
+        family: "learning_external_source",
         expectedSurface: "learning_command",
       }),
     });

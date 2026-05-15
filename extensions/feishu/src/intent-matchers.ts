@@ -165,7 +165,7 @@ export function looksLikeOnlineSourceLearningAsk(text: string): boolean {
     return false;
   }
   const hasLearningIntent =
-    /(开始学|开始学习|去学|去学习|学习|学一下|学学|研究|研究一下|研究明白|搞懂|内化|吸收|提炼|沉淀|让你学|你去学|自己学|learn|study|internalize)/iu.test(
+    /(开始学|开始学习|去学|去学习|学习|学一下|学学|研究|研究一下|研究明白|搞懂|内化|吸收|提炼|沉淀|补强|补齐|强化|加强|让你学|你去学|自己学|learn|study|internalize|学\s*(?:k\s*线|图线|蜡烛图|技术分析|图表分析|盘口|成交量|均线|macd|rsi|期权|波动率|股市|股票|美股|a股|etf|指数|风控|基本面|估值))/iu.test(
       normalized,
     );
   const hasExplicitOnlineSourceCue =
@@ -176,24 +176,36 @@ export function looksLikeOnlineSourceLearningAsk(text: string): boolean {
     /(高级|系统|系统性|全套|完整|深入|前沿|顶级|世界级|专业|权威).{0,20}(图线|k\s*线|蜡烛图|图表分析|技术分析|成交量|量价|趋势线|均线|macd|rsi)|(?:图线|k\s*线|蜡烛图|图表分析|技术分析|成交量|量价|趋势线|均线|macd|rsi).{0,20}(高级|系统|系统性|全套|完整|深入|前沿|顶级|世界级|专业|权威)/iu.test(
       normalized,
     );
+  const hasDefaultExternalLearningCue =
+    /(学习|学一下|学学|去学|去学习|补强|补齐|强化|加强).{0,24}(知识|基础|入门|框架|方法|方法论|分析|分析技术|分析框架|策略|规则|体系|知识体系|全知识|完整体系|市场结构|风控|波动率|greeks?|希腊字母)|(?:知识|基础|入门|框架|方法|方法论|分析|分析技术|分析框架|策略|规则|体系|知识体系|全知识|完整体系|市场结构|风控|波动率|greeks?|希腊字母).{0,24}(学习|学一下|学学|去学|去学习|补强|补齐|强化|加强)|学\s*(?:k\s*线|图线|蜡烛图|技术分析|图表分析|盘口|成交量|均线|macd|rsi).{0,16}(技术|分析|规则|框架|方法)?/iu.test(
+      normalized,
+    );
   const hasLearningTopic =
-    /(金融|finance|股市|股票|美股|a股|港股|市场|etf|指数|资产配置|组合|portfolio|基本面|fundamental|技术面|technical|技术分析|图表分析|k\s*线|图线|蜡烛图|成交量|量价|趋势线|均线|macd|rsi|择时|timing|风控|risk control|期权|options?|波动率|volatility|greeks?|希腊字母|衍生品|derivatives?|智能体|agent|workflow|工作流|记忆|memory)/iu.test(
+    /(金融|finance|股市|股票|美股|a股|港股|市场|加密币|crypto|etf|指数|资产配置|组合|portfolio|基本面|fundamental|技术面|technical|技术分析|图表分析|k\s*线|图线|蜡烛图|成交量|量价|趋势线|均线|macd|rsi|择时|timing|风控|risk control|期权|options?|波动率|volatility|greeks?|希腊字母|衍生品|derivatives?|智能体|agent|workflow|工作流|记忆|memory)/iu.test(
       normalized,
     );
   const asksPipelineExecution =
-    /(finance[_\s-]?learning[_\s-]?pipeline[_\s-]?orchestrator|source intake|extract|attach|retrieval receipt|retrieval review|learninginternalizationstatus|application[_\s-]?ready|failedreason|本地安全\s*source|valid source|\.md|\.txt|\.html|本地文件|文件路径)/iu.test(
+    /(finance[_\s-]?learning[_\s-]?pipeline[_\s-]?orchestrator|source intake|extract|attach|retrieval|retrieval receipt|retrieval review|receipt|review|learninginternalizationstatus|application[_\s-]?ready|failedreason|完整学习流程|学习流程|本地安全\s*source|valid source|source\s+\S+\.(?:md|txt|html)|\.md|\.txt|\.html|本地文件|文件路径|这篇|这份|这段|原文)/iu.test(
       normalized,
     );
   const asksSearchHealthOnly =
     /(搜索|联网|web|google).{0,12}(能用|可用|状态|坏了|正常吗|可以用吗|接上了吗)/iu.test(
       normalized,
     );
+  const asksOverviewOnly =
+    /(总览|总判断|整体怎么样|系统健康|学习状态|研究状态|盘点|汇总|overview|status)/iu.test(
+      normalized,
+    ) &&
+    !/(去学|去学习|学习|学一下|学学|补强|补齐|强化|加强).{0,24}(知识|基础|入门|框架|方法|方法论|分析|分析技术|分析框架|策略|规则|体系|知识体系|全知识|完整体系|市场结构)/iu.test(
+      normalized,
+    );
   return (
     hasLearningIntent &&
     hasLearningTopic &&
-    (hasExplicitOnlineSourceCue || hasBroadImplicitOnlineCue) &&
+    (hasExplicitOnlineSourceCue || hasBroadImplicitOnlineCue || hasDefaultExternalLearningCue) &&
     !asksPipelineExecution &&
-    !asksSearchHealthOnly
+    !asksSearchHealthOnly &&
+    !asksOverviewOnly
   );
 }
 

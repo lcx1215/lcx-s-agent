@@ -88,15 +88,8 @@ describe("feishu intent matchers", () => {
   it("detects finance learning pipeline asks without catching status audits", () => {
     const positiveCases = [
       "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略",
-      "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
-      "去学完全部理解交易股市所需要的数学和物理知识",
-      "你自己学理解股市需要的概率统计、时间序列、随机过程和优化",
-      "学k线图分析技术",
-      "学习蜡烛图和成交量确认规则",
       "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
       "让它学习 credit liquidity regime 框架，留下 receipt 和 retrieval review",
-      "去学期权全知识",
-      "去学波动率、Greeks 和衍生品知识体系，沉淀成可复用规则",
       "真实学习任务端到端验收：请用本地安全 source test/fixtures/finance-learning-pipeline/valid-finance-article.md 跑 finance_learning_pipeline_orchestrator，learningIntent=学习 ETF event triage workflow，必须在回复里明确显示 learningInternalizationStatus=application_ready 或 failedReason；不要说后台已完成，除非 receipt/review 真的证明。",
       "live valid source check source test/fixtures/finance-learning-pipeline/valid-finance-article.md run financelearningpipelineorchestrator learningIntent ETF event triage workflow. Must show learningInternalizationStatus applicationready or failedReason usable answer contract usable answer lines.",
     ];
@@ -108,6 +101,10 @@ describe("feishu intent matchers", () => {
     expect(looksLikeFinanceLearningPipelineAsk("finance learning pipeline 是 dev 还是 live")).toBe(
       false,
     );
+    expect(looksLikeFinanceLearningPipelineAsk("学习股市分析知识")).toBe(false);
+    expect(looksLikeFinanceLearningPipelineAsk("学k线图分析技术")).toBe(false);
+    expect(looksLikeFinanceLearningPipelineAsk("去学一套 ETF 风控和仓位管理方法")).toBe(false);
+    expect(looksLikeFinanceLearningPipelineAsk("去学期权全知识")).toBe(false);
     expect(looksLikeFinanceLearningPipelineAsk("学习高级图线分析技术")).toBe(false);
     expect(looksLikeFinanceLearningPipelineAsk("去网上学习高级图线分析技术")).toBe(false);
     expect(looksLikeFinanceLearningPipelineAsk("QQQ 现在还能拿吗")).toBe(false);
@@ -149,6 +146,17 @@ describe("feishu intent matchers", () => {
       "去网上学习高级图线分析技术",
       "网上学习高级图线分析技术，只留下能改以后判断的规则",
       "从 Google Scholar 和公开课程里找 ETF 风控做法，只沉淀可复用规则",
+      "学习股市分析知识",
+      "学习美股分析知识",
+      "学一下 A 股指数分析框架",
+      "学k线图分析技术",
+      "学习蜡烛图和成交量确认规则",
+      "补强 ETF 风控知识",
+      "学习期权波动率分析框架",
+      "学习加密币市场结构知识",
+      "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
+      "去学期权全知识",
+      "去学波动率、Greeks 和衍生品知识体系，沉淀成可复用规则",
     ];
 
     for (const phrase of positiveCases) {
@@ -156,8 +164,12 @@ describe("feishu intent matchers", () => {
       expect(looksLikeStrategicLearningAsk(phrase), phrase).toBe(true);
     }
 
-    expect(looksLikeOnlineSourceLearningAsk("学k线图分析技术")).toBe(false);
     expect(looksLikeOnlineSourceLearningAsk("搜索现在能用吗")).toBe(false);
+    expect(
+      looksLikeOnlineSourceLearningAsk(
+        "让它学习 credit liquidity regime 框架，留下 receipt 和 retrieval review",
+      ),
+    ).toBe(false);
     expect(
       looksLikeOnlineSourceLearningAsk(
         "真实学习任务端到端验收：请用本地安全 source test/fixtures/finance-learning-pipeline/valid-finance-article.md 跑 finance_learning_pipeline_orchestrator，learningIntent=学习 ETF event triage workflow，必须在回复里明确显示 learningInternalizationStatus=application_ready 或 failedReason。",
