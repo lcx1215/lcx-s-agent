@@ -101,6 +101,8 @@ async function main() {
     evolutionSkill,
     l5Skill,
     l4Skill,
+    l5SkillScript,
+    l4SkillScript,
   ] = await Promise.all([
     readOptionalText(path.join(repoRoot, "AGENTS.md")),
     readOptionalText(path.join(repoRoot, "README.md")),
@@ -114,6 +116,12 @@ async function main() {
     readOptionalText(path.join(codexSkillsRoot, "lcx-evolution-loop", "SKILL.md")),
     readOptionalText(path.join(codexSkillsRoot, "l5-regression-batterer", "SKILL.md")),
     readOptionalText(path.join(codexSkillsRoot, "l4-regression-batterer", "SKILL.md")),
+    readOptionalText(
+      path.join(codexSkillsRoot, "l5-regression-batterer", "scripts", "l5-regression-batterer.sh"),
+    ),
+    readOptionalText(
+      path.join(codexSkillsRoot, "l4-regression-batterer", "scripts", "l4-regression-batterer.sh"),
+    ),
   ]);
 
   const activeDocs = [
@@ -324,6 +332,27 @@ async function main() {
     ok: l5ScriptInstalled,
     summary: "local Codex L5 regression skill should be installed for future windows",
     evidence: l5ScriptInstalled ? [] : [`missing: ${l5ScriptPath}`],
+  });
+
+  const l5RuntimeScriptText = [l5SkillScript, l4SkillScript].filter(Boolean).join("\n");
+  const l5RuntimePinned =
+    l5RuntimeScriptText.includes("PINNED_NODE_BIN") &&
+    l5RuntimeScriptText.includes("node-v22.14.0-darwin-arm64/bin") &&
+    l5RuntimeScriptText.includes("export PATH=") &&
+    l5RuntimeScriptText.includes("pnpm");
+  checks.push({
+    id: "l5_skill_runtime_path_pinned",
+    ok: l5RuntimePinned,
+    summary:
+      "L5 regression skill runtime should pin the Node 22 pnpm path or future windows can fail from PATH drift",
+    evidence: l5RuntimePinned
+      ? []
+      : [
+          `missing pinned runtime in ${path.join(
+            codexSkillsRoot,
+            "l5-regression-batterer/scripts/l5-regression-batterer.sh",
+          )} or delegated legacy script`,
+        ],
   });
 
   const failed = checks.filter((check) => !check.ok);

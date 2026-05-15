@@ -89,6 +89,39 @@ boundaries. Use `lcx-mind-model`, `lcx-flow-graph`,
 `lcx-context-recovery-exam`, and live probes as the governance stack. If these
 surfaces disagree, treat it as architecture debt before expanding features.
 
+## Commercial L5 Blueprint
+
+Use this as the current 1-6 execution plan. It is owned by the existing exam,
+flow graph, runbook, and live-probe surfaces; do not create a parallel
+blueprint lane.
+
+1. Dev/live closure: keep `dev-ready`, `live-runtime-updated`, and
+   `live-user-seen` separate. Migration needs build, restart, probe, real Lark
+   inbound, outbound result, and visible reply evidence before any live claim.
+2. Module-learning absorption: plan receipts, review rows, `application_ready`,
+   `eval_absorbed`, and keep/downrank/discard are separate states. A stored
+   source, reviewable receipt, or clean global eval is not per-module
+   absorption by itself.
+3. L5 battery and runtime drift: `lcx-agent-exam --l5` is the heavy local gate,
+   and doctrine consistency must catch the L5 skill runtime PATH/pnpm drift
+   that can break future windows before the repo itself is actually broken.
+4. Commercial answer pipeline: the answer audit policy is that the model answer
+   is candidate, Qwen is challenger/not final authority, local review has a
+   bounded feedback budget, and the terminal decision is either adopt a visible
+   answer or return a concrete failed reason.
+5. Live observability summary: Lark proof must converge through
+   `lark-loop-diagnose`, channel probe, `feishu-reply-flow.jsonl`, and fresh
+   real-user inbound/reply evidence. Synthetic replay and local smoke stay
+   dev-only.
+6. Product control room: default UX is one main control room with specialist
+   detail on demand. Keep useful operator and specialist entrypoints, but every
+   volatile status family needs one single factual owner and flow-graph
+   consolidated entrypoint coverage.
+
+`lcx-agent-exam --json` reports this plan as `commercialBlueprint` so a future
+window can see which item is ready, blocked, needs receipts, or needs live
+proof without rereading the chat.
+
 The finance data gateway owner is `finance_data_gateway_snapshot`. Use it before
 current market, price, fundamentals, macro, ETF, options, index-weight, vendor,
 or portfolio-risk numbers reach Qwen, Lark, memory, or a visible summary. The

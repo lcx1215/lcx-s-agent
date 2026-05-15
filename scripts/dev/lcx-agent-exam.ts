@@ -41,6 +41,16 @@ type ExamLane = {
   nextAction: string;
 };
 
+type CommercialBlueprintItem = {
+  id: string;
+  order: number;
+  title: string;
+  ownerLane: string;
+  status: "ready" | "blocked" | "needs_live" | "needs_receipts" | "not_run";
+  evidence: string[];
+  nextAction: string;
+};
+
 type ExamReport = {
   ok: boolean;
   boundary: "dev_exam_only" | "dev_exam_with_live_probe";
@@ -51,6 +61,7 @@ type ExamReport = {
   trainingStarted: false;
   heavyEvalStarted: false;
   lanes: ExamLane[];
+  commercialBlueprint: CommercialBlueprintItem[];
   commands: Record<string, CommandResult>;
   summary: {
     pass: number;
@@ -69,6 +80,8 @@ type CognitiveIntegritySources = {
   moduleLearningReviewTool: string;
   larkSurfaces: string;
   localBrainRunbook: string;
+  answerAuditSurfaces: string;
+  controlRoomSurfaces: string;
 };
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -291,10 +304,12 @@ function buildModuleLearningLane(moduleCommand: CommandResult): ExamLane {
   const weak = numberValue(counts.weakModuleLearning) ?? 0;
   const invalid = numberValue(counts.invalidReceipts) ?? 0;
   const boundaryViolations = numberValue(counts.boundaryViolations) ?? 0;
+  const applicationReady = numberValue(counts.applicationReady) ?? 0;
+  const evalAbsorbed = numberValue(counts.evalAbsorbed) ?? 0;
   const status =
     boundaryViolations > 0 || invalid > 0
       ? "fail"
-      : weak > 0 || receiptFiles === 0
+      : weak > 0 || receiptFiles === 0 || evalAbsorbed === 0
         ? "warn"
         : "pass";
   return {
@@ -305,22 +320,76 @@ function buildModuleLearningLane(moduleCommand: CommandResult): ExamLane {
     evidence: [
       `receiptFiles=${receiptFiles}`,
       `weakModuleLearning=${weak}`,
+      `applicationReady=${applicationReady}`,
+      `evalAbsorbed=${evalAbsorbed}`,
       `invalidReceipts=${invalid}`,
       `boundaryViolations=${boundaryViolations}`,
       `updated=${String(review.updated === true)}`,
     ],
     issue:
       status === "pass"
-        ? "模块学习 review 有收据且没有发现弱内化或边界违规。"
+        ? "当前 module-learning review 有 eval_absorbed 收据，且没有发现弱内化或边界违规。"
         : receiptFiles === 0
           ? "今天没有模块学习 review 输入收据；不能说所有模块都已经吸收新知识。"
-          : "模块学习还有弱收据、坏收据或边界违规，不能升级成 eval_absorbed。",
+          : evalAbsorbed === 0
+            ? "当前 review 只有非 eval_absorbed 证据，不能把 stored_only/retrieval_ready/application_ready 升级成模块学会。"
+            : "模块学习还有弱收据、坏收据或边界违规，不能升级成 eval_absorbed。",
     nextAction:
       status === "pass"
         ? "保留 no-write review 作为每日检查，继续要求 fresh adjacent application。"
         : weak > 0
           ? "补 per-receipt eval/training、fresh adjacent application、keep/downrank/discard 证据，再允许 eval_absorbed。"
-          : "补真实 module_learning_pipeline_plan/application/eval 证据，再写 review receipt。",
+          : evalAbsorbed === 0 && receiptFiles > 0
+            ? "补 per-receipt eval/training absorption 和 keep/downrank/discard，再从 application_ready 升级。"
+            : "补真实 module_learning_pipeline_plan/application/eval 证据，再写 review receipt。",
+  };
+}
+
+function buildLearningSedimentationInventoryLane(
+  auditCommand: CommandResult | undefined,
+): ExamLane {
+  if (!auditCommand) {
+    return {
+      lane: "learning_sedimentation_inventory",
+      status: "not_run",
+      severity: "P3",
+      boundary: "dev_learning_sedimentation_audit_not_run",
+      evidence: ["lcx-learning-sedimentation-audit not run"],
+      issue: "没有读取全局学习沉淀库存，不能区分历史 eval_absorbed 和今天新增 review。",
+      nextAction: "跑 lcx-learning-sedimentation-audit，把历史模块吸收库存和当天 review 分开看。",
+    };
+  }
+  if (!auditCommand.ok) {
+    return commandFailedLane("learning_sedimentation_inventory", auditCommand);
+  }
+  const audit = auditCommand.json ?? {};
+  const chains = asRecord(audit.chains);
+  const modulePipeline = asRecord(chains.moduleLearningPipeline);
+  const evalAbsorbed = numberValue(modulePipeline.evalAbsorbed) ?? 0;
+  const planReceipts = numberValue(modulePipeline.planReceipts) ?? 0;
+  const weak = numberValue(modulePipeline.weakModuleLearning) ?? 0;
+  const boundaryViolations = numberValue(modulePipeline.boundaryViolations) ?? 0;
+  const status = boundaryViolations > 0 ? "fail" : evalAbsorbed > 0 && weak === 0 ? "pass" : "warn";
+  return {
+    lane: "learning_sedimentation_inventory",
+    status,
+    severity: status === "pass" ? "info" : status === "warn" ? "P2" : "P1",
+    boundary: stringValue(audit.boundary, "dev_learning_sedimentation_audit_only"),
+    evidence: [
+      `assessment=${stringValue(audit.assessment, "unknown")}`,
+      `planReceipts=${planReceipts}`,
+      `evalAbsorbed=${evalAbsorbed}`,
+      `weakModuleLearning=${weak}`,
+      `boundaryViolations=${boundaryViolations}`,
+    ],
+    issue:
+      status === "pass"
+        ? "全局学习沉淀库存里已有模块级 eval_absorbed 证据；这和今天新增 review 输入是两件事。"
+        : "全局学习沉淀库存还不能证明模块吸收，或存在弱内化/边界问题。",
+    nextAction:
+      status === "pass"
+        ? "继续让当天 review 只报告新增输入，不要把历史 eval_absorbed 和今天新增混说。"
+        : "先修 learning-sedimentation-audit 指出的 gaps，再谈模块吸收。",
   };
 }
 
@@ -470,6 +539,93 @@ function buildMemorySedimentationLane(sources?: CognitiveIntegritySources): Exam
       status === "pass"
         ? "继续要求 receipt、failedReason、fresh adjacent application 和 eval/training 证据。"
         : "补 source->receipt->apply->eval_absorbed 的 fail-closed 契约。",
+  };
+}
+
+function buildAnswerAuditPipelineLane(sources?: CognitiveIntegritySources): ExamLane {
+  if (!sources) {
+    return {
+      lane: "commercial_answer_audit_pipeline",
+      status: "not_run",
+      severity: "P2",
+      boundary: "static_contract_sources_missing",
+      evidence: ["sourceAudit=false"],
+      issue: "没有读取 Lark 回答审计契约源码，不能判断商用回答流水线是否闭环。",
+      nextAction: "重新跑 lcx-agent-exam，让它读取 answer audit 和 reply-flow surfaces。",
+    };
+  }
+  const sourceOk = hasAll(sources.answerAuditSurfaces, [
+    "buildLarkAnswerAuditPolicy",
+    "model_candidate_not_final_authority",
+    "challenger_only_not_final_authority",
+    "answer_audit",
+    "terminalDecision",
+  ]);
+  const runbookOk = hasAll(sources.localBrainRunbook, [
+    "bounded feedback",
+    "answer audit",
+    "model answer",
+    "Qwen is challenger",
+    "terminal decision",
+  ]);
+  const status = sourceOk && runbookOk ? "pass" : "fail";
+  return {
+    lane: "commercial_answer_audit_pipeline",
+    status,
+    severity: status === "pass" ? "info" : "P1",
+    boundary: "dev_static_lark_answer_audit_contract",
+    evidence: [`answerAuditSource=${String(sourceOk)}`, `runbookPolicy=${String(runbookOk)}`],
+    issue:
+      status === "pass"
+        ? "商用回答流水线有边界：模型先给候选，本地/Qwen 做有限审计，最后要么采纳可见回复，要么给失败理由。"
+        : "回答审计契约缺口会让系统在大模型和本地回路之间无限反复，或者把候选答案直接当最终答案。",
+    nextAction:
+      status === "pass"
+        ? "后续 live 验收要看 answer_audit stage 和真实可见回复，不只看本地源码。"
+        : "补 answer audit policy、reply-flow stage、runbook 终止条件和回归。",
+  };
+}
+
+function buildControlRoomProductLane(sources?: CognitiveIntegritySources): ExamLane {
+  if (!sources) {
+    return {
+      lane: "product_control_room",
+      status: "not_run",
+      severity: "P2",
+      boundary: "static_contract_sources_missing",
+      evidence: ["sourceAudit=false"],
+      issue: "没有读取 control-room 产品入口契约，不能判断是否成了多入口屎山。",
+      nextAction: "重新跑 lcx-agent-exam，让它读取 README、AGENTS、capabilities 和 runbook。",
+    };
+  }
+  const productOk = hasAll(sources.controlRoomSurfaces, [
+    "one main control room",
+    "control_room_main_lane",
+    "specialist detail only on demand",
+  ]);
+  const convergenceOk = hasAll(sources.localBrainRunbook, [
+    "Commercial-grade convergence does not mean deleting useful entrypoints",
+    "Converge duplicated authority instead",
+    "single factual owner",
+  ]);
+  const status = productOk && convergenceOk ? "pass" : "fail";
+  return {
+    lane: "product_control_room",
+    status,
+    severity: status === "pass" ? "info" : "P1",
+    boundary: "dev_static_product_entrypoint_contract",
+    evidence: [
+      `controlRoomContract=${String(productOk)}`,
+      `entrypointConvergence=${String(convergenceOk)}`,
+    ],
+    issue:
+      status === "pass"
+        ? "产品入口原则是一个主 control room，加必要专门入口；重复权威要合并，不是删除所有入口。"
+        : "control room 和多入口收敛契约不完整，后续容易平行造入口。",
+    nextAction:
+      status === "pass"
+        ? "新增入口前继续用 flow graph 的 consolidated entrypoint families 做 owner 检查。"
+        : "补 README/AGENTS/runbook/capabilities 的产品入口和单一事实 owner 契约。",
   };
 }
 
@@ -638,6 +794,109 @@ function buildAutomationLane(planCommand: CommandResult, doctorCommand: CommandR
   };
 }
 
+function laneById(lanes: ExamLane[], laneId: string): ExamLane | undefined {
+  return lanes.find((lane) => lane.lane === laneId);
+}
+
+function blueprintStatusFromLane(lane: ExamLane | undefined): CommercialBlueprintItem["status"] {
+  if (!lane) {
+    return "blocked";
+  }
+  if (lane.status === "pass") {
+    return "ready";
+  }
+  if (lane.status === "not_run") {
+    return "not_run";
+  }
+  return "blocked";
+}
+
+function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5: boolean }) {
+  const moduleLane = laneById(params.lanes, "module_learning_internalization");
+  const inventoryLane = laneById(params.lanes, "learning_sedimentation_inventory");
+  const liveLane = laneById(params.lanes, "live_visible_boundary");
+  const larkLane = laneById(params.lanes, "lark_feishu_visible_loop");
+  const l5Lane = laneById(params.lanes, "l5_regression_battery");
+  const answerLane = laneById(params.lanes, "commercial_answer_audit_pipeline");
+  const controlRoomLane = laneById(params.lanes, "product_control_room");
+
+  return [
+    {
+      id: "live_closure",
+      order: 1,
+      title: "dev/live 闭环和真实 Lark 验收",
+      ownerLane: "live_visible_boundary",
+      status:
+        params.live && liveLane?.status === "warn" && larkLane?.status !== "fail"
+          ? "needs_live"
+          : params.live
+            ? blueprintStatusFromLane(liveLane)
+            : "needs_live",
+      evidence: liveLane?.evidence ?? ["live lane missing"],
+      nextAction:
+        "按 dev-ready -> live-runtime-updated -> live-user-seen 顺序做迁移、重启、probe、真实入站回复验收。",
+    },
+    {
+      id: "module_learning_absorption",
+      order: 2,
+      title: "模块学习真实吸收证据",
+      ownerLane: "learning_sedimentation_inventory",
+      status:
+        inventoryLane?.status === "pass"
+          ? "ready"
+          : moduleLane?.status === "pass"
+            ? "ready"
+            : "needs_receipts",
+      evidence: [
+        ...(inventoryLane?.evidence ?? ["learning sedimentation inventory missing"]),
+        ...(moduleLane?.evidence ?? ["module learning lane missing"]),
+      ],
+      nextAction:
+        "补 module_learning_pipeline_plan/review、fresh adjacent application、per-receipt eval/training 和 keep/downrank/discard。",
+    },
+    {
+      id: "l5_runtime_battery",
+      order: 3,
+      title: "L5 回归和运行时依赖漂移门禁",
+      ownerLane: "l5_regression_battery",
+      status: params.l5 ? blueprintStatusFromLane(l5Lane) : "not_run",
+      evidence: l5Lane?.evidence ?? ["--l5 not supplied"],
+      nextAction:
+        "需要大考时跑 lcx-agent-exam --l5；doctrine consistency 负责捕捉 L5 skill 脚本 PATH/pnpm 漂移。",
+    },
+    {
+      id: "commercial_answer_audit",
+      order: 4,
+      title: "商用回答流水线和有限拷打",
+      ownerLane: "commercial_answer_audit_pipeline",
+      status: blueprintStatusFromLane(answerLane),
+      evidence: answerLane?.evidence ?? ["answer audit lane missing"],
+      nextAction:
+        "保持模型答案是候选、Qwen 是 challenger、本地审计有限轮次，最终采纳可见回复或返回失败理由。",
+    },
+    {
+      id: "live_observability_summary",
+      order: 5,
+      title: "live 可观测摘要和 Lark 验收入口",
+      ownerLane: "lark_feishu_visible_loop",
+      status: params.live ? blueprintStatusFromLane(larkLane) : "needs_live",
+      evidence: larkLane?.evidence ?? ["lark lane missing"],
+      nextAction:
+        "live 验收必须落到 lark-loop-diagnose、channel probe、feishu-reply-flow 和真实用户可见回复。",
+    },
+    {
+      id: "product_control_room",
+      order: 6,
+      title: "产品化 control room 与入口收敛",
+      ownerLane: "product_control_room",
+      status: blueprintStatusFromLane(controlRoomLane),
+      evidence: controlRoomLane?.evidence ?? ["control room lane missing"],
+      nextAction:
+        "保留必要多入口，但任何新增入口都要有 single factual owner 和 flow-graph consolidated entrypoint family。",
+    },
+  ] satisfies CommercialBlueprintItem[];
+}
+
 export function buildAgentExamReport(params: {
   checkedAt?: string;
   live: boolean;
@@ -646,6 +905,7 @@ export function buildAgentExamReport(params: {
   trainingPlan: CommandResult;
   promotionAudit: CommandResult;
   moduleLearningReview: CommandResult;
+  learningSedimentationAudit?: CommandResult;
   cognitiveIntegritySources?: CognitiveIntegritySources;
   larkDiagnose?: CommandResult;
   channelProbe?: CommandResult;
@@ -656,9 +916,12 @@ export function buildAgentExamReport(params: {
     buildTrainingLane(params.trainingPlan),
     buildPromotionLane(params.promotionAudit),
     buildModuleLearningLane(params.moduleLearningReview),
+    buildLearningSedimentationInventoryLane(params.learningSedimentationAudit),
     buildThinkingHierarchyLane(params.cognitiveIntegritySources),
     buildWorkStatusBoundaryLane(params.cognitiveIntegritySources),
     buildMemorySedimentationLane(params.cognitiveIntegritySources),
+    buildAnswerAuditPipelineLane(params.cognitiveIntegritySources),
+    buildControlRoomProductLane(params.cognitiveIntegritySources),
     buildAutomationLane(params.trainingPlan, params.doctor),
     buildLarkLane(params.larkDiagnose, params.live),
     buildLiveBoundaryLane(params.live, params.channelProbe),
@@ -672,6 +935,11 @@ export function buildAgentExamReport(params: {
     lanes.find((lane) => lane.status === "fail")?.lane ??
     lanes.find((lane) => lane.status === "warn")?.lane ??
     "none";
+  const commercialBlueprint = buildCommercialBlueprint({
+    lanes,
+    live: params.live,
+    l5: params.l5,
+  });
   return {
     ok: fail === 0,
     boundary: params.live ? "dev_exam_with_live_probe" : "dev_exam_only",
@@ -682,11 +950,15 @@ export function buildAgentExamReport(params: {
     trainingStarted: false,
     heavyEvalStarted: false,
     lanes,
+    commercialBlueprint,
     commands: {
       doctor: params.doctor,
       trainingPlan: params.trainingPlan,
       promotionAudit: params.promotionAudit,
       moduleLearningReview: params.moduleLearningReview,
+      ...(params.learningSedimentationAudit
+        ? { learningSedimentationAudit: params.learningSedimentationAudit }
+        : {}),
       ...(params.larkDiagnose ? { larkDiagnose: params.larkDiagnose } : {}),
       ...(params.channelProbe ? { channelProbe: params.channelProbe } : {}),
       ...(params.l5Battery ? { l5Battery: params.l5Battery } : {}),
@@ -807,6 +1079,8 @@ async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySource
     moduleLearningReviewTool,
     larkSurfaces,
     localBrainRunbook,
+    answerAuditSurfaces,
+    controlRoomSurfaces,
   ] = await Promise.all([
     read("AGENTS.md"),
     read("scripts/dev/local-brain-distill-eval.ts"),
@@ -815,6 +1089,18 @@ async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySource
     read("src/agents/tools/module-learning-pipeline-review-tool.ts"),
     read("extensions/feishu/src/surfaces.ts"),
     read("ops/local-brain/README.md"),
+    Promise.all([
+      read("extensions/feishu/src/lark-language-handoff-receipts.ts"),
+      read("extensions/feishu/src/lark-context-packet.ts"),
+      read("extensions/feishu/src/reply-flow-audit.ts"),
+      read("src/auto-reply/reply/feishu-reply-flow-evidence.ts"),
+    ]).then((parts) => parts.join("\n")),
+    Promise.all([
+      read("AGENTS.md"),
+      read("README.md"),
+      read("src/commands/capabilities.ts"),
+      read("ops/local-brain/README.md"),
+    ]).then((parts) => parts.join("\n")),
   ]);
   return {
     doctrine,
@@ -824,50 +1110,65 @@ async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySource
     moduleLearningReviewTool,
     larkSurfaces,
     localBrainRunbook,
+    answerAuditSurfaces,
+    controlRoomSurfaces,
   };
 }
 
 export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
-  const [doctor, trainingPlan, promotionAudit, moduleLearningReview, cognitiveIntegritySources] =
-    await Promise.all([
-      runCommand({
-        name: "lcx-system-doctor",
-        command: process.execPath,
-        args: ["--import", "tsx", "scripts/dev/lcx-system-doctor.ts", "--json"],
-        parseJson: true,
-        timeoutMs: options.timeoutMs,
-      }),
-      runCommand({
-        name: "local-brain-training-plan",
-        command: process.execPath,
-        args: ["--import", "tsx", "scripts/dev/local-brain-training-plan.ts", "--json"],
-        parseJson: true,
-        timeoutMs: options.timeoutMs,
-      }),
-      runCommand({
-        name: "local-brain-promotion-audit",
-        command: process.execPath,
-        args: ["--import", "tsx", "scripts/dev/local-brain-promotion-audit.ts", "--json"],
-        parseJson: true,
-        timeoutMs: options.timeoutMs,
-      }),
-      runCommand({
-        name: "module-learning-pipeline-review",
-        command: process.execPath,
-        args: [
-          "--import",
-          "tsx",
-          "scripts/dev/module-learning-pipeline-review.ts",
-          "--workspace",
-          DEFAULT_WORKSPACE_DIR,
-          "--no-write",
-          "--json",
-        ],
-        parseJson: true,
-        timeoutMs: options.timeoutMs,
-      }),
-      readCognitiveIntegritySources(),
-    ]);
+  const [
+    doctor,
+    trainingPlan,
+    promotionAudit,
+    moduleLearningReview,
+    learningSedimentationAudit,
+    cognitiveIntegritySources,
+  ] = await Promise.all([
+    runCommand({
+      name: "lcx-system-doctor",
+      command: process.execPath,
+      args: ["--import", "tsx", "scripts/dev/lcx-system-doctor.ts", "--json"],
+      parseJson: true,
+      timeoutMs: options.timeoutMs,
+    }),
+    runCommand({
+      name: "local-brain-training-plan",
+      command: process.execPath,
+      args: ["--import", "tsx", "scripts/dev/local-brain-training-plan.ts", "--json"],
+      parseJson: true,
+      timeoutMs: options.timeoutMs,
+    }),
+    runCommand({
+      name: "local-brain-promotion-audit",
+      command: process.execPath,
+      args: ["--import", "tsx", "scripts/dev/local-brain-promotion-audit.ts", "--json"],
+      parseJson: true,
+      timeoutMs: options.timeoutMs,
+    }),
+    runCommand({
+      name: "module-learning-pipeline-review",
+      command: process.execPath,
+      args: [
+        "--import",
+        "tsx",
+        "scripts/dev/module-learning-pipeline-review.ts",
+        "--workspace",
+        DEFAULT_WORKSPACE_DIR,
+        "--no-write",
+        "--json",
+      ],
+      parseJson: true,
+      timeoutMs: options.timeoutMs,
+    }),
+    runCommand({
+      name: "lcx-learning-sedimentation-audit",
+      command: process.execPath,
+      args: ["--import", "tsx", "scripts/dev/lcx-learning-sedimentation-audit.ts", "--json"],
+      parseJson: true,
+      timeoutMs: options.timeoutMs,
+    }),
+    readCognitiveIntegritySources(),
+  ]);
 
   const [larkDiagnose, channelProbe] = options.live
     ? await Promise.all([
@@ -905,6 +1206,7 @@ export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
     trainingPlan,
     promotionAudit,
     moduleLearningReview,
+    learningSedimentationAudit,
     cognitiveIntegritySources,
     larkDiagnose,
     channelProbe,
@@ -925,6 +1227,12 @@ function renderText(report: ExamReport): string {
     lines.push(`  evidence: ${lane.evidence.join(" | ")}`);
     lines.push(`  issue: ${lane.issue}`);
     lines.push(`  next: ${lane.nextAction}`);
+  }
+  lines.push("", "commercial blueprint:");
+  for (const item of report.commercialBlueprint) {
+    lines.push(`${item.order}. ${item.status.toUpperCase()} ${item.id} owner=${item.ownerLane}`);
+    lines.push(`  evidence: ${item.evidence.join(" | ")}`);
+    lines.push(`  next: ${item.nextAction}`);
   }
   return `${lines.join("\n")}\n`;
 }

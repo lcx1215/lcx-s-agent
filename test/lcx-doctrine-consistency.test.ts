@@ -26,7 +26,9 @@ describe("LCX doctrine consistency doctor", () => {
     await fs.mkdir(path.join(skillsRoot, "l5-regression-batterer", "scripts"), {
       recursive: true,
     });
-    await fs.mkdir(path.join(skillsRoot, "l4-regression-batterer"), { recursive: true });
+    await fs.mkdir(path.join(skillsRoot, "l4-regression-batterer", "scripts"), {
+      recursive: true,
+    });
     await fs.writeFile(
       path.join(skillsRoot, "lcx-baseline-hardening", "SKILL.md"),
       [
@@ -50,11 +52,23 @@ describe("LCX doctrine consistency doctor", () => {
     );
     await fs.writeFile(
       path.join(skillsRoot, "l5-regression-batterer", "scripts", "l5-regression-batterer.sh"),
-      "#!/usr/bin/env bash\nexit 0\n",
+      [
+        "#!/usr/bin/env bash",
+        'exec "$LCX_CODEX_SKILLS_ROOT/l4-regression-batterer/scripts/l4-regression-batterer.sh" "$@"',
+      ].join("\n"),
     );
     await fs.writeFile(
       path.join(skillsRoot, "l4-regression-batterer", "SKILL.md"),
       ["# Legacy Alias", "legacy compatibility alias.", "Prefer the L5 skill."].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(skillsRoot, "l4-regression-batterer", "scripts", "l4-regression-batterer.sh"),
+      [
+        "#!/usr/bin/env bash",
+        'PINNED_NODE_BIN="/Users/liuchengxu/.local/node-runtime/node-v22.14.0-darwin-arm64/bin"',
+        'export PATH="$PINNED_NODE_BIN:$PATH"',
+        "pnpm --version",
+      ].join("\n"),
     );
 
     const { stdout } = await execFileAsync(
@@ -75,6 +89,9 @@ describe("LCX doctrine consistency doctor", () => {
     expect(payload.summary.failed).toBe(0);
     expect(payload.summary.total).toBeGreaterThanOrEqual(10);
     expect(payload.checks.find((check) => check.id === "l5_skill_primary")?.ok).toBe(true);
+    expect(payload.checks.find((check) => check.id === "l5_skill_runtime_path_pinned")?.ok).toBe(
+      true,
+    );
     expect(
       payload.checks.find((check) => check.id === "abstraction_transfer_five_part_contract")?.ok,
     ).toBe(true);

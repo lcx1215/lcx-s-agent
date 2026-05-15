@@ -27,7 +27,11 @@ const cognitiveSources = {
   larkSurfaces:
     "dev-fixed means local implementation or tests only; live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started, running, completed, blocked, or unproven",
   localBrainRunbook:
-    "live-visible-fixed; fresh real Lark inbound plus visible reply; Do not call local training or synthetic replay `live-visible-fixed`; A stored source, summary, or dataset row is not enough; stored_only; application_ready; eval_absorbed; Do not claim Qwen model-internal learning without retained artifacts and eval evidence",
+    "live-visible-fixed; fresh real Lark inbound plus visible reply; Do not call local training or synthetic replay `live-visible-fixed`; A stored source, summary, or dataset row is not enough; stored_only; application_ready; eval_absorbed; Do not claim Qwen model-internal learning without retained artifacts and eval evidence; bounded feedback; answer audit; model answer is candidate; Qwen is challenger; terminal decision; Commercial-grade convergence does not mean deleting useful entrypoints; Converge duplicated authority instead; single factual owner",
+  answerAuditSurfaces:
+    "buildLarkAnswerAuditPolicy model_candidate_not_final_authority challenger_only_not_final_authority answer_audit terminalDecision",
+  controlRoomSurfaces:
+    "one main control room control_room_main_lane specialist detail only on demand",
 };
 
 describe("lcx-agent-exam", () => {
@@ -121,6 +125,20 @@ describe("lcx-agent-exam", () => {
     );
     expect(report.lanes.find((lane) => lane.lane === "memory_sedimentation_integrity")).toEqual(
       expect.objectContaining({ status: "pass" }),
+    );
+    expect(report.lanes.find((lane) => lane.lane === "commercial_answer_audit_pipeline")).toEqual(
+      expect.objectContaining({ status: "pass" }),
+    );
+    expect(report.lanes.find((lane) => lane.lane === "product_control_room")).toEqual(
+      expect.objectContaining({ status: "pass" }),
+    );
+    expect(report.commercialBlueprint).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "live_closure", status: "needs_live" }),
+        expect.objectContaining({ id: "module_learning_absorption", status: "needs_receipts" }),
+        expect.objectContaining({ id: "commercial_answer_audit", status: "ready" }),
+        expect.objectContaining({ id: "product_control_room", status: "ready" }),
+      ]),
     );
   });
 
