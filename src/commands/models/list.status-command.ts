@@ -625,7 +625,7 @@ export async function modelsStatusCommand(
 
   if (probeSummary) {
     runtime.log("");
-    runtime.log(colorize(rich, theme.heading, "Auth probes"));
+    runtime.log(colorize(rich, theme.heading, "Auth probes (raw provider preferred)"));
     if (probeSummary.results.length === 0) {
       runtime.log(colorize(rich, theme.muted, "- none"));
     } else {
@@ -652,12 +652,16 @@ export async function modelsStatusCommand(
       const rows = sorted.map((result) => {
         const status = colorize(rich, statusColor(result.status), result.status);
         const latency = formatProbeLatency(result.latencyMs);
+        const timeoutSuffix =
+          result.requestedTimeoutMs !== undefined
+            ? ` · timeout ${formatProbeLatency(result.requestedTimeoutMs)}`
+            : "";
         const modelLabel = result.model ?? `${result.provider}/-`;
         const modeLabel = result.mode ? ` ${colorize(rich, theme.muted, `(${result.mode})`)}` : "";
         const profile = `${colorize(rich, theme.accent, result.label)}${modeLabel}`;
         const detail = result.error?.trim();
         const detailLabel = detail ? `\n${colorize(rich, theme.muted, `↳ ${detail}`)}` : "";
-        const statusLabel = `${status}${colorize(rich, theme.muted, ` · ${latency}`)}${detailLabel}`;
+        const statusLabel = `${status}${colorize(rich, theme.muted, ` · ${latency}${timeoutSuffix}`)}${detailLabel}`;
         return {
           Model: colorize(rich, theme.heading, modelLabel),
           Profile: profile,

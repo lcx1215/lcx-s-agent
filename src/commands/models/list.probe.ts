@@ -1,7 +1,6 @@
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { resolveOpenClawAgentDir } from "../../agents/agent-paths.js";
-import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import {
   type AuthProfileCredential,
   type AuthProfileEligibilityReasonCode,
@@ -11,27 +10,25 @@ import {
   resolveAuthProfileEligibility,
   resolveAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
-import { describeFailoverError } from "../../agents/failover-error.js";
-import { getCustomProviderApiKey, resolveEnvApiKey } from "../../agents/model-auth.js";
+import {
+  getCustomProviderApiKey,
+  resolveApiKeyForProvider,
+  resolveEnvApiKey,
+} from "../../agents/model-auth.js";
 import { loadModelCatalog } from "../../agents/model-catalog.js";
 import {
   findNormalizedProviderValue,
   normalizeProviderId,
   parseModelRef,
 } from "../../agents/model-selection.js";
-import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
-import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
+import { ensureOpenClawModelsJson } from "../../agents/models-config.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import {
-  resolveSessionTranscriptPath,
-  resolveSessionTranscriptsDirForAgent,
-} from "../../config/sessions/paths.js";
+import type { ModelApi, ModelProviderConfig } from "../../config/types.models.js";
 import { coerceSecretRef, normalizeSecretInputString } from "../../config/types.secrets.js";
 import { type SecretRefResolveCache, resolveSecretRefString } from "../../secrets/resolve.js";
+import { fetchWithTimeout } from "../../utils/fetch-timeout.js";
 import { redactSecrets } from "../status-all/format.js";
 import { DEFAULT_PROVIDER, formatMs } from "./shared.js";
-
-const PROBE_PROMPT = "Reply with OK. Do not use tools.";
 
 export type AuthProbeStatus =
   | "ok"
@@ -59,6 +56,11 @@ export type AuthProbeResult = {
   label: string;
   source: "profile" | "env" | "models.json";
   mode?: string;
+  probeKind?: "raw_provider";
+  timeoutScope?: "raw_http_request";
+  requestedTimeoutMs?: number;
+  timedOut?: boolean;
+  httpStatus?: number;
   status: AuthProbeStatus;
   reasonCode?: AuthProbeReasonCode;
   error?: string;
@@ -85,6 +87,8 @@ export type AuthProbeSummary = {
     timeoutMs: number;
     concurrency: number;
     maxTokens: number;
+    probeStrategy: "raw_provider_preferred";
+    timeoutScope: "per_target_total";
   };
   results: AuthProbeResult[];
 };
@@ -209,6 +213,205 @@ function resolveProbeSecretRef(profile: AuthProfileCredential, cfg: OpenClawConf
 function formatUnresolvedRefProbeError(refLabel: string): string {
   const legacyLine = "Auth profile credentials are missing or expired.";
   return `${legacyLine}\n↳ Auth reason [unresolved_ref]: could not resolve SecretRef "${refLabel}".`;
+}
+
+function mapHttpStatusToProbeStatus(status: number): AuthProbeStatus {
+  if (status === 401 || status === 403) {
+    return "auth";
+  }
+  if (status === 402) {
+    return "billing";
+  }
+  if (status === 408 || status === 504) {
+    return "timeout";
+  }
+  if (status === 429) {
+    return "rate_limit";
+  }
+  if (status >= 400 && status < 500) {
+    return "format";
+  }
+  return "unknown";
+}
+
+function isAbortLikeError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "AbortError" ||
+      err.name === "TimeoutError" ||
+      err.message.toLowerCase().includes("aborted"))
+  );
+}
+
+type RawProviderProbeConfig = {
+  api: Extract<ModelApi, "openai-completions" | "anthropic-messages">;
+  baseUrl: string;
+  authHeader?: boolean;
+  headers?: Record<string, string>;
+};
+
+async function loadProviderConfigs(params: {
+  cfg: OpenClawConfig;
+  agentDir: string;
+}): Promise<Record<string, ModelProviderConfig>> {
+  const merged: Record<string, ModelProviderConfig> = {
+    ...params.cfg.models?.providers,
+  };
+  try {
+    await ensureOpenClawModelsJson(params.cfg, params.agentDir);
+    const raw = await fs.readFile(path.join(params.agentDir, "models.json"), "utf8");
+    const parsed = JSON.parse(raw) as { providers?: Record<string, ModelProviderConfig> };
+    for (const [provider, config] of Object.entries(parsed.providers ?? {})) {
+      merged[provider] = config;
+    }
+  } catch {
+    // A missing generated models.json should not break auth-status output; it only
+    // disables the raw provider probe fallback for that target.
+  }
+  return merged;
+}
+
+async function resolveRawProviderProbeConfig(params: {
+  cfg: OpenClawConfig;
+  agentDir: string;
+  provider: string;
+  modelId: string;
+}): Promise<RawProviderProbeConfig | null> {
+  const providers = await loadProviderConfigs({ cfg: params.cfg, agentDir: params.agentDir });
+  const providerConfig =
+    findNormalizedProviderValue(providers, params.provider) ??
+    providers[normalizeProviderId(params.provider)] ??
+    providers[params.provider];
+  if (!providerConfig?.baseUrl) {
+    return null;
+  }
+  const modelConfig = providerConfig.models?.find((entry) => entry.id === params.modelId);
+  const api = modelConfig?.api ?? providerConfig.api;
+  if (api !== "openai-completions" && api !== "anthropic-messages") {
+    return null;
+  }
+  return {
+    api,
+    baseUrl: providerConfig.baseUrl,
+    authHeader: providerConfig.authHeader,
+    headers: {
+      ...providerConfig.headers,
+      ...modelConfig?.headers,
+    },
+  };
+}
+
+function appendEndpointPath(baseUrl: string, endpointPath: "chat/completions" | "messages") {
+  return new URL(endpointPath, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href;
+}
+
+function normalizeAnthropicMessagesBaseUrl(baseUrl: string) {
+  return /\/v1\/?$/iu.test(baseUrl.trim())
+    ? baseUrl.trim()
+    : baseUrl.trim().replace(/\/?$/u, "/v1");
+}
+
+async function runRawProviderProbe(params: {
+  cfg: OpenClawConfig;
+  agentDir: string;
+  target: AuthProbeTarget;
+  model: { provider: string; model: string };
+  timeoutMs: number;
+}): Promise<AuthProbeResult | null> {
+  const rawConfig = await resolveRawProviderProbeConfig({
+    cfg: params.cfg,
+    agentDir: params.agentDir,
+    provider: params.target.provider,
+    modelId: params.model.model,
+  });
+  if (!rawConfig) {
+    return null;
+  }
+
+  const start = Date.now();
+  const baseResult = {
+    provider: params.target.provider,
+    model: `${params.model.provider}/${params.model.model}`,
+    profileId: params.target.profileId,
+    label: params.target.label,
+    source: params.target.source,
+    mode: params.target.mode,
+    probeKind: "raw_provider" as const,
+    timeoutScope: "raw_http_request" as const,
+    requestedTimeoutMs: params.timeoutMs,
+  };
+
+  try {
+    const auth = await resolveApiKeyForProvider({
+      provider: params.target.provider,
+      cfg: params.cfg,
+      profileId: params.target.profileId,
+      agentDir: params.agentDir,
+    });
+    if (!auth.apiKey) {
+      return {
+        ...baseResult,
+        timedOut: false,
+        status: "auth",
+        error: "No API key available for raw provider probe.",
+        latencyMs: Date.now() - start,
+      };
+    }
+
+    const endpoint =
+      rawConfig.api === "anthropic-messages"
+        ? appendEndpointPath(normalizeAnthropicMessagesBaseUrl(rawConfig.baseUrl), "messages")
+        : appendEndpointPath(rawConfig.baseUrl, "chat/completions");
+    const authHeaders: Record<string, string> =
+      rawConfig.api === "anthropic-messages"
+        ? rawConfig.authHeader
+          ? { Authorization: `Bearer ${auth.apiKey}` }
+          : { "x-api-key": auth.apiKey, "anthropic-version": "2023-06-01" }
+        : { Authorization: `Bearer ${auth.apiKey}` };
+    const body =
+      rawConfig.api === "anthropic-messages"
+        ? {
+            model: params.model.model,
+            max_tokens: 1,
+            messages: [{ role: "user", content: "OK" }],
+            stream: false,
+          }
+        : {
+            model: params.model.model,
+            messages: [{ role: "user", content: "OK" }],
+            max_tokens: 1,
+            stream: false,
+          };
+    const response = await fetchWithTimeout(
+      endpoint,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+          ...rawConfig.headers,
+        },
+        body: JSON.stringify(body),
+      },
+      params.timeoutMs,
+    );
+    return {
+      ...baseResult,
+      timedOut: false,
+      status: response.ok ? "ok" : mapHttpStatusToProbeStatus(response.status),
+      httpStatus: response.status,
+      error: response.ok ? undefined : `Raw provider probe returned HTTP ${response.status}.`,
+      latencyMs: Date.now() - start,
+    };
+  } catch (err) {
+    return {
+      ...baseResult,
+      timedOut: isAbortLikeError(err),
+      status: isAbortLikeError(err) ? "timeout" : "unknown",
+      error: redactSecrets(err instanceof Error ? err.message : String(err)),
+      latencyMs: Date.now() - start,
+    };
+  }
 }
 
 async function maybeResolveUnresolvedRefIssue(params: {
@@ -407,17 +610,13 @@ export async function buildProbeTargets(params: {
   return { targets, results };
 }
 
-async function probeTarget(params: {
+export async function probeTarget(params: {
   cfg: OpenClawConfig;
-  agentId: string;
   agentDir: string;
-  workspaceDir: string;
-  sessionDir: string;
   target: AuthProbeTarget;
   timeoutMs: number;
-  maxTokens: number;
 }): Promise<AuthProbeResult> {
-  const { cfg, agentId, agentDir, workspaceDir, sessionDir, target, timeoutMs, maxTokens } = params;
+  const { cfg, agentDir, target, timeoutMs } = params;
   if (!target.model) {
     return {
       provider: target.provider,
@@ -431,57 +630,36 @@ async function probeTarget(params: {
       error: "No model available for probe",
     };
   }
-
-  const sessionId = `probe-${target.provider}-${crypto.randomUUID()}`;
-  const sessionFile = resolveSessionTranscriptPath(sessionId, agentId);
-  await fs.mkdir(sessionDir, { recursive: true });
+  const probeModel = target.model;
 
   const start = Date.now();
-  try {
-    await runEmbeddedPiAgent({
-      sessionId,
-      sessionFile,
-      agentId,
-      workspaceDir,
-      agentDir,
-      config: cfg,
-      prompt: PROBE_PROMPT,
-      provider: target.model.provider,
-      model: target.model.model,
-      authProfileId: target.profileId,
-      authProfileIdSource: target.profileId ? "user" : undefined,
-      timeoutMs,
-      runId: `probe-${crypto.randomUUID()}`,
-      lane: `auth-probe:${target.provider}:${target.profileId ?? target.source}`,
-      thinkLevel: "off",
-      reasoningLevel: "off",
-      verboseLevel: "off",
-      streamParams: { maxTokens },
-    });
-    return {
-      provider: target.provider,
-      model: `${target.model.provider}/${target.model.model}`,
-      profileId: target.profileId,
-      label: target.label,
-      source: target.source,
-      mode: target.mode,
-      status: "ok",
-      latencyMs: Date.now() - start,
-    };
-  } catch (err) {
-    const described = describeFailoverError(err);
-    return {
-      provider: target.provider,
-      model: `${target.model.provider}/${target.model.model}`,
-      profileId: target.profileId,
-      label: target.label,
-      source: target.source,
-      mode: target.mode,
-      status: mapFailoverReasonToProbeStatus(described.reason),
-      error: redactSecrets(described.message),
-      latencyMs: Date.now() - start,
-    };
+  const rawResult = await runRawProviderProbe({
+    cfg,
+    agentDir,
+    target,
+    model: probeModel,
+    timeoutMs,
+  });
+  if (rawResult) {
+    return rawResult;
   }
+
+  return {
+    provider: target.provider,
+    model: `${probeModel.provider}/${probeModel.model}`,
+    profileId: target.profileId,
+    label: target.label,
+    source: target.source,
+    mode: target.mode,
+    probeKind: "raw_provider",
+    timeoutScope: "raw_http_request",
+    requestedTimeoutMs: timeoutMs,
+    timedOut: false,
+    status: "unknown",
+    error:
+      "Raw provider probe is not available for this provider/api; embedded-agent probe is intentionally not used by models status.",
+    latencyMs: Date.now() - start,
+  };
 }
 
 async function runTargetsWithConcurrency(params: {
@@ -492,15 +670,10 @@ async function runTargetsWithConcurrency(params: {
   concurrency: number;
   onProgress?: (update: { completed: number; total: number; label?: string }) => void;
 }): Promise<AuthProbeResult[]> {
-  const { cfg, targets, timeoutMs, maxTokens, onProgress } = params;
+  const { cfg, targets, timeoutMs, onProgress } = params;
   const concurrency = Math.max(1, Math.min(targets.length || 1, params.concurrency));
 
-  const agentId = resolveDefaultAgentId(cfg);
   const agentDir = resolveOpenClawAgentDir();
-  const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId) ?? resolveDefaultAgentWorkspaceDir();
-  const sessionDir = resolveSessionTranscriptsDirForAgent(agentId);
-
-  await fs.mkdir(workspaceDir, { recursive: true });
 
   let completed = 0;
   const results: Array<AuthProbeResult | undefined> = Array.from({ length: targets.length });
@@ -521,13 +694,9 @@ async function runTargetsWithConcurrency(params: {
       });
       const result = await probeTarget({
         cfg,
-        agentId,
         agentDir,
-        workspaceDir,
-        sessionDir,
         target,
         timeoutMs,
-        maxTokens,
       });
       results[index] = result;
       completed += 1;
@@ -576,7 +745,11 @@ export async function runAuthProbes(params: {
     finishedAt,
     durationMs: finishedAt - startedAt,
     totalTargets,
-    options: params.options,
+    options: {
+      ...params.options,
+      probeStrategy: "raw_provider_preferred",
+      timeoutScope: "per_target_total",
+    },
     results: [...plan.results, ...results],
   };
 }
@@ -614,5 +787,5 @@ export function describeProbeSummary(summary: AuthProbeSummary): string {
   if (summary.totalTargets === 0) {
     return "No probe targets.";
   }
-  return `Probed ${summary.totalTargets} target${summary.totalTargets === 1 ? "" : "s"} in ${formatMs(summary.durationMs)}`;
+  return `Probed ${summary.totalTargets} auth target${summary.totalTargets === 1 ? "" : "s"} in ${formatMs(summary.durationMs)} (raw provider preferred)`;
 }
