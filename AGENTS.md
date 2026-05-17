@@ -183,6 +183,12 @@ shortcuts.
   `node --import tsx scripts/dev/lcx-flow-graph.ts --json`.
 - Every supported waterflow must name its start node, terminal node, required
   modules, required filters, receipts, and any bounded feedback edges.
+- The flow graph is also the fast diagnostic index for system problems. For
+  every supported waterflow it must expose the scenario family, what it detects,
+  one owner entrypoint, one fast check command, required filters, evidence
+  receipts, failure signals, and the `dev_flow_graph_only` boundary. This keeps
+  "waterflow" usable as an operator triage surface instead of only a static
+  architecture map.
 - Waterflow coverage must keep expanding toward real task families instead of
   only the first six obvious paths. Current core families include visible
   finance research, module learning, training feedback, dev/live proof,

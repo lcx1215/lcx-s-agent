@@ -63,6 +63,12 @@ it becomes a visible bug: dev proof must not jump to live-user-seen, stored
 source must not jump to learned capability, hardened eval must not skip
 promotion gate, and training/eval loops must not recirculate without overlap
 guards or timeout/error receipts. Its proof surface is `flow_graph_exam`.
+It also emits `diagnosticIndex`. Treat that as the fast operator triage table:
+scenario family, detected failure class, owner entrypoint, fast check command,
+required filters, evidence receipts, failure signals, and the
+`dev_flow_graph_only` boundary. If a future window sees a workflow symptom, it
+should use this index to find the owner path first instead of creating another
+parallel doctor.
 It should not stay at only six obvious waterflows. The current minimum is 14
 core waterflows, including Lark visible language, provider council evidence,
 memory correction/downrank, same-philosophy engineering consolidation, external
@@ -816,6 +822,25 @@ promotionReady=true
 
 If a complex eval is added, add or reuse a simple prerequisite. The simple case
 must pass before the complex case can support promotion.
+
+The contract-only eval registry currently targets 200 cases. The expansion is
+kept as generated high-signal variants in `local-brain-distill-eval.ts`, grouped
+by realistic Lark short asks, core finance research loops, module learning,
+alternative sources, local memory activation, abstraction transfer, and
+adversarial boundaries. Do not hand-write a parallel eval registry for the same
+families; extend the existing registry, keep prerequisite coverage, and prove it
+with:
+
+```bash
+node --import tsx scripts/dev/local-brain-distill-eval.ts \
+  --contract-only \
+  --summary-only \
+  --json
+```
+
+`200/200 promotionReady=true` under `--contract-only` means the dev routing and
+output contract closed for those cases. It is not live-user-seen proof and not
+model-weight absorption proof.
 
 When a user provides one concrete example, treat it as a seed for a generic
 capability contract, not as the whole repair scope. The fix should cover the

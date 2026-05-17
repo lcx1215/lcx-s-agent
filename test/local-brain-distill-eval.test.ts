@@ -184,7 +184,7 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary).toMatchObject({ passed: 12, total: 12, promotionReady: true });
     expect(payload.evalRegistry).toMatchObject({
       boundary: "dev_eval_registry_expansion_plan_only",
-      currentCaseCount: 82,
+      currentCaseCount: 200,
       promotionTargetCaseCount: 200,
     });
     expect(payload.evalRegistry.suites).toEqual(
@@ -196,6 +196,7 @@ describe("local-brain-distill-eval", () => {
         }),
         expect.objectContaining({
           id: "lark_short_intake",
+          currentCaseCount: expect.any(Number),
           targetCaseCount: 30,
         }),
       ]),

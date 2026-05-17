@@ -168,6 +168,18 @@ type SharedEntrypointOwner = {
   reason: string;
 };
 
+type FlowDiagnosticIndexEntry = {
+  scenarioId: string;
+  family: string;
+  detects: string;
+  ownerEntrypoint: string;
+  fastCheck: string;
+  requiredFilters: FlowFilterId[];
+  evidenceReceipts: string[];
+  failureSignals: string[];
+  boundary: "dev_flow_graph_only";
+};
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 
@@ -1167,6 +1179,51 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
   },
 ];
 
+const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
+  lark_finance_research_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
+  module_learning_internalization_waterflow: "scripts/dev/module-learning-pipeline-review.ts",
+  training_failure_feedback_waterflow: "scripts/dev/local-brain-training-plan.ts",
+  dev_to_live_lark_waterflow: "scripts/dev/lcx-promote-live.ts",
+  compressed_context_recovery_waterflow: "scripts/dev/lcx-context-recovery-exam.ts",
+  local_automation_digest_waterflow: "/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh",
+  lark_visible_language_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
+  provider_council_evidence_waterflow: "extensions/feishu/src/learning-council.ts",
+  memory_correction_downrank_waterflow: "scripts/dev/lcx-system-memory-sedimentation-gate.ts",
+  finance_data_gateway_waterflow: "src/agents/finance-data-gateway.ts",
+  senior_trader_failure_focus_waterflow: "scripts/dev/local-brain-distill-eval.ts",
+  similar_engineering_consolidation_waterflow: "scripts/dev/lcx-change-impact-plan.ts",
+  external_agent_skill_distillation_waterflow: "extensions/feishu/src/learning-council.ts",
+  automation_repair_lock_waterflow: "scripts/dev/lcx-automation-repair-lock.ts",
+};
+
+const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
+  lark_finance_research_waterflow: "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
+  module_learning_internalization_waterflow:
+    "node --import tsx scripts/dev/module-learning-pipeline-review.ts --json",
+  training_failure_feedback_waterflow:
+    "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+  dev_to_live_lark_waterflow: "node --import tsx scripts/dev/lcx-promote-live.ts --status --json",
+  compressed_context_recovery_waterflow:
+    "node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json",
+  local_automation_digest_waterflow:
+    "test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json",
+  lark_visible_language_waterflow:
+    "node --import tsx src/commands/capabilities/lark-loop-diagnose.ts --json",
+  provider_council_evidence_waterflow: "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
+  memory_correction_downrank_waterflow:
+    "node --import tsx scripts/dev/lcx-system-memory-sedimentation-gate.ts --json",
+  finance_data_gateway_waterflow:
+    "node --import tsx scripts/dev/finance-data-gateway-smoke.ts --json",
+  senior_trader_failure_focus_waterflow:
+    "node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only --case-id senior_trader_failure_focus_promotion_chain --summary-only --json",
+  similar_engineering_consolidation_waterflow:
+    "node --import tsx scripts/dev/lcx-change-impact-plan.ts --json",
+  external_agent_skill_distillation_waterflow:
+    "node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only --case-id agent_skill_distillation_safety --summary-only --json",
+  automation_repair_lock_waterflow:
+    "node --import tsx scripts/dev/lcx-automation-repair-lock.ts --mode status --json",
+};
+
 const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
   head: ["AGENTS.md", "README.md", "ops/local-brain/README.md", "src/agents/system-prompt.ts"],
   workflow: [
@@ -1457,6 +1514,27 @@ function receiptCheck(): FlowCheck {
   };
 }
 
+function buildFlowDiagnosticIndex(): FlowDiagnosticIndexEntry[] {
+  return FLOW_SCENARIOS.map((scenario) => ({
+    scenarioId: scenario.id,
+    family: scenario.family,
+    detects: scenario.objective,
+    ownerEntrypoint:
+      FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID[scenario.id] ?? "scripts/dev/lcx-flow-graph.ts",
+    fastCheck:
+      FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID[scenario.id] ??
+      "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
+    requiredFilters: scenario.requiredFilters,
+    evidenceReceipts: scenario.receipts,
+    failureSignals: [
+      ...scenario.requiredFilters.map((filter) => `missing_or_skipped_filter:${filter}`),
+      ...scenario.receipts.map((receipt) => `missing_or_stale_receipt:${receipt}`),
+      (scenario.feedbackEdges?.length ?? 0) > 0 ? "unbounded_or_unreviewed_feedback" : "",
+    ].filter(Boolean),
+    boundary: "dev_flow_graph_only",
+  }));
+}
+
 function consolidationClusterCheck(surfaceTexts: Record<SurfaceGroup, string>): FlowCheck {
   const scenarioIds = new Set(FLOW_SCENARIOS.map((scenario) => scenario.id));
   const nodeIds = new Set(NODE_IDS);
@@ -1629,6 +1707,7 @@ async function main() {
       consolidationClusters: CONSOLIDATION_CLUSTERS.length,
       consolidatedEntrypointFamilies: CONSOLIDATED_ENTRYPOINT_FAMILIES.length,
       sharedEntrypointOwnerRules: SHARED_ENTRYPOINT_OWNERS.length,
+      diagnosticEntries: FLOW_SCENARIOS.length,
     },
     checks,
     scenarios: FLOW_SCENARIOS.map((scenario) => ({
@@ -1642,6 +1721,7 @@ async function main() {
       feedbackEdgeCount: scenario.feedbackEdges?.length ?? 0,
       receipts: scenario.receipts,
     })),
+    diagnosticIndex: buildFlowDiagnosticIndex(),
     consolidationClusters: CONSOLIDATION_CLUSTERS,
     consolidatedEntrypointFamilies: CONSOLIDATED_ENTRYPOINT_FAMILIES,
     sharedEntrypointOwnerRules: SHARED_ENTRYPOINT_OWNERS,

@@ -43,6 +43,7 @@ describe("LCX flow graph exam", () => {
         consolidationClusters: number;
         consolidatedEntrypointFamilies: number;
         sharedEntrypointOwnerRules: number;
+        diagnosticEntries: number;
       };
       checks: Array<{
         id: string;
@@ -74,6 +75,15 @@ describe("LCX flow graph exam", () => {
         familyIds: string[];
         reason: string;
       }>;
+      diagnosticIndex: Array<{
+        scenarioId: string;
+        family: string;
+        ownerEntrypoint: string;
+        fastCheck: string;
+        evidenceReceipts: string[];
+        failureSignals: string[];
+        boundary: string;
+      }>;
       liveTouched: boolean;
       providerConfigTouched: boolean;
       protectedMemoryTouched: boolean;
@@ -96,6 +106,7 @@ describe("LCX flow graph exam", () => {
     expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(6);
     expect(payload.summary.consolidatedEntrypointFamilies).toBeGreaterThanOrEqual(8);
     expect(payload.summary.sharedEntrypointOwnerRules).toBeGreaterThanOrEqual(2);
+    expect(payload.summary.diagnosticEntries).toBe(payload.summary.scenarios);
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "flow_graph_integrity", ok: true }),
@@ -304,6 +315,29 @@ describe("LCX flow graph exam", () => {
           familyIds: expect.arrayContaining([
             "dev_live_evidence_entrypoints",
             "lark_visible_reply_audit_entrypoints",
+          ]),
+        }),
+      ]),
+    );
+    expect(payload.diagnosticIndex).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scenarioId: "module_learning_internalization_waterflow",
+          ownerEntrypoint: "scripts/dev/module-learning-pipeline-review.ts",
+          fastCheck: "node --import tsx scripts/dev/module-learning-pipeline-review.ts --json",
+          evidenceReceipts: expect.arrayContaining(["module_learning_pipeline_review"]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:retrieval_apply_eval_review_required",
+          ]),
+          boundary: "dev_flow_graph_only",
+        }),
+        expect.objectContaining({
+          scenarioId: "training_failure_feedback_waterflow",
+          ownerEntrypoint: "scripts/dev/local-brain-training-plan.ts",
+          fastCheck: "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:training_overlap_guard",
+            "unbounded_or_unreviewed_feedback",
           ]),
         }),
       ]),
