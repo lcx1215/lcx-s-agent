@@ -81,6 +81,7 @@ const DEFAULT_GUARD_LOG = path.join(
   "minimax-brain-training-guard-medium.jsonl",
 );
 const LOCAL_BRAIN_EVAL_MAX_TOKENS = "700";
+const LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS = "320";
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT = 5;
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET = 1_600;
 const LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET = 360;
@@ -105,6 +106,14 @@ function rawOutputFromError(error: unknown): string | undefined {
   return error instanceof LocalBrainGenerateError && error.rawOutput.trim().length > 0
     ? error.rawOutput
     : undefined;
+}
+
+function isEmptyTimeoutGenerateError(error: unknown): error is LocalBrainGenerateError {
+  return (
+    error instanceof LocalBrainGenerateError &&
+    error.message.includes("timed out after") &&
+    error.rawOutput.trim().length === 0
+  );
 }
 
 function terminateActiveGenerateChild(): void {
@@ -2741,7 +2750,44 @@ function buildPrompt(evalCase: EvalCase): string {
   ].join("\n");
 }
 
-function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
+function buildTimeoutRetryPrompt(evalCase: EvalCase): string {
+  const promptModuleIds = normalizeLocalBrainModuleList([
+    ...evalCase.requiredModules,
+    ...CORE_PROMPT_MODULES,
+  ]);
+  const requiredMissingData = evalCase.requiredMissingData ?? [];
+  const requiredRiskBoundaries = evalCase.requiredRiskBoundaries ?? [];
+  return [
+    "You are the LCX Agent local auxiliary thought-flow model.",
+    "Timeout retry compact mode: output one single-line JSON object only.",
+    "/no_think",
+    "No prose, no markdown, no <think>, no explanations, no nested objects.",
+    'Exact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    "Keep arrays short; use only compact snake_case ids.",
+    `Allowed module ids: ${promptModuleIds.join(", ")}.`,
+    requiredMissingData.length > 0
+      ? `Required missing_data ids: ${requiredMissingData.join(", ")}.`
+      : "Keep missing_data compact.",
+    requiredRiskBoundaries.length > 0
+      ? `Required risk_boundaries: research_only, ${requiredRiskBoundaries.join(", ")}.`
+      : "Required risk_boundaries: research_only.",
+    "For scenario probabilities with missing sample, weights, returns, or macro inputs, do not invent probabilities; route to data-gated research preflight.",
+    `user_or_task: ${evalCase.userAsk}`,
+    `source_summary: ${evalCase.sourceSummary}`,
+  ].join("\n");
+}
+
+function runGenerate(
+  options: CliOptions,
+  evalCase: EvalCase,
+  mode: "standard" | "timeout_retry" = "standard",
+): Promise<string> {
+  const prompt =
+    mode === "timeout_retry" ? buildTimeoutRetryPrompt(evalCase) : buildPrompt(evalCase);
+  const maxTokens =
+    mode === "timeout_retry"
+      ? LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS
+      : LOCAL_BRAIN_EVAL_MAX_TOKENS;
   return new Promise((resolve, reject) => {
     const args = [
       "-m",
@@ -2750,9 +2796,9 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
       "--model",
       options.model,
       "--prompt",
-      buildPrompt(evalCase),
+      prompt,
       "--max-tokens",
-      LOCAL_BRAIN_EVAL_MAX_TOKENS,
+      maxTokens,
       "--temp",
       "0",
       "--verbose",
@@ -2820,6 +2866,24 @@ function runGenerate(options: CliOptions, evalCase: EvalCase): Promise<string> {
       }
     });
   });
+}
+
+async function runGenerateWithTimeoutRetry(
+  options: CliOptions,
+  evalCase: EvalCase,
+): Promise<{ rawOutput: string; parseRecovered: boolean; parseError?: string }> {
+  try {
+    return { rawOutput: await runGenerate(options, evalCase), parseRecovered: false };
+  } catch (error) {
+    if (!options.hardened || !isEmptyTimeoutGenerateError(error)) {
+      throw error;
+    }
+    return {
+      rawOutput: await runGenerate(options, evalCase, "timeout_retry"),
+      parseRecovered: true,
+      parseError: `${error.name}: ${error.message}`,
+    };
+  }
 }
 
 function parseJsonFromOutput(raw: string): Record<string, unknown> {
@@ -3218,7 +3282,10 @@ for (const evalCase of evalCases) {
   }
   let rawOutput = "";
   try {
-    rawOutput = resolvedOptions.contractOnly ? "" : await runGenerate(resolvedOptions, evalCase);
+    const generateResult = resolvedOptions.contractOnly
+      ? { rawOutput: "", parseRecovered: false }
+      : await runGenerateWithTimeoutRetry(resolvedOptions, evalCase);
+    rawOutput = generateResult.rawOutput;
     const rawParsed = resolvedOptions.contractOnly ? {} : extractJson(rawOutput);
     const parsed = finalizeModuleFields(
       options.hardened
@@ -3233,6 +3300,8 @@ for (const evalCase of evalCases) {
       rawOutput,
       parsed,
       acceptance: evaluate(parsed, evalCase),
+      parseRecovered: generateResult.parseRecovered || undefined,
+      parseError: generateResult.parseError,
     });
     if (options.progress) {
       process.stderr.write(

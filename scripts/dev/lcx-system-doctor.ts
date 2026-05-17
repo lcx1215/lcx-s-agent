@@ -330,11 +330,14 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
   if (name === "local-brain-current-adapter") {
     return {
       ok: payload.ok,
+      owner: payload.owner,
+      planBoundary: payload.planBoundary,
       selectedAdapter: payload.selectedAdapter,
-      trainingSeedAdapter: payload.trainingSeedAdapter,
-      trainingSeed: payload.trainingSeed,
-      model: payload.model,
-      adapterPrefix: payload.adapterPrefix,
+      selectedCleanEval: payload.selectedCleanEval,
+      latestPassingEval: payload.latestPassingEval,
+      latestPromotedAdapter: payload.latestPromotedAdapter,
+      runtimeAdapterPolicy: payload.runtimeAdapterPolicy,
+      consolidationState: payload.consolidationState,
       selectionMode: payload.selectionMode,
       liveTouched: payload.liveTouched,
       providerConfigTouched: payload.providerConfigTouched,
@@ -559,6 +562,7 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
         latestStableEval: plan.latestStableEval,
         latestTrainingSeedEval: plan.latestTrainingSeedEval,
         latestCandidateEval: plan.latestCandidateEval,
+        qwenCapabilityConsolidation: plan.qwenCapabilityConsolidation,
         latestPromotionAt: plan.latestPromotionAt,
         latestPromotedAdapter: plan.latestPromotedAdapter,
         latestTeacher: plan.latestTeacher,
@@ -593,6 +597,52 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function localBrainCurrentAdapterFromTrainingPlan(trainingPlanCheck: CheckResult): CheckResult {
+  const startedAt = Date.now();
+  const qwenCapability =
+    trainingPlanCheck.summary.qwenCapabilityConsolidation &&
+    typeof trainingPlanCheck.summary.qwenCapabilityConsolidation === "object" &&
+    !Array.isArray(trainingPlanCheck.summary.qwenCapabilityConsolidation)
+      ? (trainingPlanCheck.summary.qwenCapabilityConsolidation as Record<string, unknown>)
+      : {};
+  const latestPassingEval =
+    trainingPlanCheck.summary.latestPassingEval &&
+    typeof trainingPlanCheck.summary.latestPassingEval === "object" &&
+    !Array.isArray(trainingPlanCheck.summary.latestPassingEval)
+      ? (trainingPlanCheck.summary.latestPassingEval as Record<string, unknown>)
+      : {};
+  const selectedAdapter =
+    typeof qwenCapability.selectedCleanAdapter === "string"
+      ? qwenCapability.selectedCleanAdapter
+      : typeof latestPassingEval.adapterPath === "string"
+        ? latestPassingEval.adapterPath
+        : typeof trainingPlanCheck.summary.latestPromotedAdapter === "string"
+          ? trainingPlanCheck.summary.latestPromotedAdapter
+          : undefined;
+  return {
+    name: "local-brain-current-adapter",
+    ok: trainingPlanCheck.ok && typeof selectedAdapter === "string",
+    durationMs: Date.now() - startedAt,
+    summary: {
+      owner: "local-brain-training-plan",
+      planBoundary: trainingPlanCheck.summary.planBoundary,
+      selectedAdapter,
+      selectedCleanEval: qwenCapability.selectedCleanEval,
+      runtimeAdapterPolicy: qwenCapability.runtimeAdapterPolicy,
+      consolidationState: qwenCapability.consolidationState,
+      latestPassingEval,
+      latestPromotedAdapter: trainingPlanCheck.summary.latestPromotedAdapter,
+      selectionMode: "training-plan-latest-passing",
+      liveTouched: false,
+      providerConfigTouched: false,
+    },
+    error:
+      trainingPlanCheck.ok && typeof selectedAdapter === "string"
+        ? undefined
+        : "local-brain-training-plan did not expose a selected clean adapter",
+  };
 }
 
 type CouncilRoleSummary = {
@@ -971,7 +1021,8 @@ checks.push(
     parseJson: true,
   }),
 );
-checks.push(await minimaxTrainingGuardStatusCheck());
+const trainingGuardCheck = await minimaxTrainingGuardStatusCheck();
+checks.push(trainingGuardCheck);
 checks.push(await modelCouncilProviderEvidenceCheck());
 checks.push(
   await runCommand({
@@ -1005,22 +1056,7 @@ checks.push(
     parseJson: true,
   }),
 );
-const currentAdapterCheck = await runCommand({
-  name: "local-brain-current-adapter",
-  command: process.execPath,
-  args: [
-    "--import",
-    "tsx",
-    "scripts/dev/minimax-brain-training-guard.ts",
-    "--resolve-current-adapter",
-    "--bootstrap-if-missing",
-    "--model",
-    "Qwen/Qwen3-0.6B",
-    "--log",
-    MINIMAX_GUARD_LOG,
-  ],
-  parseJson: true,
-});
+const currentAdapterCheck = localBrainCurrentAdapterFromTrainingPlan(trainingGuardCheck);
 checks.push(currentAdapterCheck);
 checks.push(
   options.brainPlan || options.deep

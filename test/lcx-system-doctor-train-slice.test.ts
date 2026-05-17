@@ -77,6 +77,10 @@ describe("LCX system doctor train slice observability", () => {
     );
 
     expect(doctorSource).toContain("buildLocalBrainTrainingPlan");
+    expect(doctorSource).toContain("localBrainCurrentAdapterFromTrainingPlan");
+    expect(doctorSource).toContain('selectionMode: "training-plan-latest-passing"');
+    expect(doctorSource).toContain("selectedCleanAdapter");
+    expect(doctorSource).not.toContain('"--resolve-current-adapter"');
     expect(doctorSource).not.toContain('command.includes("--resolve-current-adapter")');
     expect(trainingPlanSource).toContain('!line.includes("--resolve-current-adapter")');
   });

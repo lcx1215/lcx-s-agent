@@ -632,7 +632,7 @@ describe("local-brain-distill-eval", () => {
         "--case-id",
         "portfolio_mixed_q_t_nvda",
         "--timeout-ms",
-        "500",
+        "2500",
         "--json",
       ],
       {
@@ -669,7 +669,112 @@ describe("local-brain-distill-eval", () => {
     const targetCase = payload.cases.find((entry) => entry.id === "portfolio_mixed_q_t_nvda");
     expect(targetCase?.acceptance.ok).toBe(true);
     expect(targetCase?.parseRecovered).toBe(true);
-    expect(targetCase?.parseError).toContain("timed out after 500ms");
+    expect(targetCase?.parseError).toContain("timed out after 2500ms");
+  });
+
+  it("retries empty MLX timeouts with a compact prompt without allowing promotion", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-empty-timeout-"));
+    const fakePython = path.join(tempDir, "python");
+    const targetTimeoutPath = path.join(tempDir, "target-timeout.txt");
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        `const targetTimeoutPath = ${JSON.stringify(targetTimeoutPath)};`,
+        `const argLog = ${JSON.stringify(argLog)};`,
+        "fs.appendFileSync(argLog, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        "const promptIndex = process.argv.indexOf('--prompt');",
+        "const prompt = promptIndex >= 0 ? process.argv[promptIndex + 1] || '' : '';",
+        "const isTargetStandardPrompt = prompt.includes('我想给软着陆') && !prompt.includes('Timeout retry compact mode');",
+        "if (isTargetStandardPrompt && !fs.existsSync(targetTimeoutPath)) {",
+        "  fs.writeFileSync(targetTimeoutPath, '1');",
+        "  setInterval(() => {}, 1000);",
+        "}",
+        "else {",
+        "  console.log(JSON.stringify({",
+        "    task_family: 'scenario_probability_missing_inputs_research_preflight',",
+        "    primary_modules: ['macro_rates_inflation','credit_liquidity','etf_regime','company_fundamentals_value','quant_math','portfolio_risk_gates','finance_learning_memory','source_registry'],",
+        "    supporting_modules: ['causal_map','review_panel'],",
+        "    required_tools: [],",
+        "    missing_data: ['position_weights_and_return_series','portfolio_weights_and_risk_limits','current_rates_and_inflation_inputs'],",
+        "    risk_boundaries: ['research_only','no_model_math_guessing','no_trade_advice'],",
+        "    next_step: 'request_missing_inputs',",
+        "    rejected_context: ['old_lark_conversation_history']",
+        "  }));",
+        "}",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--no-adapter",
+        "--python",
+        fakePython,
+        "--hardened",
+        "--case-id",
+        "scenario_probability_no_model_math_guessing",
+        "--timeout-ms",
+        "2500",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: {
+        passed: number;
+        total: number;
+        promotionReady: boolean;
+        parseRecoveredCaseIds: string[];
+      };
+      cases: Array<{
+        id: string;
+        parseRecovered?: boolean;
+        parseError?: string;
+        acceptance: { ok: boolean };
+      }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary).toMatchObject({
+      passed: 4,
+      total: 4,
+      promotionReady: false,
+      parseRecoveredCaseIds: ["scenario_probability_no_model_math_guessing"],
+    });
+    const targetCase = payload.cases.find(
+      (entry) => entry.id === "scenario_probability_no_model_math_guessing",
+    );
+    expect(targetCase?.acceptance.ok).toBe(true);
+    expect(targetCase?.parseRecovered).toBe(true);
+    expect(targetCase?.parseError).toContain("timed out after 2500ms");
+
+    const records = readFileSync(argLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    expect(records.length).toBe(5);
+    const retryArgs = records.find((args) => {
+      const promptIndex = args.indexOf("--prompt");
+      return (args[promptIndex + 1] ?? "").includes("Timeout retry compact mode");
+    });
+    expect(retryArgs).toBeDefined();
+    const retryArgsValue = retryArgs ?? [];
+    const promptIndex = retryArgsValue.indexOf("--prompt");
+    const maxTokenIndex = retryArgsValue.indexOf("--max-tokens");
+    expect(retryArgsValue[promptIndex + 1]).toContain("Timeout retry compact mode");
+    expect(retryArgsValue[maxTokenIndex + 1]).toBe("320");
   });
 
   it("cleans up the active mlx child when the eval wrapper receives a termination signal", async () => {
