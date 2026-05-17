@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createModuleLearningPipelinePlanTool } from "../../src/agents/tools/module-learning-pipeline-plan-tool.ts";
+import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
 import { DEFAULT_GUARD_LOG_PATH, DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
 type CliOptions = {
@@ -455,6 +456,7 @@ async function writeAbsorbedPlanReceipts(params: {
     });
     const planResult = await planTool.execute(`module-learning-absorption-${index}`, {
       targetModule,
+      receiptDateKey: params.dateKey,
       sourceUrlOrPath: stringValue(row.sourceUrlOrPath),
       learningIntent: stringValue(row.learningIntent),
       actualReadingScope: stringValue(row.actualReadingScope),
@@ -487,6 +489,22 @@ async function writeAbsorbedPlanReceipts(params: {
     });
   }
   return written;
+}
+
+async function refreshReviewAfterWrite(params: {
+  workspaceDir: string;
+  dateKey: string;
+}): Promise<{ review: JsonRecord; reviewPath: string }> {
+  const reviewTool = createModuleLearningPipelineReviewTool({ workspaceDir: params.workspaceDir });
+  const reviewResult = await reviewTool.execute("module-learning-absorption-gate-refresh", {
+    dateKey: params.dateKey,
+    writeReview: true,
+  });
+  const review = reviewResult.details as JsonRecord;
+  return {
+    review,
+    reviewPath: stringValue(review.reviewPath) ?? path.join(REVIEW_DIR, `${params.dateKey}.json`),
+  };
 }
 
 function renderText(result: ReturnType<typeof buildGate>): string {
@@ -540,8 +558,27 @@ const writtenAbsorptionReceipts =
         absorptionDecision: options.absorptionDecision,
       })
     : [];
+const refreshedReview =
+  writtenAbsorptionReceipts.length > 0
+    ? await refreshReviewAfterWrite({
+        workspaceDir: options.workspaceDir,
+        dateKey,
+      })
+    : undefined;
+const refreshedGate =
+  refreshedReview && latestEval
+    ? buildGate({
+        dateKey,
+        review: refreshedReview.review,
+        reviewPath: refreshedReview.reviewPath,
+        latestEval,
+        evalEvidenceSource,
+      })
+    : undefined;
 const finalResult = {
-  ...result,
+  ...(refreshedGate ?? result),
+  preWriteGateDecision: writtenAbsorptionReceipts.length > 0 ? result.gateDecision : null,
+  postWriteReviewRefreshed: Boolean(refreshedGate),
   writeRequested: options.writeAbsorbedPlanReceipts,
   absorptionDecision: options.absorptionDecision,
   writtenAbsorptionReceipts,

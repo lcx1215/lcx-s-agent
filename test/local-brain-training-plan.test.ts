@@ -460,4 +460,71 @@ describe("local-brain-training-plan", () => {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
   });
+
+  it("surfaces finance apply receipts that still need module-learning bridge receipts", async () => {
+    const worktree = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-worktree-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-workspace-"));
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+    await writeJson(workspaceDir, "memory/finance-learning-retrieval-receipts/2026-05-12/r.json", {
+      boundary: "finance_learning_retrieval_receipt",
+      normalizedArticleArtifactPaths: ["memory/research-sources/source.md"],
+    });
+    await writeJson(
+      workspaceDir,
+      "memory/finance-learning-apply-usage-receipts/2026-05-12/a.json",
+      {
+        boundary: "finance_learning_capability_apply_usage_receipt",
+        ok: true,
+        queryText: "Research-only QQQ TLT NVDA portfolio risk decomposition.",
+        appliedCapabilities: [
+          {
+            capabilityName: "ETF risk sizing review workflow",
+            sourceArticlePath: "memory/research-sources/source.md",
+            matchedSignals: ["portfolio_risk_gates", "risk_gate_design"],
+            applicationBoundary: "research_only",
+            attachmentPoint: "research_capability:risk_gate_design",
+          },
+        ],
+      },
+    );
+
+    try {
+      const plan = await buildLocalBrainTrainingPlan({
+        guardLogPath,
+        quotaLogPath,
+        worktree,
+        workspaceDir,
+        json: true,
+        processCheck: false,
+      });
+
+      expect(plan.moduleLearningReview).toMatchObject({
+        counts: expect.objectContaining({
+          receiptFiles: 0,
+          weakModuleLearning: 0,
+        }),
+      });
+      expect(plan.learningSedimentationBridge).toMatchObject({
+        boundary: "dev_learning_sedimentation_bridge_only",
+        candidateCount: 1,
+        sourceApplyReceiptFiles: 1,
+        notPromoted: true,
+      });
+      expect(plan.decisions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "module_learning_bridge_candidates_pending",
+            lane: "module_learning",
+            action: "write_module_learning_plan_receipts_then_review_absorption_gate",
+          }),
+        ]),
+      );
+    } finally {
+      await fs.rm(worktree, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
 });

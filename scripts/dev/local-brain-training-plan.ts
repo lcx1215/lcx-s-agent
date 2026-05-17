@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createModuleLearningPipelineReviewTool } from "../../src/agents/tools/module-learning-pipeline-review-tool.ts";
+import { buildLearningSedimentationBridge } from "./lcx-learning-sedimentation-bridge.ts";
 import {
   DEFAULT_GUARD_LOG_PATH,
   DEFAULT_WORKSPACE_DIR,
@@ -101,6 +102,19 @@ type ModuleLearningReviewSnapshot = {
   weakModuleLearning?: unknown[];
   invalidReceipts?: unknown[];
   separationContract?: unknown;
+};
+
+type LearningSedimentationBridgeSnapshot = {
+  ok?: unknown;
+  boundary?: unknown;
+  candidateCount?: unknown;
+  sourceApplyReceiptFiles?: unknown;
+  candidates?: unknown[];
+  nextAction?: unknown;
+  notPromoted?: unknown;
+  liveTouched?: unknown;
+  providerConfigTouched?: unknown;
+  protectedMemoryTouched?: unknown;
 };
 
 type TrainingDecision = {
@@ -657,6 +671,7 @@ function buildDecisions(params: {
   latestTeacher?: TeacherSnapshot;
   latestQuotaStatus?: QuotaStatusSnapshot;
   moduleLearningReview?: ModuleLearningReviewSnapshot;
+  learningSedimentationBridge?: LearningSedimentationBridgeSnapshot;
   guardLogPath: string;
   worktree: string;
 }): TrainingDecision[] {
@@ -795,6 +810,22 @@ function buildDecisions(params: {
       nextCommand: boundaryViolations > 0 ? buildRepairLockCommand(params.worktree) : undefined,
     });
   }
+  const bridgeCandidateCount =
+    typeof params.learningSedimentationBridge?.candidateCount === "number"
+      ? params.learningSedimentationBridge.candidateCount
+      : 0;
+  const reviewReceiptFiles =
+    typeof moduleLearningCounts.receiptFiles === "number" ? moduleLearningCounts.receiptFiles : 0;
+  if (reviewReceiptFiles === 0 && bridgeCandidateCount > 0) {
+    decisions.push({
+      id: "module_learning_bridge_candidates_pending",
+      lane: "module_learning",
+      severity: "P2",
+      action: "write_module_learning_plan_receipts_then_review_absorption_gate",
+      reason: `${bridgeCandidateCount} finance-learning apply receipt candidate(s) can enter the module-learning review chain; review is currently empty for today.`,
+      codexRepairEligible: false,
+    });
+  }
 
   if (params.latestEval?.promotionReady && latestEvalIsAfterStart) {
     decisions.push({
@@ -808,6 +839,29 @@ function buildDecisions(params: {
   }
 
   return decisions;
+}
+
+async function learningSedimentationBridgeSnapshot(
+  workspaceDir: string,
+): Promise<LearningSedimentationBridgeSnapshot> {
+  const result = await buildLearningSedimentationBridge({
+    workspaceDir,
+    maxCandidates: 8,
+    writePlanReceipts: false,
+    json: true,
+  });
+  return {
+    ok: result.ok,
+    boundary: result.boundary,
+    candidateCount: result.candidateCount,
+    sourceApplyReceiptFiles: result.sourceApplyReceiptFiles,
+    candidates: result.candidates.slice(0, 5),
+    nextAction: result.nextAction,
+    notPromoted: result.notPromoted,
+    liveTouched: result.liveTouched,
+    providerConfigTouched: result.providerConfigTouched,
+    protectedMemoryTouched: result.protectedMemoryTouched,
+  };
 }
 
 async function moduleLearningReviewSnapshot(
@@ -878,6 +932,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
   const moduleLearningReview = await moduleLearningReviewSnapshot(workspaceDir);
+  const learningSedimentationBridge = await learningSedimentationBridgeSnapshot(workspaceDir);
   const decisions = buildDecisions({
     activeProcesses,
     overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
@@ -887,6 +942,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestTeacher,
     latestQuotaStatus,
     moduleLearningReview,
+    learningSedimentationBridge,
     guardLogPath: options.guardLogPath,
     worktree,
   });
@@ -921,6 +977,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestTeacher,
     latestQuotaStatus,
     moduleLearningReview,
+    learningSedimentationBridge,
     decisions,
     codexAutoRepair: {
       eligible: repairDecisions.length > 0,

@@ -1,9 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createModuleLearningPipelinePlanTool } from "../../src/agents/tools/module-learning-pipeline-plan-tool.ts";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
-type CliOptions = {
+export type LearningSedimentationBridgeOptions = {
   workspaceDir: string;
   maxCandidates: number;
   writePlanReceipts: boolean;
@@ -59,8 +60,8 @@ function readValue(args: string[], index: number): string {
   return value;
 }
 
-function parseArgs(args: string[]): CliOptions {
-  const options: CliOptions = {
+function parseArgs(args: string[]): LearningSedimentationBridgeOptions {
+  const options: LearningSedimentationBridgeOptions = {
     workspaceDir: DEFAULT_WORKSPACE_DIR,
     maxCandidates: DEFAULT_MAX_CANDIDATES,
     writePlanReceipts: false,
@@ -243,7 +244,9 @@ async function buildRetrievalIndex(workspaceDir: string): Promise<Map<string, st
   return index;
 }
 
-async function buildBridge(options: CliOptions) {
+export async function buildLearningSedimentationBridge(
+  options: LearningSedimentationBridgeOptions,
+) {
   const memoryDir = path.join(options.workspaceDir, "memory");
   const [applyFiles, retrievalIndex] = await Promise.all([
     listJsonFiles(path.join(memoryDir, "finance-learning-apply-usage-receipts")),
@@ -366,7 +369,7 @@ async function buildBridge(options: CliOptions) {
   };
 }
 
-function renderText(result: Awaited<ReturnType<typeof buildBridge>>): string {
+function renderText(result: Awaited<ReturnType<typeof buildLearningSedimentationBridge>>): string {
   return (
     [
       `Learning sedimentation bridge | candidates=${result.candidateCount}`,
@@ -378,10 +381,16 @@ function renderText(result: Awaited<ReturnType<typeof buildBridge>>): string {
   );
 }
 
-const options = parseArgs(process.argv.slice(2));
-const result = await buildBridge(options);
-if (options.json) {
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-} else {
-  process.stdout.write(renderText(result));
+async function main(): Promise<void> {
+  const options = parseArgs(process.argv.slice(2));
+  const result = await buildLearningSedimentationBridge(options);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    process.stdout.write(renderText(result));
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
 }

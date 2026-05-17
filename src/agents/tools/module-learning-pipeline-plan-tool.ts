@@ -65,6 +65,7 @@ export const MODULE_LEARNING_EVIDENCE_STATUSES: ModuleLearningEvidenceStatus[] =
 
 const ModuleLearningPipelinePlanSchema = Type.Object({
   targetModule: stringEnum(MODULE_LEARNING_TARGETS),
+  receiptDateKey: Type.Optional(Type.String()),
   sourceUrlOrPath: Type.Optional(Type.String()),
   learningIntent: Type.Optional(Type.String()),
   actualReadingScope: Type.Optional(Type.String()),
@@ -700,8 +701,9 @@ function buildModuleLearningReceiptPath(params: {
   targetModule: string;
   learningIntent: string;
   toolCallId: string;
+  dateKey?: string;
 }): string {
-  const dateKey = new Date().toISOString().slice(0, 10);
+  const dateKey = params.dateKey ?? new Date().toISOString().slice(0, 10);
   const hash = createHash("sha256")
     .update(`${params.toolCallId}\n${params.targetModule}\n${params.learningIntent}`)
     .digest("hex")
@@ -738,6 +740,12 @@ export function createModuleLearningPipelinePlanTool(options?: {
       const targetModule = readStringParam(params, "targetModule", { required: true });
       if (!MODULE_LEARNING_TARGETS.includes(targetModule as ModuleLearningTarget)) {
         throw new ToolInputError(`unsupported targetModule: ${targetModule}`);
+      }
+      const receiptDateKey = normalizeOptional(
+        readStringParam(params, "receiptDateKey", { allowEmpty: true }),
+      );
+      if (receiptDateKey && !/^\d{4}-\d{2}-\d{2}$/u.test(receiptDateKey)) {
+        throw new ToolInputError("receiptDateKey must be YYYY-MM-DD");
       }
       const schema = MODULE_SCHEMAS[targetModule as ModuleLearningTarget];
       const sourceUrlOrPath = normalizeOptional(readStringParam(params, "sourceUrlOrPath"));
@@ -835,6 +843,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
               targetModule: schema.targetModule,
               learningIntent,
               toolCallId,
+              dateKey: receiptDateKey ?? undefined,
             })
           : null;
       const payload = {

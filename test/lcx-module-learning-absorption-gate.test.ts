@@ -279,6 +279,14 @@ describe("lcx-module-learning-absorption-gate", () => {
     );
     expect(writeResult.status).toBe(0);
     const writeParsed = JSON.parse(writeResult.stdout) as Record<string, unknown>;
+    expect(writeParsed).toEqual(
+      expect.objectContaining({
+        absorptionReady: true,
+        gateDecision: "ready_for_eval_absorbed_review",
+        preWriteGateDecision: "hold_at_application_ready",
+        postWriteReviewRefreshed: true,
+      }),
+    );
     expect(writeParsed.writtenAbsorptionReceipts).toEqual([
       expect.objectContaining({
         targetModule: "options_volatility",

@@ -155,10 +155,15 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("operator_training_plan_snapshot_differs_from_current");
     expect(recoverySource).toContain("operator_training_state_snapshot_differs_from_current");
     expect(recoverySource).toContain("actionableWarnings");
+    expect(recoverySource).toContain("informationalWarnings");
+    expect(recoverySource).toContain("volatileTruthOwner");
+    expect(recoverySource).toContain("compressed_digest_not_realtime_training_authority");
     expect(recoverySource).toContain("MAX_OPERATOR_STATE_AGE_MS");
     expect(recoverySource).toContain("flow_graph_recovers_task_waterflows");
     expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
     expect(localOperator).toContain("NODE_FLOW_FILE");
+    expect(localOperator).toContain("volatileOwner");
+    expect(localOperator).toContain("learningSedimentationBridge");
     expect(localOperator).toContain("compressedContextRecovered");
   });
 });

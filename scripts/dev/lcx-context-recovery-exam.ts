@@ -461,6 +461,8 @@ function buildNewWindowHandoffText(params: {
     `unmatchedFiles=${unmatchedFiles.join(",") || "none"}`,
     "",
     "## Training Truth",
+    "volatileOwner=local-brain-training-plan",
+    "operatorLatestRole=compressed_digest_not_realtime_training_authority",
     `activeProcessCount=${scalarText(params.trainingPlan?.activeProcessCount)}`,
     `latestEval=${scalarText(latestEval?.passed)}/${scalarText(latestEval?.total)} promotionReady=${scalarText(latestEval?.promotionReady)}`,
     `latestEvalParseRecovered=${stringArray(latestEval?.parseRecoveredCaseIds).join(",") || "none"}`,
@@ -747,6 +749,12 @@ async function main() {
   }
 
   const failed = checks.filter((check) => !check.ok);
+  const informationalWarnings = warnings.filter((warning) =>
+    warning.id.startsWith("operator_training_"),
+  );
+  const actionableWarnings = warnings.filter(
+    (warning) => !warning.id.startsWith("operator_training_"),
+  );
   const result = {
     ok: failed.length === 0,
     boundary: "dev_context_recovery_exam_only",
@@ -767,8 +775,16 @@ async function main() {
     ],
     checks,
     actionableFailures: failed.map((check) => `${check.id}: ${check.summary}`),
-    actionableWarnings: warnings.map((warning) => `${warning.id}: ${warning.summary}`),
+    actionableWarnings: actionableWarnings.map((warning) => `${warning.id}: ${warning.summary}`),
+    informationalWarnings: informationalWarnings.map(
+      (warning) => `${warning.id}: ${warning.summary}`,
+    ),
     warnings,
+    volatileTruthOwner: {
+      training: "local-brain-training-plan",
+      operatorLatestRole: "compressed_digest_not_realtime_training_authority",
+      currentTrainingPlanUsed: currentTrainingPlan.ok,
+    },
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
