@@ -826,6 +826,12 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
   const l5Lane = laneById(params.lanes, "l5_regression_battery");
   const answerLane = laneById(params.lanes, "commercial_answer_audit_pipeline");
   const controlRoomLane = laneById(params.lanes, "product_control_room");
+  const moduleLearningStatus =
+    inventoryLane?.status === "pass"
+      ? "ready"
+      : moduleLane?.status === "pass"
+        ? "ready"
+        : "needs_receipts";
 
   return [
     {
@@ -848,18 +854,15 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
       order: 2,
       title: "模块学习真实吸收证据",
       ownerLane: "learning_sedimentation_inventory",
-      status:
-        inventoryLane?.status === "pass"
-          ? "ready"
-          : moduleLane?.status === "pass"
-            ? "ready"
-            : "needs_receipts",
+      status: moduleLearningStatus,
       evidence: [
         ...(inventoryLane?.evidence ?? ["learning sedimentation inventory missing"]),
         ...(moduleLane?.evidence ?? ["module learning lane missing"]),
       ],
       nextAction:
-        "补 module_learning_pipeline_plan/review、fresh adjacent application、per-receipt eval/training 和 keep/downrank/discard。",
+        moduleLearningStatus === "ready"
+          ? "保持 no-write review 和 learning-sedimentation audit；新输入继续要求 fresh adjacent application、per-receipt eval/training、keep/downrank/discard。"
+          : "补 module_learning_pipeline_plan/review、fresh adjacent application、per-receipt eval/training 和 keep/downrank/discard。",
     },
     {
       id: "l5_runtime_battery",

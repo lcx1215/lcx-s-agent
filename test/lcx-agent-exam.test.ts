@@ -142,6 +142,82 @@ describe("lcx-agent-exam", () => {
     );
   });
 
+  it("does not ask to re-complete module learning when absorption inventory is ready", () => {
+    const report = buildAgentExamReport({
+      checkedAt: "2026-05-12T00:00:00.000Z",
+      live: false,
+      l5: false,
+      doctor: okCommand("doctor", {
+        ok: true,
+        boundary: "dev_observability_only",
+        liveTouched: false,
+        summary: { passed: 12, failed: 0, skipped: 5 },
+      }),
+      trainingPlan: okCommand("training-plan", {
+        activeProcesses: [{ pid: 123, role: "guard" }],
+        latestEval: { name: "stable_hardened_eval", passed: 72, total: 72 },
+        latestDataset: { examples: 9000 },
+        latestTeacher: { failures: 0 },
+        decisions: [{ id: "continue_medium_training" }],
+      }),
+      promotionAudit: okCommand("promotion-audit", {
+        boundary: "dev_local_brain_promotion_audit_only",
+        promotionDecision: "safe",
+        resolverMatchesLatestEval: true,
+        realBugsFound: [],
+        latestEval: {
+          name: "stable_hardened_eval",
+          passed: 72,
+          total: 72,
+          promotionReady: true,
+        },
+        selectedEval: {
+          name: "stable_hardened_eval",
+          passed: 72,
+          total: 72,
+          promotionReady: true,
+        },
+      }),
+      moduleLearningReview: okCommand("module-review", {
+        boundary: "module_learning_pipeline_review_only",
+        updated: false,
+        counts: {
+          receiptFiles: 8,
+          weakModuleLearning: 0,
+          applicationReady: 0,
+          evalAbsorbed: 8,
+          invalidReceipts: 0,
+          boundaryViolations: 0,
+        },
+      }),
+      learningSedimentationAudit: okCommand("learning-audit", {
+        ok: true,
+        boundary: "dev_learning_sedimentation_audit_only",
+        assessment: "usable_and_module_certifiable",
+        chains: {
+          moduleLearningPipeline: {
+            planReceipts: 32,
+            evalAbsorbed: 16,
+            weakModuleLearning: 0,
+            boundaryViolations: 0,
+          },
+        },
+      }),
+      cognitiveIntegritySources: cognitiveSources,
+    });
+
+    const moduleBlueprint = report.commercialBlueprint.find(
+      (item) => item.id === "module_learning_absorption",
+    );
+    expect(moduleBlueprint).toEqual(
+      expect.objectContaining({
+        status: "ready",
+        nextAction: expect.stringContaining("保持 no-write review"),
+      }),
+    );
+    expect(moduleBlueprint?.nextAction).not.toContain("补 module_learning_pipeline_plan/review");
+  });
+
   it("downgrades training when the latest teacher batch still has failures", () => {
     const report = buildAgentExamReport({
       live: false,
