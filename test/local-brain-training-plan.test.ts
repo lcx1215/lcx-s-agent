@@ -319,6 +319,7 @@ describe("local-brain-training-plan", () => {
     expect(plan.qwenCapabilityConsolidation).toMatchObject({
       boundary: "dev_qwen_capability_consolidation_only",
       runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble",
+      adapterLadderPolicy: "champion_challenger_harvest_into_next_single_adapter",
       capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter",
       consolidationState: "candidate_capabilities_not_yet_consolidated",
       selectedCleanAdapter: "/tmp/adapter-r2",
@@ -328,6 +329,26 @@ describe("local-brain-training-plan", () => {
       blockedCapabilityFamilies: [
         { caseId: "plain_recent_stock_market_brief_preflight", count: 1 },
       ],
+    });
+    expect(plan.qwenCapabilityConsolidation.adapterLadder).toMatchObject({
+      champion: {
+        adapterPath: "/tmp/adapter-r2",
+        runtimeEligible: true,
+      },
+      latestBlockedChallenger: {
+        adapterPath: "/tmp/adapter-r8",
+        runtimeEligible: false,
+      },
+    });
+    expect(plan.qwenCapabilityConsolidation.capabilityHarvest).toMatchObject({
+      boundary: "dev_blocked_challenger_harvest_only",
+      harvestMode: "failed_or_parse_recovered_cases_to_teacher_curriculum",
+      sourceBlockedAdapter: "/tmp/adapter-r8",
+      harvestCaseIds: ["plain_recent_stock_market_brief_preflight"],
+      nextTeacherFocusCaseIds: ["plain_recent_stock_market_brief_preflight"],
+      notPromotionProof: true,
+      requiredNextStep:
+        "feed_harvested_cases_to_failure_focus_teacher_then_retrain_unified_adapter",
     });
     expect(plan.activeHeavyEvalCounts).toEqual({
       localBrainEval: 0,

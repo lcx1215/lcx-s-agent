@@ -144,6 +144,64 @@ describe("local-brain-distill-eval", () => {
     expect(targetCase?.parsed.missing_data).toContain("module_learning_pipeline_review_status");
   });
 
+  it("routes interviews blogs sentiment and viral executive events through alternative-source gates", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        [
+          "viral_ceo_dinner_industry_signal_source_gate",
+          "management_interview_hbm_supply_chain_signal",
+          "investor_blog_thesis_source_quality_gate",
+          "podcast_social_sentiment_hypothesis_gate",
+          "alternative_source_to_fundamental_followthrough_chain",
+        ].join(","),
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      evalRegistry: {
+        boundary: string;
+        currentCaseCount: number;
+        promotionTargetCaseCount: number;
+        suites: Array<{ id: string; currentCaseCount: number; targetCaseCount: number }>;
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary).toMatchObject({ passed: 12, total: 12, promotionReady: true });
+    expect(payload.evalRegistry).toMatchObject({
+      boundary: "dev_eval_registry_expansion_plan_only",
+      currentCaseCount: 82,
+      promotionTargetCaseCount: 200,
+    });
+    expect(payload.evalRegistry.suites).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "finance_source_quality",
+          currentCaseCount: expect.any(Number),
+          targetCaseCount: 50,
+        }),
+        expect.objectContaining({
+          id: "lark_short_intake",
+          targetCaseCount: 30,
+        }),
+      ]),
+    );
+  });
+
   it("extracts the first balanced JSON object from noisy model output", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-json-"));
     const fakePython = path.join(tempDir, "python");

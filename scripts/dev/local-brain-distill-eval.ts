@@ -2228,6 +2228,146 @@ const EVAL_CASES: EvalCase[] = [
     ],
   },
   {
+    id: "viral_ceo_dinner_industry_signal_source_gate",
+    userAsk:
+      "像黄仁勋和韩国大公司老板吃炸鸡这种 viral 饭局，后面某些 AI 供应链股票大涨。本地大脑应该怎么把这种材料学进去？不能直接说饭局导致股价，要先当产业关系和市场情绪线索处理。",
+    sourceSummary:
+      "alternative market signal source preflight for viral executive dinner coverage; requires source registry, transcript/source type, official follow-up, fundamentals, price-window review, and no direct causality claim.",
+    requiredModules: [
+      "source_registry",
+      "data_provenance_quality",
+      "causal_map",
+      "company_fundamentals_value",
+      "event_driven",
+      "finance_learning_memory",
+      "review_panel",
+    ],
+    minModuleMatches: 6,
+    requiredMissingData: [
+      "source_url_or_local_source_path",
+      "source_timestamp_and_vendor",
+      "primary_source_or_transcript",
+      "source_type_and_reliability_grade",
+      "official_followup_or_contract_evidence",
+      "market_price_and_fundamental_followup_window",
+    ],
+    requiredRiskBoundaries: [
+      "alternative_source_not_standalone_alpha",
+      "no_causality_from_viral_event",
+      "sample_out_validation_required",
+    ],
+  },
+  {
+    id: "management_interview_hbm_supply_chain_signal",
+    userAsk:
+      "如果 CEO 采访里暗示 HBM 供应链、AI 服务器订单或客户关系变化，本地大脑要怎么学习？请把采访当弱来源，必须找原文、时间戳、官方后续、财报和供应链证据。",
+    sourceSummary:
+      "management interview as weak supply-chain signal; requires transcript/source timestamp, official follow-up, fundamental evidence, and review before durable lesson.",
+    requiredModules: [
+      "source_registry",
+      "data_provenance_quality",
+      "causal_map",
+      "company_fundamentals_value",
+      "event_driven",
+      "review_panel",
+    ],
+    minModuleMatches: 5,
+    requiredMissingData: [
+      "source_url_or_local_source_path",
+      "source_timestamp_and_vendor",
+      "primary_source_or_transcript",
+      "official_followup_or_contract_evidence",
+      "market_price_and_fundamental_followup_window",
+    ],
+    requiredRiskBoundaries: [
+      "alternative_source_not_standalone_alpha",
+      "no_causality_from_viral_event",
+    ],
+  },
+  {
+    id: "investor_blog_thesis_source_quality_gate",
+    userAsk:
+      "一个投资博客说某存储芯片公司会因为 AI 需求重估，本地大脑能不能学习？要区分博客观点、数据来源、作者激励、官方证据、样本外验证，不能直接沉淀成买入逻辑。",
+    sourceSummary:
+      "investor blog thesis learning gate; blog is usable as a hypothesis source only after provenance, incentive, official evidence, and validation review.",
+    requiredModules: [
+      "source_registry",
+      "data_provenance_quality",
+      "research_artifact_qc",
+      "company_fundamentals_value",
+      "finance_learning_memory",
+      "review_panel",
+    ],
+    minModuleMatches: 5,
+    requiredMissingData: [
+      "source_url_or_local_source_path",
+      "source_timestamp_and_vendor",
+      "source_type_and_reliability_grade",
+      "official_followup_or_contract_evidence",
+      "market_price_and_fundamental_followup_window",
+    ],
+    requiredRiskBoundaries: [
+      "alternative_source_not_standalone_alpha",
+      "sample_out_validation_required",
+    ],
+  },
+  {
+    id: "podcast_social_sentiment_hypothesis_gate",
+    userAsk:
+      "播客和社媒都在讨论 AI 硬件订单爆发，这种市场情绪能不能进本地大脑？请当 hypothesis，不当事实；要 source registry、时间戳、覆盖样本、官方交叉验证和风险门。",
+    sourceSummary:
+      "podcast and social sentiment as hypothesis only; requires source type, timestamp, sample definition, official cross-check, and no standalone-alpha boundary.",
+    requiredModules: [
+      "source_registry",
+      "data_provenance_quality",
+      "causal_map",
+      "finance_learning_memory",
+      "quant_math",
+      "review_panel",
+    ],
+    minModuleMatches: 5,
+    requiredMissingData: [
+      "source_url_or_local_source_path",
+      "source_timestamp_and_vendor",
+      "source_type_and_reliability_grade",
+      "official_followup_or_contract_evidence",
+      "market_price_and_fundamental_followup_window",
+    ],
+    requiredRiskBoundaries: [
+      "alternative_source_not_standalone_alpha",
+      "sample_out_validation_required",
+    ],
+  },
+  {
+    id: "alternative_source_to_fundamental_followthrough_chain",
+    userAsk:
+      "请把采访、博客、舆情、饭局新闻这类非传统来源变成一条学习链：先登记来源，再打可靠性等级，再找财报/订单/价格窗口 follow-through，最后只沉淀可复用规则。",
+    sourceSummary:
+      "generic alternative-source learning chain requiring registry, reliability grading, fundamental follow-through, price-window review, and keep/downrank decision.",
+    requiredModules: [
+      "source_registry",
+      "data_provenance_quality",
+      "company_fundamentals_value",
+      "finance_learning_memory",
+      "research_artifact_qc",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 6,
+    requiredMissingData: [
+      "source_url_or_local_source_path",
+      "source_timestamp_and_vendor",
+      "source_type_and_reliability_grade",
+      "official_followup_or_contract_evidence",
+      "market_price_and_fundamental_followup_window",
+    ],
+    requiredRiskBoundaries: [
+      "alternative_source_not_standalone_alpha",
+      "no_causality_from_viral_event",
+      "sample_out_validation_required",
+    ],
+  },
+  {
     id: "senior_trader_failure_focus_promotion_chain",
     userAsk:
       "把最近没过 promotion 的高级交易员失败族合并修：当前数据新鲜度、财报证据、NVDA AI capex 二阶传导、市场宽度只做 timing、未验证宏观 claim、模型分歧、旧记忆降权、估值压缩、券商研报学习、错误复盘和情绪 vendor 冲突；全部要走同一条 source -> finance_data_gateway -> capability -> retrieval/apply -> eval/training -> review 链。",
@@ -2366,6 +2506,80 @@ const EVAL_CASES: EvalCase[] = [
 ];
 
 const EVAL_CASE_BY_ID = new Map(EVAL_CASES.map((evalCase) => [evalCase.id, evalCase]));
+
+const EVAL_EXPANSION_MILESTONES = [120, 160, 200] as const;
+const EVAL_REGISTRY_SUITES = [
+  {
+    id: "core_promotion",
+    targetCaseCount: 80,
+    description:
+      "core promotion and no-regression cases that should remain fast enough to run often",
+    matches: (evalCase: EvalCase) =>
+      !/(external|paper|source|sentiment|blog|interview|podcast|viral|memory|learning|artifact|vendor|alternative)/iu.test(
+        `${evalCase.id} ${evalCase.sourceSummary}`,
+      ),
+  },
+  {
+    id: "finance_source_quality",
+    targetCaseCount: 50,
+    description:
+      "finance provenance, official source, vendor conflict, interview, blog, and alternative-signal gates",
+    matches: (evalCase: EvalCase) =>
+      /(source|vendor|filing|artifact|sentiment|interview|blog|podcast|viral|alternative|provenance|analyst)/iu.test(
+        `${evalCase.id} ${evalCase.sourceSummary}`,
+      ) ||
+      evalCase.requiredModules.includes("source_registry") ||
+      evalCase.requiredModules.includes("data_provenance_quality"),
+  },
+  {
+    id: "lark_short_intake",
+    targetCaseCount: 30,
+    description: "short natural-language asks that must expand into the right workflow",
+    matches: (evalCase: EvalCase) =>
+      /(plain|short_lark|lark|ambiguous|短|一句|口语)/iu.test(`${evalCase.id} ${evalCase.userAsk}`),
+  },
+  {
+    id: "memory_learning",
+    targetCaseCount: 30,
+    description: "local memory, online learning, apply validation, and durable sedimentation cases",
+    matches: (evalCase: EvalCase) =>
+      /(memory|learning|internalization|source_coverage|stale|沉淀|学习|复盘)/iu.test(
+        `${evalCase.id} ${evalCase.sourceSummary} ${evalCase.userAsk}`,
+      ) || evalCase.requiredModules.includes("finance_learning_memory"),
+  },
+  {
+    id: "adversarial_boundaries",
+    targetCaseCount: 40,
+    description: "anti-overclaim, no-trade-advice, stale data, conflict, and parse-hardening cases",
+    matches: (evalCase: EvalCase) =>
+      /(conflict|unverified|stale|no_trade|execution|high_leverage|red_team|overfit|causality|standalone_alpha|parse|risk|boundary)/iu.test(
+        `${evalCase.id} ${evalCase.sourceSummary} ${evalCase.userAsk} ${(evalCase.requiredRiskBoundaries ?? []).join(" ")}`,
+      ),
+  },
+];
+
+function buildEvalRegistrySummary() {
+  const suites = EVAL_REGISTRY_SUITES.map((suite) => {
+    const caseIds = EVAL_CASES.filter(suite.matches).map((evalCase) => evalCase.id);
+    return {
+      id: suite.id,
+      targetCaseCount: suite.targetCaseCount,
+      currentCaseCount: caseIds.length,
+      gapToTarget: Math.max(0, suite.targetCaseCount - caseIds.length),
+      sampleCaseIds: caseIds.slice(0, 12),
+      description: suite.description,
+    };
+  });
+  return {
+    boundary: "dev_eval_registry_expansion_plan_only",
+    currentCaseCount: EVAL_CASES.length,
+    promotionTargetCaseCount: EVAL_EXPANSION_MILESTONES.at(-1),
+    nextMilestones: EVAL_EXPANSION_MILESTONES,
+    suites,
+    expansionPolicy:
+      "expand with high-signal failure families and prerequisites; do not add low-value cases just to reach 200",
+  };
+}
 
 function mergeUniqueStrings(...groups: readonly string[][]): string[] {
   const seen = new Set<string>();
@@ -2516,6 +2730,28 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
   ["china_property_credit_a_share_us_tech_spillover", ["cross_market_us_a_index_crypto_analysis"]],
   ["paper_claim_conflicts_with_local_memory_rule", ["paper_learning_internalization_absorption"]],
   ["sentiment_vendor_conflict_validation_loop", ["sentiment_market_external_module_learning"]],
+  [
+    "viral_ceo_dinner_industry_signal_source_gate",
+    ["sentiment_market_external_module_learning", "source_coverage_actual_reading_scope"],
+  ],
+  [
+    "management_interview_hbm_supply_chain_signal",
+    ["single_company_fundamental_risk", "source_coverage_actual_reading_scope"],
+  ],
+  [
+    "investor_blog_thesis_source_quality_gate",
+    ["research_artifact_qc_gate", "source_coverage_actual_reading_scope"],
+  ],
+  ["podcast_social_sentiment_hypothesis_gate", ["sentiment_vendor_conflict_validation_loop"]],
+  [
+    "alternative_source_to_fundamental_followthrough_chain",
+    [
+      "viral_ceo_dinner_industry_signal_source_gate",
+      "management_interview_hbm_supply_chain_signal",
+      "investor_blog_thesis_source_quality_gate",
+      "podcast_social_sentiment_hypothesis_gate",
+    ],
+  ],
   [
     "senior_trader_failure_focus_promotion_chain",
     [
@@ -3428,6 +3664,7 @@ const result = {
     failedCaseDiagnostics,
     promotionReady: failedCases.length === 0 && parseRecoveredCases.length === 0,
   },
+  evalRegistry: buildEvalRegistrySummary(),
   cases: options.summaryOnly ? undefined : caseResults,
 };
 

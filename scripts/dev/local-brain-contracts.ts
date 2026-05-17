@@ -467,6 +467,14 @@ function looksLikeSourceGroundingAudit(text: string): boolean {
 }
 
 function looksLikeDataConflictReconciliation(text: string): boolean {
+  if (
+    /(采访|访谈|interview|博客|blog|substack|播客|podcast|饭局|晚餐|炸鸡|chimaek|kkanbu|viral)/iu.test(
+      text,
+    ) &&
+    !/(不同数据源|数据源.*不一致|vendor|供应商|conflict|冲突|口径)/iu.test(text)
+  ) {
+    return false;
+  }
   return (
     !looksLikeCurrentMarketDataFreshnessGap(text) &&
     !looksLikePaperLearningWithSource(text) &&
@@ -486,6 +494,20 @@ function looksLikeSentimentVendorConflictValidation(text: string): boolean {
     /(新闻情绪|社媒情绪|news sentiment|social sentiment|风险偏好)/iu.test(text) &&
     /(vendor|供应商|不同数据源|冲突|conflict|互相冲突|不一致)/iu.test(text) &&
     /(样本外|sample[- ]?out|standalone alpha|单独.*alpha|独立.*alpha|审阅|review|validation|验证)/iu.test(
+      text,
+    )
+  );
+}
+
+function looksLikeAlternativeMarketSignalSource(text: string): boolean {
+  return (
+    !looksLikeSentimentVendorConflictValidation(text) &&
+    !looksLikeSentimentMarketModuleLearning(text) &&
+    !looksLikeDataConflictReconciliation(text) &&
+    /(采访|访谈|interview|博客|blog|substack|播客|podcast|饭局|晚餐|炸鸡|chimaek|kkanbu|ceo.{0,12}(meeting|dinner)|社媒|舆情|market sentiment|情绪|viral|传闻|rumou?r)/iu.test(
+      text,
+    ) &&
+    /(市场|股价|暴涨|供应链|hbm|ai|capex|三星|samsung|海力士|hynix|英伟达|nvidia|黄仁勋|jensen|公司|产业|fundamental|基本面|信号|线索|学习|沉淀)/iu.test(
       text,
     )
   );
@@ -833,6 +855,14 @@ function mentionsCryptoMarket(text: string): boolean {
 }
 
 function looksLikeSentimentMarketModuleLearning(text: string): boolean {
+  if (
+    /(采访|访谈|interview|博客|blog|substack|播客|podcast|饭局|晚餐|炸鸡|chimaek|kkanbu|viral)/iu.test(
+      text,
+    ) &&
+    !/(github|开源|repo|module|模块|接入|框架|vendor|供应商|不同数据源|冲突)/iu.test(text)
+  ) {
+    return false;
+  }
   return (
     /(情绪|sentiment|news sentiment|social sentiment|舆情|twitter|x.com|reddit|新闻情绪)/iu.test(
       text,
@@ -1674,6 +1704,60 @@ export function hardenLocalBrainPlanForAsk(
         "language_routing_candidate_artifacts",
         "commodity_term_dump_without_application_path",
         "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeAlternativeMarketSignalSource(text)) {
+    return {
+      ...safe,
+      task_family: "alternative_market_signal_source_preflight",
+      primary_modules: [
+        "source_registry",
+        "data_provenance_quality",
+        "causal_map",
+        "company_fundamentals_value",
+        "event_driven",
+        "finance_learning_memory",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: [
+        "us_equity_market_structure",
+        "global_index_regime",
+        "portfolio_risk_gates",
+        "research_artifact_qc",
+      ],
+      required_tools: [
+        "source_registry_lookup",
+        "artifact_memory_recall",
+        "data_timestamp_and_vendor_compare",
+        "review_panel",
+      ],
+      missing_data: [
+        "source_url_or_local_source_path",
+        "source_timestamp_and_vendor",
+        "primary_source_or_transcript",
+        "source_type_and_reliability_grade",
+        "official_followup_or_contract_evidence",
+        "market_price_and_fundamental_followup_window",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_current_market_data",
+        "alternative_source_not_standalone_alpha",
+        "no_causality_from_viral_event",
+        "sample_out_validation_required",
+      ],
+      next_step:
+        "register_source_type_timestamp_and_transcript_then_check_official_followup_fundamentals_price_window_and_review_before_any_lesson",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "viral_event_as_direct_causal_proof",
+        "single_blog_or_interview_as_trade_signal",
+        "unverified_market_claim",
       ],
     };
   }

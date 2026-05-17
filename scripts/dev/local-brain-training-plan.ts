@@ -41,6 +41,7 @@ type EvalSnapshot = {
 type QwenCapabilityConsolidationSnapshot = {
   boundary: "dev_qwen_capability_consolidation_only";
   runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble";
+  adapterLadderPolicy: "champion_challenger_harvest_into_next_single_adapter";
   capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter";
   consolidationState:
     | "selected_clean_adapter"
@@ -56,6 +57,41 @@ type QwenCapabilityConsolidationSnapshot = {
   latestCleanCandidate?: EvalSnapshot;
   latestBlockedCandidate?: EvalSnapshot;
   blockedCapabilityFamilies: { caseId: string; count: number }[];
+  adapterLadder: {
+    champion?: {
+      adapterPath?: string;
+      eval?: Pick<
+        EvalSnapshot,
+        "at" | "name" | "adapterPath" | "passed" | "total" | "promotionReady"
+      >;
+      runtimeEligible: boolean;
+    };
+    latestCleanChallenger?: {
+      adapterPath?: string;
+      eval?: Pick<
+        EvalSnapshot,
+        "at" | "name" | "adapterPath" | "passed" | "total" | "promotionReady"
+      >;
+      promotionAuditRequired: boolean;
+    };
+    latestBlockedChallenger?: {
+      adapterPath?: string;
+      eval?: Pick<
+        EvalSnapshot,
+        "at" | "name" | "adapterPath" | "passed" | "total" | "promotionReady"
+      >;
+      runtimeEligible: false;
+    };
+  };
+  capabilityHarvest: {
+    boundary: "dev_blocked_challenger_harvest_only";
+    harvestMode: "failed_or_parse_recovered_cases_to_teacher_curriculum";
+    sourceBlockedAdapter?: string;
+    harvestCaseIds: string[];
+    nextTeacherFocusCaseIds: string[];
+    notPromotionProof: true;
+    requiredNextStep: string;
+  };
   requiredAction:
     | "run_promotion_audit_for_latest_clean_candidate"
     | "continue_failure_focus_until_next_clean_unified_adapter"
@@ -398,6 +434,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
   const cleanCandidates = candidateSnapshots.filter((snapshot) => snapshot.promotionReady);
   const blockedCandidates = candidateSnapshots.filter((snapshot) => !snapshot.promotionReady);
   const blockedCaseCounts = new Map<string, number>();
+  const latestBlockedHarvestCaseIds: string[] = [];
   for (const snapshot of blockedCandidates) {
     for (const caseId of [
       ...snapshot.failedCaseIds,
@@ -409,6 +446,19 @@ function qwenCapabilityConsolidationSnapshot(params: {
   }
   const latestCleanCandidate = cleanCandidates[0];
   const latestBlockedCandidate = blockedCandidates[0];
+  if (latestBlockedCandidate) {
+    latestBlockedHarvestCaseIds.push(
+      ...new Set([
+        ...latestBlockedCandidate.failedCaseIds,
+        ...latestBlockedCandidate.parseErrorCaseIds,
+        ...latestBlockedCandidate.parseRecoveredCaseIds,
+      ]),
+    );
+  }
+  const blockedCapabilityFamilies = [...blockedCaseCounts.entries()]
+    .map(([caseId, count]) => ({ caseId, count }))
+    .toSorted((left, right) => right.count - left.count || left.caseId.localeCompare(right.caseId))
+    .slice(0, 12);
   const latestCandidateIsBlocked = Boolean(
     params.latestCandidateEval && !params.latestCandidateEval.promotionReady,
   );
@@ -429,6 +479,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
   return {
     boundary: "dev_qwen_capability_consolidation_only",
     runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble",
+    adapterLadderPolicy: "champion_challenger_harvest_into_next_single_adapter",
     capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter",
     consolidationState,
     selectedCleanAdapter: params.latestPassingEval?.adapterPath,
@@ -437,15 +488,51 @@ function qwenCapabilityConsolidationSnapshot(params: {
     blockedCandidateAdapterCount: blockedCandidates.length,
     latestCleanCandidate,
     latestBlockedCandidate,
-    blockedCapabilityFamilies: [...blockedCaseCounts.entries()]
-      .map(([caseId, count]) => ({ caseId, count }))
-      .toSorted(
-        (left, right) => right.count - left.count || left.caseId.localeCompare(right.caseId),
-      )
-      .slice(0, 12),
+    blockedCapabilityFamilies,
+    adapterLadder: {
+      champion: params.latestPassingEval
+        ? {
+            adapterPath: params.latestPassingEval.adapterPath,
+            eval: compactEvalSnapshot(params.latestPassingEval),
+            runtimeEligible: true,
+          }
+        : undefined,
+      latestCleanChallenger: latestCleanCandidate
+        ? {
+            adapterPath: latestCleanCandidate.adapterPath,
+            eval: compactEvalSnapshot(latestCleanCandidate),
+            promotionAuditRequired:
+              latestCleanCandidate.adapterPath !== params.latestPassingEval?.adapterPath,
+          }
+        : undefined,
+      latestBlockedChallenger: latestBlockedCandidate
+        ? {
+            adapterPath: latestBlockedCandidate.adapterPath,
+            eval: compactEvalSnapshot(latestBlockedCandidate),
+            runtimeEligible: false,
+          }
+        : undefined,
+    },
+    capabilityHarvest: {
+      boundary: "dev_blocked_challenger_harvest_only",
+      harvestMode: "failed_or_parse_recovered_cases_to_teacher_curriculum",
+      sourceBlockedAdapter: latestBlockedCandidate?.adapterPath,
+      harvestCaseIds: latestBlockedHarvestCaseIds,
+      nextTeacherFocusCaseIds:
+        latestBlockedHarvestCaseIds.length > 0
+          ? latestBlockedHarvestCaseIds.slice(0, 8)
+          : blockedCapabilityFamilies.map((entry) => entry.caseId).slice(0, 8),
+      notPromotionProof: true,
+      requiredNextStep:
+        latestBlockedHarvestCaseIds.length > 0 || blockedCapabilityFamilies.length > 0
+          ? "feed_harvested_cases_to_failure_focus_teacher_then_retrain_unified_adapter"
+          : "wait_for_named_failed_or_parse_recovered_cases_before_harvest",
+    },
     requiredAction,
     notes: [
       "Do not serve multiple LoRA adapters together just because several r values trained.",
+      "Use champion/challenger selection for evaluation, but runtime still has one champion adapter.",
+      "Blocked challenger capability is harvested into teacher curriculum and the next unified adapter, not served directly.",
       "All useful Qwen capability must be distilled back through teacher data, hardened eval, and promotion audit into one clean selected adapter.",
       "A newer 77/77 candidate with parseRecovered is useful training evidence, not a runtime replacement for the selected clean adapter.",
     ],
