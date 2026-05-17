@@ -17,6 +17,8 @@ const RESTART_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 const LIVE_RESTART_HEALTH_TIMEOUT_MS = 180_000;
 const PROBE_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_REPLY_FLOW_LOG = path.join(os.homedir(), ".openclaw/logs/feishu-reply-flow.jsonl");
+const CHANNEL_PROBE_UNREACHABLE_PATTERN =
+  /Gateway not reachable|config-only status|abnormal closure/iu;
 const LARK_POST_MIGRATION_PROBE_SCRIPT =
   "/Users/liuchengxu/.codex/skills/lark-post-migration-probe/scripts/lark-post-migration-probe.sh";
 
@@ -168,6 +170,7 @@ type PromotionReceipt = {
     sourceChecks: CommandResult[];
     install: CommandResult | null;
     targetBuild: CommandResult | null;
+    targetUiBuild: CommandResult | null;
     gatewayInstall: CommandResult | null;
     restart: CommandResult | null;
     probe: CommandResult | null;
@@ -261,6 +264,23 @@ function runCommand(
     stdout: (result.stdout || "").slice(-4000),
     stderr: `${result.stderr || ""}${errorText}`.slice(-4000),
   };
+}
+
+function normalizeChannelProbeResult(result: CommandResult): CommandResult {
+  if (result.status === "passed") {
+    const combined = `${result.stdout}\n${result.stderr}`;
+    if (CHANNEL_PROBE_UNREACHABLE_PATTERN.test(combined)) {
+      return {
+        ...result,
+        status: "failed",
+        code: result.code === 0 ? 1 : result.code,
+        stderr: `${result.stderr}${
+          result.stderr ? "\n" : ""
+        }[probe validation] channels status reported gateway not reachable`,
+      };
+    }
+  }
+  return result;
 }
 
 function skippedCommand(command: string, cwd: string): CommandResult {
@@ -815,6 +835,7 @@ function renderText(receipt: PromotionReceipt): string {
     ...receipt.commands.sourceChecks,
     receipt.commands.install,
     receipt.commands.targetBuild,
+    receipt.commands.targetUiBuild,
     receipt.commands.gatewayInstall,
     receipt.commands.restart,
     receipt.commands.probe,
@@ -987,11 +1008,13 @@ export function main(argv = process.argv.slice(2)): number {
     const probe =
       !initialArgs.statusProbe || initialArgs.skipProbe || !state
         ? null
-        : runCommand(
-            "pnpm",
-            ["--silent", "openclaw", "channels", "status", "--probe"],
-            initialArgs.targetRoot,
-            PROBE_COMMAND_TIMEOUT_MS,
+        : normalizeChannelProbeResult(
+            runCommand(
+              "pnpm",
+              ["--silent", "openclaw", "channels", "status", "--probe"],
+              initialArgs.targetRoot,
+              PROBE_COMMAND_TIMEOUT_MS,
+            ),
           );
     const visibleProof = state
       ? readLiveVisibleProof({
@@ -1072,6 +1095,7 @@ function runPromotion(initialArgs: Args): number {
     sourceChecks: [],
     install: null,
     targetBuild: null,
+    targetUiBuild: null,
     gatewayInstall: null,
     restart: null,
     probe: null,
@@ -1136,6 +1160,16 @@ function runPromotion(initialArgs: Args): number {
   }
 
   if (blockedReasons.length === 0 && args.apply) {
+    commands.targetUiBuild = args.skipTargetBuild
+      ? skippedCommand("pnpm ui:build", args.targetRoot)
+      : runCommand("pnpm", ["ui:build"], args.targetRoot);
+    if (commands.targetUiBuild.status === "failed") {
+      applyFailed = true;
+      blockedReasons.push("target ui build failed");
+    }
+  }
+
+  if (blockedReasons.length === 0 && args.apply) {
     commands.gatewayInstall = args.skipGatewayInstall
       ? skippedCommand(
           "pnpm --silent openclaw gateway install --force --runtime node",
@@ -1182,11 +1216,13 @@ function runPromotion(initialArgs: Args): number {
   if (blockedReasons.length === 0 && args.apply) {
     commands.probe = args.skipProbe
       ? skippedCommand("pnpm --silent openclaw channels status --probe", args.targetRoot)
-      : runCommand(
-          "pnpm",
-          ["--silent", "openclaw", "channels", "status", "--probe"],
-          args.targetRoot,
-          PROBE_COMMAND_TIMEOUT_MS,
+      : normalizeChannelProbeResult(
+          runCommand(
+            "pnpm",
+            ["--silent", "openclaw", "channels", "status", "--probe"],
+            args.targetRoot,
+            PROBE_COMMAND_TIMEOUT_MS,
+          ),
         );
     if (commands.probe.status === "failed") {
       applyFailed = true;

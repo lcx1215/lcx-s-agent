@@ -76,6 +76,7 @@ function writePromotionState(
           sourceChecks: [],
           install: null,
           targetBuild: null,
+          targetUiBuild: null,
           gatewayInstall: null,
           restart: options.restartStatus
             ? command("pnpm --silent openclaw daemon restart", options.restartStatus)
@@ -116,6 +117,71 @@ function runStatus(sourceRoot: string, targetRoot: string): string {
   );
   expect(result.status, result.stderr || result.stdout).toBe(0);
   return result.stdout;
+}
+
+function writeFakePnpm(
+  binDir: string,
+  logPath: string,
+  options: { probeReachable: boolean },
+): void {
+  const scriptPath = path.join(binDir, "pnpm");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/bin/sh",
+      `echo "$*" >> ${JSON.stringify(logPath)}`,
+      'if [ "$*" = "ui:build" ]; then',
+      '  echo "ui built"',
+      "  exit 0",
+      "fi",
+      'if [ "$*" = "--silent openclaw daemon restart" ]; then',
+      '  echo "Restarted LaunchAgent: gui/501/ai.openclaw.gateway"',
+      "  exit 0",
+      "fi",
+      'if [ "$*" = "--silent openclaw channels status --probe" ]; then',
+      options.probeReachable
+        ? '  echo "Gateway reachable."'
+        : '  echo "Gateway not reachable; showing config-only status."',
+      "  exit 0",
+      "fi",
+      "exit 0",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  fs.chmodSync(scriptPath, 0o755);
+}
+
+function runApplyWithFakePnpm(params: {
+  sourceRoot: string;
+  targetRoot: string;
+  fakeBinDir: string;
+}): ReturnType<typeof spawnSync> {
+  return spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      scriptPath,
+      "--apply",
+      "--source-root",
+      params.sourceRoot,
+      "--target-root",
+      params.targetRoot,
+      "--skip-source-checks",
+      "--skip-install",
+      "--skip-gateway-install",
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        PATH: `${params.fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+    },
+  );
 }
 
 describe("lcx-promote-live status", () => {
@@ -321,5 +387,54 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveRuntimeProbePassed=true");
     expect(stdout).toContain("liveRuntimeUpdated=true");
     expect(stdout).toContain("nextHumanStep=send_real_lark_acceptance");
+  });
+
+  it("runs target ui build before live restart and probe", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    const fakeBinDir = tempDir("promote-live-bin");
+    const commandLog = path.join(fakeBinDir, "pnpm.log");
+    writeFakePnpm(fakeBinDir, commandLog, { probeReachable: true });
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+
+    const result = runApplyWithFakePnpm({ sourceRoot, targetRoot, fakeBinDir });
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.stdout).toContain("pnpm build.status=passed");
+    expect(result.stdout).toContain("pnpm ui:build.status=passed");
+    expect(result.stdout).toContain("pnpm --silent openclaw daemon restart.status=passed");
+    expect(result.stdout).toContain("pnpm --silent openclaw channels status --probe.status=passed");
+    expect(fs.readFileSync(commandLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
+      "build",
+      "ui:build",
+      "--silent openclaw daemon restart",
+      "--silent openclaw channels status --probe",
+    ]);
+  });
+
+  it("fails live promotion when channel probe exits zero but reports gateway unreachable", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    const fakeBinDir = tempDir("promote-live-bin");
+    const commandLog = path.join(fakeBinDir, "pnpm.log");
+    writeFakePnpm(fakeBinDir, commandLog, { probeReachable: false });
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+
+    const result = runApplyWithFakePnpm({ sourceRoot, targetRoot, fakeBinDir });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("promoteLive=blocked");
+    expect(result.stdout).toContain("blockedReason=channel probe failed");
+    expect(result.stdout).toContain("pnpm --silent openclaw channels status --probe.status=failed");
   });
 });
