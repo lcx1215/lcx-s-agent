@@ -47,6 +47,7 @@ import { isFeishuFamilyChannel } from "./reply-routing-helpers.js";
 import { routeReply } from "./route-reply.js";
 import { buildBareSessionResetPrompt } from "./session-reset-prompt.js";
 import { buildQueuedSystemPrompt, ensureSkillSnapshot } from "./session-updates.js";
+import { applySkillAutoCueToBody, resolveSkillAutoCue } from "./skill-autocue.js";
 import { resolveTypingMode } from "./typing-mode.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
 import type { TypingController } from "./typing.js";
@@ -389,6 +390,16 @@ export async function runPreparedReply(
   sessionEntry = skillResult.sessionEntry ?? sessionEntry;
   currentSystemSent = skillResult.systemSent;
   const skillsSnapshot = skillResult.skillsSnapshot;
+  const skillAutoCue = resolveSkillAutoCue({
+    body: effectiveBaseBody,
+    availableSkillNames: skillsSnapshot?.skills.map((entry) => entry.name) ?? [],
+  });
+  if (skillAutoCue) {
+    prefixedBodyBase = applySkillAutoCueToBody({
+      body: prefixedBodyBase,
+      cue: skillAutoCue,
+    });
+  }
   const prefixedBody = [threadContextNote, prefixedBodyBase].filter(Boolean).join("\n\n");
   const mediaNote = buildInboundMediaNote(ctx);
   const mediaReplyHint = mediaNote
@@ -448,7 +459,11 @@ export async function runPreparedReply(
     sessionEntry,
     resolveSessionFilePathOptions({ agentId, storePath }),
   );
-  const queueBodyBase = [threadContextNote, effectiveBaseBody].filter(Boolean).join("\n\n");
+  const skillCuedQueueBodyBase = applySkillAutoCueToBody({
+    body: effectiveBaseBody,
+    cue: skillAutoCue,
+  });
+  const queueBodyBase = [threadContextNote, skillCuedQueueBodyBase].filter(Boolean).join("\n\n");
   const queuedBody = mediaNote
     ? [mediaNote, mediaReplyHint, queueBodyBase].filter(Boolean).join("\n").trim()
     : queueBodyBase;

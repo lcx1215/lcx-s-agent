@@ -7,12 +7,18 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 20 * 1024 * 1024;
+const localRuntimeEnv = {
+  ...process.env,
+  HOME: "/Users/liuchengxu",
+  OPENCLAW_CONFIG_PATH: "/Users/liuchengxu/.openclaw/openclaw.json",
+  OPENCLAW_STATE_DIR: "/Users/liuchengxu/.openclaw",
+};
 
 async function runJsonScript(script: string) {
   try {
     return await execFileAsync(process.execPath, ["--import", "tsx", script, "--json"], {
       cwd: repoRoot,
-      env: process.env,
+      env: localRuntimeEnv,
       maxBuffer: EXEC_MAX_BUFFER,
     });
   } catch (error) {
@@ -32,7 +38,7 @@ async function runJsonScriptWithArgs(script: string, args: string[]) {
   try {
     return await execFileAsync(process.execPath, ["--import", "tsx", script, ...args], {
       cwd: repoRoot,
-      env: process.env,
+      env: localRuntimeEnv,
       maxBuffer: EXEC_MAX_BUFFER,
     });
   } catch (error) {
@@ -144,6 +150,7 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("local_operator_latest_is_fresh");
     expect(recoverySource).toContain("local_operator_latest_matches_current_workflow_surface");
     expect(recoverySource).toContain("fresh_training_plan_decision_visible_after_recovery");
+    expect(recoverySource).toContain("runtime_lcx_operator_skills_available_and_autocued");
     expect(recoverySource).toContain("operatorDecisionIdsMatchCurrent");
     expect(recoverySource).toContain("operator_training_plan_snapshot_differs_from_current");
     expect(recoverySource).toContain("operator_training_state_snapshot_differs_from_current");

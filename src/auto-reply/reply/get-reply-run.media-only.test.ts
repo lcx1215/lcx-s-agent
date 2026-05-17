@@ -86,7 +86,7 @@ vi.mock("./typing-mode.js", () => ({
 import { runReplyAgent } from "./agent-runner.js";
 import { summarizeRecentFeishuReplyFlowEvidence } from "./feishu-reply-flow-evidence.js";
 import { routeReply } from "./route-reply.js";
-import { buildQueuedSystemPrompt } from "./session-updates.js";
+import { buildQueuedSystemPrompt, ensureSkillSnapshot } from "./session-updates.js";
 import { resolveTypingMode } from "./typing-mode.js";
 
 function baseParams(
@@ -176,6 +176,47 @@ describe("runPreparedReply media-only handling", () => {
     expect(call?.followupRun.prompt).toContain("[Thread history - for context]");
     expect(call?.followupRun.prompt).toContain("Earlier message in this thread");
     expect(call?.followupRun.prompt).toContain("[User sent media without caption]");
+  });
+
+  it("injects deterministic skill preflight into the agent prompt when a natural-language request matches an installed skill", async () => {
+    vi.mocked(ensureSkillSnapshot).mockResolvedValueOnce({
+      sessionEntry: undefined,
+      systemSent: true,
+      skillsSnapshot: {
+        prompt: "",
+        skills: [{ name: "agent-brain-eval" }],
+        resolvedSkills: [],
+      },
+    });
+
+    const body = "本地智能体真的会用这些skills吗，确保它能用会用真的用了";
+    const result = await runPreparedReply(
+      baseParams({
+        ctx: {
+          Body: body,
+          RawBody: body,
+          CommandBody: body,
+          OriginatingChannel: "slack",
+          OriginatingTo: "C123",
+          ChatType: "group",
+        },
+        sessionCtx: {
+          Body: body,
+          BodyStripped: body,
+          Provider: "slack",
+          ChatType: "group",
+          OriginatingChannel: "slack",
+          OriginatingTo: "C123",
+        },
+      }),
+    );
+
+    expect(result).toEqual({ text: "ok" });
+    const call = vi.mocked(runReplyAgent).mock.calls[0]?.[0];
+    expect(call?.commandBody).toContain("[Gateway skill preflight - deterministic]");
+    expect(call?.commandBody).toContain("Matched skill: agent-brain-eval");
+    expect(call?.commandBody).toContain('Use the "agent-brain-eval" skill');
+    expect(call?.followupRun.prompt).toContain("Matched skill: agent-brain-eval");
   });
 
   it("keeps thread history context on follow-up turns", async () => {

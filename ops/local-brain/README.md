@@ -564,6 +564,11 @@ Use them like this:
 - `cli-anything-harvester`: evaluate CLI-Anything, CLI-Hub, GUI/local software CLI wrappers, and safe agent-native software-control plans before any wrapper is trusted.
 
 The skills are operator guidance, not durable market memory. Do not copy their text into protected repo memory.
+The local reply path also has deterministic skill preflight for common LCX
+operator asks. Natural-language requests about Qwen training, whole-system
+waterflow, agent brain learning, Lark live proof, runtime drift, finance
+learning, CLI-Anything, and skill harvesting should be cued to one installed
+skill before the model answers. Explicit `/skill ...` commands still win.
 
 ## External And General Skills
 

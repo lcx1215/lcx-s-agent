@@ -3,6 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { buildWorkspaceSkillSnapshot } from "../../src/agents/skills.ts";
+import { resolveSkillAutoCue } from "../../src/auto-reply/reply/skill-autocue.ts";
+import { loadConfig } from "../../src/config/config.ts";
 import { LOCAL_OPERATOR_LATEST_PATH } from "./lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
@@ -10,6 +13,39 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 const LOCAL_OPERATOR_LATEST = LOCAL_OPERATOR_LATEST_PATH;
 const MAX_OPERATOR_STATE_AGE_MS = 3 * 60 * 60 * 1000;
+const REQUIRED_RUNTIME_SKILLS = [
+  "agent-brain-eval",
+  "cli-anything-harvester",
+  "lcx-qwen-training-operator",
+  "lcx-workflow-waterflow-auditor",
+  "finance-learning-researcher",
+  "lark-live-loop-debugger",
+  "lark-post-migration-probe",
+  "agent-runtime-drift-auditor",
+  "lcx-baseline-hardening",
+  "lcx-evolution-loop",
+  "l5-regression-batterer",
+  "skill-harvester",
+] as const;
+
+const REQUIRED_AUTOCUE_PROBES = [
+  {
+    body: "香港大学 CLI-Anything 可以把本地软件 CLI 化吗，演示一下",
+    expectedSkill: "cli-anything-harvester",
+  },
+  {
+    body: "本地智能体真的会用这些skills吗，确保它能用会用真的用了",
+    expectedSkill: "agent-brain-eval",
+  },
+  {
+    body: "检查 qwen 训练 guard PID 和最新 adapter promotion truth",
+    expectedSkill: "lcx-qwen-training-operator",
+  },
+  {
+    body: "全系统水路和记忆沉淀一起审一遍",
+    expectedSkill: "lcx-workflow-waterflow-auditor",
+  },
+] as const;
 
 type RecoveryCheck = {
   id: string;
@@ -192,6 +228,43 @@ function compactCurrentTrainingVolatile(value: unknown) {
         ? (record.latestDataset as Record<string, unknown>).counts
         : undefined,
   };
+}
+
+function currentRuntimeSkillSnapshot() {
+  try {
+    const snapshot = buildWorkspaceSkillSnapshot(repoRoot, {
+      config: loadConfig(),
+    });
+    const availableSkillNames = snapshot.skills.map((entry) => entry.name);
+    const missing = REQUIRED_RUNTIME_SKILLS.filter(
+      (skillName) => !availableSkillNames.includes(skillName),
+    );
+    const cueResults = REQUIRED_AUTOCUE_PROBES.map((probe) => {
+      const cue = resolveSkillAutoCue({
+        body: probe.body,
+        availableSkillNames,
+      });
+      return {
+        expectedSkill: probe.expectedSkill,
+        selectedSkill: cue?.skillName,
+        ok: cue?.skillName === probe.expectedSkill,
+      };
+    });
+    return {
+      ok: missing.length === 0 && cueResults.every((entry) => entry.ok),
+      skillCount: availableSkillNames.length,
+      missing,
+      cueResults,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      skillCount: 0,
+      missing: [...REQUIRED_RUNTIME_SKILLS],
+      cueResults: [],
+      error: String(error),
+    };
+  }
 }
 
 function operatorTrainingVolatileMatches(
@@ -519,6 +592,7 @@ async function main() {
   const currentTrainingVolatileSnapshot = compactCurrentTrainingVolatile(
     currentTrainingPlan.payload,
   );
+  const runtimeSkillSnapshot = currentRuntimeSkillSnapshot();
   const operatorTrainingVolatileMatchesCurrent =
     latestTraining === undefined ||
     operatorTrainingVolatileMatches(operatorTrainingSnapshot, currentTrainingVolatileSnapshot);
@@ -638,6 +712,13 @@ async function main() {
         operatorDecisionIdsMatchCurrent: operatorTrainingPlanMatchesCurrent,
         error: currentTrainingPlan.error,
       },
+    },
+    {
+      id: "runtime_lcx_operator_skills_available_and_autocued",
+      ok: runtimeSkillSnapshot.ok,
+      summary:
+        "local runtime skill snapshot must include core LCX operator skills and deterministic natural-language autocues",
+      evidence: runtimeSkillSnapshot,
     },
   ];
 

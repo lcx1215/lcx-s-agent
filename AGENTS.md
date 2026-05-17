@@ -56,6 +56,9 @@ CLI-Anything-style wrappers stay Codex-side auxiliary tools until a concrete
 wrapper has an owner, JSON contract, safety boundary, and local verification;
 LCX Agent may distill the reusable workflow pattern, but not inherit broad
 desktop-control authority by default.
+The live/local reply path should not rely only on weak-model memory for common
+LCX skills: deterministic skill preflight may cue one matching installed skill
+before the model answers, while explicit `/skill` commands still take priority.
 
 Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.
 
