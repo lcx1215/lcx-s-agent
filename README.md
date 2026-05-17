@@ -124,7 +124,7 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 11. 用压缩上下文恢复考试确认新 Codex/Claude Code 窗口不靠聊天历史也能恢复全局：本地 operator latest state 必须写入 `mindModel` 和 `contextRecovery` 摘要。
 12. Mind Model 还要检查 invariant registry：小 workflow、内容口径、训练重叠、临时 HOME 漂移、stored-only learning、未验证市场数据、dev/live 文案这些容易反复犯的错，都必须有头部规则、脚下入口、测试或 receipt 证据和边界字段。
 13. 用 LCX Agent Flow Graph 检查 task waterflow：任务进来以后不能 wrong-flow、漏 filter valve、跳过 receipt、无限回流或把 dev 证据升级成 live-user-seen；每类任务只流过该流过的模块，但必须经过该经过的过滤阀和 bounded feedback。
-14. 本机 Codex skills 分层使用：LCX 核心 skills 进入本仓 runbook，通用开发/部署/外部服务 skills 留在 Codex 全局按需调用；本地大脑只学习 `skill_pattern_distillation` 这种可复用工作流，不把每个 skill 原文或外部服务权限吞进 runtime。
+14. 本机 Codex skills 分层使用：LCX 核心 skills 进入本仓 runbook，通用开发/部署/外部服务 skills 留在 Codex 全局按需调用；遇到 CLI-Anything、CLI-Hub、GUI/local software CLI 化或 agent-native software-control 评估，默认先用 `cli-anything-harvester`；本地大脑只学习 `skill_pattern_distillation` 这种可复用工作流，不把每个 skill 原文、外部服务权限或桌面控制权限吞进 runtime。
 15. Qwen 训练由 `lcx-qwen-training-operator` 这类 operator skill 监督：先查 active PID、overlap、guard log 新鲜度、teacher quota、dataset 和 promotion truth；24 小时进化指训练/eval/backoff/安全拉起闭环，不是 24 小时满负载硬烧。
     运行时只能选一个干净的 `latest-passing` adapter；后续全 Qwen 能力要靠 teacher/dataset/eval/promotion 回流成下一代统一 clean adapter，不能把多个 r 并联上，也不能把带 `parseRecovered` 的 candidate 当成已上线能力。
 16. 复杂工程变更由 `lcx-workflow-waterflow-auditor` 这类 god-view skill 监督：小改动必须能回到水路图、head-tail、一头一尾 proof、记忆沉淀和 dev/live 边界，不能只修局部忘掉全局。

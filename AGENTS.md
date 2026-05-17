@@ -46,11 +46,16 @@ Use the matching skill before acting:
 - `l5-regression-batterer` for L5 baseline pressure tests with realistic user/Lark prompts.
 - `l4-regression-batterer` only as a legacy compatibility alias that should forward to the L5 battery.
 - `skill-harvester` for evaluating and isolating new external/local skills.
+- `cli-anything-harvester` for CLI-Anything, CLI-Hub, GUI/local software CLI wrapper evaluation, and safe agent-native software-control planning.
 
 Keep skill placement explicit: core LCX skills guide this repo's operator work;
 general Codex skills stay global support tools unless the runbook classifies
 them as auxiliary. LCX Agent should learn reusable workflow patterns through
 `skill_pattern_distillation`, not ingest every Codex skill as runtime authority.
+CLI-Anything-style wrappers stay Codex-side auxiliary tools until a concrete
+wrapper has an owner, JSON contract, safety boundary, and local verification;
+LCX Agent may distill the reusable workflow pattern, but not inherit broad
+desktop-control authority by default.
 
 Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.
 

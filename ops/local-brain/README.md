@@ -538,6 +538,7 @@ When context is missing, load only the skills that match the current question. T
 /Users/liuchengxu/.codex/skills/l5-regression-batterer/SKILL.md
 /Users/liuchengxu/.codex/skills/l4-regression-batterer/SKILL.md
 /Users/liuchengxu/.codex/skills/skill-harvester/SKILL.md
+/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md
 ```
 
 List the full current local inventory with:
@@ -560,6 +561,7 @@ Use them like this:
 - `l5-regression-batterer`: L5 baseline pressure tests with realistic Chinese finance/control-room prompts.
 - `l4-regression-batterer`: legacy compatibility alias only; prefer the L5 skill in new work.
 - `skill-harvester`: evaluate and isolate new external or local skills before letting them affect the agent.
+- `cli-anything-harvester`: evaluate CLI-Anything, CLI-Hub, GUI/local software CLI wrappers, and safe agent-native software-control plans before any wrapper is trusted.
 
 The skills are operator guidance, not durable market memory. Do not copy their text into protected repo memory.
 
@@ -587,6 +589,7 @@ Some useful skills are not LCX-specific, but future coding windows should still 
 /Users/liuchengxu/.codex/skills/transcribe/SKILL.md
 /Users/liuchengxu/.codex/skills/screenshot/SKILL.md
 /Users/liuchengxu/.codex/skills/self-improving-for-codex/SKILL.md
+/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md
 ```
 
 Use these as support tools, not as LCX doctrine:
@@ -603,6 +606,7 @@ Use these as support tools, not as LCX doctrine:
 - `pdf`, `doc`, and `transcribe`: local document and audio workflows.
 - `screenshot`: desktop or Lark/Feishu visual evidence capture when the user asks or when a visible UI proof is needed.
 - `self-improving-for-codex`: Codex-global memory loop maintenance only; do not use it to replace LCX Agent's repo-local operator, doctor, memory, or training receipts.
+- `cli-anything-harvester`: CLI-Anything/CLI-Hub and local software wrapper evaluation only; keep wrappers isolated with JSON contracts, safety boundaries, and local proof before promoting any pattern.
 
 Keep deployment, external service, and content-production skills such as
 `cloudflare-deploy`, `netlify-deploy`, `render-deploy`, `vercel-deploy`,
@@ -615,7 +619,7 @@ Do not migrate `chronicle` into LCX Agent. Treat it as a Codex-session
 observation aid with sensitive context boundaries, not as durable agent memory
 or runtime workflow.
 
-Plugin-provided skills may also appear in a Codex session, for example Hugging Face, GitHub, browser, or web-app skills. Treat those as session capabilities, not repo-pinned guarantees. If an external skill is missing, use `skill-harvester` to evaluate and install it in an isolated folder before relying on it.
+Plugin-provided skills may also appear in a Codex session, for example Hugging Face, GitHub, browser, or web-app skills. Treat those as session capabilities, not repo-pinned guarantees. If an external skill is missing, use `skill-harvester` to evaluate and install it in an isolated folder before relying on it. If the request is specifically about CLI-Anything, CLI-Hub, controlling local software through a CLI wrapper, or making desktop software agent-native, use `cli-anything-harvester` first and only distill verified workflow patterns back into LCX Agent.
 
 ## Current Mainline Model
 
