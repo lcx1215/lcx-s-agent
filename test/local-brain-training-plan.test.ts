@@ -233,6 +233,19 @@ describe("local-brain-training-plan", () => {
       adapterPath: "/tmp/adapter-r8",
       promotionReady: false,
     });
+    expect(plan.qwenCapabilityConsolidation).toMatchObject({
+      boundary: "dev_qwen_capability_consolidation_only",
+      runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble",
+      capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter",
+      consolidationState: "candidate_capabilities_not_yet_consolidated",
+      selectedCleanAdapter: "/tmp/adapter-r2",
+      cleanCandidateAdapterCount: 0,
+      blockedCandidateAdapterCount: 1,
+      requiredAction: "continue_failure_focus_until_next_clean_unified_adapter",
+      blockedCapabilityFamilies: [
+        { caseId: "plain_recent_stock_market_brief_preflight", count: 1 },
+      ],
+    });
     expect(plan.activeHeavyEvalCounts).toEqual({
       localBrainEval: 0,
       externalLocalBrainEval: 0,

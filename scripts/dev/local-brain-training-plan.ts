@@ -36,6 +36,32 @@ type EvalSnapshot = {
   parseErrorSamples: string[];
 };
 
+type QwenCapabilityConsolidationSnapshot = {
+  boundary: "dev_qwen_capability_consolidation_only";
+  runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble";
+  capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter";
+  consolidationState:
+    | "selected_clean_adapter"
+    | "candidate_capabilities_not_yet_consolidated"
+    | "awaiting_clean_adapter";
+  selectedCleanAdapter?: string;
+  selectedCleanEval?: Pick<
+    EvalSnapshot,
+    "at" | "name" | "adapterPath" | "passed" | "total" | "promotionReady"
+  >;
+  cleanCandidateAdapterCount: number;
+  blockedCandidateAdapterCount: number;
+  latestCleanCandidate?: EvalSnapshot;
+  latestBlockedCandidate?: EvalSnapshot;
+  blockedCapabilityFamilies: { caseId: string; count: number }[];
+  requiredAction:
+    | "run_promotion_audit_for_latest_clean_candidate"
+    | "continue_failure_focus_until_next_clean_unified_adapter"
+    | "keep_selected_clean_adapter_and_continue_consolidation"
+    | "wait_for_hardened_eval";
+  notes: string[];
+};
+
 type TeacherSnapshot = {
   at: string;
   event: string;
@@ -286,6 +312,101 @@ function latestPassingEvalSnapshot(events: JsonRecord[]): EvalSnapshot | undefin
     .map(evalSnapshotFromEvent)
     .filter((entry): entry is EvalSnapshot => Boolean(entry?.promotionReady))
     .toSorted((left, right) => right.at.localeCompare(left.at))[0];
+}
+
+function uniqueLatestEvalSnapshots(snapshots: EvalSnapshot[]): EvalSnapshot[] {
+  const latestByAdapter = new Map<string, EvalSnapshot>();
+  for (const snapshot of snapshots.toSorted((left, right) => left.at.localeCompare(right.at))) {
+    const key = snapshot.adapterPath ?? `${snapshot.name}:${snapshot.at}`;
+    latestByAdapter.set(key, snapshot);
+  }
+  return [...latestByAdapter.values()].toSorted((left, right) => right.at.localeCompare(left.at));
+}
+
+function compactEvalSnapshot(
+  snapshot: EvalSnapshot | undefined,
+):
+  | Pick<EvalSnapshot, "at" | "name" | "adapterPath" | "passed" | "total" | "promotionReady">
+  | undefined {
+  if (!snapshot) {
+    return undefined;
+  }
+  return {
+    at: snapshot.at,
+    name: snapshot.name,
+    adapterPath: snapshot.adapterPath,
+    passed: snapshot.passed,
+    total: snapshot.total,
+    promotionReady: snapshot.promotionReady,
+  };
+}
+
+function qwenCapabilityConsolidationSnapshot(params: {
+  events: JsonRecord[];
+  latestPassingEval?: EvalSnapshot;
+  latestCandidateEval?: EvalSnapshot;
+}): QwenCapabilityConsolidationSnapshot {
+  const candidateSnapshots = uniqueLatestEvalSnapshots(
+    params.events
+      .filter((event) => event.name === "candidate_hardened_eval")
+      .map(evalSnapshotFromEvent)
+      .filter((entry): entry is EvalSnapshot => Boolean(entry)),
+  );
+  const cleanCandidates = candidateSnapshots.filter((snapshot) => snapshot.promotionReady);
+  const blockedCandidates = candidateSnapshots.filter((snapshot) => !snapshot.promotionReady);
+  const blockedCaseCounts = new Map<string, number>();
+  for (const snapshot of blockedCandidates) {
+    for (const caseId of [
+      ...snapshot.failedCaseIds,
+      ...snapshot.parseErrorCaseIds,
+      ...snapshot.parseRecoveredCaseIds,
+    ]) {
+      blockedCaseCounts.set(caseId, (blockedCaseCounts.get(caseId) ?? 0) + 1);
+    }
+  }
+  const latestCleanCandidate = cleanCandidates[0];
+  const latestBlockedCandidate = blockedCandidates[0];
+  const latestCandidateIsBlocked = Boolean(
+    params.latestCandidateEval && !params.latestCandidateEval.promotionReady,
+  );
+  const consolidationState = params.latestPassingEval
+    ? latestCandidateIsBlocked
+      ? "candidate_capabilities_not_yet_consolidated"
+      : "selected_clean_adapter"
+    : "awaiting_clean_adapter";
+  const requiredAction =
+    latestCandidateIsBlocked || latestBlockedCandidate
+      ? "continue_failure_focus_until_next_clean_unified_adapter"
+      : latestCleanCandidate &&
+          latestCleanCandidate.adapterPath !== params.latestPassingEval?.adapterPath
+        ? "run_promotion_audit_for_latest_clean_candidate"
+        : params.latestPassingEval
+          ? "keep_selected_clean_adapter_and_continue_consolidation"
+          : "wait_for_hardened_eval";
+  return {
+    boundary: "dev_qwen_capability_consolidation_only",
+    runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble",
+    capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter",
+    consolidationState,
+    selectedCleanAdapter: params.latestPassingEval?.adapterPath,
+    selectedCleanEval: compactEvalSnapshot(params.latestPassingEval),
+    cleanCandidateAdapterCount: cleanCandidates.length,
+    blockedCandidateAdapterCount: blockedCandidates.length,
+    latestCleanCandidate,
+    latestBlockedCandidate,
+    blockedCapabilityFamilies: [...blockedCaseCounts.entries()]
+      .map(([caseId, count]) => ({ caseId, count }))
+      .toSorted(
+        (left, right) => right.count - left.count || left.caseId.localeCompare(right.caseId),
+      )
+      .slice(0, 12),
+    requiredAction,
+    notes: [
+      "Do not serve multiple LoRA adapters together just because several r values trained.",
+      "All useful Qwen capability must be distilled back through teacher data, hardened eval, and promotion audit into one clean selected adapter.",
+      "A newer 77/77 candidate with parseRecovered is useful training evidence, not a runtime replacement for the selected clean adapter.",
+    ],
+  };
 }
 
 function datasetSummary(event: JsonRecord | undefined): JsonRecord | undefined {
@@ -744,6 +865,11 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const latestCandidateEval = latestEvalSnapshot(
     guardEvents.filter((event) => event.name === "candidate_hardened_eval"),
   );
+  const qwenCapabilityConsolidation = qwenCapabilityConsolidationSnapshot({
+    events: guardEvents,
+    latestPassingEval,
+    latestCandidateEval,
+  });
   const latestPromotion = latestEvent(
     guardEvents,
     (event) => event.event === "adapter_promoted_for_guard_session",
@@ -785,6 +911,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestStableEval,
     latestTrainingSeedEval,
     latestCandidateEval,
+    qwenCapabilityConsolidation,
     latestPromotionAt: eventTime(latestPromotion),
     latestPromotedAdapter:
       typeof latestPromotion?.adapterPath === "string" ? latestPromotion.adapterPath : undefined,

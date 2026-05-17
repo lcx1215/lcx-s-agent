@@ -134,6 +134,11 @@ surface, and boundary flag.
   guard is already active, the training plan must return
   `training_already_active` and `do_not_start_overlapping_guard`; doctor must
   keep overlapping local-brain training visible instead of hiding it.
+- Qwen capability must consolidate forward. Runtime selection should use one
+  clean `latest-passing` adapter, while useful capability from later r values
+  must flow back through teacher data, hardened eval, and promotion audit into
+  the next unified clean adapter. Do not serve multiple LoRA adapters together
+  or treat a `parseRecovered` candidate as live capability.
 - The system doctor should include `mind-model-consistency`; if it fails, treat
   it as a P2 architecture blind spot before expanding features.
 - A compressed or newly opened coding window should also pass the context

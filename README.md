@@ -126,6 +126,7 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 13. 用 LCX Agent Flow Graph 检查 task waterflow：任务进来以后不能 wrong-flow、漏 filter valve、跳过 receipt、无限回流或把 dev 证据升级成 live-user-seen；每类任务只流过该流过的模块，但必须经过该经过的过滤阀和 bounded feedback。
 14. 本机 Codex skills 分层使用：LCX 核心 skills 进入本仓 runbook，通用开发/部署/外部服务 skills 留在 Codex 全局按需调用；本地大脑只学习 `skill_pattern_distillation` 这种可复用工作流，不把每个 skill 原文或外部服务权限吞进 runtime。
 15. Qwen 训练由 `lcx-qwen-training-operator` 这类 operator skill 监督：先查 active PID、overlap、guard log 新鲜度、teacher quota、dataset 和 promotion truth；24 小时进化指训练/eval/backoff/安全拉起闭环，不是 24 小时满负载硬烧。
+    运行时只能选一个干净的 `latest-passing` adapter；后续全 Qwen 能力要靠 teacher/dataset/eval/promotion 回流成下一代统一 clean adapter，不能把多个 r 并联上，也不能把带 `parseRecovered` 的 candidate 当成已上线能力。
 16. 复杂工程变更由 `lcx-workflow-waterflow-auditor` 这类 god-view skill 监督：小改动必须能回到水路图、head-tail、一头一尾 proof、记忆沉淀和 dev/live 边界，不能只修局部忘掉全局。
 17. 未来目标是世界级 agent 架构，但验收标准不是口号：用户入口简单，内部角色专业，volatile 状态只有一个事实 owner，学习沉淀有 source/retrieval/apply/eval/review 证据，所有回流有边界，dev/live/protected memory 不混，架构变更能被 mind model、flow graph、head-tail、doctor、training-plan、context recovery 和 live probe 共同解释。
 

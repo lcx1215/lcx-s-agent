@@ -79,6 +79,13 @@ active process, eval, promotion, quota, and overlap truth is owned by
 should not carry a second independent ps/log parser or a separate promotion
 decision.
 
+Qwen capability consolidation also belongs to `local-brain-training-plan`.
+Runtime should stay on one clean `latest-passing` adapter, but later r values
+are not thrown away: their useful lessons must be distilled through
+teacher/data/eval/promotion into the next unified clean adapter. Do not present
+multiple r adapters as jointly served capability, and do not promote a candidate
+with `parseRecovered` just because it scored 77/77.
+
 World-class agent architecture is the target standard for future work, but it is
 operational, not a slogan. In this repo it means: single factual owner per volatile
 state family, simple control-room UX, specialized internal roles, source/eval
