@@ -29,7 +29,7 @@ const cognitiveSources = {
   localBrainRunbook:
     "live-visible-fixed; fresh real Lark inbound plus visible reply; Do not call local training or synthetic replay `live-visible-fixed`; A stored source, summary, or dataset row is not enough; stored_only; application_ready; eval_absorbed; Do not claim Qwen model-internal learning without retained artifacts and eval evidence; bounded feedback; answer audit; model answer is candidate; Qwen is challenger; terminal decision; Commercial-grade convergence does not mean deleting useful entrypoints; Converge duplicated authority instead; single factual owner",
   answerAuditSurfaces:
-    "buildLarkAnswerAuditPolicy model_candidate_not_final_authority challenger_only_not_final_authority answer_audit terminalDecision",
+    "buildLarkAnswerAuditPolicy dev_commercial_answer_pipeline_only model_candidate_not_final_authority candidate_answer_not_final_authority challenger_only_not_final_authority answer_audit terminalDecision return_failed_reason local_memory_recall learning_sedimentation_review stored_only_is_not_learning retrieval_apply_eval_review_required",
   controlRoomSurfaces:
     "one main control room control_room_main_lane specialist detail only on demand",
 };

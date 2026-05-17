@@ -91,7 +91,7 @@ describe("LCX commercial answer pipeline", () => {
       "--ask",
       "学习期权基础知识。",
       "--candidate-answer",
-      "先联网找权威来源和实际阅读范围，登记 source registry，再沉淀概念、风险边界和练习；不是期权交易建议。",
+      "先查本地旧沉淀，再联网找权威来源和实际阅读范围，登记来源；做应用验证和评审，保留/降权后再沉淀概念、风险边界和练习；不是期权交易建议。",
     ]);
 
     expect(payload).toEqual(
@@ -104,6 +104,8 @@ describe("LCX commercial answer pipeline", () => {
     expect(payload.stages).toEqual(
       expect.arrayContaining([
         "source_registry_or_web_learning",
+        "learning_sedimentation_review",
+        "local_memory_recall",
         "local_brain_planner",
         "qwen_challenger",
         "review_panel",
@@ -111,5 +113,28 @@ describe("LCX commercial answer pipeline", () => {
       ]),
     );
     expect(payload.failedReasons).toEqual([]);
+  });
+
+  it("rejects shallow web-learning answers that skip local recall and sedimentation evidence", async () => {
+    const payload = await runPipeline([
+      "--ask",
+      "学习期权基础知识。",
+      "--candidate-answer",
+      "我直接给你讲期权基础：看涨看跌、行权价和到期日。",
+    ]);
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(payload.failedReasons).toEqual(
+      expect.arrayContaining([
+        "web_learning_source_intake_missing",
+        "local_memory_check_missing",
+        "learning_sedimentation_review_missing",
+      ]),
+    );
   });
 });

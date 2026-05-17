@@ -179,6 +179,8 @@ describe("LCX flow graph exam", () => {
             "qwen_challenger_not_final_authority",
             "terminal_decision_required",
             "no_raw_json_visible_reply",
+            "stored_only_is_not_learning",
+            "retrieval_apply_eval_review_required",
           ]),
         }),
         expect.objectContaining({

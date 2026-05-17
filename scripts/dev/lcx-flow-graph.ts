@@ -611,6 +611,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "visible_text_no_internal_labels",
       "no_raw_json_visible_reply",
       "source_evidence_gate",
+      "stored_only_is_not_learning",
+      "retrieval_apply_eval_review_required",
       "no_trade_advice",
       "no_unverified_current_market_data",
       "reply_flow_audit_required",

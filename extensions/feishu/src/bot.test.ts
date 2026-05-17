@@ -7041,16 +7041,16 @@ describe("learning council routing", () => {
       }),
     );
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("可以学，但现在还缺可核验材料"),
+      text: expect.stringContaining("收到，已开始学：股市分析知识。"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("识别结果：金融能力学习入口"),
+      text: expect.stringContaining("当前结果：拆解和本地大脑计划入口已经形成"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("当前状态：还没开始学习；没有学习回执"),
+      text: expect.stringContaining("所以我不能说已经学完"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("memory/articles/options-basics.md"),
+      text: expect.stringContaining("后台如果完成，会再补发完成版"),
     });
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>

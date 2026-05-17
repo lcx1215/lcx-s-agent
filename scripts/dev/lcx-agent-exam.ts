@@ -99,7 +99,7 @@ function usage(): never {
       "  --json          print JSON",
       "  --live          run Lark/channel probe commands; still does not claim live-visible-fixed",
       "  --l5            run scripts/l5-regression-batterer.sh --local",
-      "  --timeout-ms N  per-command timeout, default 45000",
+      "  --timeout-ms N  per-command timeout, default 120000",
     ].join("\n"),
   );
 }
@@ -125,7 +125,7 @@ function parseArgs(args: string[]): CliOptions {
     json: false,
     live: false,
     l5: false,
-    timeoutMs: 45_000,
+    timeoutMs: 120_000,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -563,6 +563,10 @@ function buildAnswerAuditPipelineLane(sources?: CognitiveIntegritySources): Exam
     "answer_audit",
     "terminalDecision",
     "return_failed_reason",
+    "local_memory_recall",
+    "learning_sedimentation_review",
+    "stored_only_is_not_learning",
+    "retrieval_apply_eval_review_required",
   ]);
   const runbookOk = hasAll(sources.localBrainRunbook, [
     "bounded feedback",
@@ -1121,59 +1125,51 @@ async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySource
 }
 
 export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
-  const [
-    doctor,
-    trainingPlan,
-    promotionAudit,
-    moduleLearningReview,
-    learningSedimentationAudit,
-    cognitiveIntegritySources,
-  ] = await Promise.all([
-    runCommand({
-      name: "lcx-system-doctor",
-      command: process.execPath,
-      args: ["--import", "tsx", "scripts/dev/lcx-system-doctor.ts", "--json"],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
-    runCommand({
-      name: "local-brain-training-plan",
-      command: process.execPath,
-      args: ["--import", "tsx", "scripts/dev/local-brain-training-plan.ts", "--json"],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
-    runCommand({
-      name: "local-brain-promotion-audit",
-      command: process.execPath,
-      args: ["--import", "tsx", "scripts/dev/local-brain-promotion-audit.ts", "--json"],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
-    runCommand({
-      name: "module-learning-pipeline-review",
-      command: process.execPath,
-      args: [
-        "--import",
-        "tsx",
-        "scripts/dev/module-learning-pipeline-review.ts",
-        "--workspace",
-        DEFAULT_WORKSPACE_DIR,
-        "--no-write",
-        "--json",
-      ],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
-    runCommand({
-      name: "lcx-learning-sedimentation-audit",
-      command: process.execPath,
-      args: ["--import", "tsx", "scripts/dev/lcx-learning-sedimentation-audit.ts", "--json"],
-      parseJson: true,
-      timeoutMs: options.timeoutMs,
-    }),
-    readCognitiveIntegritySources(),
-  ]);
+  const cognitiveIntegritySourcesPromise = readCognitiveIntegritySources();
+  const doctor = await runCommand({
+    name: "lcx-system-doctor",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-system-doctor.ts", "--json"],
+    parseJson: true,
+    timeoutMs: options.timeoutMs,
+  });
+  const trainingPlan = await runCommand({
+    name: "local-brain-training-plan",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/local-brain-training-plan.ts", "--json"],
+    parseJson: true,
+    timeoutMs: options.timeoutMs,
+  });
+  const promotionAudit = await runCommand({
+    name: "local-brain-promotion-audit",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/local-brain-promotion-audit.ts", "--json"],
+    parseJson: true,
+    timeoutMs: options.timeoutMs,
+  });
+  const moduleLearningReview = await runCommand({
+    name: "module-learning-pipeline-review",
+    command: process.execPath,
+    args: [
+      "--import",
+      "tsx",
+      "scripts/dev/module-learning-pipeline-review.ts",
+      "--workspace",
+      DEFAULT_WORKSPACE_DIR,
+      "--no-write",
+      "--json",
+    ],
+    parseJson: true,
+    timeoutMs: options.timeoutMs,
+  });
+  const learningSedimentationAudit = await runCommand({
+    name: "lcx-learning-sedimentation-audit",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-learning-sedimentation-audit.ts", "--json"],
+    parseJson: true,
+    timeoutMs: options.timeoutMs,
+  });
+  const cognitiveIntegritySources = await cognitiveIntegritySourcesPromise;
 
   const [larkDiagnose, channelProbe] = options.live
     ? await Promise.all([

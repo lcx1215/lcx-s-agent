@@ -17,6 +17,7 @@ type PipelineStageId =
   | "intent_classifier"
   | "local_memory_recall"
   | "source_registry_or_web_learning"
+  | "learning_sedimentation_review"
   | "finance_data_gateway"
   | "local_brain_planner"
   | "model_candidate_answer"
@@ -31,6 +32,7 @@ type PipelineNeed = {
     | "fresh_or_current_data"
     | "web_or_external_learning"
     | "local_memory_recall"
+    | "learning_sedimentation_review"
     | "finance_data_gateway"
     | "model_disagreement_arbitration"
     | "review_panel"
@@ -66,7 +68,7 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "short_learning_routes_to_web_source_intake",
     ask: "学习期权基础知识。",
     candidateAnswer:
-      "先联网找权威教材和交易所/监管来源，登记 source registry 和实际阅读范围，再沉淀成基础概念、风险边界和练习题；这不是期权交易建议。",
+      "先查本地旧沉淀，再联网找权威教材和交易所/监管来源，登记来源和实际阅读范围；最后做应用验证、评审、保留/降权决定，再沉淀成基础概念、风险边界和练习题；这不是期权交易建议。",
     expectedDecision: "adopt_visible_answer",
   },
   {
@@ -80,7 +82,7 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "alternative_source_stays_weak_until_followthrough",
     ask: "有个博客说 HBM 要爆发，这能学进本地大脑吗？",
     candidateAnswer:
-      "可以先当弱证据处理，但要原文链接、作者、发布时间、可靠性等级，再找财报、订单、价格窗口和后续复盘；不能直接沉淀成因果、alpha 或仓位规则。",
+      "可以先和本地旧沉淀对照，当弱证据处理，但要原文链接、作者、发布时间、可靠性等级，再找财报、订单、价格窗口和后续复盘；只有通过应用验证、评审和保留/降权决定后，才可能沉淀成 research-only 规则，不能直接沉淀成因果、alpha 或仓位规则。",
     expectedDecision: "adopt_visible_answer",
   },
   {
@@ -101,6 +103,8 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "model_rewrite_budget_required",
   "no_raw_json_visible_reply",
   "source_evidence_gate",
+  "stored_only_is_not_learning",
+  "retrieval_apply_eval_review_required",
   "no_unverified_current_market_data",
   "no_trade_advice",
 ] as const;
@@ -162,10 +166,11 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
     text,
     /\b(?:learn|study|web|online|internet|paper|blog|interview|podcast|source|github|repo)\b|学习|网上|联网|网页|论文|博客|访谈|播客|来源|链接|开源|项目/u,
   );
-  const localMemoryRecall = includesPattern(
+  const explicitLocalMemoryRecall = includesPattern(
     text,
     /\b(?:memory|previous|old rule|learned rule|receipt)\b|本地记忆|旧规则|以前|沉淀|已学|历史/u,
   );
+  const localMemoryRecall = explicitLocalMemoryRecall || webOrExternalLearning;
   const modelDisagreement = includesPattern(
     text,
     /\b(?:model disagreement|which model|conflict)\b|大模型|模型.*分歧|分歧|冲突|听谁/u,
@@ -192,7 +197,14 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
     {
       id: "local_memory_recall",
       required: localMemoryRecall,
-      reason: "old memory must be recalled, checked, and downranked when stale",
+      reason:
+        "learning asks should reuse old local sedimentation before adding new external sources",
+    },
+    {
+      id: "learning_sedimentation_review",
+      required: webOrExternalLearning,
+      reason:
+        "external learning must leave apply/review/eval or keep-downrank evidence before being called learned",
     },
     {
       id: "finance_data_gateway",
@@ -224,6 +236,9 @@ function resolveRequiredStages(needs: PipelineNeed[]): PipelineStageId[] {
     "intent_classifier",
     requiredNeedIds.has("local_memory_recall") ? "local_memory_recall" : undefined,
     requiredNeedIds.has("web_or_external_learning") ? "source_registry_or_web_learning" : undefined,
+    requiredNeedIds.has("learning_sedimentation_review")
+      ? "learning_sedimentation_review"
+      : undefined,
     requiredNeedIds.has("finance_data_gateway") ? "finance_data_gateway" : undefined,
     "local_brain_planner",
     "model_candidate_answer",
@@ -332,6 +347,21 @@ function auditCandidate(params: {
       evidence: sourceIntakeVisible
         ? "candidate routes learning through source intake and reading scope"
         : "candidate teaches from memory without source intake",
+    });
+  }
+
+  if (requiredNeedIds.has("learning_sedimentation_review")) {
+    const sedimentationVisible = includesPattern(
+      candidateLower,
+      /\b(?:apply validation|application validation|review|eval|training absorption|keep|downrank|discard|fresh adjacent)\b|应用验证|评审|审阅|复用检查|吸收|训练|保留|降权|丢弃|相邻任务/u,
+    );
+    checks.push({
+      id: "external_learning_must_leave_sedimentation_evidence",
+      ok: sedimentationVisible,
+      failedReason: sedimentationVisible ? undefined : "learning_sedimentation_review_missing",
+      evidence: sedimentationVisible
+        ? "candidate keeps external learning tied to apply/review/eval or keep-downrank evidence"
+        : "candidate stores or summarizes external learning without sedimentation evidence",
     });
   }
 
