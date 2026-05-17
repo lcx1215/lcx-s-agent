@@ -400,6 +400,8 @@ describe("local-brain-distill-eval", () => {
     expect(source).toContain("must use exact recommended module ids only");
     expect(source).toContain("do not invent prefixes like finance_framework_*");
     expect(source).toContain('LOCAL_BRAIN_EVAL_MAX_TOKENS = "700"');
+    expect(source).toContain("TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS");
+    expect(source).toContain('LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS = "360"');
   });
 
   it("passes no-think template settings through the mlx_lm generate call", async () => {
@@ -525,6 +527,86 @@ describe("local-brain-distill-eval", () => {
       expect(targetPrompt).not.toContain("External financial agent frameworks such as Anthropic");
       expect(targetPrompt).not.toContain("when code is i.");
       expect(targetPrompt).not.toContain("and keep.");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses tighter prompt and token budgets for timeout-prone finance preflight cases", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-timeout-prone-"));
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        "fs.appendFileSync(process.env.EVAL_FAKE_PYTHON_LOG, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        "console.log(JSON.stringify({",
+        "task_family: 'single_company_risk_preflight',",
+        "primary_modules: ['company_fundamentals_value','causal_map','portfolio_risk_gates','quant_math','technical_timing','macro_rates_inflation','source_registry','review_panel','agent_workflow_memory','eval_harness_design','finance_learning_memory','credit_liquidity','cross_asset_liquidity','fx_currency_liquidity','global_index_regime','us_equity_market_structure','etf_regime'],",
+        "supporting_modules: [],",
+        "required_tools: ['control_room_summary'],",
+        "missing_data: ['current_total_assets_and_position_size','position_weights_cost_basis_and_risk_limits','position_weights_and_return_series','portfolio_weights_and_risk_limits','latest_company_fundamental_inputs','valuation_range_and_margin_of_safety_inputs','original_example','abstracted_failure_family','adjacent_non_identical_scenario','shared_contract','regression_proof','hidden_workflow_scope','user_visible_summary_contract','market_scope_and_time_window','fresh_market_data_snapshot','source_timestamp_and_vendor','price_volume_breadth_and_technical_regime_inputs'],",
+        "risk_boundaries: ['research_only','no_model_math_guessing','risk_gate_before_action_language','position_sizing_requires_user_constraints_and_risk_budget','no_trade_advice','do_not_answer_literal_short_phrase_only','do_not_stop_at_original_example','proof_required_before_claiming_transfer','no_raw_json_visible_reply','no_unverified_current_market_data','technical_timing_not_standalone_alpha'],",
+        "next_step: 'route_to_review',",
+        "rejected_context: ['old_lark_conversation_history']",
+        "}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--case-id",
+          "single_company_fundamental_risk,plain_single_stock_position_sizing_preflight",
+          "--summary-only",
+          "--json",
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            EVAL_FAKE_PYTHON_LOG: argLog,
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const records = readFileSync(argLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      const timeoutProneRecords = records.filter((args) => {
+        const prompt = args[args.indexOf("--prompt") + 1] ?? "";
+        return prompt.includes("只研究 NVDA 基本面风险") || prompt.includes("关注 NVDA 持仓多少");
+      });
+      expect(timeoutProneRecords.length).toBe(2);
+      for (const args of timeoutProneRecords) {
+        const prompt = args[args.indexOf("--prompt") + 1] ?? "";
+        expect(args[args.indexOf("--max-tokens") + 1]).toBe("360");
+        expect(prompt.length).toBeLessThan(4_500);
+        expect(prompt).toContain("Timeout-sensitive compact eval");
+        expect(prompt).not.toContain("External financial agent frameworks such as Anthropic");
+      }
+      expect(timeoutProneRecords[0]?.[timeoutProneRecords[0].indexOf("--prompt") + 1]).toContain(
+        "missing_data <= 4",
+      );
+      expect(timeoutProneRecords[1]?.[timeoutProneRecords[1].indexOf("--prompt") + 1]).toContain(
+        "missing_data <= 6",
+      );
+      expect(timeoutProneRecords[1]?.[timeoutProneRecords[1].indexOf("--prompt") + 1]).toContain(
+        "risk_boundaries <= 5",
+      );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

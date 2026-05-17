@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildLocalBrainTrainingPlan } from "../scripts/dev/local-brain-training-plan.js";
+import {
+  buildLocalBrainTrainingPlan,
+  buildQwenBaseModelMigrationPlan,
+} from "../scripts/dev/local-brain-training-plan.js";
 
 async function writeJsonl(prefix: string, lines: unknown[]): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -22,6 +25,86 @@ async function writeJson(
 }
 
 describe("local-brain-training-plan", () => {
+  it("blocks Qwen 1.7B migration probes while training is active", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-qwen-migration-home-"));
+    const cacheDir = path.join(homeDir, ".cache/huggingface/hub/models--Qwen--Qwen3-1.7B");
+    await fs.mkdir(cacheDir, { recursive: true });
+    await fs.writeFile(path.join(cacheDir, "model.safetensors"), "fake");
+
+    try {
+      const plan = await buildQwenBaseModelMigrationPlan({
+        homeDir,
+        machineMemoryBytes: 8 * 1024 * 1024 * 1024,
+        activeHeavyEvalCounts: {
+          localBrainEval: 1,
+          externalLocalBrainEval: 0,
+          mlx: 1,
+        },
+        activeProcesses: [
+          {
+            pid: 101,
+            command: "node --import tsx scripts/dev/minimax-brain-training-guard.ts",
+            role: "guard",
+          },
+          {
+            pid: 102,
+            ppid: 101,
+            command: "node --import tsx scripts/dev/local-brain-distill-eval.ts",
+            role: "local_brain_eval",
+          },
+        ],
+      });
+
+      expect(plan).toMatchObject({
+        boundary: "dev_qwen_base_model_migration_plan_only",
+        currentModel: "Qwen/Qwen3-0.6B",
+        candidateModel: "Qwen/Qwen3-1.7B",
+        candidateCached: true,
+        activeTrainingProcessCount: 2,
+        decision: "blocked_training_active",
+        action: "wait_for_current_guard_eval_and_teacher_to_finish",
+      });
+      expect(plan.allowedNextCommand).toBeUndefined();
+      expect(plan.forbiddenWhileActive).toContain(
+        "do_not_start_qwen_1_7b_smoke_while_guard_active",
+      );
+    } finally {
+      await fs.rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("only makes Qwen 1.7B smoke available when cached and idle", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-qwen-migration-home-"));
+    const cacheDir = path.join(homeDir, ".cache/huggingface/hub/models--Qwen--Qwen3-1.7B");
+    await fs.mkdir(cacheDir, { recursive: true });
+    await fs.writeFile(path.join(cacheDir, "model.safetensors"), "fake");
+
+    try {
+      const plan = await buildQwenBaseModelMigrationPlan({
+        homeDir,
+        machineMemoryBytes: 8 * 1024 * 1024 * 1024,
+        activeHeavyEvalCounts: {
+          localBrainEval: 0,
+          externalLocalBrainEval: 0,
+          mlx: 0,
+        },
+        activeProcesses: [],
+      });
+
+      expect(plan).toMatchObject({
+        candidateCached: true,
+        activeTrainingProcessCount: 0,
+        decision: "ready_for_no_adapter_smoke",
+        action: "run_no_adapter_smoke_before_any_lora_training",
+      });
+      expect(plan.allowedNextCommand).toContain("--no-adapter");
+      expect(plan.allowedNextCommand).toContain("--model Qwen/Qwen3-1.7B");
+      expect(plan.notes.join("\n")).toContain("adapters cannot be directly reused");
+    } finally {
+      await fs.rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("turns eval output-contract failures into a Codex repair decision", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },

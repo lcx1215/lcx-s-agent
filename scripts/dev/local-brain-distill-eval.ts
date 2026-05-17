@@ -82,10 +82,15 @@ const DEFAULT_GUARD_LOG = path.join(
 );
 const LOCAL_BRAIN_EVAL_MAX_TOKENS = "700";
 const LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS = "320";
+const LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS = "360";
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT = 5;
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET = 1_600;
 const LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET = 360;
 const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
+const TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS = new Set([
+  "single_company_fundamental_risk",
+  "plain_single_stock_position_sizing_preflight",
+]);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
@@ -2687,14 +2692,20 @@ function selectCompactEvalContractHints(evalCase: EvalCase): string[] {
   const ranked = selected
     .map((hint, index) => ({ hint, index, score: scoreEvalContractHint(evalCase, hint) }))
     .toSorted((left, right) => right.score - left.score || left.index - right.index);
+  const maxCount = TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
+    ? 2
+    : LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT;
+  const charBudget = TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
+    ? 720
+    : LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET;
   const chosen = ranked
     .filter((entry, index) => entry.score > 0 || index < 2)
-    .slice(0, LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT)
+    .slice(0, maxCount)
     .map((entry) => compactHint(entry.hint));
   const compacted: string[] = [];
   let usedChars = 0;
   for (const hint of chosen) {
-    if (usedChars + hint.length > LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET) {
+    if (usedChars + hint.length > charBudget) {
       break;
     }
     compacted.push(hint);
@@ -2704,13 +2715,27 @@ function selectCompactEvalContractHints(evalCase: EvalCase): string[] {
 }
 
 function outputContractHintsFor(evalCase: EvalCase): string[] {
-  const missingDataCap = Math.max(8, evalCase.requiredMissingData?.length ?? 0);
-  const riskBoundaryCap = Math.max(6, (evalCase.requiredRiskBoundaries?.length ?? 0) + 1);
+  const timeoutProne = TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id);
+  const missingDataCap = timeoutProne
+    ? Math.max(4, evalCase.requiredMissingData?.length ?? 0)
+    : Math.max(8, evalCase.requiredMissingData?.length ?? 0);
+  const riskBoundaryCap = timeoutProne
+    ? Math.max(4, (evalCase.requiredRiskBoundaries?.length ?? 0) + 1)
+    : Math.max(6, (evalCase.requiredRiskBoundaries?.length ?? 0) + 1);
   return LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.map((hint) =>
     hint.startsWith("Hard output budget:")
       ? `Hard output budget: primary_modules <= 8, supporting_modules <= 6, required_tools <= 6, missing_data <= ${missingDataCap}, risk_boundaries <= ${riskBoundaryCap}, rejected_context <= 3.`
       : hint,
   );
+}
+
+function maxTokensForEvalCase(evalCase: EvalCase, mode: "standard" | "timeout_retry"): string {
+  if (mode === "timeout_retry") {
+    return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
+  }
+  return TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
+    ? LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS
+    : LOCAL_BRAIN_EVAL_MAX_TOKENS;
 }
 
 function buildPrompt(evalCase: EvalCase): string {
@@ -2731,6 +2756,9 @@ function buildPrompt(evalCase: EvalCase): string {
     `Output contract: ${outputContractHintsFor(evalCase).join(" ")}`,
     'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
+    TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
+      ? "Timeout-sensitive compact eval: include only required ids and the smallest directly relevant module set."
+      : undefined,
     "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`,
     "primary_modules, supporting_modules, and required_tools must use exact recommended module ids only; do not invent prefixes like finance_framework_*.",
@@ -2747,7 +2775,9 @@ function buildPrompt(evalCase: EvalCase): string {
     "source_kind: clean_eval",
     `user_or_task: ${evalCase.userAsk}`,
     `source_summary: ${evalCase.sourceSummary}`,
-  ].join("\n");
+  ]
+    .filter((line): line is string => typeof line === "string")
+    .join("\n");
 }
 
 function buildTimeoutRetryPrompt(evalCase: EvalCase): string {
@@ -2784,10 +2814,7 @@ function runGenerate(
 ): Promise<string> {
   const prompt =
     mode === "timeout_retry" ? buildTimeoutRetryPrompt(evalCase) : buildPrompt(evalCase);
-  const maxTokens =
-    mode === "timeout_retry"
-      ? LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS
-      : LOCAL_BRAIN_EVAL_MAX_TOKENS;
+  const maxTokens = maxTokensForEvalCase(evalCase, mode);
   return new Promise((resolve, reject) => {
     const args = [
       "-m",

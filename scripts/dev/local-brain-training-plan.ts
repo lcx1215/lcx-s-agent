@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -63,6 +64,31 @@ type QwenCapabilityConsolidationSnapshot = {
   notes: string[];
 };
 
+export type QwenBaseModelMigrationSnapshot = {
+  boundary: "dev_qwen_base_model_migration_plan_only";
+  currentModel: "Qwen/Qwen3-0.6B";
+  candidateModel: "Qwen/Qwen3-1.7B";
+  candidateCachePath: string;
+  candidateCached: boolean;
+  candidateCacheBytes?: number;
+  machineMemoryBytes?: number;
+  activeTrainingProcessCount: number;
+  activeHeavyEvalCounts: {
+    localBrainEval: number;
+    externalLocalBrainEval: number;
+    mlx: number;
+  };
+  decision:
+    | "blocked_training_active"
+    | "candidate_not_cached"
+    | "memory_too_small_for_candidate"
+    | "ready_for_no_adapter_smoke";
+  action: string;
+  allowedNextCommand?: string;
+  forbiddenWhileActive: string[];
+  notes: string[];
+};
+
 type TeacherSnapshot = {
   at: string;
   event: string;
@@ -86,7 +112,7 @@ type QuotaStatusSnapshot = {
   finalConcurrency?: number;
 };
 
-type ActiveTrainingProcess = {
+export type ActiveTrainingProcess = {
   pid?: number;
   ppid?: number;
   elapsed?: string;
@@ -145,6 +171,9 @@ const buildMediumTrainingCommand = (logPath: string): string =>
   `node --import tsx scripts/dev/minimax-brain-training-guard.ts --duration-minutes 285 --batch-limit 20 --teacher-profile minimax-plus-brain --teacher-duration-minutes 12 --teacher-concurrency 6 --teacher-sidecar --teacher-sidecar-max-calls 900 --teacher-sidecar-batch-limit 36 --teacher-sidecar-concurrency 8 --train-every 2 --eval-every 1 --train-iters 40 --load-max 100 --train-load-max 12 --log ${quoteShellArg(logPath)}`;
 
 const execFileAsync = promisify(execFile);
+const QWEN_MIGRATION_CURRENT_MODEL = "Qwen/Qwen3-0.6B" as const;
+const QWEN_MIGRATION_CANDIDATE_MODEL = "Qwen/Qwen3-1.7B" as const;
+const MIN_QWEN_1_7B_SMOKE_MEMORY_BYTES = 8 * 1024 * 1024 * 1024;
 
 function usage(): never {
   throw new Error(
@@ -616,6 +645,91 @@ function activeHeavyEvalSummary(activeProcesses: ActiveTrainingProcess[]) {
   };
 }
 
+function qwenMigrationCandidateCachePath(homeDir = process.env.HOME ?? os.homedir()): string {
+  const hfHome = process.env.HF_HOME;
+  const hubDir = hfHome
+    ? path.join(hfHome, "hub")
+    : path.join(homeDir, ".cache", "huggingface", "hub");
+  return path.join(hubDir, "models--Qwen--Qwen3-1.7B");
+}
+
+async function directorySizeBytes(dirPath: string): Promise<number | undefined> {
+  const stats = await fs.stat(dirPath).catch(() => undefined);
+  if (!stats?.isDirectory()) {
+    return undefined;
+  }
+  const result = await execFileAsync("du", ["-sk", dirPath]).catch(() => undefined);
+  const rawSize = result?.stdout.trim().split(/\s+/u)[0];
+  const sizeKb = rawSize ? Number(rawSize) : NaN;
+  return Number.isFinite(sizeKb) ? sizeKb * 1024 : undefined;
+}
+
+async function machineMemoryBytes(): Promise<number | undefined> {
+  const result = await execFileAsync("sysctl", ["-n", "hw.memsize"]).catch(() => undefined);
+  const parsed = result ? Number(result.stdout.trim()) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export async function buildQwenBaseModelMigrationPlan(params: {
+  activeProcesses: ActiveTrainingProcess[];
+  activeHeavyEvalCounts: QwenBaseModelMigrationSnapshot["activeHeavyEvalCounts"];
+  homeDir?: string;
+  machineMemoryBytes?: number;
+}): Promise<QwenBaseModelMigrationSnapshot> {
+  const candidateCachePath = qwenMigrationCandidateCachePath(params.homeDir);
+  const candidateCacheBytes = await directorySizeBytes(candidateCachePath);
+  const candidateCached = candidateCacheBytes !== undefined;
+  const memoryBytes = params.machineMemoryBytes ?? (await machineMemoryBytes());
+  const activeTrainingProcessCount = params.activeProcesses.length;
+  const active = activeTrainingProcessCount > 0;
+  const memoryTooSmall =
+    typeof memoryBytes === "number" && memoryBytes < MIN_QWEN_1_7B_SMOKE_MEMORY_BYTES;
+  const decision = active
+    ? "blocked_training_active"
+    : !candidateCached
+      ? "candidate_not_cached"
+      : memoryTooSmall
+        ? "memory_too_small_for_candidate"
+        : "ready_for_no_adapter_smoke";
+  const allowedNextCommand =
+    decision === "ready_for_no_adapter_smoke"
+      ? "node --import tsx scripts/dev/local-brain-distill-eval.ts --no-adapter --model Qwen/Qwen3-1.7B --case-id portfolio_mixed_q_t_nvda --summary-only --json --timeout-ms 180000"
+      : undefined;
+  const action =
+    decision === "blocked_training_active"
+      ? "wait_for_current_guard_eval_and_teacher_to_finish"
+      : decision === "candidate_not_cached"
+        ? "download_or_preload_candidate_before_any_smoke"
+        : decision === "memory_too_small_for_candidate"
+          ? "keep_qwen3_0_6b_and_do_not_attempt_candidate"
+          : "run_no_adapter_smoke_before_any_lora_training";
+  return {
+    boundary: "dev_qwen_base_model_migration_plan_only",
+    currentModel: QWEN_MIGRATION_CURRENT_MODEL,
+    candidateModel: QWEN_MIGRATION_CANDIDATE_MODEL,
+    candidateCachePath,
+    candidateCached,
+    candidateCacheBytes,
+    machineMemoryBytes: memoryBytes,
+    activeTrainingProcessCount,
+    activeHeavyEvalCounts: params.activeHeavyEvalCounts,
+    decision,
+    action,
+    allowedNextCommand,
+    forbiddenWhileActive: [
+      "do_not_start_qwen_1_7b_smoke_while_guard_active",
+      "do_not_start_lora_training_while_eval_or_mlx_active",
+      "do_not_replace_runtime_adapter_without_promotion_audit",
+      "do_not_treat_no_adapter_smoke_as_migration_success",
+    ],
+    notes: [
+      "Qwen3-0.6B adapters cannot be directly reused on Qwen3-1.7B; migrate data, curriculum, evals, and gates, then train a new adapter.",
+      "The first safe step is a no-adapter load/inference smoke, not LoRA training.",
+      "A successful smoke is dev evidence only; runtime stays on the latest-passing clean adapter until a new adapter passes hardened eval and promotion audit.",
+    ],
+  };
+}
+
 function hasOutputContractSignals(
   snapshot: EvalSnapshot | undefined,
   guardFailure?: JsonRecord,
@@ -670,6 +784,7 @@ function buildDecisions(params: {
   latestEval?: EvalSnapshot;
   latestTeacher?: TeacherSnapshot;
   latestQuotaStatus?: QuotaStatusSnapshot;
+  qwenBaseModelMigration?: QwenBaseModelMigrationSnapshot;
   moduleLearningReview?: ModuleLearningReviewSnapshot;
   learningSedimentationBridge?: LearningSedimentationBridgeSnapshot;
   guardLogPath: string;
@@ -698,6 +813,29 @@ function buildDecisions(params: {
       reason:
         "local-brain-training-plan detected overlapping heavy local-brain eval while the guard is active.",
       codexRepairEligible: false,
+    });
+  }
+
+  if (params.qwenBaseModelMigration?.decision === "blocked_training_active") {
+    decisions.push({
+      id: "qwen_base_model_migration_blocked_active_training",
+      lane: "qwen_migration",
+      severity: "info",
+      action: "wait_for_idle_before_qwen_1_7b_smoke",
+      reason:
+        "Qwen3-1.7B migration probe is blocked because guard/eval/teacher/MLX work is active.",
+      codexRepairEligible: false,
+    });
+  } else if (params.qwenBaseModelMigration?.decision === "ready_for_no_adapter_smoke") {
+    decisions.push({
+      id: "qwen_base_model_migration_smoke_ready",
+      lane: "qwen_migration",
+      severity: "info",
+      action: "run_no_adapter_smoke_before_any_lora_training",
+      reason:
+        "Qwen3-1.7B candidate is cached and no active local-brain process was detected; run one no-adapter smoke before training.",
+      codexRepairEligible: false,
+      nextCommand: params.qwenBaseModelMigration.allowedNextCommand,
     });
   }
 
@@ -933,6 +1071,10 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
   const moduleLearningReview = await moduleLearningReviewSnapshot(workspaceDir);
   const learningSedimentationBridge = await learningSedimentationBridgeSnapshot(workspaceDir);
+  const qwenBaseModelMigration = await buildQwenBaseModelMigrationPlan({
+    activeProcesses,
+    activeHeavyEvalCounts: activeHeavyEval.counts,
+  });
   const decisions = buildDecisions({
     activeProcesses,
     overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
@@ -941,6 +1083,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestEval,
     latestTeacher,
     latestQuotaStatus,
+    qwenBaseModelMigration,
     moduleLearningReview,
     learningSedimentationBridge,
     guardLogPath: options.guardLogPath,
@@ -976,6 +1119,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
       (!eventTime(latestGuardStart) || latestEval!.at >= eventTime(latestGuardStart)),
     latestTeacher,
     latestQuotaStatus,
+    qwenBaseModelMigration,
     moduleLearningReview,
     learningSedimentationBridge,
     decisions,
