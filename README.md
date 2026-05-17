@@ -142,6 +142,8 @@ node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 
 金融数据不能散落在各模块里直接给 Qwen 或 Lark 用。凡是当前行情、价格、财报、宏观、ETF、期权、指数权重、vendor 字段、仓位风险里会出现数字的路径，先走 `finance_data_gateway_snapshot`：每个字段必须带 provider role、source timestamp、timezone、field definition、unit/currency、adjusted status、source URL/artifact；主源、交叉校验源和官方/issuer 慢源不一致时进入 `data_provenance_quality`，不能硬写结论。
 
+采访、博客、播客、社交情绪、管理层饭局和市场 attention 这类材料不是新开一条学习路线。它们属于 external finance learning 里的弱证据子类：可以沉淀成假设和研究检查项，但必须带 source type、reliability grade、原始来源或 transcript、官方 follow-up、基本面 follow-through、市场 follow-through window、retrieval/apply receipt、eval/training absorption、module-learning review 和 keep/downrank/discard 决策。缺这些证据时，只能保留为 hypothesis-only 或 downranked，不能当因果、alpha、仓位或 durable doctrine。
+
 ## 系统提升和问题族修复纪律
 
 LCX Agent 不把 baseline hardening 理解成“只把当前触发样例补过去”。真正的 baseline 是让同一类错误不再从别的接口冒出来。

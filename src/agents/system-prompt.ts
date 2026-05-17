@@ -87,6 +87,11 @@ function buildMemorySection(params: {
           "When a finance answer needs current, timestamped, priced, fundamental, macro, ETF, options, or vendor-sourced numbers, use finance_data_gateway_snapshot before drafting numeric conclusions. It normalizes primary, cross-check, and official/issuer evidence into one research-only snapshot, makes source timestamp, field definition, currency/unit, adjusted status, freshness, and provider conflicts visible, and blocks or routes conflicted data to data_provenance_quality review instead of letting the model guess.",
         ]
       : []),
+    ...(params.availableTools.has("finance_article_source_registry_record")
+      ? [
+          "When a finance article source must be retained for future low-frequency research learning, use finance_article_source_registry_record. The record must name source type, allowed collection methods, manual-input requirements, freshness expectation, reliability notes, extraction target, and research-only action authority. For interviews, blogs, podcasts, social sentiment, viral executive meetings, and market-attention stories, mark sourceEvidenceClass=weak_alternative_source with reliabilityGrade, primary source or transcript requirement, official/fundamental follow-through gates, market follow-through window, and weakEvidenceLearningPolicy. It must not fetch remote content automatically, create trade authority, or promote weak alternative sources into causality or alpha by themselves.",
+        ]
+      : []),
     ...(params.availableTools.has("finance_article_source_collection_preflight")
       ? [
           "When a finance article source or collection request needs compliance screening before any collection attempt, use finance_article_source_collection_preflight. It returns allowed, blocked, or manual_only and only points to finance_article_extract_capability_input when safe local/manual collection is allowed.",
@@ -109,7 +114,7 @@ function buildMemorySection(params: {
       : []),
     ...(params.availableTools.has("module_learning_pipeline_plan")
       ? [
-          "When any module claims it should learn from an outside source, use module_learning_pipeline_plan to map the module to the shared source registry, actual reading scope, retrieval receipt, application validation, local-brain eval or training absorption evidence, fresh adjacent application, and keep/downrank/discard decision. Do not describe storage or a summary alone as module learning.",
+          "When any module claims it should learn from an outside source, use module_learning_pipeline_plan to map the module to the shared source registry, actual reading scope, retrieval receipt, application validation, local-brain eval or training absorption evidence, fresh adjacent application, and keep/downrank/discard decision. For weak alternative finance sources, include sourceEvidenceClass, sourceReliabilityGrade, primary source or transcript path, official follow-up, fundamental follow-through, market follow-through window, and weakEvidenceLearningPolicy before calling the lesson absorbed. Do not describe storage or a summary alone as module learning.",
         ]
       : []),
     ...(params.availableTools.has("module_learning_pipeline_review")
@@ -401,6 +406,7 @@ function buildLearningDoctrineSection(isMinimal: boolean) {
     "Convert learning into concise lessons, reusable decision rules, correction notes, follow-up items, and stale/downrank decisions.",
     "When a learning output has lasting value, prefer compressing it into compact reusable templates for sizing discipline, risk transmission, outcome review, behavior correction, execution hygiene, business quality, or catalyst mapping instead of leaving it as a loose essay.",
     "Learning outputs must be audited before they enter durable memory. Keep weak evidence provisional and downrank noisy lessons instead of promoting them into doctrine.",
+    "Interviews, blogs, podcasts, social sentiment, viral executive meetings, and market-attention stories are weak alternative finance sources inside the same external-learning chain, not a separate lane; keep them hypothesis-only or downranked until primary source/transcript, reliability grade, official follow-up, fundamental follow-through, market follow-through window, retrieval/apply evidence, eval or training absorption, module-learning review, and keep/downrank/discard evidence exist.",
     "Daily progress must be concrete, not theatrical.",
     "",
   ];
@@ -684,7 +690,7 @@ export function buildAgentSystemPrompt(params: {
     finance_data_gateway_snapshot:
       "Normalize one research-only finance data snapshot from primary, cross-check, and official/issuer evidence; requires timestamps, field definitions, units/currency, freshness, and conflict visibility before sourced numbers are used",
     finance_article_source_registry_record:
-      "Create or refresh one retained finance article source registry entry using only safe collection methods; never fetches remote content automatically",
+      "Create or refresh one retained finance article source registry entry using only safe collection methods; mark interviews, blogs, podcasts, social sentiment, viral events, and market-attention stories as weak alternative evidence with reliability and follow-through gates; never fetches remote content automatically",
     finance_article_source_collection_preflight:
       "Preflight one finance article source or collection request and classify it as allowed, blocked, or manual_only under the safe collection contract; read-only",
     finance_article_source_registry_inspect:
@@ -696,7 +702,7 @@ export function buildAgentSystemPrompt(params: {
     finance_learning_retrieval_review:
       "Summarize finance learning retrieval receipts into a same-day per-run quality review, link apply usage receipts/reviews when present, flag weak learning that did not become retrievable or application-ready, and keep Lark language corpus plus protected memory untouched",
     module_learning_pipeline_plan:
-      "Plan and optionally receipt one evidence-gated module-learning chain across source registry, reading scope, retrieval, application validation, eval/training absorption, fresh adjacent application, and keep/downrank/discard decision; do not describe storage or a summary alone as module learning",
+      "Plan and optionally receipt one evidence-gated module-learning chain across source registry, reading scope, retrieval, application validation, eval/training absorption, fresh adjacent application, and keep/downrank/discard decision; weak alternative finance sources must include reliability, transcript/source, follow-up, follow-through, and weak-evidence policy gates before absorption; do not describe storage or a summary alone as module learning",
     module_learning_pipeline_review:
       "Summarize module-learning plan receipts by evidence status, flags incomplete statuses and boundary-violating module-learning claims, and keep live, provider config, protected memory, language corpus, and execution authority untouched",
     finance_learning_capability_apply:

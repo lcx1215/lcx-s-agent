@@ -135,6 +135,64 @@ describe("finance article source registry tools", () => {
     );
   });
 
+  it("records weak alternative market sources as hypothesis-only inputs with follow-through gates", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-article-source-registry-");
+    const recordTool = createFinanceArticleSourceRegistryRecordTool({ workspaceDir });
+    const inspectTool = createFinanceArticleSourceRegistryInspectTool({ workspaceDir });
+
+    await expect(
+      recordTool.execute("record-weak-interview-missing-gates", {
+        sourceName: "AI executive dinner coverage",
+        sourceType: "viral_event_source",
+        sourceUrlOrIdentifier: "https://example.com/viral-dinner",
+        allowedCollectionMethods: ["user_provided_url", "manual_paste"],
+        requiresManualInput: true,
+        ...buildBaseArgs(),
+      }),
+    ).rejects.toThrow("sourceEvidenceClass=weak_alternative_source");
+
+    await recordTool.execute("record-weak-interview", {
+      sourceName: "AI executive dinner coverage",
+      sourceType: "viral_event_source",
+      sourceUrlOrIdentifier: "https://example.com/viral-dinner",
+      allowedCollectionMethods: ["user_provided_url", "manual_paste"],
+      requiresManualInput: true,
+      complianceNotes:
+        "Use as hypothesis input only; require original article/video transcript, official follow-up, and fundamental follow-through before any durable lesson.",
+      rateLimitNotes: "Manual low-frequency review only.",
+      freshnessExpectation: "same-day source timestamp plus later follow-through window",
+      reliabilityNotes:
+        "Weak alternative source; do not infer causality or alpha from viral attention without official and fundamental evidence.",
+      extractionTarget: "finance_article_extract_capability_input",
+      allowedActionAuthority: "research_only",
+      sourceEvidenceClass: "weak_alternative_source",
+      reliabilityGrade: "d",
+      primarySourceOrTranscriptRequired: true,
+      officialFollowupRequired: true,
+      fundamentalFollowthroughRequired: true,
+      marketFollowthroughWindow: "30-180 days with explicit price and fundamentals review",
+      weakEvidenceLearningPolicy: "downrank_until_followthrough",
+    });
+
+    const inspectResult = await inspectTool.execute("inspect-weak-source", {
+      sourceType: "viral_event_source",
+    });
+    expect(inspectResult.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        sourceCount: 1,
+        sources: [
+          expect.objectContaining({
+            sourceName: "AI executive dinner coverage",
+            sourceEvidenceClass: "weak_alternative_source",
+            reliabilityGrade: "d",
+            weakEvidenceLearningPolicy: "downrank_until_followthrough",
+          }),
+        ],
+      }),
+    );
+  });
+
   it("accepts RSS/public feed sources only when marked public", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-article-source-registry-");
     const recordTool = createFinanceArticleSourceRegistryRecordTool({ workspaceDir });

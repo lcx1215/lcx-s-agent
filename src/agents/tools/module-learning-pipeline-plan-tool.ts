@@ -47,6 +47,16 @@ type ModuleLearningSchema = {
 };
 
 export const MODULE_LEARNING_DECISIONS = ["keep", "downrank", "discard", "not_decided"] as const;
+export const MODULE_LEARNING_SOURCE_EVIDENCE_CLASSES = [
+  "hard",
+  "medium",
+  "weak_alternative_source",
+] as const;
+export const MODULE_LEARNING_SOURCE_RELIABILITY_GRADES = ["a", "b", "c", "d"] as const;
+export const MODULE_LEARNING_WEAK_EVIDENCE_POLICIES = [
+  "hypothesis_only",
+  "downrank_until_followthrough",
+] as const;
 
 type ModuleLearningEvidenceStatus =
   | "missing_evidence"
@@ -76,6 +86,13 @@ const ModuleLearningPipelinePlanSchema = Type.Object({
   applicationValidationReceiptPath: Type.Optional(Type.String()),
   trainingOrEvalAbsorptionEvidencePath: Type.Optional(Type.String()),
   freshAdjacentApplicationTask: Type.Optional(Type.String()),
+  sourceEvidenceClass: Type.Optional(stringEnum(MODULE_LEARNING_SOURCE_EVIDENCE_CLASSES)),
+  sourceReliabilityGrade: Type.Optional(stringEnum(MODULE_LEARNING_SOURCE_RELIABILITY_GRADES)),
+  primarySourceOrTranscriptPath: Type.Optional(Type.String()),
+  officialFollowupEvidencePath: Type.Optional(Type.String()),
+  fundamentalFollowthroughEvidencePath: Type.Optional(Type.String()),
+  marketFollowthroughWindow: Type.Optional(Type.String()),
+  weakEvidenceLearningPolicy: Type.Optional(stringEnum(MODULE_LEARNING_WEAK_EVIDENCE_POLICIES)),
   keepDownrankDiscardDecision: Type.Optional(stringEnum(MODULE_LEARNING_DECISIONS)),
   supersedesReceiptPath: Type.Optional(Type.String()),
   writeReceipt: Type.Optional(Type.Boolean()),
@@ -672,7 +689,11 @@ function resolveEvidenceStatus(params: {
   trainingOrEvalAbsorptionEvidencePath: string | null;
   freshAdjacentApplicationTask: string | null;
   keepDownrankDiscardDecision: string | null;
+  weakEvidenceGateSatisfied: boolean;
 }): ModuleLearningEvidenceStatus {
+  if (!params.weakEvidenceGateSatisfied) {
+    return "missing_evidence";
+  }
   const sourceReady =
     Boolean(params.sourceUrlOrPath) &&
     Boolean(params.actualReadingScope) &&
@@ -777,6 +798,53 @@ export function createModuleLearningPipelinePlanTool(options?: {
       const freshAdjacentApplicationTask = normalizeOptional(
         readStringParam(params, "freshAdjacentApplicationTask", { allowEmpty: true }),
       );
+      const sourceEvidenceClass = normalizeOptional(
+        readStringParam(params, "sourceEvidenceClass", { allowEmpty: true }),
+      );
+      if (
+        sourceEvidenceClass &&
+        !MODULE_LEARNING_SOURCE_EVIDENCE_CLASSES.includes(
+          sourceEvidenceClass as (typeof MODULE_LEARNING_SOURCE_EVIDENCE_CLASSES)[number],
+        )
+      ) {
+        throw new ToolInputError(`unsupported sourceEvidenceClass: ${sourceEvidenceClass}`);
+      }
+      const sourceReliabilityGrade = normalizeOptional(
+        readStringParam(params, "sourceReliabilityGrade", { allowEmpty: true }),
+      );
+      if (
+        sourceReliabilityGrade &&
+        !MODULE_LEARNING_SOURCE_RELIABILITY_GRADES.includes(
+          sourceReliabilityGrade as (typeof MODULE_LEARNING_SOURCE_RELIABILITY_GRADES)[number],
+        )
+      ) {
+        throw new ToolInputError(`unsupported sourceReliabilityGrade: ${sourceReliabilityGrade}`);
+      }
+      const primarySourceOrTranscriptPath = normalizeOptional(
+        readStringParam(params, "primarySourceOrTranscriptPath", { allowEmpty: true }),
+      );
+      const officialFollowupEvidencePath = normalizeOptional(
+        readStringParam(params, "officialFollowupEvidencePath", { allowEmpty: true }),
+      );
+      const fundamentalFollowthroughEvidencePath = normalizeOptional(
+        readStringParam(params, "fundamentalFollowthroughEvidencePath", { allowEmpty: true }),
+      );
+      const marketFollowthroughWindow = normalizeOptional(
+        readStringParam(params, "marketFollowthroughWindow", { allowEmpty: true }),
+      );
+      const weakEvidenceLearningPolicy = normalizeOptional(
+        readStringParam(params, "weakEvidenceLearningPolicy", { allowEmpty: true }),
+      );
+      if (
+        weakEvidenceLearningPolicy &&
+        !MODULE_LEARNING_WEAK_EVIDENCE_POLICIES.includes(
+          weakEvidenceLearningPolicy as (typeof MODULE_LEARNING_WEAK_EVIDENCE_POLICIES)[number],
+        )
+      ) {
+        throw new ToolInputError(
+          `unsupported weakEvidenceLearningPolicy: ${weakEvidenceLearningPolicy}`,
+        );
+      }
       const keepDownrankDiscardDecision = normalizeOptional(
         readStringParam(params, "keepDownrankDiscardDecision", { allowEmpty: true }),
       );
@@ -793,6 +861,19 @@ export function createModuleLearningPipelinePlanTool(options?: {
           `unsupported keepDownrankDiscardDecision: ${keepDownrankDiscardDecision}`,
         );
       }
+      const weakEvidenceGateRequired = sourceEvidenceClass === "weak_alternative_source";
+      const weakEvidenceGateMissing = weakEvidenceGateRequired
+        ? [
+            primarySourceOrTranscriptPath ? null : "primary_source_or_transcript",
+            sourceReliabilityGrade ? null : "source_reliability_grade",
+            officialFollowupEvidencePath ? null : "official_followup_or_contract_evidence",
+            fundamentalFollowthroughEvidencePath ? null : "fundamental_followthrough_evidence",
+            marketFollowthroughWindow ? null : "market_followthrough_window",
+            weakEvidenceLearningPolicy ? null : "weak_evidence_learning_policy",
+          ].filter((item): item is string => Boolean(item))
+        : [];
+      const weakEvidenceGateSatisfied =
+        !weakEvidenceGateRequired || weakEvidenceGateMissing.length === 0;
       const evidenceStatus = resolveEvidenceStatus({
         sourceUrlOrPath,
         actualReadingScope,
@@ -802,6 +883,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
         trainingOrEvalAbsorptionEvidencePath,
         freshAdjacentApplicationTask,
         keepDownrankDiscardDecision,
+        weakEvidenceGateSatisfied,
       });
       const missingEvidence = [
         sourceUrlOrPath ? null : "source_url_or_local_source_path",
@@ -815,6 +897,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
         keepDownrankDiscardDecision && keepDownrankDiscardDecision !== "not_decided"
           ? null
           : "keep_downrank_or_discard_decision",
+        ...weakEvidenceGateMissing,
       ].filter((item): item is string => Boolean(item));
 
       const financePipelineArgs =
@@ -834,6 +917,9 @@ export function createModuleLearningPipelinePlanTool(options?: {
                 schema.targetModule === "data_provenance_quality"
                   ? "data_provenance_quality_review_input"
                   : "finance_article_extract_capability_input",
+              sourceEvidenceClass: sourceEvidenceClass ?? "medium",
+              sourceReliabilityGrade,
+              weakEvidenceLearningPolicy,
             }
           : null;
 
@@ -860,6 +946,20 @@ export function createModuleLearningPipelinePlanTool(options?: {
         applicationValidationReceiptPath,
         trainingOrEvalAbsorptionEvidencePath,
         freshAdjacentApplicationTask,
+        sourceEvidenceClass: sourceEvidenceClass ?? "medium",
+        sourceReliabilityGrade,
+        primarySourceOrTranscriptPath,
+        officialFollowupEvidencePath,
+        fundamentalFollowthroughEvidencePath,
+        marketFollowthroughWindow,
+        weakEvidenceLearningPolicy,
+        weakEvidenceGate: {
+          required: weakEvidenceGateRequired,
+          satisfied: weakEvidenceGateSatisfied,
+          missingEvidence: weakEvidenceGateMissing,
+          boundary:
+            "weak alternative sources can shape hypotheses and reusable research checks only; they cannot become causality, alpha, or trade evidence without follow-through review",
+        },
         keepDownrankDiscardDecision: keepDownrankDiscardDecision ?? "not_decided",
         supersedesReceiptPath,
         existingArtifactPaths,
@@ -873,6 +973,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
           "prior_art_search",
           "source_registry_record",
           "actual_reading_scope",
+          "weak_source_type_reliability_and_followthrough_gate",
           "module_specific_capability_rule",
           "capability_card_or_retrieval_receipt",
           "application_validation_receipt",

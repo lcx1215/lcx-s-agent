@@ -195,6 +195,94 @@ describe("module learning pipeline plan tool", () => {
     );
   });
 
+  it("keeps weak alternative sources in the same module-learning chain with follow-through gates", async () => {
+    const tool = createModuleLearningPipelinePlanTool();
+
+    const missingFollowthrough = await tool.execute("weak-alternative-missing", {
+      targetModule: "company_fundamentals_value",
+      sourceUrlOrPath: "https://example.com/viral-ai-dinner",
+      actualReadingScope: "Read the article and identify the executive interaction claim.",
+      existingArtifactPaths: ["memory/research-sources/viral-ai-dinner.md"],
+      sourceRegistryRecordPath: "memory/finance-article-source-registry.md",
+      retrievalReceiptPath: "memory/finance-learning-retrieval-receipts/weak-source.json",
+      applicationValidationReceiptPath:
+        "memory/finance-learning-apply-usage-receipts/weak-source.json",
+      trainingOrEvalAbsorptionEvidencePath: "ops/local-brain/eval/weak-source.json",
+      freshAdjacentApplicationTask:
+        "Apply the weak-source rule to a fresh AI supply-chain interview without trade advice.",
+      keepDownrankDiscardDecision: "keep",
+      sourceEvidenceClass: "weak_alternative_source",
+      sourceReliabilityGrade: "d",
+      weakEvidenceLearningPolicy: "downrank_until_followthrough",
+    });
+
+    expect(missingFollowthrough.details).toEqual(
+      expect.objectContaining({
+        status: "missing_evidence",
+        weakEvidenceGate: expect.objectContaining({
+          required: true,
+          satisfied: false,
+          missingEvidence: expect.arrayContaining([
+            "primary_source_or_transcript",
+            "official_followup_or_contract_evidence",
+            "fundamental_followthrough_evidence",
+            "market_followthrough_window",
+          ]),
+        }),
+        missingEvidence: expect.arrayContaining([
+          "primary_source_or_transcript",
+          "official_followup_or_contract_evidence",
+          "fundamental_followthrough_evidence",
+        ]),
+      }),
+    );
+
+    const absorbed = await tool.execute("weak-alternative-ready", {
+      targetModule: "company_fundamentals_value",
+      sourceUrlOrPath: "https://example.com/viral-ai-dinner",
+      actualReadingScope:
+        "Read the original article, transcript, official company follow-up, and later filing evidence.",
+      existingArtifactPaths: [
+        "memory/research-sources/viral-ai-dinner.md",
+        "memory/research-sources/viral-ai-dinner-followthrough.md",
+      ],
+      sourceRegistryRecordPath: "memory/finance-article-source-registry.md",
+      retrievalReceiptPath: "memory/finance-learning-retrieval-receipts/weak-source.json",
+      applicationValidationReceiptPath:
+        "memory/finance-learning-apply-usage-receipts/weak-source.json",
+      trainingOrEvalAbsorptionEvidencePath: "ops/local-brain/eval/weak-source.json",
+      freshAdjacentApplicationTask:
+        "Apply the weak-source rule to a fresh AI supply-chain interview without trade advice.",
+      keepDownrankDiscardDecision: "keep",
+      sourceEvidenceClass: "weak_alternative_source",
+      sourceReliabilityGrade: "d",
+      primarySourceOrTranscriptPath: "memory/research-sources/viral-ai-dinner-transcript.md",
+      officialFollowupEvidencePath: "memory/research-sources/ai-supply-chain-official-followup.md",
+      fundamentalFollowthroughEvidencePath:
+        "memory/research-sources/ai-supply-chain-fundamental-followthrough.md",
+      marketFollowthroughWindow: "30-180 days",
+      weakEvidenceLearningPolicy: "downrank_until_followthrough",
+    });
+
+    expect(absorbed.details).toEqual(
+      expect.objectContaining({
+        status: "eval_absorbed",
+        sourceEvidenceClass: "weak_alternative_source",
+        sourceReliabilityGrade: "d",
+        weakEvidenceGate: expect.objectContaining({
+          required: true,
+          satisfied: true,
+          missingEvidence: [],
+        }),
+        financePipelineArgs: expect.objectContaining({
+          sourceEvidenceClass: "weak_alternative_source",
+          sourceReliabilityGrade: "d",
+          weakEvidenceLearningPolicy: "downrank_until_followthrough",
+        }),
+      }),
+    );
+  });
+
   it("writes a receipt and upgrades status when evidence paths are present", async () => {
     const workspaceDir = await makeTempWorkspace("openclaw-module-learning-plan-");
     const tool = createModuleLearningPipelinePlanTool({ workspaceDir });

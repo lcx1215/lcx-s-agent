@@ -1328,6 +1328,46 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("routes interviews blogs and viral market attention as weak external finance learning", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "像黄仁勋和韩国大公司老板吃炸鸡这种 viral 饭局，后面某些 AI 供应链股票大涨。本地大脑应该怎么把采访、博客、播客和市场情绪这类材料沉淀？",
+      },
+    );
+
+    expect(plan.task_family).toBe("alternative_market_signal_source_preflight");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "source_registry",
+        "data_provenance_quality",
+        "company_fundamentals_value",
+        "finance_learning_memory",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "source_type_and_reliability_grade",
+        "primary_source_or_transcript",
+        "official_followup_or_contract_evidence",
+        "market_price_and_fundamental_followup_window",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "module_learning_pipeline_review_status",
+        "keep_downrank_or_discard_decision",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "alternative_source_not_standalone_alpha",
+        "no_causality_from_viral_event",
+        "sample_out_validation_required",
+      ]),
+    );
+  });
+
   it("distills external financial agents into bounded LCX workflow patterns", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

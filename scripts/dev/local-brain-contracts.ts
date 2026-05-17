@@ -1741,6 +1741,11 @@ export function hardenLocalBrainPlanForAsk(
         "source_type_and_reliability_grade",
         "official_followup_or_contract_evidence",
         "market_price_and_fundamental_followup_window",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "module_learning_pipeline_review_status",
+        "keep_downrank_or_discard_decision",
       ],
       risk_boundaries: [
         "research_only",

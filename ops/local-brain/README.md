@@ -521,6 +521,17 @@ The local-brain contracts, eval case, and MiniMax teacher curriculum also requir
 `module_learning_pipeline_plan` receipt is therefore only a planning artifact
 until review, application, and eval/training evidence close the loop.
 
+Alternative finance sources follow the same module-learning lane, not a separate
+special lane. Management interviews, investor blogs, podcasts, social sentiment,
+viral executive meetings, and market-attention stories are weak evidence until a
+source registry entry, actual reading scope, reliability grade, primary source
+or transcript, official follow-up, fundamental follow-through, market
+follow-through window, retrieval/apply evidence, eval or training absorption,
+module-learning review, and keep/downrank/discard decision are all present. The
+only allowed interim status is hypothesis-only or downranked; these sources must
+not become direct causality, standalone alpha, sizing authority, or durable
+doctrine by themselves.
+
 ## Codex Skills To Load
 
 When context is missing, load only the skills that match the current question. The most useful local skill files are:

@@ -52,10 +52,22 @@ export const FINANCE_STRUCTURED_DATA_SOURCE_TYPES = [
   "vendor_data_source",
 ] as const;
 
+export const FINANCE_WEAK_ALTERNATIVE_SOURCE_TYPES = [
+  "management_interview_source",
+  "investor_blog_source",
+  "podcast_source",
+  "social_sentiment_source",
+  "viral_event_source",
+] as const;
+
 type FinanceArticleSourceEntry = FinanceArticleSourceRegistryArtifact["sources"][number];
 
 export function isFinanceStructuredDataSourceType(sourceType: string): boolean {
   return (FINANCE_STRUCTURED_DATA_SOURCE_TYPES as readonly string[]).includes(sourceType);
+}
+
+export function isFinanceWeakAlternativeSourceType(sourceType: string): boolean {
+  return (FINANCE_WEAK_ALTERNATIVE_SOURCE_TYPES as readonly string[]).includes(sourceType);
 }
 
 export function ensureNoForbiddenFinanceArticleSourceSignals(params: {
@@ -125,6 +137,41 @@ export function validateFinanceArticleSourceEntry(entry: FinanceArticleSourceEnt
     if (!STRUCTURED_DATA_QUALITY_PATTERN.test(qualityNotes)) {
       throw new ToolInputError(
         "structured finance data sources must state timestamp, vendor, field-definition, currency, adjustment, update-cadence, or data-quality notes",
+      );
+    }
+  }
+  if (
+    isFinanceWeakAlternativeSourceType(entry.sourceType) ||
+    entry.sourceEvidenceClass === "weak_alternative_source"
+  ) {
+    if (entry.sourceEvidenceClass !== "weak_alternative_source") {
+      throw new ToolInputError(
+        "interview, blog, podcast, social sentiment, and viral-event sources must be marked sourceEvidenceClass=weak_alternative_source",
+      );
+    }
+    if (!entry.reliabilityGrade || !["c", "d"].includes(entry.reliabilityGrade)) {
+      throw new ToolInputError(
+        "weak alternative finance sources must use reliabilityGrade c or d until official and fundamental follow-through is reviewed",
+      );
+    }
+    if (!entry.primarySourceOrTranscriptRequired) {
+      throw new ToolInputError(
+        "weak alternative finance sources must require primary source or transcript evidence",
+      );
+    }
+    if (!entry.officialFollowupRequired || !entry.fundamentalFollowthroughRequired) {
+      throw new ToolInputError(
+        "weak alternative finance sources must require official follow-up and fundamental follow-through evidence before learning can be promoted",
+      );
+    }
+    if (!entry.marketFollowthroughWindow?.trim()) {
+      throw new ToolInputError(
+        "weak alternative finance sources must define a market follow-through window",
+      );
+    }
+    if (!entry.weakEvidenceLearningPolicy) {
+      throw new ToolInputError(
+        "weak alternative finance sources must set weakEvidenceLearningPolicy to hypothesis_only or downrank_until_followthrough",
       );
     }
   }

@@ -308,6 +308,16 @@ recoverable, auditable, and honest under real use.
 - For every new complex brain loop, add or reuse a simple prerequisite eval. Local-brain promotion must run the prerequisite together with the complex case, not as an optional separate check.
 - Convert learning into concise lessons, reusable decision rules, correction notes, follow-up items, and stale/downrank decisions.
 - Online learning internalization is module-wide, not factor-only: every module that claims to learn from an external source must leave the same source registry, actual reading scope, module-specific capability rule, retrieval receipt, apply validation, local-brain eval or training absorption evidence, fresh adjacent application task, safety boundary, and keep/downrank/discard decision. A stored file or summary alone is not module learning.
+- Alternative finance sources such as management interviews, investor blogs,
+  podcasts, social sentiment, viral executive meetings, and market-attention
+  stories are not a separate learning lane. They are weak-evidence subclasses of
+  external finance learning and must stay hypothesis-only or downranked until
+  source type, reliability grade, primary source or transcript, official
+  follow-up, fundamental follow-through, market follow-through window,
+  retrieval/apply evidence, eval or training absorption, module-learning review,
+  and keep/downrank/discard decision are all present. They must not become
+  direct causality, standalone alpha, trade/sizing authority, or durable doctrine
+  by themselves.
 - Daily progress must be concrete, not theatrical.
 
 ## Baseline-Hardening Mode

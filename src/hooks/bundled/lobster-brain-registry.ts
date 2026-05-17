@@ -803,6 +803,11 @@ export const FINANCE_ARTICLE_SOURCE_TYPES = [
   "licensed_research_source",
   "internal_research_source",
   "manual_article_source",
+  "management_interview_source",
+  "investor_blog_source",
+  "podcast_source",
+  "social_sentiment_source",
+  "viral_event_source",
 ] as const;
 
 export const FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS = [
@@ -813,6 +818,19 @@ export const FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS = [
   "browser_assisted_manual_collection",
 ] as const;
 
+export const FINANCE_ARTICLE_SOURCE_EVIDENCE_CLASSES = [
+  "hard",
+  "medium",
+  "weak_alternative_source",
+] as const;
+
+export const FINANCE_ARTICLE_SOURCE_RELIABILITY_GRADES = ["a", "b", "c", "d"] as const;
+
+export const FINANCE_ARTICLE_SOURCE_WEAK_EVIDENCE_LEARNING_POLICIES = [
+  "hypothesis_only",
+  "downrank_until_followthrough",
+] as const;
+
 export type FinanceLearningCapabilityType = (typeof FINANCE_LEARNING_CAPABILITY_TYPES)[number];
 export type FinanceLearningCapabilityTag = (typeof FINANCE_LEARNING_CAPABILITY_TAGS)[number];
 export type FinanceLearningSourceType = (typeof FINANCE_LEARNING_SOURCE_TYPES)[number];
@@ -821,6 +839,12 @@ export type FinanceLearningEvidenceLevel = (typeof FINANCE_LEARNING_EVIDENCE_LEV
 export type FinanceArticleSourceType = (typeof FINANCE_ARTICLE_SOURCE_TYPES)[number];
 export type FinanceArticleSourceCollectionMethod =
   (typeof FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS)[number];
+export type FinanceArticleSourceEvidenceClass =
+  (typeof FINANCE_ARTICLE_SOURCE_EVIDENCE_CLASSES)[number];
+export type FinanceArticleSourceReliabilityGrade =
+  (typeof FINANCE_ARTICLE_SOURCE_RELIABILITY_GRADES)[number];
+export type FinanceArticleSourceWeakEvidenceLearningPolicy =
+  (typeof FINANCE_ARTICLE_SOURCE_WEAK_EVIDENCE_LEARNING_POLICIES)[number];
 
 export const FINANCE_EVIDENCE_CATEGORIES = [
   "equity_market_evidence",
@@ -896,6 +920,13 @@ export type FinanceArticleSourceRegistryArtifact = {
     extractionTarget: string;
     allowedActionAuthority: FinanceFrameworkAllowedActionAuthority;
     isPubliclyAccessible?: boolean | undefined;
+    sourceEvidenceClass?: FinanceArticleSourceEvidenceClass | undefined;
+    reliabilityGrade?: FinanceArticleSourceReliabilityGrade | undefined;
+    primarySourceOrTranscriptRequired?: boolean | undefined;
+    officialFollowupRequired?: boolean | undefined;
+    fundamentalFollowthroughRequired?: boolean | undefined;
+    marketFollowthroughWindow?: string | undefined;
+    weakEvidenceLearningPolicy?: FinanceArticleSourceWeakEvidenceLearningPolicy | undefined;
   }>;
 };
 
@@ -4258,6 +4289,33 @@ export function renderFinanceArticleSourceRegistryArtifact(
           `- **Extraction Target**: ${source.extractionTarget}`,
           `- **Allowed Action Authority**: ${source.allowedActionAuthority}`,
           `- **Is Publicly Accessible**: ${source.isPubliclyAccessible ? "yes" : "no"}`,
+          ...(source.sourceEvidenceClass
+            ? [`- **Source Evidence Class**: ${source.sourceEvidenceClass}`]
+            : []),
+          ...(source.reliabilityGrade
+            ? [`- **Reliability Grade**: ${source.reliabilityGrade}`]
+            : []),
+          ...(typeof source.primarySourceOrTranscriptRequired === "boolean"
+            ? [
+                `- **Primary Source Or Transcript Required**: ${source.primarySourceOrTranscriptRequired ? "yes" : "no"}`,
+              ]
+            : []),
+          ...(typeof source.officialFollowupRequired === "boolean"
+            ? [
+                `- **Official Followup Required**: ${source.officialFollowupRequired ? "yes" : "no"}`,
+              ]
+            : []),
+          ...(typeof source.fundamentalFollowthroughRequired === "boolean"
+            ? [
+                `- **Fundamental Followthrough Required**: ${source.fundamentalFollowthroughRequired ? "yes" : "no"}`,
+              ]
+            : []),
+          ...(source.marketFollowthroughWindow
+            ? [`- **Market Followthrough Window**: ${source.marketFollowthroughWindow}`]
+            : []),
+          ...(source.weakEvidenceLearningPolicy
+            ? [`- **Weak Evidence Learning Policy**: ${source.weakEvidenceLearningPolicy}`]
+            : []),
           "#### Allowed Collection Methods",
           ...(source.allowedCollectionMethods.length > 0
             ? source.allowedCollectionMethods.map((method) => `- ${method}`)
@@ -4449,6 +4507,28 @@ export function parseFinanceArticleSourceRegistryArtifact(
         .match(/- \*\*Is Publicly Accessible\*\*: ([^\r\n]+)/)?.[1]
         ?.trim()
         .toLowerCase();
+      const sourceEvidenceClass = block
+        .match(/- \*\*Source Evidence Class\*\*: ([^\r\n]+)/)?.[1]
+        ?.trim();
+      const reliabilityGrade = block.match(/- \*\*Reliability Grade\*\*: ([^\r\n]+)/)?.[1]?.trim();
+      const primarySourceOrTranscriptRequiredRaw = block
+        .match(/- \*\*Primary Source Or Transcript Required\*\*: ([^\r\n]+)/)?.[1]
+        ?.trim()
+        .toLowerCase();
+      const officialFollowupRequiredRaw = block
+        .match(/- \*\*Official Followup Required\*\*: ([^\r\n]+)/)?.[1]
+        ?.trim()
+        .toLowerCase();
+      const fundamentalFollowthroughRequiredRaw = block
+        .match(/- \*\*Fundamental Followthrough Required\*\*: ([^\r\n]+)/)?.[1]
+        ?.trim()
+        .toLowerCase();
+      const marketFollowthroughWindow = block
+        .match(/- \*\*Market Followthrough Window\*\*: ([^\r\n]+)/)?.[1]
+        ?.trim();
+      const weakEvidenceLearningPolicy = block
+        .match(/- \*\*Weak Evidence Learning Policy\*\*: ([^\r\n]+)/)?.[1]
+        ?.trim();
       const allowedCollectionMethods = [...block.matchAll(/^-\s+([a-z_]+)$/gmu)]
         .map((match) => normalizeFinanceArticleSourceCollectionMethod(match[1]?.trim()))
         .filter(
@@ -4486,6 +4566,30 @@ export function parseFinanceArticleSourceRegistryArtifact(
         extractionTarget,
         allowedActionAuthority,
         isPubliclyAccessible: isPubliclyAccessibleRaw === "yes",
+        sourceEvidenceClass: normalizeFinanceArticleSourceEvidenceClass(sourceEvidenceClass),
+        reliabilityGrade: normalizeFinanceArticleSourceReliabilityGrade(reliabilityGrade),
+        primarySourceOrTranscriptRequired:
+          primarySourceOrTranscriptRequiredRaw === "yes"
+            ? true
+            : primarySourceOrTranscriptRequiredRaw === "no"
+              ? false
+              : undefined,
+        officialFollowupRequired:
+          officialFollowupRequiredRaw === "yes"
+            ? true
+            : officialFollowupRequiredRaw === "no"
+              ? false
+              : undefined,
+        fundamentalFollowthroughRequired:
+          fundamentalFollowthroughRequiredRaw === "yes"
+            ? true
+            : fundamentalFollowthroughRequiredRaw === "no"
+              ? false
+              : undefined,
+        marketFollowthroughWindow,
+        weakEvidenceLearningPolicy: normalizeFinanceArticleSourceWeakEvidenceLearningPolicy(
+          weakEvidenceLearningPolicy,
+        ),
       };
     })
     .flatMap((source) => (source ? [source] : []));
@@ -4812,6 +4916,44 @@ function normalizeFinanceArticleSourceCollectionMethod(
   }
   if ((FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS as readonly string[]).includes(value)) {
     return value as FinanceArticleSourceCollectionMethod;
+  }
+  return undefined;
+}
+
+function normalizeFinanceArticleSourceEvidenceClass(
+  value: string | undefined,
+): FinanceArticleSourceEvidenceClass | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if ((FINANCE_ARTICLE_SOURCE_EVIDENCE_CLASSES as readonly string[]).includes(value)) {
+    return value as FinanceArticleSourceEvidenceClass;
+  }
+  return undefined;
+}
+
+function normalizeFinanceArticleSourceReliabilityGrade(
+  value: string | undefined,
+): FinanceArticleSourceReliabilityGrade | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if ((FINANCE_ARTICLE_SOURCE_RELIABILITY_GRADES as readonly string[]).includes(value)) {
+    return value as FinanceArticleSourceReliabilityGrade;
+  }
+  return undefined;
+}
+
+function normalizeFinanceArticleSourceWeakEvidenceLearningPolicy(
+  value: string | undefined,
+): FinanceArticleSourceWeakEvidenceLearningPolicy | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (
+    (FINANCE_ARTICLE_SOURCE_WEAK_EVIDENCE_LEARNING_POLICIES as readonly string[]).includes(value)
+  ) {
+    return value as FinanceArticleSourceWeakEvidenceLearningPolicy;
   }
   return undefined;
 }

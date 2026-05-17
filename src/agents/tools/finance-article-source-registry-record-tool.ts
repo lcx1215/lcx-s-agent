@@ -33,6 +33,17 @@ const FinanceArticleSourceRegistryRecordSchema = Type.Object({
   extractionTarget: Type.String(),
   allowedActionAuthority: stringEnum(FINANCE_FRAMEWORK_ALLOWED_ACTION_AUTHORITIES),
   isPubliclyAccessible: Type.Optional(Type.Boolean()),
+  sourceEvidenceClass: Type.Optional(
+    stringEnum(["hard", "medium", "weak_alternative_source"] as const),
+  ),
+  reliabilityGrade: Type.Optional(stringEnum(["a", "b", "c", "d"] as const)),
+  primarySourceOrTranscriptRequired: Type.Optional(Type.Boolean()),
+  officialFollowupRequired: Type.Optional(Type.Boolean()),
+  fundamentalFollowthroughRequired: Type.Optional(Type.Boolean()),
+  marketFollowthroughWindow: Type.Optional(Type.String()),
+  weakEvidenceLearningPolicy: Type.Optional(
+    stringEnum(["hypothesis_only", "downrank_until_followthrough"] as const),
+  ),
   executionRequested: Type.Optional(Type.Boolean()),
   autoPromotionRequested: Type.Optional(Type.Boolean()),
   doctrineMutationRequested: Type.Optional(Type.Boolean()),
@@ -119,6 +130,34 @@ export function createFinanceArticleSourceRegistryRecordTool(options?: {
       ) as FinanceArticleSourceRegistryArtifact["sources"][number]["allowedActionAuthority"];
       const isPubliclyAccessible =
         typeof params.isPubliclyAccessible === "boolean" ? params.isPubliclyAccessible : false;
+      const sourceEvidenceClass =
+        typeof params.sourceEvidenceClass === "string"
+          ? (params.sourceEvidenceClass as FinanceArticleSourceRegistryArtifact["sources"][number]["sourceEvidenceClass"])
+          : undefined;
+      const reliabilityGrade =
+        typeof params.reliabilityGrade === "string"
+          ? (params.reliabilityGrade as FinanceArticleSourceRegistryArtifact["sources"][number]["reliabilityGrade"])
+          : undefined;
+      const primarySourceOrTranscriptRequired =
+        typeof params.primarySourceOrTranscriptRequired === "boolean"
+          ? params.primarySourceOrTranscriptRequired
+          : undefined;
+      const officialFollowupRequired =
+        typeof params.officialFollowupRequired === "boolean"
+          ? params.officialFollowupRequired
+          : undefined;
+      const fundamentalFollowthroughRequired =
+        typeof params.fundamentalFollowthroughRequired === "boolean"
+          ? params.fundamentalFollowthroughRequired
+          : undefined;
+      const marketFollowthroughWindow =
+        typeof params.marketFollowthroughWindow === "string"
+          ? params.marketFollowthroughWindow.trim()
+          : undefined;
+      const weakEvidenceLearningPolicy =
+        typeof params.weakEvidenceLearningPolicy === "string"
+          ? (params.weakEvidenceLearningPolicy as FinanceArticleSourceRegistryArtifact["sources"][number]["weakEvidenceLearningPolicy"])
+          : undefined;
 
       ensureNoForbiddenFinanceArticleSourceSignals({
         texts: [
@@ -128,6 +167,10 @@ export function createFinanceArticleSourceRegistryRecordTool(options?: {
           rateLimitNotes,
           reliabilityNotes,
           extractionTarget,
+          sourceEvidenceClass ?? "",
+          reliabilityGrade ?? "",
+          marketFollowthroughWindow ?? "",
+          weakEvidenceLearningPolicy ?? "",
           ...allowedCollectionMethods,
         ],
         executionRequested: params.executionRequested === true,
@@ -148,6 +191,13 @@ export function createFinanceArticleSourceRegistryRecordTool(options?: {
         extractionTarget,
         allowedActionAuthority,
         isPubliclyAccessible,
+        sourceEvidenceClass,
+        reliabilityGrade,
+        primarySourceOrTranscriptRequired,
+        officialFollowupRequired,
+        fundamentalFollowthroughRequired,
+        marketFollowthroughWindow,
+        weakEvidenceLearningPolicy,
       };
       validateFinanceArticleSourceEntry(sourceEntry);
 
