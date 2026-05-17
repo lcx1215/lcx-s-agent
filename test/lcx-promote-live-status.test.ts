@@ -298,7 +298,7 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("nextHumanStep=retry_live_restart_then_probe");
   });
 
-  it("does not call matching commit live-runtime-updated when restart failed but probe passed", () => {
+  it("treats a matching commit as live-runtime-updated when fresh probe passes after restart timeout", () => {
     const sourceRoot = tempDir("promote-live-source");
     const targetRoot = tempDir("promote-live-target");
     git(sourceRoot, ["init", "--quiet"]);
@@ -319,7 +319,7 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveRuntimeCommitMatched=true");
     expect(stdout).toContain("liveRuntimeRestartCommandStatus=failed");
     expect(stdout).toContain("liveRuntimeProbePassed=true");
-    expect(stdout).toContain("liveRuntimeUpdated=false");
-    expect(stdout).toContain("nextHumanStep=retry_live_restart_then_probe");
+    expect(stdout).toContain("liveRuntimeUpdated=true");
+    expect(stdout).toContain("nextHumanStep=send_real_lark_acceptance");
   });
 });

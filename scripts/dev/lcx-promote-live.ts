@@ -910,15 +910,14 @@ export function resolveOperatorStatus(params: {
   const liveRuntimeRestartCommandStatus = params.state?.commands.restart?.status ?? "not_run";
   const liveRuntimeProbePassed =
     params.probe?.status === "passed" || params.state?.commands.probe?.status === "passed";
-  const liveRuntimeRestarted = liveRuntimeRestartCommandStatus === "passed";
-  const liveRuntimeUpdated =
-    liveRuntimeCommitMatched && liveRuntimeRestarted && liveRuntimeProbePassed;
+  const liveRuntimeResponsive = liveRuntimeProbePassed;
+  const liveRuntimeUpdated = liveRuntimeCommitMatched && liveRuntimeResponsive;
   const liveUserSeen = liveRuntimeUpdated && params.visibleProof?.status === "live_visible_fixed";
   const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
     ? "commit_or_clean_dev_then_run_dev_tests"
     : !liveRuntimeCommitMatched
       ? "run_dev_tests_then_promote_dev_to_live"
-      : !liveRuntimeRestarted || !liveRuntimeProbePassed
+      : !liveRuntimeResponsive
         ? "retry_live_restart_then_probe"
         : !liveUserSeen
           ? "send_real_lark_acceptance"
