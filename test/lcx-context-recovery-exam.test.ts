@@ -132,6 +132,7 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.handoffForNewWindow.text).toContain("# LCX New-Window Handoff");
     expect(payload.handoffForNewWindow.text).toContain("do not start overlapping");
     expect(payload.handoffForNewWindow.text).toContain("dev/local handoff only");
+    expect(payload.handoffForNewWindow.text).toContain("informationalWarnings=");
   });
 
   it("keeps the recovery exam visible in durable doctrine and local automation", async () => {

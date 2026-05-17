@@ -423,6 +423,7 @@ function buildNewWindowHandoffText(params: {
     summary: { passed: number; failed: number; total: number };
     actionableFailures: string[];
     actionableWarnings: string[];
+    informationalWarnings: string[];
     requiredRecoveryCommands: string[];
   };
   changeImpact?: ReturnType<typeof compactChangeImpact>;
@@ -481,6 +482,7 @@ function buildNewWindowHandoffText(params: {
     `flowGraphFilters=${scalarText(params.flowGraphEvidence?.filters)}`,
     `actionableFailures=${params.result.actionableFailures.join(" | ") || "none"}`,
     `actionableWarnings=${params.result.actionableWarnings.join(" | ") || "none"}`,
+    `informationalWarnings=${params.result.informationalWarnings.join(" | ") || "none"}`,
     "",
     "## Recovery Commands",
     ...params.result.requiredRecoveryCommands.map((command) => `- ${command}`),

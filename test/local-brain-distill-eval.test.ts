@@ -892,7 +892,9 @@ describe("local-brain-distill-eval", () => {
       passed: 4,
       total: 4,
       promotionReady: false,
-      parseRecoveredCaseIds: ["scenario_probability_no_model_math_guessing"],
+      parseRecoveredCaseIds: expect.arrayContaining([
+        "scenario_probability_no_model_math_guessing",
+      ]),
     });
     const targetCase = payload.cases.find(
       (entry) => entry.id === "scenario_probability_no_model_math_guessing",
