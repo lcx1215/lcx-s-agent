@@ -556,10 +556,13 @@ function buildAnswerAuditPipelineLane(sources?: CognitiveIntegritySources): Exam
   }
   const sourceOk = hasAll(sources.answerAuditSurfaces, [
     "buildLarkAnswerAuditPolicy",
+    "dev_commercial_answer_pipeline_only",
     "model_candidate_not_final_authority",
+    "candidate_answer_not_final_authority",
     "challenger_only_not_final_authority",
     "answer_audit",
     "terminalDecision",
+    "return_failed_reason",
   ]);
   const runbookOk = hasAll(sources.localBrainRunbook, [
     "bounded feedback",
@@ -1090,6 +1093,8 @@ async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySource
     read("extensions/feishu/src/surfaces.ts"),
     read("ops/local-brain/README.md"),
     Promise.all([
+      read("scripts/dev/lcx-commercial-answer-pipeline.ts"),
+      read("test/lcx-commercial-answer-pipeline.test.ts"),
       read("extensions/feishu/src/lark-language-handoff-receipts.ts"),
       read("extensions/feishu/src/lark-context-packet.ts"),
       read("extensions/feishu/src/reply-flow-audit.ts"),

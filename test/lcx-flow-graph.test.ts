@@ -100,10 +100,10 @@ describe("LCX flow graph exam", () => {
     );
     expect(payload.summary.failed).toBe(0);
     expect(payload.summary.total).toBeGreaterThanOrEqual(8);
-    expect(payload.summary.scenarios).toBeGreaterThanOrEqual(13);
+    expect(payload.summary.scenarios).toBeGreaterThanOrEqual(14);
     expect(payload.summary.nodes).toBeGreaterThanOrEqual(70);
     expect(payload.summary.filters).toBeGreaterThanOrEqual(35);
-    expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(6);
+    expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(7);
     expect(payload.summary.consolidatedEntrypointFamilies).toBeGreaterThanOrEqual(8);
     expect(payload.summary.sharedEntrypointOwnerRules).toBeGreaterThanOrEqual(2);
     expect(payload.summary.diagnosticEntries).toBe(payload.summary.scenarios);
@@ -168,6 +168,17 @@ describe("LCX flow graph exam", () => {
             "visible_text_no_internal_labels",
             "bounded_answer_review",
             "reply_flow_audit_required",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "commercial_answer_pipeline_waterflow",
+          feedbackEdgeCount: 2,
+          receipts: expect.arrayContaining(["commercial_answer_pipeline", "review_panel"]),
+          requiredFilters: expect.arrayContaining([
+            "candidate_answer_not_final_authority",
+            "qwen_challenger_not_final_authority",
+            "terminal_decision_required",
+            "no_raw_json_visible_reply",
           ]),
         }),
         expect.objectContaining({
@@ -249,6 +260,14 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "commercial_answer_pipeline_cluster",
+          ownerScenario: "commercial_answer_pipeline_waterflow",
+          mergeFilters: expect.arrayContaining([
+            "candidate_answer_not_final_authority",
+            "terminal_decision_required",
+          ]),
+        }),
+        expect.objectContaining({
           id: "senior_trader_failure_focus_cluster",
           ownerScenario: "senior_trader_failure_focus_waterflow",
           mergeFilters: expect.arrayContaining([
@@ -273,8 +292,8 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           id: "lark_visible_reply_audit_entrypoints",
-          ownerCluster: "dev_live_evidence_cluster",
-          watchedPathTerms: expect.arrayContaining(["reply-flow-audit"]),
+          ownerCluster: "commercial_answer_pipeline_cluster",
+          watchedPathTerms: expect.arrayContaining(["reply-flow-audit", "commercial-answer"]),
         }),
         expect.objectContaining({
           id: "qwen_training_operation_entrypoints",
@@ -338,6 +357,16 @@ describe("LCX flow graph exam", () => {
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:training_overlap_guard",
             "unbounded_or_unreviewed_feedback",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "commercial_answer_pipeline_waterflow",
+          ownerEntrypoint: "scripts/dev/lcx-commercial-answer-pipeline.ts",
+          fastCheck: "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
+          evidenceReceipts: expect.arrayContaining(["commercial_answer_pipeline"]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:candidate_answer_not_final_authority",
+            "missing_or_skipped_filter:terminal_decision_required",
           ]),
         }),
       ]),

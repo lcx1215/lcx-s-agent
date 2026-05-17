@@ -114,6 +114,7 @@ const PATH_RULES: PathRule[] = [
     id: "lark_feishu_visible_surface",
     lane: "lark_feishu_visible_reply",
     patterns: [
+      /^scripts\/dev\/lcx-commercial-answer-pipeline\.ts$/u,
       /^extensions\/feishu\//u,
       /^src\/auto-reply\/reply\/feishu-reply-flow-evidence\.ts$/u,
       /^src\/commands\/capabilities\/lark-/u,

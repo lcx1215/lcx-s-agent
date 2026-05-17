@@ -128,7 +128,8 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 15. Qwen 训练由 `lcx-qwen-training-operator` 这类 operator skill 监督：先查 active PID、overlap、guard log 新鲜度、teacher quota、dataset 和 promotion truth；24 小时进化指训练/eval/backoff/安全拉起闭环，不是 24 小时满负载硬烧。
     运行时只能选一个干净的 `latest-passing` adapter；后续全 Qwen 能力要靠 teacher/dataset/eval/promotion 回流成下一代统一 clean adapter，不能把多个 r 并联上，也不能把带 `parseRecovered` 的 candidate 当成已上线能力。
 16. 复杂工程变更由 `lcx-workflow-waterflow-auditor` 这类 god-view skill 监督：小改动必须能回到水路图、head-tail、一头一尾 proof、记忆沉淀和 dev/live 边界，不能只修局部忘掉全局。
-17. 未来目标是世界级 agent 架构，但验收标准不是口号：用户入口简单，内部角色专业，volatile 状态只有一个事实 owner，学习沉淀有 source/retrieval/apply/eval/review 证据，所有回流有边界，dev/live/protected memory 不混，架构变更能被 mind model、flow graph、head-tail、doctor、training-plan、context recovery 和 live probe 共同解释。
+17. 商用回答流水线由 `scripts/dev/lcx-commercial-answer-pipeline.ts` 做 dev 诊断 owner：模型答案只是候选，Qwen 只是 challenger，本地合约和 review panel 有有限轮次，最后只能 `adopt_visible_answer` 或 `return_failed_reason`。它专门防止短句问法被浅答、模型答案直接当最终答案、无限反复改写、raw JSON/internal label 露给用户。
+18. 未来目标是世界级 agent 架构，但验收标准不是口号：用户入口简单，内部角色专业，volatile 状态只有一个事实 owner，学习沉淀有 source/retrieval/apply/eval/review 证据，所有回流有边界，dev/live/protected memory 不混，架构变更能被 mind model、flow graph、head-tail、doctor、training-plan、context recovery 和 live probe 共同解释。
 
 上帝视角检查命令：
 
@@ -138,7 +139,7 @@ node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 ```
 
-它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图还输出 `diagnosticIndex`：每条水流会告诉你它检测什么问题、事实 owner 是哪个入口、最快检查命令是什么、缺哪个 filter/receipt 会报警。它不是只画结构图，而是给 operator 快速定位系统断点。现在水路图至少覆盖 14 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock、金融数据网关对账、高级交易员失败族闭环。
+它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图还输出 `diagnosticIndex`：每条水流会告诉你它检测什么问题、事实 owner 是哪个入口、最快检查命令是什么、缺哪个 filter/receipt 会报警。它不是只画结构图，而是给 operator 快速定位系统断点。现在水路图至少覆盖 15 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、商用回答流水线、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock、金融数据网关对账、高级交易员失败族闭环。
 
 金融数据不能散落在各模块里直接给 Qwen 或 Lark 用。凡是当前行情、价格、财报、宏观、ETF、期权、指数权重、vendor 字段、仓位风险里会出现数字的路径，先走 `finance_data_gateway_snapshot`：每个字段必须带 provider role、source timestamp、timezone、field definition、unit/currency、adjusted status、source URL/artifact；主源、交叉校验源和官方/issuer 慢源不一致时进入 `data_provenance_quality`，不能硬写结论。
 
@@ -200,6 +201,18 @@ pnpm vitest run extensions/feishu/src/intent-matchers.test.ts
 pnpm vitest run extensions/feishu/src/lark-language-handoff-receipts.test.ts
 pnpm vitest run extensions/feishu/src/surfaces.test.ts
 ```
+
+商用回答流水线 dev 诊断：
+
+```bash
+node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json
+node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts \
+  --ask "学习期权基础知识。" \
+  --candidate-answer "先联网找权威来源和实际阅读范围，登记 source registry，再沉淀概念、风险边界和练习；不是期权交易建议。" \
+  --json
+```
+
+这个命令不碰 live sender/provider/MLX。它只检查：短句是否被展开成真实工作流、当前行情是否标数据缺口、学习是否走来源登记、模型分歧是否按证据仲裁、候选答案能否进入可见回复。
 
 本地大脑 smoke / eval：
 

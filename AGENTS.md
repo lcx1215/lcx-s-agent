@@ -243,6 +243,14 @@ state family, no duplicate hidden diagnostics, no false alarms during expected
 in-progress training, and no loss of the specialized entrypoints a real operator
 needs.
 
+Commercial answer quality has its own dev owner:
+`scripts/dev/lcx-commercial-answer-pipeline.ts`. Use it when changing answer
+composition, Lark visible replies, model/Qwen review, source gating, or
+control-room summary wording. The terminal decision is always either
+`adopt_visible_answer` or `return_failed_reason`; never let model rewrites loop
+without a budget, never treat Qwen as final authority, and never expose raw
+JSON/module labels as the user-visible answer.
+
 ## World-Class Agent Architecture Doctrine
 
 Future LCX Agent architecture should be world-class, but this must mean

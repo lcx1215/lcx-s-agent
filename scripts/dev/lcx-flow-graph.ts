@@ -58,6 +58,8 @@ type FlowNodeId =
   | "display_text_normalizer"
   | "answer_audit_budget"
   | "visible_answer_adoption_gate"
+  | "model_candidate_answer"
+  | "local_contract_audit"
   | "reply_flow_audit"
   | "readability_review"
   | "provider_evidence"
@@ -103,6 +105,11 @@ type FlowFilterId =
   | "error_receipt_required"
   | "visible_text_no_internal_labels"
   | "bounded_answer_review"
+  | "candidate_answer_not_final_authority"
+  | "qwen_challenger_not_final_authority"
+  | "terminal_decision_required"
+  | "model_rewrite_budget_required"
+  | "no_raw_json_visible_reply"
   | "reply_flow_audit_required"
   | "provider_evidence_required"
   | "no_provider_config_change"
@@ -239,6 +246,8 @@ const NODE_IDS: FlowNodeId[] = [
   "display_text_normalizer",
   "answer_audit_budget",
   "visible_answer_adoption_gate",
+  "model_candidate_answer",
+  "local_contract_audit",
   "reply_flow_audit",
   "readability_review",
   "provider_evidence",
@@ -285,6 +294,11 @@ const FILTER_IDS: FlowFilterId[] = [
   "error_receipt_required",
   "visible_text_no_internal_labels",
   "bounded_answer_review",
+  "candidate_answer_not_final_authority",
+  "qwen_challenger_not_final_authority",
+  "terminal_decision_required",
+  "model_rewrite_budget_required",
+  "no_raw_json_visible_reply",
   "reply_flow_audit_required",
   "provider_evidence_required",
   "no_provider_config_change",
@@ -566,6 +580,63 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "feishu-reply-flow",
       "normalizeFeishuDisplayText",
       "lark-loop-diagnose",
+    ],
+  },
+  {
+    id: "commercial_answer_pipeline_waterflow",
+    family: "commercial_answer_adoption_and_failed_reason",
+    objective:
+      "A user-facing answer must move from language intake through planning, evidence gates, bounded local/Qwen/model review, and a terminal adoption gate instead of looping forever or treating a model answer as final authority.",
+    start: "ingress_lark_feishu",
+    end: "visible_reply",
+    requiredNodes: [
+      "ingress_lark_feishu",
+      "intent_classifier",
+      "local_brain_planner",
+      "model_candidate_answer",
+      "answer_audit_budget",
+      "local_contract_audit",
+      "review_panel",
+      "visible_answer_adoption_gate",
+      "control_room_summary",
+      "reply_flow_audit",
+      "visible_reply",
+    ],
+    requiredFilters: [
+      "bounded_answer_review",
+      "candidate_answer_not_final_authority",
+      "qwen_challenger_not_final_authority",
+      "model_rewrite_budget_required",
+      "terminal_decision_required",
+      "visible_text_no_internal_labels",
+      "no_raw_json_visible_reply",
+      "source_evidence_gate",
+      "no_trade_advice",
+      "no_unverified_current_market_data",
+      "reply_flow_audit_required",
+    ],
+    edges: [
+      ["ingress_lark_feishu", "intent_classifier"],
+      ["intent_classifier", "local_brain_planner"],
+      ["local_brain_planner", "model_candidate_answer"],
+      ["model_candidate_answer", "answer_audit_budget"],
+      ["answer_audit_budget", "local_contract_audit"],
+      ["local_contract_audit", "review_panel"],
+      ["review_panel", "visible_answer_adoption_gate"],
+      ["visible_answer_adoption_gate", "control_room_summary"],
+      ["control_room_summary", "reply_flow_audit"],
+      ["reply_flow_audit", "visible_reply"],
+    ],
+    feedbackEdges: [
+      ["review_panel", "model_candidate_answer"],
+      ["local_contract_audit", "local_brain_planner"],
+    ],
+    receipts: [
+      "commercial_answer_pipeline",
+      "lark_language_handoff_receipt",
+      "lark_context_packet",
+      "review_panel",
+      "feishu-reply-flow",
     ],
   },
   {
@@ -938,6 +1009,27 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     mergeFilters: ["dev_ready_not_live_user_seen", "real_lark_inbound_required"],
   },
   {
+    id: "commercial_answer_pipeline_cluster",
+    philosophy:
+      "model answer, Qwen challenge, local audit, review panel, and visible reply adoption are one bounded answer pipeline",
+    ownerScenario: "commercial_answer_pipeline_waterflow",
+    ownerNode: "answer_audit_budget",
+    sameClassTerms: [
+      "commercial answer pipeline",
+      "answer audit",
+      "model_candidate_not_final_authority",
+      "challenger_only_not_final_authority",
+      "terminalDecision",
+      "failedReason",
+    ],
+    mergeFilters: [
+      "candidate_answer_not_final_authority",
+      "qwen_challenger_not_final_authority",
+      "terminal_decision_required",
+      "bounded_answer_review",
+    ],
+  },
+  {
     id: "automation_digest_cluster",
     philosophy:
       "operator loop, cleanup, doctor, training plan, and digest must produce one local truth",
@@ -1055,7 +1147,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
   },
   {
     id: "lark_visible_reply_audit_entrypoints",
-    ownerCluster: "dev_live_evidence_cluster",
+    ownerCluster: "commercial_answer_pipeline_cluster",
     ownerPath: "src/commands/capabilities/lark-loop-diagnose.ts",
     watchedPathTerms: [
       "lark-context-packet",
@@ -1063,6 +1155,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "reply-flow-audit",
       "feishu-reply-flow-evidence",
       "lark-loop-diagnose",
+      "commercial-answer",
     ],
     allowedPaths: [
       "extensions/feishu/src/lark-context-packet.test.ts",
@@ -1072,8 +1165,10 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "extensions/feishu/src/reply-flow-audit.ts",
       "src/auto-reply/reply/feishu-reply-flow-evidence.test.ts",
       "src/auto-reply/reply/feishu-reply-flow-evidence.ts",
+      "scripts/dev/lcx-commercial-answer-pipeline.ts",
       "src/commands/capabilities.lark-loop-diagnose.test.ts",
       "src/commands/capabilities/lark-loop-diagnose.ts",
+      "test/lcx-commercial-answer-pipeline.test.ts",
     ],
   },
   {
@@ -1187,6 +1282,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   compressed_context_recovery_waterflow: "scripts/dev/lcx-context-recovery-exam.ts",
   local_automation_digest_waterflow: "/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh",
   lark_visible_language_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
+  commercial_answer_pipeline_waterflow: "scripts/dev/lcx-commercial-answer-pipeline.ts",
   provider_council_evidence_waterflow: "extensions/feishu/src/learning-council.ts",
   memory_correction_downrank_waterflow: "scripts/dev/lcx-system-memory-sedimentation-gate.ts",
   finance_data_gateway_waterflow: "src/agents/finance-data-gateway.ts",
@@ -1209,6 +1305,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json",
   lark_visible_language_waterflow:
     "node --import tsx src/commands/capabilities/lark-loop-diagnose.ts --json",
+  commercial_answer_pipeline_waterflow:
+    "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
   provider_council_evidence_waterflow: "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
   memory_correction_downrank_waterflow:
     "node --import tsx scripts/dev/lcx-system-memory-sedimentation-gate.ts --json",
@@ -1232,6 +1330,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-system-doctor.ts",
+    "scripts/dev/lcx-commercial-answer-pipeline.ts",
     "scripts/dev/lcx-learning-sedimentation-bridge.ts",
     "scripts/dev/lcx-learning-sedimentation-audit.ts",
     "scripts/dev/lcx-learning-sedimentation-map.ts",
@@ -1254,6 +1353,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "test/lcx-flow-graph.test.ts",
     "test/lcx-mind-model.test.ts",
     "test/lcx-context-recovery-exam.test.ts",
+    "test/lcx-commercial-answer-pipeline.test.ts",
     "test/lcx-learning-sedimentation-bridge.test.ts",
     "test/lcx-learning-sedimentation-audit.test.ts",
     "test/lcx-learning-sedimentation-map.test.ts",

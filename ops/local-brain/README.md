@@ -69,12 +69,13 @@ required filters, evidence receipts, failure signals, and the
 `dev_flow_graph_only` boundary. If a future window sees a workflow symptom, it
 should use this index to find the owner path first instead of creating another
 parallel doctor.
-It should not stay at only six obvious waterflows. The current minimum is 14
-core waterflows, including Lark visible language, provider council evidence,
-memory correction/downrank, same-philosophy engineering consolidation, external
-skill or agent distillation, automation repair locks, and finance data gateway
-reconciliation. The same-philosophy consolidation clusters enforce that related
-mechanisms merge into one owner scenario instead of becoming parallel systems.
+It should not stay at only six obvious waterflows. The current minimum is 15
+core waterflows, including Lark visible language, commercial answer pipeline,
+provider council evidence, memory correction/downrank, same-philosophy
+engineering consolidation, external skill or agent distillation, automation
+repair locks, and finance data gateway reconciliation. The same-philosophy
+consolidation clusters enforce that related mechanisms merge into one owner
+scenario instead of becoming parallel systems.
 
 Commercial-grade convergence does not mean deleting useful entrypoints. Keep
 separate product/operator surfaces for the control room, doctor, training plan,
@@ -121,7 +122,17 @@ blueprint lane.
 4. Commercial answer pipeline: the answer audit policy is that the model answer
    is candidate, Qwen is challenger/not final authority, local review has a
    bounded feedback budget, and the terminal decision is either adopt a visible
-   answer or return a concrete failed reason.
+   answer or return a concrete failed reason. The dev owner is:
+
+   ```bash
+   node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json
+   ```
+
+   Use it before touching answer composition, Lark visible reply wording,
+   model/Qwen review, source gates, or control-room summaries. It is dev-only:
+   it does not call providers, live sender, or MLX, and it does not prove
+   live-user-seen.
+
 5. Live observability summary: Lark proof must converge through
    `lark-loop-diagnose`, channel probe, `feishu-reply-flow.jsonl`, and fresh
    real-user inbound/reply evidence. Synthetic replay and local smoke stay
