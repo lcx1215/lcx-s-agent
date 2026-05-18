@@ -220,6 +220,9 @@ function expectedSurfaceForCandidate(params: {
   ) {
     return "control_room";
   }
+  if (params.family === "live_probe_failure") {
+    return undefined;
+  }
   const target = LARK_ROUTING_FAMILY_CONTRACTS[params.family].target;
   return target === "protocol_truth_surface" ? undefined : target;
 }

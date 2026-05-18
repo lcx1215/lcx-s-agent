@@ -1364,6 +1364,18 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
   }
 
   if (
+    /(?:live\s*验收|真实链路|重启后的真实链路|请只回复)/iu.test(normalized) &&
+    /(?:lark\s*live\s*visible\s*fixed|feishu\s*live\s*visible\s*fixed|live\s*visible\s*fixed|larklivevisiblefixed|feishulivevisiblefixed)/iu.test(
+      compact,
+    )
+  ) {
+    return buildHighSignalSemanticCandidate(
+      "live_probe_failure",
+      "live_visible_acceptance_phrase_family",
+    );
+  }
+
+  if (
     /family\s*=\s*live_scheduling_queue|done\s*[—-]\s*family\s*=\s*live_scheduling_queue/iu.test(
       normalized,
     )

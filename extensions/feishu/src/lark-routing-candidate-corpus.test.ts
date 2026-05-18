@@ -118,6 +118,28 @@ describe("lark routing candidate corpus", () => {
     });
   });
 
+  it("keeps live-visible acceptance phrases in the live probe proof family", () => {
+    const candidate = createLarkPendingRoutingCandidate({
+      source: "lark_user_utterance",
+      payload:
+        "live验收：请只回复 lark-live-visible-fixed-agent-architecture-20260514，并说明这是重启后的真实链路。",
+      createdAt: "2026-05-18T00:00:00.000Z",
+    });
+    const evaluation = evaluateLarkPendingRoutingCandidate({ cfg, candidate });
+
+    expect(evaluation).toMatchObject({
+      reason: "accepted_language_case",
+      candidate: expect.objectContaining({
+        semantic: expect.objectContaining({
+          family: "live_probe_failure",
+        }),
+      }),
+      acceptedCase: expect.objectContaining({
+        family: "live_probe_failure",
+      }),
+    });
+  });
+
   it("accepts investment philosophy skill-internalization utterances as external learning", () => {
     const candidate = createLarkPendingRoutingCandidate({
       source: "lark_user_utterance",
