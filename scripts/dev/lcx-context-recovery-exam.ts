@@ -456,6 +456,7 @@ function compactLearningSedimentationAudit(value: unknown) {
       evalAbsorbed: modulePipeline.evalAbsorbed,
       weakModuleLearning: modulePipeline.weakModuleLearning,
       boundaryViolations: modulePipeline.boundaryViolations,
+      latestReview: modulePipeline.latestReview,
     },
     gaps,
     liveTouched: record.liveTouched,
@@ -509,7 +510,17 @@ function buildNewWindowHandoffText(params: {
   );
   const latestEval = params.trainingPlan?.latestEval;
   const moduleLatestEval = params.moduleAbsorption?.latestEval;
+  const moduleGateCounts =
+    params.moduleAbsorption?.counts && typeof params.moduleAbsorption.counts === "object"
+      ? (params.moduleAbsorption.counts as Record<string, unknown>)
+      : {};
   const modulePipeline = params.learningSedimentation?.moduleLearningPipeline;
+  const sedimentationLatestReview =
+    modulePipeline?.latestReview &&
+    typeof modulePipeline.latestReview === "object" &&
+    !Array.isArray(modulePipeline.latestReview)
+      ? (modulePipeline.latestReview as Record<string, unknown>)
+      : {};
   const sedimentationGaps = stringArray(params.learningSedimentation?.gaps);
   const lines = [
     "# LCX New-Window Handoff",
@@ -544,9 +555,11 @@ function buildNewWindowHandoffText(params: {
     "## Module Learning Truth",
     `absorptionReady=${scalarText(params.moduleAbsorption?.absorptionReady)}`,
     `gateDecision=${scalarText(params.moduleAbsorption?.gateDecision)}`,
+    `moduleGateCounts=plan=${scalarText(moduleGateCounts.planReceiptFiles)} reviewRows=${scalarText(moduleGateCounts.reviewRows)} evalAbsorbed=${scalarText(moduleGateCounts.evalAbsorbed)} weak=${scalarText(moduleGateCounts.weakReceiptCount)} missingAbsorption=${scalarText(moduleGateCounts.missingAbsorptionEvidenceReceipts)}`,
     `moduleGateLatestEval=${scalarText(moduleLatestEval?.passed)}/${scalarText(moduleLatestEval?.total)} promotionReady=${scalarText(moduleLatestEval?.promotionReady)}`,
     `sedimentationAssessment=${scalarText(params.learningSedimentation?.assessment)}`,
-    `sedimentationModulePipeline=${scalarText(modulePipeline?.planReceipts)}/${scalarText(modulePipeline?.reviewFiles)} planReview evalAbsorbed=${scalarText(modulePipeline?.evalAbsorbed)} weak=${scalarText(modulePipeline?.weakModuleLearning)} boundaryViolations=${scalarText(modulePipeline?.boundaryViolations)}`,
+    `sedimentationModulePipeline=${scalarText(modulePipeline?.planReceipts)}/${scalarText(modulePipeline?.reviewFiles)} planReview historicalEvalAbsorbed=${scalarText(modulePipeline?.evalAbsorbed)} weak=${scalarText(modulePipeline?.weakModuleLearning)} boundaryViolations=${scalarText(modulePipeline?.boundaryViolations)}`,
+    `sedimentationLatestReview=${scalarText(sedimentationLatestReview.path)} evalAbsorbed=${scalarText(sedimentationLatestReview.evalAbsorbed)} weak=${scalarText(sedimentationLatestReview.weakModuleLearning)} applicationReady=${scalarText(sedimentationLatestReview.applicationReady)}`,
     `sedimentationGaps=${sedimentationGaps.join(",") || "none"}`,
     `blockers=${blockers.join(",") || "none"}`,
     `nextActions=${nextActions.join(" | ") || "none"}`,

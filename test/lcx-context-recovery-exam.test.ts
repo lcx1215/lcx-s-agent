@@ -120,6 +120,11 @@ describe("LCX compressed context recovery exam", () => {
             evalAbsorbed: number;
             weakModuleLearning: number;
             boundaryViolations: number;
+            latestReview?: {
+              path: string;
+              evalAbsorbed: number;
+              weakModuleLearning: number;
+            };
           };
           gaps: string[];
         };
@@ -158,8 +163,11 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.handoffForNewWindow.text).toContain("dev/local handoff only");
     expect(payload.handoffForNewWindow.text).toContain("deferredCommands=");
     expect(payload.handoffForNewWindow.text).toContain("safetyNotes=");
+    expect(payload.handoffForNewWindow.text).toContain("moduleGateCounts=");
     expect(payload.handoffForNewWindow.text).toContain("sedimentationAssessment=");
     expect(payload.handoffForNewWindow.text).toContain("sedimentationModulePipeline=");
+    expect(payload.handoffForNewWindow.text).toContain("historicalEvalAbsorbed=");
+    expect(payload.handoffForNewWindow.text).toContain("sedimentationLatestReview=");
     expect(payload.handoffForNewWindow.text).toContain("sedimentationGaps=");
     expect(payload.handoffForNewWindow.text).toContain("informationalWarnings=");
   }, 240_000);

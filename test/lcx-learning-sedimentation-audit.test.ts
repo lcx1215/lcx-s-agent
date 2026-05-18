@@ -52,6 +52,12 @@ async function runAudit(workspaceDir: string) {
         reviewFiles: number;
         evalAbsorbed: number;
         weakModuleLearning: number;
+        latestReview?: {
+          path: string;
+          evalAbsorbed: number;
+          weakModuleLearning: number;
+          applicationReady: number;
+        };
       };
     };
     gaps: Array<{ id: string; severity: string }>;
@@ -180,6 +186,13 @@ describe("LCX learning sedimentation audit", () => {
     expect(payload.chains.moduleLearningPipeline).toEqual(
       expect.objectContaining({ ok: true, planReceipts: 1, reviewFiles: 1, evalAbsorbed: 1 }),
     );
+    expect(payload.chains.moduleLearningPipeline.latestReview).toEqual(
+      expect.objectContaining({
+        path: "memory/module-learning-pipeline-reviews/day.json",
+        evalAbsorbed: 1,
+        weakModuleLearning: 0,
+      }),
+    );
     expect(payload.gaps.map((gap) => gap.id)).not.toContain(
       "module_learning_pipeline_has_no_plan_receipts",
     );
@@ -247,6 +260,11 @@ describe("LCX learning sedimentation audit", () => {
 
     expect(output).toContain("module_eval_absorbed=1");
     expect(output).toContain("module_weak_receipts=2");
+    expect(output).toContain(
+      "module_latest_review=memory/module-learning-pipeline-reviews/day.json",
+    );
+    expect(output).toContain("module_latest_review_eval_absorbed=1");
+    expect(output).toContain("module_latest_review_weak_receipts=2");
     expect(output).toContain("module_learning_review_has_weak_receipts");
   });
 

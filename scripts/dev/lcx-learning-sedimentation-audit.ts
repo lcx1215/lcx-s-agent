@@ -141,11 +141,27 @@ async function summarizeModuleLearningReviews(files: FileEntry[]): Promise<{
   evalAbsorbed: number;
   weakModuleLearning: number;
   boundaryViolations: number;
+  latestReview?: {
+    path: string;
+    evalAbsorbed: number;
+    weakModuleLearning: number;
+    boundaryViolations: number;
+    applicationReady: number;
+  };
 }> {
   const summary = {
     evalAbsorbed: 0,
     weakModuleLearning: 0,
     boundaryViolations: 0,
+    latestReview: undefined as
+      | {
+          path: string;
+          evalAbsorbed: number;
+          weakModuleLearning: number;
+          boundaryViolations: number;
+          applicationReady: number;
+        }
+      | undefined,
   };
   for (const file of files) {
     const parsed = await readJsonObject(file.path);
@@ -153,11 +169,23 @@ async function summarizeModuleLearningReviews(files: FileEntry[]): Promise<{
       parsed?.counts && typeof parsed.counts === "object" && !Array.isArray(parsed.counts)
         ? (parsed.counts as Record<string, unknown>)
         : {};
-    summary.evalAbsorbed += typeof counts.evalAbsorbed === "number" ? counts.evalAbsorbed : 0;
-    summary.weakModuleLearning +=
+    const evalAbsorbed = typeof counts.evalAbsorbed === "number" ? counts.evalAbsorbed : 0;
+    const weakModuleLearning =
       typeof counts.weakModuleLearning === "number" ? counts.weakModuleLearning : 0;
-    summary.boundaryViolations +=
+    const boundaryViolations =
       typeof counts.boundaryViolations === "number" ? counts.boundaryViolations : 0;
+    const applicationReady =
+      typeof counts.applicationReady === "number" ? counts.applicationReady : 0;
+    summary.evalAbsorbed += evalAbsorbed;
+    summary.weakModuleLearning += weakModuleLearning;
+    summary.boundaryViolations += boundaryViolations;
+    summary.latestReview ??= {
+      path: file.path,
+      evalAbsorbed,
+      weakModuleLearning,
+      boundaryViolations,
+      applicationReady,
+    };
   }
   return summary;
 }
@@ -328,6 +356,15 @@ async function buildAudit(workspaceDir: string) {
         evalAbsorbed: moduleReviewSummary.evalAbsorbed,
         weakModuleLearning: moduleReviewSummary.weakModuleLearning,
         boundaryViolations: moduleReviewSummary.boundaryViolations,
+        latestReview: moduleReviewSummary.latestReview
+          ? {
+              path: relativeToWorkspace(workspaceDir, moduleReviewSummary.latestReview.path),
+              evalAbsorbed: moduleReviewSummary.latestReview.evalAbsorbed,
+              weakModuleLearning: moduleReviewSummary.latestReview.weakModuleLearning,
+              boundaryViolations: moduleReviewSummary.latestReview.boundaryViolations,
+              applicationReady: moduleReviewSummary.latestReview.applicationReady,
+            }
+          : undefined,
       },
     },
     gaps,
@@ -374,6 +411,9 @@ function renderText(audit: Awaited<ReturnType<typeof buildAudit>>): string {
       `module_review_files=${audit.chains.moduleLearningPipeline.reviewFiles}`,
       `module_eval_absorbed=${audit.chains.moduleLearningPipeline.evalAbsorbed}`,
       `module_weak_receipts=${audit.chains.moduleLearningPipeline.weakModuleLearning}`,
+      `module_latest_review=${audit.chains.moduleLearningPipeline.latestReview?.path ?? "none"}`,
+      `module_latest_review_eval_absorbed=${audit.chains.moduleLearningPipeline.latestReview?.evalAbsorbed ?? 0}`,
+      `module_latest_review_weak_receipts=${audit.chains.moduleLearningPipeline.latestReview?.weakModuleLearning ?? 0}`,
       `gaps=${audit.gaps.map((gap) => gap.id).join(",") || "none"}`,
     ].join("\n") + "\n"
   );
