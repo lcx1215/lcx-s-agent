@@ -49,16 +49,12 @@ const PATH_RULES: PathRule[] = [
     headTailRequired: true,
   },
   {
-    id: "local_brain_micro_surface",
-    lane: "qwen_training_or_local_brain",
+    id: "architecture_supervision_stack",
+    lane: "global_doctrine_and_runbook",
     patterns: [
-      /^scripts\/dev\/local-brain-/u,
-      /^scripts\/dev\/minimax-brain-/u,
-      /^scripts\/dev\/minimax-quota-brain-saturator\.ts$/u,
       /^scripts\/dev\/lcx-change-impact-plan\.ts$/u,
       /^scripts\/dev\/lcx-local-paths\.ts$/u,
       /^scripts\/dev\/lcx-context-recovery-exam\.ts$/u,
-      /^scripts\/dev\/finance-data-gateway-smoke\.ts$/u,
       /^scripts\/dev\/lcx-agent-exam\.ts$/u,
       /^scripts\/dev\/lcx-flow-graph\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
@@ -67,11 +63,32 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-system-doctor\.ts$/u,
       /^test\/lcx-problem-cluster-radar\.test\.ts$/u,
     ],
+    requiredChecks: ["head-tail-consistency", "architecture-supervision-tests"],
+    commands: [
+      "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
+      "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+      "pnpm vitest run test/lcx-change-impact-plan.test.ts test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/lcx-agent-exam.test.ts test/lcx-problem-cluster-radar.test.ts",
+    ],
+    deferredCommands: ["pnpm vitest run test/local-brain-distill-eval.test.ts"],
+    safetyNotes: [
+      "Run deferred local-brain-distill-eval tests only after local-brain-training-plan shows no active guard/eval/MLX process; do not create overlapping heavy eval.",
+    ],
+    headTailRequired: true,
+  },
+  {
+    id: "local_brain_micro_surface",
+    lane: "qwen_training_or_local_brain",
+    patterns: [
+      /^scripts\/dev\/local-brain-/u,
+      /^scripts\/dev\/minimax-brain-/u,
+      /^scripts\/dev\/minimax-quota-brain-saturator\.ts$/u,
+      /^scripts\/dev\/finance-data-gateway-smoke\.ts$/u,
+    ],
     requiredChecks: ["head-tail-consistency", "targeted-local-brain-tests"],
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-      "pnpm vitest run test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/local-brain-contracts.test.ts",
+      "pnpm vitest run test/local-brain-contracts.test.ts test/local-brain-training-plan.test.ts",
     ],
     deferredCommands: ["pnpm vitest run test/local-brain-distill-eval.test.ts"],
     safetyNotes: [

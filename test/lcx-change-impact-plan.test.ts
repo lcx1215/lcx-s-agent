@@ -25,6 +25,13 @@ async function runPlan(changedFile: string) {
   );
   return JSON.parse(stdout) as {
     ok: boolean;
+    affectedLanes: string[];
+    impacts: Array<{
+      id: string;
+      lane: string;
+      matchedFiles: string[];
+      requiredChecks: string[];
+    }>;
     recommendedFastCommands: string[];
     deferredCommands: string[];
     safetyNotes: string[];
@@ -36,6 +43,16 @@ describe("lcx-change-impact-plan", () => {
     const payload = await runPlan("scripts/dev/lcx-context-recovery-exam.ts");
 
     expect(payload.ok).toBe(true);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_stack",
+          lane: "global_doctrine_and_runbook",
+          requiredChecks: expect.arrayContaining(["architecture-supervision-tests"]),
+        }),
+      ]),
+    );
     expect(payload.recommendedFastCommands.join("\n")).not.toContain(
       "test/local-brain-distill-eval.test.ts",
     );
@@ -44,5 +61,28 @@ describe("lcx-change-impact-plan", () => {
     );
     expect(payload.safetyNotes.join("\n")).toContain("no active guard/eval/MLX");
     expect(payload.safetyNotes.join("\n")).toContain("do not create overlapping heavy eval");
+  });
+
+  it("classifies flow graph changes as architecture supervision, not Qwen training work", async () => {
+    const payload = await runPlan("scripts/dev/lcx-flow-graph.ts");
+
+    expect(payload.ok).toBe(true);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_stack",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: ["scripts/dev/lcx-flow-graph.ts"],
+        }),
+      ]),
+    );
+    expect(payload.impacts).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "local_brain_micro_surface",
+        }),
+      ]),
+    );
   });
 });
