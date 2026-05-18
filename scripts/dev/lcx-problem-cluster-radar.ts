@@ -106,6 +106,10 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
+function severityValue(value: unknown): Severity {
+  return value === "P1" || value === "P2" || value === "P3" || value === "info" ? value : "P3";
+}
+
 function severityRank(severity: Severity): number {
   if (severity === "P1") {
     return 3;
@@ -425,22 +429,28 @@ function learningSedimentationCluster(inputs: RadarInputs): ProblemCluster | und
       },
     });
   }
-  const gaps = stringArray(audit?.gaps);
+  const gaps = arrayValue(audit?.gaps).map(recordValue).filter(Boolean);
   if (gaps.length > 0) {
-    signals.push({
-      id: "learning_sedimentation_gaps",
-      severity: "P3",
-      summary: "learning sedimentation has explicit gaps",
-      evidence: gaps,
-    });
+    for (const gap of gaps) {
+      const id = stringValue(gap.id) ?? "learning_sedimentation_gap";
+      signals.push({
+        id,
+        severity: severityValue(gap.severity),
+        summary: stringValue(gap.meaning) ?? "learning sedimentation has an explicit gap",
+        evidence: gap,
+      });
+    }
   }
-  const riskyConflations = arrayValue(map?.riskyConflations);
-  if (riskyConflations.length > 0) {
+  const mapSummary = recordValue(map?.summary);
+  if (mapSummary && booleanValue(mapSummary.languageCorpusSeparated) === false) {
     signals.push({
-      id: "learning_lane_risky_conflations",
+      id: "language_corpus_not_separated",
       severity: "P2",
-      summary: "learning sedimentation map found risky conflations",
-      evidence: riskyConflations,
+      summary: "learning sedimentation map says language corpus is not separated",
+      evidence: {
+        summary: mapSummary,
+        riskyConflations: map?.riskyConflations,
+      },
     });
   }
   return problemCluster({

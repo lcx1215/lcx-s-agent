@@ -150,6 +150,105 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
+  it("treats sedimentation map conflation rules as guardrails, not active incidents", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        latestEval: { passed: 77, total: 77, promotionReady: true, parseRecoveredCaseIds: [] },
+        decisions: [],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        summary: { languageCorpusSeparated: true },
+        riskyConflations: [
+          {
+            from: "language_routing_corpus_boundary",
+            to: "brain_distillation_training_material",
+            rule: "language_corpus_must_not_be_mixed_with_brain_distillation_artifacts",
+          },
+        ],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    expect(result.clusters.map((cluster) => cluster.id)).not.toContain(
+      "learning_sedimentation_cluster",
+    );
+    expect(result.actionableClusters).not.toContain("learning_sedimentation_cluster");
+  });
+
+  it("surfaces real sedimentation audit gap objects with their severity", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        latestEval: { passed: 77, total: 77, promotionReady: true, parseRecoveredCaseIds: [] },
+        decisions: [],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [
+          {
+            id: "module_learning_review_has_weak_receipts",
+            severity: "P2",
+            meaning: "Some module-learning receipts are still weak.",
+          },
+        ],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        summary: { languageCorpusSeparated: true },
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    const cluster = result.clusters.find((entry) => entry.id === "learning_sedimentation_cluster");
+    expect(cluster).toEqual(
+      expect.objectContaining({
+        severity: "P2",
+      }),
+    );
+    expect(cluster?.signals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "module_learning_review_has_weak_receipts",
+          severity: "P2",
+          summary: "Some module-learning receipts are still weak.",
+        }),
+      ]),
+    );
+  });
+
   it("is registered in durable architecture surfaces and can run against current owners", async () => {
     const { stdout } = await runJsonScript("scripts/dev/lcx-problem-cluster-radar.ts");
     const payload = JSON.parse(stdout) as {
