@@ -124,6 +124,7 @@ type ActiveGuardAdapterTruthSnapshot = {
   guardUsesSelectedCleanAdapter: boolean | null;
   guardUsesLatestPromotedAdapter: boolean | null;
   mismatchReasons: string[];
+  stalePromotionReasons: string[];
   action:
     | "guard_adapter_matches_selected_clean_adapter"
     | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
@@ -718,10 +719,12 @@ function activeGuardAdapterTruthSnapshot(params: {
     latestPromotedAdapterStillClean !== false
       ? guardCurrentAdapter === params.latestPromotedAdapter
       : null;
-  const mismatchReasons = [
+  const stalePromotionReasons = [
     latestPromotedAdapterStillClean === false
       ? "latest_promoted_adapter_no_longer_selected_clean"
       : undefined,
+  ].filter((entry): entry is string => Boolean(entry));
+  const mismatchReasons = [
     guardUsesSelectedCleanAdapter === false
       ? "guard_current_adapter_not_selected_clean"
       : undefined,
@@ -753,6 +756,7 @@ function activeGuardAdapterTruthSnapshot(params: {
     guardUsesSelectedCleanAdapter,
     guardUsesLatestPromotedAdapter,
     mismatchReasons,
+    stalePromotionReasons,
     action:
       mismatchReasons.length > 0
         ? "wait_for_active_guard_then_restart_with_selected_clean_adapter"
@@ -1140,6 +1144,20 @@ function buildDecisions(params: {
         `selectedCleanAdapter=${params.activeGuardAdapterTruth?.selectedCleanAdapter ?? "unknown"}`,
         `latestPromotedAdapter=${params.activeGuardAdapterTruth?.latestPromotedAdapter ?? "unknown"}`,
         `mismatch=${params.activeGuardAdapterTruth?.mismatchReasons.join(",")}`,
+      ].join("; "),
+      codexRepairEligible: false,
+    });
+  }
+  if ((params.activeGuardAdapterTruth?.stalePromotionReasons ?? []).length > 0) {
+    decisions.push({
+      id: "latest_promoted_adapter_not_selected_clean",
+      lane: "adapter_promotion",
+      severity: "P3",
+      action: "keep_selected_clean_adapter_and_wait_for_promotion_audit",
+      reason: [
+        `selectedCleanAdapter=${params.activeGuardAdapterTruth?.selectedCleanAdapter ?? "unknown"}`,
+        `latestPromotedAdapter=${params.activeGuardAdapterTruth?.latestPromotedAdapter ?? "unknown"}`,
+        `stalePromotion=${params.activeGuardAdapterTruth?.stalePromotionReasons.join(",")}`,
       ].join("; "),
       codexRepairEligible: false,
     });

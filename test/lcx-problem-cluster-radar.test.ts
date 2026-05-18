@@ -258,6 +258,68 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
+  it("does not call stale latest-promoted truth an active guard adapter mismatch", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        activeProcesses: [{ pid: 101, role: "guard" }],
+        latestEval: { passed: 200, total: 200, promotionReady: true, parseRecoveredCaseIds: [] },
+        activeGuardAdapterTruth: {
+          boundary: "dev_active_guard_adapter_truth_only",
+          guardCurrentAdapter: "/tmp/adapter-clean-r2",
+          selectedCleanAdapter: "/tmp/adapter-clean-r2",
+          latestPromotedAdapter: "/tmp/adapter-stale-promoted-r1",
+          mismatchReasons: [],
+          stalePromotionReasons: ["latest_promoted_adapter_no_longer_selected_clean"],
+        },
+        decisions: [
+          {
+            id: "latest_promoted_adapter_not_selected_clean",
+            action: "keep_selected_clean_adapter_and_wait_for_promotion_audit",
+            reason: "latestPromotedAdapter is no longer selected clean.",
+            codexRepairEligible: false,
+          },
+        ],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    const cluster = result.clusters.find((entry) => entry.id === "adapter_promotion_truth_cluster");
+    expect(cluster?.signals.map((signal) => signal.id)).toEqual(
+      expect.arrayContaining([
+        "latest_promoted_adapter_not_selected_clean",
+        "latest_promoted_adapter_stale",
+      ]),
+    );
+    expect(cluster?.signals.map((signal) => signal.id)).not.toContain(
+      "active_guard_adapter_truth_mismatch",
+    );
+    expect(cluster?.blockingReasons).not.toContain(
+      "guard_adapter_mismatch_not_repairable_while_guard_active",
+    );
+  });
+
   it("does not keep stale eval timeouts as watch clusters after a newer eval verdict", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {

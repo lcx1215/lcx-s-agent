@@ -626,8 +626,23 @@ describe("local-brain-training-plan", () => {
       latestPromotedAdapterStillClean: false,
       guardUsesSelectedCleanAdapter: true,
       guardUsesLatestPromotedAdapter: null,
-      mismatchReasons: ["latest_promoted_adapter_no_longer_selected_clean"],
+      mismatchReasons: [],
+      stalePromotionReasons: ["latest_promoted_adapter_no_longer_selected_clean"],
+      action: "guard_adapter_matches_selected_clean_adapter",
     });
+    expect(plan.decisions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "guard_adapter_mismatch" })]),
+    );
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "latest_promoted_adapter_not_selected_clean",
+          lane: "adapter_promotion",
+          severity: "P3",
+          codexRepairEligible: false,
+        }),
+      ]),
+    );
     expect(plan.qwenCapabilityConsolidation.adapterLadder.latestCleanChallenger).toBeUndefined();
     expect(plan.qwenCapabilityConsolidation.adapterLadder.latestBlockedChallenger).toMatchObject({
       adapterPath: "/tmp/promoted-later-failed-r2",

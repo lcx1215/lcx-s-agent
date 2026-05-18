@@ -299,6 +299,10 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
         severity: "P2",
         summary: "active guard adapter does not match the selected clean adapter truth",
       },
+      latest_promoted_adapter_not_selected_clean: {
+        severity: "P3",
+        summary: "latest promoted adapter is no longer the selected clean runtime adapter",
+      },
     }),
   );
   const mismatchReasons = stringArray(activeGuardAdapterTruth?.mismatchReasons);
@@ -312,6 +316,21 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
         selectedCleanAdapter: activeGuardAdapterTruth?.selectedCleanAdapter,
         latestPromotedAdapter: activeGuardAdapterTruth?.latestPromotedAdapter,
         mismatchReasons,
+      },
+    });
+  }
+  const stalePromotionReasons = stringArray(activeGuardAdapterTruth?.stalePromotionReasons);
+  if (stalePromotionReasons.length > 0) {
+    signals.push({
+      id: "latest_promoted_adapter_stale",
+      severity: "P3",
+      summary:
+        "latest promoted adapter is stale but active guard may still be using the selected clean adapter",
+      evidence: {
+        guardCurrentAdapter: activeGuardAdapterTruth?.guardCurrentAdapter,
+        selectedCleanAdapter: activeGuardAdapterTruth?.selectedCleanAdapter,
+        latestPromotedAdapter: activeGuardAdapterTruth?.latestPromotedAdapter,
+        stalePromotionReasons,
       },
     });
   }
