@@ -16,6 +16,9 @@ const MAX_OPERATOR_STATE_AGE_MS = 3 * 60 * 60 * 1000;
 const REQUIRED_RUNTIME_SKILLS = [
   "agent-brain-eval",
   "cli-anything-harvester",
+  "lcx-commercial-answer-pipeline-operator",
+  "lcx-module-learning-absorption-operator",
+  "lcx-promotion-and-adapter-truth-operator",
   "lcx-qwen-training-operator",
   "lcx-workflow-waterflow-auditor",
   "finance-learning-researcher",
@@ -38,8 +41,20 @@ const REQUIRED_AUTOCUE_PROBES = [
     expectedSkill: "agent-brain-eval",
   },
   {
-    body: "检查 qwen 训练 guard PID 和最新 adapter promotion truth",
+    body: "检查 qwen 训练 guard PID 和最新训练状态",
     expectedSkill: "lcx-qwen-training-operator",
+  },
+  {
+    body: "检查最新 adapter promotion truth 和 parseRecovered 是否阻塞晋级",
+    expectedSkill: "lcx-promotion-and-adapter-truth-operator",
+  },
+  {
+    body: "把网上学习到的采访和博客沉淀到模块，确认不是 stored-only",
+    expectedSkill: "lcx-module-learning-absorption-operator",
+  },
+  {
+    body: "商用回答流水线要避免模型答案直接当最终答案，并输出 failed reason",
+    expectedSkill: "lcx-commercial-answer-pipeline-operator",
   },
   {
     body: "全系统水路和记忆沉淀一起审一遍",

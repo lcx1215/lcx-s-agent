@@ -4,6 +4,9 @@ import { applySkillAutoCueToBody, resolveSkillAutoCue } from "./skill-autocue.js
 const coreSkills = [
   "agent-brain-eval",
   "cli-anything-harvester",
+  "lcx-commercial-answer-pipeline-operator",
+  "lcx-module-learning-absorption-operator",
+  "lcx-promotion-and-adapter-truth-operator",
   "lcx-qwen-training-operator",
   "lcx-workflow-waterflow-auditor",
 ];
@@ -29,11 +32,38 @@ describe("resolveSkillAutoCue", () => {
 
   it("selects the Qwen operator for local-brain training supervision requests", () => {
     const cue = resolveSkillAutoCue({
-      body: "检查 qwen 训练 guard PID 和最新 adapter promotion truth",
+      body: "检查 qwen 训练 guard PID 和最新训练状态",
       availableSkillNames: coreSkills,
     });
 
     expect(cue?.skillName).toBe("lcx-qwen-training-operator");
+  });
+
+  it("selects the adapter truth operator for promotion and parseRecovered requests", () => {
+    const cue = resolveSkillAutoCue({
+      body: "检查最新 adapter promotion truth 和 parseRecovered 是否阻塞晋级",
+      availableSkillNames: coreSkills,
+    });
+
+    expect(cue?.skillName).toBe("lcx-promotion-and-adapter-truth-operator");
+  });
+
+  it("selects module learning absorption operator for source-learning internalization", () => {
+    const cue = resolveSkillAutoCue({
+      body: "把网上学习到的采访和博客沉淀到模块，确认不是 stored-only",
+      availableSkillNames: coreSkills,
+    });
+
+    expect(cue?.skillName).toBe("lcx-module-learning-absorption-operator");
+  });
+
+  it("selects commercial answer pipeline operator for bounded visible reply review", () => {
+    const cue = resolveSkillAutoCue({
+      body: "商用回答流水线要避免模型答案直接当最终答案，并输出 failed reason",
+      availableSkillNames: coreSkills,
+    });
+
+    expect(cue?.skillName).toBe("lcx-commercial-answer-pipeline-operator");
   });
 
   it("does not select a skill that is not available in the current snapshot", () => {

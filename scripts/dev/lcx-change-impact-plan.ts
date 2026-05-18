@@ -127,6 +127,7 @@ const PATH_RULES: PathRule[] = [
     patterns: [
       /^scripts\/dev\/lcx-commercial-answer-pipeline\.ts$/u,
       /^extensions\/feishu\//u,
+      /^src\/auto-reply\/reply\/skill-autocue\.ts$/u,
       /^src\/auto-reply\/reply\/feishu-reply-flow-evidence\.ts$/u,
       /^src\/commands\/capabilities\/lark-/u,
     ],

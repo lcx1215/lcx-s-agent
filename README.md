@@ -129,8 +129,11 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
     运行时只能选一个干净的 `latest-passing` adapter；后续全 Qwen 能力要靠 teacher/dataset/eval/promotion 回流成下一代统一 clean adapter，不能把多个 r 并联上，也不能把带 `parseRecovered` 的 candidate 当成已上线能力。
 16. 复杂工程变更由 `lcx-workflow-waterflow-auditor` 这类 god-view skill 监督：小改动必须能回到水路图、head-tail、一头一尾 proof、记忆沉淀和 dev/live 边界，不能只修局部忘掉全局。
 17. 商用回答流水线由 `scripts/dev/lcx-commercial-answer-pipeline.ts` 做 dev 诊断 owner：模型答案只是候选，Qwen 只是 challenger，本地合约和 review panel 有有限轮次，最后只能 `adopt_visible_answer` 或 `return_failed_reason`。它专门防止短句问法被浅答、模型答案直接当最终答案、无限反复改写、raw JSON/internal label 露给用户。
-18. 未来目标是世界级 agent 架构，但验收标准不是口号：用户入口简单，内部角色专业，volatile 状态只有一个事实 owner，学习沉淀有 source/retrieval/apply/eval/review 证据，所有回流有边界，dev/live/protected memory 不混，架构变更能被 mind model、flow graph、head-tail、doctor、training-plan、context recovery、problem cluster radar 和 live probe 共同解释。
-19. 未来智能体不能等用户逐个提醒这些架构检查。遇到非平凡工程、上下文恢复、训练/晋级判断、模块学习吸收、记忆沉淀、Lark/live 边界或“继续找问题”时，先自动跑 `lcx-problem-cluster-radar` 看当前问题簇，再按 cluster 的 `ownerEntrypoint` 去跑 owner 命令；如果 training-plan 显示 Qwen/MiniMax/MLX 正在跑，就只报告 PID 和 defer heavy eval，不启动重叠任务。
+18. 模块学习吸收用 `lcx-module-learning-absorption-operator`：网上学习、论文、博客、采访、开源项目、alternative source 都走同一条 source registry / reading scope / retrieval / apply / eval absorption / keep-downrank-discard 链，不能把 stored-only 说成学会。
+19. 商用回答流水线用 `lcx-commercial-answer-pipeline-operator`：短句意图、大模型候选、Qwen challenger、本地 review、有限重试、failed reason 和 visible reply adoption 都由同一条流水线解释，不能另造平行 answer V2。
+20. Qwen adapter 真相用 `lcx-promotion-and-adapter-truth-operator`：`latest-passing`、`latest-promoted`、active guard adapter、parseRecovered、blocked challenger、promotion audit 分开看；`200/200` 带 parseRecovered 仍不能 promotion。
+21. 未来目标是世界级 agent 架构，但验收标准不是口号：用户入口简单，内部角色专业，volatile 状态只有一个事实 owner，学习沉淀有 source/retrieval/apply/eval/review 证据，所有回流有边界，dev/live/protected memory 不混，架构变更能被 mind model、flow graph、head-tail、doctor、training-plan、context recovery、problem cluster radar 和 live probe 共同解释。
+22. 未来智能体不能等用户逐个提醒这些架构检查。遇到非平凡工程、上下文恢复、训练/晋级判断、模块学习吸收、记忆沉淀、Lark/live 边界或“继续找问题”时，先自动跑 `lcx-problem-cluster-radar` 看当前问题簇，再按 cluster 的 `ownerEntrypoint` 去跑 owner 命令；如果 training-plan 显示 Qwen/MiniMax/MLX 正在跑，就只报告 PID 和 defer heavy eval，不启动重叠任务。
 
 上帝视角检查命令：
 

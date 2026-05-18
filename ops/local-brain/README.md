@@ -598,6 +598,9 @@ When context is missing, load only the skills that match the current question. T
 /Users/liuchengxu/.codex/skills/agent-runtime-drift-auditor/SKILL.md
 /Users/liuchengxu/.codex/skills/lcx-qwen-training-operator/SKILL.md
 /Users/liuchengxu/.codex/skills/lcx-workflow-waterflow-auditor/SKILL.md
+/Users/liuchengxu/.codex/skills/lcx-module-learning-absorption-operator/SKILL.md
+/Users/liuchengxu/.codex/skills/lcx-commercial-answer-pipeline-operator/SKILL.md
+/Users/liuchengxu/.codex/skills/lcx-promotion-and-adapter-truth-operator/SKILL.md
 /Users/liuchengxu/.codex/skills/l5-regression-batterer/SKILL.md
 /Users/liuchengxu/.codex/skills/l4-regression-batterer/SKILL.md
 /Users/liuchengxu/.codex/skills/skill-harvester/SKILL.md
@@ -621,12 +624,21 @@ Use them like this:
 - `agent-runtime-drift-auditor`: compare dev repo, live sidecar, daemon/runtime, and receipts for drift.
 - `lcx-qwen-training-operator`: check Qwen 24-hour training/eval/backoff/restart supervision without creating overlap.
 - `lcx-workflow-waterflow-auditor`: check god-view workflow closure, waterflow routing, head-tail consistency, and memory sedimentation gaps.
+- `lcx-module-learning-absorption-operator`: check online/source learning and module absorption without confusing stored-only, application-ready, and eval-absorbed states.
+- `lcx-commercial-answer-pipeline-operator`: check commercial answer adoption, short Lark intent expansion, bounded model/Qwen review, visible reply cleanliness, and failed-reason output.
+- `lcx-promotion-and-adapter-truth-operator`: check latest-passing vs latest-promoted, parseRecovered promotion blocks, active guard mismatch, and blocked challenger capability.
 - `l5-regression-batterer`: L5 baseline pressure tests with realistic Chinese finance/control-room prompts.
 - `l4-regression-batterer`: legacy compatibility alias only; prefer the L5 skill in new work.
 - `skill-harvester`: evaluate and isolate new external or local skills before letting them affect the agent.
 - `cli-anything-harvester`: evaluate CLI-Anything, CLI-Hub, GUI/local software CLI wrappers, and safe agent-native software-control plans before any wrapper is trusted.
 
 The skills are operator guidance, not durable market memory. Do not copy their text into protected repo memory.
+Runtime-visible LCX skills must also be present in the OpenClaw managed skill
+snapshot under `/Users/liuchengxu/.openclaw/skills/`. It is acceptable for that
+managed path to symlink back to the canonical Codex skill folder under
+`/Users/liuchengxu/.codex/skills/`, but `lcx-context-recovery-exam` must prove
+the local runtime can see and autocue the skill before claiming the agent will
+use it without reminders.
 The local reply path also has deterministic skill preflight for common LCX
 operator asks. Natural-language requests about Qwen training, whole-system
 waterflow, agent brain learning, Lark live proof, runtime drift, finance
