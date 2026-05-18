@@ -119,6 +119,7 @@ type ActiveGuardAdapterTruthSnapshot = {
   selectedCleanAdapter?: string;
   latestPromotedAdapter?: string;
   latestPromotedAt?: string;
+  latestPromotedAdapterStillClean: boolean | null;
   guardStartedAfterLatestPromotion: boolean;
   guardUsesSelectedCleanAdapter: boolean | null;
   guardUsesLatestPromotedAdapter: boolean | null;
@@ -483,10 +484,41 @@ function countEvalTimeoutsAfter(
 }
 
 function latestPassingEvalSnapshot(events: JsonRecord[]): EvalSnapshot | undefined {
-  return events
-    .map(evalSnapshotFromEvent)
-    .filter((entry): entry is EvalSnapshot => Boolean(entry?.promotionReady))
+  return latestAdapterVerdictSnapshots(events)
+    .filter((entry) => entry.promotionReady)
     .toSorted((left, right) => right.at.localeCompare(left.at))[0];
+}
+
+function latestAdapterVerdictSnapshots(events: JsonRecord[]): EvalSnapshot[] {
+  return uniqueLatestEvalSnapshots(
+    events
+      .flatMap((event) => [evalSnapshotFromEvent(event), evalSnapshotFromTimeoutEvent(event)])
+      .filter((entry): entry is EvalSnapshot => Boolean(entry?.adapterPath)),
+  );
+}
+
+function evalSnapshotFromTimeoutEvent(event: JsonRecord): EvalSnapshot | undefined {
+  const timeout = evalTimeoutSnapshotFromEvent(event);
+  if (!timeout) {
+    return undefined;
+  }
+  return {
+    at: timeout.at,
+    event: "step_timeout",
+    name: timeout.name,
+    adapterPath: timeout.adapterPath,
+    passed: 0,
+    total: 0,
+    passRate: 0,
+    promotionReady: false,
+    failedCaseIds:
+      timeout.failedCaseIds.length > 0
+        ? timeout.failedCaseIds
+        : [`${timeout.name || "eval"}_total_timeout`],
+    parseErrorCaseIds: [],
+    parseRecoveredCaseIds: [],
+    parseErrorSamples: [],
+  };
 }
 
 function uniqueLatestEvalSnapshots(snapshots: EvalSnapshot[]): EvalSnapshot[] {
@@ -521,14 +553,31 @@ function qwenCapabilityConsolidationSnapshot(params: {
   latestPassingEval?: EvalSnapshot;
   latestCandidateEval?: EvalSnapshot;
 }): QwenCapabilityConsolidationSnapshot {
+  const latestVerdictByAdapter = new Map(
+    latestAdapterVerdictSnapshots(params.events)
+      .filter((snapshot): snapshot is EvalSnapshot & { adapterPath: string } =>
+        Boolean(snapshot.adapterPath),
+      )
+      .map((snapshot) => [snapshot.adapterPath, snapshot]),
+  );
   const candidateSnapshots = uniqueLatestEvalSnapshots(
     params.events
       .filter((event) => event.name === "candidate_hardened_eval")
       .map(evalSnapshotFromEvent)
       .filter((entry): entry is EvalSnapshot => Boolean(entry)),
   );
-  const cleanCandidates = candidateSnapshots.filter((snapshot) => snapshot.promotionReady);
-  const blockedCandidates = candidateSnapshots.filter((snapshot) => !snapshot.promotionReady);
+  const candidateVerdicts = uniqueLatestEvalSnapshots(
+    candidateSnapshots.map((snapshot) => {
+      const latestVerdict = snapshot.adapterPath
+        ? latestVerdictByAdapter.get(snapshot.adapterPath)
+        : undefined;
+      return latestVerdict && latestVerdict.at.localeCompare(snapshot.at) > 0
+        ? latestVerdict
+        : snapshot;
+    }),
+  );
+  const cleanCandidates = candidateVerdicts.filter((snapshot) => snapshot.promotionReady);
+  const blockedCandidates = candidateVerdicts.filter((snapshot) => !snapshot.promotionReady);
   const blockedCaseCounts = new Map<string, number>();
   const latestBlockedHarvestCaseIds: string[] = [];
   for (const snapshot of blockedCandidates) {
@@ -654,15 +703,25 @@ function activeGuardAdapterTruthSnapshot(params: {
   const guardStartedAfterLatestPromotion = Boolean(
     latestGuardStartAt && params.latestPromotedAt && params.latestPromotedAt <= latestGuardStartAt,
   );
+  const latestPromotedAdapterStillClean =
+    params.latestPromotedAdapter && params.selectedCleanAdapter
+      ? params.latestPromotedAdapter === params.selectedCleanAdapter
+      : null;
   const guardUsesSelectedCleanAdapter =
     guardCurrentAdapter && params.selectedCleanAdapter
       ? guardCurrentAdapter === params.selectedCleanAdapter
       : null;
   const guardUsesLatestPromotedAdapter =
-    guardCurrentAdapter && params.latestPromotedAdapter && guardStartedAfterLatestPromotion
+    guardCurrentAdapter &&
+    params.latestPromotedAdapter &&
+    guardStartedAfterLatestPromotion &&
+    latestPromotedAdapterStillClean !== false
       ? guardCurrentAdapter === params.latestPromotedAdapter
       : null;
   const mismatchReasons = [
+    latestPromotedAdapterStillClean === false
+      ? "latest_promoted_adapter_no_longer_selected_clean"
+      : undefined,
     guardUsesSelectedCleanAdapter === false
       ? "guard_current_adapter_not_selected_clean"
       : undefined,
@@ -689,6 +748,7 @@ function activeGuardAdapterTruthSnapshot(params: {
     selectedCleanAdapter: params.selectedCleanAdapter,
     latestPromotedAdapter: params.latestPromotedAdapter,
     latestPromotedAt: params.latestPromotedAt,
+    latestPromotedAdapterStillClean,
     guardStartedAfterLatestPromotion,
     guardUsesSelectedCleanAdapter,
     guardUsesLatestPromotedAdapter,

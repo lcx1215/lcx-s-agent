@@ -473,6 +473,168 @@ describe("local-brain-training-plan", () => {
     );
   });
 
+  it("does not select an adapter whose latest verdict became non-passing", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      {
+        at: "2026-05-09T09:00:00.000Z",
+        event: "step_ok",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/older-still-clean-r1",
+          summary: {
+            passed: 77,
+            total: 77,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T10:00:00.000Z",
+        event: "step_ok",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/newer-later-failed-r2",
+          summary: {
+            passed: 77,
+            total: 77,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T11:00:00.000Z",
+        event: "step_non_passing",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/newer-later-failed-r2",
+          summary: {
+            passed: 76,
+            total: 77,
+            passRate: 0.987,
+            failedCaseIds: ["single_company_fundamental_risk"],
+            parseErrorCaseIds: ["single_company_fundamental_risk"],
+            parseRecoveredCaseIds: [],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.latestPassingEval).toMatchObject({
+      adapterPath: "/tmp/older-still-clean-r1",
+      promotionReady: true,
+    });
+    expect(plan.qwenCapabilityConsolidation.selectedCleanAdapter).toBe("/tmp/older-still-clean-r1");
+  });
+
+  it("marks a promoted adapter as invalidated when its latest verdict fails", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      {
+        at: "2026-05-09T09:00:00.000Z",
+        event: "step_ok",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/older-still-clean-r1",
+          summary: {
+            passed: 77,
+            total: 77,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T10:00:00.000Z",
+        event: "step_ok",
+        name: "candidate_hardened_eval",
+        result: {
+          adapterPath: "/tmp/promoted-later-failed-r2",
+          summary: {
+            passed: 77,
+            total: 77,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T10:00:01.000Z",
+        event: "adapter_promoted_for_guard_session",
+        adapterPath: "/tmp/promoted-later-failed-r2",
+      },
+      {
+        at: "2026-05-09T11:00:00.000Z",
+        event: "step_non_passing",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/promoted-later-failed-r2",
+          summary: {
+            passed: 76,
+            total: 77,
+            passRate: 0.987,
+            failedCaseIds: ["single_company_fundamental_risk"],
+            parseErrorCaseIds: ["single_company_fundamental_risk"],
+            parseRecoveredCaseIds: [],
+            promotionReady: false,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T12:00:00.000Z",
+        event: "guard_start",
+        options: {
+          currentAdapter: "/tmp/older-still-clean-r1",
+          trainingSeedAdapter: "/tmp/older-still-clean-r1",
+          trainingResumeAdapter: "/tmp/older-still-clean-r1",
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.activeGuardAdapterTruth).toMatchObject({
+      selectedCleanAdapter: "/tmp/older-still-clean-r1",
+      latestPromotedAdapter: "/tmp/promoted-later-failed-r2",
+      latestPromotedAdapterStillClean: false,
+      guardUsesSelectedCleanAdapter: true,
+      guardUsesLatestPromotedAdapter: null,
+      mismatchReasons: ["latest_promoted_adapter_no_longer_selected_clean"],
+    });
+    expect(plan.qwenCapabilityConsolidation.adapterLadder.latestCleanChallenger).toBeUndefined();
+    expect(plan.qwenCapabilityConsolidation.adapterLadder.latestBlockedChallenger).toMatchObject({
+      adapterPath: "/tmp/promoted-later-failed-r2",
+      runtimeEligible: false,
+    });
+  });
+
   it("does not repair from stale eval failures before the latest guard start", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       {
