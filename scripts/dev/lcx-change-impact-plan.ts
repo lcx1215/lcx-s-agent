@@ -9,6 +9,8 @@ type PathRule = {
   patterns: RegExp[];
   requiredChecks: string[];
   commands: string[];
+  deferredCommands?: string[];
+  safetyNotes?: string[];
   headTailRequired?: boolean;
   risk?: "normal" | "elevated";
 };
@@ -19,6 +21,8 @@ type Impact = {
   matchedFiles: string[];
   requiredChecks: string[];
   commands: string[];
+  deferredCommands: string[];
+  safetyNotes: string[];
   headTailRequired: boolean;
   risk: "normal" | "elevated";
 };
@@ -64,7 +68,12 @@ const PATH_RULES: PathRule[] = [
     requiredChecks: ["head-tail-consistency", "targeted-local-brain-tests"],
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
-      "pnpm vitest run test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/local-brain-distill-eval.test.ts test/local-brain-contracts.test.ts",
+      "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+      "pnpm vitest run test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/local-brain-contracts.test.ts",
+    ],
+    deferredCommands: ["pnpm vitest run test/local-brain-distill-eval.test.ts"],
+    safetyNotes: [
+      "Run deferred local-brain-distill-eval tests only after local-brain-training-plan shows no active guard/eval/MLX process; do not create overlapping heavy eval.",
     ],
     headTailRequired: true,
   },
@@ -235,6 +244,8 @@ function impactFor(files: readonly string[]): Impact[] {
       matchedFiles,
       requiredChecks: rule.requiredChecks,
       commands,
+      deferredCommands: rule.deferredCommands ?? [],
+      safetyNotes: rule.safetyNotes ?? [],
       headTailRequired: rule.headTailRequired === true,
       risk: rule.risk ?? "normal",
     };
@@ -251,6 +262,14 @@ function uniqueCommands(impacts: readonly Impact[]): string[] {
   ];
 }
 
+function uniqueDeferredCommands(impacts: readonly Impact[]): string[] {
+  return [...new Set(impacts.flatMap((impact) => impact.deferredCommands))];
+}
+
+function uniqueSafetyNotes(impacts: readonly Impact[]): string[] {
+  return [...new Set(impacts.flatMap((impact) => impact.safetyNotes))];
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const changedFiles =
@@ -258,6 +277,8 @@ async function main() {
       ? normalizeChangedFiles(options.changed)
       : normalizeChangedFiles(await gitChangedFiles());
   const impacts = impactFor(changedFiles);
+  const deferredCommands = uniqueDeferredCommands(impacts);
+  const safetyNotes = uniqueSafetyNotes(impacts);
   const unmatchedFiles = changedFiles.filter(
     (file) => !impacts.some((impact) => impact.matchedFiles.includes(file)),
   );
@@ -273,6 +294,8 @@ async function main() {
       impacts.length > 0
         ? uniqueCommands(impacts)
         : ["git status --short --branch", "git diff --check"],
+    deferredCommands,
+    safetyNotes,
     escalation: {
       runFullDoctor:
         impacts.some((impact) => impact.risk === "elevated" || impact.headTailRequired) ||
@@ -293,6 +316,8 @@ async function main() {
       : [
           `lcx change impact plan files=${changedFiles.length} lanes=${result.affectedLanes.join(",") || "none"}`,
           ...result.recommendedFastCommands.map((command) => `- ${command}`),
+          ...deferredCommands.map((command) => `- deferred: ${command}`),
+          ...safetyNotes.map((note) => `- note: ${note}`),
         ].join("\n") + "\n",
   );
 }

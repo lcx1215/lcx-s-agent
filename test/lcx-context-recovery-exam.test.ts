@@ -109,9 +109,20 @@ describe("LCX compressed context recovery exam", () => {
           changedFiles: string[];
           affectedLanes: string[];
           unmatchedFiles: string[];
+          deferredCommands: string[];
+          safetyNotes: string[];
         };
         trainingPlan: { decisionIds: string[] };
         moduleAbsorption: { blockers: string[] };
+        learningSedimentation: {
+          assessment: string;
+          moduleLearningPipeline: {
+            evalAbsorbed: number;
+            weakModuleLearning: number;
+            boundaryViolations: number;
+          };
+          gaps: string[];
+        };
         text: string;
       };
     };
@@ -127,13 +138,31 @@ describe("LCX compressed context recovery exam", () => {
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.changedFiles)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.affectedLanes)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.unmatchedFiles)).toBe(true);
+    expect(Array.isArray(payload.handoffForNewWindow.changeImpact.deferredCommands)).toBe(true);
+    expect(Array.isArray(payload.handoffForNewWindow.changeImpact.safetyNotes)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.trainingPlan.decisionIds)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.moduleAbsorption.blockers)).toBe(true);
+    expect(Array.isArray(payload.handoffForNewWindow.learningSedimentation.gaps)).toBe(true);
+    expect(payload.handoffForNewWindow.learningSedimentation.assessment).toEqual(
+      expect.any(String),
+    );
+    expect(payload.handoffForNewWindow.learningSedimentation.moduleLearningPipeline).toEqual(
+      expect.objectContaining({
+        evalAbsorbed: expect.any(Number),
+        weakModuleLearning: expect.any(Number),
+        boundaryViolations: expect.any(Number),
+      }),
+    );
     expect(payload.handoffForNewWindow.text).toContain("# LCX New-Window Handoff");
     expect(payload.handoffForNewWindow.text).toContain("do not start overlapping");
     expect(payload.handoffForNewWindow.text).toContain("dev/local handoff only");
+    expect(payload.handoffForNewWindow.text).toContain("deferredCommands=");
+    expect(payload.handoffForNewWindow.text).toContain("safetyNotes=");
+    expect(payload.handoffForNewWindow.text).toContain("sedimentationAssessment=");
+    expect(payload.handoffForNewWindow.text).toContain("sedimentationModulePipeline=");
+    expect(payload.handoffForNewWindow.text).toContain("sedimentationGaps=");
     expect(payload.handoffForNewWindow.text).toContain("informationalWarnings=");
-  });
+  }, 240_000);
 
   it("keeps the recovery exam visible in durable doctrine and local automation", async () => {
     const [agents, runbook, doctorSource, recoverySource, localOperator] = await Promise.all([

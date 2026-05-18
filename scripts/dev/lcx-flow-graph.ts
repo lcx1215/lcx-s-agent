@@ -1113,6 +1113,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/dev/lcx-mind-model.ts",
       "scripts/dev/lcx-system-doctor.ts",
       "test/lcx-agent-exam.test.ts",
+      "test/lcx-change-impact-plan.test.ts",
       "test/lcx-context-recovery-exam.test.ts",
       "test/lcx-flow-graph.test.ts",
       "test/lcx-head-tail-consistency.test.ts",

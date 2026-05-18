@@ -348,6 +348,23 @@ async function currentModuleAbsorptionGateSnapshot(): Promise<{
   }
 }
 
+async function currentLearningSedimentationAuditSnapshot(): Promise<{
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: string;
+}> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-learning-sedimentation-audit.ts", "--json"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
 function compactChangeImpact(value: unknown) {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -360,6 +377,8 @@ function compactChangeImpact(value: unknown) {
     affectedLanes: record.affectedLanes,
     unmatchedFiles: record.unmatchedFiles,
     recommendedFastCommands: record.recommendedFastCommands,
+    deferredCommands: record.deferredCommands,
+    safetyNotes: record.safetyNotes,
     escalation: record.escalation,
     liveTouched: record.liveTouched,
     providerConfigTouched: record.providerConfigTouched,
@@ -399,6 +418,52 @@ function compactModuleAbsorptionGate(value: unknown) {
   };
 }
 
+function compactLearningSedimentationAudit(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const chains =
+    record.chains && typeof record.chains === "object" && !Array.isArray(record.chains)
+      ? (record.chains as Record<string, unknown>)
+      : {};
+  const modulePipeline =
+    chains.moduleLearningPipeline &&
+    typeof chains.moduleLearningPipeline === "object" &&
+    !Array.isArray(chains.moduleLearningPipeline)
+      ? (chains.moduleLearningPipeline as Record<string, unknown>)
+      : {};
+  const gaps = Array.isArray(record.gaps)
+    ? record.gaps
+        .map((gap) => {
+          if (!gap || typeof gap !== "object" || Array.isArray(gap)) {
+            return undefined;
+          }
+          const id = (gap as Record<string, unknown>).id;
+          return typeof id === "string" ? id : undefined;
+        })
+        .filter((id): id is string => id !== undefined)
+    : [];
+  return {
+    ok: record.ok,
+    boundary: record.boundary,
+    assessment: record.assessment,
+    sufficientForCurrentUse: record.sufficientForCurrentUse,
+    moduleLearningPipeline: {
+      ok: modulePipeline.ok,
+      planReceipts: modulePipeline.planReceipts,
+      reviewFiles: modulePipeline.reviewFiles,
+      evalAbsorbed: modulePipeline.evalAbsorbed,
+      weakModuleLearning: modulePipeline.weakModuleLearning,
+      boundaryViolations: modulePipeline.boundaryViolations,
+    },
+    gaps,
+    liveTouched: record.liveTouched,
+    providerConfigTouched: record.providerConfigTouched,
+    protectedMemoryTouched: record.protectedMemoryTouched,
+  };
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
@@ -429,11 +494,14 @@ function buildNewWindowHandoffText(params: {
   changeImpact?: ReturnType<typeof compactChangeImpact>;
   trainingPlan?: ReturnType<typeof compactTrainingPlan>;
   moduleAbsorption?: ReturnType<typeof compactModuleAbsorptionGate>;
+  learningSedimentation?: ReturnType<typeof compactLearningSedimentationAudit>;
   flowGraphEvidence?: Record<string, unknown>;
 }): string {
   const changedFiles = stringArray(params.changeImpact?.changedFiles);
   const affectedLanes = stringArray(params.changeImpact?.affectedLanes);
   const unmatchedFiles = stringArray(params.changeImpact?.unmatchedFiles);
+  const deferredCommands = stringArray(params.changeImpact?.deferredCommands);
+  const safetyNotes = stringArray(params.changeImpact?.safetyNotes);
   const blockers = stringArray(params.moduleAbsorption?.blockers);
   const nextActions = stringArray(params.moduleAbsorption?.nextActions);
   const trainingDecisionIds = stringArray(
@@ -441,6 +509,8 @@ function buildNewWindowHandoffText(params: {
   );
   const latestEval = params.trainingPlan?.latestEval;
   const moduleLatestEval = params.moduleAbsorption?.latestEval;
+  const modulePipeline = params.learningSedimentation?.moduleLearningPipeline;
+  const sedimentationGaps = stringArray(params.learningSedimentation?.gaps);
   const lines = [
     "# LCX New-Window Handoff",
     "",
@@ -460,6 +530,8 @@ function buildNewWindowHandoffText(params: {
     ...changedFiles.map((file) => `- ${file}`),
     `affectedLanes=${affectedLanes.join(",") || "none"}`,
     `unmatchedFiles=${unmatchedFiles.join(",") || "none"}`,
+    `deferredCommands=${deferredCommands.join(" | ") || "none"}`,
+    `safetyNotes=${safetyNotes.join(" | ") || "none"}`,
     "",
     "## Training Truth",
     "volatileOwner=local-brain-training-plan",
@@ -473,6 +545,9 @@ function buildNewWindowHandoffText(params: {
     `absorptionReady=${scalarText(params.moduleAbsorption?.absorptionReady)}`,
     `gateDecision=${scalarText(params.moduleAbsorption?.gateDecision)}`,
     `moduleGateLatestEval=${scalarText(moduleLatestEval?.passed)}/${scalarText(moduleLatestEval?.total)} promotionReady=${scalarText(moduleLatestEval?.promotionReady)}`,
+    `sedimentationAssessment=${scalarText(params.learningSedimentation?.assessment)}`,
+    `sedimentationModulePipeline=${scalarText(modulePipeline?.planReceipts)}/${scalarText(modulePipeline?.reviewFiles)} planReview evalAbsorbed=${scalarText(modulePipeline?.evalAbsorbed)} weak=${scalarText(modulePipeline?.weakModuleLearning)} boundaryViolations=${scalarText(modulePipeline?.boundaryViolations)}`,
+    `sedimentationGaps=${sedimentationGaps.join(",") || "none"}`,
     `blockers=${blockers.join(",") || "none"}`,
     `nextActions=${nextActions.join(" | ") || "none"}`,
     "",
@@ -792,13 +867,20 @@ async function main() {
     protectedMemoryTouched: false,
   };
   const handoffSources = options.handoff
-    ? await Promise.all([currentChangeImpactSnapshot(), currentModuleAbsorptionGateSnapshot()])
+    ? await Promise.all([
+        currentChangeImpactSnapshot(),
+        currentModuleAbsorptionGateSnapshot(),
+        currentLearningSedimentationAuditSnapshot(),
+      ])
     : undefined;
   const handoffChangeImpact = handoffSources
     ? compactChangeImpact(handoffSources[0].payload)
     : undefined;
   const moduleAbsorption = handoffSources
     ? compactModuleAbsorptionGate(handoffSources[1].payload)
+    : undefined;
+  const learningSedimentation = handoffSources
+    ? compactLearningSedimentationAudit(handoffSources[2].payload)
     : undefined;
   const handoffForNewWindow = options.handoff
     ? {
@@ -809,16 +891,19 @@ async function main() {
         changeImpact: handoffChangeImpact,
         trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
         moduleAbsorption,
+        learningSedimentation,
         text: buildNewWindowHandoffText({
           result,
           changeImpact: handoffChangeImpact,
           trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
           moduleAbsorption,
+          learningSedimentation,
           flowGraphEvidence: currentFlowEvidence,
         }),
         errors: {
           changeImpact: handoffSources?.[0].error,
           moduleAbsorption: handoffSources?.[1].error,
+          learningSedimentation: handoffSources?.[2].error,
         },
       }
     : undefined;
