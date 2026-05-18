@@ -818,6 +818,17 @@ function blueprintStatusFromLane(lane: ExamLane | undefined): CommercialBlueprin
   return "blocked";
 }
 
+function evidenceHasPositiveCount(evidence: readonly string[], key: string): boolean {
+  const prefix = `${key}=`;
+  return evidence.some((entry) => {
+    if (!entry.startsWith(prefix)) {
+      return false;
+    }
+    const value = Number.parseInt(entry.slice(prefix.length), 10);
+    return Number.isFinite(value) && value > 0;
+  });
+}
+
 function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5: boolean }) {
   const moduleLane = laneById(params.lanes, "module_learning_internalization");
   const inventoryLane = laneById(params.lanes, "learning_sedimentation_inventory");
@@ -832,6 +843,13 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
       : moduleLane?.status === "pass"
         ? "ready"
         : "needs_receipts";
+  const moduleLearningEvidence = [
+    ...(inventoryLane?.evidence ?? ["learning sedimentation inventory missing"]),
+    ...(moduleLane?.evidence ?? ["module learning lane missing"]),
+  ];
+  const moduleLearningHasPlanOrReview =
+    evidenceHasPositiveCount(moduleLearningEvidence, "receiptFiles") ||
+    evidenceHasPositiveCount(moduleLearningEvidence, "planReceipts");
 
   return [
     {
@@ -855,14 +873,13 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
       title: "模块学习真实吸收证据",
       ownerLane: "learning_sedimentation_inventory",
       status: moduleLearningStatus,
-      evidence: [
-        ...(inventoryLane?.evidence ?? ["learning sedimentation inventory missing"]),
-        ...(moduleLane?.evidence ?? ["module learning lane missing"]),
-      ],
+      evidence: moduleLearningEvidence,
       nextAction:
         moduleLearningStatus === "ready"
           ? "保持 no-write review 和 learning-sedimentation audit；新输入继续要求 fresh adjacent application、per-receipt eval/training、keep/downrank/discard。"
-          : "补 module_learning_pipeline_plan/review、fresh adjacent application、per-receipt eval/training 和 keep/downrank/discard。",
+          : moduleLearningHasPlanOrReview
+            ? "已有 module_learning_pipeline_plan/review 证据；继续补 per-receipt eval/training、fresh adjacent application、keep/downrank/discard，不能重复写 plan 冒充吸收。"
+            : "补 module_learning_pipeline_plan/review、fresh adjacent application、per-receipt eval/training 和 keep/downrank/discard。",
     },
     {
       id: "l5_runtime_battery",

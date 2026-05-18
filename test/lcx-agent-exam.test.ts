@@ -218,6 +218,83 @@ describe("lcx-agent-exam", () => {
     expect(moduleBlueprint?.nextAction).not.toContain("补 module_learning_pipeline_plan/review");
   });
 
+  it("does not ask to rewrite module learning plan/review when only eval absorption is missing", () => {
+    const report = buildAgentExamReport({
+      checkedAt: "2026-05-12T00:00:00.000Z",
+      live: false,
+      l5: false,
+      doctor: okCommand("doctor", {
+        ok: true,
+        boundary: "dev_observability_only",
+        liveTouched: false,
+        summary: { passed: 12, failed: 0, skipped: 5 },
+      }),
+      trainingPlan: okCommand("training-plan", {
+        activeProcesses: [{ pid: 123, role: "guard" }],
+        latestEval: { name: "stable_hardened_eval", passed: 72, total: 72 },
+        latestDataset: { examples: 9000 },
+        latestTeacher: { failures: 0 },
+        decisions: [{ id: "continue_medium_training" }],
+      }),
+      promotionAudit: okCommand("promotion-audit", {
+        boundary: "dev_local_brain_promotion_audit_only",
+        promotionDecision: "safe",
+        resolverMatchesLatestEval: true,
+        realBugsFound: [],
+        latestEval: {
+          name: "stable_hardened_eval",
+          passed: 72,
+          total: 72,
+          promotionReady: true,
+        },
+        selectedEval: {
+          name: "stable_hardened_eval",
+          passed: 72,
+          total: 72,
+          promotionReady: true,
+        },
+      }),
+      moduleLearningReview: okCommand("module-review", {
+        boundary: "module_learning_pipeline_review_only",
+        updated: false,
+        counts: {
+          receiptFiles: 8,
+          weakModuleLearning: 8,
+          applicationReady: 8,
+          evalAbsorbed: 0,
+          invalidReceipts: 0,
+          boundaryViolations: 0,
+        },
+      }),
+      learningSedimentationAudit: okCommand("learning-audit", {
+        ok: true,
+        boundary: "dev_learning_sedimentation_audit_only",
+        assessment: "usable_but_not_model_absorbed",
+        chains: {
+          moduleLearningPipeline: {
+            planReceipts: 8,
+            evalAbsorbed: 0,
+            weakModuleLearning: 8,
+            boundaryViolations: 0,
+          },
+        },
+      }),
+      cognitiveIntegritySources: cognitiveSources,
+    });
+
+    const moduleBlueprint = report.commercialBlueprint.find(
+      (item) => item.id === "module_learning_absorption",
+    );
+    expect(moduleBlueprint).toEqual(
+      expect.objectContaining({
+        status: "needs_receipts",
+        nextAction: expect.stringContaining("已有 module_learning_pipeline_plan/review"),
+      }),
+    );
+    expect(moduleBlueprint?.nextAction).not.toContain("补 module_learning_pipeline_plan/review");
+    expect(moduleBlueprint?.nextAction).toContain("不能重复写 plan 冒充吸收");
+  });
+
   it("downgrades training when the latest teacher batch still has failures", () => {
     const report = buildAgentExamReport({
       live: false,
