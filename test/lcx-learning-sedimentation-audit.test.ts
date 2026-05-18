@@ -169,6 +169,43 @@ describe("LCX learning sedimentation audit", () => {
     );
   });
 
+  it("does not call the module pipeline certifiable when weak receipts remain", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-audit-"));
+    await seedGeneralLearningEvidence(workspaceDir);
+    const memoryDir = path.join(workspaceDir, "memory");
+    await writeJson(
+      path.join(memoryDir, "module-learning-pipeline-plan-receipts", "day", "m.json"),
+      {
+        ok: true,
+      },
+    );
+    await writeJson(path.join(memoryDir, "module-learning-pipeline-reviews", "day.json"), {
+      counts: {
+        evalAbsorbed: 1,
+        weakModuleLearning: 1,
+        boundaryViolations: 0,
+      },
+    });
+
+    const payload = await runAudit(workspaceDir);
+
+    expect(payload.assessment).toBe("usable_with_partial_module_absorption_but_weak_receipts");
+    expect(payload.chains.moduleLearningPipeline).toEqual(
+      expect.objectContaining({
+        ok: false,
+        planReceipts: 1,
+        reviewFiles: 1,
+        evalAbsorbed: 1,
+        weakModuleLearning: 1,
+      }),
+    );
+    expect(payload.gaps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "module_learning_review_has_weak_receipts" }),
+      ]),
+    );
+  });
+
   it("does not call module learning certifiable when reviews have no eval absorption", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-audit-"));
     await seedGeneralLearningEvidence(workspaceDir);

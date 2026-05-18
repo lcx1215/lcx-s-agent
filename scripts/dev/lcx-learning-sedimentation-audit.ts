@@ -217,9 +217,12 @@ async function buildAudit(workspaceDir: string) {
   const reviewChain = reviewPanelReceipts.length > 0;
   const correctionChain = correctionNotes.length > 0 || learningCouncilNotes.length > 0;
   const moduleLearningReviewed = modulePlanReceipts.length > 0 && moduleReviews.length > 0;
+  const moduleLearningHasEvalAbsorption = moduleReviewSummary.evalAbsorbed > 0;
+  const moduleLearningHasWeakReceipts = moduleReviewSummary.weakModuleLearning > 0;
   const moduleLearningCertifiable =
     moduleLearningReviewed &&
-    moduleReviewSummary.evalAbsorbed > 0 &&
+    moduleLearningHasEvalAbsorption &&
+    !moduleLearningHasWeakReceipts &&
     moduleReviewSummary.boundaryViolations === 0;
   const sufficientForCurrentUse = financeLearningFullChain && brainDistillationChain && reviewChain;
 
@@ -254,6 +257,16 @@ async function buildAudit(workspaceDir: string) {
           },
         ]
       : []),
+    ...(moduleLearningReviewed && moduleLearningHasWeakReceipts
+      ? [
+          {
+            id: "module_learning_review_has_weak_receipts",
+            severity: "P2",
+            meaning:
+              "Some module-learning receipts are still stored_only, retrieval_ready, or application_ready; historical eval_absorbed receipts do not make the whole module pipeline certifiable.",
+          },
+        ]
+      : []),
     ...(!reviewChain
       ? [
           {
@@ -273,7 +286,9 @@ async function buildAudit(workspaceDir: string) {
       ? moduleLearningCertifiable
         ? "usable_and_module_certifiable"
         : moduleLearningReviewed
-          ? "usable_with_module_review_but_no_eval_absorption"
+          ? moduleLearningHasEvalAbsorption && moduleLearningHasWeakReceipts
+            ? "usable_with_partial_module_absorption_but_weak_receipts"
+            : "usable_with_module_review_but_no_eval_absorption"
           : "usable_but_module_specific_certification_gap"
       : "insufficient_learning_sedimentation_evidence",
     sufficientForCurrentUse,
