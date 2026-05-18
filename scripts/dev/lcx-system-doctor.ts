@@ -415,6 +415,42 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       protectedMemoryTouched: payload.protectedMemoryTouched,
     };
   }
+  if (name === "problem-cluster-radar") {
+    return {
+      ok: payload.ok,
+      boundary: payload.boundary,
+      summary: payload.summary,
+      actionableClusters: payload.actionableClusters,
+      nextActions: payload.nextActions,
+      clusters: Array.isArray(payload.clusters)
+        ? payload.clusters.map((cluster) => {
+            const record =
+              cluster && typeof cluster === "object" && !Array.isArray(cluster)
+                ? (cluster as Record<string, unknown>)
+                : {};
+            return {
+              id: record.id,
+              family: record.family,
+              severity: record.severity,
+              ownerEntrypoint: record.ownerEntrypoint,
+              sourceOwners: record.sourceOwners,
+              signalIds: Array.isArray(record.signals)
+                ? record.signals
+                    .map((signal) =>
+                      signal && typeof signal === "object" && !Array.isArray(signal)
+                        ? (signal as Record<string, unknown>).id
+                        : undefined,
+                    )
+                    .filter((id): id is string => typeof id === "string")
+                : [],
+            };
+          })
+        : [],
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
   if (name === "system-memory-sedimentation-gate") {
     return {
       ok: payload.ok,
@@ -1018,6 +1054,14 @@ checks.push(
     name: "system-memory-sedimentation-gate",
     command: process.execPath,
     args: ["--import", "tsx", "scripts/dev/lcx-system-memory-sedimentation-gate.ts", "--json"],
+    parseJson: true,
+  }),
+);
+checks.push(
+  await runCommand({
+    name: "problem-cluster-radar",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-problem-cluster-radar.ts", "--json"],
     parseJson: true,
   }),
 );

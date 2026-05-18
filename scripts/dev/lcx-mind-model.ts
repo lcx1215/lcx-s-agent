@@ -74,6 +74,7 @@ const WORKFLOW_SURFACES = [
   "scripts/dev/lcx-local-paths.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/lcx-head-tail-consistency.ts",
+  "scripts/dev/lcx-problem-cluster-radar.ts",
   "scripts/dev/lcx-learning-sedimentation-bridge.ts",
   "scripts/dev/lcx-learning-sedimentation-audit.ts",
   "scripts/dev/lcx-learning-sedimentation-map.ts",
@@ -103,6 +104,7 @@ const PROOF_SURFACES = [
   "test/lcx-flow-graph.test.ts",
   "test/lcx-head-tail-consistency.test.ts",
   "test/lcx-mind-model.test.ts",
+  "test/lcx-problem-cluster-radar.test.ts",
   "test/lcx-agent-exam.test.ts",
   "test/local-brain-training-plan.test.ts",
   "test/local-brain-distill-eval.test.ts",
@@ -150,6 +152,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "local-brain-training-plan",
       "lcx-agent-exam",
       "lcx-context-recovery-exam",
+      "lcx-problem-cluster-radar",
     ],
     proofTerms: [
       "observability-entrypoints",
@@ -158,6 +161,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "compressedContextRecovered",
       "local_operator_latest_is_fresh",
       "maxOperatorStateAgeMs",
+      "problemClusters",
     ],
     boundaryTerms: ["dev_observability_only", "live-visible-fixed"],
     nextAction:
@@ -517,6 +521,20 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Reject architecture changes that add slogans, duplicate truth owners, or unverified live/provider/protected-memory claims.",
+  },
+  {
+    id: "problem_cluster_radar_consumes_owner_outputs",
+    category: "workflow",
+    objective:
+      "God-view checks must aggregate current owner red lights into problem clusters instead of requiring Codex to manually rediscover them.",
+    termsBySurface: {
+      head: ["problem cluster radar", "owner outputs", "problemClusters"],
+      workflow: ["lcx-problem-cluster-radar", "sourceOwners", "ownerEntrypoint"],
+      proof: ["test/lcx-problem-cluster-radar.test.ts", "actionableClusters"],
+      boundary: ["dev_problem_cluster_radar_only", "liveTouched", "providerConfigTouched"],
+    },
+    nextAction:
+      "Use lcx-problem-cluster-radar when owner commands are green structurally but current runtime or learning facts still expose P2/P3 clusters.",
   },
 ];
 

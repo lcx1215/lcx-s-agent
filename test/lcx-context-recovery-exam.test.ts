@@ -88,6 +88,7 @@ describe("LCX compressed context recovery exam", () => {
         "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
         "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
         "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+        "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       ]),
     );
     expect(Array.isArray(payload.actionableWarnings)).toBe(true);
@@ -198,6 +199,7 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("compressed_digest_not_realtime_training_authority");
     expect(recoverySource).toContain("MAX_OPERATOR_STATE_AGE_MS");
     expect(recoverySource).toContain("flow_graph_recovers_task_waterflows");
+    expect(recoverySource).toContain("lcx-problem-cluster-radar");
     expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
     expect(localOperator).toContain("NODE_FLOW_FILE");
     expect(localOperator).toContain("volatileOwner");

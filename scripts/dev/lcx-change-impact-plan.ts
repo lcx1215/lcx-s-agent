@@ -63,7 +63,9 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-flow-graph\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
       /^scripts\/dev\/lcx-mind-model\.ts$/u,
+      /^scripts\/dev\/lcx-problem-cluster-radar\.ts$/u,
       /^scripts\/dev\/lcx-system-doctor\.ts$/u,
+      /^test\/lcx-problem-cluster-radar\.test\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "targeted-local-brain-tests"],
     commands: [

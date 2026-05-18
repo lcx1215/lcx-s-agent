@@ -11,6 +11,7 @@ sed -n '1,220p' ops/local-brain/README.md
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
+node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
 test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && \
   sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json
 ```
@@ -26,6 +27,12 @@ The training plan command is the shared coordinator for repeated training
 failures: it classifies whether the next step is continue training,
 failure-focus sample generation, teacher-quality repair, promotion audit, or
 Codex auto-repair through the repo repair lock.
+The problem cluster radar is the shared god-view aggregator for current
+owner-reported issues. It consumes existing owner outputs such as
+`local-brain-training-plan`, `lcx-module-learning-absorption-gate`,
+`lcx-mind-model`, `lcx-flow-graph`, and `lcx-context-recovery-exam`; it must not
+re-implement their truth logic. Use it when the structure checks pass but Codex
+still needs to know which P1/P2/P3 problem clusters are active.
 
 If the task asks about external or newly added skills, use the runbook's skill inventory command:
 
@@ -138,6 +145,12 @@ surface, and boundary flag.
   drift. This includes small workflow details, visible content mistakes,
   temporary test-HOME drift, stale receipts, stored-only learning claims,
   unverified market claims, and dev/live wording mistakes.
+- The problem cluster radar must sit above the governance stack as an
+  aggregator, not a duplicate owner. It should report `problemClusters`,
+  `actionableClusters`, `ownerEntrypoint`, `sourceOwners`, and
+  `dev_problem_cluster_radar_only` so future Codex windows can see active
+  runtime, eval, module-learning, recovery, or dirty-worktree issue clusters
+  without manually rediscovering them from raw logs.
 - Do not start overlapping training. If Qwen, MiniMax teacher, MLX eval, or the
   guard is already active, the training plan must return
   `training_already_active` and `do_not_start_overlapping_guard`; doctor must
@@ -277,8 +290,9 @@ recoverable, auditable, and honest under real use.
   cleaner receipts, lower false-positive alarms, and no protected-memory,
   provider-config, or live-sender drift.
 - Mind model, flow graph, head-tail, doctor, training plan, context recovery, and
-  live probe are the governance stack for this standard. If they disagree, the
-  disagreement is a P2 architecture issue before feature expansion.
+  problem cluster radar, plus live probe when explicitly in live scope, are the
+  governance stack for this standard. If they disagree, the disagreement is a
+  P2 architecture issue before feature expansion.
 
 ## Mission
 

@@ -34,6 +34,7 @@ god-view check:
 node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
+node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-audit.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-map.ts --json
@@ -69,6 +70,20 @@ required filters, evidence receipts, failure signals, and the
 `dev_flow_graph_only` boundary. If a future window sees a workflow symptom, it
 should use this index to find the owner path first instead of creating another
 parallel doctor.
+The Problem Cluster Radar is the current-issue aggregator for that governance
+stack:
+
+```bash
+node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+```
+
+It reads existing owner outputs and emits `problemClusters`,
+`actionableClusters`, `ownerEntrypoint`, and `sourceOwners`. It is not allowed to
+become a second truth owner for training, eval, module learning, flow graph, or
+context recovery. Its job is to group current red lights so a future Codex
+window can see that, for example, eval timeout, parseRecovered promotion block,
+module-learning absorption gap, stale recovery, or dirty worktree are active
+problem clusters without manually rediscovering them from raw logs.
 It should not stay at only six obvious waterflows. The current minimum is 15
 core waterflows, including Lark visible language, commercial answer pipeline,
 provider council evidence, memory correction/downrank, same-philosophy
@@ -100,8 +115,9 @@ proof before durable claims, bounded feedback instead of open-ended loops,
 recoverable state after context loss, and strict dev/live/protected-memory
 boundaries. Use `lcx-mind-model`, `lcx-flow-graph`,
 `lcx-head-tail-consistency`, `lcx-system-doctor`, `local-brain-training-plan`,
-`lcx-context-recovery-exam`, and live probes as the governance stack. If these
-surfaces disagree, treat it as architecture debt before expanding features.
+`lcx-context-recovery-exam`, `lcx-problem-cluster-radar`, and live probes as the
+governance stack. If these surfaces disagree, treat it as architecture debt
+before expanding features.
 
 ## Commercial L5 Blueprint
 
