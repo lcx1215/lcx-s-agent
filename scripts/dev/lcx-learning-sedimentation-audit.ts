@@ -373,6 +373,7 @@ function renderText(audit: Awaited<ReturnType<typeof buildAudit>>): string {
       `module_plan_receipts=${audit.chains.moduleLearningPipeline.planReceipts}`,
       `module_review_files=${audit.chains.moduleLearningPipeline.reviewFiles}`,
       `module_eval_absorbed=${audit.chains.moduleLearningPipeline.evalAbsorbed}`,
+      `module_weak_receipts=${audit.chains.moduleLearningPipeline.weakModuleLearning}`,
       `gaps=${audit.gaps.map((gap) => gap.id).join(",") || "none"}`,
     ].join("\n") + "\n"
   );

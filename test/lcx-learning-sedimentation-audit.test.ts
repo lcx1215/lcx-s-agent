@@ -61,6 +61,25 @@ async function runAudit(workspaceDir: string) {
   };
 }
 
+async function runAuditText(workspaceDir: string) {
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "scripts/dev/lcx-learning-sedimentation-audit.ts",
+      "--workspace",
+      workspaceDir,
+    ],
+    {
+      cwd: repoRoot,
+      env: process.env,
+      maxBuffer: EXEC_MAX_BUFFER,
+    },
+  );
+  return stdout;
+}
+
 async function seedGeneralLearningEvidence(workspaceDir: string): Promise<void> {
   const memoryDir = path.join(workspaceDir, "memory");
   await writeText(path.join(memoryDir, "research-sources", "source.md"), "source");
@@ -204,6 +223,31 @@ describe("LCX learning sedimentation audit", () => {
         expect.objectContaining({ id: "module_learning_review_has_weak_receipts" }),
       ]),
     );
+  });
+
+  it("shows weak module receipts in the text summary", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-audit-"));
+    await seedGeneralLearningEvidence(workspaceDir);
+    const memoryDir = path.join(workspaceDir, "memory");
+    await writeJson(
+      path.join(memoryDir, "module-learning-pipeline-plan-receipts", "day", "m.json"),
+      {
+        ok: true,
+      },
+    );
+    await writeJson(path.join(memoryDir, "module-learning-pipeline-reviews", "day.json"), {
+      counts: {
+        evalAbsorbed: 1,
+        weakModuleLearning: 2,
+        boundaryViolations: 0,
+      },
+    });
+
+    const output = await runAuditText(workspaceDir);
+
+    expect(output).toContain("module_eval_absorbed=1");
+    expect(output).toContain("module_weak_receipts=2");
+    expect(output).toContain("module_learning_review_has_weak_receipts");
   });
 
   it("does not call module learning certifiable when reviews have no eval absorption", async () => {

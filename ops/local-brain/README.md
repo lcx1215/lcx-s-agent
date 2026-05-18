@@ -499,6 +499,12 @@ receipts too, and `supersededReceiptFiles` names old `application_ready`
 receipts replaced by newer `eval_absorbed` receipts. Do not delete the old
 receipts to make the count look clean; they are the audit trail.
 
+The global learning-sedimentation audit may show historical `evalAbsorbed`
+counts while today's active receipts still have `weakModuleLearning > 0`. That
+state is only partial absorption. It must not print
+`usable_and_module_certifiable` until `weakModuleLearning=0` and boundary
+violations are also zero.
+
 For the automation lane that should leave a daily dev/local receipt, run:
 
 ```bash
