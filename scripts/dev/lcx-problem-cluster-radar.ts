@@ -12,6 +12,7 @@ const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 const EXEC_MAX_BUFFER = 24 * 1024 * 1024;
 
 type Severity = "P1" | "P2" | "P3" | "info";
+type ClusterActionability = "repair_now" | "blocked_by_owner_gate" | "watch";
 
 type OwnerSnapshot = {
   ok: boolean;
@@ -32,6 +33,8 @@ type ProblemCluster = {
   id: string;
   family: string;
   severity: Severity;
+  actionability: ClusterActionability;
+  blockingReasons: string[];
   ownerEntrypoint: string;
   sourceOwners: string[];
   signals: ProblemSignal[];
@@ -138,20 +141,43 @@ function problemCluster(params: {
   sourceOwners: string[];
   signals: ProblemSignal[];
   nextAction: string;
+  actionability?: ClusterActionability;
+  blockingReasons?: string[];
 }): ProblemCluster | undefined {
   if (params.signals.length === 0) {
     return undefined;
   }
+  const severity = maxSeverity(params.signals);
   return {
     id: params.id,
     family: params.family,
-    severity: maxSeverity(params.signals),
+    severity,
+    actionability: params.actionability ?? (severityRank(severity) >= 2 ? "repair_now" : "watch"),
+    blockingReasons: params.blockingReasons ?? [],
     ownerEntrypoint: params.ownerEntrypoint,
     sourceOwners: [...new Set(params.sourceOwners)].toSorted(),
     signals: params.signals,
     nextAction: params.nextAction,
     boundary: "dev_problem_cluster_radar_only",
   };
+}
+
+function hasActiveHeavyLocalBrainProcess(
+  trainingPlan: Record<string, unknown> | undefined,
+): boolean {
+  return arrayValue(trainingPlan?.activeProcesses).length > 0;
+}
+
+function ownerDecisionRepairBlocked(
+  trainingPlan: Record<string, unknown> | undefined,
+  decisionId: string,
+): boolean {
+  return arrayValue(trainingPlan?.decisions)
+    .map(recordValue)
+    .some(
+      (decision) =>
+        decision?.id === decisionId && booleanValue(decision.codexRepairEligible) === false,
+    );
 }
 
 function commandFailureSignal(snapshot: OwnerSnapshot | undefined): ProblemSignal | undefined {
@@ -303,12 +329,25 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
     signals,
     nextAction:
       "Keep runtime on one clean latest-passing adapter and feed blocked challenger cases back through teacher/data/eval/promotion.",
+    actionability:
+      hasActiveHeavyLocalBrainProcess(payload) ||
+      ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready")
+        ? "blocked_by_owner_gate"
+        : undefined,
+    blockingReasons: [
+      ...(hasActiveHeavyLocalBrainProcess(payload) ? ["active_local_brain_guard_or_eval"] : []),
+      ...(ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready")
+        ? ["training_plan_codex_repair_not_eligible"]
+        : []),
+    ],
   });
 }
 
 function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | undefined {
   const trainingPlan = inputs.trainingPlan?.payload;
   const moduleGate = inputs.moduleAbsorption?.payload;
+  const gateBlockers = stringArray(moduleGate?.blockers);
+  const writeAvailable = booleanValue(moduleGate?.writeAvailable);
   const signals: ProblemSignal[] = [
     ...decisionSignals(trainingPlan, {
       module_learning_incomplete_evidence: {
@@ -329,7 +368,7 @@ function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | 
       },
     });
   }
-  for (const blocker of stringArray(moduleGate?.blockers)) {
+  for (const blocker of gateBlockers) {
     signals.push({
       id: `module_blocker_${blocker}`,
       severity:
@@ -345,6 +384,29 @@ function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | 
     signals,
     nextAction:
       "Complete per-receipt eval/training absorption evidence and rerun the gate before claiming module learning is internalized.",
+    actionability:
+      writeAvailable === false ||
+      gateBlockers.some((blocker) =>
+        [
+          "latest_hardened_eval_not_clean",
+          "latest_hardened_eval_timeout_newer_than_absorption_evidence",
+        ].includes(blocker),
+      ) ||
+      ownerDecisionRepairBlocked(trainingPlan, "module_learning_incomplete_evidence")
+        ? "blocked_by_owner_gate"
+        : undefined,
+    blockingReasons: [
+      ...(writeAvailable === false ? ["module_absorption_write_not_available"] : []),
+      ...gateBlockers.filter((blocker) =>
+        [
+          "latest_hardened_eval_not_clean",
+          "latest_hardened_eval_timeout_newer_than_absorption_evidence",
+        ].includes(blocker),
+      ),
+      ...(ownerDecisionRepairBlocked(trainingPlan, "module_learning_incomplete_evidence")
+        ? ["training_plan_codex_repair_not_eligible"]
+        : []),
+    ],
   });
 }
 
@@ -417,6 +479,8 @@ function contextRecoveryCluster(inputs: RadarInputs): ProblemCluster | undefined
 function learningSedimentationCluster(inputs: RadarInputs): ProblemCluster | undefined {
   const audit = inputs.learningSedimentationAudit?.payload;
   const map = inputs.learningSedimentationMap?.payload;
+  const moduleGate = inputs.moduleAbsorption?.payload;
+  const gateBlockers = stringArray(moduleGate?.blockers);
   const signals: ProblemSignal[] = [];
   if (audit && booleanValue(audit.sufficientForCurrentUse) === false) {
     signals.push({
@@ -462,6 +526,12 @@ function learningSedimentationCluster(inputs: RadarInputs): ProblemCluster | und
     signals,
     nextAction:
       "Keep source learning, module absorption, system memory, training data, and language corpus separated until their own gates are clean.",
+    actionability:
+      booleanValue(moduleGate?.absorptionReady) === false ? "blocked_by_owner_gate" : undefined,
+    blockingReasons:
+      booleanValue(moduleGate?.absorptionReady) === false
+        ? ["module_absorption_gate_not_ready", ...gateBlockers]
+        : [],
   });
 }
 
@@ -566,7 +636,10 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
     systemMemoryCluster(inputs),
     dirtyWorktreeCluster(inputs),
   ].filter((cluster): cluster is ProblemCluster => Boolean(cluster));
-  const actionableClusters = clusters.filter((cluster) => severityRank(cluster.severity) >= 2);
+  const repairableClusters = clusters.filter((cluster) => cluster.actionability === "repair_now");
+  const blockedClusters = clusters.filter(
+    (cluster) => cluster.actionability === "blocked_by_owner_gate",
+  );
   const watchClusters = clusters.filter((cluster) => cluster.severity === "P3");
   return {
     ok: true,
@@ -574,7 +647,9 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
     checkedAt: new Date().toISOString(),
     summary: {
       clusters: clusters.length,
-      actionableClusters: actionableClusters.length,
+      actionableClusters: repairableClusters.length,
+      repairableClusters: repairableClusters.length,
+      blockedClusters: blockedClusters.length,
       watchClusters: watchClusters.length,
       highestSeverity: maxSeverity(clusters.flatMap((cluster) => cluster.signals)),
       sourceOwners: [
@@ -590,8 +665,14 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
       ],
     },
     clusters,
-    actionableClusters: actionableClusters.map((cluster) => cluster.id),
-    nextActions: actionableClusters.map((cluster) => `${cluster.id}: ${cluster.nextAction}`),
+    actionableClusters: repairableClusters.map((cluster) => cluster.id),
+    repairableClusters: repairableClusters.map((cluster) => cluster.id),
+    blockedClusters: blockedClusters.map((cluster) => cluster.id),
+    nextActions: repairableClusters.map((cluster) => `${cluster.id}: ${cluster.nextAction}`),
+    blockedActions: blockedClusters.map(
+      (cluster) =>
+        `${cluster.id}: ${cluster.nextAction} blocked_by=${cluster.blockingReasons.join(",")}`,
+    ),
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

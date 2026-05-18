@@ -117,24 +117,27 @@ describe("lcx-problem-cluster-radar", () => {
       }),
     );
     expect(result.actionableClusters).toEqual(
-      expect.arrayContaining([
-        "training_eval_runtime_cluster",
-        "adapter_promotion_truth_cluster",
-        "module_learning_absorption_cluster",
-      ]),
+      expect.arrayContaining(["training_eval_runtime_cluster", "adapter_promotion_truth_cluster"]),
     );
+    expect(result.actionableClusters).not.toContain("module_learning_absorption_cluster");
+    expect(result.blockedClusters).toContain("module_learning_absorption_cluster");
     expect(result.clusters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "training_eval_runtime_cluster",
           ownerEntrypoint: "scripts/dev/local-brain-training-plan.ts",
           severity: "P2",
+          actionability: "repair_now",
           sourceOwners: ["local-brain-training-plan"],
         }),
         expect.objectContaining({
           id: "module_learning_absorption_cluster",
           ownerEntrypoint: "scripts/dev/lcx-module-learning-absorption-gate.ts",
           severity: "P2",
+          actionability: "blocked_by_owner_gate",
+          blockingReasons: expect.arrayContaining([
+            "latest_hardened_eval_timeout_newer_than_absorption_evidence",
+          ]),
         }),
       ]),
     );
