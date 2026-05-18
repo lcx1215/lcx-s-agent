@@ -2041,9 +2041,13 @@ export function hardenLocalBrainPlanForAsk(
       supporting_modules: ["source_registry", "data_provenance_quality", "research_artifact_qc"],
       required_tools: ["source_registry_lookup", "artifact_memory_recall", "review_panel"],
       missing_data: [
+        "original_thesis_source_and_date",
         "original_thesis_and_evidence_used",
+        "catalyst_calendar_and_event_outcome",
         "thesis_catalyst_calendar_and_invalidation_evidence",
+        "invalidation_evidence_and_red_team_case",
         "fresh_market_data_snapshot",
+        "post_event_review_and_correction_note_scope",
         "post_event_correction_note",
       ],
       risk_boundaries: [
@@ -3393,10 +3397,13 @@ export function hardenLocalBrainPlanForAsk(
         "review_panel",
       ]),
       missing_data: mergeUnique(arrayValue(safe.missing_data), [
+        "latest_10q_10k_or_earnings_release",
         "latest_company_fundamental_inputs",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
         "source_timestamp_and_vendor",
         "fresh_market_data_snapshot",
         "model_assumptions_sensitivity_and_audit_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
         "thesis_catalyst_calendar_and_invalidation_evidence",
         "portfolio_weights_and_risk_limits",
         "company_to_portfolio_exposure_map",

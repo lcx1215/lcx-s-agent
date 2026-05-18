@@ -91,9 +91,23 @@ const TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS = new Set([
   "single_company_fundamental_risk",
   "plain_single_stock_position_sizing_preflight",
 ]);
+const PARSE_STABILITY_COMPACT_EVAL_CASE_PREFIXES = [
+  "core_options_event_boundary",
+  "core_thesis_catalyst_lifecycle",
+  "research_artifact_qc_expansion",
+] as const;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
+
+function isParseStabilityCompactEvalCase(evalCase: EvalCase): boolean {
+  return (
+    TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id) ||
+    PARSE_STABILITY_COMPACT_EVAL_CASE_PREFIXES.some((prefix) =>
+      evalCase.id.startsWith(`${prefix}_`),
+    )
+  );
+}
 
 class LocalBrainGenerateError extends Error {
   readonly rawOutput: string;
@@ -573,6 +587,13 @@ const EVAL_CASES: EvalCase[] = [
     sourceSummary: "single-company fundamental risk planning request without fresh filing data.",
     requiredModules: ["company_fundamentals_value", "causal_map", "portfolio_risk_gates"],
     minModuleMatches: 3,
+    requiredMissingData: [
+      "latest_10q_10k_or_earnings_release",
+      "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "portfolio_weights_and_risk_limits",
+    ],
+    requiredRiskBoundaries: ["no_unverified_filing_claims", "no_trade_advice"],
   },
   {
     id: "value_investing_fundamental_core",
@@ -2807,7 +2828,13 @@ const GENERATED_EVAL_EXPANSION_CASES = [
       "review_panel",
     ],
     minModuleMatches: 5,
-    requiredRiskBoundaries: ["no_trade_advice"],
+    requiredMissingData: [
+      "original_thesis_source_and_date",
+      "catalyst_calendar_and_event_outcome",
+      "invalidation_evidence_and_red_team_case",
+      "post_event_review_and_correction_note_scope",
+    ],
+    requiredRiskBoundaries: ["red_team_invalidation_required", "no_trade_advice"],
     userAsks: [
       "这个持仓 thesis 还成立吗？先找原始论据。",
       "催化剂兑现后要不要复盘，别直接改结论。",
@@ -3650,12 +3677,9 @@ function selectCompactEvalContractHints(evalCase: EvalCase): string[] {
   const ranked = selected
     .map((hint, index) => ({ hint, index, score: scoreEvalContractHint(evalCase, hint) }))
     .toSorted((left, right) => right.score - left.score || left.index - right.index);
-  const maxCount = TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
-    ? 2
-    : LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT;
-  const charBudget = TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
-    ? 720
-    : LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET;
+  const compactForParseStability = isParseStabilityCompactEvalCase(evalCase);
+  const maxCount = compactForParseStability ? 2 : LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT;
+  const charBudget = compactForParseStability ? 720 : LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET;
   const chosen = ranked
     .filter((entry, index) => entry.score > 0 || index < 2)
     .slice(0, maxCount)
@@ -3673,11 +3697,11 @@ function selectCompactEvalContractHints(evalCase: EvalCase): string[] {
 }
 
 function outputContractHintsFor(evalCase: EvalCase): string[] {
-  const timeoutProne = TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id);
-  const missingDataCap = timeoutProne
+  const compactForParseStability = isParseStabilityCompactEvalCase(evalCase);
+  const missingDataCap = compactForParseStability
     ? Math.max(4, evalCase.requiredMissingData?.length ?? 0)
     : Math.max(8, evalCase.requiredMissingData?.length ?? 0);
-  const riskBoundaryCap = timeoutProne
+  const riskBoundaryCap = compactForParseStability
     ? Math.max(4, (evalCase.requiredRiskBoundaries?.length ?? 0) + 1)
     : Math.max(6, (evalCase.requiredRiskBoundaries?.length ?? 0) + 1);
   return LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.map((hint) =>
@@ -3691,7 +3715,7 @@ function maxTokensForEvalCase(evalCase: EvalCase, mode: "standard" | "timeout_re
   if (mode === "timeout_retry") {
     return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
   }
-  return TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
+  return isParseStabilityCompactEvalCase(evalCase)
     ? LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS
     : LOCAL_BRAIN_EVAL_MAX_TOKENS;
 }
@@ -3714,8 +3738,8 @@ function buildPrompt(evalCase: EvalCase): string {
     `Output contract: ${outputContractHintsFor(evalCase).join(" ")}`,
     'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
-    TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id)
-      ? "Timeout-sensitive compact eval: include only required ids and the smallest directly relevant module set."
+    isParseStabilityCompactEvalCase(evalCase)
+      ? "Parse-stability compact eval: include only required ids, keep every value short, and close the JSON object without trailing text."
       : undefined,
     "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`,

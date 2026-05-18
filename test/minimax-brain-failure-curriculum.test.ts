@@ -158,6 +158,51 @@ describe("minimax brain failure curriculum", () => {
     expect(prompts[0].userMessage).toContain("不能把结构化数据当文章抽取");
   });
 
+  it("turns parse-recovered eval cases into output-contract failure focus prompts", async () => {
+    const logPath = await makeGuardLog([
+      {
+        at: "2026-05-18T16:42:58.646Z",
+        event: "step_non_passing",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          summary: {
+            passed: 200,
+            total: 200,
+            passRate: 1,
+            failedCaseIds: [],
+            parseRecoveredCaseIds: [
+              "core_options_event_boundary_02",
+              "core_thesis_catalyst_lifecycle_06",
+              "research_artifact_qc_expansion_03",
+            ],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+
+    const prompts = await buildFailureCurriculumPrompts({
+      guardLogPath: logPath,
+      maxPrompts: 3,
+      startIndex: 40,
+    });
+    const promptText = prompts.map((prompt) => prompt.userMessage).join("\n");
+    const summaryText = prompts.map((prompt) => prompt.sourceSummary).join("\n");
+
+    expect(prompts.map((prompt) => prompt.id)).toEqual([
+      "failure_focus_core_options_event_boundary_02_00040",
+      "failure_focus_core_thesis_catalyst_lifecycle_06_00041",
+      "failure_focus_research_artifact_qc_expansion_03_00042",
+    ]);
+    expect(promptText).toContain("JSON 必须闭合");
+    expect(promptText).toContain("options_iv_skew_gamma_and_event_calendar");
+    expect(promptText).toContain("original_thesis_source_and_date");
+    expect(promptText).toContain("research_artifact_qc_and_number_provenance_checklist");
+    expect(summaryText).toContain("parseRecovered");
+    expect(summaryText).toContain("compact valid JSON is required before promotion");
+  });
+
   it("returns no prompts when no failed eval evidence exists", async () => {
     const logPath = await makeGuardLog([
       {

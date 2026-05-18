@@ -19,6 +19,7 @@ type FailureEvalSnapshot = {
   at: string;
   adapterPath: string;
   failedCaseIds: string[];
+  parseRecoveredCaseIds: string[];
   passed: number;
   total: number;
   passRate: number;
@@ -40,6 +41,30 @@ const DEFAULT_GUARD_LOG = path.join(
 );
 
 const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
+  {
+    caseId: "core_options_event_boundary",
+    priority: 101,
+    userMessage:
+      "训练本地大脑修复期权事件风险 eval 的输出稳定性：财报、IV、skew、gamma、ETF/仓位风险只能生成紧凑 planning JSON；必须包含 source_registry、options_volatility、event_driven、company_fundamentals_value、quant_math、portfolio_risk_gates、review_panel、options_iv_skew_gamma_and_event_calendar、latest_filing_or_event_source、position_weights_and_return_series、no_options_trade_advice 和 risk_gate_before_action_language；不要 markdown、不要解释、不要拖尾文本，JSON 必须闭合。",
+    sourceSummary:
+      "parse-recovered repair for options event-boundary eval family; trains compact valid JSON output plus required data gaps and no-options-trade boundary.",
+  },
+  {
+    caseId: "core_thesis_catalyst_lifecycle",
+    priority: 101,
+    userMessage:
+      "训练本地大脑修复 thesis/catalyst 生命周期 eval 的输出稳定性：只输出紧凑 planning JSON，覆盖 original_thesis_source_and_date、catalyst_calendar_and_event_outcome、invalidation_evidence_and_red_team_case、post_event_review_and_correction_note_scope、thesis_catalyst_lifecycle、company_fundamentals_value、causal_map、portfolio_risk_gates、finance_learning_memory、review_panel、red_team_invalidation_required 和 no_trade_advice；不要把新闻热度当结论，不要输出说明文字，JSON 必须闭合。",
+    sourceSummary:
+      "parse-recovered repair for thesis catalyst lifecycle eval family; trains compact valid JSON output plus lifecycle evidence gaps and red-team boundary.",
+  },
+  {
+    caseId: "research_artifact_qc_expansion",
+    priority: 100,
+    userMessage:
+      "训练本地大脑修复 research artifact QC eval 的输出稳定性：只输出紧凑 planning JSON，覆盖 research_artifact_qc、data_provenance_quality、source_registry、review_panel、control_room_summary、research_artifact_qc_and_number_provenance_checklist、source_timestamp_and_vendor、citation_and_provenance_rule、cite_every_number_or_mark_unsourced 和 human_review_required_before_external_use；不要 markdown、不要引用格式长解释、不要拖尾文本，JSON 必须闭合。",
+    sourceSummary:
+      "parse-recovered repair for research artifact QC eval family; trains compact valid JSON output plus number provenance and human-review boundary.",
+  },
   {
     caseId: "short_lark_commodity_learning_intake",
     priority: 120,
@@ -219,7 +244,15 @@ function evalSnapshotFromPayload(
     return undefined;
   }
   const failedCaseIds = (summary as { failedCaseIds?: unknown }).failedCaseIds;
-  if (!Array.isArray(failedCaseIds) || failedCaseIds.length === 0) {
+  const parseRecoveredCaseIds = (summary as { parseRecoveredCaseIds?: unknown })
+    .parseRecoveredCaseIds;
+  const filteredFailedCaseIds = Array.isArray(failedCaseIds)
+    ? failedCaseIds.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const filteredParseRecoveredCaseIds = Array.isArray(parseRecoveredCaseIds)
+    ? parseRecoveredCaseIds.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  if (filteredFailedCaseIds.length === 0 && filteredParseRecoveredCaseIds.length === 0) {
     return undefined;
   }
   const passed = (summary as { passed?: unknown }).passed;
@@ -228,7 +261,8 @@ function evalSnapshotFromPayload(
   return {
     at: typeof payload.at === "string" ? payload.at : "",
     adapterPath,
-    failedCaseIds: failedCaseIds.filter((entry): entry is string => typeof entry === "string"),
+    failedCaseIds: filteredFailedCaseIds,
+    parseRecoveredCaseIds: filteredParseRecoveredCaseIds,
     passed: typeof passed === "number" ? passed : 0,
     total: typeof total === "number" ? total : 0,
     passRate: typeof passRate === "number" ? passRate : 0,
@@ -261,6 +295,24 @@ function fallbackRecipe(caseId: string, priority: number): FailureCaseRecipe {
   };
 }
 
+function recipeForCaseId(
+  caseId: string,
+  recipeByCaseId: Map<string, FailureCaseRecipe>,
+  priority: number,
+): FailureCaseRecipe {
+  const exactRecipe = recipeByCaseId.get(caseId);
+  if (exactRecipe) {
+    return exactRecipe;
+  }
+  const prefixRecipe = Array.from(recipeByCaseId.entries()).find(
+    ([recipeCaseId]) => recipeCaseId !== caseId && caseId.startsWith(`${recipeCaseId}_`),
+  )?.[1];
+  if (prefixRecipe) {
+    return { ...prefixRecipe, caseId, priority: Math.max(priority, prefixRecipe.priority) };
+  }
+  return fallbackRecipe(caseId, priority);
+}
+
 export async function buildFailureCurriculumPrompts(
   options: FailureCurriculumOptions,
 ): Promise<TeacherPrompt[]> {
@@ -272,8 +324,11 @@ export async function buildFailureCurriculumPrompts(
     return [];
   }
   const recipeByCaseId = new Map(FAILURE_CASE_RECIPES.map((recipe) => [recipe.caseId, recipe]));
-  const recipes = snapshot.failedCaseIds
-    .map((caseId, index) => recipeByCaseId.get(caseId) ?? fallbackRecipe(caseId, 10 - index))
+  const focusCaseIds = Array.from(
+    new Set([...snapshot.failedCaseIds, ...snapshot.parseRecoveredCaseIds]),
+  );
+  const recipes = focusCaseIds
+    .map((caseId, index) => recipeForCaseId(caseId, recipeByCaseId, 10 - index))
     .toSorted(
       (left, right) => right.priority - left.priority || left.caseId.localeCompare(right.caseId),
     )
@@ -285,8 +340,13 @@ export async function buildFailureCurriculumPrompts(
     sourceSummary: [
       recipe.sourceSummary,
       `Latest failed eval adapter ${path.basename(snapshot.adapterPath)} passed ${snapshot.passed}/${snapshot.total} (${snapshot.passRate}).`,
+      snapshot.parseRecoveredCaseIds.includes(recipe.caseId)
+        ? "This case passed acceptance only through parseRecovered; compact valid JSON is required before promotion."
+        : undefined,
       "Writes brain distillation review only; no live sender, provider config, language corpus, protected memory, or finance doctrine change.",
-    ].join(" "),
+    ]
+      .filter((entry): entry is string => typeof entry === "string")
+      .join(" "),
   }));
 }
 
