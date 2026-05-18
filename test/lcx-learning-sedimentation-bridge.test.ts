@@ -37,6 +37,9 @@ async function runBridge(workspaceDir: string, extraArgs: string[] = []) {
     boundary: string;
     writePlanReceipts: boolean;
     candidateCount: number;
+    existingPlanReceiptCount: number;
+    missingPlanReceiptCount: number;
+    nextAction: string;
     candidates: Array<{
       targetModule: string;
       status: string;
@@ -46,6 +49,7 @@ async function runBridge(workspaceDir: string, extraArgs: string[] = []) {
       missingEvidence: string[];
       receiptPath: string | null;
       receiptWritten: boolean;
+      receiptAlreadyExists: boolean;
     }>;
     notPromoted: boolean;
     liveTouched: boolean;
@@ -89,6 +93,9 @@ describe("LCX learning sedimentation bridge", () => {
         boundary: "dev_learning_sedimentation_bridge_only",
         writePlanReceipts: false,
         candidateCount: 1,
+        existingPlanReceiptCount: 0,
+        missingPlanReceiptCount: 1,
+        nextAction: "write_missing_plan_receipts_then_run_module_learning_review",
         notPromoted: true,
         liveTouched: false,
         providerConfigTouched: false,
@@ -104,6 +111,7 @@ describe("LCX learning sedimentation bridge", () => {
         applicationValidationReceiptPath: "memory/finance-learning-apply-usage-receipts/day/a.json",
         receiptPath: null,
         receiptWritten: false,
+        receiptAlreadyExists: false,
       }),
     );
     expect(payload.candidates[0]?.missingEvidence).toEqual(
@@ -123,6 +131,7 @@ describe("LCX learning sedimentation bridge", () => {
 
     expect(payload.writePlanReceipts).toBe(true);
     expect(payload.candidates[0]?.receiptWritten).toBe(true);
+    expect(payload.candidates[0]?.receiptAlreadyExists).toBe(false);
     expect(payload.candidates[0]?.status).toBe("application_ready");
     const receiptPath = payload.candidates[0]?.receiptPath;
     expect(receiptPath).toEqual(expect.stringContaining("module-learning-pipeline-plan-receipts"));
@@ -139,6 +148,36 @@ describe("LCX learning sedimentation bridge", () => {
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
+      }),
+    );
+  });
+
+  it("reuses same-day plan receipts instead of asking operators to write duplicates", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-bridge-"));
+    await seedBridgeEvidence(workspaceDir);
+
+    const written = await runBridge(workspaceDir, ["--write-plan-receipts"]);
+    const existingReceiptPath = written.candidates[0]?.receiptPath;
+    expect(existingReceiptPath).toEqual(
+      expect.stringContaining("module-learning-pipeline-plan-receipts"),
+    );
+
+    const dryRun = await runBridge(workspaceDir);
+
+    expect(dryRun).toEqual(
+      expect.objectContaining({
+        writePlanReceipts: false,
+        candidateCount: 1,
+        existingPlanReceiptCount: 1,
+        missingPlanReceiptCount: 0,
+        nextAction: "run_module_learning_review_and_absorption_gate",
+      }),
+    );
+    expect(dryRun.candidates[0]).toEqual(
+      expect.objectContaining({
+        receiptPath: existingReceiptPath,
+        receiptWritten: false,
+        receiptAlreadyExists: true,
       }),
     );
   });

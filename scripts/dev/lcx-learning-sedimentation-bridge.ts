@@ -38,8 +38,16 @@ type RetrievalReceipt = {
 };
 
 const DEFAULT_MAX_CANDIDATES = 8;
+const PLAN_RECEIPT_DIR = path.join("memory", "module-learning-pipeline-plan-receipts");
 const MODULE_LEARNING_SOURCE_REGISTRY =
   "memory/local-memory/finance-learning-capability-candidates.md";
+
+type ExistingPlanReceipt = {
+  receiptPath: string;
+  status?: unknown;
+  missingEvidence?: unknown;
+  claimBoundary?: unknown;
+};
 
 function usage(): never {
   throw new Error(
@@ -224,6 +232,58 @@ function retrievalSources(receipt: RetrievalReceipt): string[] {
   return [...new Set([...direct, ...candidateSources])];
 }
 
+function planReceiptKey(params: {
+  targetModule: string;
+  sourceUrlOrPath: string;
+  applicationValidationReceiptPath: string;
+}): string {
+  return [
+    params.targetModule,
+    params.sourceUrlOrPath,
+    params.applicationValidationReceiptPath,
+  ].join("\n");
+}
+
+async function buildExistingPlanReceiptIndex(params: {
+  workspaceDir: string;
+  dateKey: string;
+}): Promise<Map<string, ExistingPlanReceipt>> {
+  const receiptFiles = await listJsonFiles(
+    path.join(params.workspaceDir, PLAN_RECEIPT_DIR, params.dateKey),
+  );
+  const index = new Map<string, ExistingPlanReceipt>();
+  for (const file of receiptFiles) {
+    const receipt = await readJsonObject<Record<string, unknown>>(file.path);
+    if (receipt?.boundary !== "dev_module_learning_pipeline_plan") {
+      continue;
+    }
+    const targetModule = typeof receipt.targetModule === "string" ? receipt.targetModule : "";
+    const sourceUrlOrPath =
+      typeof receipt.sourceUrlOrPath === "string" ? receipt.sourceUrlOrPath : "";
+    const applicationValidationReceiptPath =
+      typeof receipt.applicationValidationReceiptPath === "string"
+        ? receipt.applicationValidationReceiptPath
+        : "";
+    if (!targetModule || !sourceUrlOrPath || !applicationValidationReceiptPath) {
+      continue;
+    }
+    const key = planReceiptKey({
+      targetModule,
+      sourceUrlOrPath,
+      applicationValidationReceiptPath,
+    });
+    if (!index.has(key)) {
+      index.set(key, {
+        receiptPath: relativeToWorkspace(params.workspaceDir, file.path),
+        status: receipt.status,
+        missingEvidence: receipt.missingEvidence,
+        claimBoundary: receipt.claimBoundary,
+      });
+    }
+  }
+  return index;
+}
+
 async function buildRetrievalIndex(workspaceDir: string): Promise<Map<string, string>> {
   const memoryDir = path.join(workspaceDir, "memory");
   const retrievalFiles = await listJsonFiles(
@@ -248,9 +308,11 @@ export async function buildLearningSedimentationBridge(
   options: LearningSedimentationBridgeOptions,
 ) {
   const memoryDir = path.join(options.workspaceDir, "memory");
-  const [applyFiles, retrievalIndex] = await Promise.all([
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const [applyFiles, retrievalIndex, existingPlanReceipts] = await Promise.all([
     listJsonFiles(path.join(memoryDir, "finance-learning-apply-usage-receipts")),
     buildRetrievalIndex(options.workspaceDir),
+    buildExistingPlanReceiptIndex({ workspaceDir: options.workspaceDir, dateKey }),
   ]);
   const planTool = createModuleLearningPipelinePlanTool({ workspaceDir: options.workspaceDir });
   const rawCandidates: Array<{
@@ -309,6 +371,13 @@ export async function buildLearningSedimentationBridge(
 
   const candidates = [];
   for (const [index, candidate] of uniqueCandidates.entries()) {
+    const existingReceipt = existingPlanReceipts.get(
+      planReceiptKey({
+        targetModule: candidate.targetModule,
+        sourceUrlOrPath: candidate.sourceUrlOrPath,
+        applicationValidationReceiptPath: candidate.applicationValidationReceiptPath,
+      }),
+    );
     const planResult = await planTool.execute(`learning-sedimentation-bridge-${index}`, {
       targetModule: candidate.targetModule,
       sourceUrlOrPath: candidate.sourceUrlOrPath,
@@ -325,7 +394,7 @@ export async function buildLearningSedimentationBridge(
       retrievalReceiptPath: candidate.retrievalReceiptPath,
       applicationValidationReceiptPath: candidate.applicationValidationReceiptPath,
       keepDownrankDiscardDecision: "not_decided",
-      writeReceipt: options.writePlanReceipts,
+      writeReceipt: options.writePlanReceipts && !existingReceipt,
     });
     const details = planResult.details as Record<string, unknown>;
     candidates.push({
@@ -335,13 +404,18 @@ export async function buildLearningSedimentationBridge(
       retrievalReceiptPath: candidate.retrievalReceiptPath ?? null,
       applicationValidationReceiptPath: candidate.applicationValidationReceiptPath,
       matchedSignals: candidate.matchedSignals,
-      status: details.status,
-      missingEvidence: details.missingEvidence,
-      receiptPath: details.receiptPath,
+      status: existingReceipt?.status ?? details.status,
+      missingEvidence: existingReceipt?.missingEvidence ?? details.missingEvidence,
+      receiptPath: existingReceipt?.receiptPath ?? details.receiptPath,
       receiptWritten: details.receiptWritten,
-      claimBoundary: details.claimBoundary,
+      receiptAlreadyExists: Boolean(existingReceipt),
+      claimBoundary: existingReceipt?.claimBoundary ?? details.claimBoundary,
     });
   }
+  const existingPlanReceiptCount = candidates.filter(
+    (candidate) => candidate.receiptAlreadyExists,
+  ).length;
+  const missingPlanReceiptCount = candidates.length - existingPlanReceiptCount;
 
   return {
     ok: true,
@@ -349,12 +423,16 @@ export async function buildLearningSedimentationBridge(
     workspaceDir: options.workspaceDir,
     writePlanReceipts: options.writePlanReceipts,
     candidateCount: candidates.length,
+    existingPlanReceiptCount,
+    missingPlanReceiptCount,
     sourceApplyReceiptFiles: applyFiles.length,
     candidates,
     nextAction:
-      candidates.length > 0
-        ? "write_plan_receipts_then_run_module_learning_review_when_operator_wants_certification"
-        : "create_or_apply_learning_receipts_before_module_bridge",
+      candidates.length === 0
+        ? "create_or_apply_learning_receipts_before_module_bridge"
+        : missingPlanReceiptCount === 0
+          ? "run_module_learning_review_and_absorption_gate"
+          : "write_missing_plan_receipts_then_run_module_learning_review",
     notPromoted: true,
     notTouched: [
       "live_sender",
