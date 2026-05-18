@@ -35,6 +35,8 @@ node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
+node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-audit.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-map.ts --json
@@ -84,6 +86,13 @@ context recovery. Its job is to group current red lights so a future Codex
 window can see that, for example, eval timeout, parseRecovered promotion block,
 module-learning absorption gap, stale recovery, or dirty worktree are active
 problem clusters without manually rediscovering them from raw logs.
+Run it automatically before non-trivial repairs, training/promotion judgments,
+module-learning absorption claims, memory sedimentation claims, Lark/live
+boundary claims, and broad "find more problems" work. Start with the radar to
+get the cluster list, then follow each cluster's `ownerEntrypoint`; do not let
+the radar replace those owners. If the training plan shows active
+Qwen/MiniMax/MLX work, do not start a second heavy eval from this governance
+stack.
 It should not stay at only six obvious waterflows. The current minimum is 15
 core waterflows, including Lark visible language, commercial answer pipeline,
 provider council evidence, memory correction/downrank, same-philosophy

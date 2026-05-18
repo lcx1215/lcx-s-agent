@@ -34,6 +34,29 @@ owner-reported issues. It consumes existing owner outputs such as
 re-implement their truth logic. Use it when the structure checks pass but Codex
 still needs to know which P1/P2/P3 problem clusters are active.
 
+## Governance Stack Autopilot
+
+Future Codex, Claude Code, and LCX Agent operator flows should not wait for the
+user to ask for each architecture check by name. For any non-trivial engineering
+task, compressed-context handoff, training/promotion judgment, module-learning
+claim, memory sedimentation claim, Lark/live boundary claim, or "continue
+finding issues" request, run the governance stack automatically:
+
+```bash
+node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
+node --import tsx scripts/dev/local-brain-training-plan.ts --json
+node --import tsx scripts/dev/lcx-mind-model.ts --json
+node --import tsx scripts/dev/lcx-flow-graph.ts --json
+node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json
+```
+
+Use the radar first to discover current problem clusters, then use the owner
+entrypoint from each cluster for the actual repair. Do not make the radar a
+second source of truth. Do not run heavy eval/training from this checklist when
+`local-brain-training-plan` reports active Qwen/MiniMax/MLX work; report the
+active PID and defer heavy commands instead.
+
 If the task asks about external or newly added skills, use the runbook's skill inventory command:
 
 ```bash
