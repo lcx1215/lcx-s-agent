@@ -369,6 +369,9 @@ function buildLearningSedimentationInventoryLane(
   const planReceipts = numberValue(modulePipeline.planReceipts) ?? 0;
   const weak = numberValue(modulePipeline.weakModuleLearning) ?? 0;
   const boundaryViolations = numberValue(modulePipeline.boundaryViolations) ?? 0;
+  const gaps = asArray(audit.gaps)
+    .map((gap) => stringValue(asRecord(gap).id, ""))
+    .filter((id) => id.length > 0);
   const status = boundaryViolations > 0 ? "fail" : evalAbsorbed > 0 && weak === 0 ? "pass" : "warn";
   return {
     lane: "learning_sedimentation_inventory",
@@ -381,6 +384,7 @@ function buildLearningSedimentationInventoryLane(
       `evalAbsorbed=${evalAbsorbed}`,
       `weakModuleLearning=${weak}`,
       `boundaryViolations=${boundaryViolations}`,
+      `gaps=${gaps.join(",") || "none"}`,
     ],
     issue:
       status === "pass"
@@ -819,14 +823,20 @@ function blueprintStatusFromLane(lane: ExamLane | undefined): CommercialBlueprin
 }
 
 function evidenceHasPositiveCount(evidence: readonly string[], key: string): boolean {
-  const prefix = `${key}=`;
+  const exactPrefix = `${key}=`;
+  const scopedSuffix = `.${key}=`;
   return evidence.some((entry) => {
-    if (!entry.startsWith(prefix)) {
+    if (!entry.startsWith(exactPrefix) && !entry.includes(scopedSuffix)) {
       return false;
     }
-    const value = Number.parseInt(entry.slice(prefix.length), 10);
+    const valueText = entry.slice(entry.indexOf("=") + 1);
+    const value = Number.parseInt(valueText, 10);
     return Number.isFinite(value) && value > 0;
   });
+}
+
+function prefixEvidence(scope: string, evidence: readonly string[]): string[] {
+  return evidence.map((entry) => `${scope}.${entry}`);
 }
 
 function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5: boolean }) {
@@ -838,14 +848,13 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
   const answerLane = laneById(params.lanes, "commercial_answer_audit_pipeline");
   const controlRoomLane = laneById(params.lanes, "product_control_room");
   const moduleLearningStatus =
-    inventoryLane?.status === "pass"
-      ? "ready"
-      : moduleLane?.status === "pass"
-        ? "ready"
-        : "needs_receipts";
+    inventoryLane?.status === "pass" && moduleLane?.status === "pass" ? "ready" : "needs_receipts";
   const moduleLearningEvidence = [
-    ...(inventoryLane?.evidence ?? ["learning sedimentation inventory missing"]),
-    ...(moduleLane?.evidence ?? ["module learning lane missing"]),
+    ...prefixEvidence(
+      "inventory",
+      inventoryLane?.evidence ?? ["learning sedimentation inventory missing"],
+    ),
+    ...prefixEvidence("todayReview", moduleLane?.evidence ?? ["module learning lane missing"]),
   ];
   const moduleLearningHasPlanOrReview =
     evidenceHasPositiveCount(moduleLearningEvidence, "receiptFiles") ||

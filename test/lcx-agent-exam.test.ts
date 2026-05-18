@@ -212,6 +212,12 @@ describe("lcx-agent-exam", () => {
     expect(moduleBlueprint).toEqual(
       expect.objectContaining({
         status: "ready",
+        evidence: expect.arrayContaining([
+          "inventory.assessment=usable_and_module_certifiable",
+          "inventory.planReceipts=32",
+          "todayReview.receiptFiles=8",
+          "todayReview.evalAbsorbed=8",
+        ]),
         nextAction: expect.stringContaining("保持 no-write review"),
       }),
     );
@@ -270,6 +276,7 @@ describe("lcx-agent-exam", () => {
         ok: true,
         boundary: "dev_learning_sedimentation_audit_only",
         assessment: "usable_but_not_model_absorbed",
+        gaps: [{ id: "module_learning_review_has_weak_receipts", severity: "P2" }],
         chains: {
           moduleLearningPipeline: {
             planReceipts: 8,
@@ -288,11 +295,101 @@ describe("lcx-agent-exam", () => {
     expect(moduleBlueprint).toEqual(
       expect.objectContaining({
         status: "needs_receipts",
+        evidence: expect.arrayContaining([
+          "inventory.assessment=usable_but_not_model_absorbed",
+          "inventory.planReceipts=8",
+          "todayReview.receiptFiles=8",
+          "todayReview.applicationReady=8",
+        ]),
         nextAction: expect.stringContaining("已有 module_learning_pipeline_plan/review"),
+      }),
+    );
+    expect(report.lanes.find((lane) => lane.lane === "learning_sedimentation_inventory")).toEqual(
+      expect.objectContaining({
+        evidence: expect.arrayContaining(["gaps=module_learning_review_has_weak_receipts"]),
       }),
     );
     expect(moduleBlueprint?.nextAction).not.toContain("补 module_learning_pipeline_plan/review");
     expect(moduleBlueprint?.nextAction).toContain("不能重复写 plan 冒充吸收");
+  });
+
+  it("keeps module learning blueprint blocked when inventory is clean but today's review is weak", () => {
+    const report = buildAgentExamReport({
+      checkedAt: "2026-05-12T00:00:00.000Z",
+      live: false,
+      l5: false,
+      doctor: okCommand("doctor", {
+        ok: true,
+        boundary: "dev_observability_only",
+        liveTouched: false,
+        summary: { passed: 12, failed: 0, skipped: 5 },
+      }),
+      trainingPlan: okCommand("training-plan", {
+        activeProcesses: [{ pid: 123, role: "guard" }],
+        latestEval: { name: "stable_hardened_eval", passed: 72, total: 72 },
+        latestDataset: { examples: 9000 },
+        latestTeacher: { failures: 0 },
+        decisions: [{ id: "continue_medium_training" }],
+      }),
+      promotionAudit: okCommand("promotion-audit", {
+        boundary: "dev_local_brain_promotion_audit_only",
+        promotionDecision: "safe",
+        resolverMatchesLatestEval: true,
+        realBugsFound: [],
+        latestEval: {
+          name: "stable_hardened_eval",
+          passed: 72,
+          total: 72,
+          promotionReady: true,
+        },
+        selectedEval: {
+          name: "stable_hardened_eval",
+          passed: 72,
+          total: 72,
+          promotionReady: true,
+        },
+      }),
+      moduleLearningReview: okCommand("module-review", {
+        boundary: "module_learning_pipeline_review_only",
+        updated: false,
+        counts: {
+          receiptFiles: 1,
+          weakModuleLearning: 1,
+          applicationReady: 1,
+          evalAbsorbed: 0,
+          invalidReceipts: 0,
+          boundaryViolations: 0,
+        },
+      }),
+      learningSedimentationAudit: okCommand("learning-audit", {
+        ok: true,
+        boundary: "dev_learning_sedimentation_audit_only",
+        assessment: "usable_and_module_certifiable",
+        chains: {
+          moduleLearningPipeline: {
+            planReceipts: 32,
+            evalAbsorbed: 16,
+            weakModuleLearning: 0,
+            boundaryViolations: 0,
+          },
+        },
+      }),
+      cognitiveIntegritySources: cognitiveSources,
+    });
+
+    const moduleBlueprint = report.commercialBlueprint.find(
+      (item) => item.id === "module_learning_absorption",
+    );
+    expect(moduleBlueprint).toEqual(
+      expect.objectContaining({
+        status: "needs_receipts",
+        evidence: expect.arrayContaining([
+          "inventory.assessment=usable_and_module_certifiable",
+          "todayReview.weakModuleLearning=1",
+        ]),
+        nextAction: expect.stringContaining("继续补 per-receipt eval/training"),
+      }),
+    );
   });
 
   it("downgrades training when the latest teacher batch still has failures", () => {
