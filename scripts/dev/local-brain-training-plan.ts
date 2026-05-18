@@ -110,6 +110,25 @@ type QwenCapabilityConsolidationSnapshot = {
   notes: string[];
 };
 
+type ActiveGuardAdapterTruthSnapshot = {
+  boundary: "dev_active_guard_adapter_truth_only";
+  latestGuardStartAt?: string;
+  guardCurrentAdapter?: string;
+  guardTrainingSeedAdapter?: string;
+  guardTrainingResumeAdapter?: string;
+  selectedCleanAdapter?: string;
+  latestPromotedAdapter?: string;
+  latestPromotedAt?: string;
+  guardStartedAfterLatestPromotion: boolean;
+  guardUsesSelectedCleanAdapter: boolean | null;
+  guardUsesLatestPromotedAdapter: boolean | null;
+  mismatchReasons: string[];
+  action:
+    | "guard_adapter_matches_selected_clean_adapter"
+    | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
+    | "no_active_guard_adapter_to_compare";
+};
+
 export type QwenBaseModelMigrationSnapshot = {
   boundary: "dev_qwen_base_model_migration_plan_only";
   currentModel: "Qwen/Qwen3-0.6B";
@@ -308,6 +327,11 @@ async function readJsonl(logPath: string | undefined): Promise<JsonRecord[]> {
 
 function eventTime(event: JsonRecord | undefined): string {
   return typeof event?.at === "string" ? event.at : "";
+}
+
+function stringField(record: JsonRecord | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
 function latestEvent(
@@ -608,6 +632,73 @@ function qwenCapabilityConsolidationSnapshot(params: {
       "All useful Qwen capability must be distilled back through teacher data, hardened eval, and promotion audit into one clean selected adapter.",
       "A newer 77/77 candidate with parseRecovered is useful training evidence, not a runtime replacement for the selected clean adapter.",
     ],
+  };
+}
+
+function activeGuardAdapterTruthSnapshot(params: {
+  latestGuardStart?: JsonRecord;
+  selectedCleanAdapter?: string;
+  latestPromotedAdapter?: string;
+  latestPromotedAt?: string;
+}): ActiveGuardAdapterTruthSnapshot {
+  const latestGuardStartAt = eventTime(params.latestGuardStart) || undefined;
+  const options =
+    params.latestGuardStart?.options &&
+    typeof params.latestGuardStart.options === "object" &&
+    !Array.isArray(params.latestGuardStart.options)
+      ? (params.latestGuardStart.options as JsonRecord)
+      : undefined;
+  const guardCurrentAdapter = stringField(options, "currentAdapter");
+  const guardTrainingSeedAdapter = stringField(options, "trainingSeedAdapter");
+  const guardTrainingResumeAdapter = stringField(options, "trainingResumeAdapter");
+  const guardStartedAfterLatestPromotion = Boolean(
+    latestGuardStartAt && params.latestPromotedAt && params.latestPromotedAt <= latestGuardStartAt,
+  );
+  const guardUsesSelectedCleanAdapter =
+    guardCurrentAdapter && params.selectedCleanAdapter
+      ? guardCurrentAdapter === params.selectedCleanAdapter
+      : null;
+  const guardUsesLatestPromotedAdapter =
+    guardCurrentAdapter && params.latestPromotedAdapter && guardStartedAfterLatestPromotion
+      ? guardCurrentAdapter === params.latestPromotedAdapter
+      : null;
+  const mismatchReasons = [
+    guardUsesSelectedCleanAdapter === false
+      ? "guard_current_adapter_not_selected_clean"
+      : undefined,
+    guardUsesLatestPromotedAdapter === false
+      ? "guard_current_adapter_not_latest_promoted_after_promotion"
+      : undefined,
+    guardTrainingSeedAdapter &&
+    params.selectedCleanAdapter &&
+    guardTrainingSeedAdapter !== params.selectedCleanAdapter
+      ? "guard_training_seed_adapter_not_selected_clean"
+      : undefined,
+    guardTrainingResumeAdapter &&
+    params.selectedCleanAdapter &&
+    guardTrainingResumeAdapter !== params.selectedCleanAdapter
+      ? "guard_training_resume_adapter_not_selected_clean"
+      : undefined,
+  ].filter((entry): entry is string => Boolean(entry));
+  return {
+    boundary: "dev_active_guard_adapter_truth_only",
+    latestGuardStartAt,
+    guardCurrentAdapter,
+    guardTrainingSeedAdapter,
+    guardTrainingResumeAdapter,
+    selectedCleanAdapter: params.selectedCleanAdapter,
+    latestPromotedAdapter: params.latestPromotedAdapter,
+    latestPromotedAt: params.latestPromotedAt,
+    guardStartedAfterLatestPromotion,
+    guardUsesSelectedCleanAdapter,
+    guardUsesLatestPromotedAdapter,
+    mismatchReasons,
+    action:
+      mismatchReasons.length > 0
+        ? "wait_for_active_guard_then_restart_with_selected_clean_adapter"
+        : guardCurrentAdapter
+          ? "guard_adapter_matches_selected_clean_adapter"
+          : "no_active_guard_adapter_to_compare",
   };
 }
 
@@ -946,6 +1037,7 @@ function buildDecisions(params: {
   latestTeacher?: TeacherSnapshot;
   latestQuotaStatus?: QuotaStatusSnapshot;
   qwenBaseModelMigration?: QwenBaseModelMigrationSnapshot;
+  activeGuardAdapterTruth?: ActiveGuardAdapterTruthSnapshot;
   moduleLearningReview?: ModuleLearningReviewSnapshot;
   learningSedimentationBridge?: LearningSedimentationBridgeSnapshot;
   guardLogPath: string;
@@ -973,6 +1065,22 @@ function buildDecisions(params: {
       action: "hold_new_training_and_debug_overlap",
       reason:
         "local-brain-training-plan detected overlapping heavy local-brain eval while the guard is active.",
+      codexRepairEligible: false,
+    });
+  }
+
+  if ((params.activeGuardAdapterTruth?.mismatchReasons ?? []).length > 0) {
+    decisions.push({
+      id: "guard_adapter_mismatch",
+      lane: "training",
+      severity: "P2",
+      action: "wait_for_active_guard_then_restart_with_selected_clean_adapter",
+      reason: [
+        `Active guard currentAdapter=${params.activeGuardAdapterTruth?.guardCurrentAdapter ?? "unknown"}`,
+        `selectedCleanAdapter=${params.activeGuardAdapterTruth?.selectedCleanAdapter ?? "unknown"}`,
+        `latestPromotedAdapter=${params.activeGuardAdapterTruth?.latestPromotedAdapter ?? "unknown"}`,
+        `mismatch=${params.activeGuardAdapterTruth?.mismatchReasons.join(",")}`,
+      ].join("; "),
       codexRepairEligible: false,
     });
   }
@@ -1250,6 +1358,15 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     guardEvents,
     (event) => event.event === "adapter_promoted_for_guard_session",
   );
+  const latestPromotedAt = eventTime(latestPromotion) || undefined;
+  const latestPromotedAdapter =
+    typeof latestPromotion?.adapterPath === "string" ? latestPromotion.adapterPath : undefined;
+  const activeGuardAdapterTruth = activeGuardAdapterTruthSnapshot({
+    latestGuardStart,
+    selectedCleanAdapter: qwenCapabilityConsolidation.selectedCleanAdapter,
+    latestPromotedAdapter,
+    latestPromotedAt,
+  });
   const activeHeavyEval = activeHeavyEvalSummary(activeProcesses);
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
@@ -1276,6 +1393,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestTeacher,
     latestQuotaStatus,
     qwenBaseModelMigration,
+    activeGuardAdapterTruth,
     moduleLearningReview,
     learningSedimentationBridge,
     guardLogPath: options.guardLogPath,
@@ -1305,9 +1423,9 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestTrainingSeedEval,
     latestCandidateEval,
     qwenCapabilityConsolidation,
-    latestPromotionAt: eventTime(latestPromotion),
-    latestPromotedAdapter:
-      typeof latestPromotion?.adapterPath === "string" ? latestPromotion.adapterPath : undefined,
+    activeGuardAdapterTruth,
+    latestPromotionAt: latestPromotedAt,
+    latestPromotedAdapter,
     latestEvalIsCurrentForGuardStart:
       Boolean(latestEval?.at) &&
       (!eventTime(latestGuardStart) || latestEval!.at >= eventTime(latestGuardStart)),

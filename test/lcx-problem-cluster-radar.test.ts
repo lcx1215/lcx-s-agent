@@ -197,6 +197,67 @@ describe("lcx-problem-cluster-radar", () => {
     expect(result.actionableClusters).not.toContain("learning_sedimentation_cluster");
   });
 
+  it("folds guard adapter mismatch into adapter promotion truth", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        activeProcesses: [{ pid: 101, role: "guard" }],
+        latestEval: { passed: 200, total: 200, promotionReady: true, parseRecoveredCaseIds: [] },
+        activeGuardAdapterTruth: {
+          boundary: "dev_active_guard_adapter_truth_only",
+          guardCurrentAdapter: "/tmp/adapter-stale-r1",
+          selectedCleanAdapter: "/tmp/adapter-clean-r2",
+          latestPromotedAdapter: "/tmp/adapter-clean-r2",
+          mismatchReasons: ["guard_current_adapter_not_selected_clean"],
+        },
+        decisions: [
+          {
+            id: "guard_adapter_mismatch",
+            action: "wait_for_active_guard_then_restart_with_selected_clean_adapter",
+            reason: "Active guard currentAdapter differs from selectedCleanAdapter.",
+            codexRepairEligible: false,
+          },
+        ],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    const cluster = result.clusters.find((entry) => entry.id === "adapter_promotion_truth_cluster");
+    expect(cluster).toEqual(
+      expect.objectContaining({
+        severity: "P2",
+        actionability: "blocked_by_owner_gate",
+        blockingReasons: expect.arrayContaining([
+          "guard_adapter_mismatch_not_repairable_while_guard_active",
+        ]),
+      }),
+    );
+    expect(cluster?.signals.map((signal) => signal.id)).toEqual(
+      expect.arrayContaining(["guard_adapter_mismatch", "active_guard_adapter_truth_mismatch"]),
+    );
+  });
+
   it("surfaces real sedimentation audit gap objects with their severity", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {

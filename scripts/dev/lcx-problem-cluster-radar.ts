@@ -285,7 +285,30 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
   const latestEval = recordValue(payload?.latestEval);
   const latestPassingEval = recordValue(payload?.latestPassingEval);
   const qwen = recordValue(payload?.qwenCapabilityConsolidation);
+  const activeGuardAdapterTruth = recordValue(payload?.activeGuardAdapterTruth);
   const signals: ProblemSignal[] = [];
+  signals.push(
+    ...decisionSignals(payload, {
+      guard_adapter_mismatch: {
+        severity: "P2",
+        summary: "active guard adapter does not match the selected clean adapter truth",
+      },
+    }),
+  );
+  const mismatchReasons = stringArray(activeGuardAdapterTruth?.mismatchReasons);
+  if (mismatchReasons.length > 0) {
+    signals.push({
+      id: "active_guard_adapter_truth_mismatch",
+      severity: "P2",
+      summary: "active guard is running from a different adapter than selected clean truth",
+      evidence: {
+        guardCurrentAdapter: activeGuardAdapterTruth?.guardCurrentAdapter,
+        selectedCleanAdapter: activeGuardAdapterTruth?.selectedCleanAdapter,
+        latestPromotedAdapter: activeGuardAdapterTruth?.latestPromotedAdapter,
+        mismatchReasons,
+      },
+    });
+  }
   if (latestEval && booleanValue(latestEval.promotionReady) === false) {
     signals.push({
       id: "latest_eval_not_promotion_ready",
@@ -331,11 +354,15 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
       "Keep runtime on one clean latest-passing adapter and feed blocked challenger cases back through teacher/data/eval/promotion.",
     actionability:
       hasActiveHeavyLocalBrainProcess(payload) ||
+      ownerDecisionRepairBlocked(payload, "guard_adapter_mismatch") ||
       ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready")
         ? "blocked_by_owner_gate"
         : undefined,
     blockingReasons: [
       ...(hasActiveHeavyLocalBrainProcess(payload) ? ["active_local_brain_guard_or_eval"] : []),
+      ...(ownerDecisionRepairBlocked(payload, "guard_adapter_mismatch")
+        ? ["guard_adapter_mismatch_not_repairable_while_guard_active"]
+        : []),
       ...(ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready")
         ? ["training_plan_codex_repair_not_eligible"]
         : []),

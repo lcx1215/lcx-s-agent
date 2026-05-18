@@ -403,6 +403,76 @@ describe("local-brain-training-plan", () => {
     );
   });
 
+  it("surfaces guard adapter mismatch against the selected clean adapter", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      {
+        at: "2026-05-09T09:40:00.000Z",
+        event: "step_ok",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-clean-r2",
+          summary: {
+            passed: 77,
+            total: 77,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T09:45:00.000Z",
+        event: "adapter_promoted_for_guard_session",
+        adapterPath: "/tmp/adapter-clean-r2",
+      },
+      {
+        at: "2026-05-09T10:00:00.000Z",
+        event: "guard_start",
+        options: {
+          currentAdapter: "/tmp/adapter-stale-r1",
+          trainingSeedAdapter: "/tmp/adapter-stale-r1",
+          trainingResumeAdapter: "/tmp/adapter-stale-r1",
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.activeGuardAdapterTruth).toMatchObject({
+      boundary: "dev_active_guard_adapter_truth_only",
+      guardCurrentAdapter: "/tmp/adapter-stale-r1",
+      selectedCleanAdapter: "/tmp/adapter-clean-r2",
+      latestPromotedAdapter: "/tmp/adapter-clean-r2",
+      guardStartedAfterLatestPromotion: true,
+      guardUsesSelectedCleanAdapter: false,
+      guardUsesLatestPromotedAdapter: false,
+      mismatchReasons: expect.arrayContaining([
+        "guard_current_adapter_not_selected_clean",
+        "guard_current_adapter_not_latest_promoted_after_promotion",
+        "guard_training_seed_adapter_not_selected_clean",
+        "guard_training_resume_adapter_not_selected_clean",
+      ]),
+    });
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "guard_adapter_mismatch",
+          lane: "training",
+          severity: "P2",
+          codexRepairEligible: false,
+        }),
+      ]),
+    );
+  });
+
   it("does not repair from stale eval failures before the latest guard start", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       {
