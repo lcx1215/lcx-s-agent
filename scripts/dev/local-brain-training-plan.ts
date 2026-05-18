@@ -38,6 +38,16 @@ type EvalSnapshot = {
   parseErrorSamples: string[];
 };
 
+type EvalTimeoutSnapshot = {
+  at: string;
+  name: string;
+  adapterPath?: string;
+  timeoutReason?: string;
+  timeoutMs?: number;
+  durationMs?: number;
+  failedCaseIds: string[];
+};
+
 type QwenCapabilityConsolidationSnapshot = {
   boundary: "dev_qwen_capability_consolidation_only";
   runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble";
@@ -328,6 +338,15 @@ function isEvalEvent(event: JsonRecord): boolean {
   );
 }
 
+function isEvalTimeoutEvent(event: JsonRecord): boolean {
+  return (
+    event.event === "step_timeout" &&
+    ["stable_hardened_eval", "training_seed_hardened_eval", "candidate_hardened_eval"].includes(
+      eventName(event),
+    )
+  );
+}
+
 function evalSnapshotFromEvent(event: JsonRecord): EvalSnapshot | undefined {
   if (!isEvalEvent(event)) {
     return undefined;
@@ -379,11 +398,64 @@ function evalSnapshotFromEvent(event: JsonRecord): EvalSnapshot | undefined {
   };
 }
 
+function evalTimeoutSnapshotFromEvent(event: JsonRecord): EvalTimeoutSnapshot | undefined {
+  if (!isEvalTimeoutEvent(event)) {
+    return undefined;
+  }
+  const result = event.result;
+  const resultRecord = result && typeof result === "object" ? (result as JsonRecord) : {};
+  const summary = resultRecord.summary;
+  const summaryRecord = summary && typeof summary === "object" ? (summary as JsonRecord) : {};
+  return {
+    at: eventTime(event),
+    name: eventName(event),
+    adapterPath:
+      typeof resultRecord.adapterPath === "string" ? resultRecord.adapterPath : undefined,
+    timeoutReason:
+      typeof resultRecord.timeoutReason === "string"
+        ? resultRecord.timeoutReason
+        : typeof event.timeoutReason === "string"
+          ? event.timeoutReason
+          : undefined,
+    timeoutMs:
+      typeof resultRecord.timeoutMs === "number"
+        ? resultRecord.timeoutMs
+        : typeof event.durationMs === "number"
+          ? event.durationMs
+          : undefined,
+    durationMs:
+      typeof resultRecord.durationMs === "number"
+        ? resultRecord.durationMs
+        : typeof event.durationMs === "number"
+          ? event.durationMs
+          : undefined,
+    failedCaseIds: asStringArray(summaryRecord.failedCaseIds),
+  };
+}
+
 function latestEvalSnapshot(events: JsonRecord[]): EvalSnapshot | undefined {
   return events
     .map(evalSnapshotFromEvent)
     .filter((entry): entry is EvalSnapshot => Boolean(entry))
     .toSorted((left, right) => right.at.localeCompare(left.at))[0];
+}
+
+function latestEvalTimeoutSnapshot(events: JsonRecord[]): EvalTimeoutSnapshot | undefined {
+  return events
+    .map(evalTimeoutSnapshotFromEvent)
+    .filter((entry): entry is EvalTimeoutSnapshot => Boolean(entry))
+    .toSorted((left, right) => right.at.localeCompare(left.at))[0];
+}
+
+function countEvalTimeoutsAfter(
+  events: JsonRecord[],
+  guardStartAt: string | undefined,
+  name: string,
+): number {
+  return events
+    .map(evalTimeoutSnapshotFromEvent)
+    .filter((entry): entry is EvalTimeoutSnapshot => Boolean(entry))
+    .filter((entry) => entry.name === name && (!guardStartAt || entry.at > guardStartAt)).length;
 }
 
 function latestPassingEvalSnapshot(events: JsonRecord[]): EvalSnapshot | undefined {
@@ -869,6 +941,8 @@ function buildDecisions(params: {
   latestGuardStart?: JsonRecord;
   latestGuardFailure?: JsonRecord;
   latestEval?: EvalSnapshot;
+  latestEvalTimeout?: EvalTimeoutSnapshot;
+  stableEvalTimeoutCountAfterLatestStart?: number;
   latestTeacher?: TeacherSnapshot;
   latestQuotaStatus?: QuotaStatusSnapshot;
   qwenBaseModelMigration?: QwenBaseModelMigrationSnapshot;
@@ -955,6 +1029,25 @@ function buildDecisions(params: {
       severity: "info",
       action: "wait_for_current_hardened_eval_before_repairing",
       reason: `Latest eval at ${params.latestEval.at} is older than latest guard_start at ${guardStartAt}.`,
+      codexRepairEligible: false,
+    });
+  }
+
+  const latestTimeoutAfterStart =
+    Boolean(params.latestEvalTimeout?.at) &&
+    (!guardStartAt || params.latestEvalTimeout!.at > guardStartAt);
+  if (latestTimeoutAfterStart) {
+    const count = params.stableEvalTimeoutCountAfterLatestStart ?? 0;
+    decisions.push({
+      id: "stable_eval_timeout_after_latest_start",
+      lane: "training",
+      severity: count >= 2 ? "P2" : "P3",
+      action: "hold_promotion_and_repair_eval_runtime_or_scope",
+      reason: `Latest ${params.latestEvalTimeout!.name} timed out at ${
+        params.latestEvalTimeout!.at
+      } after latest guard_start${
+        count > 0 ? `; stable_hardened_eval timeouts this guard=${count}` : ""
+      }.`,
       codexRepairEligible: false,
     });
   }
@@ -1137,6 +1230,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     (event) => event.name === "train_slice" && event.event === "step_ok",
   );
   const latestEval = latestEvalSnapshot(guardEvents);
+  const latestEvalTimeout = latestEvalTimeoutSnapshot(guardEvents);
   const latestPassingEval = latestPassingEvalSnapshot(guardEvents);
   const latestStableEval = latestEvalSnapshot(
     guardEvents.filter((event) => event.name === "stable_hardened_eval"),
@@ -1159,6 +1253,12 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const activeHeavyEval = activeHeavyEvalSummary(activeProcesses);
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
+  const latestGuardStartAt = eventTime(latestGuardStart);
+  const stableEvalTimeoutCountAfterLatestStart = countEvalTimeoutsAfter(
+    guardEvents,
+    latestGuardStartAt,
+    "stable_hardened_eval",
+  );
   const moduleLearningReview = await moduleLearningReviewSnapshot(workspaceDir);
   const learningSedimentationBridge = await learningSedimentationBridgeSnapshot(workspaceDir);
   const qwenBaseModelMigration = await buildQwenBaseModelMigrationPlan({
@@ -1171,6 +1271,8 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestGuardStart,
     latestGuardFailure,
     latestEval,
+    latestEvalTimeout,
+    stableEvalTimeoutCountAfterLatestStart,
     latestTeacher,
     latestQuotaStatus,
     qwenBaseModelMigration,
@@ -1191,11 +1293,13 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     activeProcesses,
     activeHeavyEvalCounts: activeHeavyEval.counts,
     overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
-    latestGuardStartAt: eventTime(latestGuardStart),
+    latestGuardStartAt,
     latestDataset: datasetSummary(latestDataset),
     latestTrainSlice: trainSliceSummary(latestTrainSlice),
     latestSmokeAt: eventTime(latestSmoke),
     latestEval,
+    latestEvalTimeout,
+    stableEvalTimeoutCountAfterLatestStart,
     latestPassingEval,
     latestStableEval,
     latestTrainingSeedEval,

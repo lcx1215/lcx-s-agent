@@ -14,6 +14,13 @@ async function seedJson(workspaceDir: string, relativePath: string, payload: unk
   return absolutePath;
 }
 
+async function seedJsonl(workspaceDir: string, relativePath: string, lines: unknown[]) {
+  const absolutePath = path.join(workspaceDir, relativePath);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+  return absolutePath;
+}
+
 function runCli(args: string[], workspaceDir: string) {
   return spawnSync(
     process.execPath,
@@ -183,6 +190,79 @@ describe("lcx-module-learning-absorption-gate", () => {
         gateDecision: "ready_for_eval_absorbed_review",
         blockers: [],
       }),
+    );
+  });
+
+  it("blocks absorption when a newer hardened eval timeout follows older clean evidence", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
+    const guardLogPath = await seedJsonl(workspaceDir, "guard.jsonl", [
+      cleanEvalSummary(),
+      {
+        at: "2026-05-14T16:00:00.000Z",
+        event: "step_timeout",
+        name: "stable_hardened_eval",
+        durationMs: 3_600_001,
+        timeoutReason: "total_timeout",
+        result: {
+          adapterPath: "/tmp/adapter-r6",
+          timeoutReason: "total_timeout",
+          timeoutMs: 3_600_001,
+          durationMs: 3_600_001,
+          summary: {
+            passed: 0,
+            total: 0,
+            failedCaseIds: ["stable_hardened_eval_total_timeout"],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+    await seedJson(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json", {
+      boundary: "module_learning_pipeline_review",
+      dateKey: "2026-05-14",
+      counts: {
+        receiptFiles: 1,
+        validReceipts: 1,
+        applicationReady: 0,
+        evalAbsorbed: 1,
+        weakModuleLearning: 0,
+        boundaryViolations: 0,
+      },
+      rows: [
+        {
+          receiptPath: "memory/module-learning-pipeline-plan-receipts/2026-05-14/options.json",
+          targetModule: "options_volatility",
+          status: "eval_absorbed",
+          trainingOrEvalAbsorptionEvidencePath: "memory/evals/options.json",
+          freshAdjacentApplicationTask: "Apply the options lesson to a new ETF event-risk brief.",
+          keepDownrankDiscardDecision: "keep",
+          missingEvidence: [],
+          weak: false,
+          boundaryViolation: false,
+        },
+      ],
+    });
+
+    const result = runCli(["--date", "2026-05-14", "--guard-log", guardLogPath], workspaceDir);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        absorptionReady: false,
+        gateDecision: "hold_at_application_ready",
+        writeAvailable: false,
+      }),
+    );
+    expect(parsed.latestEvalTimeout).toEqual(
+      expect.objectContaining({
+        name: "stable_hardened_eval",
+        timeoutReason: "total_timeout",
+        newerThanLatestEval: true,
+      }),
+    );
+    expect(parsed.blockers).toContain(
+      "latest_hardened_eval_timeout_newer_than_absorption_evidence",
     );
   });
 

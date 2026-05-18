@@ -458,6 +458,79 @@ describe("local-brain-training-plan", () => {
     });
   });
 
+  it("surfaces repeated stable eval timeouts after the latest guard start", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+      {
+        at: "2026-05-09T11:00:00.000Z",
+        event: "step_timeout",
+        name: "stable_hardened_eval",
+        durationMs: 3_600_001,
+        timeoutReason: "total_timeout",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          timeoutReason: "total_timeout",
+          timeoutMs: 3_600_001,
+          durationMs: 3_600_001,
+          summary: {
+            passed: 0,
+            total: 0,
+            failedCaseIds: ["stable_hardened_eval_total_timeout"],
+            promotionReady: false,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T12:00:00.000Z",
+        event: "step_timeout",
+        name: "stable_hardened_eval",
+        durationMs: 3_600_002,
+        timeoutReason: "total_timeout",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          timeoutReason: "total_timeout",
+          timeoutMs: 3_600_002,
+          durationMs: 3_600_002,
+          summary: {
+            passed: 0,
+            total: 0,
+            failedCaseIds: ["stable_hardened_eval_total_timeout"],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.latestEvalTimeout).toMatchObject({
+      at: "2026-05-09T12:00:00.000Z",
+      name: "stable_hardened_eval",
+      adapterPath: "/tmp/adapter-r2",
+      timeoutReason: "total_timeout",
+      failedCaseIds: ["stable_hardened_eval_total_timeout"],
+    });
+    expect(plan.stableEvalTimeoutCountAfterLatestStart).toBe(2);
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "stable_eval_timeout_after_latest_start",
+          lane: "training",
+          severity: "P2",
+          action: "hold_promotion_and_repair_eval_runtime_or_scope",
+          codexRepairEligible: false,
+          reason: expect.stringContaining("stable_hardened_eval timeouts this guard=2"),
+        }),
+      ]),
+    );
+  });
+
   it("treats summary-only parse error case ids as output-contract failures", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },

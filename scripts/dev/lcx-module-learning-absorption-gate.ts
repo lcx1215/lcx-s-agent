@@ -31,6 +31,16 @@ type EvalSnapshot = {
   parseRecoveredCaseIds: string[];
 };
 
+type EvalTimeoutSnapshot = {
+  at?: string;
+  name?: string;
+  adapterPath?: string;
+  timeoutReason?: string;
+  timeoutMs?: number;
+  durationMs?: number;
+  failedCaseIds: string[];
+};
+
 const REVIEW_DIR = path.join("memory", "module-learning-pipeline-reviews");
 const PLAN_RECEIPT_DIR = path.join("memory", "module-learning-pipeline-plan-receipts");
 const ABSORPTION_EVIDENCE_DIR = path.join("memory", "module-learning-absorption-evidence");
@@ -172,6 +182,29 @@ function normalizeEvalSnapshot(payload: JsonRecord | undefined): EvalSnapshot | 
   };
 }
 
+function normalizeEvalTimeoutSnapshot(
+  payload: JsonRecord | undefined,
+): EvalTimeoutSnapshot | undefined {
+  if (!payload || payload.event !== "step_timeout") {
+    return undefined;
+  }
+  const name = stringValue(payload.name);
+  if (!name || !EVAL_EVENT_NAMES.has(name)) {
+    return undefined;
+  }
+  const result = recordValue(payload.result) ?? {};
+  const summary = recordValue(result.summary) ?? {};
+  return {
+    at: stringValue(payload.at),
+    name,
+    adapterPath: stringValue(result.adapterPath) ?? stringValue(payload.adapterPath),
+    timeoutReason: stringValue(result.timeoutReason) ?? stringValue(payload.timeoutReason),
+    timeoutMs: numberValue(result.timeoutMs) || numberValue(payload.durationMs) || undefined,
+    durationMs: numberValue(result.durationMs) || numberValue(payload.durationMs) || undefined,
+    failedCaseIds: stringArrayValue(summary.failedCaseIds),
+  };
+}
+
 async function readEvalSummary(evalSummaryPath: string): Promise<EvalSnapshot | undefined> {
   const parsed = JSON.parse(await fs.readFile(evalSummaryPath, "utf8")) as JsonRecord;
   return normalizeEvalSnapshot(parsed);
@@ -201,6 +234,34 @@ async function latestEvalFromGuardLog(guardLogPath: string): Promise<EvalSnapsho
       }
     } catch {
       // Ignore malformed historical log lines; absence of a clean eval remains visible.
+    }
+  }
+  return snapshots.toSorted((left, right) => (right.at ?? "").localeCompare(left.at ?? ""))[0];
+}
+
+async function latestEvalTimeoutFromGuardLog(
+  guardLogPath: string,
+): Promise<EvalTimeoutSnapshot | undefined> {
+  let text = "";
+  try {
+    text = await fs.readFile(guardLogPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  const snapshots: EvalTimeoutSnapshot[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes("hardened_eval")) {
+      continue;
+    }
+    try {
+      const event = JSON.parse(trimmed) as JsonRecord;
+      const snapshot = normalizeEvalTimeoutSnapshot(event);
+      if (snapshot) {
+        snapshots.push(snapshot);
+      }
+    } catch {
+      // Ignore malformed historical log lines; timeout absence remains visible through blockers.
     }
   }
   return snapshots.toSorted((left, right) => (right.at ?? "").localeCompare(left.at ?? ""))[0];
@@ -304,6 +365,7 @@ function buildGate(params: {
   reviewPath: string;
   planReceiptFiles: number;
   latestEval: EvalSnapshot | undefined;
+  latestEvalTimeout: EvalTimeoutSnapshot | undefined;
   evalEvidenceSource: string;
 }) {
   const blockers: string[] = [];
@@ -335,6 +397,9 @@ function buildGate(params: {
     boundaryViolations === 0;
   const reviewStaleOrEmpty =
     Boolean(params.review) && rows.length === 0 && params.planReceiptFiles > 0;
+  const evalTimeoutNewerThanEval =
+    Boolean(params.latestEvalTimeout?.at) &&
+    (!params.latestEval?.at || params.latestEvalTimeout!.at! > params.latestEval.at);
 
   if (!params.review) {
     blockers.push("module_learning_review_missing");
@@ -359,6 +424,12 @@ function buildGate(params: {
       "repair failed or parse-recovered eval cases before using eval evidence for absorption",
     );
   }
+  if (evalTimeoutNewerThanEval) {
+    blockers.push("latest_hardened_eval_timeout_newer_than_absorption_evidence");
+    nextActions.push(
+      "repair or rerun the timed-out hardened eval before using older clean eval evidence for module absorption",
+    );
+  }
   if (boundaryViolations > 0) {
     blockers.push("module_learning_receipt_boundary_violation");
   }
@@ -372,7 +443,7 @@ function buildGate(params: {
     );
   }
 
-  const absorptionReady = perReceiptAbsorbed && globalEvalClean;
+  const absorptionReady = perReceiptAbsorbed && globalEvalClean && !evalTimeoutNewerThanEval;
   return {
     ok: true,
     boundary: "dev_module_learning_absorption_gate_only",
@@ -405,6 +476,18 @@ function buildGate(params: {
           globalEvalClean,
         }
       : null,
+    latestEvalTimeout: params.latestEvalTimeout
+      ? {
+          at: params.latestEvalTimeout.at,
+          name: params.latestEvalTimeout.name,
+          adapterPath: params.latestEvalTimeout.adapterPath,
+          timeoutReason: params.latestEvalTimeout.timeoutReason,
+          timeoutMs: params.latestEvalTimeout.timeoutMs,
+          durationMs: params.latestEvalTimeout.durationMs,
+          failedCaseIds: params.latestEvalTimeout.failedCaseIds,
+          newerThanLatestEval: evalTimeoutNewerThanEval,
+        }
+      : null,
     requiredCaseIds: REQUIRED_CASE_IDS,
     missingEvidenceByReceipt: missingEvidenceByReceipt.slice(0, 20),
     blockers: [...new Set(blockers)],
@@ -413,6 +496,7 @@ function buildGate(params: {
     writeAvailable:
       !params.review ||
       !globalEvalClean ||
+      evalTimeoutNewerThanEval ||
       boundaryViolations > 0 ||
       rows.length === 0 ||
       missingEvidenceByReceipt.length === 0
@@ -568,12 +652,16 @@ const evalEvidenceSource = options.evalSummaryPath
 const latestEval = options.evalSummaryPath
   ? await readEvalSummary(options.evalSummaryPath)
   : await latestEvalFromGuardLog(options.guardLogPath ?? DEFAULT_GUARD_LOG_PATH);
+const latestEvalTimeout = options.evalSummaryPath
+  ? undefined
+  : await latestEvalTimeoutFromGuardLog(options.guardLogPath ?? DEFAULT_GUARD_LOG_PATH);
 const result = buildGate({
   dateKey,
   review,
   reviewPath: reviewRelativePath,
   planReceiptFiles,
   latestEval,
+  latestEvalTimeout,
   evalEvidenceSource,
 });
 const writtenAbsorptionReceipts =
@@ -608,6 +696,7 @@ const refreshedGate =
         reviewPath: refreshedReview.reviewPath,
         planReceiptFiles: refreshedPlanReceiptFiles,
         latestEval,
+        latestEvalTimeout,
         evalEvidenceSource,
       })
     : undefined;
