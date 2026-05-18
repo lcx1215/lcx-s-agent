@@ -101,6 +101,15 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function evalPassLabel(evalRecord: Record<string, unknown> | undefined): string {
+  const passed = evalRecord?.passed;
+  const total = evalRecord?.total;
+  if (typeof passed === "number" && typeof total === "number") {
+    return `${passed}/${total}`;
+  }
+  return "green pass count";
+}
+
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
@@ -353,8 +362,12 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
     signals.push({
       id: "parse_recovered_blocks_promotion",
       severity: "P2",
-      summary: "parseRecovered exists, so 77/77 is not a clean promotion proof",
-      evidence: { parseRecoveredCaseIds },
+      summary: `parseRecovered exists, so ${evalPassLabel(latestEval)} is not a clean promotion proof`,
+      evidence: {
+        passed: latestEval?.passed,
+        total: latestEval?.total,
+        parseRecoveredCaseIds,
+      },
     });
   }
   if (qwen && qwen.consolidationState === "candidate_capabilities_not_yet_consolidated") {

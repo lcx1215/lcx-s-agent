@@ -320,6 +320,63 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
+  it("reports parseRecovered promotion blocks with the current eval pass count", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        latestEval: {
+          at: "2026-05-18T21:05:19.003Z",
+          passed: 200,
+          total: 200,
+          promotionReady: false,
+          parseRecoveredCaseIds: ["core_options_event_boundary_02"],
+        },
+        qwenCapabilityConsolidation: {
+          consolidationState: "candidate_capabilities_not_yet_consolidated",
+          selectedCleanAdapter: "/tmp/r4",
+        },
+        decisions: [],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    const cluster = result.clusters.find((entry) => entry.id === "adapter_promotion_truth_cluster");
+    const signal = cluster?.signals.find(
+      (entry) => entry.id === "parse_recovered_blocks_promotion",
+    );
+    expect(signal).toEqual(
+      expect.objectContaining({
+        summary: "parseRecovered exists, so 200/200 is not a clean promotion proof",
+        evidence: expect.objectContaining({
+          passed: 200,
+          total: 200,
+          parseRecoveredCaseIds: ["core_options_event_boundary_02"],
+        }),
+      }),
+    );
+  });
+
   it("does not keep stale eval timeouts as watch clusters after a newer eval verdict", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
