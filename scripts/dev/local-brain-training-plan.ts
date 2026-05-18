@@ -984,6 +984,20 @@ async function machineMemoryBytes(): Promise<number | undefined> {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function activeQwenMigrationBlockAction(activeProcesses: ActiveTrainingProcess[]): string {
+  const activeRoles = new Set(activeProcesses.map((process) => process.role));
+  if (activeRoles.has("local_brain_eval") || activeRoles.has("mlx")) {
+    return "wait_for_current_guard_eval_and_mlx_to_finish";
+  }
+  if (activeRoles.has("teacher_batch") || activeRoles.has("saturator")) {
+    return "wait_for_current_teacher_or_sidecar_to_finish";
+  }
+  if (activeRoles.has("guard")) {
+    return "wait_for_current_guard_to_finish";
+  }
+  return "wait_for_active_training_processes_to_finish";
+}
+
 export async function buildQwenBaseModelMigrationPlan(params: {
   activeProcesses: ActiveTrainingProcess[];
   activeHeavyEvalCounts: QwenBaseModelMigrationSnapshot["activeHeavyEvalCounts"];
@@ -1011,7 +1025,7 @@ export async function buildQwenBaseModelMigrationPlan(params: {
       : undefined;
   const action =
     decision === "blocked_training_active"
-      ? "wait_for_current_guard_eval_and_teacher_to_finish"
+      ? activeQwenMigrationBlockAction(params.activeProcesses)
       : decision === "candidate_not_cached"
         ? "download_or_preload_candidate_before_any_smoke"
         : decision === "memory_too_small_for_candidate"
@@ -1169,8 +1183,7 @@ function buildDecisions(params: {
       lane: "qwen_migration",
       severity: "info",
       action: "wait_for_idle_before_qwen_1_7b_smoke",
-      reason:
-        "Qwen3-1.7B migration probe is blocked because guard/eval/teacher/MLX work is active.",
+      reason: `Qwen3-1.7B migration probe is blocked by active local-brain process state; migrationAction=${params.qwenBaseModelMigration.action}.`,
       codexRepairEligible: false,
     });
   } else if (params.qwenBaseModelMigration?.decision === "ready_for_no_adapter_smoke") {

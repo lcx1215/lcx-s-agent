@@ -62,12 +62,48 @@ describe("local-brain-training-plan", () => {
         candidateCached: true,
         activeTrainingProcessCount: 2,
         decision: "blocked_training_active",
-        action: "wait_for_current_guard_eval_and_teacher_to_finish",
+        action: "wait_for_current_guard_eval_and_mlx_to_finish",
       });
       expect(plan.allowedNextCommand).toBeUndefined();
       expect(plan.forbiddenWhileActive).toContain(
         "do_not_start_qwen_1_7b_smoke_while_guard_active",
       );
+    } finally {
+      await fs.rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports guard-only Qwen migration blocking without implying eval or teacher work", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-qwen-migration-home-"));
+    const cacheDir = path.join(homeDir, ".cache/huggingface/hub/models--Qwen--Qwen3-1.7B");
+    await fs.mkdir(cacheDir, { recursive: true });
+    await fs.writeFile(path.join(cacheDir, "model.safetensors"), "fake");
+
+    try {
+      const plan = await buildQwenBaseModelMigrationPlan({
+        homeDir,
+        machineMemoryBytes: 8 * 1024 * 1024 * 1024,
+        activeHeavyEvalCounts: {
+          localBrainEval: 0,
+          externalLocalBrainEval: 0,
+          mlx: 0,
+        },
+        activeProcesses: [
+          {
+            pid: 101,
+            command: "node --import tsx scripts/dev/minimax-brain-training-guard.ts",
+            role: "guard",
+          },
+        ],
+      });
+
+      expect(plan).toMatchObject({
+        candidateCached: true,
+        activeTrainingProcessCount: 1,
+        decision: "blocked_training_active",
+        action: "wait_for_current_guard_to_finish",
+      });
+      expect(plan.allowedNextCommand).toBeUndefined();
     } finally {
       await fs.rm(homeDir, { recursive: true, force: true });
     }
