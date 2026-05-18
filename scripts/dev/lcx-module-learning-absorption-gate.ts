@@ -32,6 +32,7 @@ type EvalSnapshot = {
 };
 
 const REVIEW_DIR = path.join("memory", "module-learning-pipeline-reviews");
+const PLAN_RECEIPT_DIR = path.join("memory", "module-learning-pipeline-plan-receipts");
 const ABSORPTION_EVIDENCE_DIR = path.join("memory", "module-learning-absorption-evidence");
 const EVAL_EVENT_NAMES = new Set([
   "stable_hardened_eval",
@@ -219,6 +220,19 @@ async function readReview(params: { workspaceDir: string; dateKey: string }) {
   }
 }
 
+async function countPlanReceiptFiles(params: {
+  workspaceDir: string;
+  dateKey: string;
+}): Promise<number> {
+  const receiptDir = path.join(params.workspaceDir, PLAN_RECEIPT_DIR, params.dateKey);
+  try {
+    const entries = await fs.readdir(receiptDir, { withFileTypes: true });
+    return entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json")).length;
+  } catch {
+    return 0;
+  }
+}
+
 function adjacentTaskForModule(targetModule: string): string {
   const tasks: Record<string, string> = {
     portfolio_risk_gates:
@@ -288,6 +302,7 @@ function buildGate(params: {
   dateKey: string;
   review: JsonRecord | undefined;
   reviewPath: string;
+  planReceiptFiles: number;
   latestEval: EvalSnapshot | undefined;
   evalEvidenceSource: string;
 }) {
@@ -318,11 +333,19 @@ function buildGate(params: {
     missingEvidenceByReceipt.length === 0 &&
     numberValue(counts.evalAbsorbed) === rows.length &&
     boundaryViolations === 0;
+  const reviewStaleOrEmpty =
+    Boolean(params.review) && rows.length === 0 && params.planReceiptFiles > 0;
 
   if (!params.review) {
     blockers.push("module_learning_review_missing");
     nextActions.push(
       "run module-learning-pipeline-review for the current date before claiming absorption",
+    );
+  }
+  if (reviewStaleOrEmpty) {
+    blockers.push("module_learning_review_stale_or_empty");
+    nextActions.push(
+      "rerun module-learning-pipeline-review so absorption gate sees the current plan receipts",
     );
   }
   if (!params.latestEval) {
@@ -359,6 +382,7 @@ function buildGate(params: {
     absorptionReady,
     gateDecision: absorptionReady ? "ready_for_eval_absorbed_review" : "hold_at_application_ready",
     counts: {
+      planReceiptFiles: params.planReceiptFiles,
       reviewRows: rows.length,
       weakReceiptCount: weakRows.length,
       evalAbsorbed: numberValue(counts.evalAbsorbed),
@@ -534,6 +558,10 @@ const { review, reviewRelativePath } = await readReview({
   workspaceDir: options.workspaceDir,
   dateKey,
 });
+const planReceiptFiles = await countPlanReceiptFiles({
+  workspaceDir: options.workspaceDir,
+  dateKey,
+});
 const evalEvidenceSource = options.evalSummaryPath
   ? options.evalSummaryPath
   : (options.guardLogPath ?? DEFAULT_GUARD_LOG_PATH);
@@ -544,6 +572,7 @@ const result = buildGate({
   dateKey,
   review,
   reviewPath: reviewRelativePath,
+  planReceiptFiles,
   latestEval,
   evalEvidenceSource,
 });
@@ -565,12 +594,19 @@ const refreshedReview =
         dateKey,
       })
     : undefined;
+const refreshedPlanReceiptFiles = refreshedReview
+  ? await countPlanReceiptFiles({
+      workspaceDir: options.workspaceDir,
+      dateKey,
+    })
+  : planReceiptFiles;
 const refreshedGate =
   refreshedReview && latestEval
     ? buildGate({
         dateKey,
         review: refreshedReview.review,
         reviewPath: refreshedReview.reviewPath,
+        planReceiptFiles: refreshedPlanReceiptFiles,
         latestEval,
         evalEvidenceSource,
       })

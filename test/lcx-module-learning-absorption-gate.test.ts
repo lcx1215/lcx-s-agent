@@ -207,6 +207,60 @@ describe("lcx-module-learning-absorption-gate", () => {
     expect(parsed.blockers).toContain("module_learning_review_missing");
   });
 
+  it("flags an empty review as stale when plan receipts already exist", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
+    const evalSummaryPath = await seedJson(workspaceDir, "eval-summary.json", cleanEvalSummary());
+    await seedJson(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-14/options.json",
+      {
+        boundary: "dev_module_learning_pipeline_plan",
+        targetModule: "options_volatility",
+        status: "application_ready",
+      },
+    );
+    await seedJson(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json", {
+      boundary: "module_learning_pipeline_review",
+      dateKey: "2026-05-14",
+      counts: {
+        receiptFiles: 0,
+        validReceipts: 0,
+        applicationReady: 0,
+        evalAbsorbed: 0,
+        weakModuleLearning: 0,
+        boundaryViolations: 0,
+      },
+      rows: [],
+    });
+
+    const result = runCli(
+      ["--date", "2026-05-14", "--eval-summary", evalSummaryPath],
+      workspaceDir,
+    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        absorptionReady: false,
+        gateDecision: "hold_at_application_ready",
+        writeAvailable: false,
+      }),
+    );
+    expect(parsed.counts).toEqual(
+      expect.objectContaining({
+        planReceiptFiles: 1,
+        reviewRows: 0,
+      }),
+    );
+    expect(parsed.blockers).toContain("module_learning_review_stale_or_empty");
+    expect(parsed.nextActions).toEqual(
+      expect.arrayContaining([
+        "rerun module-learning-pipeline-review so absorption gate sees the current plan receipts",
+      ]),
+    );
+  });
+
   it("can write evidence and superseding eval-absorbed plan receipts when the gate is clean", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
     const evalSummaryPath = await seedJson(workspaceDir, "eval-summary.json", cleanEvalSummary());
