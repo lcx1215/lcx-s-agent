@@ -549,7 +549,7 @@ export function looksLikeSourceCoverageScopeAsk(text: string): boolean {
       normalized,
     );
   const hasCoverageHonestyCue =
-    /(别把|不要把|别说成|不要说成|别假装|不要假装|只能说|说清楚|标出来|标明|说明只读了|只读了|覆盖范围|覆盖面|抽样|样本|只看了|看过哪些|读了哪些|没搜到|搜不到|搜索不可用|检索不可用|能力|capability|limited|sample|sampled|partial|unknown|not exhaustive|not complete|not comprehensive|source coverage|coverage limits?|sampling limits?|what was actually read)/u.test(
+    /(别把|不要把|别说成|不要说成|别假装|不要假装|只能说|说清楚|标出来|标明|说明只读了|只读了|覆盖范围|覆盖面|抽样|样本|只看了|看过哪些|读了哪些|没搜到|搜不到|搜索不可用|检索不可用|可检索能力|检索能力|limited|sample|sampled|partial|unknown|not exhaustive|not complete|not comprehensive|source coverage|coverage limits?|sampling limits?|what was actually read)/u.test(
       normalized,
     );
   return (

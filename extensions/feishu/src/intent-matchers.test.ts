@@ -387,6 +387,11 @@ describe("feishu intent matchers", () => {
     }
 
     expect(looksLikeSourceCoverageScopeAsk("去 Google 上学最近 agent 记忆怎么做")).toBe(false);
+    expect(
+      looksLikeSourceCoverageScopeAsk(
+        "学习期权基础知识。你先判断这是要网上学习、用本地沉淀，还是两者结合；然后给我一个新手能懂但不肤浅的学习框架，并说明后续怎么沉淀成系统能力。",
+      ),
+    ).toBe(false);
     expect(looksLikeSourceCoverageScopeAsk("搜索现在能用吗")).toBe(false);
   });
 

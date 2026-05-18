@@ -230,6 +230,12 @@ function looksLikeApiReplyArtifactScopeAsk(text: string): boolean {
   );
 }
 
+function looksLikeExplicitOnlineLearningSourceCue(text: string): boolean {
+  return /(google|web|网上|互联网|联网|搜索|搜一下|去搜|查一下|去查|公开网页|公开课程|课程材料|syllabus|google scholar|ssrn|nber|open web|public web|github|开源|博客|blog|网页|外部来源|外部材料)/iu.test(
+    text,
+  );
+}
+
 function resolveBackendToolContract(params: {
   family: LarkRoutingFamily;
   utterance: string;
@@ -252,7 +258,9 @@ function resolveBackendToolContract(params: {
   }
   if (
     params.family === "learning_external_source" &&
-    (looksLikeExternalSkillInternalizationAsk(params.utterance) || plannerRequestsFinancePipeline)
+    (looksLikeExternalSkillInternalizationAsk(params.utterance) ||
+      (plannerRequestsFinancePipeline &&
+        !looksLikeExplicitOnlineLearningSourceCue(params.utterance)))
   ) {
     return {
       toolName: "finance_learning_pipeline_orchestrator",
@@ -1830,6 +1838,38 @@ function resolveDeterministicFallbackFamily(params: {
   };
 }
 
+function resolveLocalLearningRouteOverride(params: {
+  utterance: string;
+  apiSelected?: { family: LarkRoutingFamily; source: "api"; confidence: number };
+}):
+  | {
+      family: LarkRoutingFamily;
+      source: "deterministic_fallback";
+      confidence: number;
+      reason: string;
+    }
+  | undefined {
+  if (params.apiSelected?.family !== "market_capability_learning_intake") {
+    return undefined;
+  }
+  if (
+    !looksLikeOnlineSourceLearningAsk(params.utterance) ||
+    !looksLikeExplicitOnlineLearningSourceCue(params.utterance) ||
+    hasExplicitLearningSource(params.utterance)
+  ) {
+    return undefined;
+  }
+  return {
+    family: looksLikeSourceCoverageScopeAsk(params.utterance)
+      ? "external_source_coverage_honesty"
+      : "learning_external_source",
+    source: "deterministic_fallback",
+    confidence: Math.max(0.94, Math.min(0.98, params.apiSelected.confidence)),
+    reason:
+      "api_market_learning_intake_rejected_for_online_source_learning_without_concrete_local_source",
+  };
+}
+
 function defaultWorkOrderModules(family: LarkRoutingFamily): readonly string[] {
   switch (family) {
     case "position_risk_adjustment":
@@ -2258,7 +2298,12 @@ export async function resolveLarkAgentInstructionHandoff(params: {
         utterance: params.utterance,
         deterministicSurface,
       });
+  const localLearningRouteOverride = resolveLocalLearningRouteOverride({
+    utterance: params.utterance,
+    apiSelected,
+  });
   const selected =
+    localLearningRouteOverride ??
     apiSelected ??
     (deterministicFallback
       ? {
@@ -2280,8 +2325,9 @@ export async function resolveLarkAgentInstructionHandoff(params: {
       notice: "",
     };
   }
-  const boundaryLine =
-    selected.source === "deterministic_fallback"
+  const boundaryLine = localLearningRouteOverride
+    ? "Safety boundary: API planner candidate was locally rejected because online-source learning must not be downgraded into a local-source-only pipeline; this is still not execution approval or learned-capability proof."
+    : selected.source === "deterministic_fallback"
       ? "Safety boundary: API planner was unavailable or below threshold, so this is a deterministic fallback routing hint, not primary local decomposition and not execution approval; deterministic guards and surface policy remain authoritative."
       : "Safety boundary: this envelope is a routing hint for the agent, not execution approval; deterministic guards and surface policy remain authoritative.";
   const targetLine = `Suggested family=${selected.family}; target=${
@@ -2290,6 +2336,9 @@ export async function resolveLarkAgentInstructionHandoff(params: {
   const deterministicLine = deterministicSurface
     ? `Deterministic surface=${deterministicSurface}.`
     : "Deterministic surface=unresolved.";
+  const localOverrideLine = localLearningRouteOverride
+    ? `Local route override: ${localLearningRouteOverride.reason}.`
+    : undefined;
   const backendToolContract = resolveBackendToolContract({
     family: selected.family,
     utterance: params.utterance,
@@ -2324,6 +2373,7 @@ export async function resolveLarkAgentInstructionHandoff(params: {
       `[Lark instruction-understanding envelope]`,
       targetLine,
       deterministicLine,
+      localOverrideLine,
       backendLine,
       workOrderLine,
       boundaryLine,

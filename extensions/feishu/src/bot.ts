@@ -1145,8 +1145,12 @@ function renderFeishuLearningCouncilVisibleTimeoutReply(params: {
   return [
     `收到，已开始学：${topic}。`,
     "",
-    "我会先把任务拆清楚，再等材料和审阅结果，不会把“开始处理”说成“已经学会”。",
+    "我先给可执行的学习入口版本；后续要等来源阅读和审阅结果，不能把“入口计划”说成“已经学会”。",
     ...chain,
+    ...renderFeishuLearningIntakePlanDeliverable({
+      handoffReceiptArtifact: params.handoffReceiptArtifact,
+      userMessage: params.userMessage,
+    }),
     "",
     "当前结果：拆解和本地大脑计划入口已经形成，但大模型审阅还没在前台等待时间内完成。",
     "所以我不能说已经学完，也不会写成可复用能力。后台如果完成，会再补发完成版；如果失败，会说明卡在哪一步。",
@@ -1188,6 +1192,48 @@ function renderFeishuLearningBrainChainSummary(params: {
     lines.push("- 学习证据: 需要可核验材料、学习回执和审阅结果；缺任何一项都不能说已经学会。");
   }
   return lines;
+}
+
+function renderFeishuLearningIntakePlanDeliverable(params: {
+  handoffReceiptArtifact?: LarkLanguageHandoffReceiptArtifact;
+  userMessage?: string;
+}): string[] {
+  const handoff = params.handoffReceiptArtifact?.handoff;
+  const workOrder = handoff?.workOrder;
+  const outputContract = workOrder?.outputContract.join("\n") ?? "";
+  const objective = workOrder?.objective ?? "";
+  const userMessage = params.userMessage ?? "";
+  const asksForPlanDeliverable =
+    /路径判断|框架层级|沉淀路线图|学习框架|路径判断结论/u.test(outputContract) ||
+    /学习框架|沉淀成系统能力|网上学习|本地沉淀|两者结合/u.test(`${objective}\n${userMessage}`);
+  if (!asksForPlanDeliverable) {
+    return [];
+  }
+
+  const isOptions =
+    /期权|option|options/iu.test(`${objective}\n${userMessage}`) ||
+    (params.handoffReceiptArtifact?.financeBrainOrchestration?.primaryModules ?? []).includes(
+      "options_volatility",
+    );
+  if (!isOptions) {
+    return [
+      "",
+      "## 先给入口版学习框架",
+      "- 路径判断: 两者结合。网上来源负责补新资料和校准定义，本地沉淀负责复用已有规则、记录错误修正和形成可检索能力。",
+      "- 学习顺序: 先学基础概念，再学因果机制，最后接风险边界和复盘样例。",
+      "- 沉淀方式: source registry -> capability rule -> retrieval/apply receipt -> review -> eval/training absorption。",
+    ];
+  }
+
+  return [
+    "",
+    "## 先给入口版期权学习框架",
+    "- 路径判断: 两者结合。期权基础概念可以先用网上权威资料校准，本地沉淀用来保存定义、常见误区、风控边界和后续复盘规则。",
+    "- 第一层：合约语言。看懂 call/put、行权价、到期日、权利金、买方/卖方、内在价值和时间价值。",
+    "- 第二层：价格为什么动。重点学标的价格、波动率、时间流逝、利率/分红，以及 Delta/Gamma/Theta/Vega 这些 Greek 的直觉含义。",
+    "- 第三层：策略和风险边界。先理解保护性 put、备兑 call、价差组合的风险收益形状；新手不要先学复杂组合，更不能把期权当高杠杆彩票。",
+    "- 沉淀路线: 先登记来源和阅读范围，再提炼成 options_volatility 的能力规则，随后做 retrieval/apply 回执、相邻应用题、review 和 eval/training absorption；通过前只算 intake plan，不算系统已经学会。",
+  ];
 }
 
 function summarizeFeishuLearningVisibleTopic(userMessage: string | undefined): string {

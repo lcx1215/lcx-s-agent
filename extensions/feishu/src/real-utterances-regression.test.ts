@@ -1537,6 +1537,49 @@ describe("real daily utterance regression", () => {
     }
   });
 
+  it("overrides API market-learning intake when the user explicitly asks for online learning plus local sedimentation", async () => {
+    const utterance =
+      "学习期权基础知识。你先判断这是要网上学习、用本地沉淀，还是两者结合；然后给我一个新手能懂但不肤浅的学习框架，并说明后续怎么沉淀成系统能力。";
+
+    expect(looksLikeFinanceLearningPipelineAsk(utterance)).toBe(false);
+
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance,
+      apiProvider: async () => ({
+        family: "market_capability_learning_intake",
+        confidence: 0.78,
+        rationale: "market capability learning intake",
+        workOrder: {
+          objective: "learn options basics and internalize it",
+          requiredModules: ["finance_learning_pipeline_orchestrator"],
+          backendTool: "finance_learning_pipeline_orchestrator",
+          evidenceRequired: ["retrieval receipt"],
+          safetyBoundaries: ["research_only"],
+          outputContract: ["failedReason"],
+        },
+      }),
+    });
+
+    expect(handoff.family).toBe("learning_external_source");
+    expect(handoff.source).toBe("deterministic_fallback");
+    expect(handoff.apiCandidate?.family).toBe("market_capability_learning_intake");
+    expect(handoff.backendToolContract).toBeUndefined();
+    expect(handoff.notice).toContain("Local route override:");
+    expect(handoff.workOrder?.evidenceRequired).toEqual([
+      "source list with links",
+      "coverage limits",
+      "adoption or discard decision",
+    ]);
+    expect(handoff.workOrder?.outputContract).toContain(
+      "use web/search/source grounding when available",
+    );
+    expect(handoff.workOrder?.outputContract).not.toContain(
+      "name missing source requirement when source is absent",
+    );
+  });
+
   it("routes explicit online or broad advanced chart learning to external-source learning, not local-source-only pipeline", async () => {
     const utterances = [
       "学习高级图线分析技术",

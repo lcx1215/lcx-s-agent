@@ -8842,6 +8842,266 @@ describe("learning council routing", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("does not downgrade online options learning plus local sedimentation into the local-source missing gate", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "market_capability_learning_intake",
+      confidence: 0.78,
+      rationale: "operator asked the agent to learn options for itself",
+      workOrder: {
+        objective: "learn options basics with online and local sedimentation",
+        requiredModules: ["finance_learning_pipeline_orchestrator"],
+        backendTool: "finance_learning_pipeline_orchestrator",
+        evidenceRequired: ["retrieval receipt"],
+        safetyBoundaries: ["research_only"],
+        outputContract: ["failedReason"],
+      },
+    }));
+    mockRunFeishuLearningCouncil.mockResolvedValue(
+      "Learning council run: full three-model execution completed.\n\n## Kimi synthesis\n- 用网上来源和本地沉淀一起学。",
+    );
+
+    const mockDispatchReplyFromConfig = vi.fn();
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-online-options-learning-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            control_room: { chatId: "oc-control" },
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    const userText =
+      "学习期权基础知识。你先判断这是要网上学习、用本地沉淀，还是两者结合；然后给我一个新手能懂但不肤浅的学习框架，并说明后续怎么沉淀成系统能力。";
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-online-options-learning",
+          chat_id: "oc-control",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: userText,
+          }),
+        },
+      },
+    });
+
+    expect(mockRunFeishuLearningCouncil).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userMessage: userText,
+        routeAgentId: "main",
+        sessionKey: "agent:main:feishu:dm:ou-attacker:surface:learning_command",
+        workspaceDir: tempDir,
+      }),
+    );
+    expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    const replyTexts = (
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    ).map((call) => call[0].text);
+    expect(replyTexts.join("\n")).toContain("学习审阅已完成");
+    expect(replyTexts.join("\n")).toContain("用网上来源和本地沉淀一起学");
+    expect(replyTexts.join("\n")).not.toContain("现在缺：本地 `.md` / `.txt` / `.html`");
+    await expect(
+      fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
+    ).rejects.toThrow();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("keeps online options learning timeout replies useful when the planner contract asks for a framework", async () => {
+    process.env.OPENCLAW_FEISHU_LEARNING_COUNCIL_REPLY_TIMEOUT_MS = "5";
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+    mockCreateGatewayLarkApiRouteProvider.mockReturnValue(async () => ({
+      family: "learning_capability_maintenance",
+      confidence: 0.85,
+      rationale:
+        "online vs local judgment is part of the learning framework and capability sedimentation plan",
+      workOrder: {
+        objective:
+          "判断期权基础学习的来源路径（网上/本地/两者混合），给出新手友好但不肤浅的期权知识学习框架，并说明如何将学习成果沉淀为系统能力",
+        requiredModules: ["learning_command", "knowledge_maintenance", "portfolio_risk_gates"],
+        backendTool: "local_agent_skill_distiller",
+        evidenceRequired: [
+          "学习路径判断依据",
+          "三层期权知识框架（概念/定价/风控）",
+          "沉淀为系统能力的步骤路线图",
+        ],
+        safetyBoundaries: ["research_only", "no_execution_authority"],
+        outputContract: ["路径判断结论", "框架层级结构（3层）", "沉淀路线图（3步）"],
+      },
+    }));
+    mockRunFeishuLearningCouncil.mockReturnValue(new Promise(() => {}));
+
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: vi.fn(),
+            withReplyDispatcher: vi.fn(
+              async ({
+                dispatcher,
+                run,
+                onSettled,
+              }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+                try {
+                  return await run();
+                } finally {
+                  dispatcher.markComplete();
+                  try {
+                    await dispatcher.waitForIdle();
+                  } finally {
+                    await onSettled?.();
+                  }
+                }
+              },
+            ) as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-online-options-timeout-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            control_room: { chatId: "oc-control" },
+            learning_command: { chatId: "oc-learning" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    const userText =
+      "学习期权基础知识。你先判断这是要网上学习、用本地沉淀，还是两者结合；然后给我一个新手能懂但不肤浅的学习框架，并说明后续怎么沉淀成系统能力。";
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-online-options-learning-timeout",
+          chat_id: "oc-control",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: userText,
+          }),
+        },
+      },
+    });
+
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).toContain("先给入口版期权学习框架");
+    expect(replyText).toContain("路径判断: 两者结合");
+    expect(replyText).toContain("第一层：合约语言");
+    expect(replyText).toContain("第二层：价格为什么动");
+    expect(replyText).toContain("第三层：策略和风险边界");
+    expect(replyText).toContain("通过前只算 intake plan，不算系统已经学会");
+    expect(replyText).not.toContain("现在缺：本地 `.md` / `.txt` / `.html`");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
   it("fails closed in the finance learning pipeline without receipts when market capability source cannot be extracted", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
