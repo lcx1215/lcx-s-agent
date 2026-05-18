@@ -365,10 +365,15 @@ function buildLearningSedimentationInventoryLane(
   const audit = auditCommand.json ?? {};
   const chains = asRecord(audit.chains);
   const modulePipeline = asRecord(chains.moduleLearningPipeline);
+  const latestReview = asRecord(modulePipeline.latestReview);
   const evalAbsorbed = numberValue(modulePipeline.evalAbsorbed) ?? 0;
   const planReceipts = numberValue(modulePipeline.planReceipts) ?? 0;
   const weak = numberValue(modulePipeline.weakModuleLearning) ?? 0;
   const boundaryViolations = numberValue(modulePipeline.boundaryViolations) ?? 0;
+  const latestReviewPath = stringValue(latestReview.path, "none");
+  const latestReviewEvalAbsorbed = numberValue(latestReview.evalAbsorbed) ?? 0;
+  const latestReviewWeak = numberValue(latestReview.weakModuleLearning) ?? 0;
+  const latestReviewApplicationReady = numberValue(latestReview.applicationReady) ?? 0;
   const gaps = asArray(audit.gaps)
     .map((gap) => stringValue(asRecord(gap).id, ""))
     .filter((id) => id.length > 0);
@@ -381,9 +386,13 @@ function buildLearningSedimentationInventoryLane(
     evidence: [
       `assessment=${stringValue(audit.assessment, "unknown")}`,
       `planReceipts=${planReceipts}`,
-      `evalAbsorbed=${evalAbsorbed}`,
+      `historicalEvalAbsorbed=${evalAbsorbed}`,
       `weakModuleLearning=${weak}`,
       `boundaryViolations=${boundaryViolations}`,
+      `latestReview=${latestReviewPath}`,
+      `latestReview.evalAbsorbed=${latestReviewEvalAbsorbed}`,
+      `latestReview.weakModuleLearning=${latestReviewWeak}`,
+      `latestReview.applicationReady=${latestReviewApplicationReady}`,
       `gaps=${gaps.join(",") || "none"}`,
     ],
     issue:

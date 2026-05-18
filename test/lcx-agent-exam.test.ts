@@ -200,6 +200,12 @@ describe("lcx-agent-exam", () => {
             evalAbsorbed: 16,
             weakModuleLearning: 0,
             boundaryViolations: 0,
+            latestReview: {
+              path: "memory/module-learning-pipeline-reviews/2026-05-18.json",
+              evalAbsorbed: 8,
+              weakModuleLearning: 0,
+              applicationReady: 0,
+            },
           },
         },
       }),
@@ -215,6 +221,8 @@ describe("lcx-agent-exam", () => {
         evidence: expect.arrayContaining([
           "inventory.assessment=usable_and_module_certifiable",
           "inventory.planReceipts=32",
+          "inventory.historicalEvalAbsorbed=16",
+          "inventory.latestReview.evalAbsorbed=8",
           "todayReview.receiptFiles=8",
           "todayReview.evalAbsorbed=8",
         ]),
@@ -283,6 +291,12 @@ describe("lcx-agent-exam", () => {
             evalAbsorbed: 0,
             weakModuleLearning: 8,
             boundaryViolations: 0,
+            latestReview: {
+              path: "memory/module-learning-pipeline-reviews/2026-05-18.json",
+              evalAbsorbed: 0,
+              weakModuleLearning: 8,
+              applicationReady: 8,
+            },
           },
         },
       }),
@@ -306,7 +320,12 @@ describe("lcx-agent-exam", () => {
     );
     expect(report.lanes.find((lane) => lane.lane === "learning_sedimentation_inventory")).toEqual(
       expect.objectContaining({
-        evidence: expect.arrayContaining(["gaps=module_learning_review_has_weak_receipts"]),
+        evidence: expect.arrayContaining([
+          "historicalEvalAbsorbed=0",
+          "latestReview.evalAbsorbed=0",
+          "latestReview.weakModuleLearning=8",
+          "gaps=module_learning_review_has_weak_receipts",
+        ]),
       }),
     );
     expect(moduleBlueprint?.nextAction).not.toContain("补 module_learning_pipeline_plan/review");
@@ -371,6 +390,12 @@ describe("lcx-agent-exam", () => {
             evalAbsorbed: 16,
             weakModuleLearning: 0,
             boundaryViolations: 0,
+            latestReview: {
+              path: "memory/module-learning-pipeline-reviews/2026-05-17.json",
+              evalAbsorbed: 16,
+              weakModuleLearning: 0,
+              applicationReady: 0,
+            },
           },
         },
       }),
