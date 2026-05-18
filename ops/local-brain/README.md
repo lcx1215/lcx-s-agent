@@ -504,6 +504,10 @@ counts while today's active receipts still have `weakModuleLearning > 0`. That
 state is only partial absorption. It must not print
 `usable_and_module_certifiable` until `weakModuleLearning=0` and boundary
 violations are also zero.
+The learning-sedimentation map should mirror this: use
+`partial_eval_absorption_with_weak_receipts` for mixed historical/active
+evidence, `boundary_violation_blocks_absorption` for boundary drift, and reserve
+`module_eval_absorbed_receipts_clean` for the clean ready state.
 
 For the automation lane that should leave a daily dev/local receipt, run:
 

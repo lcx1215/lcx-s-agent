@@ -565,6 +565,67 @@ describe("local-brain-training-plan", () => {
     }
   });
 
+  it("surfaces module-learning boundary violations on eval-absorbed receipts", async () => {
+    const worktree = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-worktree-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-workspace-"));
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+    const dateKey = new Date().toISOString().slice(0, 10);
+    await writeJson(
+      workspaceDir,
+      `memory/module-learning-pipeline-plan-receipts/${dateKey}/bad.json`,
+      {
+        boundary: "dev_module_learning_pipeline_plan",
+        targetModule: "portfolio_risk_gates",
+        status: "eval_absorbed",
+        absorptionEvidence: {
+          evalCaseId: "portfolio_risk_gate_eval",
+          evalPassed: true,
+          trainingSliceIncluded: true,
+          keepDownrankDiscardDecision: "keep",
+        },
+        liveTouched: true,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      },
+    );
+
+    try {
+      const plan = await buildLocalBrainTrainingPlan({
+        guardLogPath,
+        quotaLogPath,
+        worktree,
+        workspaceDir,
+        json: true,
+        processCheck: false,
+      });
+
+      expect(plan.moduleLearningReview).toMatchObject({
+        counts: expect.objectContaining({
+          weakModuleLearning: 1,
+          evalAbsorbed: 1,
+          boundaryViolations: 1,
+        }),
+      });
+      expect(plan.decisions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "module_learning_incomplete_evidence",
+            lane: "module_learning",
+            codexRepairEligible: true,
+            reason: expect.stringContaining("violate boundary rules"),
+            nextCommand: expect.stringContaining("lcx-automation-repair-lock.ts"),
+          }),
+        ]),
+      );
+    } finally {
+      await fs.rm(worktree, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("surfaces finance apply receipts that still need module-learning bridge receipts", async () => {
     const worktree = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-worktree-"));
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-workspace-"));

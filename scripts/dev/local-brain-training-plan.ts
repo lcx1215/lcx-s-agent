@@ -1024,13 +1024,16 @@ function buildDecisions(params: {
     typeof moduleLearningCounts.boundaryViolations === "number"
       ? moduleLearningCounts.boundaryViolations
       : 0;
-  if (weakModuleLearning > 0) {
+  if (weakModuleLearning > 0 || boundaryViolations > 0) {
     decisions.push({
       id: "module_learning_incomplete_evidence",
       lane: "module_learning",
       severity: "P2",
       action: "complete_module_learning_evidence_before_claiming_absorption",
-      reason: `${weakModuleLearning} module-learning receipt(s) are not eval_absorbed yet.`,
+      reason:
+        boundaryViolations > 0
+          ? `${boundaryViolations} module-learning receipt(s) violate boundary rules; ${weakModuleLearning} receipt(s) are not eval_absorbed yet.`
+          : `${weakModuleLearning} module-learning receipt(s) are not eval_absorbed yet.`,
       codexRepairEligible: boundaryViolations > 0,
       nextCommand: boundaryViolations > 0 ? buildRepairLockCommand(params.worktree) : undefined,
     });

@@ -228,6 +228,24 @@ async function buildMap(workspaceDir: string) {
   );
   const acceptedCandidates = await acceptedBrainCandidates(brainReviewFiles);
   const reviewCounts = await moduleReviewCounts(moduleReviews);
+  const moduleAbsorptionReady =
+    reviewCounts.evalAbsorbed > 0 &&
+    reviewCounts.weakModuleLearning === 0 &&
+    reviewCounts.boundaryViolations === 0;
+  const moduleLearningHasWeakReceipts = reviewCounts.weakModuleLearning > 0;
+  const moduleLearningHasBoundaryViolations = reviewCounts.boundaryViolations > 0;
+  const moduleLearningHasEvalAbsorption = reviewCounts.evalAbsorbed > 0;
+  const moduleLearningStatus = moduleLearningHasBoundaryViolations
+    ? "boundary_violation_blocks_absorption"
+    : moduleAbsorptionReady
+      ? "module_eval_absorbed_receipts_clean"
+      : moduleLearningHasEvalAbsorption && moduleLearningHasWeakReceipts
+        ? "partial_eval_absorption_with_weak_receipts"
+        : moduleReviews.length > 0
+          ? "reviewable_not_absorbed"
+          : modulePlanReceipts.length > 0
+            ? "planned_not_reviewed"
+            : "missing_evidence";
   const correctionNotes = rootMemoryFiles.filter((entry) =>
     /(?:^|\/)\d{4}-\d{2}-\d{2}-correction-note-|(?:^|\/)correction-note-/u.test(
       path.relative(workspaceDir, entry.path).split(path.sep).join("/"),
@@ -279,14 +297,7 @@ async function buildMap(workspaceDir: string) {
       id: "local_module_learning_sedimentation",
       title: "Local module learning plan/review/absorption",
       category: "module_absorption",
-      status:
-        reviewCounts.evalAbsorbed > 0
-          ? "module_eval_absorbed_receipts_present"
-          : moduleReviews.length > 0
-            ? "reviewable_not_absorbed"
-            : modulePlanReceipts.length > 0
-              ? "planned_not_reviewed"
-              : "missing_evidence",
+      status: moduleLearningStatus,
       proves: [
         "Module-specific learning is only certifiable after plan, review, per-receipt absorption evidence, and keep/downrank/discard decision.",
       ],
@@ -458,7 +469,7 @@ async function buildMap(workspaceDir: string) {
     workspaceDir,
     summary: {
       laneCount: lanes.length,
-      moduleAbsorptionReady: reviewCounts.evalAbsorbed > 0 && reviewCounts.weakModuleLearning === 0,
+      moduleAbsorptionReady,
       systemMemoryPresent:
         localMemoryFiles.length > 0 ||
         correctionNotes.length > 0 ||

@@ -134,6 +134,70 @@ describe("lcx-learning-sedimentation-map", () => {
     );
   });
 
+  it("keeps partial eval absorption separate from clean module absorption", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sedimentation-map-"));
+    await seedJson(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-14/m.json",
+      { boundary: "dev_module_learning_pipeline_plan", status: "eval_absorbed" },
+    );
+    await seedJson(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json", {
+      counts: {
+        applicationReady: 1,
+        evalAbsorbed: 1,
+        weakModuleLearning: 1,
+        boundaryViolations: 0,
+      },
+    });
+
+    const result = runCli(workspaceDir);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(parsed.summary).toEqual(
+      expect.objectContaining({
+        moduleAbsorptionReady: false,
+      }),
+    );
+    expect(lane(parsed, "local_module_learning_sedimentation")).toEqual(
+      expect.objectContaining({
+        status: "partial_eval_absorption_with_weak_receipts",
+      }),
+    );
+  });
+
+  it("blocks module absorption when review boundary violations remain", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sedimentation-map-"));
+    await seedJson(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-14/m.json",
+      { boundary: "dev_module_learning_pipeline_plan", status: "eval_absorbed" },
+    );
+    await seedJson(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json", {
+      counts: {
+        applicationReady: 0,
+        evalAbsorbed: 1,
+        weakModuleLearning: 0,
+        boundaryViolations: 1,
+      },
+    });
+
+    const result = runCli(workspaceDir);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(parsed.summary).toEqual(
+      expect.objectContaining({
+        moduleAbsorptionReady: false,
+      }),
+    );
+    expect(lane(parsed, "local_module_learning_sedimentation")).toEqual(
+      expect.objectContaining({
+        status: "boundary_violation_blocks_absorption",
+      }),
+    );
+  });
+
   it("does not call source or system memory evidence module absorption", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sedimentation-map-"));
     await seedFile(workspaceDir, "memory/research-sources/source.md", "source");
