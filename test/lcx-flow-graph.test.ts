@@ -69,6 +69,7 @@ describe("LCX flow graph exam", () => {
         ownerCluster: string;
         ownerPath: string;
         watchedPathTerms: string[];
+        allowedPaths: string[];
       }>;
       sharedEntrypointOwnerRules: Array<{
         path: string;
@@ -295,7 +296,15 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           id: "lark_visible_reply_audit_entrypoints",
           ownerCluster: "commercial_answer_pipeline_cluster",
-          watchedPathTerms: expect.arrayContaining(["reply-flow-audit", "commercial-answer"]),
+          watchedPathTerms: expect.arrayContaining([
+            "reply-flow-audit",
+            "commercial-answer",
+            "skill-autocue",
+          ]),
+          allowedPaths: expect.arrayContaining([
+            "src/auto-reply/reply/skill-autocue.ts",
+            "src/auto-reply/reply/skill-autocue.test.ts",
+          ]),
         }),
         expect.objectContaining({
           id: "qwen_training_operation_entrypoints",

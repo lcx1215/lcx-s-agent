@@ -1162,6 +1162,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "feishu-reply-flow-evidence",
       "lark-loop-diagnose",
       "commercial-answer",
+      "skill-autocue",
     ],
     allowedPaths: [
       "extensions/feishu/src/lark-context-packet.test.ts",
@@ -1171,6 +1172,8 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "extensions/feishu/src/reply-flow-audit.ts",
       "src/auto-reply/reply/feishu-reply-flow-evidence.test.ts",
       "src/auto-reply/reply/feishu-reply-flow-evidence.ts",
+      "src/auto-reply/reply/skill-autocue.test.ts",
+      "src/auto-reply/reply/skill-autocue.ts",
       "scripts/dev/lcx-commercial-answer-pipeline.ts",
       "src/commands/capabilities.lark-loop-diagnose.test.ts",
       "src/commands/capabilities/lark-loop-diagnose.ts",
