@@ -247,8 +247,14 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
   const timeoutAfterCurrentStart = ownerDecisionSignals.some(
     (signal) => signal.id === "stable_eval_timeout_after_latest_start",
   );
+  const latestEval = recordValue(payload?.latestEval);
   const latestTimeout = recordValue(payload?.latestEvalTimeout);
-  if (latestTimeout) {
+  const latestEvalAt = stringValue(latestEval?.at);
+  const latestTimeoutAt = stringValue(latestTimeout?.at);
+  const timeoutIsNewerThanLatestEval =
+    latestTimeoutAt !== undefined &&
+    (!latestEvalAt || latestTimeoutAt.localeCompare(latestEvalAt) >= 0);
+  if (latestTimeout && (timeoutAfterCurrentStart || timeoutIsNewerThanLatestEval)) {
     signals.push({
       id: timeoutAfterCurrentStart
         ? "latest_eval_timeout_visible"

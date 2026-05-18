@@ -258,6 +258,54 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
+  it("does not keep stale eval timeouts as watch clusters after a newer eval verdict", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        latestEval: {
+          at: "2026-05-18T12:00:00.000Z",
+          passed: 77,
+          total: 77,
+          promotionReady: true,
+          parseRecoveredCaseIds: [],
+        },
+        latestEvalTimeout: {
+          at: "2026-05-18T11:00:00.000Z",
+          name: "stable_hardened_eval",
+          timeoutReason: "total_timeout",
+        },
+        stableEvalTimeoutCountAfterLatestStart: 0,
+        decisions: [],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    expect(result.clusters.map((cluster) => cluster.id)).not.toContain(
+      "training_eval_runtime_cluster",
+    );
+  });
+
   it("surfaces real sedimentation audit gap objects with their severity", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
