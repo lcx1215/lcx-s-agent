@@ -517,5 +517,8 @@ describe("lcx-problem-cluster-radar", () => {
         }),
       ]),
     );
+    expect(payload.clusters.map((cluster) => cluster.id)).not.toContain(
+      "owner_output_availability_cluster",
+    );
   }, 240_000);
 });

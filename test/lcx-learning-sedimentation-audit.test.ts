@@ -52,6 +52,7 @@ async function runAudit(workspaceDir: string) {
         reviewFiles: number;
         evalAbsorbed: number;
         weakModuleLearning: number;
+        cumulativeWeakModuleLearning?: number;
         latestReview?: {
           path: string;
           evalAbsorbed: number;
@@ -235,6 +236,48 @@ describe("LCX learning sedimentation audit", () => {
       expect.arrayContaining([
         expect.objectContaining({ id: "module_learning_review_has_weak_receipts" }),
       ]),
+    );
+  });
+
+  it("does not let superseded historical weak reviews block a clean latest module review", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-learning-audit-"));
+    await seedGeneralLearningEvidence(workspaceDir);
+    const memoryDir = path.join(workspaceDir, "memory");
+    await writeJson(
+      path.join(memoryDir, "module-learning-pipeline-plan-receipts", "day", "m.json"),
+      {
+        ok: true,
+      },
+    );
+    await writeJson(path.join(memoryDir, "module-learning-pipeline-reviews", "2026-05-18.json"), {
+      counts: {
+        evalAbsorbed: 0,
+        weakModuleLearning: 2,
+        boundaryViolations: 0,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeJson(path.join(memoryDir, "module-learning-pipeline-reviews", "2026-05-19.json"), {
+      counts: {
+        evalAbsorbed: 2,
+        weakModuleLearning: 0,
+        boundaryViolations: 0,
+      },
+    });
+
+    const payload = await runAudit(workspaceDir);
+
+    expect(payload.assessment).toBe("usable_and_module_certifiable");
+    expect(payload.chains.moduleLearningPipeline).toEqual(
+      expect.objectContaining({
+        ok: true,
+        evalAbsorbed: 2,
+        weakModuleLearning: 0,
+        cumulativeWeakModuleLearning: 2,
+      }),
+    );
+    expect(payload.gaps.map((gap) => gap.id)).not.toContain(
+      "module_learning_review_has_weak_receipts",
     );
   });
 

@@ -764,6 +764,18 @@ async function runJsonOwner(owner: string, script: string): Promise<OwnerSnapsho
     };
   } catch (error) {
     const details = error as { stdout?: string; stderr?: string; message?: string };
+    if (details.stdout) {
+      try {
+        return {
+          ok: true,
+          owner,
+          command,
+          payload: parseJsonObjectFromOutput(details.stdout),
+        };
+      } catch {
+        // Fall through to owner-unavailable. Some owners fail before writing JSON.
+      }
+    }
     return {
       ok: false,
       owner,

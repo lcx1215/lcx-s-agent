@@ -245,13 +245,20 @@ async function buildAudit(workspaceDir: string) {
   const reviewChain = reviewPanelReceipts.length > 0;
   const correctionChain = correctionNotes.length > 0 || learningCouncilNotes.length > 0;
   const moduleLearningReviewed = modulePlanReceipts.length > 0 && moduleReviews.length > 0;
-  const moduleLearningHasEvalAbsorption = moduleReviewSummary.evalAbsorbed > 0;
-  const moduleLearningHasWeakReceipts = moduleReviewSummary.weakModuleLearning > 0;
+  const latestModuleReview = moduleReviewSummary.latestReview;
+  const activeModuleEvalAbsorbed =
+    latestModuleReview?.evalAbsorbed ?? moduleReviewSummary.evalAbsorbed;
+  const activeModuleWeakReceipts =
+    latestModuleReview?.weakModuleLearning ?? moduleReviewSummary.weakModuleLearning;
+  const activeModuleBoundaryViolations =
+    latestModuleReview?.boundaryViolations ?? moduleReviewSummary.boundaryViolations;
+  const moduleLearningHasEvalAbsorption = activeModuleEvalAbsorbed > 0;
+  const moduleLearningHasWeakReceipts = activeModuleWeakReceipts > 0;
   const moduleLearningCertifiable =
     moduleLearningReviewed &&
     moduleLearningHasEvalAbsorption &&
     !moduleLearningHasWeakReceipts &&
-    moduleReviewSummary.boundaryViolations === 0;
+    activeModuleBoundaryViolations === 0;
   const sufficientForCurrentUse = financeLearningFullChain && brainDistillationChain && reviewChain;
 
   const gaps = [
@@ -353,9 +360,12 @@ async function buildAudit(workspaceDir: string) {
         ok: moduleLearningCertifiable,
         planReceipts: modulePlanReceipts.length,
         reviewFiles: moduleReviews.length,
-        evalAbsorbed: moduleReviewSummary.evalAbsorbed,
-        weakModuleLearning: moduleReviewSummary.weakModuleLearning,
-        boundaryViolations: moduleReviewSummary.boundaryViolations,
+        evalAbsorbed: activeModuleEvalAbsorbed,
+        weakModuleLearning: activeModuleWeakReceipts,
+        cumulativeEvalAbsorbed: moduleReviewSummary.evalAbsorbed,
+        cumulativeWeakModuleLearning: moduleReviewSummary.weakModuleLearning,
+        boundaryViolations: activeModuleBoundaryViolations,
+        cumulativeBoundaryViolations: moduleReviewSummary.boundaryViolations,
         latestReview: moduleReviewSummary.latestReview
           ? {
               path: relativeToWorkspace(workspaceDir, moduleReviewSummary.latestReview.path),
