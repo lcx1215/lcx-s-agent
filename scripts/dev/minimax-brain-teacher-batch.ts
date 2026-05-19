@@ -1595,17 +1595,95 @@ function findBalancedJsonObject(raw: string): string | null {
   return null;
 }
 
+const TEACHER_PLAN_JSON_KEYS = [
+  "task_family",
+  "primary_modules",
+  "supporting_modules",
+  "required_tools",
+  "missing_data",
+  "risk_boundaries",
+  "next_step",
+  "rejected_context",
+] as const;
+const TEACHER_PLAN_JSON_KEY_PATTERN = TEACHER_PLAN_JSON_KEYS.join("|");
+
+function quoteKnownTeacherKey(keyWithColon: string): string {
+  return keyWithColon.replace(new RegExp(`^(${TEACHER_PLAN_JSON_KEY_PATTERN})\\s*:`, "u"), '"$1":');
+}
+
+function repairKnownUnquotedTeacherKeys(candidate: string): string {
+  return candidate.replace(
+    new RegExp(`([,{]\\s*)(${TEACHER_PLAN_JSON_KEY_PATTERN})\\s*:`, "gu"),
+    '$1"$2":',
+  );
+}
+
+function repairDuplicateCommas(candidate: string): string {
+  let repaired = "";
+  let inString = false;
+  let escaped = false;
+  let commaPending = false;
+
+  for (const char of candidate) {
+    if (escaped) {
+      repaired += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      repaired += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      repaired += char;
+      inString = !inString;
+      commaPending = false;
+      continue;
+    }
+    if (inString) {
+      repaired += char;
+      continue;
+    }
+    if (char === ",") {
+      if (!commaPending) {
+        repaired += char;
+      }
+      commaPending = true;
+      continue;
+    }
+    repaired += char;
+    if (!/\s/u.test(char)) {
+      commaPending = false;
+    }
+  }
+
+  return repaired;
+}
+
 function repairMissingCommas(candidate: string): string {
+  const keyPattern = `(?:"[A-Za-z0-9_$ -]+"|${TEACHER_PLAN_JSON_KEY_PATTERN})\\s*:`;
   return candidate
-    .replace(/([}\]"])\s+("[A-Za-z0-9_$ -]+"\s*:)/gu, "$1,$2")
-    .replace(/\b(true|false|null|-?\d+(?:\.\d+)?)\s+("[A-Za-z0-9_$ -]+"\s*:)/gu, "$1,$2")
+    .replace(new RegExp(`([}\\]"])\\s+(${keyPattern})`, "gu"), (_match, prefix, key) => {
+      return `${prefix},${quoteKnownTeacherKey(String(key))}`;
+    })
+    .replace(
+      new RegExp(`\\b(true|false|null|-?\\d+(?:\\.\\d+)?)\\s+(${keyPattern})`, "gu"),
+      (_match, prefix, key) => {
+        return `${prefix},${quoteKnownTeacherKey(String(key))}`;
+      },
+    )
     .replace(/"\s+"/gu, '","');
 }
 
-function parseTeacherPlanCandidate(candidate: string): TeacherPlan {
-  const repaired = repairMissingCommas(candidate)
+function repairTeacherPlanJson(candidate: string): string {
+  return repairDuplicateCommas(repairKnownUnquotedTeacherKeys(repairMissingCommas(candidate)))
     .replace(/\[\s*\.\.\.\s*\]/gu, "[]")
     .replace(/,\s*([}\]])/gu, "$1");
+}
+
+function parseTeacherPlanCandidate(candidate: string): TeacherPlan {
+  const repaired = repairTeacherPlanJson(candidate);
   return JSON.parse(repaired) as TeacherPlan;
 }
 

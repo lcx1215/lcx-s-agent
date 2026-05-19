@@ -224,6 +224,23 @@ describe("minimax brain teacher batch parsing", () => {
     expect(plan.primary_modules).toEqual(["macro_rates_inflation"]);
   });
 
+  it("repairs known unquoted teacher keys and duplicate commas", () => {
+    const plan = extractJson(`{
+      task_family: "teacher_key_quote_repair",,
+      primary_modules: ["macro_rates_inflation",, "portfolio_risk_gates"],
+      supporting_modules: ["review_panel"],
+      required_tools: ["review_panel"],
+      missing_data: [],
+      risk_boundaries: ["research_only"],
+      next_step: "review"
+      rejected_context: ["old_lark_conversation_history"],
+    }`);
+
+    expect(plan.task_family).toBe("teacher_key_quote_repair");
+    expect(plan.primary_modules).toEqual(["macro_rates_inflation", "portfolio_risk_gates"]);
+    expect(plan.rejected_context).toEqual(["old_lark_conversation_history"]);
+  });
+
   it("repairs MiniMax placeholder arrays before teacher-plan hardening", () => {
     const plan = normalizeTeacherPlan(
       extractJson(`{
