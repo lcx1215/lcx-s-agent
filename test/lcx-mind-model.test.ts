@@ -101,6 +101,10 @@ describe("LCX mind model god-view architecture check", () => {
           ok: true,
         }),
         expect.objectContaining({
+          id: "visible_reply_hides_internal_runtime_details",
+          ok: true,
+        }),
+        expect.objectContaining({
           id: "module_learning_cannot_be_stored_only",
           ok: true,
         }),

@@ -76,6 +76,7 @@ const WORKFLOW_SURFACES = [
   "scripts/dev/lcx-head-tail-consistency.ts",
   "scripts/dev/lcx-problem-cluster-radar.ts",
   "scripts/dev/lcx-commercial-acceptance-harness.ts",
+  "scripts/dev/lcx-commercial-answer-pipeline.ts",
   "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   "scripts/dev/lcx-learning-sedimentation-bridge.ts",
   "scripts/dev/lcx-learning-sedimentation-audit.ts",
@@ -95,6 +96,7 @@ const WORKFLOW_SURFACES = [
   LOCAL_OPERATOR_LOOP,
   LOCAL_CODEX_ARCHIVE,
   "scripts/dev/lcx-promote-live.ts",
+  "extensions/feishu/src/lark-language-handoff-receipts.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
   "src/commands/capabilities/lark-loop-diagnose.ts",
@@ -108,6 +110,8 @@ const PROOF_SURFACES = [
   "test/lcx-mind-model.test.ts",
   "test/lcx-problem-cluster-radar.test.ts",
   "test/lcx-commercial-acceptance-harness.test.ts",
+  "test/lcx-commercial-answer-pipeline.test.ts",
+  "extensions/feishu/src/lark-language-handoff-receipts.test.ts",
   "test/lcx-external-agent-upgrade-radar.test.ts",
   "test/lcx-agent-exam.test.ts",
   "test/local-brain-training-plan.test.ts",
@@ -135,11 +139,13 @@ const BOUNDARY_SURFACES = [
   "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-commercial-acceptance-harness.ts",
+  "scripts/dev/lcx-commercial-answer-pipeline.ts",
   "scripts/dev/lcx-system-doctor.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/local-brain-training-plan.ts",
   "scripts/dev/minimax-brain-teacher-batch.ts",
   "scripts/dev/lcx-automation-repair-lock.ts",
+  "extensions/feishu/src/lark-language-handoff-receipts.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
 ] as const;
 
@@ -482,6 +488,27 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Do not claim live-user-seen unless live status has fresh inbound plus a successful visible reply, either fixed acceptance or post-migration natural prompt proof.",
+  },
+  {
+    id: "visible_reply_hides_internal_runtime_details",
+    category: "content",
+    objective:
+      "Lark-visible answers must translate backend and eval machinery into user language unless the user asks for protocol proof.",
+    termsBySurface: {
+      head: ["visible reply", "no internal labels", "用户入口简单"],
+      workflow: [
+        "no_internal_runtime_details_visible",
+        "Internal-detail rule",
+        "visible_text_no_internal_runtime_details",
+      ],
+      proof: [
+        "visible_learning_reply_blocks_internal_runtime_details",
+        "internal_runtime_details_in_visible_answer",
+      ],
+      boundary: ["providerConfigTouched", "liveTouched", "protectedMemoryTouched"],
+    },
+    nextAction:
+      "If a real Lark reply exposes module ids, receipt paths, message ids, timeout milliseconds, or protocol labels, repair the shared visible-answer gate before adding features.",
   },
   {
     id: "content_claims_need_source_or_unverified_flag",

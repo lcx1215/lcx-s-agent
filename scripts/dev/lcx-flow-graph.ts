@@ -106,6 +106,7 @@ type FlowFilterId =
   | "single_digest_only"
   | "error_receipt_required"
   | "visible_text_no_internal_labels"
+  | "no_internal_runtime_details_visible"
   | "bounded_answer_review"
   | "candidate_answer_not_final_authority"
   | "qwen_challenger_not_final_authority"
@@ -299,6 +300,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "single_digest_only",
   "error_receipt_required",
   "visible_text_no_internal_labels",
+  "no_internal_runtime_details_visible",
   "bounded_answer_review",
   "candidate_answer_not_final_authority",
   "qwen_challenger_not_final_authority",
@@ -565,6 +567,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
     requiredFilters: [
       "visible_text_no_internal_labels",
+      "no_internal_runtime_details_visible",
       "bounded_answer_review",
       "reply_flow_audit_required",
       "dev_ready_not_live_user_seen",
@@ -617,6 +620,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "model_rewrite_budget_required",
       "terminal_decision_required",
       "visible_text_no_internal_labels",
+      "no_internal_runtime_details_visible",
       "no_raw_json_visible_reply",
       "source_evidence_gate",
       "stored_only_is_not_learning",

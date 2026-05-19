@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 5, failed: 0, total: 5 });
+    expect(payload.summary).toEqual({ passed: 6, failed: 0, total: 6 });
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -51,6 +51,11 @@ describe("LCX commercial answer pipeline", () => {
           failedReasons: expect.arrayContaining([
             "model_answer_chosen_without_evidence_arbitration",
           ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "visible_learning_reply_blocks_internal_runtime_details",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["internal_runtime_details_in_visible_answer"]),
         }),
       ]),
     );
@@ -135,6 +140,25 @@ describe("LCX commercial answer pipeline", () => {
         "local_memory_check_missing",
         "learning_sedimentation_review_missing",
       ]),
+    );
+  });
+
+  it("rejects learning replies that expose backend runtime details to Lark users", async () => {
+    const payload = await runPipeline([
+      "--ask",
+      "请用网上可靠来源和本地沉淀学习期权基础，说明后续怎么沉淀成系统能力和 eval；不要暴露后台细节。",
+      "--candidate-answer",
+      "沉淀路线: 提炼成 options_volatility 的能力规则，随后做 retrieval/apply 回执和 eval/training absorption。证据: 前台等待超时 90000ms，消息: om_x100b6ff98bee68a108119f9a4b40d01。",
+    ]);
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(payload.failedReasons).toEqual(
+      expect.arrayContaining(["internal_runtime_details_in_visible_answer"]),
     );
   });
 });

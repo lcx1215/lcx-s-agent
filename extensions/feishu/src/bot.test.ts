@@ -388,6 +388,7 @@ describe("buildFeishuAgentBody", () => {
       surfaceNotice: [
         "[Lark answer composer contract]",
         "Visible reply rule: answer the user's real question first in plain language; do not lead with family, route, modules, receipts, JSON, or backend labels unless the user explicitly asks for protocol proof.",
+        "Internal-detail rule: translate internals into user language; do not expose module ids, retrieval/apply labels, receipt or handoff terms, message ids, timeout milliseconds, answer_audit, or eval/training absorption wording.",
         "Required visible shape for finance/research tasks: concise judgment, key reasons, missing inputs or failedReason, research-only next checklist, and proof path only at the end if useful.",
       ].join("\n"),
     });
@@ -395,6 +396,7 @@ describe("buildFeishuAgentBody", () => {
     expect(body).toContain("Lark answer composer contract");
     expect(body).toContain("answer the user's real question first in plain language");
     expect(body).toContain("do not lead with family, route, modules, receipts");
+    expect(body).toContain("do not expose module ids");
     expect(body).toContain("concise judgment, key reasons, missing inputs or failedReason");
   });
 

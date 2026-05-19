@@ -691,7 +691,7 @@ Use them like this:
 - `lcx-qwen-training-operator`: check Qwen 24-hour training/eval/backoff/restart supervision without creating overlap.
 - `lcx-workflow-waterflow-auditor`: check god-view workflow closure, waterflow routing, head-tail consistency, and memory sedimentation gaps.
 - `lcx-module-learning-absorption-operator`: check online/source learning and module absorption without confusing stored-only, application-ready, and eval-absorbed states.
-- `lcx-commercial-answer-pipeline-operator`: check commercial answer adoption, short Lark intent expansion, bounded model/Qwen review, visible reply cleanliness, and failed-reason output.
+- `lcx-commercial-answer-pipeline-operator`: check commercial answer adoption, short Lark intent expansion, bounded model/Qwen review, visible reply cleanliness, failed-reason output, and whether backend/runtime proof terms were translated before reaching Lark users.
 - `lcx-promotion-and-adapter-truth-operator`: check latest-passing vs latest-promoted, parseRecovered promotion blocks, active guard mismatch, and blocked challenger capability.
 - `l5-regression-batterer`: L5 baseline pressure tests with realistic Chinese finance/control-room prompts.
 - `l4-regression-batterer`: legacy compatibility alias only; prefer the L5 skill in new work.

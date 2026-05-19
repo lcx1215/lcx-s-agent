@@ -167,6 +167,7 @@ describe("LCX flow graph exam", () => {
           id: "lark_visible_language_waterflow",
           requiredFilters: expect.arrayContaining([
             "visible_text_no_internal_labels",
+            "no_internal_runtime_details_visible",
             "bounded_answer_review",
             "reply_flow_audit_required",
           ]),
@@ -180,6 +181,7 @@ describe("LCX flow graph exam", () => {
             "qwen_challenger_not_final_authority",
             "terminal_decision_required",
             "no_raw_json_visible_reply",
+            "no_internal_runtime_details_visible",
             "stored_only_is_not_learning",
             "retrieval_apply_eval_review_required",
           ]),

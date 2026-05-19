@@ -68,8 +68,16 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "short_learning_routes_to_web_source_intake",
     ask: "学习期权基础知识。",
     candidateAnswer:
-      "先查本地旧沉淀，再联网找权威教材和交易所/监管来源，登记来源和实际阅读范围；最后做应用验证、评审、保留/降权决定，再沉淀成基础概念、风险边界和练习题；这不是期权交易建议。",
+      "先查本地旧沉淀，再联网找权威教材和交易所/监管来源，登记来源和实际阅读范围；最后做练习题、人工可读审阅、保留/降权决定，再沉淀成基础概念、风险边界和可复用检查清单；这不是期权交易建议。",
     expectedDecision: "adopt_visible_answer",
+  },
+  {
+    id: "visible_learning_reply_blocks_internal_runtime_details",
+    ask: "请用网上可靠来源和本地沉淀学习期权基础，说明后续怎么沉淀成系统能力和 eval；不要暴露后台细节。",
+    candidateAnswer:
+      "沉淀路线: 提炼成 options_volatility 的能力规则，随后做 retrieval/apply 回执和 eval/training absorption。证据: 前台等待超时 90000ms，消息: om_x100b6ff98bee68a108119f9a4b40d01。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["internal_runtime_details_in_visible_answer"],
   },
   {
     id: "position_sizing_requires_inputs_before_answer",
@@ -102,6 +110,7 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "terminal_decision_required",
   "model_rewrite_budget_required",
   "no_raw_json_visible_reply",
+  "no_internal_runtime_details_visible",
   "source_evidence_gate",
   "stored_only_is_not_learning",
   "retrieval_apply_eval_review_required",
@@ -275,6 +284,10 @@ function auditCandidate(params: {
       candidateLower,
       /\b(?:task_family|primary_modules|supporting_modules|required_tools|risk_boundaries|bounded_answer_review|finance_data_gateway_snapshot|review_panel)\b/u,
     );
+  const internalRuntimeDetailsVisible = includesPattern(
+    candidate,
+    /\b(?:options_[a-z0-9_]+|[a-z0-9_]+_waterflow|answer_audit|bounded_answer_review|handoff|receipt(?:s)?|retrieval\/apply|eval\/training absorption|training absorption|messageId|correlationId|deliveryMessageId)\b|消息:\s*om_[a-z0-9_]+|om_[a-z0-9_]{12,}|前台等待超时|等待超时[:：]?\s*\d+\s*ms|\d{4,}\s*ms|后台如果完成|后台学习审阅/u,
+  );
 
   const directTradeLanguage =
     includesPattern(
@@ -301,6 +314,16 @@ function auditCandidate(params: {
       evidence: rawJsonOrInternalLabels
         ? "candidate leaks JSON/protocol/module labels"
         : "candidate is visible prose, not raw protocol output",
+    },
+    {
+      id: "visible_text_no_internal_runtime_details",
+      ok: !internalRuntimeDetailsVisible,
+      failedReason: internalRuntimeDetailsVisible
+        ? "internal_runtime_details_in_visible_answer"
+        : undefined,
+      evidence: internalRuntimeDetailsVisible
+        ? "candidate exposes module ids, receipt/protocol terms, message ids, or timeout internals"
+        : "candidate keeps runtime details out of the user-visible reply",
     },
     {
       id: "no_trade_or_execution_authority",
@@ -353,7 +376,7 @@ function auditCandidate(params: {
   if (requiredNeedIds.has("learning_sedimentation_review")) {
     const sedimentationVisible = includesPattern(
       candidateLower,
-      /\b(?:apply validation|application validation|review|eval|training absorption|keep|downrank|discard|fresh adjacent)\b|应用验证|评审|审阅|复用检查|吸收|训练|保留|降权|丢弃|相邻任务/u,
+      /\b(?:application validation|review|eval|keep|downrank|discard|fresh adjacent|practice question|checklist)\b|应用验证|评审|审阅|复用检查|检验题|练习题|检查清单|保留|降权|丢弃|相邻任务/u,
     );
     checks.push({
       id: "external_learning_must_leave_sedimentation_evidence",

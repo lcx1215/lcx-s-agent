@@ -264,6 +264,9 @@ describe("lark language handoff receipts", () => {
     expect(notice).toContain("Lark answer composer contract");
     expect(notice).toContain("answer the user's real question first in plain language");
     expect(notice).toContain("do not lead with family, route, modules, receipts");
+    expect(notice).toContain("translate internals into user language");
+    expect(notice).toContain("do not expose module ids");
+    expect(notice).toContain("message ids, timeout milliseconds");
     expect(notice).toContain("Answer audit budget");
     expect(notice).toContain("model answer is only a candidate");
     expect(notice).toContain("Qwen is not_requested");

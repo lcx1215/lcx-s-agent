@@ -338,6 +338,12 @@ recoverable, auditable, and honest under real use.
 - User-facing quality must stay boring and dependable: concise control-room
   summary first, specialist detail on demand, no internal labels, no raw JSON
   leaks, no fake live-user-seen, and no hidden execution authority.
+  Lark/Feishu visible replies must also hide runtime machinery by default:
+  module ids, receipt/handoff labels, message ids, timeout milliseconds,
+  `retrieval/apply`, `answer_audit`, and `eval/training absorption` are
+  internal proof language. Translate them into source list, reading scope,
+  practice checks, review, future reuse, or a plain blocked reason unless the
+  user explicitly asks for protocol proof.
 - Architecture changes must be judged by measured capability and operational
   cleanliness: fewer duplicate truth sources, clearer recovery, stronger evals,
   cleaner receipts, lower false-positive alarms, and no protected-memory,

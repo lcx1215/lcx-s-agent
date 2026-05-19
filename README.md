@@ -128,7 +128,7 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 15. Qwen 训练由 `lcx-qwen-training-operator` 这类 operator skill 监督：先查 active PID、overlap、guard log 新鲜度、teacher quota、dataset 和 promotion truth；24 小时进化指训练/eval/backoff/安全拉起闭环，不是 24 小时满负载硬烧。
     运行时只能选一个干净的 `latest-passing` adapter；后续全 Qwen 能力要靠 teacher/dataset/eval/promotion 回流成下一代统一 clean adapter，不能把多个 r 并联上，也不能把带 `parseRecovered` 的 candidate 当成已上线能力。
 16. 复杂工程变更由 `lcx-workflow-waterflow-auditor` 这类 god-view skill 监督：小改动必须能回到水路图、head-tail、一头一尾 proof、记忆沉淀和 dev/live 边界，不能只修局部忘掉全局。
-17. 商用回答流水线由 `scripts/dev/lcx-commercial-answer-pipeline.ts` 做 dev 诊断 owner：模型答案只是候选，Qwen 只是 challenger，本地合约和 review panel 有有限轮次，最后只能 `adopt_visible_answer` 或 `return_failed_reason`。它专门防止短句问法被浅答、模型答案直接当最终答案、无限反复改写、raw JSON/internal label 露给用户。
+17. 商用回答流水线由 `scripts/dev/lcx-commercial-answer-pipeline.ts` 做 dev 诊断 owner：模型答案只是候选，Qwen 只是 challenger，本地合约和 review panel 有有限轮次，最后只能 `adopt_visible_answer` 或 `return_failed_reason`。它专门防止短句问法被浅答、模型答案直接当最终答案、无限反复改写、raw JSON/internal label/后台运行细节露给用户；模块 id、receipt/handoff、消息 id、timeout ms、`retrieval/apply`、`eval/training absorption` 要翻译成普通用户能懂的来源、阅读范围、练习检查、审阅和后续复用。
 18. 模块学习吸收用 `lcx-module-learning-absorption-operator`：网上学习、论文、博客、采访、开源项目、alternative source 都走同一条 source registry / reading scope / retrieval / apply / eval absorption / keep-downrank-discard 链，不能把 stored-only 说成学会。
 19. 商用回答流水线用 `lcx-commercial-answer-pipeline-operator`：短句意图、大模型候选、Qwen challenger、本地 review、有限重试、failed reason 和 visible reply adoption 都由同一条流水线解释，不能另造平行 answer V2。
 20. Qwen adapter 真相用 `lcx-promotion-and-adapter-truth-operator`：`latest-passing`、`latest-promoted`、active guard adapter、parseRecovered、blocked challenger、promotion audit 分开看；`200/200` 带 parseRecovered 仍不能 promotion。
