@@ -1182,7 +1182,10 @@ function renderFeishuLearningBrainChainSummary(params: {
     ? "先拆商品供需和宏观传导，再接组合风险门。"
     : "先拆清目标和缺失证据，再做审阅，不直接生成学习结论。";
   const lines = [
-    `- 任务理解: ${objective ?? "先建立可复用学习规则，再等材料验证。"}`,
+    `- 任务理解: ${humanizeFeishuLearningVisibleObjective({
+      objective,
+      primaryModules,
+    })}`,
     `- 处理重点: ${focus}`,
     `- 处理方式: ${domainPlan}`,
     "- 审阅方式: 先核对材料、证据和边界，再决定是否写入能力卡。",
@@ -1192,6 +1195,27 @@ function renderFeishuLearningBrainChainSummary(params: {
     lines.push("- 学习证据: 需要可核验材料、学习回执和审阅结果；缺任何一项都不能说已经学会。");
   }
   return lines;
+}
+
+function humanizeFeishuLearningVisibleObjective(params: {
+  objective?: string;
+  primaryModules: readonly string[];
+}): string {
+  const objective = params.objective?.trim();
+  const isGenericLearningObjective =
+    !objective ||
+    /^Run a bounded external-source learning pass for the user request\.?$/iu.test(objective) ||
+    /^Run [a-z0-9_-]+ for the user request\.?$/iu.test(objective);
+  if (!isGenericLearningObjective && !/[a-z]{3,}\s+[a-z]{3,}/iu.test(objective)) {
+    return objective;
+  }
+  if (params.primaryModules.includes("options_volatility")) {
+    return "判断期权学习要用哪些外部来源和本地沉淀，先搭入口框架，再等审阅结果决定能否写成能力。";
+  }
+  if (params.primaryModules.includes("commodities_oil_gold")) {
+    return "判断商品学习要补哪些外部来源和本地规则，先搭供需、宏观和风险边界的学习入口。";
+  }
+  return "按用户问题做来源判断、学习框架搭建和后续沉淀规划。";
 }
 
 function renderFeishuLearningIntakePlanDeliverable(params: {
@@ -1323,8 +1347,59 @@ function renderFeishuLearningCouncilDelayedCompletionReply(params: {
     `原消息：${params.originalMessageId}`,
     "前台状态：已经先回复过等待超时。",
     "",
-    params.run.text,
+    renderFeishuLearningCouncilVisibleCompletionText(params.run.text),
   ].join("\n");
+}
+
+function renderFeishuLearningCouncilVisibleCompletionText(text: string): string {
+  const normalized = normalizeFeishuDisplayText(text);
+  const visibleLines: string[] = [];
+  let previousWasBlank = false;
+  for (const rawLine of normalized.split("\n")) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (!previousWasBlank && visibleLines.length > 0) {
+        visibleLines.push("");
+        previousWasBlank = true;
+      }
+      continue;
+    }
+    const productLine = humanizeFeishuLearningCouncilVisibleLine(trimmed);
+    if (!productLine) {
+      continue;
+    }
+    if (
+      visibleLines.length > 0 &&
+      visibleLines[visibleLines.length - 1]?.trim() === productLine.trim()
+    ) {
+      continue;
+    }
+    visibleLines.push(productLine);
+    previousWasBlank = false;
+  }
+  const rendered = visibleLines.join("\n").trim();
+  return (
+    rendered ||
+    "后台审阅完成，但没有生成适合直接展示的学习结论；原始结果已保存在本地回执里，不能直接当作已经学会。"
+  );
+}
+
+function humanizeFeishuLearningCouncilVisibleLine(line: string): string | undefined {
+  if (
+    /^-?\s*审阅通道[：:]/u.test(line) ||
+    /(?:Lane receipt|runtime provider|runtime model|运行供应商|运行模型|能力契约=)/iu.test(line)
+  ) {
+    return undefined;
+  }
+  const headingLabels: Record<string, string> = {
+    "Kimi 综合判断": "综合判断",
+    "MiniMax 审阅": "反方检查",
+    "MiniMax 反方审阅": "反方检查",
+    "DeepSeek 信息抽取": "可沉淀要点",
+    三模型共识: "后台审阅共识",
+  };
+  return headingLabels[line] ?? line;
 }
 
 function scheduleFeishuLearningCouncilDelayedCompletionReply(params: {
@@ -6973,7 +7048,10 @@ export async function handleFeishuMessage(params: {
           workspaceDir: learningWorkspaceDir,
           handoffReceiptArtifact: larkHandoffReceipt?.artifact,
         });
-        const councilText = councilRun.text;
+        const councilText =
+          councilRun.status === "timed_out"
+            ? councilRun.text
+            : renderFeishuLearningCouncilVisibleCompletionText(councilRun.text);
         const timeboxStart =
           councilRun.status === "completed"
             ? await startFeishuLearningTimeboxSession({

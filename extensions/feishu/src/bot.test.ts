@@ -6695,7 +6695,7 @@ describe("learning council routing", () => {
     );
     expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: "学习审阅已完成。\n\nKimi 综合判断\n- one point",
+      text: "学习审阅已完成。\n\n综合判断\n- one point",
     });
   });
 
@@ -6922,6 +6922,7 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
+    expect(replyText).not.toContain("Run a bounded external-source learning pass");
     expect(replyText).not.toContain("大模型拆解:");
     expect(replyText).not.toContain("本地大脑模块计划:");
     expect(replyText).not.toContain("回交大模型审阅:");
@@ -7171,7 +7172,13 @@ describe("learning council routing", () => {
     });
 
     resolveCouncil(
-      "Learning council run: full three-model execution completed.\n\n## Keep\n- delayed insight",
+      [
+        "Learning council run: full three-model execution completed.",
+        "",
+        "## Kimi synthesis",
+        "Lane receipt: contract=synthesis (configured role: kimi); runtime provider=moonshot; runtime model=moonshot/kimi-k2.6",
+        "- delayed insight",
+      ].join("\n"),
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -7196,6 +7203,17 @@ describe("learning council routing", () => {
       replyToMessageId: "msg-learning-delayed",
       accountId: "default",
     });
+    const delayedCompletionText = (
+      mockSendMessageFeishu.mock.calls as unknown as Array<
+        [{ text: string; replyToMessageId?: string }]
+      >
+    )[0]?.[0].text;
+    expect(delayedCompletionText).not.toContain("Learning council run");
+    expect(delayedCompletionText).not.toContain("Lane receipt");
+    expect(delayedCompletionText).not.toContain("runtime provider");
+    expect(delayedCompletionText).not.toContain("runtime model");
+    expect(delayedCompletionText).not.toContain("Kimi synthesis");
+    expect(delayedCompletionText).toContain("综合判断");
   });
 
   it("runs the finance learning pipeline directly for concrete market capability learning with a local source", async () => {
@@ -8967,6 +8985,9 @@ describe("learning council routing", () => {
     ).map((call) => call[0].text);
     expect(replyTexts.join("\n")).toContain("学习审阅已完成");
     expect(replyTexts.join("\n")).toContain("用网上来源和本地沉淀一起学");
+    expect(replyTexts.join("\n")).not.toContain("Kimi synthesis");
+    expect(replyTexts.join("\n")).not.toContain("Learning council run");
+    expect(replyTexts.join("\n")).not.toContain("runtime provider");
     expect(replyTexts.join("\n")).not.toContain("现在缺：本地 `.md` / `.txt` / `.html`");
     await expect(
       fs.stat(path.join(tempDir, "memory", "finance-learning-retrieval-receipts")),
