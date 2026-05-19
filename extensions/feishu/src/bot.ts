@@ -1399,7 +1399,29 @@ function humanizeFeishuLearningCouncilVisibleLine(line: string): string | undefi
     "DeepSeek 信息抽取": "可沉淀要点",
     三模型共识: "后台审阅共识",
   };
-  return headingLabels[line] ?? line;
+  const productLine = headingLabels[line] ?? line;
+  return sanitizeFeishuLearningCouncilProductLine(productLine);
+}
+
+function sanitizeFeishuLearningCouncilProductLine(line: string): string | undefined {
+  if (/MEMORY\.md|memory\/options-learning\/?/iu.test(line)) {
+    return line
+      .replace(/MEMORY\.md/giu, "待审学习回执")
+      .replace(/memory\/options-learning\/?/giu, "本地期权学习回执");
+  }
+  if (/仓位\s*[≤<]=?\s*\d+%/u.test(line)) {
+    return "• 风险纪律：先用纸面练习理解风险收益形状；前台学习结论不提供具体仓位阈值或交易指令。";
+  }
+  if (/必须记录/u.test(line) && /交易|止损/u.test(line)) {
+    return "• 复盘纪律：记录假设、预期、失效条件和事后偏差。";
+  }
+  if (/^\s*(?:-\s*)?例[：:]/u.test(line) && /QQQ|Call|Put|持有|卖|买/u.test(line)) {
+    return "• 示例写法：用纸面组合描述“如果...就...”的风险边界，不写成真实下单建议。";
+  }
+  if (/实战验证/u.test(line) && /真实交易/u.test(line)) {
+    return line.replace(/实战验证（有真实交易后）/gu, "纸面验证和真实使用前审阅");
+  }
+  return line;
 }
 
 function scheduleFeishuLearningCouncilDelayedCompletionReply(params: {

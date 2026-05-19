@@ -7178,6 +7178,12 @@ describe("learning council routing", () => {
         "## Kimi synthesis",
         "Lane receipt: contract=synthesis (configured role: kimi); runtime provider=moonshot; runtime model=moonshot/kimi-k2.6",
         "- delayed insight",
+        "- 绝对红线：不用杠杆，单策略仓位≤5%",
+        "- 必须记录：每次交易的理由、预期、止损点",
+        "- 存到本地 memory/options-learning/ 目录",
+        '- 例："如果持有QQQ且认为短期涨不动 → 备兑Call收租"',
+        "- 写入 MEMORY.md 的期权纪律专节",
+        "阶段4：实战验证（有真实交易后）",
       ].join("\n"),
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -7213,6 +7219,13 @@ describe("learning council routing", () => {
     expect(delayedCompletionText).not.toContain("runtime provider");
     expect(delayedCompletionText).not.toContain("runtime model");
     expect(delayedCompletionText).not.toContain("Kimi synthesis");
+    expect(delayedCompletionText).not.toContain("MEMORY.md");
+    expect(delayedCompletionText).not.toContain("memory/options-learning");
+    expect(delayedCompletionText).not.toContain("单策略仓位≤5%");
+    expect(delayedCompletionText).not.toContain("每次交易");
+    expect(delayedCompletionText).not.toContain("如果持有QQQ");
+    expect(delayedCompletionText).toContain("本地期权学习回执");
+    expect(delayedCompletionText).toContain("前台学习结论不提供具体仓位阈值或交易指令");
     expect(delayedCompletionText).toContain("综合判断");
   });
 
