@@ -190,6 +190,31 @@ type PromotionManifest = {
   managedFiles: string[];
 };
 
+type CommandStatusSummary = Pick<CommandResult, "command" | "cwd" | "status" | "code">;
+
+type PromotionStateStatusSummary = Omit<
+  PromotionReceipt,
+  "fileActions" | "commands" | "visibleProof"
+> & {
+  fileActionSummary: {
+    storedLimit: number;
+    storedCount: number;
+    copiedCount: number;
+    removedCount: number;
+    changedFileCount: number;
+    managedFileCount: number;
+  };
+  commandSummary: {
+    sourceChecks: CommandStatusSummary[];
+    install: CommandStatusSummary | null;
+    targetBuild: CommandStatusSummary | null;
+    targetUiBuild: CommandStatusSummary | null;
+    gatewayInstall: CommandStatusSummary | null;
+    restart: CommandStatusSummary | null;
+    probe: CommandStatusSummary | null;
+  };
+};
+
 type PromotionLock =
   | {
       acquired: true;
@@ -920,6 +945,46 @@ function renderStatus(params: {
   return `${lines.join("\n")}\n`;
 }
 
+function summarizeCommandStatus(command: CommandResult | null): CommandStatusSummary | null {
+  return command
+    ? {
+        command: command.command,
+        cwd: command.cwd,
+        status: command.status,
+        code: command.code,
+      }
+    : null;
+}
+
+function summarizePromotionStateForStatus(
+  state: PromotionReceipt | null,
+): PromotionStateStatusSummary | null {
+  if (!state) {
+    return null;
+  }
+  const { fileActions, commands, visibleProof: _visibleProof, ...rest } = state;
+  return {
+    ...rest,
+    fileActionSummary: {
+      storedLimit: 200,
+      storedCount: fileActions.length,
+      copiedCount: fileActions.filter((action) => action.copied).length,
+      removedCount: fileActions.filter((action) => action.removed).length,
+      changedFileCount: state.changedFileCount,
+      managedFileCount: state.managedFileCount,
+    },
+    commandSummary: {
+      sourceChecks: commands.sourceChecks.map((command) => summarizeCommandStatus(command)!),
+      install: summarizeCommandStatus(commands.install),
+      targetBuild: summarizeCommandStatus(commands.targetBuild),
+      targetUiBuild: summarizeCommandStatus(commands.targetUiBuild),
+      gatewayInstall: summarizeCommandStatus(commands.gatewayInstall),
+      restart: summarizeCommandStatus(commands.restart),
+      probe: summarizeCommandStatus(commands.probe),
+    },
+  };
+}
+
 export function resolveOperatorStatus(params: {
   state: PromotionReceipt | null;
   devLiveDrift: DevLiveDriftStatus;
@@ -1036,7 +1101,17 @@ export function main(argv = process.argv.slice(2)): number {
     });
     process.stdout.write(
       initialArgs.json
-        ? `${JSON.stringify({ state, operatorStatus, devLiveDrift, probe, visibleProof }, null, 2)}\n`
+        ? `${JSON.stringify(
+            {
+              state: summarizePromotionStateForStatus(state),
+              operatorStatus,
+              devLiveDrift,
+              probe: summarizeCommandStatus(probe),
+              visibleProof,
+            },
+            null,
+            2,
+          )}\n`
         : renderStatus({
             args: initialArgs,
             state,

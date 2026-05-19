@@ -317,6 +317,83 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("devLiveDrift=live_matches_current_dev");
   });
 
+  it("keeps json status bounded by summarizing promotion receipt internals", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+    const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
+
+    writePromotionState(targetRoot, currentCommit, {
+      restartStatus: "passed",
+      probeStatus: "passed",
+    });
+    const statePath = path.join(targetRoot, "branches/_system/live-promotion-state.json");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+      fileActions: unknown[];
+      commands: {
+        targetBuild: { stdout: string; stderr: string };
+      };
+    };
+    state.fileActions = Array.from({ length: 250 }, (_, index) => ({
+      relativePath: `file-${index}.ts`,
+      sourceSha256: "source",
+      targetSha256Before: "before",
+      targetSha256After: "source",
+      copied: true,
+      removed: false,
+    }));
+    state.commands.targetBuild = {
+      command: "pnpm build",
+      cwd: targetRoot,
+      status: "passed",
+      code: 0,
+      stdout: "x".repeat(10_000),
+      stderr: "y".repeat(10_000),
+    };
+    fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+
+    const payload = JSON.parse(runStatus(sourceRoot, targetRoot, ["--json"])) as {
+      state: {
+        fileActions?: unknown;
+        commands?: unknown;
+        fileActionSummary: {
+          storedCount: number;
+          copiedCount: number;
+          managedFileCount: number;
+        };
+        commandSummary: {
+          targetBuild: { command: string; status: string; stdout?: unknown; stderr?: unknown };
+        };
+      };
+      operatorStatus: { liveRuntimeUpdated: boolean };
+      visibleProof: { status: string };
+    };
+
+    expect(payload.state.fileActions).toBeUndefined();
+    expect(payload.state.commands).toBeUndefined();
+    expect(payload.state.fileActionSummary).toMatchObject({
+      storedCount: 250,
+      copiedCount: 250,
+      managedFileCount: 1,
+    });
+    expect(payload.state.commandSummary.targetBuild).toEqual({
+      command: "pnpm build",
+      cwd: targetRoot,
+      status: "passed",
+      code: 0,
+    });
+    expect(payload.state.commandSummary.targetBuild.stdout).toBeUndefined();
+    expect(payload.state.commandSummary.targetBuild.stderr).toBeUndefined();
+    expect(payload.operatorStatus.liveRuntimeUpdated).toBe(true);
+    expect(payload.visibleProof.status).toBe("reply_flow_missing");
+  });
+
   it("counts a real post-migration Lark reply as live-user-seen without requiring the fixed acceptance phrase", () => {
     const sourceRoot = tempDir("promote-live-source");
     const targetRoot = tempDir("promote-live-target");
