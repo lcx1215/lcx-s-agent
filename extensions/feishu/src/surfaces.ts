@@ -1143,7 +1143,7 @@ export function buildFeishuControlRoomOrchestrationNotice(
   if (plan.replyContract === "position_management") {
     appendNoticeLines(lines, [
       "[System: This is a control-room position-risk research question. Keep the answer in control_room, do not auto-publish specialist slices, and use this fixed structure in order: boundary and missing inputs, key risk drivers, main counter-case / invalidation, evidence checklist, behavior-risk note, one-line research summary.]",
-      "[System: Do not answer with buy/sell/add/reduce/hold/wait labels, do not use Current Stance or Action Triggers headings, and do not tell the user whether to average down, cut, hold, or wait.]",
+      "[System: Do not answer with buy/sell/add/reduce/hold/wait labels, do not tell the user whether to average down, cut, hold, or wait.]",
       "[System: Explicitly apply the portfolio sizing discipline template as a risk framework only: ask for current weight, total portfolio, risk budget, time horizon, max drawdown tolerance, cost basis, and fresh source timestamps before any position-sizing discussion.]",
       "[System: If the question depends on macro or cross-asset context, apply the risk transmission template: identify the live driver, the transmission path, the assets most exposed, and one invalidation path.]",
       "[System: Use exact markdown headings when possible: ## Boundary And Missing Inputs, ## Key Risk Drivers, ## Main Counter-Case / Invalidation, ## Evidence Checklist, ## Behavior-Risk Note, ## One-Line Research Summary.]",

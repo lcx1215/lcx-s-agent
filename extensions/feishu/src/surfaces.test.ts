@@ -2027,7 +2027,8 @@ describe("buildFeishuControlRoomOrchestrationNotice", () => {
     expect(notice).toContain(
       "If the position depends on a known event path, use the catalyst-map template too: separate what would truly confirm, what would truly break, and what is mostly noise",
     );
-    expect(notice).not.toContain("## Current Stance");
+    expect(notice).not.toContain("Current Stance");
+    expect(notice).not.toContain("Action Triggers");
     expect(notice).not.toContain("Add / Reduce / Wait");
   });
 

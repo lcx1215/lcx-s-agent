@@ -808,16 +808,19 @@ describe("buildAgentSystemPrompt", () => {
       "If the fresh anchors are missing, stale, or inconsistent, refuse to rank assets and say what data is still needed.",
     );
     expect(prompt).toContain(
-      "For buy, sell, add, reduce, hold, or position-sizing questions about ETFs, stocks, or current holdings: use a fixed structure with exactly these sections when possible: current stance, key reasons, main counter-case or risk, action triggers, confidence, and one-line summary.",
+      "For buy, sell, add, reduce, hold, wait, average-down, cut-loss, or position-sizing questions about ETFs, stocks, options, or current holdings: convert the request into position-risk research, not an action stance.",
     );
     expect(prompt).toContain(
-      "Use exact headings when possible: Current Stance, Key Reasons, Main Counter-Case / Risk, Action Triggers, Confidence, One-Line Summary.",
+      "Do not use legacy action-status or trade-trigger headings. Do not answer with buy/sell/add/reduce/hold/wait labels, and do not tell the user whether to average down, cut, hold, wait, or add.",
     );
     expect(prompt).toContain(
-      "In current stance, use one plain risk-controlled label only such as hold, watch, reduce, do not add yet, or add only if conditions trigger. Do not claim direct execution authority.",
+      "Use a research-only structure when possible: boundary and missing inputs, key risk drivers, main counter-case or invalidation, evidence checklist, behavior-risk note, and one-line research summary.",
     );
     expect(prompt).toContain(
-      "Keep key reasons to the top two or three points. Do not let a position answer expand into a long macro essay.",
+      "In the boundary section, say direct action is blocked without portfolio weight, cost basis, time horizon, risk budget, max drawdown tolerance, source timestamps, and current evidence quality.",
+    );
+    expect(prompt).toContain(
+      "Keep key risk drivers to the top two or three points. Do not let a position-risk answer expand into a long macro essay.",
     );
     expect(prompt).toContain(
       "Use the portfolio-sizing-discipline template to keep sizing modest, name concentration risk, and distinguish conviction from actual size.",
@@ -829,13 +832,16 @@ describe("buildAgentSystemPrompt", () => {
       "Use the behavior-error-correction template to check for urgency theater, confirmation bias, premature adding, refusal to reduce, or any other behavior mistake that is masquerading as conviction.",
     );
     expect(prompt).toContain(
-      "Judge whether the answer would pass the portfolio-answer-scorecard: one clear stance, explicit add/reduce/wait triggers, real risk framing, calibrated confidence, and willingness to say wait when the setup is noisy.",
+      "Judge whether the answer would pass the portfolio-research-scorecard: no direct action label, explicit missing inputs, real risk framing, calibrated evidence confidence, and willingness to block direct action when the setup is noisy.",
     );
     expect(prompt).toContain(
-      "In action triggers, separate what would justify adding, what would justify reducing, and what means wait. Prefer conditions and invalidation logic over price-chasing or prediction theater.",
+      "In the evidence checklist, list observations, invalidation evidence, and missing sources only. Do not phrase them as add, reduce, stop-loss, target-price, wait-window, or execution triggers.",
     );
+    expect(prompt).not.toContain("Use exact headings when possible: Current Stance");
+    expect(prompt).not.toContain("In current stance, use one plain risk-controlled label");
+    expect(prompt).not.toContain("Action Triggers, Confidence, One-Line Summary");
     expect(prompt).toContain(
-      "Use the execution-hygiene template to decide whether now is an action window or a wait window, especially around event risk, weak liquidity, or high volatility.",
+      "Use the execution-hygiene template only to identify why direct action language is blocked, especially around event risk, weak liquidity, high volatility, stale data, or incomplete user constraints.",
     );
     expect(prompt).toContain(
       "For company or issuer work, use the business-quality template to judge industry structure, pricing power, capital allocation, management credibility, and principal structural risk instead of stopping at superficial valuation talk.",
@@ -847,7 +853,7 @@ describe("buildAgentSystemPrompt", () => {
       "When the user is asking whether an old holding thesis still survives, do not answer from scratch: state what still holds, what has weakened or broken, what fresh evidence matters most now, what would invalidate the surviving thesis, and one short next-step judgment. If the old thesis cannot be found, say that explicitly and lower confidence.",
     );
     expect(prompt).toContain(
-      "Keep confidence modest and explicit: low, medium, or high plus one short reason. Make the one-line summary one sentence only.",
+      "Keep confidence as evidence confidence only: low, medium, or high plus one short reason. Make the one-line research summary one sentence only.",
     );
     expect(prompt).toContain(
       "When reviewing prior recommendations or turning a result into a lesson, use the outcome-review template so process quality, error type, and replacement rule are explicit.",
