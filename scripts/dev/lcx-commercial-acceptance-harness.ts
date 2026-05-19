@@ -130,6 +130,10 @@ function highestSeverity(gates: readonly AcceptanceGate[]): Severity {
   );
 }
 
+function severityValue(value: unknown, fallback: Severity): Severity {
+  return value === "P1" || value === "P2" || value === "P3" || value === "info" ? value : fallback;
+}
+
 function ownerUnavailableGate(owner: string, snapshot: OwnerSnapshot | undefined): AcceptanceGate {
   return {
     id: `${owner}_owner_unavailable`,
@@ -241,18 +245,21 @@ function radarGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
     };
   }
   if (blocked > 0) {
+    const radarSeverity = severityValue(summary?.highestSeverity, "P2");
+    const watchOnly = severityRank(radarSeverity) <= severityRank("P3");
     return {
       id: "radar_blocked_problem_clusters",
-      status: "blocked",
-      severity: "P2",
+      status: watchOnly ? "watch" : "blocked",
+      severity: radarSeverity,
       owner: "scripts/dev/lcx-problem-cluster-radar.ts",
       evidence: {
         summary,
         blockedClusters: snapshot!.payload!.blockedClusters,
         blockedActions: snapshot!.payload!.blockedActions,
       },
-      nextAction:
-        "Do not paper over blocked owner gates; wait for training/eval/module gates or satisfy their prerequisites.",
+      nextAction: watchOnly
+        ? "Watch owner-blocked P3 clusters and avoid starting overlapping repairs."
+        : "Do not paper over blocked owner gates; wait for training/eval/module gates or satisfy their prerequisites.",
     };
   }
   if (watch > 0) {

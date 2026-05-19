@@ -202,6 +202,37 @@ describe("lcx-commercial-acceptance-harness", () => {
     ).toContain("Do not start overlapping training");
   });
 
+  it("does not inflate radar P3 owner-blocked clusters into commercial P2 blockers", () => {
+    const inputs = baseInputs();
+    inputs.problemRadar = owner("lcx-problem-cluster-radar", {
+      ok: true,
+      summary: {
+        clusters: 1,
+        actionableClusters: 0,
+        repairableClusters: 0,
+        blockedClusters: 1,
+        watchClusters: 1,
+        highestSeverity: "P3",
+      },
+      blockedClusters: ["adapter_promotion_truth_cluster"],
+      blockedActions: [
+        "adapter_promotion_truth_cluster: blocked_by=active_local_brain_guard_or_eval",
+      ],
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(true);
+    expect(result.blockedGates).not.toContain("radar_blocked_problem_clusters");
+    expect(result.watchGates).toContain("radar_blocked_problem_clusters");
+    expect(result.gates.find((gate) => gate.id === "radar_blocked_problem_clusters")).toEqual(
+      expect.objectContaining({
+        status: "watch",
+        severity: "P3",
+      }),
+    );
+  });
+
   it("runs against the current repo without sending Lark messages or touching live sender", async () => {
     const { stdout } = await runJsonScript("scripts/dev/lcx-commercial-acceptance-harness.ts");
     const payload = JSON.parse(stdout) as {
