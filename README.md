@@ -137,6 +137,7 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 23. 商用验收不能靠 Codex 手工扫红点。`scripts/dev/lcx-commercial-acceptance-harness.ts` 是产品级考官：它消费 commercial answer pipeline、problem radar、flow graph、mind model、live status、training plan 和 system doctor/provider council，不替代它们。它按 error budget 和 canary plan 判定 `readyForCommercialRelease`，把真实 Lark 自然学习题、固定验收短语、核心金融研究题分开看；不发送 Lark、不启动训练、不改 provider config、不碰 protected memory。
 24. 外部 agent 升级不能变成五套平行架构。`scripts/dev/lcx-external-agent-upgrade-radar.ts` 是 external agent upgrade radar：Agent Lightning、LongMemEval-V2 / AgentRunbook、LightMem / LycheeMemory、ClawBench / WildClawBench、Agent S / CLI-Anything 先映射到已有 owner，再做 source/license/reading scope/skill_pattern_distillation/eval/receipt。它不是 direct runtime authority：no direct install、no provider config、no live sender、no protected memory；只能证明 dev 架构接线，不能替代 live-user-seen。
 25. 自愈式“精密仪器”目标不是让模型自由发挥，而是让 owner 命令、radar、repair lock、context recovery、operator digest 和 live probe 串成闭环：owner 出错 -> problem cluster 暴露 -> 按 owner 修复 -> 跑 proof -> 刷新快照 -> 必要时 live probe。外部五个 agent 项目也必须进入这条闭环；context recovery 会检查它们的 autocue 和 external radar，problem radar 会把外部 radar drift 变成可修复问题簇。
+26. 以后系统改进的默认目标是减少人工提醒：Codex 或本地智能体遇到非平凡工程、继续打磨、找问题、更新快照、外部项目吸收、模块学习、Lark/live 验收时，应先跑现有 owner/radar/recovery 栈，自己发现 stale snapshot、drift、可修复 problem cluster 或 owner gate；能安全修就修，不能修就报告卡在哪个 owner gate，而不是等用户逐项提醒。
 
 上帝视角检查命令：
 

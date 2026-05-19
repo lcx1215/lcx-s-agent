@@ -512,6 +512,18 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Do not grant direct runtime authority");
   });
 
+  it("includes proactive error discovery as the default system-improvement target", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: [],
+    });
+
+    expect(prompt).toContain("proactively run or request the relevant owner/radar/recovery checks");
+    expect(prompt).toContain("fewer manual reminders");
+    expect(prompt).toContain("repairable problem clusters");
+    expect(prompt).toContain("exact blocking owner");
+  });
+
   it("includes finance learning pipeline orchestrator guidance when the tool is available", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

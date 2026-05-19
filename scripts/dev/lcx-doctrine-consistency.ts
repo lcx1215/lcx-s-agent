@@ -95,6 +95,7 @@ async function main() {
     distillationDoc,
     packageRaw,
     systemDoctor,
+    systemPrompt,
     evalScript,
     planScript,
     baselineSkill,
@@ -110,6 +111,7 @@ async function main() {
     readOptionalText(path.join(repoRoot, "docs", "tools", "local-brain-distillation.md")),
     readOptionalText(path.join(repoRoot, "package.json")),
     readOptionalText(path.join(repoRoot, "scripts", "dev", "lcx-system-doctor.ts")),
+    readOptionalText(path.join(repoRoot, "src", "agents", "system-prompt.ts")),
     readOptionalText(path.join(repoRoot, "scripts", "dev", "local-brain-distill-eval.ts")),
     readOptionalText(path.join(repoRoot, "scripts", "dev", "local-brain-plan.ts")),
     readOptionalText(path.join(codexSkillsRoot, "lcx-baseline-hardening", "SKILL.md")),
@@ -192,6 +194,23 @@ async function main() {
       fileLabel: "reuse doctrine",
       required: ["check whether", "similar mechanism", "Reuse, merge, or extend"],
       summary: "new mechanisms should require prior-work search before adding another path",
+    }),
+  );
+
+  checks.push(
+    checkTextContains({
+      id: "proactive_error_discovery_goal_required",
+      text: [agents, readme, runbook, systemPrompt].filter(Boolean).join("\n"),
+      fileLabel: "proactive self-healing goal doctrine",
+      required: [
+        "fewer manual reminders",
+        "owner/radar/recovery",
+        "stale snapshots",
+        "repairable problem cluster",
+        "exact blocking owner",
+      ],
+      summary:
+        "system-improvement goals should default to proactive error discovery and snapshot refresh",
     }),
   );
 

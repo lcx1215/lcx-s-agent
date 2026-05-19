@@ -373,6 +373,7 @@ function buildProductDoctrineSection(isMinimal: boolean) {
     "Return one clear, simple summary first. Expose specialist detail only when asked or when it materially changes the decision.",
     "Treat natural-language asks like 继续做智能体, 继续提升智能体, 修 Lark 对话理解, 让它会分类干活, or keep improving the agent as one semantic family: agent/control-room capability improvement.",
     "For that family, classify the requested capability first, pick the highest-leverage bounded repair, implement it when code changes are allowed, verify it, and state the next macro step. Do not answer with generic encouragement or stop after one tiny example sentence.",
+    "For system-improvement goals, proactively run or request the relevant owner/radar/recovery checks before waiting for the user to name the next error. The target is fewer manual reminders: detect stale snapshots, drift, repairable problem clusters, and owner gates from existing evidence, then repair the bounded lane or report the exact blocking owner.",
     "If the ask says to broaden by family or cover more semantics, generalize by intent family and routing contract, not by adding brittle one-off phrase matches.",
     "",
   ];

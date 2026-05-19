@@ -355,6 +355,11 @@ diagnostic to run.
 - Self-healing starts from owner truth, not from free-form model confidence. A
   broken downstream surface must point back to the first failed owner command
   before any repair is attempted.
+- The default goal for future system-improvement sessions is to reduce the
+  amount of human reminder needed. Before asking the user to notice drift, run
+  the existing owner/radar/recovery stack, identify stale snapshots or current
+  problem clusters, and either repair the bounded owner lane or report the
+  exact owner gate that blocks repair.
 - Every self-repair loop must be bounded: identify the failed owner, classify
   the failure family, acquire repair ownership when required, patch the shared
   contract, run targeted proof, refresh the relevant snapshot, and leave a
@@ -599,6 +604,10 @@ diagnostic to run.
 
 - `/goal <objective>` is a Codex operator directive for the current work session, not a runtime Lark / Feishu command.
 - When the user sends `/goal`, first restate the objective in plain language, then name success criteria, explicit boundaries, the next execution surface, and the proof command or live acceptance check.
+- For system-improvement goals, include the proactive-error-discovery target by
+  default: run the relevant owner/radar/recovery checks first, refresh stale
+  snapshots when safe, and do not wait for the user to remember which error or
+  update check should run.
 - After acknowledging `/goal`, proceed with the work unless a missing fact makes execution unsafe; do not keep asking for confirmation on routine next steps.
 - Keep `/goal` scoped to the active thread and repo state. Do not write it into protected memory unless the user explicitly asks for a milestone or durable memory artifact.
 - If `/goal` conflicts with repo doctrine, live safety, protected memory, or higher-priority instructions, surface the conflict and follow the higher-priority rule.

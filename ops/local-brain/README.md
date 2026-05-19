@@ -420,6 +420,13 @@ autocue path; `lcx-problem-cluster-radar` consumes the external radar so missing
 candidates, owner drift, direct runtime authority, or "perfect integration"
 overclaims become repairable clusters instead of silent architecture debt.
 
+The default operator goal is proactive error discovery and snapshot refresh.
+For non-trivial engineering, "continue", system hardening, live migration,
+module learning, external project absorption, or memory/update work, start with
+the owner/radar/recovery stack before asking the user what to check. Repair the
+bounded owner lane when the radar marks it repairable; when a gate blocks repair,
+name the owner command and blocker instead of waiting for manual reminders.
+
 ## All-Module Internalization Chain
 
 Do not treat the source-to-learning chain as a factor-only mechanism. Any local

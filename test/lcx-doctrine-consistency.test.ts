@@ -98,5 +98,8 @@ describe("LCX doctrine consistency doctor", () => {
     expect(
       payload.checks.find((check) => check.id === "current_adapter_selector_required")?.ok,
     ).toBe(true);
+    expect(
+      payload.checks.find((check) => check.id === "proactive_error_discovery_goal_required")?.ok,
+    ).toBe(true);
   });
 });
