@@ -1,5 +1,5 @@
 const GENERIC_LEARNING_TOPIC_RE =
-  /^(?:审阅|学习审阅|学习框架|框架|入口|资料|来源|沉淀|系统能力|eval)$/iu;
+  /^(?:一样|这样|这个|这个主题|审阅|学习审阅|学习框架|框架|入口|资料|来源|沉淀|系统能力|eval)$/iu;
 
 function normalizeLearningTopicText(value: string): string {
   return value
@@ -53,6 +53,16 @@ export function summarizeFeishuLearningVisibleTopic(userMessage: string | undefi
     .trim();
   if (stripped && stripped !== normalized) {
     const topic = compactLearningTopicCandidate(stripped);
+    if (topic) {
+      return topic;
+    }
+  }
+
+  const requestedArtifactPatterns = [
+    /(?:给我|输出|整理|生成)\s*(?:一版|一个|一份|一套)?\s*([^，。；;,.!?！？:：]{1,36}?)(?:[，。；;,.!?！？:：]|$)/iu,
+  ];
+  for (const pattern of requestedArtifactPatterns) {
+    const topic = compactLearningTopicCandidate(normalized.match(pattern)?.[1] ?? "");
     if (topic) {
       return topic;
     }
