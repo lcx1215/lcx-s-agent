@@ -7209,6 +7209,28 @@ describe("learning council routing", () => {
       replyToMessageId: "msg-learning-delayed",
       accountId: "default",
     });
+    expect(mockRecordFeishuReplyFlowEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "msg-learning-delayed",
+        stage: "outbound_attempt",
+        replyKind: "delayed_completion",
+        sendMode: "message",
+        textPreview: expect.stringContaining("后台学习审阅完成，补发完成版。"),
+        usedReplyTarget: true,
+      }),
+    );
+    expect(mockRecordFeishuReplyFlowEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "msg-learning-delayed",
+        stage: "outbound_result",
+        replyKind: "delayed_completion",
+        sendMode: "message",
+        deliveryStatus: "success",
+        feishuCode: 0,
+        textPreview: expect.stringContaining("后台学习审阅完成，补发完成版。"),
+        usedReplyTarget: true,
+      }),
+    );
     const delayedCompletionText = (
       mockSendMessageFeishu.mock.calls as unknown as Array<
         [{ text: string; replyToMessageId?: string }]

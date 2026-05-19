@@ -1445,12 +1445,68 @@ function scheduleFeishuLearningCouncilDelayedCompletionReply(params: {
         run,
         originalMessageId: params.messageId,
       });
-      const result = await sendMessageFeishu({
-        cfg: params.cfg,
-        to: `chat:${params.chatId}`,
-        text,
-        replyToMessageId: params.messageId,
+      void recordFeishuReplyFlowEvent({
+        correlationId: params.messageId,
+        stage: "outbound_attempt",
         accountId: params.accountId,
+        messageId: params.messageId,
+        chatId: params.chatId,
+        agentId: params.agentId,
+        replyKind: "delayed_completion",
+        sendMode: "message",
+        textPreview: text,
+        outboundMessageType: "post",
+        receiveIdType: "chat_id",
+        usedReplyTarget: true,
+        usedFallbackCreate: false,
+      });
+      let result: Awaited<ReturnType<typeof sendMessageFeishu>>;
+      try {
+        result = await sendMessageFeishu({
+          cfg: params.cfg,
+          to: `chat:${params.chatId}`,
+          text,
+          replyToMessageId: params.messageId,
+          accountId: params.accountId,
+        });
+      } catch (error) {
+        void recordFeishuReplyFlowEvent({
+          correlationId: params.messageId,
+          stage: "outbound_result",
+          accountId: params.accountId,
+          messageId: params.messageId,
+          chatId: params.chatId,
+          agentId: params.agentId,
+          replyKind: "delayed_completion",
+          sendMode: "message",
+          textPreview: text,
+          deliveryStatus: "failed",
+          outboundMessageType: "post",
+          receiveIdType: "chat_id",
+          usedReplyTarget: true,
+          usedFallbackCreate: false,
+          error: String(error),
+        });
+        throw error;
+      }
+      void recordFeishuReplyFlowEvent({
+        correlationId: params.messageId,
+        stage: "outbound_result",
+        accountId: params.accountId,
+        messageId: params.messageId,
+        chatId: params.chatId,
+        agentId: params.agentId,
+        replyKind: "delayed_completion",
+        sendMode: "message",
+        textPreview: text,
+        deliveryMessageId: result.messageId,
+        deliveryStatus: "success",
+        feishuCode: 0,
+        feishuMsg: "success",
+        outboundMessageType: "post",
+        receiveIdType: "chat_id",
+        usedReplyTarget: true,
+        usedFallbackCreate: false,
       });
       await persistCapturedFeishuSurfaceLine({
         cfg: params.cfg,

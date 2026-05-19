@@ -135,6 +135,7 @@ function writeFakePnpm(
       "  exit 0",
       "fi",
       'if [ "$*" = "--silent openclaw daemon restart" ]; then',
+      `  echo "restart_timeout=$OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS" >> ${JSON.stringify(logPath)}`,
       '  echo "Restarted LaunchAgent: gui/501/ai.openclaw.gateway"',
       "  exit 0",
       "fi",
@@ -413,6 +414,7 @@ describe("lcx-promote-live status", () => {
       "build",
       "ui:build",
       "--silent openclaw daemon restart",
+      "restart_timeout=90000",
       "--silent openclaw channels status --probe",
     ]);
   });
