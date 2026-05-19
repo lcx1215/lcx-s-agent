@@ -176,13 +176,18 @@ const PATH_RULES: PathRule[] = [
     id: "live_or_provider_boundary",
     lane: "dev_live_boundary",
     patterns: [
+      /^scripts\/dev\/lcx-promote-live\.ts$/u,
+      /^test\/lcx-promote-live-status\.test\.ts$/u,
       /^src\/agents\/model-auth/u,
       /^src\/config\//u,
       /^extensions\/feishu\/src\/.*sender/u,
       /^scripts\/live/u,
     ],
     requiredChecks: ["explicit-live-boundary-review", "doctor"],
-    commands: ["node --import tsx scripts/dev/lcx-system-doctor.ts --json"],
+    commands: [
+      "pnpm vitest run test/lcx-promote-live-status.test.ts",
+      "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
+    ],
     risk: "elevated",
   },
   {
@@ -197,10 +202,11 @@ const PATH_RULES: PathRule[] = [
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/dev/lcx-change-impact-plan.ts [--json] [--changed PATH ...]",
+      "Usage: node --import tsx scripts/dev/lcx-change-impact-plan.ts [--json] [--changed PATH ...] [--files PATH ...]",
       "",
-      "Fast path-based impact plan for micro changes. When --changed is omitted,",
-      "reads git status/diff and recommends the impact-appropriate verification set.",
+      "Fast path-based impact plan for micro changes. --changed accepts one PATH per flag;",
+      "--files accepts one or more PATH values until the next flag. When explicit files",
+      "are omitted, reads git status/diff and recommends the impact-appropriate verification set.",
     ].join("\n"),
   );
 }
@@ -218,6 +224,16 @@ function parseArgs(args: string[]) {
       }
       options.changed.push(value);
       index += 1;
+    } else if (arg === "--files") {
+      let consumed = 0;
+      while (args[index + 1 + consumed] && !args[index + 1 + consumed].startsWith("--")) {
+        options.changed.push(args[index + 1 + consumed]);
+        consumed += 1;
+      }
+      if (consumed === 0) {
+        usage();
+      }
+      index += consumed;
     } else if (arg === "--help" || arg === "-h") {
       usage();
     } else {
