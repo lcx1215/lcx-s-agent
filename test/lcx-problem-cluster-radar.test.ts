@@ -425,6 +425,62 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
+  it("blocks active eval-timeout repair when the training owner says Codex cannot repair yet", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        activeProcesses: [{ pid: 101, role: "guard" }],
+        latestEval: { passed: 200, total: 200, promotionReady: true, parseRecoveredCaseIds: [] },
+        latestEvalTimeout: {
+          at: "2026-05-19T05:03:22.610Z",
+          timeoutReason: "total_timeout",
+        },
+        stableEvalTimeoutCountAfterLatestStart: 1,
+        decisions: [
+          {
+            id: "stable_eval_timeout_after_latest_start",
+            action: "hold_promotion_and_repair_eval_runtime_or_scope",
+            reason: "Latest stable_hardened_eval timed out after latest guard_start.",
+            codexRepairEligible: false,
+          },
+        ],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    const cluster = result.clusters.find((entry) => entry.id === "training_eval_runtime_cluster");
+    expect(cluster).toEqual(
+      expect.objectContaining({
+        severity: "P2",
+        actionability: "blocked_by_owner_gate",
+        blockingReasons: ["active_local_brain_guard_or_eval"],
+      }),
+    );
+    expect(result.actionableClusters).not.toContain("training_eval_runtime_cluster");
+    expect(result.blockedClusters).toContain("training_eval_runtime_cluster");
+  });
+
   it("surfaces real sedimentation audit gap objects with their severity", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {

@@ -284,6 +284,14 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
       evidence: { stableEvalTimeoutCountAfterLatestStart: timeoutCount },
     });
   }
+  const activeOwnerBlockedRepair =
+    hasActiveHeavyLocalBrainProcess(payload) &&
+    ownerDecisionSignals.some(
+      (signal) =>
+        ["stable_eval_timeout_after_latest_start", "eval_pending_after_latest_start"].includes(
+          signal.id,
+        ) && recordValue(signal.evidence)?.codexRepairEligible === false,
+    );
   return problemCluster({
     id: "training_eval_runtime_cluster",
     family: "qwen_training_eval_runtime",
@@ -292,6 +300,8 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
     signals,
     nextAction:
       "Hold promotion and repair eval runtime, timeout budget, or eval scope through local-brain-training-plan before judging the candidate.",
+    actionability: activeOwnerBlockedRepair ? "blocked_by_owner_gate" : undefined,
+    blockingReasons: activeOwnerBlockedRepair ? ["active_local_brain_guard_or_eval"] : [],
   });
 }
 
