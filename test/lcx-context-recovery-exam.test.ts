@@ -114,6 +114,11 @@ describe("LCX compressed context recovery exam", () => {
           deferredCommands: string[];
           safetyNotes: string[];
         };
+        liveStatus: {
+          liveRuntimeUpdated?: boolean;
+          liveUserSeen?: boolean;
+          liveMatchesCurrentDev?: boolean;
+        };
         trainingPlan: { decisionIds: string[] };
         moduleAbsorption: { blockers: string[] };
         learningSedimentation: {
@@ -147,6 +152,12 @@ describe("LCX compressed context recovery exam", () => {
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.unmatchedFiles)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.deferredCommands)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.safetyNotes)).toBe(true);
+    expect(payload.handoffForNewWindow.liveStatus).toEqual(
+      expect.objectContaining({
+        liveRuntimeUpdated: expect.any(Boolean),
+        liveUserSeen: expect.any(Boolean),
+      }),
+    );
     expect(Array.isArray(payload.handoffForNewWindow.trainingPlan.decisionIds)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.moduleAbsorption.blockers)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.learningSedimentation.gaps)).toBe(true);
@@ -162,7 +173,12 @@ describe("LCX compressed context recovery exam", () => {
     );
     expect(payload.handoffForNewWindow.text).toContain("# LCX New-Window Handoff");
     expect(payload.handoffForNewWindow.text).toContain("do not start overlapping");
-    expect(payload.handoffForNewWindow.text).toContain("dev/local handoff only");
+    expect(payload.handoffForNewWindow.text).toContain("context handoff is dev/local evidence");
+    expect(payload.handoffForNewWindow.text).not.toContain("not live-runtime-updated");
+    expect(payload.handoffForNewWindow.text).toContain("Live Boundary Truth");
+    expect(payload.handoffForNewWindow.text).toContain("volatileOwner=lcx-promote-live");
+    expect(payload.handoffForNewWindow.text).toContain("liveRuntimeUpdated=");
+    expect(payload.handoffForNewWindow.text).toContain("liveUserSeen=");
     expect(payload.handoffForNewWindow.text).toContain("deferredCommands=");
     expect(payload.handoffForNewWindow.text).toContain("safetyNotes=");
     expect(payload.handoffForNewWindow.text).toContain("moduleGateCounts=");
@@ -203,6 +219,9 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("MAX_OPERATOR_STATE_AGE_MS");
     expect(recoverySource).toContain("flow_graph_recovers_task_waterflows");
     expect(recoverySource).toContain("lcx-problem-cluster-radar");
+    expect(recoverySource).toContain("currentLiveStatusSnapshot");
+    expect(recoverySource).toContain("Live Boundary Truth");
+    expect(recoverySource).toContain("volatileOwner=lcx-promote-live");
     expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
     expect(localOperator).toContain("NODE_FLOW_FILE");
     expect(localOperator).toContain("volatileOwner");

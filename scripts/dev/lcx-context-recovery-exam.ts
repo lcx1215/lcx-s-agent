@@ -392,6 +392,23 @@ async function currentLearningSedimentationAuditSnapshot(): Promise<{
   }
 }
 
+async function currentLiveStatusSnapshot(): Promise<{
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: string;
+}> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-promote-live.ts", "--status", "--json"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
 async function currentExternalAgentUpgradeRadarSnapshot(): Promise<{
   ok: boolean;
   payload?: Record<string, unknown>;
@@ -429,6 +446,36 @@ function compactExternalAgentUpgradeRadar(value: unknown) {
     liveTouched: record.liveTouched,
     providerConfigTouched: record.providerConfigTouched,
     protectedMemoryTouched: record.protectedMemoryTouched,
+  };
+}
+
+function compactLiveStatus(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const operatorStatus =
+    record.operatorStatus && typeof record.operatorStatus === "object"
+      ? (record.operatorStatus as Record<string, unknown>)
+      : {};
+  const devLiveDrift =
+    record.devLiveDrift && typeof record.devLiveDrift === "object"
+      ? (record.devLiveDrift as Record<string, unknown>)
+      : {};
+  const visibleProof =
+    record.visibleProof && typeof record.visibleProof === "object"
+      ? (record.visibleProof as Record<string, unknown>)
+      : {};
+  return {
+    liveRuntimeUpdated: operatorStatus.liveRuntimeUpdated,
+    liveUserSeen: operatorStatus.liveUserSeen,
+    liveMatchesCurrentDev: devLiveDrift.liveMatchesCurrentDev,
+    liveNeedsPromotion: devLiveDrift.liveNeedsPromotion,
+    visibleStatus: visibleProof.status,
+    freshInboundCount: visibleProof.freshInboundCount,
+    freshOutboundResultCount: visibleProof.freshOutboundResultCount,
+    acceptanceMatched: visibleProof.acceptanceMatched,
+    acceptancePhrase: visibleProof.acceptancePhrase,
   };
 }
 
@@ -561,6 +608,7 @@ function buildNewWindowHandoffText(params: {
   };
   changeImpact?: ReturnType<typeof compactChangeImpact>;
   trainingPlan?: ReturnType<typeof compactTrainingPlan>;
+  liveStatus?: ReturnType<typeof compactLiveStatus>;
   moduleAbsorption?: ReturnType<typeof compactModuleAbsorptionGate>;
   learningSedimentation?: ReturnType<typeof compactLearningSedimentationAudit>;
   flowGraphEvidence?: Record<string, unknown>;
@@ -598,7 +646,8 @@ function buildNewWindowHandoffText(params: {
     `recoveryChecks=${params.result.summary.passed}/${params.result.summary.total}`,
     "",
     "## Boundaries",
-    "- dev/local handoff only; not live-runtime-updated and not live-user-seen",
+    "- context handoff is dev/local evidence; live status below is read-only from lcx-promote-live",
+    "- do not claim live-user-seen unless lcx-promote-live shows fresh real Lark inbound and reply proof",
     "- liveTouched=false; providerConfigTouched=false; protectedMemoryTouched=false",
     "- do not start overlapping Qwen/MiniMax/MLX training; trust fresh local-brain-training-plan",
     "- do not touch memory/current-research-line.md or memory/unified-risk-view.md",
@@ -610,6 +659,18 @@ function buildNewWindowHandoffText(params: {
     `unmatchedFiles=${unmatchedFiles.join(",") || "none"}`,
     `deferredCommands=${deferredCommands.join(" | ") || "none"}`,
     `safetyNotes=${safetyNotes.join(" | ") || "none"}`,
+    "",
+    "## Live Boundary Truth",
+    "volatileOwner=lcx-promote-live",
+    `liveRuntimeUpdated=${scalarText(params.liveStatus?.liveRuntimeUpdated)}`,
+    `liveUserSeen=${scalarText(params.liveStatus?.liveUserSeen)}`,
+    `liveMatchesCurrentDev=${scalarText(params.liveStatus?.liveMatchesCurrentDev)}`,
+    `liveNeedsPromotion=${scalarText(params.liveStatus?.liveNeedsPromotion)}`,
+    `liveVisibleStatus=${scalarText(params.liveStatus?.visibleStatus)}`,
+    `freshInboundCount=${scalarText(params.liveStatus?.freshInboundCount)}`,
+    `freshOutboundResultCount=${scalarText(params.liveStatus?.freshOutboundResultCount)}`,
+    `acceptanceMatched=${scalarText(params.liveStatus?.acceptanceMatched)}`,
+    `acceptancePhrase=${scalarText(params.liveStatus?.acceptancePhrase, "none")}`,
     "",
     "## Training Truth",
     "volatileOwner=local-brain-training-plan",
@@ -977,6 +1038,7 @@ async function main() {
         currentChangeImpactSnapshot(),
         currentModuleAbsorptionGateSnapshot(),
         currentLearningSedimentationAuditSnapshot(),
+        currentLiveStatusSnapshot(),
       ])
     : undefined;
   const handoffChangeImpact = handoffSources
@@ -988,6 +1050,7 @@ async function main() {
   const learningSedimentation = handoffSources
     ? compactLearningSedimentationAudit(handoffSources[2].payload)
     : undefined;
+  const liveStatus = handoffSources ? compactLiveStatus(handoffSources[3].payload) : undefined;
   const handoffForNewWindow = options.handoff
     ? {
         boundary: "dev_context_recovery_handoff_only",
@@ -996,12 +1059,14 @@ async function main() {
           "compact current-state snapshot for future Codex windows; reuses context recovery instead of creating a parallel memory lane",
         changeImpact: handoffChangeImpact,
         trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
+        liveStatus,
         moduleAbsorption,
         learningSedimentation,
         text: buildNewWindowHandoffText({
           result,
           changeImpact: handoffChangeImpact,
           trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
+          liveStatus,
           moduleAbsorption,
           learningSedimentation,
           flowGraphEvidence: currentFlowEvidence,
@@ -1010,6 +1075,7 @@ async function main() {
           changeImpact: handoffSources?.[0].error,
           moduleAbsorption: handoffSources?.[1].error,
           learningSedimentation: handoffSources?.[2].error,
+          liveStatus: handoffSources?.[3].error,
         },
       }
     : undefined;
