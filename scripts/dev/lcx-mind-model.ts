@@ -404,10 +404,16 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     termsBySurface: {
       head: ["dev-ready", "live-runtime-updated", "live-user-seen"],
       workflow: ["liveRuntimeUpdated", "liveUserSeen", "liveNeedsPromotion"],
-      proof: ["acceptancePhrase", "freshInboundCount", "acceptanceMatched"],
+      proof: [
+        "acceptancePhrase",
+        "freshInboundCount",
+        "liveVisibleStatus",
+        "acceptanceMatched",
+        "post_migration_reply_seen",
+      ],
     },
     nextAction:
-      "Do not claim live-user-seen unless live status has fresh inbound and matched acceptance evidence.",
+      "Do not claim live-user-seen unless live status has fresh inbound plus a successful visible reply, either fixed acceptance or post-migration natural prompt proof.",
   },
   {
     id: "content_claims_need_source_or_unverified_flag",

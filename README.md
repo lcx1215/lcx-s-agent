@@ -291,10 +291,10 @@ pnpm lcx:live:status
 - `liveRuntimeRestartCommandStatus`: 最近一次 live promotion 记录里的 restart 命令状态；它是证据字段，不等于真实用户验收。
 - `liveRuntimeProbePassed`: live sidecar 的 runtime/channel probe 是否通过。
 - `liveRuntimeUpdated`: 当前 clean dev HEAD 是否已经迁移到 live sidecar，并且 live runtime probe 已通过。
-- `liveUserSeen`: 当前 dev HEAD 对应的 live runtime 是否已经被真实 Lark/Feishu 可见回复验收。
+- `liveUserSeen`: 当前 dev HEAD 对应的 live runtime 是否已经被真实 Lark/Feishu 可见回复验收。固定验收短语和迁移后的自然学习问题都可以作为真实可见回复证据，但二者要分开看。
 - `nextHumanStep`: 下一步该做 dev 测试、迁移 live，还是发真实 Lark 验收。
 - `liveVisibleStatus`: 真实 Lark/Feishu 入站和回复证据状态。
-- `acceptanceMatched`: 最新验收短语是否已经在真实回复里出现。
+- `acceptanceMatched`: 最新验收短语是否已经在真实回复里出现。它不要求自然学习问题也命中固定短语；自然问题看 `liveVisibleStatus=post_migration_reply_seen`。
 
 看到 `livePromotionStatus=promoted` 只代表曾经有一次 promotion 成功；如果同时看到 `liveNeedsPromotion=true`，说明当前 dev 仓还有更新没有进入 live sidecar，不能把当前 dev 修复说成 live 已修复。
 
