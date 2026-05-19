@@ -215,6 +215,10 @@ type PromotionStateStatusSummary = Omit<
   };
 };
 
+type PromotionReceiptOutputSummary = PromotionStateStatusSummary & {
+  visibleProof?: LiveVisibleProof;
+};
+
 type PromotionLock =
   | {
       acquired: true;
@@ -985,6 +989,15 @@ function summarizePromotionStateForStatus(
   };
 }
 
+function summarizePromotionReceiptForOutput(
+  receipt: PromotionReceipt,
+): PromotionReceiptOutputSummary {
+  return {
+    ...summarizePromotionStateForStatus(receipt)!,
+    visibleProof: receipt.visibleProof,
+  };
+}
+
 export function resolveOperatorStatus(params: {
   state: PromotionReceipt | null;
   devLiveDrift: DevLiveDriftStatus;
@@ -1335,7 +1348,11 @@ function runPromotion(initialArgs: Args): number {
     writeJson(receipt.statePath, receipt);
   }
   prepared.cleanup();
-  process.stdout.write(args.json ? `${JSON.stringify(receipt, null, 2)}\n` : renderText(receipt));
+  process.stdout.write(
+    args.json
+      ? `${JSON.stringify(summarizePromotionReceiptForOutput(receipt), null, 2)}\n`
+      : renderText(receipt),
+  );
   return receipt.status === "blocked" || receipt.status === "failed" ? 1 : 0;
 }
 

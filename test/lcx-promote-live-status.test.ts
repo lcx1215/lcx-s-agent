@@ -163,6 +163,7 @@ function runApplyWithFakePnpm(params: {
   sourceRoot: string;
   targetRoot: string;
   fakeBinDir: string;
+  json?: boolean;
 }): ReturnType<typeof spawnSync> {
   return spawnSync(
     process.execPath,
@@ -178,6 +179,7 @@ function runApplyWithFakePnpm(params: {
       "--skip-source-checks",
       "--skip-install",
       "--skip-gateway-install",
+      ...(params.json ? ["--json"] : []),
     ],
     {
       cwd: repoRoot,
@@ -550,6 +552,53 @@ describe("lcx-promote-live status", () => {
       "restart_timeout=90000",
       "--silent openclaw channels status --probe",
     ]);
+  });
+
+  it("keeps apply json output bounded while the receipt file remains auditable", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    const fakeBinDir = tempDir("promote-live-bin");
+    const commandLog = path.join(fakeBinDir, "pnpm.log");
+    writeFakePnpm(fakeBinDir, commandLog, { probeReachable: true });
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+
+    const result = runApplyWithFakePnpm({ sourceRoot, targetRoot, fakeBinDir, json: true });
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      fileActions?: unknown;
+      commands?: unknown;
+      receiptPath: string;
+      fileActionSummary: { storedCount: number; managedFileCount: number };
+      commandSummary: {
+        targetBuild: { stdout?: unknown; stderr?: unknown };
+        targetUiBuild: { stdout?: unknown; stderr?: unknown };
+        restart: { status: string };
+        probe: { status: string };
+      };
+      visibleProof: { status: string };
+    };
+    const receipt = JSON.parse(fs.readFileSync(payload.receiptPath, "utf8")) as {
+      fileActions: unknown[];
+      commands: { targetUiBuild: { stdout: string } };
+    };
+
+    expect(payload.fileActions).toBeUndefined();
+    expect(payload.commands).toBeUndefined();
+    expect(payload.fileActionSummary).toMatchObject({ storedCount: 1, managedFileCount: 1 });
+    expect(payload.commandSummary.targetBuild.stdout).toBeUndefined();
+    expect(payload.commandSummary.targetBuild.stderr).toBeUndefined();
+    expect(payload.commandSummary.targetUiBuild.stdout).toBeUndefined();
+    expect(payload.commandSummary.targetUiBuild.stderr).toBeUndefined();
+    expect(payload.commandSummary.restart.status).toBe("passed");
+    expect(payload.commandSummary.probe.status).toBe("passed");
+    expect(payload.visibleProof.status).toBe("reply_flow_missing");
+    expect(receipt.fileActions).toHaveLength(1);
+    expect(receipt.commands.targetUiBuild.stdout).toContain("ui built");
   });
 
   it("fails live promotion when channel probe exits zero but reports gateway unreachable", () => {
