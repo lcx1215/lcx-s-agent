@@ -1153,12 +1153,8 @@ function renderFeishuLearningCouncilVisibleTimeoutReply(params: {
       userMessage: params.userMessage,
     }),
     "",
-    "当前结果：拆解和本地大脑计划入口已经形成，但大模型审阅还没在前台等待时间内完成。",
-    "所以我不能说已经学完，也不会写成可复用能力。后台如果完成，会再补发完成版；如果失败，会说明卡在哪一步。",
-    "",
-    "## 证据",
-    `- 前台等待超时：${params.timeoutMs}ms`,
-    `- messageId: ${params.messageId}`,
+    "当前结果：学习入口和本地计划已经形成，完整审阅还没完成。",
+    "所以我不能说已经学完，也不会写成可复用能力。后续如果审阅完成，会补发完成版；如果失败，会说明缺哪个材料或审阅环节。",
     "",
     "边界：这是 research-only 学习任务，没有交易建议，也没有执行权限。",
   ].join("\n");
@@ -1246,7 +1242,7 @@ function renderFeishuLearningIntakePlanDeliverable(params: {
       "## 先给入口版学习框架",
       "- 路径判断: 两者结合。网上来源负责补新资料和校准定义，本地沉淀负责复用已有规则、记录错误修正和形成可检索能力。",
       "- 学习顺序: 先学基础概念，再学因果机制，最后接风险边界和复盘样例。",
-      "- 沉淀方式: source registry -> capability rule -> retrieval/apply receipt -> review -> eval/training absorption。",
+      "- 沉淀方式: 先登记来源和阅读范围，再变成可复用规则、练习题、审阅题和后续复盘检查表；通过前只算学习入口，不算系统已经学会。",
     ];
   }
 
@@ -1257,7 +1253,7 @@ function renderFeishuLearningIntakePlanDeliverable(params: {
     "- 第一层：合约语言。看懂 call/put、行权价、到期日、权利金、买方/卖方、内在价值和时间价值。",
     "- 第二层：价格为什么动。重点学标的价格、波动率、时间流逝、利率/分红，以及 Delta/Gamma/Theta/Vega 这些 Greek 的直觉含义。",
     "- 第三层：策略和风险边界。先理解保护性 put、备兑 call、价差组合的风险收益形状；新手不要先学复杂组合，更不能把期权当高杠杆彩票。",
-    "- 沉淀路线: 先登记来源和阅读范围，再提炼成 options_volatility 的能力规则，随后做 retrieval/apply 回执、相邻应用题、review 和 eval/training absorption；通过前只算 intake plan，不算系统已经学会。",
+    "- 沉淀路线: 先登记来源和阅读范围，再提炼成期权波动率、希腊字母和风险边界规则，随后做相邻练习题、审阅题和复盘检查表；通过前只算学习入口，不算系统已经学会。",
   ];
 }
 
@@ -1281,8 +1277,7 @@ async function runFeishuLearningCouncilWithVisibleTimeout(
         text: [
           "学习审阅没有产出可用结论。",
           "",
-          `原因：${String(error)}`,
-          `消息：${params.messageId}`,
+          "原因：学习审阅过程中有通道失败或超时；具体错误已保存在本地日志。",
           "",
           "边界：这次不能算已经学会，也不能写成可复用能力。",
         ].join("\n"),
@@ -1314,17 +1309,15 @@ async function runFeishuLearningCouncilWithVisibleTimeout(
 
 function renderFeishuLearningCouncilDelayedCompletionReply(params: {
   run: FeishuLearningCouncilCompletedVisibleRun;
-  originalMessageId: string;
 }): string {
   const header =
     params.run.status === "completed"
-      ? "后台学习审阅完成，补发完成版。"
-      : "后台学习审阅失败，补发失败原因。";
+      ? "学习审阅完成，补发完成版。"
+      : "学习审阅失败，补发失败原因。";
   return [
     header,
     "",
-    `原消息：${params.originalMessageId}`,
-    "前台状态：已经先回复过等待超时。",
+    "你前面已经收到入口版；这次补上完整审阅结果。",
     "",
     renderFeishuLearningCouncilVisibleCompletionText(params.run.text),
   ].join("\n");
@@ -1376,7 +1369,7 @@ function humanizeFeishuLearningCouncilVisibleLine(line: string): string | undefi
     "MiniMax 审阅": "反方检查",
     "MiniMax 反方审阅": "反方检查",
     "DeepSeek 信息抽取": "可沉淀要点",
-    三模型共识: "后台审阅共识",
+    三模型共识: "审阅共识",
   };
   const productLine = headingLabels[line] ?? line;
   return sanitizeFeishuLearningCouncilProductLine(productLine);
@@ -1400,7 +1393,12 @@ function sanitizeFeishuLearningCouncilProductLine(line: string): string | undefi
   if (/实战验证/u.test(line) && /真实交易/u.test(line)) {
     return line.replace(/实战验证（有真实交易后）/gu, "纸面验证和真实使用前审阅");
   }
-  return line;
+  return line
+    .replace(/\bretrieval\/apply\b/giu, "检索和应用练习")
+    .replace(/\beval\/training absorption\b/giu, "评估题和学习吸收")
+    .replace(/\btraining absorption\b/giu, "学习吸收")
+    .replace(/\breceipts?\b/giu, "学习回执")
+    .replace(/\boptions_volatility\b/giu, "期权波动率规则");
 }
 
 function scheduleFeishuLearningCouncilDelayedCompletionReply(params: {
@@ -1422,7 +1420,6 @@ function scheduleFeishuLearningCouncilDelayedCompletionReply(params: {
     .then(async (run) => {
       const text = renderFeishuLearningCouncilDelayedCompletionReply({
         run,
-        originalMessageId: params.messageId,
       });
       void recordFeishuReplyFlowEvent({
         correlationId: params.messageId,

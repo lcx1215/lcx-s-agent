@@ -6799,10 +6799,7 @@ describe("learning council routing", () => {
     expect(mockStartFeishuLearningTimeboxSession).not.toHaveBeenCalled();
     expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("前台等待超时：5ms"),
-    });
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("不能说已经学完，也不会写成可复用能力"),
+      text: expect.stringContaining("当前结果：学习入口和本地计划已经形成"),
     });
     const timeoutReplyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
@@ -6814,6 +6811,10 @@ describe("learning council routing", () => {
     expect(timeoutReplyText).not.toContain("回交大模型审阅:");
     expect(timeoutReplyText).not.toContain("failedReason:");
     expect(timeoutReplyText).not.toContain("application_ready");
+    expect(timeoutReplyText).not.toContain("5ms");
+    expect(timeoutReplyText).not.toContain("messageId");
+    expect(timeoutReplyText).not.toContain("msg-learning-timeout");
+    expect(timeoutReplyText).not.toContain("前台等待超时");
   });
 
   it("keeps short learning timeout replies readable for commodity learning requests", async () => {
@@ -6929,7 +6930,7 @@ describe("learning council routing", () => {
     expect(replyText).not.toContain("本地大脑模块计划:");
     expect(replyText).not.toContain("回交大模型审阅:");
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("后台如果完成，会再补发完成版"),
+      text: expect.stringContaining("后续如果审阅完成，会补发完成版"),
     });
     expect(baseDispatcher.sendFinalReply).not.toHaveBeenCalledWith({
       text: expect.stringContaining("Learning council run: delayed"),
@@ -7047,13 +7048,13 @@ describe("learning council routing", () => {
       text: expect.stringContaining("收到，已开始学：股市分析知识。"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("当前结果：拆解和本地大脑计划入口已经形成"),
+      text: expect.stringContaining("当前结果：学习入口和本地计划已经形成"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: expect.stringContaining("所以我不能说已经学完"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("后台如果完成，会再补发完成版"),
+      text: expect.stringContaining("后续如果审阅完成，会补发完成版"),
     });
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
@@ -7167,7 +7168,7 @@ describe("learning council routing", () => {
     });
 
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("前台等待超时：5ms"),
+      text: expect.stringContaining("当前结果：学习入口和本地计划已经形成"),
     });
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: expect.not.stringContaining("learning_council_reply_timeout_after_5ms"),
@@ -7183,6 +7184,7 @@ describe("learning council routing", () => {
         "- 绝对红线：不用杠杆，单策略仓位≤5%",
         "- 必须记录：每次交易的理由、预期、止损点",
         "- 存到本地 memory/options-learning/ 目录",
+        "- 结论仍然要经过后续 receipt，才能升级成稳定规则。",
         '- 例："如果持有QQQ且认为短期涨不动 → 备兑Call收租"',
         "- 写入 MEMORY.md 的期权纪律专节",
         "阶段4：实战验证（有真实交易后）",
@@ -7193,14 +7195,7 @@ describe("learning council routing", () => {
     expect(mockSendMessageFeishu).toHaveBeenCalledWith({
       cfg,
       to: "chat:oc-learning",
-      text: expect.stringContaining("后台学习审阅完成，补发完成版。"),
-      replyToMessageId: "msg-learning-delayed",
-      accountId: "default",
-    });
-    expect(mockSendMessageFeishu).toHaveBeenCalledWith({
-      cfg,
-      to: "chat:oc-learning",
-      text: expect.stringContaining("前台状态：已经先回复过等待超时。"),
+      text: expect.stringContaining("学习审阅完成，补发完成版。"),
       replyToMessageId: "msg-learning-delayed",
       accountId: "default",
     });
@@ -7217,7 +7212,7 @@ describe("learning council routing", () => {
         stage: "outbound_attempt",
         replyKind: "delayed_completion",
         sendMode: "message",
-        textPreview: expect.stringContaining("后台学习审阅完成，补发完成版。"),
+        textPreview: expect.stringContaining("学习审阅完成，补发完成版。"),
         usedReplyTarget: true,
       }),
     );
@@ -7229,7 +7224,7 @@ describe("learning council routing", () => {
         sendMode: "message",
         deliveryStatus: "success",
         feishuCode: 0,
-        textPreview: expect.stringContaining("后台学习审阅完成，补发完成版。"),
+        textPreview: expect.stringContaining("学习审阅完成，补发完成版。"),
         usedReplyTarget: true,
       }),
     );
@@ -7243,6 +7238,12 @@ describe("learning council routing", () => {
     expect(delayedCompletionText).not.toContain("runtime provider");
     expect(delayedCompletionText).not.toContain("runtime model");
     expect(delayedCompletionText).not.toContain("Kimi synthesis");
+    expect(delayedCompletionText).not.toContain("原消息");
+    expect(delayedCompletionText).not.toContain("前台状态");
+    expect(delayedCompletionText).not.toContain("msg-learning-delayed");
+    expect(delayedCompletionText).not.toContain("后台");
+    expect(delayedCompletionText).not.toContain("receipt");
+    expect(delayedCompletionText).toContain("学习回执");
     expect(delayedCompletionText).not.toContain("MEMORY.md");
     expect(delayedCompletionText).not.toContain("memory/options-learning");
     expect(delayedCompletionText).not.toContain("单策略仓位≤5%");
@@ -9155,8 +9156,14 @@ describe("learning council routing", () => {
     expect(replyText).toContain("第一层：合约语言");
     expect(replyText).toContain("第二层：价格为什么动");
     expect(replyText).toContain("第三层：策略和风险边界");
-    expect(replyText).toContain("通过前只算 intake plan，不算系统已经学会");
+    expect(replyText).toContain("通过前只算学习入口，不算系统已经学会");
     expect(replyText).not.toContain("现在缺：本地 `.md` / `.txt` / `.html`");
+    expect(replyText).not.toContain("options_volatility");
+    expect(replyText).not.toContain("retrieval/apply");
+    expect(replyText).not.toContain("eval/training absorption");
+    expect(replyText).not.toContain("前台等待超时");
+    expect(replyText).not.toContain("messageId");
+    expect(replyText).not.toContain("msg-online-options-learning-timeout");
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
