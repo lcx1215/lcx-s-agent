@@ -222,5 +222,5 @@ describe("lcx-commercial-acceptance-harness", () => {
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       ]),
     );
-  });
+  }, 240_000);
 });

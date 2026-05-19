@@ -172,6 +172,29 @@ function problemCluster(params: {
   };
 }
 
+function repairableSignalEntries(clusters: readonly ProblemCluster[]) {
+  return clusters.flatMap((cluster) =>
+    cluster.signals.flatMap((signal) => {
+      const evidence = recordValue(signal.evidence);
+      if (evidence?.codexRepairEligible !== true) {
+        return [];
+      }
+      return [
+        {
+          clusterId: cluster.id,
+          signalId: signal.id,
+          severity: signal.severity,
+          summary: signal.summary,
+          ownerEntrypoint: cluster.ownerEntrypoint,
+          sourceOwners: cluster.sourceOwners,
+          action: stringValue(evidence.action) ?? "owner_marked_codex_repair_eligible",
+          reason: stringValue(evidence.reason),
+        },
+      ];
+    }),
+  );
+}
+
 function hasActiveHeavyLocalBrainProcess(
   trainingPlan: Record<string, unknown> | undefined,
 ): boolean {
@@ -252,6 +275,14 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
       severity: "P1",
       summary: "overlapping heavy eval or training process detected",
     },
+    output_contract_or_parser_failure: {
+      severity: "P2",
+      summary: "eval or guard evidence has output-contract/parser failures that need repair",
+    },
+    teacher_sample_quality_failure: {
+      severity: "P2",
+      summary: "teacher batch output has JSON or sample-quality failures that need repair",
+    },
   });
   signals.push(...ownerDecisionSignals);
   const timeoutAfterCurrentStart = ownerDecisionSignals.some(
@@ -300,7 +331,7 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
     sourceOwners: ["local-brain-training-plan"],
     signals,
     nextAction:
-      "Hold promotion and repair eval runtime, timeout budget, or eval scope through local-brain-training-plan before judging the candidate.",
+      "Hold promotion and repair eval runtime, output contract, teacher sample quality, timeout budget, or eval scope through local-brain-training-plan before judging the candidate.",
     actionability: activeOwnerBlockedRepair ? "blocked_by_owner_gate" : undefined,
     blockingReasons: activeOwnerBlockedRepair ? ["active_local_brain_guard_or_eval"] : [],
   });
@@ -780,6 +811,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
   const blockedClusters = clusters.filter(
     (cluster) => cluster.actionability === "blocked_by_owner_gate",
   );
+  const repairableSignals = repairableSignalEntries(clusters);
   const watchClusters = clusters.filter((cluster) => cluster.severity === "P3");
   return {
     ok: true,
@@ -789,6 +821,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
       clusters: clusters.length,
       actionableClusters: repairableClusters.length,
       repairableClusters: repairableClusters.length,
+      repairableSignals: repairableSignals.length,
       blockedClusters: blockedClusters.length,
       watchClusters: watchClusters.length,
       highestSeverity: maxSeverity(clusters.flatMap((cluster) => cluster.signals)),
@@ -808,8 +841,12 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
     clusters,
     actionableClusters: repairableClusters.map((cluster) => cluster.id),
     repairableClusters: repairableClusters.map((cluster) => cluster.id),
+    repairableSignals,
     blockedClusters: blockedClusters.map((cluster) => cluster.id),
     nextActions: repairableClusters.map((cluster) => `${cluster.id}: ${cluster.nextAction}`),
+    repairableActions: repairableSignals.map(
+      (signal) => `${signal.clusterId}/${signal.signalId}: ${signal.action}`,
+    ),
     blockedActions: blockedClusters.map(
       (cluster) =>
         `${cluster.id}: ${cluster.nextAction} blocked_by=${cluster.blockingReasons.join(",")}`,

@@ -481,6 +481,137 @@ describe("lcx-problem-cluster-radar", () => {
     expect(result.blockedClusters).toContain("training_eval_runtime_cluster");
   });
 
+  it("preserves repairable sub-signals when a mixed training cluster is owner-blocked", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        activeProcesses: [{ pid: 101, role: "guard" }],
+        latestEval: { passed: 201, total: 201, promotionReady: false, parseRecoveredCaseIds: [] },
+        latestEvalTimeout: {
+          at: "2026-05-19T05:03:22.610Z",
+          timeoutReason: "total_timeout",
+        },
+        stableEvalTimeoutCountAfterLatestStart: 1,
+        decisions: [
+          {
+            id: "stable_eval_timeout_after_latest_start",
+            action: "hold_promotion_and_repair_eval_runtime_or_scope",
+            reason: "Latest stable_hardened_eval timed out after latest guard_start.",
+            codexRepairEligible: false,
+          },
+          {
+            id: "teacher_sample_quality_failure",
+            action: "repair_teacher_filter_or_prompt_if_pattern_repeats",
+            reason: "SyntaxError: Expected double-quoted property name in JSON.",
+            codexRepairEligible: true,
+          },
+        ],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    expect(result.actionableClusters).not.toContain("training_eval_runtime_cluster");
+    expect(result.blockedClusters).toContain("training_eval_runtime_cluster");
+    expect(result.summary.repairableSignals).toBe(1);
+    expect(result.repairableSignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          clusterId: "training_eval_runtime_cluster",
+          signalId: "teacher_sample_quality_failure",
+          ownerEntrypoint: "scripts/dev/local-brain-training-plan.ts",
+        }),
+      ]),
+    );
+    expect(result.repairableActions).toEqual(
+      expect.arrayContaining([
+        "training_eval_runtime_cluster/teacher_sample_quality_failure: repair_teacher_filter_or_prompt_if_pattern_repeats",
+      ]),
+    );
+  });
+
+  it("keeps Codex-repairable teacher and output-contract decisions actionable during active training", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        activeProcesses: [{ pid: 101, role: "guard" }],
+        latestEval: { passed: 201, total: 201, promotionReady: false, parseRecoveredCaseIds: [] },
+        decisions: [
+          {
+            id: "output_contract_or_parser_failure",
+            action: "enter_codex_auto_repair_if_repeated",
+            reason: "Eval evidence contains JSON/parser output-contract signals.",
+            codexRepairEligible: true,
+          },
+          {
+            id: "teacher_sample_quality_failure",
+            action: "repair_teacher_filter_or_prompt_if_pattern_repeats",
+            reason: "SyntaxError: Expected double-quoted property name in JSON.",
+            codexRepairEligible: true,
+          },
+        ],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    const cluster = result.clusters.find((entry) => entry.id === "training_eval_runtime_cluster");
+    expect(cluster).toEqual(
+      expect.objectContaining({
+        severity: "P2",
+        actionability: "repair_now",
+      }),
+    );
+    expect(cluster?.signals.map((signal) => signal.id)).toEqual(
+      expect.arrayContaining([
+        "output_contract_or_parser_failure",
+        "teacher_sample_quality_failure",
+      ]),
+    );
+    expect(result.actionableClusters).toContain("training_eval_runtime_cluster");
+    expect(result.blockedClusters).not.toContain("training_eval_runtime_cluster");
+  });
+
   it("surfaces real sedimentation audit gap objects with their severity", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {

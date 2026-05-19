@@ -81,12 +81,15 @@ node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
 ```
 
 It reads existing owner outputs and emits `problemClusters`,
-`actionableClusters`, `ownerEntrypoint`, and `sourceOwners`. It is not allowed to
-become a second truth owner for training, eval, module learning, flow graph, or
-context recovery. Its job is to group current red lights so a future Codex
-window can see that, for example, eval timeout, parseRecovered promotion block,
-module-learning absorption gap, stale recovery, or dirty worktree are active
-problem clusters without manually rediscovering them from raw logs.
+`actionableClusters`, `repairableSignals`, `ownerEntrypoint`, and
+`sourceOwners`. It is not allowed to become a second truth owner for training,
+eval, module learning, flow graph, or context recovery. Its job is to group
+current red lights so a future Codex window can see that, for example, eval
+timeout, parseRecovered promotion block, module-learning absorption gap, stale
+recovery, dirty worktree, or a Codex-repairable teacher/output-contract
+sub-signal are active problem clusters without manually rediscovering them from
+raw logs. A blocked mixed cluster must not hide a sub-signal whose owner already
+marked `codexRepairEligible=true`.
 Run it automatically before non-trivial repairs, training/promotion judgments,
 module-learning absorption claims, memory sedimentation claims, Lark/live
 boundary claims, and broad "find more problems" work. Start with the radar to

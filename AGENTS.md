@@ -197,10 +197,13 @@ surface, and boundary flag.
   unverified market claims, and dev/live wording mistakes.
 - The problem cluster radar must sit above the governance stack as an
   aggregator, not a duplicate owner. It should report `problemClusters`,
-  `actionableClusters`, `ownerEntrypoint`, `sourceOwners`, and
-  `dev_problem_cluster_radar_only` so future Codex windows can see active
+  `actionableClusters`, `repairableSignals`, `ownerEntrypoint`, `sourceOwners`,
+  and `dev_problem_cluster_radar_only` so future Codex windows can see active
   runtime, eval, module-learning, recovery, or dirty-worktree issue clusters
-  without manually rediscovering them from raw logs.
+  without manually rediscovering them from raw logs. If a mixed cluster is
+  blocked by an owner gate, the radar must still expose sub-signals whose owner
+  already marked `codexRepairEligible=true`; blocked cluster truth must not hide
+  repairable contract, parser, or teacher-quality work.
 - Do not start overlapping training. If Qwen, MiniMax teacher, MLX eval, or the
   guard is already active, the training plan must return
   `training_already_active` and `do_not_start_overlapping_guard`; doctor must
