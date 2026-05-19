@@ -138,6 +138,7 @@ describe("lcx-agent-exam", () => {
         expect.objectContaining({ id: "module_learning_absorption", status: "needs_receipts" }),
         expect.objectContaining({ id: "commercial_answer_audit", status: "ready" }),
         expect.objectContaining({ id: "product_control_room", status: "ready" }),
+        expect.objectContaining({ id: "commercial_acceptance_harness", status: "not_run" }),
       ]),
     );
   });

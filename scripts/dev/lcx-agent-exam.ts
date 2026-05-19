@@ -939,6 +939,20 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
       nextAction:
         "保留必要多入口，但任何新增入口都要有 single factual owner 和 flow-graph consolidated entrypoint family。",
     },
+    {
+      id: "commercial_acceptance_harness",
+      order: 7,
+      title: "商用验收考官和 canary/error budget",
+      ownerLane: "commercial_acceptance_harness",
+      status: "not_run",
+      evidence: [
+        "owner=lcx-commercial-acceptance-harness",
+        "command=node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json",
+        "consumes=answer_pipeline,problem_radar,flow_graph,mind_model,live_status,training_plan,system_doctor",
+      ],
+      nextAction:
+        "需要商用 release readiness 时跑 commercial acceptance harness；它消费 owner 输出，不发送 Lark、不启动训练、不替代 owner truth。",
+    },
   ] satisfies CommercialBlueprintItem[];
 }
 

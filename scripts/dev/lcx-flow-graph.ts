@@ -80,6 +80,7 @@ type FlowNodeId =
   | "workflow_distillation"
   | "local_skill_candidate"
   | "acceptance_eval"
+  | "commercial_acceptance_harness"
   | "schedule_gate"
   | "repair_lock";
 
@@ -127,6 +128,8 @@ type FlowFilterId =
   | "license_scope_required"
   | "untrusted_source_isolation"
   | "human_signoff_checkpoint"
+  | "commercial_error_budget_required"
+  | "product_canary_suite_required"
   | "automation_schedule_gate"
   | "repair_lock_required";
 
@@ -268,6 +271,7 @@ const NODE_IDS: FlowNodeId[] = [
   "workflow_distillation",
   "local_skill_candidate",
   "acceptance_eval",
+  "commercial_acceptance_harness",
   "schedule_gate",
   "repair_lock",
 ];
@@ -316,6 +320,8 @@ const FILTER_IDS: FlowFilterId[] = [
   "license_scope_required",
   "untrusted_source_isolation",
   "human_signoff_checkpoint",
+  "commercial_error_budget_required",
+  "product_canary_suite_required",
   "automation_schedule_gate",
   "repair_lock_required",
 ];
@@ -675,6 +681,64 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     receipts: ["learning-council", "model-council-provider-evidence", "review_panel"],
   },
   {
+    id: "commercial_acceptance_harness_waterflow",
+    family: "commercial_product_acceptance_gate",
+    objective:
+      "Commercial acceptance must grade real product readiness by consuming existing owner outputs, error budgets, and live canaries instead of fixing isolated red dots or becoming a new truth owner.",
+    start: "local_operator_loop",
+    end: "acceptance_eval",
+    requiredNodes: [
+      "local_operator_loop",
+      "system_doctor",
+      "training_plan",
+      "mind_model",
+      "flow_graph",
+      "commercial_acceptance_harness",
+      "answer_audit_budget",
+      "live_migration",
+      "build_restart_probe",
+      "real_lark_inbound",
+      "live_user_seen",
+      "acceptance_eval",
+    ],
+    requiredFilters: [
+      "commercial_error_budget_required",
+      "product_canary_suite_required",
+      "single_owner_required",
+      "bounded_answer_review",
+      "training_overlap_guard",
+      "provider_evidence_required",
+      "dev_ready_not_live_user_seen",
+      "live_runtime_probe_required",
+      "real_lark_inbound_required",
+    ],
+    edges: [
+      ["local_operator_loop", "system_doctor"],
+      ["system_doctor", "training_plan"],
+      ["training_plan", "mind_model"],
+      ["mind_model", "flow_graph"],
+      ["flow_graph", "commercial_acceptance_harness"],
+      ["commercial_acceptance_harness", "answer_audit_budget"],
+      ["commercial_acceptance_harness", "live_migration"],
+      ["live_migration", "build_restart_probe"],
+      ["build_restart_probe", "real_lark_inbound"],
+      ["real_lark_inbound", "live_user_seen"],
+      ["live_user_seen", "acceptance_eval"],
+      ["answer_audit_budget", "acceptance_eval"],
+    ],
+    feedbackEdges: [
+      ["acceptance_eval", "commercial_acceptance_harness"],
+      ["commercial_acceptance_harness", "training_plan"],
+    ],
+    receipts: [
+      "commercial_acceptance_harness",
+      "commercial_answer_pipeline",
+      "lcx-problem-cluster-radar",
+      "live-promotion",
+      "feishu-reply-flow",
+    ],
+  },
+  {
     id: "memory_correction_downrank_waterflow",
     family: "memory_recall_correction_and_downrank",
     objective:
@@ -1032,6 +1096,25 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     ],
   },
   {
+    id: "commercial_acceptance_harness_cluster",
+    philosophy:
+      "commercial acceptance is one product-grade exam that consumes owner outputs, error budgets, and live canaries without replacing those owners",
+    ownerScenario: "commercial_acceptance_harness_waterflow",
+    ownerNode: "commercial_acceptance_harness",
+    sameClassTerms: [
+      "commercial acceptance harness",
+      "product canary",
+      "error budget",
+      "readyForCommercialRelease",
+      "post_migration_lark_canary",
+    ],
+    mergeFilters: [
+      "commercial_error_budget_required",
+      "product_canary_suite_required",
+      "single_owner_required",
+    ],
+  },
+  {
     id: "automation_digest_cluster",
     philosophy:
       "operator loop, cleanup, doctor, training plan, and digest must produce one local truth",
@@ -1181,6 +1264,16 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     ],
   },
   {
+    id: "commercial_acceptance_harness_entrypoints",
+    ownerCluster: "commercial_acceptance_harness_cluster",
+    ownerPath: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+    watchedPathTerms: ["commercial-acceptance", "commercial_acceptance", "product-canary"],
+    allowedPaths: [
+      "scripts/dev/lcx-commercial-acceptance-harness.ts",
+      "test/lcx-commercial-acceptance-harness.test.ts",
+    ],
+  },
+  {
     id: "qwen_training_operation_entrypoints",
     ownerCluster: "senior_trader_failure_focus_cluster",
     ownerPath: "scripts/dev/local-brain-training-plan.ts",
@@ -1292,6 +1385,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   local_automation_digest_waterflow: "/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh",
   lark_visible_language_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
   commercial_answer_pipeline_waterflow: "scripts/dev/lcx-commercial-answer-pipeline.ts",
+  commercial_acceptance_harness_waterflow: "scripts/dev/lcx-commercial-acceptance-harness.ts",
   provider_council_evidence_waterflow: "extensions/feishu/src/learning-council.ts",
   memory_correction_downrank_waterflow: "scripts/dev/lcx-system-memory-sedimentation-gate.ts",
   finance_data_gateway_waterflow: "src/agents/finance-data-gateway.ts",
@@ -1316,6 +1410,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx src/commands/capabilities/lark-loop-diagnose.ts --json",
   commercial_answer_pipeline_waterflow:
     "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
+  commercial_acceptance_harness_waterflow:
+    "node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json",
   provider_council_evidence_waterflow: "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
   memory_correction_downrank_waterflow:
     "node --import tsx scripts/dev/lcx-system-memory-sedimentation-gate.ts --json",
@@ -1340,6 +1436,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-system-doctor.ts",
     "scripts/dev/lcx-commercial-answer-pipeline.ts",
+    "scripts/dev/lcx-commercial-acceptance-harness.ts",
     "scripts/dev/lcx-learning-sedimentation-bridge.ts",
     "scripts/dev/lcx-learning-sedimentation-audit.ts",
     "scripts/dev/lcx-learning-sedimentation-map.ts",
@@ -1363,6 +1460,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "test/lcx-mind-model.test.ts",
     "test/lcx-context-recovery-exam.test.ts",
     "test/lcx-commercial-answer-pipeline.test.ts",
+    "test/lcx-commercial-acceptance-harness.test.ts",
     "test/lcx-learning-sedimentation-bridge.test.ts",
     "test/lcx-learning-sedimentation-audit.test.ts",
     "test/lcx-learning-sedimentation-map.test.ts",

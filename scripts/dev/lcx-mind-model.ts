@@ -75,6 +75,7 @@ const WORKFLOW_SURFACES = [
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/lcx-head-tail-consistency.ts",
   "scripts/dev/lcx-problem-cluster-radar.ts",
+  "scripts/dev/lcx-commercial-acceptance-harness.ts",
   "scripts/dev/lcx-learning-sedimentation-bridge.ts",
   "scripts/dev/lcx-learning-sedimentation-audit.ts",
   "scripts/dev/lcx-learning-sedimentation-map.ts",
@@ -105,6 +106,7 @@ const PROOF_SURFACES = [
   "test/lcx-head-tail-consistency.test.ts",
   "test/lcx-mind-model.test.ts",
   "test/lcx-problem-cluster-radar.test.ts",
+  "test/lcx-commercial-acceptance-harness.test.ts",
   "test/lcx-agent-exam.test.ts",
   "test/local-brain-training-plan.test.ts",
   "test/local-brain-distill-eval.test.ts",
@@ -129,6 +131,7 @@ const BOUNDARY_SURFACES = [
   "src/agents/system-prompt.ts",
   "scripts/dev/lcx-promote-live.ts",
   "scripts/dev/lcx-flow-graph.ts",
+  "scripts/dev/lcx-commercial-acceptance-harness.ts",
   "scripts/dev/lcx-system-doctor.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/local-brain-training-plan.ts",
@@ -232,6 +235,34 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     boundaryTerms: ["live-visible-fixed", "providerConfigTouched", "liveTouched"],
     nextAction:
       "Do not claim live-visible-fixed until migration, probe, and real inbound/reply evidence exist.",
+  },
+  {
+    id: "commercial_acceptance_harness",
+    masterLane: "global_doctrine_and_runbook",
+    objective:
+      "Grade commercial readiness through one product-level exam that consumes existing owners instead of manual red-dot hunting.",
+    headTerms: ["Commercial Acceptance Harness", "product-grade exam", "readyForCommercialRelease"],
+    workflowTerms: [
+      "lcx-commercial-acceptance-harness",
+      "lcx-commercial-answer-pipeline",
+      "lcx-problem-cluster-radar",
+      "lcx-promote-live",
+    ],
+    proofTerms: [
+      "commercial_acceptance_harness",
+      "canaryPlan",
+      "blockedGates",
+      "provider_council_degraded",
+      "post_migration_lark_canary_missing",
+    ],
+    boundaryTerms: [
+      "dev_commercial_acceptance_harness_only",
+      "liveTouched",
+      "providerConfigTouched",
+      "protectedMemoryTouched",
+    ],
+    nextAction:
+      "Run the commercial acceptance harness for product readiness; fix owner gates, not isolated symptoms.",
   },
   {
     id: "finance_research_capability",

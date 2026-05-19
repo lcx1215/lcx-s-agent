@@ -134,6 +134,7 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 20. Qwen adapter 真相用 `lcx-promotion-and-adapter-truth-operator`：`latest-passing`、`latest-promoted`、active guard adapter、parseRecovered、blocked challenger、promotion audit 分开看；`200/200` 带 parseRecovered 仍不能 promotion。
 21. 未来目标是世界级 agent 架构，但验收标准不是口号：用户入口简单，内部角色专业，volatile 状态只有一个事实 owner，学习沉淀有 source/retrieval/apply/eval/review 证据，所有回流有边界，dev/live/protected memory 不混，架构变更能被 mind model、flow graph、head-tail、doctor、training-plan、context recovery、problem cluster radar 和 live probe 共同解释。
 22. 未来智能体不能等用户逐个提醒这些架构检查。遇到非平凡工程、上下文恢复、训练/晋级判断、模块学习吸收、记忆沉淀、Lark/live 边界或“继续找问题”时，先自动跑 `lcx-problem-cluster-radar` 看当前问题簇，再按 cluster 的 `ownerEntrypoint` 去跑 owner 命令；如果 training-plan 显示 Qwen/MiniMax/MLX 正在跑，就只报告 PID 和 defer heavy eval，不启动重叠任务。
+23. 商用验收不能靠 Codex 手工扫红点。`scripts/dev/lcx-commercial-acceptance-harness.ts` 是产品级考官：它消费 commercial answer pipeline、problem radar、flow graph、mind model、live status、training plan 和 system doctor/provider council，不替代它们。它按 error budget 和 canary plan 判定 `readyForCommercialRelease`，把真实 Lark 自然学习题、固定验收短语、核心金融研究题分开看；不发送 Lark、不启动训练、不改 provider config、不碰 protected memory。
 
 上帝视角检查命令：
 
@@ -142,11 +143,12 @@ node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 ```
 
-它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图还输出 `diagnosticIndex`：每条水流会告诉你它检测什么问题、事实 owner 是哪个入口、最快检查命令是什么、缺哪个 filter/receipt 会报警。它不是只画结构图，而是给 operator 快速定位系统断点。`lcx-problem-cluster-radar` 在这些 owner 上面做聚合：它不重新判断 Qwen、模块学习、上下文恢复或水路是否正确，只读取各 owner 的 JSON，把当前红灯合成 `problemClusters` / `actionableClusters`，例如 eval 超时、旧 eval 证据晚于新 guard、模块 absorption 未闭环、dirty worktree、operator recovery 警告。这样 Codex 不需要靠人工扫日志才能知道“现在还有哪些中等问题簇”。现在水路图至少覆盖 15 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、商用回答流水线、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock、金融数据网关对账、高级交易员失败族闭环。
+它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图还输出 `diagnosticIndex`：每条水流会告诉你它检测什么问题、事实 owner 是哪个入口、最快检查命令是什么、缺哪个 filter/receipt 会报警。它不是只画结构图，而是给 operator 快速定位系统断点。`lcx-problem-cluster-radar` 在这些 owner 上面做聚合：它不重新判断 Qwen、模块学习、上下文恢复或水路是否正确，只读取各 owner 的 JSON，把当前红灯合成 `problemClusters` / `actionableClusters`，例如 eval 超时、旧 eval 证据晚于新 guard、模块 absorption 未闭环、dirty worktree、operator recovery 警告。`lcx-commercial-acceptance-harness` 再往上做商用判卷：不是新事实 owner，而是把答案流水线、雷达、live 状态、训练 overlap、provider council 和 canary 缺口合成一张 release readiness 表。这样 Codex 不需要靠人工扫日志才能知道“现在还有哪些中等问题簇”和“能不能按商用标准说 ready”。现在水路图至少覆盖 16 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、商用回答流水线、商用验收考官、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock、金融数据网关对账、高级交易员失败族闭环。
 
 金融数据不能散落在各模块里直接给 Qwen 或 Lark 用。凡是当前行情、价格、财报、宏观、ETF、期权、指数权重、vendor 字段、仓位风险里会出现数字的路径，先走 `finance_data_gateway_snapshot`：每个字段必须带 provider role、source timestamp、timezone、field definition、unit/currency、adjusted status、source URL/artifact；主源、交叉校验源和官方/issuer 慢源不一致时进入 `data_provenance_quality`，不能硬写结论。
 

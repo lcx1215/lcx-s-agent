@@ -101,11 +101,11 @@ describe("LCX flow graph exam", () => {
     );
     expect(payload.summary.failed).toBe(0);
     expect(payload.summary.total).toBeGreaterThanOrEqual(8);
-    expect(payload.summary.scenarios).toBeGreaterThanOrEqual(14);
+    expect(payload.summary.scenarios).toBeGreaterThanOrEqual(16);
     expect(payload.summary.nodes).toBeGreaterThanOrEqual(70);
     expect(payload.summary.filters).toBeGreaterThanOrEqual(35);
-    expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(7);
-    expect(payload.summary.consolidatedEntrypointFamilies).toBeGreaterThanOrEqual(8);
+    expect(payload.summary.consolidationClusters).toBeGreaterThanOrEqual(9);
+    expect(payload.summary.consolidatedEntrypointFamilies).toBeGreaterThanOrEqual(9);
     expect(payload.summary.sharedEntrypointOwnerRules).toBeGreaterThanOrEqual(2);
     expect(payload.summary.diagnosticEntries).toBe(payload.summary.scenarios);
     expect(payload.checks).toEqual(
@@ -192,6 +192,21 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "commercial_acceptance_harness_waterflow",
+          feedbackEdgeCount: 2,
+          receipts: expect.arrayContaining([
+            "commercial_acceptance_harness",
+            "lcx-problem-cluster-radar",
+            "feishu-reply-flow",
+          ]),
+          requiredFilters: expect.arrayContaining([
+            "commercial_error_budget_required",
+            "product_canary_suite_required",
+            "single_owner_required",
+            "real_lark_inbound_required",
+          ]),
+        }),
+        expect.objectContaining({
           id: "memory_correction_downrank_waterflow",
           requiredFilters: expect.arrayContaining([
             "memory_write_freshness_gate",
@@ -271,6 +286,15 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "commercial_acceptance_harness_cluster",
+          ownerScenario: "commercial_acceptance_harness_waterflow",
+          mergeFilters: expect.arrayContaining([
+            "commercial_error_budget_required",
+            "product_canary_suite_required",
+            "single_owner_required",
+          ]),
+        }),
+        expect.objectContaining({
           id: "senior_trader_failure_focus_cluster",
           ownerScenario: "senior_trader_failure_focus_waterflow",
           mergeFilters: expect.arrayContaining([
@@ -305,6 +329,12 @@ describe("LCX flow graph exam", () => {
             "src/auto-reply/reply/skill-autocue.ts",
             "src/auto-reply/reply/skill-autocue.test.ts",
           ]),
+        }),
+        expect.objectContaining({
+          id: "commercial_acceptance_harness_entrypoints",
+          ownerCluster: "commercial_acceptance_harness_cluster",
+          ownerPath: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          watchedPathTerms: expect.arrayContaining(["commercial-acceptance"]),
         }),
         expect.objectContaining({
           id: "qwen_training_operation_entrypoints",
@@ -378,6 +408,16 @@ describe("LCX flow graph exam", () => {
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:candidate_answer_not_final_authority",
             "missing_or_skipped_filter:terminal_decision_required",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "commercial_acceptance_harness_waterflow",
+          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          fastCheck: "node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json",
+          evidenceReceipts: expect.arrayContaining(["commercial_acceptance_harness"]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:commercial_error_budget_required",
+            "missing_or_skipped_filter:product_canary_suite_required",
           ]),
         }),
       ]),

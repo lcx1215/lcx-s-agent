@@ -9,6 +9,7 @@ When a new Codex coding window enters this repo without prior chat context, star
 ```bash
 sed -n '1,220p' ops/local-brain/README.md
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff
+node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
@@ -33,6 +34,18 @@ owner-reported issues. It consumes existing owner outputs such as
 `lcx-mind-model`, `lcx-flow-graph`, and `lcx-context-recovery-exam`; it must not
 re-implement their truth logic. Use it when the structure checks pass but Codex
 still needs to know which P1/P2/P3 problem clusters are active.
+The commercial acceptance harness is the product-grade exam above the answer
+pipeline and radar:
+
+```bash
+node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
+```
+
+It consumes existing owners for answer quality, problem clusters, architecture,
+live status, training overlap, and provider council evidence. It must not
+replace those owners, send Lark messages, start training, change provider
+config, touch protected memory, or claim `live-user-seen` without real
+post-migration Lark evidence.
 
 ## Governance Stack Autopilot
 
@@ -44,6 +57,7 @@ finding issues" request, run the governance stack automatically:
 
 ```bash
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-mind-model.ts --json

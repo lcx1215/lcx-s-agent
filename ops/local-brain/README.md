@@ -35,6 +35,7 @@ node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
@@ -93,13 +94,25 @@ get the cluster list, then follow each cluster's `ownerEntrypoint`; do not let
 the radar replace those owners. If the training plan shows active
 Qwen/MiniMax/MLX work, do not start a second heavy eval from this governance
 stack.
-It should not stay at only six obvious waterflows. The current minimum is 15
+The Commercial Acceptance Harness is the product-grade exam above those owners:
+
+```bash
+node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
+```
+
+It consumes commercial answer pipeline, problem radar, flow graph, mind model,
+live status, training plan, and system doctor/provider council evidence. It is
+not a new truth owner, does not send Lark messages, and does not start training.
+Treat `blocked` gates as explicit acceptance gaps: post-migration natural Lark
+canary missing, provider degradation, active Qwen guard, or owner-gated module
+learning states are not green release proof.
+It should not stay at only six obvious waterflows. The current minimum is 16
 core waterflows, including Lark visible language, commercial answer pipeline,
-provider council evidence, memory correction/downrank, same-philosophy
-engineering consolidation, external skill or agent distillation, automation
-repair locks, and finance data gateway reconciliation. The same-philosophy
-consolidation clusters enforce that related mechanisms merge into one owner
-scenario instead of becoming parallel systems.
+commercial acceptance harness, provider council evidence, memory
+correction/downrank, same-philosophy engineering consolidation, external skill
+or agent distillation, automation repair locks, and finance data gateway
+reconciliation. The same-philosophy consolidation clusters enforce that related
+mechanisms merge into one owner scenario instead of becoming parallel systems.
 
 Commercial-grade convergence does not mean deleting useful entrypoints. Keep
 separate product/operator surfaces for the control room, doctor, training plan,
@@ -166,6 +179,12 @@ blueprint lane.
    detail on demand. Keep useful operator and specialist entrypoints, but every
    volatile status family needs one single factual owner and flow-graph
    consolidated entrypoint coverage.
+7. Product-grade acceptance: run
+   `node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json`
+   to judge release readiness across answer quality, radar clusters, live
+   status, training overlap, provider council, and canary gaps. It reports
+   `readyForCommercialRelease`; blocked gates are evidence, not a reason to
+   claim green.
 
 `lcx-agent-exam --json` reports this plan as `commercialBlueprint` so a future
 window can see which item is ready, blocked, needs receipts, or needs live
