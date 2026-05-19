@@ -814,6 +814,79 @@ describe("local-brain-training-plan", () => {
     );
   });
 
+  it("does not advertise promotion ready when a newer stable eval timeout supersedes the clean eval", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+      {
+        at: "2026-05-09T10:30:00.000Z",
+        event: "step_ok",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          summary: {
+            passed: 200,
+            total: 200,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T11:00:00.000Z",
+        event: "step_timeout",
+        name: "stable_hardened_eval",
+        durationMs: 3_600_002,
+        timeoutReason: "total_timeout",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          timeoutReason: "total_timeout",
+          timeoutMs: 3_600_002,
+          durationMs: 3_600_002,
+          summary: {
+            passed: 0,
+            total: 0,
+            failedCaseIds: ["stable_hardened_eval_total_timeout"],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.latestEval).toMatchObject({
+      at: "2026-05-09T10:30:00.000Z",
+      promotionReady: true,
+    });
+    expect(plan.latestEvalTimeout).toMatchObject({
+      at: "2026-05-09T11:00:00.000Z",
+      timeoutReason: "total_timeout",
+    });
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "promotion_candidate_blocked_by_runtime_truth",
+          lane: "promotion_audit",
+          severity: "P2",
+          codexRepairEligible: false,
+          reason: expect.stringContaining("newer than promotion-ready eval"),
+        }),
+      ]),
+    );
+    expect(plan.decisions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "promotion_candidate_ready" })]),
+    );
+  });
+
   it("treats summary-only parse error case ids as output-contract failures", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },

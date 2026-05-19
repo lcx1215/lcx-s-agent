@@ -1235,6 +1235,10 @@ function buildDecisions(params: {
   const latestTimeoutAfterStart =
     Boolean(params.latestEvalTimeout?.at) &&
     (!guardStartAt || params.latestEvalTimeout!.at > guardStartAt);
+  const latestTimeoutBlocksPromotion =
+    latestTimeoutAfterStart &&
+    Boolean(params.latestEvalTimeout?.at) &&
+    (!params.latestEval?.at || params.latestEvalTimeout!.at > params.latestEval.at);
   if (latestTimeoutAfterStart) {
     const count = params.stableEvalTimeoutCountAfterLatestStart ?? 0;
     decisions.push({
@@ -1250,6 +1254,7 @@ function buildDecisions(params: {
       codexRepairEligible: false,
     });
   }
+  const guardAdapterMismatch = (params.activeGuardAdapterTruth?.mismatchReasons ?? []).length > 0;
 
   if (params.latestEval && latestEvalIsAfterStart && !params.latestEval.promotionReady) {
     decisions.push({
@@ -1347,7 +1352,29 @@ function buildDecisions(params: {
     });
   }
 
-  if (params.latestEval?.promotionReady && latestEvalIsAfterStart) {
+  if (
+    params.latestEval?.promotionReady &&
+    latestEvalIsAfterStart &&
+    (latestTimeoutBlocksPromotion || guardAdapterMismatch)
+  ) {
+    decisions.push({
+      id: "promotion_candidate_blocked_by_runtime_truth",
+      lane: "promotion_audit",
+      severity: latestTimeoutBlocksPromotion || guardAdapterMismatch ? "P2" : "P3",
+      action: "wait_for_current_guard_truth_before_promotion_audit",
+      reason: [
+        latestTimeoutBlocksPromotion
+          ? `Latest eval timeout at ${params.latestEvalTimeout?.at} is newer than promotion-ready eval at ${params.latestEval.at}.`
+          : undefined,
+        guardAdapterMismatch
+          ? `Active guard adapter mismatch: ${params.activeGuardAdapterTruth?.mismatchReasons.join(",")}.`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      codexRepairEligible: false,
+    });
+  } else if (params.latestEval?.promotionReady && latestEvalIsAfterStart) {
     decisions.push({
       id: "promotion_candidate_ready",
       lane: "promotion_audit",
