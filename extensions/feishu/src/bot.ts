@@ -110,6 +110,7 @@ import {
   peekFeishuLearningTimeboxSession,
   startFeishuLearningTimeboxSession,
 } from "./learning-timebox.js";
+import { summarizeFeishuLearningVisibleTopic } from "./learning-visible-topic.js";
 import { runFeishuMarketIntelligencePacket } from "./market-intelligence.js";
 import { downloadMessageResourceFeishu } from "./media.js";
 import { extractMentionTargets, isMentionForwardRequest } from "./mention.js";
@@ -1258,28 +1259,6 @@ function renderFeishuLearningIntakePlanDeliverable(params: {
     "- 第三层：策略和风险边界。先理解保护性 put、备兑 call、价差组合的风险收益形状；新手不要先学复杂组合，更不能把期权当高杠杆彩票。",
     "- 沉淀路线: 先登记来源和阅读范围，再提炼成 options_volatility 的能力规则，随后做 retrieval/apply 回执、相邻应用题、review 和 eval/training absorption；通过前只算 intake plan，不算系统已经学会。",
   ];
-}
-
-function summarizeFeishuLearningVisibleTopic(userMessage: string | undefined): string {
-  const normalized = (userMessage ?? "")
-    .replace(/<at\s+[^>]*>.*?<\/at>/giu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (!normalized) {
-    return "这个主题";
-  }
-  const topicPatterns = [
-    /(?:今天|现在|接下来)?\s*(?:学习|研究|补|看|读)\s*([^，。；;,.!?！？]{1,36})/iu,
-    /([^，。；;,.!?！？]{1,36})\s*(?:的知识|知识|框架|资料|论文)/iu,
-  ];
-  for (const pattern of topicPatterns) {
-    const match = normalized.match(pattern);
-    const topic = match?.[1]?.trim();
-    if (topic) {
-      return topic;
-    }
-  }
-  return normalized.length > 36 ? `${normalized.slice(0, 36)}...` : normalized;
 }
 
 async function runFeishuLearningCouncilWithVisibleTimeout(

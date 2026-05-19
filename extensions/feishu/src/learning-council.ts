@@ -27,6 +27,7 @@ import type {
 } from "../../../src/hooks/bundled/lobster-brain-registry.js";
 import { writeFileWithinRoot } from "../../../src/infra/fs-safe.js";
 import { recordOperationalAnomaly } from "../../../src/infra/operational-anomalies.js";
+import { summarizeLearningCouncilVisibleTopic } from "./learning-visible-topic.js";
 
 type LearningCouncilRole = "kimi" | "minimax" | "deepseek";
 type LearningCouncilCapability = "synthesis" | "challenge" | "extraction";
@@ -1454,37 +1455,6 @@ function renderRoleSection(
       .trim();
   }
   return `## ${result.heading}\n${laneReceipt}\n- run_failed: ${result.error ?? "unknown error"}\n- status: low-fidelity for this role in this turn.`.trim();
-}
-
-function summarizeLearningCouncilVisibleTopic(userMessage: string): string {
-  const normalized = userMessage
-    .replace(/<at\s+[^>]*>.*?<\/at>/giu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (!normalized) {
-    return "这个学习主题";
-  }
-  const stripped = normalized
-    .replace(/^(?:今天|现在|接下来)\s*/u, "")
-    .replace(/^(?:用|让)?(?:三|3|多)?个?模型(?:一起|同时)?\s*/u, "")
-    .replace(/^(?:一起|同时)?\s*(?:学习一下|学一下|学学|学习|研究|补|看|读)\s*/u, "")
-    .replace(/(?:的知识|知识|框架|资料|论文)$/u, "")
-    .trim();
-  if (stripped && stripped !== normalized) {
-    return stripped.length > 36 ? `${stripped.slice(0, 36)}...` : stripped;
-  }
-  const topicPatterns = [
-    /(?:今天|现在|接下来)?\s*(?:学习|研究|补|看|读)\s*([^，。；;,.!?！？]{1,36})/iu,
-    /([^，。；;,.!?！？]{1,36})\s*(?:的知识|知识|框架|资料|论文)/iu,
-  ];
-  for (const pattern of topicPatterns) {
-    const match = normalized.match(pattern);
-    const topic = match?.[1]?.trim();
-    if (topic) {
-      return topic;
-    }
-  }
-  return normalized.length > 36 ? `${normalized.slice(0, 36)}...` : normalized;
 }
 
 function renderLearningCouncilReadableLead(params: {
