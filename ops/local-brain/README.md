@@ -260,6 +260,10 @@ failure-focus curriculum, run teacher-quality repair, run promotion audit, or
 enter Codex auto-repair mode through the repo repair lock. Use this plan before
 creating a new training script, eval lane, automation prompt, or one-off fix.
 It is dev/local only and must not be used to claim live Lark success.
+When `lcx-problem-cluster-radar` reports `pendingVerificationSignals`, treat it
+as dev repaired but not owner-verified: do not patch the same lane again until
+the owning training, teacher, eval, or promotion command reruns and clears or
+reopens the signal.
 It reads module-learning receipts from `~/.openclaw/workspace` by default, not
 from the repo worktree. Use `--workspace PATH` only for isolated tests or an
 explicit alternate workspace. The plan must surface

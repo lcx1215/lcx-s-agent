@@ -53,10 +53,19 @@ type RadarInputs = {
   systemMemoryGate?: OwnerSnapshot;
   changeImpact?: OwnerSnapshot;
   externalAgentUpgrade?: OwnerSnapshot;
+  repairVerification?: Record<string, RepairVerificationEvidence>;
 };
 
 type CliOptions = {
   json: boolean;
+};
+
+type RepairVerificationEvidence = {
+  status: "pending_owner_verification";
+  repairedAt: string;
+  commit: string;
+  files: string[];
+  reason: string;
 };
 
 function usage(): never {
@@ -100,6 +109,15 @@ function stringArray(value: unknown): string[] {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+export function isIsoTimeSameOrAfter(candidate: string, baseline: string): boolean {
+  const candidateMs = Date.parse(candidate);
+  const baselineMs = Date.parse(baseline);
+  if (!Number.isFinite(candidateMs) || !Number.isFinite(baselineMs)) {
+    return false;
+  }
+  return candidateMs >= baselineMs;
 }
 
 function evalPassLabel(evalRecord: Record<string, unknown> | undefined): string {
@@ -172,11 +190,19 @@ function problemCluster(params: {
   };
 }
 
-function repairableSignalEntries(clusters: readonly ProblemCluster[]) {
+function repairableSignalEntries(
+  clusters: readonly ProblemCluster[],
+  repairVerification: Record<string, RepairVerificationEvidence> | undefined,
+) {
   return clusters.flatMap((cluster) =>
     cluster.signals.flatMap((signal) => {
       const evidence = recordValue(signal.evidence);
       if (evidence?.codexRepairEligible !== true) {
+        return [];
+      }
+      const key = `${cluster.id}/${signal.id}`;
+      const pendingVerification = repairVerification?.[key] ?? repairVerification?.[signal.id];
+      if (pendingVerification) {
         return [];
       }
       return [
@@ -189,6 +215,44 @@ function repairableSignalEntries(clusters: readonly ProblemCluster[]) {
           sourceOwners: cluster.sourceOwners,
           action: stringValue(evidence.action) ?? "owner_marked_codex_repair_eligible",
           reason: stringValue(evidence.reason),
+        },
+      ];
+    }),
+  );
+}
+
+function pendingVerificationSignalEntries(
+  clusters: readonly ProblemCluster[],
+  repairVerification: Record<string, RepairVerificationEvidence> | undefined,
+) {
+  if (!repairVerification) {
+    return [];
+  }
+  return clusters.flatMap((cluster) =>
+    cluster.signals.flatMap((signal) => {
+      const evidence = recordValue(signal.evidence);
+      if (evidence?.codexRepairEligible !== true) {
+        return [];
+      }
+      const key = `${cluster.id}/${signal.id}`;
+      const pendingVerification = repairVerification[key] ?? repairVerification[signal.id];
+      if (!pendingVerification) {
+        return [];
+      }
+      return [
+        {
+          clusterId: cluster.id,
+          signalId: signal.id,
+          severity: signal.severity,
+          summary: signal.summary,
+          ownerEntrypoint: cluster.ownerEntrypoint,
+          sourceOwners: cluster.sourceOwners,
+          status: pendingVerification.status,
+          repairedAt: pendingVerification.repairedAt,
+          commit: pendingVerification.commit,
+          files: pendingVerification.files,
+          reason: pendingVerification.reason,
+          ownerVerificationRequired: true,
         },
       ];
     }),
@@ -211,6 +275,15 @@ function ownerDecisionRepairBlocked(
       (decision) =>
         decision?.id === decisionId && booleanValue(decision.codexRepairEligible) === false,
     );
+}
+
+function hasDecision(
+  trainingPlan: Record<string, unknown> | undefined,
+  decisionId: string,
+): boolean {
+  return arrayValue(trainingPlan?.decisions)
+    .map(recordValue)
+    .some((decision) => decision?.id === decisionId);
 }
 
 function commandFailureSignal(snapshot: OwnerSnapshot | undefined): ProblemSignal | undefined {
@@ -294,7 +367,7 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
   const latestTimeoutAt = stringValue(latestTimeout?.at);
   const timeoutIsNewerThanLatestEval =
     latestTimeoutAt !== undefined &&
-    (!latestEvalAt || latestTimeoutAt.localeCompare(latestEvalAt) >= 0);
+    (!latestEvalAt || isIsoTimeSameOrAfter(latestTimeoutAt, latestEvalAt));
   if (latestTimeout && (timeoutAfterCurrentStart || timeoutIsNewerThanLatestEval)) {
     signals.push({
       id: timeoutAfterCurrentStart
@@ -811,7 +884,11 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
   const blockedClusters = clusters.filter(
     (cluster) => cluster.actionability === "blocked_by_owner_gate",
   );
-  const repairableSignals = repairableSignalEntries(clusters);
+  const repairableSignals = repairableSignalEntries(clusters, inputs.repairVerification);
+  const pendingVerificationSignals = pendingVerificationSignalEntries(
+    clusters,
+    inputs.repairVerification,
+  );
   const watchClusters = clusters.filter((cluster) => cluster.severity === "P3");
   return {
     ok: true,
@@ -822,6 +899,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
       actionableClusters: repairableClusters.length,
       repairableClusters: repairableClusters.length,
       repairableSignals: repairableSignals.length,
+      pendingVerificationSignals: pendingVerificationSignals.length,
       blockedClusters: blockedClusters.length,
       watchClusters: watchClusters.length,
       highestSeverity: maxSeverity(clusters.flatMap((cluster) => cluster.signals)),
@@ -842,10 +920,15 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
     actionableClusters: repairableClusters.map((cluster) => cluster.id),
     repairableClusters: repairableClusters.map((cluster) => cluster.id),
     repairableSignals,
+    pendingVerificationSignals,
     blockedClusters: blockedClusters.map((cluster) => cluster.id),
     nextActions: repairableClusters.map((cluster) => `${cluster.id}: ${cluster.nextAction}`),
     repairableActions: repairableSignals.map(
       (signal) => `${signal.clusterId}/${signal.signalId}: ${signal.action}`,
+    ),
+    pendingVerificationActions: pendingVerificationSignals.map(
+      (signal) =>
+        `${signal.clusterId}/${signal.signalId}: wait_for_owner_verification commit=${signal.commit}`,
     ),
     blockedActions: blockedClusters.map(
       (cluster) =>
@@ -899,6 +982,59 @@ async function runJsonOwner(owner: string, script: string): Promise<OwnerSnapsho
         .slice(-1200),
     };
   }
+}
+
+async function latestCommitTouchingPaths(
+  paths: string[],
+): Promise<{ commit: string; committedAt: string } | undefined> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["log", "-1", "--format=%H%x00%cI", "--", ...paths],
+      {
+        cwd: repoRoot,
+        env: process.env,
+        maxBuffer: EXEC_MAX_BUFFER,
+      },
+    );
+    const [commit, committedAt] = stdout.trim().split("\0");
+    if (!commit || !committedAt) {
+      return undefined;
+    }
+    return { commit, committedAt };
+  } catch {
+    return undefined;
+  }
+}
+
+async function buildRepairVerification(
+  trainingPlan: Record<string, unknown> | undefined,
+): Promise<Record<string, RepairVerificationEvidence>> {
+  const repairVerification: Record<string, RepairVerificationEvidence> = {};
+  const latestTeacher = recordValue(trainingPlan?.latestTeacher);
+  const latestTeacherAt = stringValue(latestTeacher?.at);
+  const teacherRepairFiles = [
+    "scripts/dev/minimax-brain-teacher-batch.ts",
+    "test/minimax-brain-teacher-batch.test.ts",
+  ];
+  if (latestTeacherAt && hasDecision(trainingPlan, "teacher_sample_quality_failure")) {
+    const commit = await latestCommitTouchingPaths(teacherRepairFiles);
+    if (
+      commit &&
+      isIsoTimeSameOrAfter(commit.committedAt, latestTeacherAt) &&
+      commit.committedAt !== latestTeacherAt
+    ) {
+      repairVerification["training_eval_runtime_cluster/teacher_sample_quality_failure"] = {
+        status: "pending_owner_verification",
+        repairedAt: commit.committedAt,
+        commit: commit.commit.slice(0, 10),
+        files: teacherRepairFiles,
+        reason:
+          "repo has a newer teacher parser repair commit than the latest logged teacher failure; wait for the next teacher owner run before opening another repair",
+      };
+    }
+  }
+  return repairVerification;
 }
 
 async function collectOwnerSnapshots(): Promise<RadarInputs> {
@@ -955,6 +1091,7 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
       "scripts/dev/lcx-external-agent-upgrade-radar.ts",
     ),
   ]);
+  const repairVerification = await buildRepairVerification(trainingPlan.payload);
   return {
     trainingPlan,
     moduleAbsorption,
@@ -966,6 +1103,7 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
     systemMemoryGate,
     changeImpact,
     externalAgentUpgrade,
+    repairVerification,
   };
 }
 

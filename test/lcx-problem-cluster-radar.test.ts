@@ -2,7 +2,10 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { buildProblemClusterRadar } from "../scripts/dev/lcx-problem-cluster-radar.js";
+import {
+  buildProblemClusterRadar,
+  isIsoTimeSameOrAfter,
+} from "../scripts/dev/lcx-problem-cluster-radar.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -38,6 +41,15 @@ async function runJsonScript(script: string) {
 }
 
 describe("lcx-problem-cluster-radar", () => {
+  it("compares ISO timestamps by instant instead of local string shape", () => {
+    expect(isIsoTimeSameOrAfter("2026-05-19T13:20:46-04:00", "2026-05-19T14:35:30.371Z")).toBe(
+      true,
+    );
+    expect(isIsoTimeSameOrAfter("2026-05-19T10:20:46-04:00", "2026-05-19T14:35:30.371Z")).toBe(
+      false,
+    );
+  });
+
   it("aggregates owner outputs into actionable problem clusters without owning truth", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
@@ -546,6 +558,82 @@ describe("lcx-problem-cluster-radar", () => {
     expect(result.repairableActions).toEqual(
       expect.arrayContaining([
         "training_eval_runtime_cluster/teacher_sample_quality_failure: repair_teacher_filter_or_prompt_if_pattern_repeats",
+      ]),
+    );
+  });
+
+  it("moves already-repaired sub-signals into pending owner verification", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        activeProcesses: [{ pid: 101, role: "guard" }],
+        latestTeacher: {
+          at: "2026-05-19T14:35:30.371Z",
+          failures: 1,
+        },
+        latestEval: { passed: 201, total: 201, promotionReady: false, parseRecoveredCaseIds: [] },
+        decisions: [
+          {
+            id: "teacher_sample_quality_failure",
+            action: "repair_teacher_filter_or_prompt_if_pattern_repeats",
+            reason: "SyntaxError: Expected double-quoted property name in JSON.",
+            codexRepairEligible: true,
+          },
+        ],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+      repairVerification: {
+        "training_eval_runtime_cluster/teacher_sample_quality_failure": {
+          status: "pending_owner_verification",
+          repairedAt: "2026-05-19T17:18:00.000Z",
+          commit: "6a0091c73e",
+          files: [
+            "scripts/dev/minimax-brain-teacher-batch.ts",
+            "test/minimax-brain-teacher-batch.test.ts",
+          ],
+          reason: "newer teacher parser repair commit",
+        },
+      },
+    });
+
+    expect(result.summary.repairableSignals).toBe(0);
+    expect(result.summary.pendingVerificationSignals).toBe(1);
+    expect(result.repairableActions).toEqual([]);
+    expect(result.pendingVerificationSignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          clusterId: "training_eval_runtime_cluster",
+          signalId: "teacher_sample_quality_failure",
+          status: "pending_owner_verification",
+          commit: "6a0091c73e",
+          ownerVerificationRequired: true,
+        }),
+      ]),
+    );
+    expect(result.pendingVerificationActions).toEqual(
+      expect.arrayContaining([
+        "training_eval_runtime_cluster/teacher_sample_quality_failure: wait_for_owner_verification commit=6a0091c73e",
       ]),
     );
   });

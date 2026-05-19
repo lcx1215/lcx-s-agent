@@ -374,6 +374,10 @@ diagnostic to run.
   the failure family, acquire repair ownership when required, patch the shared
   contract, run targeted proof, refresh the relevant snapshot, and leave a
   receipt or commit.
+- A repaired owner signal is not the same as a verified owner signal. If a
+  commit or receipt is newer than the latest owner failure but the owner has not
+  rerun yet, radar should classify it as `pending_owner_verification` instead
+  of asking future agents to patch the same lane again.
 - Stale snapshots are not harmless. Context recovery and local operator digest
   must compare current owner outputs against stored snapshots and force refresh
   before a future agent relies on old machine truth.
