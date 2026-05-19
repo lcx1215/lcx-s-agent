@@ -395,6 +395,22 @@ why_existing_path_was_insufficient=<short_reason>
 For papers, open-source projects, external skills, and finance research modules,
 this gate is mandatory before claiming anything was learned or internalized.
 
+For broad external-agent upgrades, run the external agent upgrade radar before
+building a new path:
+
+```bash
+node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json
+```
+
+The current five source families are Agent Lightning, LongMemEval-V2 /
+AgentRunbook, LightMem / LycheeMemory, ClawBench / WildClawBench, and Agent S /
+CLI-Anything. They must land in existing owners such as problem radar, context
+recovery, learning sedimentation, commercial acceptance, skill-harvester, and
+cli-anything-harvester. This is not direct runtime authority: no direct install,
+no provider config, no live sender, and no protected memory mutation. Treat the
+radar as dev-only architecture wiring until a concrete probe, eval/receipt,
+live migration, and fresh Lark visible proof all exist.
+
 ## All-Module Internalization Chain
 
 Do not treat the source-to-learning chain as a factor-only mechanism. Any local

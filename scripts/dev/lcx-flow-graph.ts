@@ -76,6 +76,7 @@ type FlowNodeId =
   | "single_owner_contract"
   | "parallel_path_reject"
   | "external_agent_source"
+  | "external_upgrade_radar"
   | "license_scope_review"
   | "workflow_distillation"
   | "local_skill_candidate"
@@ -267,6 +268,7 @@ const NODE_IDS: FlowNodeId[] = [
   "single_owner_contract",
   "parallel_path_reject",
   "external_agent_source",
+  "external_upgrade_radar",
   "license_scope_review",
   "workflow_distillation",
   "local_skill_candidate",
@@ -937,6 +939,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "source_registry",
       "license_scope_review",
       "actual_reading_scope",
+      "external_upgrade_radar",
       "workflow_distillation",
       "local_skill_candidate",
       "review_panel",
@@ -953,13 +956,19 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["external_agent_source", "source_registry"],
       ["source_registry", "license_scope_review"],
       ["license_scope_review", "actual_reading_scope"],
-      ["actual_reading_scope", "workflow_distillation"],
+      ["actual_reading_scope", "external_upgrade_radar"],
+      ["external_upgrade_radar", "workflow_distillation"],
       ["workflow_distillation", "local_skill_candidate"],
       ["local_skill_candidate", "review_panel"],
       ["review_panel", "acceptance_eval"],
     ],
     feedbackEdges: [["acceptance_eval", "workflow_distillation"]],
-    receipts: ["skill_pattern_distillation", "agent_workflow_memory", "local-brain-distill-eval"],
+    receipts: [
+      "lcx-external-agent-upgrade-radar",
+      "skill_pattern_distillation",
+      "agent_workflow_memory",
+      "local-brain-distill-eval",
+    ],
   },
   {
     id: "automation_repair_lock_waterflow",
@@ -1132,8 +1141,13 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     philosophy:
       "external agent and skill ideas are learned as bounded workflow patterns, not installed authority",
     ownerScenario: "external_agent_skill_distillation_waterflow",
-    ownerNode: "workflow_distillation",
-    sameClassTerms: ["skill_pattern_distillation", "agent_workflow_memory", "license"],
+    ownerNode: "external_upgrade_radar",
+    sameClassTerms: [
+      "lcx-external-agent-upgrade-radar",
+      "skill_pattern_distillation",
+      "agent_workflow_memory",
+      "license",
+    ],
     mergeFilters: ["license_scope_required", "untrusted_source_isolation"],
   },
   {
@@ -1330,11 +1344,21 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
   {
     id: "external_skill_learning_entrypoints",
     ownerCluster: "external_skill_learning_cluster",
-    ownerPath: "extensions/feishu/src/learning-council.ts",
-    watchedPathTerms: ["agent-workflow", "learning-council", "skill-pattern"],
+    ownerPath: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+    watchedPathTerms: [
+      "agent-workflow",
+      "external-agent-upgrade",
+      "skill-pattern",
+      "github-project-capability-intake",
+    ],
     allowedPaths: [
+      "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+      "test/lcx-external-agent-upgrade-radar.test.ts",
       "extensions/feishu/src/learning-council.test.ts",
       "extensions/feishu/src/learning-council.ts",
+      "src/agents/openclaw-tools.github-project-capability-intake-registration.test.ts",
+      "src/agents/tools/github-project-capability-intake-tool.test.ts",
+      "src/agents/tools/github-project-capability-intake-tool.ts",
     ],
   },
   {
@@ -1391,7 +1415,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   finance_data_gateway_waterflow: "src/agents/finance-data-gateway.ts",
   senior_trader_failure_focus_waterflow: "scripts/dev/local-brain-distill-eval.ts",
   similar_engineering_consolidation_waterflow: "scripts/dev/lcx-change-impact-plan.ts",
-  external_agent_skill_distillation_waterflow: "extensions/feishu/src/learning-council.ts",
+  external_agent_skill_distillation_waterflow: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   automation_repair_lock_waterflow: "scripts/dev/lcx-automation-repair-lock.ts",
 };
 
@@ -1422,7 +1446,7 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
   similar_engineering_consolidation_waterflow:
     "node --import tsx scripts/dev/lcx-change-impact-plan.ts --json",
   external_agent_skill_distillation_waterflow:
-    "node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only --case-id agent_skill_distillation_safety --summary-only --json",
+    "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
   automation_repair_lock_waterflow:
     "node --import tsx scripts/dev/lcx-automation-repair-lock.ts --mode status --json",
 };

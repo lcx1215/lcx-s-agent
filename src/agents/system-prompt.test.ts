@@ -496,6 +496,19 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("without fetching remote content automatically");
   });
 
+  it("keeps external agent projects behind bounded intake and existing owners", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["github_project_capability_intake"],
+    });
+
+    expect(prompt).toContain("github_project_capability_intake");
+    expect(prompt).toContain("external-agent upgrade sources");
+    expect(prompt).toContain("skill-harvester");
+    expect(prompt).toContain("cli-anything-harvester");
+    expect(prompt).toContain("Do not grant direct runtime authority");
+  });
+
   it("includes finance learning pipeline orchestrator guidance when the tool is available", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

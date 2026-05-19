@@ -184,7 +184,7 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary).toMatchObject({ passed: 12, total: 12, promotionReady: true });
     expect(payload.evalRegistry).toMatchObject({
       boundary: "dev_eval_registry_expansion_plan_only",
-      currentCaseCount: 200,
+      currentCaseCount: 201,
       promotionTargetCaseCount: 200,
     });
     expect(payload.evalRegistry.suites).toEqual(
@@ -1226,6 +1226,50 @@ describe("local-brain-distill-eval", () => {
       ]),
     );
     expect(payload.summary.total).toBeGreaterThan(4);
+    expect(payload.summary.promotionReady).toBe(true);
+  });
+
+  it("gates five-project external agent upgrades behind existing-owner distillation", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "external_agent_upgrade_five_project_distillation",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { promotionReady: boolean; total: number };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual([
+      "external_agent_upgrade_five_project_distillation",
+    ]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "external_knowledge_internalization_protocol",
+        "agent_skill_distillation_safety",
+        "source_coverage_actual_reading_scope",
+        "abstraction_transfer_repair_protocol",
+      ]),
+    );
+    expect(payload.summary.total).toBeGreaterThanOrEqual(5);
     expect(payload.summary.promotionReady).toBe(true);
   });
 

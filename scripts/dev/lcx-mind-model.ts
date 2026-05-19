@@ -76,6 +76,7 @@ const WORKFLOW_SURFACES = [
   "scripts/dev/lcx-head-tail-consistency.ts",
   "scripts/dev/lcx-problem-cluster-radar.ts",
   "scripts/dev/lcx-commercial-acceptance-harness.ts",
+  "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   "scripts/dev/lcx-learning-sedimentation-bridge.ts",
   "scripts/dev/lcx-learning-sedimentation-audit.ts",
   "scripts/dev/lcx-learning-sedimentation-map.ts",
@@ -107,6 +108,7 @@ const PROOF_SURFACES = [
   "test/lcx-mind-model.test.ts",
   "test/lcx-problem-cluster-radar.test.ts",
   "test/lcx-commercial-acceptance-harness.test.ts",
+  "test/lcx-external-agent-upgrade-radar.test.ts",
   "test/lcx-agent-exam.test.ts",
   "test/local-brain-training-plan.test.ts",
   "test/local-brain-distill-eval.test.ts",
@@ -130,6 +132,7 @@ const BOUNDARY_SURFACES = [
   "ops/local-brain/README.md",
   "src/agents/system-prompt.ts",
   "scripts/dev/lcx-promote-live.ts",
+  "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-commercial-acceptance-harness.ts",
   "scripts/dev/lcx-system-doctor.ts",
@@ -368,6 +371,40 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     nextAction:
       "Judge future architecture work by factual owners, recovery, eval proof, bounded feedback, and boundary honesty.",
   },
+  {
+    id: "external_agent_upgrade_distillation",
+    masterLane: "agent_workflow_memory",
+    objective:
+      "Fold useful GitHub, arXiv, memory, benchmark, and computer-use projects into existing LCX owners without granting runtime authority.",
+    headTerms: [
+      "external agent upgrade radar",
+      "Agent Lightning",
+      "LongMemEval-V2",
+      "ClawBench",
+      "CLI-Anything",
+    ],
+    workflowTerms: [
+      "lcx-external-agent-upgrade-radar",
+      "github_project_capability_intake",
+      "skill-harvester",
+      "cli-anything-harvester",
+    ],
+    proofTerms: [
+      "registeredCandidateCount",
+      "perfectIntegrationClaim",
+      "runtimeAuthorityGrantedCount",
+      "test/lcx-external-agent-upgrade-radar.test.ts",
+    ],
+    boundaryTerms: [
+      "dev_external_agent_upgrade_radar_only",
+      "no direct install",
+      "providerConfigTouched",
+      "protectedMemoryTouched",
+      "liveTouched",
+    ],
+    nextAction:
+      "Run lcx-external-agent-upgrade-radar before absorbing external agent projects; distill only into existing owner lanes.",
+  },
 ];
 
 const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
@@ -526,6 +563,34 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Add or update a flow-graph scenario whenever a new task family can skip filters or recirculate.",
+  },
+  {
+    id: "external_agent_projects_cannot_be_parallel_systems",
+    category: "workflow",
+    objective:
+      "External papers, GitHub projects, skills, benchmarks, and computer-use frameworks must distill into existing LCX owners instead of becoming parallel architectures.",
+    termsBySurface: {
+      head: ["external agent upgrade radar", "not direct runtime authority", "skill-harvester"],
+      workflow: [
+        "lcx-external-agent-upgrade-radar",
+        "external_upgrade_radar",
+        "github_project_capability_intake",
+        "cli-anything-harvester",
+      ],
+      proof: [
+        "registeredCandidateCount",
+        "runtimeAuthorityGrantedCount",
+        "perfectIntegrationClaim",
+      ],
+      boundary: [
+        "dev_external_agent_upgrade_radar_only",
+        "no direct install",
+        "no provider config",
+        "no live sender",
+      ],
+    },
+    nextAction:
+      "Block direct installs or new agent frameworks until the upgrade radar maps them to source, license, distillation, receipt, eval, and owner gates.",
   },
   {
     id: "world_class_agent_architecture_is_operational_not_slogan",

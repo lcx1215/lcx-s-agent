@@ -241,6 +241,7 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           id: "external_agent_skill_distillation_waterflow",
+          receipts: expect.arrayContaining(["lcx-external-agent-upgrade-radar"]),
           requiredFilters: expect.arrayContaining([
             "license_scope_required",
             "untrusted_source_isolation",
@@ -352,7 +353,15 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           id: "external_skill_learning_entrypoints",
           ownerCluster: "external_skill_learning_cluster",
-          watchedPathTerms: expect.arrayContaining(["learning-council"]),
+          ownerPath: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+          watchedPathTerms: expect.arrayContaining([
+            "external-agent-upgrade",
+            "github-project-capability-intake",
+          ]),
+          allowedPaths: expect.arrayContaining([
+            "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+            "src/agents/tools/github-project-capability-intake-tool.ts",
+          ]),
         }),
         expect.objectContaining({
           id: "finance_data_quality_entrypoints",
@@ -419,6 +428,12 @@ describe("LCX flow graph exam", () => {
             "missing_or_skipped_filter:commercial_error_budget_required",
             "missing_or_skipped_filter:product_canary_suite_required",
           ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "external_agent_skill_distillation_waterflow",
+          ownerEntrypoint: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+          fastCheck: "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
+          evidenceReceipts: expect.arrayContaining(["lcx-external-agent-upgrade-radar"]),
         }),
       ]),
     );

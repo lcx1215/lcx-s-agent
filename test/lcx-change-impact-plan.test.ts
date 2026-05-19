@@ -85,4 +85,20 @@ describe("lcx-change-impact-plan", () => {
       ]),
     );
   });
+
+  it("classifies the external agent upgrade radar as architecture supervision", async () => {
+    const payload = await runPlan("scripts/dev/lcx-external-agent-upgrade-radar.ts");
+
+    expect(payload.ok).toBe(true);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_stack",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: ["scripts/dev/lcx-external-agent-upgrade-radar.ts"],
+        }),
+      ]),
+    );
+  });
 });

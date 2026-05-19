@@ -95,6 +95,16 @@ Use the matching skill before acting:
 - `skill-harvester` for evaluating and isolating new external/local skills.
 - `cli-anything-harvester` for CLI-Anything, CLI-Hub, GUI/local software CLI wrapper evaluation, and safe agent-native software-control planning.
 
+External agent upgrade radar: when evaluating new GitHub/arXiv agent projects,
+use `node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json`
+before adopting them. Current high-value candidates are Agent Lightning,
+LongMemEval-V2 / AgentRunbook, LightMem / LycheeMemory,
+ClawBench / WildClawBench, and Agent S / CLI-Anything. They are not direct
+runtime authority: no direct install, no provider config, no live sender, and no
+protected memory changes. Distill only reusable workflow patterns into existing
+LCX owners such as problem radar, context recovery, learning sedimentation,
+commercial acceptance, skill-harvester, and cli-anything-harvester.
+
 Keep skill placement explicit: core LCX skills guide this repo's operator work;
 general Codex skills stay global support tools unless the runbook classifies
 them as auxiliary. LCX Agent should learn reusable workflow patterns through

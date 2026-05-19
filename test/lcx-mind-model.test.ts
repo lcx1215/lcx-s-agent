@@ -83,6 +83,7 @@ describe("LCX mind model god-view architecture check", () => {
         expect.objectContaining({ id: "lark_feishu_live_boundary", ok: true }),
         expect.objectContaining({ id: "flow_graph_waterflow_supervision", ok: true }),
         expect.objectContaining({ id: "world_class_agent_architecture", ok: true }),
+        expect.objectContaining({ id: "external_agent_upgrade_distillation", ok: true }),
       ]),
     );
     expect(payload.invariants).toEqual(
@@ -109,6 +110,10 @@ describe("LCX mind model god-view architecture check", () => {
         }),
         expect.objectContaining({
           id: "world_class_agent_architecture_is_operational_not_slogan",
+          ok: true,
+        }),
+        expect.objectContaining({
+          id: "external_agent_projects_cannot_be_parallel_systems",
           ok: true,
         }),
       ]),
