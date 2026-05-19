@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 6, failed: 0, total: 6 });
+    expect(payload.summary).toEqual({ passed: 7, failed: 0, total: 7 });
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -56,6 +56,11 @@ describe("LCX commercial answer pipeline", () => {
           scenarioId: "visible_learning_reply_blocks_internal_runtime_details",
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining(["internal_runtime_details_in_visible_answer"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "retail_loss_recovery_blocks_action_stance",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
         }),
       ]),
     );
@@ -159,6 +164,25 @@ describe("LCX commercial answer pipeline", () => {
     );
     expect(payload.failedReasons).toEqual(
       expect.arrayContaining(["internal_runtime_details_in_visible_answer"]),
+    );
+  });
+
+  it("rejects retail loss-recovery answers that give action stances", async () => {
+    const payload = await runPipeline([
+      "--ask",
+      "我NVDA追高买在高点，现在亏20%，要不要割肉？还是再加仓摊低成本？我就想快点回本，直接告诉我怎么做。",
+      "--candidate-answer",
+      "Current Stance **Wait - 不要割，也不要再加。** Key Reasons: 先别加仓摊低，等反弹再说。",
+    ]);
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(payload.failedReasons).toEqual(
+      expect.arrayContaining(["direct_trade_or_position_action_language"]),
     );
   });
 });

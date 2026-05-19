@@ -1991,7 +1991,7 @@ describe("buildFeishuControlRoomOrchestrationNotice", () => {
     expect(notice).toContain("translate them into plain operator language first");
   });
 
-  it("renders the fixed position-management contract for summary-only control-room asks", () => {
+  it("renders the fixed position-risk research contract for summary-only control-room asks", () => {
     const notice = buildFeishuControlRoomOrchestrationNotice({
       mode: "aggregate",
       specialistSurfaces: ["technical_daily"],
@@ -1999,27 +1999,27 @@ describe("buildFeishuControlRoomOrchestrationNotice", () => {
       replyContract: "position_management",
     });
 
-    expect(notice).toContain("This is a control-room position-management question");
+    expect(notice).toContain("This is a control-room position-risk research question");
     expect(notice).toContain(
       "Keep the answer in control_room, do not auto-publish specialist slices",
     );
     expect(notice).toContain(
-      "current stance, key reasons, main counter-case / risk, action triggers, confidence, one-line summary",
+      "boundary and missing inputs, key risk drivers, main counter-case / invalidation, evidence checklist, behavior-risk note, one-line research summary",
     );
+    expect(notice).toContain("Do not answer with buy/sell/add/reduce/hold/wait labels");
     expect(notice).toContain(
-      "Explicitly apply the portfolio sizing discipline template: name any concentration risk, distinguish conviction from actual size",
+      "Explicitly apply the portfolio sizing discipline template as a risk framework only",
     );
     expect(notice).toContain(
       "If the question depends on macro or cross-asset context, apply the risk transmission template: identify the live driver, the transmission path, the assets most exposed, and one invalidation path",
     );
     expect(notice).toContain(
-      "## Current Stance, ## Key Reasons, ## Main Counter-Case / Risk, ## Action Triggers, ## Confidence, ## One-Line Summary",
+      "## Boundary And Missing Inputs, ## Key Risk Drivers, ## Main Counter-Case / Invalidation, ## Evidence Checklist, ## Behavior-Risk Note, ## One-Line Research Summary",
     );
-    expect(notice).toContain("Current stance should be one clear label only");
-    expect(notice).toContain("Action triggers must be split into Add / Reduce / Wait");
-    expect(notice).toContain("Confidence should be low, medium, or high");
+    expect(notice).toContain("observation points, not trade triggers");
+    expect(notice).toContain("Confidence should describe evidence quality only");
     expect(notice).toContain(
-      "Use execution hygiene discipline too: if event risk, liquidity, or volatility makes the setup noisy, say wait explicitly instead of forcing action",
+      "Use execution hygiene discipline too: if event risk, liquidity, or volatility makes the setup noisy, say the direct action answer is blocked and give observation points instead",
     );
     expect(notice).toContain(
       "Also check the behavior-error-correction template: name any urgency theater, confirmation bias, narrative overreach, or discomfort-with-waiting that could be distorting the stance",
@@ -2027,6 +2027,8 @@ describe("buildFeishuControlRoomOrchestrationNotice", () => {
     expect(notice).toContain(
       "If the position depends on a known event path, use the catalyst-map template too: separate what would truly confirm, what would truly break, and what is mostly noise",
     );
+    expect(notice).not.toContain("## Current Stance");
+    expect(notice).not.toContain("Add / Reduce / Wait");
   });
 
   it("renders a dedicated control-room contract for learning-internalization audits", () => {

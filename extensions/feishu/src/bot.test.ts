@@ -1231,7 +1231,7 @@ describe("buildFeishuAgentBody", () => {
     expect(body).toContain("[System: Execution-authority guard detected.");
     expect(body).toContain("Separate research advice, code/workspace edits");
     expect(body).toContain("Research-only or unapproved actions must be labeled as not executed");
-    expect(body).toContain("Treat this as a portfolio or position-management question");
+    expect(body).toContain("Treat this as a portfolio or position-risk research question");
   });
 
   it("adds execution-authority guard without losing implementation framing", () => {
@@ -1641,7 +1641,7 @@ describe("buildFeishuAgentBody", () => {
     expect(body).toContain("[System: High-stakes risk guard detected.");
     expect(body).toContain("classify the risk category, authority boundary");
     expect(body).toContain("do not execute or imply approval authority");
-    expect(body).toContain("Treat this as a portfolio or position-management question");
+    expect(body).toContain("Treat this as a portfolio or position-risk research question");
   });
 
   it("adds high-stakes risk guard without losing implementation framing", () => {
@@ -1672,7 +1672,7 @@ describe("buildFeishuAgentBody", () => {
     expect(body).toContain("[System: Result-shape guard detected.");
     expect(body).toContain("Preserve the requested output contract");
     expect(body).toContain("[System: High-stakes risk guard detected.");
-    expect(body).toContain("Treat this as a portfolio or position-management question");
+    expect(body).toContain("Treat this as a portfolio or position-risk research question");
   });
 
   it("adds result-shape guard without losing bounded out-of-scope framing", () => {
@@ -1993,7 +1993,7 @@ describe("buildFeishuAgentBody", () => {
     expect(body).toContain("去看看几个指数最新的风险和潜在收益");
   });
 
-  it("adds a position-management notice for buy or reduce questions", () => {
+  it("adds a position-risk research notice for buy or reduce questions", () => {
     const body = buildFeishuAgentBody({
       ctx: {
         content: "我现在该不该减仓 QQQ，还是继续持有？",
@@ -2004,13 +2004,15 @@ describe("buildFeishuAgentBody", () => {
     });
 
     expect(body).toContain(
-      "[System: Treat this as a portfolio or position-management question, not as prediction theater and not as direct execution authority. Use a fixed reply structure with these sections in order when possible: 1. current stance, 2. key reasons, 3. main counter-case / risk, 4. action triggers, 5. confidence, 6. one-line summary. Use exact markdown headings when possible: ## Current Stance, ## Key Reasons, ## Main Counter-Case / Risk, ## Action Triggers, ## Confidence, ## One-Line Summary. In current stance, use one plain label only: hold, watch, reduce, do not add yet, or add only if conditions trigger. Apply sizing discipline explicitly: name any concentration risk, distinguish conviction from actual size, and default low confidence toward smaller size or wait. If macro or cross-asset context matters, explain the live driver and transmission path instead of hand-wavy market color. In action triggers, separate what would justify adding, what would justify reducing, and what means wait. Use execution hygiene too: if event risk, liquidity, or volatility makes the setup noisy, say wait explicitly. Also check for behavior-error drift: urgency theater, confirmation bias, narrative overreach, or emotional discomfort with waiting. If known events matter, map the real catalysts too: what would confirm, what would break, and what is mostly noise. Keep key reasons to the top 2-3 points. Keep confidence to low, medium, or high plus one short justification. Make the one-line summary exactly one sentence. Keep it concise, disciplined, and risk-controlled. No hype, no fake certainty, and no long rambling essay.]",
+      "[System: Treat this as a portfolio or position-risk research question, not as prediction theater and not as direct execution authority. Do not answer with a buy/sell/add/reduce/hold/wait stance, do not use Current Stance or Action Triggers headings, and do not tell the user whether to average down, cut, hold, or wait. Use a research-only structure with these sections in order when possible: 1. boundary and missing inputs, 2. key risk drivers, 3. counter-case / invalidation, 4. evidence checklist, 5. behavior-risk note, 6. one-line research summary. Apply sizing discipline as a risk framework only: ask for current weight, total portfolio, risk budget, time horizon, max drawdown tolerance, cost basis, and fresh source timestamps before any position-sizing discussion. If macro or cross-asset context matters, explain the live driver and transmission path instead of hand-wavy market color. Use execution hygiene too: when evidence is missing, say the answer is blocked for direct action and provide observation points, not trade triggers. Also check for behavior-error drift: urgency theater, confirmation bias, narrative overreach, or emotional discomfort with losses. If known events matter, map what would confirm or break the thesis, and what is mostly noise. Keep key reasons to the top 2-3 points. Keep confidence as evidence confidence only, not action confidence. Make the one-line summary exactly one research-only sentence. Keep it concise, disciplined, and risk-controlled. No hype, no fake certainty, and no long rambling essay.]",
     );
-    expect(body).toContain("Apply sizing discipline explicitly");
+    expect(body).toContain("Do not answer with a buy/sell/add/reduce/hold/wait stance");
+    expect(body).toContain("Apply sizing discipline as a risk framework only");
     expect(body).toContain("explain the live driver and transmission path");
     expect(body).toContain("Use execution hygiene too");
     expect(body).toContain("behavior-error drift");
-    expect(body).toContain("map the real catalysts too");
+    expect(body).toContain("map what would confirm or break the thesis");
+    expect(body).not.toContain("## Current Stance");
     expect(body).toContain("我现在该不该减仓 QQQ，还是继续持有？");
   });
 

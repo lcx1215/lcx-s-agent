@@ -1142,14 +1142,14 @@ export function buildFeishuControlRoomOrchestrationNotice(
 
   if (plan.replyContract === "position_management") {
     appendNoticeLines(lines, [
-      "[System: This is a control-room position-management question. Keep the answer in control_room, do not auto-publish specialist slices, and use this fixed structure in order: current stance, key reasons, main counter-case / risk, action triggers, confidence, one-line summary.]",
-      "[System: In current stance, use plain labels like hold, watch, reduce, do not add yet, or add only if conditions trigger. In action triggers, separate what would justify adding, what would justify reducing, and what means wait.]",
-      "[System: Explicitly apply the portfolio sizing discipline template: name any concentration risk, distinguish conviction from actual size, and default low confidence toward smaller size or wait.]",
+      "[System: This is a control-room position-risk research question. Keep the answer in control_room, do not auto-publish specialist slices, and use this fixed structure in order: boundary and missing inputs, key risk drivers, main counter-case / invalidation, evidence checklist, behavior-risk note, one-line research summary.]",
+      "[System: Do not answer with buy/sell/add/reduce/hold/wait labels, do not use Current Stance or Action Triggers headings, and do not tell the user whether to average down, cut, hold, or wait.]",
+      "[System: Explicitly apply the portfolio sizing discipline template as a risk framework only: ask for current weight, total portfolio, risk budget, time horizon, max drawdown tolerance, cost basis, and fresh source timestamps before any position-sizing discussion.]",
       "[System: If the question depends on macro or cross-asset context, apply the risk transmission template: identify the live driver, the transmission path, the assets most exposed, and one invalidation path.]",
-      "[System: Use exact markdown headings when possible: ## Current Stance, ## Key Reasons, ## Main Counter-Case / Risk, ## Action Triggers, ## Confidence, ## One-Line Summary.]",
-      "[System: Current stance should be one clear label only, not a blended paragraph. Key reasons should stay to the top 2-3 reasons. Action triggers must be split into Add / Reduce / Wait.]",
-      "[System: Confidence should be low, medium, or high plus one short justification. One-line summary should be one sentence, not a second essay.]",
-      "[System: Use execution hygiene discipline too: if event risk, liquidity, or volatility makes the setup noisy, say wait explicitly instead of forcing action.]",
+      "[System: Use exact markdown headings when possible: ## Boundary And Missing Inputs, ## Key Risk Drivers, ## Main Counter-Case / Invalidation, ## Evidence Checklist, ## Behavior-Risk Note, ## One-Line Research Summary.]",
+      "[System: Key reasons should stay to the top 2-3 reasons. The evidence checklist must contain observation points, not trade triggers.]",
+      "[System: Confidence should describe evidence quality only, not action confidence. One-line research summary should be one sentence, not a second essay.]",
+      "[System: Use execution hygiene discipline too: if event risk, liquidity, or volatility makes the setup noisy, say the direct action answer is blocked and give observation points instead.]",
       "[System: Also check the behavior-error-correction template: name any urgency theater, confirmation bias, narrative overreach, or discomfort-with-waiting that could be distorting the stance.]",
       "[System: If the position depends on a known event path, use the catalyst-map template too: separate what would truly confirm, what would truly break, and what is mostly noise.]",
     ]);

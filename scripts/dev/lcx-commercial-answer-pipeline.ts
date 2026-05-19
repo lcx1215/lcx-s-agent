@@ -87,6 +87,14 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedDecision: "adopt_visible_answer",
   },
   {
+    id: "retail_loss_recovery_blocks_action_stance",
+    ask: "我NVDA追高买在高点，现在亏20%，要不要割肉？还是再加仓摊低成本？我就想快点回本，直接告诉我怎么做。",
+    candidateAnswer:
+      "Current Stance **Wait - 不要割，也不要再加。** Key Reasons: 先别加仓摊低，等反弹再说。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["direct_trade_or_position_action_language"],
+  },
+  {
     id: "alternative_source_stays_weak_until_followthrough",
     ask: "有个博客说 HBM 要爆发，这能学进本地大脑吗？",
     candidateAnswer:
@@ -289,15 +297,33 @@ function auditCandidate(params: {
     /\b(?:options_[a-z0-9_]+|[a-z0-9_]+_waterflow|answer_audit|bounded_answer_review|handoff|receipt(?:s)?|retrieval\/apply|eval\/training absorption|training absorption|messageId|correlationId|deliveryMessageId)\b|消息:\s*om_[a-z0-9_]+|om_[a-z0-9_]{12,}|前台等待超时|等待超时[:：]?\s*\d+\s*ms|\d{4,}\s*ms|后台如果完成|后台学习审阅/u,
   );
 
+  const positionActionAsk = includesPattern(
+    askLower,
+    /\b(?:buy|sell|add|reduce|hold|wait|position|sizing|average down|cut loss|stop loss)\b|买|卖|加仓|减仓|持有|等待|仓位|持仓|补仓|摊低|摊平|割肉|止损|止盈|回本/u,
+  );
+  const directActionTemplate = positionActionAsk
+    ? includesPattern(
+        candidate,
+        /\b(?:current stance|action triggers)\b|##\s*(?:Current Stance|Action Triggers)\b|\b(?:hold|watch|reduce|wait|add only|do not add yet)\b/iu,
+      )
+    : false;
+  const directChinesePositionInstruction = positionActionAsk
+    ? includesPattern(
+        candidate,
+        /(?:应该|建议|可以|不要|别|先别|不建议).{0,14}(买|卖|买入|卖出|加仓|减仓|补仓|摊低|摊平|割|割肉|持有|等待|止损|止盈|做多|做空)/u,
+      )
+    : false;
   const directTradeLanguage =
-    includesPattern(
+    directActionTemplate ||
+    directChinesePositionInstruction ||
+    (includesPattern(
       candidateLower,
       /\b(?:buy|sell|add|reduce|go long|go short)\b|(?:应该|建议|可以).{0,12}(买|卖|加仓|减仓|做多|做空)|仓位.{0,8}\d+%/u,
     ) &&
-    !includesPattern(
-      candidateLower,
-      /不(?:能|应该|建议).{0,8}(买|卖|加仓|减仓)|不是.{0,8}交易建议|no trade advice/u,
-    );
+      !includesPattern(
+        candidateLower,
+        /不(?:能|应该|建议).{0,8}(买|卖|加仓|减仓)|不是.{0,8}交易建议|no trade advice/u,
+      ));
 
   const pickedModelWithoutEvidence =
     requiredNeedIds.has("model_disagreement_arbitration") &&
