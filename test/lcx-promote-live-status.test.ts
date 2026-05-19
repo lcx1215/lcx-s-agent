@@ -96,7 +96,7 @@ function writePromotionState(
   );
 }
 
-function runStatus(sourceRoot: string, targetRoot: string): string {
+function runStatus(sourceRoot: string, targetRoot: string, extraArgs: string[] = []): string {
   const result = spawnSync(
     process.execPath,
     [
@@ -108,6 +108,7 @@ function runStatus(sourceRoot: string, targetRoot: string): string {
       sourceRoot,
       "--target-root",
       targetRoot,
+      ...extraArgs,
     ],
     {
       cwd: repoRoot,
@@ -117,6 +118,11 @@ function runStatus(sourceRoot: string, targetRoot: string): string {
   );
   expect(result.status, result.stderr || result.stdout).toBe(0);
   return result.stdout;
+}
+
+function appendReplyFlowRecord(logPath: string, record: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.appendFileSync(logPath, `${JSON.stringify(record)}\n`, "utf8");
 }
 
 function writeFakePnpm(
@@ -309,6 +315,56 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveMatchesCurrentDev=true");
     expect(stdout).toContain("liveNeedsPromotion=false");
     expect(stdout).toContain("devLiveDrift=live_matches_current_dev");
+  });
+
+  it("counts a real post-migration Lark reply as live-user-seen without requiring the fixed acceptance phrase", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    const replyFlowLog = path.join(tempDir("promote-live-reply-flow"), "feishu-reply-flow.jsonl");
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+    const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
+
+    writePromotionState(targetRoot, currentCommit, {
+      restartStatus: "passed",
+      probeStatus: "passed",
+    });
+    appendReplyFlowRecord(replyFlowLog, {
+      kind: "feishu_reply_flow",
+      stage: "inbound",
+      recordedAt: "2099-01-01T00:01:00.000Z",
+      messageId: "om_learning_real_user",
+      chatId: "oc_control",
+      chatType: "group",
+      contentType: "text",
+      textPreview: "请用网上可靠来源和本地沉淀，一起做一次期权基础学习审阅",
+    });
+    appendReplyFlowRecord(replyFlowLog, {
+      kind: "feishu_reply_flow",
+      stage: "outbound_result",
+      recordedAt: "2099-01-01T00:02:00.000Z",
+      messageId: "om_learning_real_user",
+      chatId: "oc_control",
+      replyKind: "final",
+      sendMode: "message",
+      deliveryStatus: "success",
+      textPreview: "收到，已开始学：期权基础。",
+    });
+
+    const stdout = runStatus(sourceRoot, targetRoot, ["--reply-flow-log", replyFlowLog]);
+
+    expect(stdout).toContain("liveRuntimeUpdated=true");
+    expect(stdout).toContain("liveUserSeen=true");
+    expect(stdout).toContain("nextHumanStep=no_action_current_dev_seen_in_live");
+    expect(stdout).toContain("liveVisibleStatus=post_migration_reply_seen");
+    expect(stdout).toContain("freshInboundCount=1");
+    expect(stdout).toContain("freshOutboundResultCount=1");
+    expect(stdout).toContain("acceptanceMatched=false");
   });
 
   it("does not call dirty dev work live-runtime-updated", () => {

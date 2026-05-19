@@ -42,6 +42,7 @@ type Args = {
   autoSnapshot: boolean;
   port: number;
   acceptancePhrase: string | undefined;
+  replyFlowLog: string | undefined;
 };
 
 type CommandResult = {
@@ -235,6 +236,7 @@ function parseArgs(argv: string[]): Args {
     autoSnapshot: !argsSet.has("--no-auto-snapshot"),
     port: Number.isFinite(port) ? port : DEFAULT_PORT,
     acceptancePhrase: readValue("--acceptance-phrase"),
+    replyFlowLog: readValue("--reply-flow-log"),
   };
 }
 
@@ -933,7 +935,10 @@ export function resolveOperatorStatus(params: {
     params.probe?.status === "passed" || params.state?.commands.probe?.status === "passed";
   const liveRuntimeResponsive = liveRuntimeProbePassed;
   const liveRuntimeUpdated = liveRuntimeCommitMatched && liveRuntimeResponsive;
-  const liveUserSeen = liveRuntimeUpdated && params.visibleProof?.status === "live_visible_fixed";
+  const liveUserSeen =
+    liveRuntimeUpdated &&
+    (params.visibleProof?.status === "live_visible_fixed" ||
+      params.visibleProof?.status === "post_migration_reply_seen");
   const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
     ? "commit_or_clean_dev_then_run_dev_tests"
     : !liveRuntimeCommitMatched
@@ -1020,6 +1025,7 @@ export function main(argv = process.argv.slice(2)): number {
       ? readLiveVisibleProof({
           since: state.generatedAt,
           acceptancePhrase: state.acceptancePhrase,
+          logPath: initialArgs.replyFlowLog,
         })
       : null;
     const operatorStatus = resolveOperatorStatus({
