@@ -411,6 +411,15 @@ no provider config, no live sender, and no protected memory mutation. Treat the
 radar as dev-only architecture wiring until a concrete probe, eval/receipt,
 live migration, and fresh Lark visible proof all exist.
 
+Future agents should not wait for the user to remember these names. Natural
+language mentions of Agent Lightning, LongMemEval/AgentRunbook,
+LightMem/LycheeMemory, ClawBench/WildClawBench, Agent S, or CLI-Anything must
+autocue `skill-harvester` or `cli-anything-harvester`, run the external upgrade
+radar, and then follow the named owner. `lcx-context-recovery-exam` verifies this
+autocue path; `lcx-problem-cluster-radar` consumes the external radar so missing
+candidates, owner drift, direct runtime authority, or "perfect integration"
+overclaims become repairable clusters instead of silent architecture debt.
+
 ## All-Module Internalization Chain
 
 Do not treat the source-to-learning chain as a factor-only mechanism. Any local

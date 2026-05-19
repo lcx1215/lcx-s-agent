@@ -344,6 +344,39 @@ recoverable, auditable, and honest under real use.
   governance stack for this standard. If they disagree, the disagreement is a
   P2 architecture issue before feature expansion.
 
+## Precision-Instrument Self-Healing Doctrine
+
+The long-term architecture target is a self-maintaining instrument: owner
+commands expose truth, radars aggregate drift, repair locks serialize fixes,
+context recovery refreshes stale snapshots, and live probes prove user-visible
+runtime behavior. The system should not depend on the user remembering which
+diagnostic to run.
+
+- Self-healing starts from owner truth, not from free-form model confidence. A
+  broken downstream surface must point back to the first failed owner command
+  before any repair is attempted.
+- Every self-repair loop must be bounded: identify the failed owner, classify
+  the failure family, acquire repair ownership when required, patch the shared
+  contract, run targeted proof, refresh the relevant snapshot, and leave a
+  receipt or commit.
+- Stale snapshots are not harmless. Context recovery and local operator digest
+  must compare current owner outputs against stored snapshots and force refresh
+  before a future agent relies on old machine truth.
+- External agent projects must be absorbed through the same instrument. Current
+  five candidates are Agent Lightning, LongMemEval-V2 / AgentRunbook,
+  LightMem / LycheeMemory, ClawBench / WildClawBench, and Agent S /
+  CLI-Anything. They must trigger `skill-harvester` or
+  `cli-anything-harvester`, then pass
+  `lcx-external-agent-upgrade-radar`, owner mapping, receipts, evals, and
+  boundary checks before any runtime pattern is trusted.
+- `lcx-problem-cluster-radar` must include the external upgrade radar as an
+  input owner. If candidate count, owner mapping, runtime-authority boundary, or
+  "perfect integration" wording drifts, the radar should surface a repairable
+  cluster without waiting for the user to notice.
+- This doctrine is still dev governance. It cannot claim live-user-seen,
+  provider health, model-weight absorption, or protected-memory writes without
+  the existing proof gates.
+
 ## Mission
 
 - Build and operate LCX Agent / OpenClaw as a low-frequency research operating system for one real user.

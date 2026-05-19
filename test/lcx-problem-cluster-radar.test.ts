@@ -536,6 +536,39 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
+  it("surfaces external agent upgrade drift instead of letting new projects become parallel systems", () => {
+    const result = buildProblemClusterRadar({
+      externalAgentUpgrade: owner("lcx-external-agent-upgrade-radar", {
+        ok: true,
+        boundary: "dev_external_agent_upgrade_radar_only",
+        summary: {
+          registeredCandidateCount: 4,
+          architectureIntegratedCount: 4,
+          runtimeAuthorityGrantedCount: 1,
+          perfectIntegrationClaim: true,
+        },
+      }),
+    });
+
+    expect(result.actionableClusters).toContain("external_agent_upgrade_cluster");
+    const cluster = result.clusters.find((entry) => entry.id === "external_agent_upgrade_cluster");
+    expect(cluster).toEqual(
+      expect.objectContaining({
+        family: "external_agent_upgrade_distillation",
+        severity: "P1",
+        ownerEntrypoint: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+      }),
+    );
+    expect(cluster?.signals.map((signal) => signal.id)).toEqual(
+      expect.arrayContaining([
+        "external_agent_candidate_count_drift",
+        "external_agent_owner_mapping_drift",
+        "external_agent_runtime_authority_granted",
+        "external_agent_perfect_integration_overclaim",
+      ]),
+    );
+  });
+
   it("is registered in durable architecture surfaces and can run against current owners", async () => {
     const { stdout } = await runJsonScript("scripts/dev/lcx-problem-cluster-radar.ts");
     const payload = JSON.parse(stdout) as {

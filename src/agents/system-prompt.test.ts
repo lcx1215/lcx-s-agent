@@ -506,6 +506,9 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("external-agent upgrade sources");
     expect(prompt).toContain("skill-harvester");
     expect(prompt).toContain("cli-anything-harvester");
+    expect(prompt).toContain("Agent Lightning");
+    expect(prompt).toContain("lcx-external-agent-upgrade-radar");
+    expect(prompt).toContain("self-healing precision instrument");
     expect(prompt).toContain("Do not grant direct runtime authority");
   });
 

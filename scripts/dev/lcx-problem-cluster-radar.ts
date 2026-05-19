@@ -52,6 +52,7 @@ type RadarInputs = {
   learningSedimentationMap?: OwnerSnapshot;
   systemMemoryGate?: OwnerSnapshot;
   changeImpact?: OwnerSnapshot;
+  externalAgentUpgrade?: OwnerSnapshot;
 };
 
 type CliOptions = {
@@ -674,6 +675,68 @@ function dirtyWorktreeCluster(inputs: RadarInputs): ProblemCluster | undefined {
   });
 }
 
+function externalAgentUpgradeCluster(inputs: RadarInputs): ProblemCluster | undefined {
+  if (!inputs.externalAgentUpgrade) {
+    return undefined;
+  }
+  const payload = inputs.externalAgentUpgrade?.payload;
+  const summary = recordValue(payload?.summary);
+  const signals: ProblemSignal[] = [];
+  if (payload && payload.ok !== true) {
+    signals.push({
+      id: "external_agent_upgrade_radar_failed",
+      severity: "P2",
+      summary: "external agent upgrade radar is not green",
+      evidence: {
+        boundary: payload.boundary,
+        summary,
+        actionableFailures: payload.actionableFailures,
+      },
+    });
+  }
+  if (numberValue(summary?.registeredCandidateCount) !== 5) {
+    signals.push({
+      id: "external_agent_candidate_count_drift",
+      severity: "P2",
+      summary: "the five external agent upgrade candidates are not all registered",
+      evidence: summary,
+    });
+  }
+  if (numberValue(summary?.architectureIntegratedCount) !== 5) {
+    signals.push({
+      id: "external_agent_owner_mapping_drift",
+      severity: "P2",
+      summary: "one or more external agent projects is no longer mapped to an existing owner",
+      evidence: summary,
+    });
+  }
+  if (numberValue(summary?.runtimeAuthorityGrantedCount) !== 0) {
+    signals.push({
+      id: "external_agent_runtime_authority_granted",
+      severity: "P1",
+      summary: "an external agent project received runtime authority without the required gates",
+      evidence: summary,
+    });
+  }
+  if (booleanValue(summary?.perfectIntegrationClaim) !== false) {
+    signals.push({
+      id: "external_agent_perfect_integration_overclaim",
+      severity: "P2",
+      summary: "external agent integration is being overclaimed as perfect",
+      evidence: summary,
+    });
+  }
+  return problemCluster({
+    id: "external_agent_upgrade_cluster",
+    family: "external_agent_upgrade_distillation",
+    ownerEntrypoint: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+    sourceOwners: ["lcx-external-agent-upgrade-radar"],
+    signals,
+    nextAction:
+      "Repair external-agent radar, autocue, owner mapping, or runtime-authority boundary before absorbing more external projects.",
+  });
+}
+
 function ownerAvailabilityCluster(inputs: RadarInputs): ProblemCluster | undefined {
   const signals = [
     inputs.trainingPlan,
@@ -685,6 +748,7 @@ function ownerAvailabilityCluster(inputs: RadarInputs): ProblemCluster | undefin
     inputs.learningSedimentationMap,
     inputs.systemMemoryGate,
     inputs.changeImpact,
+    inputs.externalAgentUpgrade,
   ]
     .map(commandFailureSignal)
     .filter((signal): signal is ProblemSignal => Boolean(signal));
@@ -709,6 +773,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
     contextRecoveryCluster(inputs),
     learningSedimentationCluster(inputs),
     systemMemoryCluster(inputs),
+    externalAgentUpgradeCluster(inputs),
     dirtyWorktreeCluster(inputs),
   ].filter((cluster): cluster is ProblemCluster => Boolean(cluster));
   const repairableClusters = clusters.filter((cluster) => cluster.actionability === "repair_now");
@@ -737,6 +802,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
         "lcx-learning-sedimentation-map",
         "lcx-system-memory-sedimentation-gate",
         "lcx-change-impact-plan",
+        "lcx-external-agent-upgrade-radar",
       ],
     },
     clusters,
@@ -827,6 +893,7 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
     learningSedimentationMap,
     systemMemoryGate,
     changeImpact,
+    externalAgentUpgrade,
   ] = await Promise.all([
     trainingPlanPromise,
     runJsonOwner(
@@ -846,6 +913,10 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
       "scripts/dev/lcx-system-memory-sedimentation-gate.ts",
     ),
     runJsonOwner("lcx-change-impact-plan", "scripts/dev/lcx-change-impact-plan.ts"),
+    runJsonOwner(
+      "lcx-external-agent-upgrade-radar",
+      "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+    ),
   ]);
   return {
     trainingPlan,
@@ -857,6 +928,7 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
     learningSedimentationMap,
     systemMemoryGate,
     changeImpact,
+    externalAgentUpgrade,
   };
 }
 

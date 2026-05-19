@@ -9,6 +9,7 @@ const coreSkills = [
   "lcx-promotion-and-adapter-truth-operator",
   "lcx-qwen-training-operator",
   "lcx-workflow-waterflow-auditor",
+  "skill-harvester",
 ];
 
 describe("resolveSkillAutoCue", () => {
@@ -64,6 +65,24 @@ describe("resolveSkillAutoCue", () => {
     });
 
     expect(cue?.skillName).toBe("lcx-commercial-answer-pipeline-operator");
+  });
+
+  it("selects workflow waterflow auditor for self-healing precision-machine architecture asks", () => {
+    const cue = resolveSkillAutoCue({
+      body: "我想让整个系统像精密仪器一样环环相扣，快照旧了能自动更新，出错后能自动修复",
+      availableSkillNames: coreSkills,
+    });
+
+    expect(cue?.skillName).toBe("lcx-workflow-waterflow-auditor");
+  });
+
+  it("selects skill harvester for the five external agent architecture families", () => {
+    const cue = resolveSkillAutoCue({
+      body: "把 Agent Lightning、LongMemEval、LightMem、ClawBench 这五个架构继续巩固融入智能体",
+      availableSkillNames: coreSkills,
+    });
+
+    expect(cue?.skillName).toBe("skill-harvester");
   });
 
   it("does not select a skill that is not available in the current snapshot", () => {

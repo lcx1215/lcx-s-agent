@@ -60,6 +60,14 @@ const REQUIRED_AUTOCUE_PROBES = [
     body: "全系统水路和记忆沉淀一起审一遍",
     expectedSkill: "lcx-workflow-waterflow-auditor",
   },
+  {
+    body: "让系统像精密仪器一样环环相扣，旧快照自动更新，错误自动修复",
+    expectedSkill: "lcx-workflow-waterflow-auditor",
+  },
+  {
+    body: "把 Agent Lightning、LongMemEval、LightMem、ClawBench 这些外部 agent 架构巩固融入智能体",
+    expectedSkill: "skill-harvester",
+  },
 ] as const;
 
 type RecoveryCheck = {
@@ -380,6 +388,46 @@ async function currentLearningSedimentationAuditSnapshot(): Promise<{
   }
 }
 
+async function currentExternalAgentUpgradeRadarSnapshot(): Promise<{
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: string;
+}> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-external-agent-upgrade-radar.ts", "--json"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
+function compactExternalAgentUpgradeRadar(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const summary =
+    record.summary && typeof record.summary === "object" && !Array.isArray(record.summary)
+      ? (record.summary as Record<string, unknown>)
+      : {};
+  return {
+    ok: record.ok,
+    boundary: record.boundary,
+    architectureFit: record.architectureFit,
+    registeredCandidateCount: summary.registeredCandidateCount,
+    architectureIntegratedCount: summary.architectureIntegratedCount,
+    runtimeAuthorityGrantedCount: summary.runtimeAuthorityGrantedCount,
+    perfectIntegrationClaim: summary.perfectIntegrationClaim,
+    liveTouched: record.liveTouched,
+    providerConfigTouched: record.providerConfigTouched,
+    protectedMemoryTouched: record.protectedMemoryTouched,
+  };
+}
+
 function compactChangeImpact(value: unknown) {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -667,6 +715,7 @@ async function main() {
     mindModel,
     flowGraph,
     currentTrainingPlan,
+    externalAgentUpgradeRadar,
   ] = await Promise.all([
     readText(path.join(repoRoot, "AGENTS.md")),
     readText(path.join(repoRoot, "ops/local-brain/README.md")),
@@ -675,6 +724,7 @@ async function main() {
     mindModelCheck(),
     flowGraphCheck(),
     currentTrainingPlanSnapshot(),
+    currentExternalAgentUpgradeRadarSnapshot(),
   ]);
 
   const latestMindModel = latestState?.mindModel as Record<string, unknown> | undefined;
@@ -827,6 +877,28 @@ async function main() {
         "local runtime skill snapshot must include core LCX operator skills and deterministic natural-language autocues",
       evidence: runtimeSkillSnapshot,
     },
+    {
+      id: "external_agent_upgrade_radar_recovered_and_autocued",
+      ok:
+        externalAgentUpgradeRadar.ok &&
+        externalAgentUpgradeRadar.payload?.ok === true &&
+        (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
+          ?.registeredCandidateCount === 5 &&
+        (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
+          ?.architectureIntegratedCount === 5 &&
+        (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
+          ?.runtimeAuthorityGrantedCount === 0 &&
+        (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
+          ?.perfectIntegrationClaim === false,
+      summary:
+        "compressed recovery must know the five external agent upgrades are autocued and routed through existing owners",
+      evidence: {
+        externalAgentUpgradeRadar: compactExternalAgentUpgradeRadar(
+          externalAgentUpgradeRadar.payload,
+        ),
+        error: externalAgentUpgradeRadar.error,
+      },
+    },
   ];
 
   const warnings: RecoveryWarning[] = [];
@@ -877,6 +949,7 @@ async function main() {
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
       "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
+      "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
       "test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json",
     ],
     checks,

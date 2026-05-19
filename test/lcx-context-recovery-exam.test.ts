@@ -89,6 +89,7 @@ describe("LCX compressed context recovery exam", () => {
         "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
         "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
+        "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
       ]),
     );
     expect(Array.isArray(payload.actionableWarnings)).toBe(true);
@@ -190,6 +191,8 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("local_operator_latest_matches_current_workflow_surface");
     expect(recoverySource).toContain("fresh_training_plan_decision_visible_after_recovery");
     expect(recoverySource).toContain("runtime_lcx_operator_skills_available_and_autocued");
+    expect(recoverySource).toContain("external_agent_upgrade_radar_recovered_and_autocued");
+    expect(recoverySource).toContain("lcx-external-agent-upgrade-radar");
     expect(recoverySource).toContain("operatorDecisionIdsMatchCurrent");
     expect(recoverySource).toContain("operator_training_plan_snapshot_differs_from_current");
     expect(recoverySource).toContain("operator_training_state_snapshot_differs_from_current");

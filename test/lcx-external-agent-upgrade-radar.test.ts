@@ -33,6 +33,8 @@ async function runRadar() {
       id: string;
       label: string;
       ownerEntrypoint: string;
+      ownerUseTrigger: string;
+      autocueTerms: string[];
       runtimeAuthority: string;
       blockedDirectAdoption: boolean;
       sourceUrls: string[];
@@ -74,6 +76,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect.arrayContaining([
         expect.objectContaining({ id: "five_external_candidates_registered", ok: true }),
         expect.objectContaining({ id: "all_candidates_map_to_existing_owners", ok: true }),
+        expect.objectContaining({ id: "automatic_use_triggers_present", ok: true }),
         expect.objectContaining({ id: "direct_runtime_adoption_blocked", ok: true }),
       ]),
     );
@@ -117,6 +120,8 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect(candidate.sourceUrls.length, candidate.id).toBeGreaterThan(0);
       expect(candidate.requiredReceipts.length, candidate.id).toBeGreaterThan(0);
       expect(candidate.requiredFilters.length, candidate.id).toBeGreaterThan(0);
+      expect(candidate.ownerUseTrigger.length, candidate.id).toBeGreaterThan(20);
+      expect(candidate.autocueTerms.length, candidate.id).toBeGreaterThan(0);
       expect(candidate.runtimeAuthority, candidate.id).toBe("not_granted");
       expect(candidate.blockedDirectAdoption, candidate.id).toBe(true);
       expect(candidate.riskBoundaries, candidate.id).toEqual(

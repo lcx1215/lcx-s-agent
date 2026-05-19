@@ -24,6 +24,8 @@ type ExternalUpgradeCandidate = {
   adoptionMode: AdoptionMode;
   existingOwner: string;
   ownerEntrypoint: string;
+  ownerUseTrigger: string;
+  autocueTerms: string[];
   distilledPattern: string;
   firstDevProbe: string;
   requiredReceipts: string[];
@@ -63,6 +65,9 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     adoptionMode: "trace_export_probe",
     existingOwner: "training failure feedback and problem-cluster radar",
     ownerEntrypoint: "scripts/dev/lcx-problem-cluster-radar.ts",
+    ownerUseTrigger:
+      "When a future task asks to learn from Agent Lightning, first run lcx-external-agent-upgrade-radar, then let problem-cluster radar own trace/credit-assignment probes.",
+    autocueTerms: ["Agent Lightning", "trace credit", "credit assignment", "agent RL"],
     distilledPattern:
       "export LCX receipts and failure clusters as trace rows for offline credit assignment; never replace Qwen promotion truth",
     firstDevProbe:
@@ -96,6 +101,9 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     adoptionMode: "memory_regression_probe",
     existingOwner: "context recovery and memory sedimentation gates",
     ownerEntrypoint: "scripts/dev/lcx-context-recovery-exam.ts",
+    ownerUseTrigger:
+      "When a future task asks for LongMemEval, AgentRunbook, stale snapshot, or long-memory regression, route through context recovery before changing memory.",
+    autocueTerms: ["LongMemEval", "AgentRunbook", "long memory eval", "stale snapshot"],
     distilledPattern:
       "turn LCX handoff, operator latest, module-learning, and live-boundary facts into regression questions for future compressed windows",
     firstDevProbe:
@@ -130,6 +138,9 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     adoptionMode: "memory_comparison_probe",
     existingOwner: "module learning absorption and system memory sedimentation",
     ownerEntrypoint: "scripts/dev/lcx-learning-sedimentation-audit.ts",
+    ownerUseTrigger:
+      "When a future task asks for LightMem, LycheeMemory, compact memory, or cheaper memory, audit current sedimentation before adding storage.",
+    autocueTerms: ["LightMem", "LycheeMemory", "compact memory", "memory comparison"],
     distilledPattern:
       "compare compact-memory ideas against LCX source/retrieval/apply/eval receipts without replacing protected summaries",
     firstDevProbe:
@@ -164,6 +175,9 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     adoptionMode: "real_task_benchmark_probe",
     existingOwner: "commercial acceptance harness and L5 regression battery",
     ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+    ownerUseTrigger:
+      "When a future task asks for ClawBench, WildClawBench, or real-task agent benchmarks, convert it into commercial canaries instead of leaderboard code.",
+    autocueTerms: ["ClawBench", "WildClawBench", "real task benchmark", "agent benchmark"],
     distilledPattern:
       "convert real task categories into LCX canaries with acceptance phrases, visible reply checks, and bounded failure reports",
     firstDevProbe:
@@ -199,6 +213,9 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     adoptionMode: "computer_use_cli_probe",
     existingOwner: "skill harvester and CLI-Anything harvester",
     ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+    ownerUseTrigger:
+      "When a future task asks for Agent S, CLI-Anything, CLI-Hub, or desktop software CLI wrappers, use cli-anything-harvester before any wrapper is trusted.",
+    autocueTerms: ["Agent S", "CLI-Anything", "CLI-Hub", "desktop control"],
     distilledPattern:
       "prefer stable local CLI or official automation first; only distill a wrapper after JSON contract, proof command, and uninstall path exist",
     firstDevProbe:
@@ -227,6 +244,12 @@ function missingFor(candidate: ExternalUpgradeCandidate): string[] {
   }
   if (!candidate.ownerEntrypoint) {
     missing.push("existing_owner_entrypoint");
+  }
+  if (!candidate.ownerUseTrigger) {
+    missing.push("owner_use_trigger");
+  }
+  if (candidate.autocueTerms.length === 0) {
+    missing.push("autocue_terms");
   }
   if (!candidate.distilledPattern) {
     missing.push("distilled_pattern");
@@ -280,6 +303,9 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
       !candidate.riskBoundaries.some((boundary) => boundary.includes("protected_memory_guard")),
   );
   const missingOwner = verdicts.filter((candidate) => !candidate.ownerEntrypoint);
+  const missingUseTriggers = verdicts.filter(
+    (candidate) => !candidate.ownerUseTrigger || candidate.autocueTerms.length === 0,
+  );
   return [
     {
       id: "five_external_candidates_registered",
@@ -301,6 +327,17 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
       ok: missingFields.length === 0,
       summary: "source, reading, distillation, receipt, filter, and probe fields are present",
       evidence: { missingFields },
+    },
+    {
+      id: "automatic_use_triggers_present",
+      ok: missingUseTriggers.length === 0,
+      summary:
+        "each external project has explicit autocue terms and an owner-use trigger for future agents",
+      evidence: verdicts.map((candidate) => ({
+        id: candidate.id,
+        autocueTerms: candidate.autocueTerms,
+        ownerUseTrigger: candidate.ownerUseTrigger,
+      })),
     },
     {
       id: "direct_runtime_adoption_blocked",
