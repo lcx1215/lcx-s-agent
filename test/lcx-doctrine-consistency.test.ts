@@ -101,5 +101,8 @@ describe("LCX doctrine consistency doctor", () => {
     expect(
       payload.checks.find((check) => check.id === "proactive_error_discovery_goal_required")?.ok,
     ).toBe(true);
+    expect(
+      payload.checks.find((check) => check.id === "future_upgrade_intake_goal_required")?.ok,
+    ).toBe(true);
   });
 });

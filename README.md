@@ -138,6 +138,7 @@ dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主�
 24. 外部 agent 升级不能变成五套平行架构。`scripts/dev/lcx-external-agent-upgrade-radar.ts` 是 external agent upgrade radar：Agent Lightning、LongMemEval-V2 / AgentRunbook、LightMem / LycheeMemory、ClawBench / WildClawBench、Agent S / CLI-Anything 先映射到已有 owner，再做 source/license/reading scope/skill_pattern_distillation/eval/receipt。它不是 direct runtime authority：no direct install、no provider config、no live sender、no protected memory；只能证明 dev 架构接线，不能替代 live-user-seen。
 25. 自愈式“精密仪器”目标不是让模型自由发挥，而是让 owner 命令、radar、repair lock、context recovery、operator digest 和 live probe 串成闭环：owner 出错 -> problem cluster 暴露 -> 按 owner 修复 -> 跑 proof -> 刷新快照 -> 必要时 live probe。外部五个 agent 项目也必须进入这条闭环；context recovery 会检查它们的 autocue 和 external radar，problem radar 会把外部 radar drift 变成可修复问题簇。
 26. 以后系统改进的默认目标是减少人工提醒：Codex 或本地智能体遇到非平凡工程、继续打磨、找问题、更新快照、外部项目吸收、模块学习、Lark/live 验收时，应先跑现有 owner/radar/recovery 栈，自己发现 stale snapshot、drift、可修复 problem cluster 或 owner gate；能安全修就修，不能修就报告卡在哪个 owner gate，而不是等用户逐项提醒。
+27. 可以接受当前智能体不够聪明，但不能接受架构封死。未来新模型、新论文、新工具、新 skill、新 benchmark、新 computer-use/CLI 化能力都必须能通过同一条升级入口进来：先 `skill-harvester` / external upgrade radar 做来源、license、权限和重叠检查，再映射到已有 owner、补 eval/receipt、最后按 dev/live 边界迁移。默认不直接安装、不直接给运行时权限、不重写核心架构。
 
 上帝视角检查命令：
 

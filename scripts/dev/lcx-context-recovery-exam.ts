@@ -68,6 +68,10 @@ const REQUIRED_AUTOCUE_PROBES = [
     body: "把 Agent Lightning、LongMemEval、LightMem、ClawBench 这些外部 agent 架构巩固融入智能体",
     expectedSkill: "skill-harvester",
   },
+  {
+    body: "它现在可以不够聪明，但要能容纳未来潜在的新技术和新升级",
+    expectedSkill: "skill-harvester",
+  },
 ] as const;
 
 type RecoveryCheck = {

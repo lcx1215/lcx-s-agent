@@ -360,6 +360,13 @@ diagnostic to run.
   the existing owner/radar/recovery stack, identify stale snapshots or current
   problem clusters, and either repair the bounded owner lane or report the
   exact owner gate that blocks repair.
+- Upgrade-readiness matters more than current cleverness. It is acceptable for
+  the present local brain to be limited, but the architecture must leave stable
+  intake slots for future models, tools, papers, skills, benchmarks, and
+  workflow upgrades. New technology should enter through source/license/review,
+  `skill-harvester`, `lcx-external-agent-upgrade-radar`, existing owner mapping,
+  eval/receipt proof, and bounded live migration instead of requiring a rewrite
+  or creating a parallel system.
 - Every self-repair loop must be bounded: identify the failed owner, classify
   the failure family, acquire repair ownership when required, patch the shared
   contract, run targeted proof, refresh the relevant snapshot, and leave a

@@ -522,6 +522,8 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("fewer manual reminders");
     expect(prompt).toContain("repairable problem clusters");
     expect(prompt).toContain("exact blocking owner");
+    expect(prompt).toContain("architecture upgrade-ready for future new technologies");
+    expect(prompt).toContain("source/license/write-scope review");
   });
 
   it("includes finance learning pipeline orchestrator guidance when the tool is available", () => {

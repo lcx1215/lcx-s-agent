@@ -427,6 +427,14 @@ the owner/radar/recovery stack before asking the user what to check. Repair the
 bounded owner lane when the radar marks it repairable; when a gate blocks repair,
 name the owner command and blocker instead of waiting for manual reminders.
 
+Keep the architecture upgrade-ready even when the current local brain is small.
+Future models, tools, papers, benchmarks, skills, and desktop/CLI-control
+upgrades should enter through `skill-harvester`, source/license/write-scope
+review, `lcx-external-agent-upgrade-radar`, existing-owner mapping, eval or
+receipt proof, and dev/live migration gates. Do not install, trust, or serve a
+new technology directly because it looks promising; make it a bounded pattern
+inside the existing owner stack first.
+
 ## All-Module Internalization Chain
 
 Do not treat the source-to-learning chain as a factor-only mechanism. Any local

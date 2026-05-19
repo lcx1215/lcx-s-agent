@@ -85,6 +85,15 @@ describe("resolveSkillAutoCue", () => {
     expect(cue?.skillName).toBe("skill-harvester");
   });
 
+  it("selects skill harvester for future new technology and upgrade intake", () => {
+    const cue = resolveSkillAutoCue({
+      body: "我可以接受它现在不够聪明，但它要能容纳未来潜在的新技术和新升级",
+      availableSkillNames: coreSkills,
+    });
+
+    expect(cue?.skillName).toBe("skill-harvester");
+  });
+
   it("does not select a skill that is not available in the current snapshot", () => {
     const cue = resolveSkillAutoCue({
       body: "香港大学 CLI-Anything 可以把本地软件 CLI 化吗",

@@ -216,6 +216,24 @@ async function main() {
 
   checks.push(
     checkTextContains({
+      id: "future_upgrade_intake_goal_required",
+      text: [agents, readme, runbook, systemPrompt].filter(Boolean).join("\n"),
+      fileLabel: "future upgrade intake doctrine",
+      required: [
+        "upgrade-ready",
+        "future new technologies",
+        "skill-harvester",
+        "source/license/write-scope",
+        "external upgrade radar",
+        "existing-owner mapping",
+      ],
+      summary:
+        "the architecture should stay open to future models, tools, skills, and benchmarks without direct runtime trust",
+    }),
+  );
+
+  checks.push(
+    checkTextContains({
       id: "current_adapter_selector_required",
       text: [readme, runbook, distillationDoc, evalScript, planScript].filter(Boolean).join("\n"),
       fileLabel: "current adapter entrypoints",
