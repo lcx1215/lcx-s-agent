@@ -20,6 +20,10 @@ import {
   writeFinanceLearningRetrievalReview,
 } from "./finance-learning-retrieval-review-tool.js";
 import { createFinanceResearchSourceWorkbenchTool } from "./finance-research-source-workbench-tool.js";
+import {
+  MODULE_LEARNING_DECISIONS,
+  MODULE_LEARNING_TARGETS,
+} from "./module-learning-pipeline-plan-tool.js";
 
 const FINANCE_EXTERNAL_SOURCE_ADAPTER_TYPES = [
   "rss_atom_json_feed",
@@ -52,6 +56,15 @@ const FINANCE_EXTERNAL_SOURCE_FAMILIES = [
   "local_artifact",
   "manual_paste",
 ] as const;
+
+const SOURCE_INTAKE_STATUS_ORDER = [
+  "stored_only",
+  "retrieval_ready",
+  "application_ready",
+  "eval_absorbed",
+] as const;
+
+type SourceIntakeStatus = (typeof SOURCE_INTAKE_STATUS_ORDER)[number];
 
 const FinanceLearningPipelineOrchestratorSchema = Type.Object({
   adapterName: Type.Optional(Type.String()),
@@ -97,6 +110,36 @@ const FinanceLearningPipelineOrchestratorSchema = Type.Object({
     Type.Number({
       description:
         "Maximum retained capabilities to apply during application validation. Defaults to 3.",
+    }),
+  ),
+  targetModule: Type.Optional(
+    stringEnum(MODULE_LEARNING_TARGETS, {
+      description:
+        "Optional module-learning target for emitting a module_learning_pipeline_plan candidate.",
+    }),
+  ),
+  actualReadingScope: Type.Optional(
+    Type.String({
+      description:
+        "Concrete source sections/pages/items actually read. Required before source intake can be treated as module-learning evidence.",
+    }),
+  ),
+  freshAdjacentApplicationTask: Type.Optional(
+    Type.String({
+      description:
+        "Fresh adjacent task where the retained capability was applied beyond copying the original source.",
+    }),
+  ),
+  keepDownrankDiscardDecision: Type.Optional(
+    stringEnum(MODULE_LEARNING_DECISIONS, {
+      description:
+        "Operator decision after retrieval/apply review. not_decided keeps the chain below eval absorption.",
+    }),
+  ),
+  trainingOrEvalAbsorptionEvidencePath: Type.Optional(
+    Type.String({
+      description:
+        "Existing local-brain eval or training absorption evidence path. The orchestrator does not create this evidence.",
     }),
   ),
 });
@@ -177,6 +220,12 @@ async function writeLearningRetrievalReceipt(params: {
     usageReviewPath: string | null;
   } | null;
   retainedCandidateCount: number;
+  targetModule: string | undefined;
+  actualReadingScope: string | undefined;
+  freshAdjacentApplicationTask: string | undefined;
+  keepDownrankDiscardDecision: string | undefined;
+  trainingOrEvalAbsorptionEvidencePath: string | undefined;
+  sourceIntakeEvidenceChain: Record<string, unknown>;
 }): Promise<string> {
   const preflightCandidateCount = countRetrievedCandidates(params.preflightCapabilityRetrieval);
   const postAttachCandidateCount = countRetrievedCandidates(params.postAttachCapabilityRetrieval);
@@ -190,6 +239,32 @@ async function writeLearningRetrievalReceipt(params: {
       toolCallId: params.toolCallId,
     }),
   );
+  const normalizedReceiptRelPath = receiptRelPath.split(path.sep).join("/");
+  const missingEvidenceAfterReceipt = Array.isArray(
+    params.sourceIntakeEvidenceChain.missingEvidence,
+  )
+    ? params.sourceIntakeEvidenceChain.missingEvidence.filter(
+        (item) => item !== "capability_card_or_retrieval_receipt",
+      )
+    : [];
+  const applicationValidationReceiptPath = params.applicationValidation?.usageReceiptPath ?? null;
+  const sourceIntakeEvidenceChain = {
+    ...params.sourceIntakeEvidenceChain,
+    retrievalReceiptPath: normalizedReceiptRelPath,
+    status:
+      applicationValidationReceiptPath &&
+      params.trainingOrEvalAbsorptionEvidencePath &&
+      params.freshAdjacentApplicationTask &&
+      hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision)
+        ? "eval_absorbed"
+        : applicationValidationReceiptPath
+          ? "application_ready"
+          : "retrieval_ready",
+    readyForModulePlanReceipt: !missingEvidenceAfterReceipt.some(
+      (item) => item !== "training_or_eval_absorption_evidence",
+    ),
+    missingEvidence: missingEvidenceAfterReceipt,
+  };
   await fs.mkdir(path.join(params.workspaceDir, receiptRelDir), { recursive: true });
   await fs.writeFile(
     path.join(params.workspaceDir, receiptRelPath),
@@ -217,6 +292,14 @@ async function writeLearningRetrievalReceipt(params: {
         preflightCapabilityRetrieval: params.preflightCapabilityRetrieval,
         postAttachCapabilityRetrieval: params.postAttachCapabilityRetrieval,
         applicationValidation: params.applicationValidation,
+        moduleLearningEvidence: {
+          targetModule: params.targetModule ?? null,
+          actualReadingScope: params.actualReadingScope ?? null,
+          freshAdjacentApplicationTask: params.freshAdjacentApplicationTask ?? null,
+          keepDownrankDiscardDecision: params.keepDownrankDiscardDecision ?? "not_decided",
+          trainingOrEvalAbsorptionEvidencePath: params.trainingOrEvalAbsorptionEvidencePath ?? null,
+          sourceIntakeEvidenceChain,
+        },
         action:
           "Use this receipt to verify whether a learning run became retrievable and, when requested, application-validated through stable finance domains, capability tags, query-ranked capability cards, and read-only apply guidance.",
       },
@@ -225,7 +308,7 @@ async function writeLearningRetrievalReceipt(params: {
     )}\n`,
     "utf8",
   );
-  return receiptRelPath.split(path.sep).join("/");
+  return normalizedReceiptRelPath;
 }
 
 function extractRetrievalReceiptDateKey(receiptPath: string): string | null {
@@ -291,6 +374,108 @@ function buildLearningInternalizationFailedReason(params: {
     return null;
   }
   return firstWeakLearningFailedReason(params.weakLearningIntents) ?? params.status;
+}
+
+function hasKeepDownrankDiscardDecision(value: string | undefined): boolean {
+  return Boolean(value && value !== "not_decided");
+}
+
+function chooseSourceIntakeStatus(params: {
+  sourceArtifactPresent: boolean;
+  retrievalReceiptPath: string | null;
+  applicationValidationReceiptPath: string | null;
+  trainingOrEvalAbsorptionEvidencePath: string | undefined;
+  freshAdjacentApplicationTask: string | undefined;
+  keepDownrankDiscardDecision: string | undefined;
+}): SourceIntakeStatus {
+  if (!params.sourceArtifactPresent) {
+    return "stored_only";
+  }
+  if (!params.retrievalReceiptPath) {
+    return "stored_only";
+  }
+  if (!params.applicationValidationReceiptPath) {
+    return "retrieval_ready";
+  }
+  if (
+    params.trainingOrEvalAbsorptionEvidencePath &&
+    params.freshAdjacentApplicationTask &&
+    hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision)
+  ) {
+    return "eval_absorbed";
+  }
+  return "application_ready";
+}
+
+function buildSourceIntakeEvidenceChain(params: {
+  targetModule: string | undefined;
+  sourceUrlOrPath: string | null;
+  normalizedArticleArtifactPaths: string[];
+  normalizedReferenceArtifactPaths: string[];
+  actualReadingScope: string | undefined;
+  retainedCandidateCount: number;
+  retrievalReceiptPath: string | null;
+  applicationValidationStatus: string;
+  applicationValidationReceiptPath: string | null;
+  freshAdjacentApplicationTask: string | undefined;
+  keepDownrankDiscardDecision: string | undefined;
+  trainingOrEvalAbsorptionEvidencePath: string | undefined;
+}) {
+  const sourceArtifactPresent =
+    params.normalizedArticleArtifactPaths.length > 0 ||
+    params.normalizedReferenceArtifactPaths.length > 0 ||
+    Boolean(params.sourceUrlOrPath);
+  const status = chooseSourceIntakeStatus({
+    sourceArtifactPresent,
+    retrievalReceiptPath: params.retrievalReceiptPath,
+    applicationValidationReceiptPath: params.applicationValidationReceiptPath,
+    trainingOrEvalAbsorptionEvidencePath: params.trainingOrEvalAbsorptionEvidencePath,
+    freshAdjacentApplicationTask: params.freshAdjacentApplicationTask,
+    keepDownrankDiscardDecision: params.keepDownrankDiscardDecision,
+  });
+  const missingEvidence = [
+    params.targetModule ? null : "target_module",
+    sourceArtifactPresent ? null : "source_url_or_local_source_path",
+    params.actualReadingScope ? null : "actual_reading_scope",
+    params.retainedCandidateCount > 0 ? null : "module_specific_capability_rule",
+    params.retrievalReceiptPath ? null : "capability_card_or_retrieval_receipt",
+    params.applicationValidationReceiptPath ? null : "application_validation_receipt",
+    params.freshAdjacentApplicationTask ? null : "fresh_adjacent_application_task",
+    hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision)
+      ? null
+      : "keep_downrank_or_discard_decision",
+    params.trainingOrEvalAbsorptionEvidencePath ? null : "training_or_eval_absorption_evidence",
+  ].filter((item): item is string => Boolean(item));
+
+  return {
+    status,
+    readyForModulePlanReceipt:
+      Boolean(params.targetModule) &&
+      sourceArtifactPresent &&
+      Boolean(params.actualReadingScope) &&
+      params.retainedCandidateCount > 0 &&
+      Boolean(params.retrievalReceiptPath) &&
+      Boolean(params.applicationValidationReceiptPath) &&
+      Boolean(params.freshAdjacentApplicationTask) &&
+      hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision),
+    evalAbsorbed: status === "eval_absorbed",
+    missingEvidence,
+    sourceUrlOrPath: params.sourceUrlOrPath,
+    sourceRegistryOrArtifactPaths: [
+      ...params.normalizedArticleArtifactPaths,
+      ...params.normalizedReferenceArtifactPaths,
+    ],
+    actualReadingScope: params.actualReadingScope ?? null,
+    retainedCandidateCount: params.retainedCandidateCount,
+    retrievalReceiptPath: params.retrievalReceiptPath,
+    applicationValidationStatus: params.applicationValidationStatus,
+    applicationValidationReceiptPath: params.applicationValidationReceiptPath,
+    freshAdjacentApplicationTask: params.freshAdjacentApplicationTask ?? null,
+    keepDownrankDiscardDecision: params.keepDownrankDiscardDecision ?? "not_decided",
+    trainingOrEvalAbsorptionEvidencePath: params.trainingOrEvalAbsorptionEvidencePath ?? null,
+    claimBoundary:
+      "stored source is not learned capability; retrieval_ready is not application_ready; application_ready is not eval_absorbed without local-brain eval/training evidence and a keep/downrank/discard decision",
+  };
 }
 
 function wrapStepFailure(params: {
@@ -365,6 +550,37 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
       );
       const maxAppliedCapabilities = clampMaxAppliedCapabilities(
         readStringOrNumberParam(params, "maxAppliedCapabilities"),
+      );
+      const targetModule = normalizeOptionalString(
+        readStringParam(params, "targetModule", { allowEmpty: true }),
+      );
+      if (
+        targetModule &&
+        !MODULE_LEARNING_TARGETS.includes(targetModule as (typeof MODULE_LEARNING_TARGETS)[number])
+      ) {
+        throw new ToolInputError(`unsupported targetModule: ${targetModule}`);
+      }
+      const actualReadingScope = normalizeOptionalString(
+        readStringParam(params, "actualReadingScope", { allowEmpty: true }),
+      );
+      const freshAdjacentApplicationTask = normalizeOptionalString(
+        readStringParam(params, "freshAdjacentApplicationTask", { allowEmpty: true }),
+      );
+      const keepDownrankDiscardDecision = normalizeOptionalString(
+        readStringParam(params, "keepDownrankDiscardDecision", { allowEmpty: true }),
+      );
+      if (
+        keepDownrankDiscardDecision &&
+        !MODULE_LEARNING_DECISIONS.includes(
+          keepDownrankDiscardDecision as (typeof MODULE_LEARNING_DECISIONS)[number],
+        )
+      ) {
+        throw new ToolInputError(
+          `unsupported keepDownrankDiscardDecision: ${keepDownrankDiscardDecision}`,
+        );
+      }
+      const trainingOrEvalAbsorptionEvidencePath = normalizeOptionalString(
+        readStringParam(params, "trainingOrEvalAbsorptionEvidencePath", { allowEmpty: true }),
       );
       const preflightCapabilityRetrieval = learningIntent
         ? (
@@ -495,17 +711,53 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
       if (route === "research_source_workbench" && normalizedArticleArtifactPaths.length === 1) {
         const contentKind = await readContentKind(workspaceDir, normalizedArticleArtifactPaths[0]);
         if (contentKind === "metadata_only_reference") {
+          const referencePaths = normalizedArticleArtifactPaths;
+          const sourceIntakeEvidenceChain = buildSourceIntakeEvidenceChain({
+            targetModule,
+            sourceUrlOrPath: referencePaths[0] ?? intakeArgs.userProvidedUrl ?? null,
+            normalizedArticleArtifactPaths: [],
+            normalizedReferenceArtifactPaths: referencePaths,
+            actualReadingScope,
+            retainedCandidateCount: 0,
+            retrievalReceiptPath: null,
+            applicationValidationStatus: "not_requested",
+            applicationValidationReceiptPath: null,
+            freshAdjacentApplicationTask,
+            keepDownrankDiscardDecision,
+            trainingOrEvalAbsorptionEvidencePath,
+          });
           return jsonResult({
             ok: true,
             intakeRoute: route,
             intakeTool,
             normalizedArticleArtifactPaths: [],
-            normalizedReferenceArtifactPaths: normalizedArticleArtifactPaths,
+            normalizedReferenceArtifactPaths: referencePaths,
             extractionSkipped: true,
             extractionSkippedReason: "metadata_only_reference_source",
             noRemoteFetchOccurred: true,
             provenancePreserved: true,
             inspectTool: null,
+            sourceIntakeEvidenceChain,
+            moduleLearningPlanCandidate: {
+              toolName: "module_learning_pipeline_plan",
+              readyToWriteReceipt: false,
+              targetModule: targetModule ?? null,
+              sourceUrlOrPath: referencePaths[0] ?? intakeArgs.userProvidedUrl ?? null,
+              learningIntent: learningIntent ?? null,
+              actualReadingScope: actualReadingScope ?? null,
+              applicationValidationTask: applicationValidationQuery ?? null,
+              existingArtifactPaths: referencePaths,
+              sourceRegistryRecordPath: null,
+              retrievalReceiptPath: null,
+              applicationValidationReceiptPath: null,
+              trainingOrEvalAbsorptionEvidencePath: trainingOrEvalAbsorptionEvidencePath ?? null,
+              freshAdjacentApplicationTask: freshAdjacentApplicationTask ?? null,
+              keepDownrankDiscardDecision: keepDownrankDiscardDecision ?? "not_decided",
+              writeReceipt: false,
+              missingEvidence: sourceIntakeEvidenceChain.missingEvidence,
+              claimBoundary:
+                "Metadata-only references are source-intake planning inputs, not learned capability.",
+            },
             action:
               "The source was normalized as metadata-only reference material. No remote content was fetched and no learning candidate was attached. Capture a local/manual article artifact before retrying the full pipeline.",
           });
@@ -513,6 +765,25 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
       }
 
       if (normalizedArticleArtifactPaths.length === 0) {
+        const sourceIntakeEvidenceChain = buildSourceIntakeEvidenceChain({
+          targetModule,
+          sourceUrlOrPath:
+            normalizedReferenceArtifactPaths[0] ??
+            intakeArgs.inputPath ??
+            intakeArgs.referenceUrl ??
+            intakeArgs.feedUrl ??
+            null,
+          normalizedArticleArtifactPaths,
+          normalizedReferenceArtifactPaths,
+          actualReadingScope,
+          retainedCandidateCount: 0,
+          retrievalReceiptPath: null,
+          applicationValidationStatus: "not_requested",
+          applicationValidationReceiptPath: null,
+          freshAdjacentApplicationTask,
+          keepDownrankDiscardDecision,
+          trainingOrEvalAbsorptionEvidencePath,
+        });
         return jsonResult({
           ok: true,
           intakeRoute: route,
@@ -524,6 +795,32 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
           noRemoteFetchOccurred: true,
           provenancePreserved: true,
           inspectTool: null,
+          sourceIntakeEvidenceChain,
+          moduleLearningPlanCandidate: {
+            toolName: "module_learning_pipeline_plan",
+            readyToWriteReceipt: false,
+            targetModule: targetModule ?? null,
+            sourceUrlOrPath:
+              normalizedReferenceArtifactPaths[0] ??
+              intakeArgs.inputPath ??
+              intakeArgs.referenceUrl ??
+              intakeArgs.feedUrl ??
+              null,
+            learningIntent: learningIntent ?? null,
+            actualReadingScope: actualReadingScope ?? null,
+            applicationValidationTask: applicationValidationQuery ?? null,
+            existingArtifactPaths: normalizedReferenceArtifactPaths,
+            sourceRegistryRecordPath: null,
+            retrievalReceiptPath: null,
+            applicationValidationReceiptPath: null,
+            trainingOrEvalAbsorptionEvidencePath: trainingOrEvalAbsorptionEvidencePath ?? null,
+            freshAdjacentApplicationTask: freshAdjacentApplicationTask ?? null,
+            keepDownrankDiscardDecision: keepDownrankDiscardDecision ?? "not_decided",
+            writeReceipt: false,
+            missingEvidence: sourceIntakeEvidenceChain.missingEvidence,
+            claimBoundary:
+              "Reference-only inputs are source-intake planning inputs, not learned capability.",
+          },
           action:
             "The input normalized into references only. No remote content was fetched and no retained candidate was attached because there was no local article content to extract.",
         });
@@ -713,6 +1010,31 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
                 : null,
           }
         : null;
+      const sourceUrlOrPath =
+        normalizedArticleArtifactPaths[0] ??
+        normalizedReferenceArtifactPaths[0] ??
+        intakeArgs.localFilePath ??
+        intakeArgs.inputPath ??
+        intakeArgs.userProvidedUrl ??
+        intakeArgs.referenceUrl ??
+        intakeArgs.feedUrl ??
+        null;
+      const applicationValidationReceiptPath =
+        applicationValidationReceiptSummary?.usageReceiptPath ?? null;
+      const sourceIntakeEvidenceChainBeforeReceipt = buildSourceIntakeEvidenceChain({
+        targetModule,
+        sourceUrlOrPath,
+        normalizedArticleArtifactPaths,
+        normalizedReferenceArtifactPaths,
+        actualReadingScope,
+        retainedCandidateCount,
+        retrievalReceiptPath: null,
+        applicationValidationStatus,
+        applicationValidationReceiptPath,
+        freshAdjacentApplicationTask,
+        keepDownrankDiscardDecision,
+        trainingOrEvalAbsorptionEvidencePath,
+      });
       const retrievalReceiptPath = learningIntent
         ? await writeLearningRetrievalReceipt({
             workspaceDir,
@@ -726,8 +1048,51 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
             postAttachCapabilityRetrieval,
             applicationValidation: applicationValidationReceiptSummary,
             retainedCandidateCount,
+            targetModule,
+            actualReadingScope,
+            freshAdjacentApplicationTask,
+            keepDownrankDiscardDecision,
+            trainingOrEvalAbsorptionEvidencePath,
+            sourceIntakeEvidenceChain: sourceIntakeEvidenceChainBeforeReceipt,
           })
         : null;
+      const sourceIntakeEvidenceChain = buildSourceIntakeEvidenceChain({
+        targetModule,
+        sourceUrlOrPath,
+        normalizedArticleArtifactPaths,
+        normalizedReferenceArtifactPaths,
+        actualReadingScope,
+        retainedCandidateCount,
+        retrievalReceiptPath,
+        applicationValidationStatus,
+        applicationValidationReceiptPath,
+        freshAdjacentApplicationTask,
+        keepDownrankDiscardDecision,
+        trainingOrEvalAbsorptionEvidencePath,
+      });
+      const moduleLearningPlanCandidate = {
+        toolName: "module_learning_pipeline_plan",
+        readyToWriteReceipt: sourceIntakeEvidenceChain.readyForModulePlanReceipt,
+        targetModule: targetModule ?? null,
+        sourceUrlOrPath,
+        learningIntent: learningIntent ?? null,
+        actualReadingScope: actualReadingScope ?? null,
+        applicationValidationTask: applicationValidationQuery ?? null,
+        existingArtifactPaths: [
+          ...normalizedArticleArtifactPaths,
+          ...normalizedReferenceArtifactPaths,
+        ],
+        sourceRegistryRecordPath: normalizedArticleArtifactPaths[0] ?? null,
+        retrievalReceiptPath,
+        applicationValidationReceiptPath,
+        trainingOrEvalAbsorptionEvidencePath: trainingOrEvalAbsorptionEvidencePath ?? null,
+        freshAdjacentApplicationTask: freshAdjacentApplicationTask ?? null,
+        keepDownrankDiscardDecision: keepDownrankDiscardDecision ?? "not_decided",
+        writeReceipt: false,
+        missingEvidence: sourceIntakeEvidenceChain.missingEvidence,
+        claimBoundary:
+          "This is a plan candidate only. Writing a plan receipt is not Qwen eval absorption; eval_absorbed still requires local-brain eval/training evidence.",
+      };
       const retrievalReview =
         learningIntent && retrievalReceiptPath
           ? await writeFinanceLearningRetrievalReview({
@@ -751,6 +1116,8 @@ export function createFinanceLearningPipelineOrchestratorTool(options?: {
         normalizedArticleArtifactPaths,
         normalizedReferenceArtifactPaths,
         retainedCandidateCount,
+        sourceIntakeEvidenceChain,
+        moduleLearningPlanCandidate,
         retrievalFirstLearning: learningIntent
           ? {
               ok: true,

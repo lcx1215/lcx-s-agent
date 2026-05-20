@@ -287,12 +287,26 @@ async function runCase(
         maxRetrievedCapabilities: 5,
         applicationValidationQuery: utterance,
         maxAppliedCapabilities: 3,
+        targetModule: "event_driven",
+        actualReadingScope:
+          "Read the fixture title, source metadata, method summary, causal claim, evidence categories, implementation requirements, and risk/failure-mode sections.",
+        freshAdjacentApplicationTask:
+          "Apply the retained event triage workflow to the Lark adjacent ETF catalyst and regime-risk intake request.",
+        keepDownrankDiscardDecision: "keep",
       });
       assert(result.details.ok === true, "lark-market-capability-intake should complete pipeline");
       const retrieval = getRecord(result.details.retrievalFirstLearning, "retrievalFirstLearning");
       const applicationValidation = getRecord(
         result.details.applicationValidation,
         "applicationValidation",
+      );
+      const sourceIntakeEvidenceChain = getRecord(
+        result.details.sourceIntakeEvidenceChain,
+        "sourceIntakeEvidenceChain",
+      );
+      const moduleLearningPlanCandidate = getRecord(
+        result.details.moduleLearningPlanCandidate,
+        "moduleLearningPlanCandidate",
       );
       const retrievalReceiptPath = getString(
         retrieval.retrievalReceiptPath,
@@ -314,6 +328,18 @@ async function runCase(
         applicationValidation.applicationValidationStatus === "application_ready" ||
           typeof applicationValidation.failedReason === "string",
         "application validation should expose application_ready or a concrete failure reason",
+      );
+      assert(
+        sourceIntakeEvidenceChain.status === "application_ready",
+        "source intake should stop at application_ready until eval/training absorption evidence exists",
+      );
+      assert(
+        sourceIntakeEvidenceChain.evalAbsorbed === false,
+        "source intake must not claim eval_absorbed from receipts alone",
+      );
+      assert(
+        moduleLearningPlanCandidate.readyToWriteReceipt === true,
+        "source intake should emit a module_learning_pipeline_plan candidate when non-eval evidence is complete",
       );
       await assertArtifactExists(workspaceDir, retrievalReceiptPath);
       await assertArtifactExists(workspaceDir, retrievalReviewPath);
@@ -365,6 +391,10 @@ async function runCase(
         retrievalReviewLinksUsage: true,
         usageReviewBoundary: usageReview.boundary,
         usageReviewReceipts: usageReviewCounts.usageReceipts,
+        sourceIntakeStatus: sourceIntakeEvidenceChain.status,
+        sourceIntakeEvalAbsorbed: sourceIntakeEvidenceChain.evalAbsorbed,
+        sourceIntakeMissingEvidence: sourceIntakeEvidenceChain.missingEvidence,
+        moduleLearningPlanCandidateReady: moduleLearningPlanCandidate.readyToWriteReceipt,
         weakLearningIntents: retrieval.weakLearningIntents,
         agentVisibleLearningLine,
         retrievalReceiptPath,

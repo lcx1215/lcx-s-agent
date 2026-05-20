@@ -18,6 +18,9 @@ Pipeline:
 3. `finance_learning_capability_attach`
 4. evidence-gated retained candidate validation
 5. `finance_learning_capability_inspect`
+6. optional retrieval-first receipt and application validation through
+   `learningIntent` and `applicationValidationQuery`
+7. source-intake evidence chain for `module_learning_pipeline_plan`
 
 Allowed action authority stays bounded to:
 
@@ -25,6 +28,51 @@ Allowed action authority stays bounded to:
 - `watch_only`
 - `candidate_for_review`
 - `no_action`
+
+## Source Intake Evidence Chain
+
+Do not call a source learned just because it was stored or summarized.
+
+For real module learning, call the orchestrator with these fields when they are
+known:
+
+- `targetModule`: one existing `module_learning_pipeline_plan` target, such as
+  `event_driven`, `portfolio_risk_gates`, `data_provenance_quality`, or
+  `company_fundamentals_value`
+- `actualReadingScope`: the exact sections, pages, transcript span, filing
+  items, or local artifact parts actually read
+- `learningIntent`: what capability should become retrievable
+- `applicationValidationQuery`: a fresh adjacent task proving the learned card
+  can be applied
+- `freshAdjacentApplicationTask`: the adjacent task in plain language
+- `keepDownrankDiscardDecision`: `keep`, `downrank`, `discard`, or
+  `not_decided`
+- `trainingOrEvalAbsorptionEvidencePath`: only when a real local-brain eval or
+  training absorption artifact already exists
+
+The orchestrator returns:
+
+- `sourceIntakeEvidenceChain.status`: `stored_only`, `retrieval_ready`,
+  `application_ready`, or `eval_absorbed`
+- `sourceIntakeEvidenceChain.missingEvidence`: the exact missing proof before
+  the source can move forward
+- `sourceIntakeEvidenceChain.evalAbsorbed`: false unless local-brain
+  eval/training evidence exists with a fresh adjacent task and
+  keep/downrank/discard decision
+- `moduleLearningPlanCandidate`: a ready-to-copy input shape for
+  `module_learning_pipeline_plan`; it sets `writeReceipt: false` and does not
+  by itself claim Qwen absorption
+
+Practical boundary:
+
+- stored local source = `stored_only`
+- capability card/retrieval receipt = `retrieval_ready`
+- apply usage receipt on a fresh adjacent task = `application_ready`
+- Qwen/local-brain eval or training evidence plus keep/downrank/discard =
+  `eval_absorbed`
+
+If any part is missing, report the missing field instead of saying the agent
+learned it.
 
 ## Demo Fixtures
 
@@ -115,6 +163,11 @@ It checks:
 - the backend contract requires a safe local or manual source
 - the finance pipeline creates a normalized research source
 - retrieval-first learning writes both `retrievalReceiptPath` and `retrievalReviewPath`
+- source intake returns `application_ready`, not `eval_absorbed`, until
+  local-brain eval/training absorption evidence exists
+- `moduleLearningPlanCandidate.readyToWriteReceipt` is true only when source,
+  actual reading scope, retrieval receipt, application receipt, fresh adjacent
+  task, and keep/downrank/discard decision are present
 
 Run it with:
 
@@ -138,7 +191,13 @@ Use the orchestrator directly with pasted article content:
   "title": "ETF event triage workflow",
   "publishDate": "2026-04-17",
   "retrievalNotes": "Operator provided a bounded finance research source with explicit provenance, concrete method notes, evidence-bearing cognition, and no remote fetch request in this orchestration step.",
-  "allowedActionAuthority": "research_only"
+  "allowedActionAuthority": "research_only",
+  "learningIntent": "ETF event triage workflow with public headlines and ETF regime risk",
+  "applicationValidationQuery": "Apply the retained ETF event triage workflow to a fresh ETF catalyst mapping and regime-risk research prompt.",
+  "targetModule": "event_driven",
+  "actualReadingScope": "Read the title, source metadata, method summary, causal claim, evidence categories, implementation requirements, and risk/failure-mode sections.",
+  "freshAdjacentApplicationTask": "Apply the retained event triage workflow to a fresh ETF catalyst mapping and regime-risk prompt.",
+  "keepDownrankDiscardDecision": "keep"
 }
 ```
 
@@ -149,6 +208,11 @@ Expected output shape:
 - one retained capability candidate in `memory/local-memory/finance-learning-capability-candidates.md`
 - explicit `evidenceCategories`
 - one `finance_learning_capability_inspect` target keyed by `sourceArticlePath`
+- `sourceIntakeEvidenceChain.status` is `application_ready`
+- `sourceIntakeEvidenceChain.missingEvidence` still includes
+  `training_or_eval_absorption_evidence` until Qwen/local-brain proof exists
+- `moduleLearningPlanCandidate` is ready for `module_learning_pipeline_plan`
+  but does not claim eval absorption
 
 ## Local File Article Flow
 

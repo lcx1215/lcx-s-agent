@@ -38,6 +38,30 @@ type PipelineDetails = Record<string, unknown> & {
     usageReceiptPath: string | null;
     usageReviewPath: string | null;
   };
+  sourceIntakeEvidenceChain: {
+    status: string;
+    readyForModulePlanReceipt: boolean;
+    evalAbsorbed: boolean;
+    missingEvidence: string[];
+    actualReadingScope: string | null;
+    retrievalReceiptPath: string | null;
+    applicationValidationReceiptPath: string | null;
+    freshAdjacentApplicationTask: string | null;
+    keepDownrankDiscardDecision: string;
+    trainingOrEvalAbsorptionEvidencePath: string | null;
+  };
+  moduleLearningPlanCandidate: {
+    toolName: string;
+    readyToWriteReceipt: boolean;
+    targetModule: string | null;
+    sourceUrlOrPath: string | null;
+    actualReadingScope: string | null;
+    retrievalReceiptPath: string | null;
+    applicationValidationReceiptPath: string | null;
+    freshAdjacentApplicationTask: string | null;
+    keepDownrankDiscardDecision: string;
+    missingEvidence: string[];
+  };
   attachResults: unknown[];
   extractionGap: unknown;
 };
@@ -253,6 +277,12 @@ describe("finance learning pipeline orchestrator tool", () => {
       applicationValidationQuery:
         "把刚学到的 ETF event triage workflow 应用到一个新的 ETF catalyst mapping 和 regime risk 研究问题",
       maxAppliedCapabilities: 2,
+      targetModule: "event_driven",
+      actualReadingScope:
+        "Read the title, source metadata, method summary, causal claim, evidence categories, implementation requirements, and risk/failure-mode sections from the pasted article.",
+      freshAdjacentApplicationTask:
+        "Apply the retained workflow to a new ETF catalyst mapping and regime-risk research prompt.",
+      keepDownrankDiscardDecision: "keep",
     });
 
     expect(asPipelineDetails(result.details)).toEqual(
@@ -262,6 +292,30 @@ describe("finance learning pipeline orchestrator tool", () => {
         intakeTool: "finance_research_source_workbench",
         retainedCandidateCount: 1,
         inspectTool: "finance_learning_capability_inspect",
+        sourceIntakeEvidenceChain: expect.objectContaining({
+          status: "application_ready",
+          readyForModulePlanReceipt: true,
+          evalAbsorbed: false,
+          missingEvidence: ["training_or_eval_absorption_evidence"],
+          actualReadingScope:
+            "Read the title, source metadata, method summary, causal claim, evidence categories, implementation requirements, and risk/failure-mode sections from the pasted article.",
+          freshAdjacentApplicationTask:
+            "Apply the retained workflow to a new ETF catalyst mapping and regime-risk research prompt.",
+          keepDownrankDiscardDecision: "keep",
+          trainingOrEvalAbsorptionEvidencePath: null,
+        }),
+        moduleLearningPlanCandidate: expect.objectContaining({
+          toolName: "module_learning_pipeline_plan",
+          readyToWriteReceipt: true,
+          targetModule: "event_driven",
+          actualReadingScope:
+            "Read the title, source metadata, method summary, causal claim, evidence categories, implementation requirements, and risk/failure-mode sections from the pasted article.",
+          freshAdjacentApplicationTask:
+            "Apply the retained workflow to a new ETF catalyst mapping and regime-risk research prompt.",
+          keepDownrankDiscardDecision: "keep",
+          writeReceipt: false,
+          missingEvidence: ["training_or_eval_absorption_evidence"],
+        }),
         retrievalFirstLearning: expect.objectContaining({
           ok: true,
           learningIntent:
@@ -370,6 +424,19 @@ describe("finance learning pipeline orchestrator tool", () => {
         usageReceiptPath: string | null;
         usageReviewPath: string | null;
       };
+      moduleLearningEvidence: {
+        targetModule: string | null;
+        actualReadingScope: string | null;
+        freshAdjacentApplicationTask: string | null;
+        keepDownrankDiscardDecision: string;
+        trainingOrEvalAbsorptionEvidencePath: string | null;
+        sourceIntakeEvidenceChain: {
+          status: string;
+          readyForModulePlanReceipt: boolean;
+          evalAbsorbed: boolean;
+          missingEvidence: string[];
+        };
+      };
     };
     expect(receipt).toMatchObject({
       boundary: "finance_learning_retrieval_receipt",
@@ -393,7 +460,28 @@ describe("finance learning pipeline orchestrator tool", () => {
           /^memory\/finance-learning-apply-usage-reviews\/\d{4}-\d{2}-\d{2}\.json$/u,
         ),
       },
+      moduleLearningEvidence: {
+        targetModule: "event_driven",
+        actualReadingScope:
+          "Read the title, source metadata, method summary, causal claim, evidence categories, implementation requirements, and risk/failure-mode sections from the pasted article.",
+        freshAdjacentApplicationTask:
+          "Apply the retained workflow to a new ETF catalyst mapping and regime-risk research prompt.",
+        keepDownrankDiscardDecision: "keep",
+        trainingOrEvalAbsorptionEvidencePath: null,
+        sourceIntakeEvidenceChain: expect.objectContaining({
+          status: "application_ready",
+          readyForModulePlanReceipt: true,
+          evalAbsorbed: false,
+          missingEvidence: ["training_or_eval_absorption_evidence"],
+        }),
+      },
     });
+    expect(receipt.moduleLearningEvidence.sourceIntakeEvidenceChain).toEqual(
+      expect.objectContaining({
+        retrievalReceiptPath: asPipelineDetails(result.details).retrievalFirstLearning
+          .retrievalReceiptPath,
+      }),
+    );
     const review = JSON.parse(
       await readWorkspaceFile(
         workspaceDir,
@@ -516,6 +604,52 @@ describe("finance learning pipeline orchestrator tool", () => {
     );
   });
 
+  it("keeps source intake below module-plan readiness when reading scope and decision evidence are missing", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-finance-learning-pipeline-");
+    const tool = createFinanceLearningPipelineOrchestratorTool({ workspaceDir });
+
+    const result = await tool.execute("source-intake-missing-evidence", {
+      sourceName: "Manual Finance Note",
+      sourceType: "manual_article_source",
+      pastedText: buildStructuredArticle(),
+      title: "ETF event triage workflow",
+      publishDate: "2026-04-17",
+      retrievalNotes: SAFE_RETRIEVAL_NOTES,
+      allowedActionAuthority: "research_only",
+      learningIntent: "ETF event triage workflow with event catalyst mapping",
+      applicationValidationQuery:
+        "把刚学到的 ETF event triage workflow 应用到一个新的 ETF catalyst mapping 问题",
+      targetModule: "event_driven",
+    });
+
+    expect(asPipelineDetails(result.details)).toEqual(
+      expect.objectContaining({
+        ok: true,
+        sourceIntakeEvidenceChain: expect.objectContaining({
+          status: "application_ready",
+          readyForModulePlanReceipt: false,
+          evalAbsorbed: false,
+          missingEvidence: expect.arrayContaining([
+            "actual_reading_scope",
+            "fresh_adjacent_application_task",
+            "keep_downrank_or_discard_decision",
+            "training_or_eval_absorption_evidence",
+          ]),
+        }),
+        moduleLearningPlanCandidate: expect.objectContaining({
+          readyToWriteReceipt: false,
+          targetModule: "event_driven",
+          actualReadingScope: null,
+          keepDownrankDiscardDecision: "not_decided",
+          missingEvidence: expect.arrayContaining([
+            "actual_reading_scope",
+            "keep_downrank_or_discard_decision",
+          ]),
+        }),
+      }),
+    );
+  });
+
   it("records Google/web references as metadata only without fetching remote content", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-learning-pipeline-");
     const tool = createFinanceLearningPipelineOrchestratorTool({ workspaceDir });
@@ -537,6 +671,16 @@ describe("finance learning pipeline orchestrator tool", () => {
         extractionSkippedReason: "metadata_only_reference_source",
         noRemoteFetchOccurred: true,
         inspectTool: null,
+        sourceIntakeEvidenceChain: expect.objectContaining({
+          status: "stored_only",
+          readyForModulePlanReceipt: false,
+          evalAbsorbed: false,
+          missingEvidence: expect.arrayContaining([
+            "actual_reading_scope",
+            "module_specific_capability_rule",
+            "capability_card_or_retrieval_receipt",
+          ]),
+        }),
       }),
     );
     expect(asPipelineDetails(result.details).normalizedArticleArtifactPaths).toEqual([]);
