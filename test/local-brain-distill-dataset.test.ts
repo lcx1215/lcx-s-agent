@@ -47,6 +47,22 @@ describe("local brain distill dataset", () => {
     expect(source).toContain('risk_boundaries":["research_only"]');
   });
 
+  it("includes current real-market stress families as high-weight Qwen curated seeds", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/local-brain-distill-dataset.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("treasury_supply_term_premium_portfolio_risk");
+    expect(source).toContain("private_credit_nonbank_leverage_stress_waterflow");
+    expect(source).toContain("ai_capex_power_grid_index_concentration_risk");
+    expect(source).toContain("energy_inflation_cross_asset_shock_risk");
+    expect(source).toContain("treasury_issuance_refunding_and_auction_calendar");
+    expect(source).toContain("nonbank_leverage_and_redemption_pressure_inputs");
+    expect(source).toContain("data_center_power_grid_and_energy_constraint_inputs");
+    expect(source).toContain("equity_bond_hedge_may_fail_under_supply_shock");
+  });
+
   it("writes parseable seed splits for downstream smoke checks", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-dataset-"));
     const workspaceDir = path.join(fixtureRoot, "workspace");

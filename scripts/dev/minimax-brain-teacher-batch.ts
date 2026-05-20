@@ -106,6 +106,34 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
       "failure-focused senior-trader promotion repair curriculum tying current data, filings, valuation, memory, sentiment validation, and review gates into one reusable chain.",
   },
   {
+    id: "treasury_supply_term_premium_portfolio_risk",
+    userMessage:
+      "训练本地 Qwen 学会把美国财政赤字、Treasury refunding、美债供给和 term premium 接进已有利率/信用/美元/ETF/组合风险血管：先要拍卖和再融资日历、期限溢价、实际利率、收益率曲线、来源时间戳，再拆 TLT 久期、QQQ 估值、信用流动性、美元流动性、组合权重和反方证据；不能把国债供给 headline 当单独交易信号。",
+    sourceSummary:
+      "Treasury supply and term-premium curriculum for macro rates, credit, FX, ETF regime, quant math, finance data gateway, portfolio risk gates, and review.",
+  },
+  {
+    id: "private_credit_nonbank_leverage_stress_waterflow",
+    userMessage:
+      "训练本地 Qwen 学会把 private credit、NBFI、leveraged loans、半流动基金赎回、basis trade 和 forced deleveraging 接进信用/跨资产/ETF/组合风险血管：先要 borrower stress、估值、赎回压力、信用利差、资金流动性、HYG 或 ETF 敞口、组合权重和 risk limit；不能把信用 headline 写成确定传染，也不能给交易建议。",
+    sourceSummary:
+      "private credit and nonbank leverage curriculum requiring credit liquidity, cross-asset liquidity, ETF regime, data provenance, portfolio risk gates, and review.",
+  },
+  {
+    id: "ai_capex_power_grid_index_concentration_risk",
+    userMessage:
+      "训练本地 Qwen 学会把 AI capex、hyperscaler 预算、数据中心电力瓶颈、HBM/GPU 供应链和 QQQ 指数集中度接成一条研究水路：先要财报/指引/预算/电力/供应链/指数权重来源，再拆 NVDA 基本面、估值敏感性、事件催化、能源约束、组合重叠、反方证据和 review；不能把 AI 热度当 alpha。",
+    sourceSummary:
+      "AI capex power-grid and index-concentration curriculum requiring fundamentals, valuation QC, event lifecycle, commodity/energy constraints, index regime, portfolio risk, data gateway, and review.",
+  },
+  {
+    id: "energy_inflation_cross_asset_shock_risk",
+    userMessage:
+      "训练本地 Qwen 学会把霍尔木兹、OPEC、原油库存、SPR、能源价格、CPI/PCE 通胀、美元、TLT、QQQ 和股债相关性接成一条供给冲击水路：先要官方或一手来源、供需/库存/备用产能、通胀预期、利率、美元流动性、ETF regime 和组合权重；必须说明供给冲击下股债对冲可能失效，不给交易建议。",
+    sourceSummary:
+      "energy supply shock curriculum requiring commodity supply data, inflation transmission, FX liquidity, equity-bond correlation risk, ETF regime, portfolio risk gates, data provenance, and review.",
+  },
+  {
     id: "value_investing_fundamental_core",
     userMessage:
       "以后价值投资很重要。训练本地大脑先做基本面和企业价值判断：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、反方证据和组合风险都要拆清楚；技术面只能后置做 timing context，不要给买卖建议。",

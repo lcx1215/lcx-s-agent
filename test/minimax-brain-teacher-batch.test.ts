@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildPrompt,
@@ -8,6 +10,8 @@ import {
   isProviderPayloadMissingFailure,
   normalizeTeacherPlan,
 } from "../scripts/dev/minimax-brain-teacher-batch.js";
+
+const repoRoot = path.resolve(import.meta.dirname, "..");
 
 describe("minimax brain teacher batch parsing", () => {
   it("asks MiniMax for compact machine-parseable teacher JSON", () => {
@@ -33,6 +37,22 @@ describe("minimax brain teacher batch parsing", () => {
     expect(systemPrompt).toContain("Required JSON keys");
     expect(systemPrompt).not.toContain("user_message:");
     expect(systemPrompt).not.toContain("source_summary:");
+  });
+
+  it("includes current real-market stress families in proactive Qwen teacher prompts", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/dev/minimax-brain-teacher-batch.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('id: "treasury_supply_term_premium_portfolio_risk"');
+    expect(source).toContain('id: "private_credit_nonbank_leverage_stress_waterflow"');
+    expect(source).toContain('id: "ai_capex_power_grid_index_concentration_risk"');
+    expect(source).toContain('id: "energy_inflation_cross_asset_shock_risk"');
+    expect(source).toContain("不能把国债供给 headline 当单独交易信号");
+    expect(source).toContain("不能把信用 headline 写成确定传染");
+    expect(source).toContain("不能把 AI 热度当 alpha");
+    expect(source).toContain("股债对冲可能失效");
   });
 
   it("uses JSON-bearing MiniMax thinking content when text content is missing", () => {
