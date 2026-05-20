@@ -526,7 +526,28 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
 function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | undefined {
   const trainingPlan = inputs.trainingPlan?.payload;
   const moduleGate = inputs.moduleAbsorption?.payload;
-  const gateBlockers = stringArray(moduleGate?.blockers);
+  const gateCounts = recordValue(moduleGate?.counts);
+  const audit = inputs.learningSedimentationAudit?.payload;
+  const auditChains = recordValue(audit?.chains);
+  const auditModuleLearning = recordValue(auditChains?.moduleLearningPipeline);
+  const auditLatestReview = recordValue(auditModuleLearning?.latestReview);
+  const noSameDayModuleReceipts =
+    (numberValue(gateCounts?.planReceiptFiles) ?? 0) === 0 &&
+    (numberValue(gateCounts?.reviewRows) ?? 0) === 0;
+  const cumulativeModuleLearningClean =
+    booleanValue(audit?.sufficientForCurrentUse) === true &&
+    booleanValue(auditModuleLearning?.ok) === true &&
+    (numberValue(auditModuleLearning?.cumulativeEvalAbsorbed) ?? 0) > 0 &&
+    (numberValue(auditModuleLearning?.cumulativeBoundaryViolations) ?? 0) === 0 &&
+    (numberValue(auditLatestReview?.evalAbsorbed) ?? 0) > 0 &&
+    (numberValue(auditLatestReview?.weakModuleLearning) ?? 0) === 0 &&
+    (numberValue(auditLatestReview?.boundaryViolations) ?? 0) === 0;
+  const sameDayEmptyButCumulativeClean = noSameDayModuleReceipts && cumulativeModuleLearningClean;
+  const gateBlockers = sameDayEmptyButCumulativeClean
+    ? stringArray(moduleGate?.blockers).filter(
+        (blocker) => blocker !== "module_learning_review_missing",
+      )
+    : stringArray(moduleGate?.blockers);
   const writeAvailable = booleanValue(moduleGate?.writeAvailable);
   const signals: ProblemSignal[] = [
     ...decisionSignals(trainingPlan, {
@@ -536,7 +557,11 @@ function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | 
       },
     }),
   ];
-  if (moduleGate && booleanValue(moduleGate.absorptionReady) === false) {
+  if (
+    moduleGate &&
+    booleanValue(moduleGate.absorptionReady) === false &&
+    !sameDayEmptyButCumulativeClean
+  ) {
     signals.push({
       id: "module_absorption_not_ready",
       severity: "P2",
@@ -565,7 +590,7 @@ function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | 
     nextAction:
       "Complete per-receipt eval/training absorption evidence and rerun the gate before claiming module learning is internalized.",
     actionability:
-      writeAvailable === false ||
+      (writeAvailable === false && !sameDayEmptyButCumulativeClean) ||
       gateBlockers.some((blocker) =>
         [
           "latest_hardened_eval_not_clean",
@@ -576,7 +601,9 @@ function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | 
         ? "blocked_by_owner_gate"
         : undefined,
     blockingReasons: [
-      ...(writeAvailable === false ? ["module_absorption_write_not_available"] : []),
+      ...(writeAvailable === false && !sameDayEmptyButCumulativeClean
+        ? ["module_absorption_write_not_available"]
+        : []),
       ...gateBlockers.filter((blocker) =>
         [
           "latest_hardened_eval_not_clean",

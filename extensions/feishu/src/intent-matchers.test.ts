@@ -181,6 +181,7 @@ describe("feishu intent matchers", () => {
     const phrases = [
       "真实持仓风险验收：我假设自己持有QQQ已经亏了8%，现在想加仓摊平，但担心高估值、利率上行和流动性收紧。请调用ETF/风控/技术择时/quant_math能力，最后给application_ready或failedReason，研究-only，不要教我下单。",
       "Real bond ETF risk check I hold TLT and it is down 12 percent. I am tempted to average down because I think rates will fall later but I worry duration inflation re-acceleration Treasury supply and liquidity risk may make this a bad regime. Research-only no trading advice. Please answer task family how ETF regime creditliquidity macroratesinflation quantmath portfolioriskgates and causalmap should work in order what local math can calculate without live yields when missing live 10Y/real yield/curve/flow data must return failedReason give a reusable checklist.",
+      "我买了 NVDA 在高位，现在亏20%，想快点回本。到底应该砍掉、继续拿着，还是补一点摊低成本？请直接一点，但不要给交易指令。",
     ];
 
     for (const phrase of phrases) {

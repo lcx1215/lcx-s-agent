@@ -974,6 +974,40 @@ describe("real daily utterance regression", () => {
     );
   });
 
+  it("routes real retail loss-recovery wording to position-risk before final answer rescue", async () => {
+    const utterance =
+      "我买了 NVDA 在高位，现在亏20%，想快点回本。到底应该砍掉、继续拿着，还是补一点摊低成本？请直接一点，但不要给交易指令。";
+    const handoff = await resolveLarkAgentInstructionHandoff({
+      cfg,
+      chatId: "oc-control",
+      utterance,
+    });
+
+    expect(looksLikePositionRiskApplicationAsk(utterance)).toBe(true);
+    expect(handoff).toMatchObject({
+      family: "position_risk_adjustment",
+      source: "deterministic_fallback",
+      targetSurface: "technical_daily",
+      workOrder: {
+        family: "position_risk_adjustment",
+        source: "deterministic_fallback_audited",
+        requiredModules: expect.arrayContaining([
+          "macro_rates_inflation",
+          "portfolio_risk_gates",
+          "review_panel",
+        ]),
+        outputContract: expect.arrayContaining([
+          "plain-language research-only risk judgment",
+          "risk observation points, not trade triggers",
+          "research checklist with no execution instruction",
+        ]),
+      },
+    });
+    expect(handoff.workOrder?.outputContract.join("\n")).not.toMatch(
+      /砍掉|补一点|摊低|买入|卖出|加仓|减仓|\b(?:buy|sell|add|reduce|hold|wait|entry|exit)\b/iu,
+    );
+  });
+
   it("hands concrete finance learning asks to the finance pipeline backend contract", async () => {
     const handoff = await resolveLarkAgentInstructionHandoff({
       cfg,

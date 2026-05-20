@@ -35,18 +35,22 @@ export function looksLikeVerticalFinanceLearningAsk(text: string): boolean {
 export function looksLikePositionRiskApplicationAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasPositionRiskCue =
-    /(持有|持仓|仓位|加仓|减仓|补仓|摊平|亏了?|回撤|position|position sizing|add to position|reduce position|drawdown|hold(?:ing|s)?|held|average down|averaging down|down\s+\d+(?:\.\d+)?\s*percent|loss|losing)/u.test(
+    /(买了|追高|高位|持有|持仓|仓位|加仓|减仓|补仓|补一点|摊低|摊平|摊低成本|割肉|砍掉|砍仓|继续拿|拿着|亏了?|亏\s*\d+(?:\.\d+)?\s*%?|回撤|回本|快点回本|position|position sizing|add to position|reduce position|drawdown|hold(?:ing|s)?|held|average down|averaging down|down\s+\d+(?:\.\d+)?\s*percent|loss|losing|recover quickly|make.*back)/u.test(
       normalized,
     );
   const hasMarketRiskCue =
-    /(qqq|spy|tlt|nasdaq|纳指|纳斯达克|etf|估值|valuation|利率|10y|收益率|yield|real yield|curve|duration|treasury supply|inflation|流动性|liquidity|creditliquidity|macro(?:rates)?inflation|regime|技术择时|technical|timing|风控|风险|risk|quant_math|quantmath|portfolioriskgates|causalmap|本地数学)/iu.test(
+    /(qqq|spy|tlt|iwm|nvda|msft|aapl|googl|meta|amzn|tsla|nasdaq|纳指|纳斯达克|etf|个股|股票|估值|valuation|利率|10y|收益率|yield|real yield|curve|duration|treasury supply|inflation|流动性|liquidity|creditliquidity|macro(?:rates)?inflation|regime|技术择时|technical|timing|风控|风险|risk|quant_math|quantmath|portfolioriskgates|causalmap|本地数学)/iu.test(
       normalized,
     );
   const hasApplicationCue =
-    /(研究-only|research-only|no trading advice|不要.*下单|不许下单|不准.*下单|不允许交易执行|不要教我下单|只做研究|本地数学|local math|模块|先后工作|work in order|检查清单|checklist|application[_\s-]?ready|failedreason|明确失败原因)/iu.test(
+    /(研究-only|research-only|no trading advice|不要.*下单|不许下单|不准.*下单|不允许交易执行|不要教我下单|不要.*交易建议|不要.*交易指令|只做研究|本地数学|local math|模块|先后工作|work in order|检查清单|checklist|application[_\s-]?ready|failedreason|明确失败原因)/iu.test(
       normalized,
     );
-  return hasPositionRiskCue && hasMarketRiskCue && hasApplicationCue;
+  const hasRetailDecisionCue =
+    /(要不要|该不该|应该|到底|直接一点|直接告诉|砍掉|割肉|继续拿|拿着|补一点|补仓|摊低|摊平|快点回本|should i|what should i do|recover quickly|make.*back)/iu.test(
+      normalized,
+    );
+  return hasPositionRiskCue && hasMarketRiskCue && (hasApplicationCue || hasRetailDecisionCue);
 }
 
 export function looksLikeFundamentalRiskApplicationAsk(text: string): boolean {

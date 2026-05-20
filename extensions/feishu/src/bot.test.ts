@@ -2390,6 +2390,33 @@ describe("classified publish routing", () => {
         textPreview: expect.stringContaining("chinese_action_framework_language"),
       }),
     );
+
+    const brainCandidateRoot = path.join(tempDir, "memory", "lark-brain-distillation-candidates");
+    const [brainCandidateDateDir] = await fs.readdir(brainCandidateRoot);
+    const brainCandidateText = await fs.readFile(
+      path.join(brainCandidateRoot, brainCandidateDateDir, "msg-retail-position-gate.json"),
+      "utf-8",
+    );
+    const brainCandidate = JSON.parse(brainCandidateText) as {
+      boundary: string;
+      noLanguageRoutingPromotion: boolean;
+      candidates: Array<{
+        source: string;
+        candidateText?: string;
+        proposedPrimaryModules?: string[];
+      }>;
+    };
+    expect(brainCandidate).toMatchObject({
+      boundary: "brain_distillation_candidate",
+      noLanguageRoutingPromotion: true,
+    });
+    expect(
+      brainCandidate.candidates.some((candidate) =>
+        candidate.candidateText?.includes("visible_answer_gate_rejection"),
+      ),
+    ).toBe(true);
+    expect(brainCandidateText).toContain("chinese_action_framework_language");
+    expect(brainCandidateText).toContain("portfolio_risk_gates");
   });
 
   it("publishes classified specialist slices to explicit Feishu surfaces and keeps a summary in control room", async () => {

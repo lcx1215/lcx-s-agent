@@ -4402,6 +4402,27 @@ function createSurfaceLineCaptureDispatcher(params: {
   };
 }
 
+function buildVisibleAnswerGateDistillationPayload(params: {
+  userMessage: string;
+  decision: VisibleAnswerAdoptionGateDecision;
+}) {
+  return {
+    source_kind: "visible_answer_gate_rejection",
+    learning_boundary: "brain_distillation_candidate_only",
+    user_message: params.userMessage,
+    failed_reasons: params.decision.failedReasons,
+    rejected_visible_answer: params.decision.originalText,
+    replacement_visible_answer: params.decision.text,
+    reusable_lesson:
+      "For direct retail position-risk asks, answer with missing inputs, risk drivers, invalidation, evidence checklist, and behavior-risk notes; do not emit buy/sell/add/reduce/hold/wait, average-down, cut-loss, or action-trigger language.",
+    no_language_routing_promotion: true,
+    no_finance_learning_artifact_until_reviewed: true,
+    no_live_sender_touched: true,
+    no_provider_config_touched: true,
+    protected_memory_touched: false,
+  };
+}
+
 function shouldSuppressDuplicateDailyWorkface(params: {
   chatId: string;
   filename: string;
@@ -6059,9 +6080,9 @@ export async function handleFeishuMessage(params: {
               : surfaceRouting.suppressedIntentSurface,
         }
       : surfaceRouting;
-    const larkApiReplyPayloads = larkInstructionHandoff.apiCandidate
+    const larkApiReplyPayloads: unknown[] = larkInstructionHandoff.apiCandidate
       ? [larkInstructionHandoff.apiCandidate]
-      : undefined;
+      : [];
     const larkHandoffReceipt = await persistLarkLanguageHandoffReceiptWithFailureReceipt({
       cfg,
       agentId: route.agentId,
@@ -6324,6 +6345,12 @@ export async function handleFeishuMessage(params: {
             dispatcher,
             userMessage: ctx.content,
             onVisibleAnswerGateDecision: (decision) => {
+              larkApiReplyPayloads.push(
+                buildVisibleAnswerGateDistillationPayload({
+                  userMessage: ctx.content,
+                  decision,
+                }),
+              );
               void recordFeishuReplyFlowEvent({
                 correlationId: ctx.messageId,
                 stage: "answer_audit",
@@ -6504,6 +6531,12 @@ export async function handleFeishuMessage(params: {
         dispatcher,
         userMessage: ctx.content,
         onVisibleAnswerGateDecision: (decision) => {
+          larkApiReplyPayloads.push(
+            buildVisibleAnswerGateDistillationPayload({
+              userMessage: ctx.content,
+              decision,
+            }),
+          );
           void recordFeishuReplyFlowEvent({
             correlationId: ctx.messageId,
             stage: "answer_audit",

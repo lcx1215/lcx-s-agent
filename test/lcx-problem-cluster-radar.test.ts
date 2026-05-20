@@ -209,6 +209,64 @@ describe("lcx-problem-cluster-radar", () => {
     expect(result.actionableClusters).not.toContain("learning_sedimentation_cluster");
   });
 
+  it("does not treat an empty same-day module gate as a blocker when cumulative absorption is clean", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        latestEval: { passed: 201, total: 201, promotionReady: true, parseRecoveredCaseIds: [] },
+        decisions: [],
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: false,
+        gateDecision: "hold_at_application_ready",
+        counts: {
+          planReceiptFiles: 0,
+          reviewRows: 0,
+          evalAbsorbed: 0,
+          boundaryViolations: 0,
+        },
+        blockers: ["module_learning_review_missing"],
+        writeAvailable: false,
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+        chains: {
+          moduleLearningPipeline: {
+            ok: true,
+            cumulativeEvalAbsorbed: 24,
+            cumulativeBoundaryViolations: 0,
+            latestReview: {
+              evalAbsorbed: 8,
+              weakModuleLearning: 0,
+              boundaryViolations: 0,
+            },
+          },
+        },
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        summary: { languageCorpusSeparated: true },
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    expect(result.clusters.map((cluster) => cluster.id)).not.toContain(
+      "module_learning_absorption_cluster",
+    );
+    expect(result.blockedClusters).not.toContain("module_learning_absorption_cluster");
+  });
+
   it("folds guard adapter mismatch into adapter promotion truth", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {

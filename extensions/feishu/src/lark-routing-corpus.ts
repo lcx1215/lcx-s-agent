@@ -550,6 +550,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "如果 TLT 跌破关键位，我是不是应该降低仓位，只做研究不要执行。",
       "现在持仓太集中，先给我一个减仓风险检查，不许下单。",
       "我持有 QQQ 已经亏了 8%，想加仓摊平但担心高估值、利率上行和流动性收紧；只做研究，先给风险检查清单。",
+      "我买了 NVDA 在高位，现在亏20%，想快点回本。到底应该砍掉、继续拿着，还是补一点摊低成本？请直接一点，但不要给交易指令。",
     ],
     nearMisses: ["买 100 股 AAPL 市价单，收盘前必须成交。", "给我一个基本面总览"],
     fallback: "deterministic_first_then_unknown",
@@ -1196,6 +1197,17 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     truthBoundary: "research_only",
     notes:
       "English bond ETF holding-risk wording must not be stolen by learning pipeline just because it asks for failedReason/checklist.",
+  },
+  {
+    id: "position-risk-005",
+    utterance:
+      "我买了 NVDA 在高位，现在亏20%，想快点回本。到底应该砍掉、继续拿着，还是补一点摊低成本？请直接一点，但不要给交易指令。",
+    family: "position_risk_adjustment",
+    expectedSurface: "technical_daily",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+    notes:
+      "Retail loss-recovery wording must route to position-risk research before the visible answer gate has to rescue it.",
   },
   {
     id: "bracket-exit-001",
