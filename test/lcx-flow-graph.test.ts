@@ -326,9 +326,12 @@ describe("LCX flow graph exam", () => {
           watchedPathTerms: expect.arrayContaining([
             "reply-flow-audit",
             "commercial-answer",
+            "visible-answer-adoption",
             "skill-autocue",
           ]),
           allowedPaths: expect.arrayContaining([
+            "extensions/feishu/src/visible-answer-adoption-gate.ts",
+            "extensions/feishu/src/visible-answer-adoption-gate.test.ts",
             "src/auto-reply/reply/skill-autocue.ts",
             "src/auto-reply/reply/skill-autocue.test.ts",
           ]),

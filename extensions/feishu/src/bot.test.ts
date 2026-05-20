@@ -2267,6 +2267,131 @@ describe("buildFeishuAgentBody", () => {
 });
 
 describe("classified publish routing", () => {
+  it("replaces unsafe retail position action frameworks before final visible dispatch", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+
+    const mockDispatchReplyFromConfig = vi.fn(
+      async ({
+        dispatcher,
+      }: {
+        dispatcher: {
+          sendFinalReply: (payload: { text?: string }) => boolean;
+        };
+      }) => {
+        dispatcher.sendFinalReply({
+          text: "先说结论：你现在最缺的不是建议，是数据。减亏两条路的本质：均价策略（抄底）和止损策略（砍仓）。",
+        });
+        return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+      },
+    );
+    const mockWithReplyDispatcher = vi.fn(
+      async ({
+        dispatcher,
+        run,
+        onSettled,
+      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+        try {
+          return await run();
+        } finally {
+          dispatcher.markComplete();
+          try {
+            await dispatcher.waitForIdle();
+          } finally {
+            await onSettled?.();
+          }
+        }
+      },
+    );
+
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher:
+              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-retail-gate-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-retail-position-gate",
+          chat_id: "oc-control-room",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "我NVDA追高买在高点，现在亏20%，要不要割肉？还是再加仓摊低成本？我就想快点回本，直接告诉我怎么做。",
+          }),
+        },
+      },
+    });
+
+    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("这类问题不能直接给交易动作结论"),
+    });
+    const visibleText = (
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0].text;
+    expect(visibleText).toContain("研究检查");
+    expect(visibleText).not.toContain("均价策略");
+    expect(visibleText).not.toContain("止损策略");
+    expect(visibleText).not.toContain("抄底");
+    expect(visibleText).not.toContain("砍仓");
+    expect(mockRecordFeishuReplyFlowEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "msg-retail-position-gate",
+        stage: "answer_audit",
+        answerAuditTerminalDecision: "visible_answer_replaced_by_gate",
+        textPreview: expect.stringContaining("chinese_action_framework_language"),
+      }),
+    );
+  });
+
   it("publishes classified specialist slices to explicit Feishu surfaces and keeps a summary in control room", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),

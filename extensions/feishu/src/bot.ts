@@ -138,6 +138,10 @@ import {
 } from "./surfaces.js";
 import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
 import type { DynamicAgentCreationConfig } from "./types.js";
+import {
+  applyVisibleAnswerAdoptionGate,
+  type VisibleAnswerAdoptionGateDecision,
+} from "./visible-answer-adoption-gate.js";
 
 // --- Permission error extraction ---
 // Extract permission grant URL from Feishu API error response.
@@ -4355,7 +4359,11 @@ async function persistCapturedFeishuSurfaceLine(params: {
   });
 }
 
-function createSurfaceLineCaptureDispatcher(params: { dispatcher: FeishuReplyDispatcherShape }): {
+function createSurfaceLineCaptureDispatcher(params: {
+  dispatcher: FeishuReplyDispatcherShape;
+  userMessage?: string;
+  onVisibleAnswerGateDecision?: (decision: VisibleAnswerAdoptionGateDecision) => void;
+}): {
   dispatcher: FeishuReplyDispatcherShape;
   getLastFinalReplyText: () => string | undefined;
 } {
@@ -4367,8 +4375,23 @@ function createSurfaceLineCaptureDispatcher(params: { dispatcher: FeishuReplyDis
         const visiblePayload = payload.text
           ? { ...payload, text: normalizeFeishuDisplayText(payload.text) }
           : payload;
-        const text = visiblePayload.text?.trim();
-        const queued = params.dispatcher.sendFinalReply(visiblePayload);
+        const rawText = visiblePayload.text?.trim();
+        const gateDecision =
+          rawText && params.userMessage
+            ? applyVisibleAnswerAdoptionGate({
+                userMessage: params.userMessage,
+                answerText: rawText,
+              })
+            : undefined;
+        if (gateDecision && gateDecision.status === "replaced") {
+          params.onVisibleAnswerGateDecision?.(gateDecision);
+        }
+        const gatedPayload =
+          gateDecision && gateDecision.status === "replaced"
+            ? { ...visiblePayload, text: gateDecision.text }
+            : visiblePayload;
+        const text = gatedPayload.text?.trim();
+        const queued = params.dispatcher.sendFinalReply(gatedPayload);
         if (queued && text) {
           lastFinalReplyText = text;
         }
@@ -6299,6 +6322,21 @@ export async function handleFeishuMessage(params: {
           });
           const surfaceLineCapture = createSurfaceLineCaptureDispatcher({
             dispatcher,
+            userMessage: ctx.content,
+            onVisibleAnswerGateDecision: (decision) => {
+              void recordFeishuReplyFlowEvent({
+                correlationId: ctx.messageId,
+                stage: "answer_audit",
+                accountId: account.accountId,
+                messageId: ctx.messageId,
+                chatId: ctx.chatId,
+                chatType: ctx.chatType,
+                agentId,
+                contentType: event.message.message_type,
+                textPreview: `visible_answer_replaced_by_gate:${decision.failedReasons.join(",")}`,
+                answerAuditTerminalDecision: "visible_answer_replaced_by_gate",
+              });
+            },
           });
           const effectiveDispatcher = createClassifiedPublishDispatcher({
             dispatcher: createDailyWorkfacePublishDispatcher({
@@ -6464,6 +6502,21 @@ export async function handleFeishuMessage(params: {
       });
       const surfaceLineCapture = createSurfaceLineCaptureDispatcher({
         dispatcher,
+        userMessage: ctx.content,
+        onVisibleAnswerGateDecision: (decision) => {
+          void recordFeishuReplyFlowEvent({
+            correlationId: ctx.messageId,
+            stage: "answer_audit",
+            accountId: account.accountId,
+            messageId: ctx.messageId,
+            chatId: ctx.chatId,
+            chatType: ctx.chatType,
+            agentId: route.agentId,
+            contentType: event.message.message_type,
+            textPreview: `visible_answer_replaced_by_gate:${decision.failedReasons.join(",")}`,
+            answerAuditTerminalDecision: "visible_answer_replaced_by_gate",
+          });
+        },
       });
       const effectiveDispatcher = createClassifiedPublishDispatcher({
         dispatcher: createDailyWorkfacePublishDispatcher({

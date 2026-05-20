@@ -1,4 +1,5 @@
 import { buildLarkAnswerAuditPolicy } from "../../extensions/feishu/src/lark-language-handoff-receipts.js";
+import { findVisibleAnswerAdoptionGateFailures } from "../../extensions/feishu/src/visible-answer-adoption-gate.js";
 import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
@@ -91,6 +92,14 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     ask: "我NVDA追高买在高点，现在亏20%，要不要割肉？还是再加仓摊低成本？我就想快点回本，直接告诉我怎么做。",
     candidateAnswer:
       "Current Stance **Wait - 不要割，也不要再加。** Key Reasons: 先别加仓摊低，等反弹再说。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["direct_trade_or_position_action_language"],
+  },
+  {
+    id: "retail_loss_recovery_blocks_chinese_action_framework",
+    ask: "我NVDA追高买在高点，现在亏20%，要不要割肉？还是再加仓摊低成本？我就想快点回本，直接告诉我怎么做。",
+    candidateAnswer:
+      "先说结论：你现在最缺的不是建议，是数据。减亏两条路的本质：均价策略（抄底）和止损策略（砍仓），要看你更能承受哪种风险。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["direct_trade_or_position_action_language"],
   },
@@ -316,6 +325,10 @@ function auditCandidate(params: {
   const directTradeLanguage =
     directActionTemplate ||
     directChinesePositionInstruction ||
+    findVisibleAnswerAdoptionGateFailures({
+      userMessage: params.ask,
+      answerText: candidate,
+    }).length > 0 ||
     (includesPattern(
       candidateLower,
       /\b(?:buy|sell|add|reduce|go long|go short)\b|(?:应该|建议|可以).{0,12}(买|卖|加仓|减仓|做多|做空)|仓位.{0,8}\d+%/u,

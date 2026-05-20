@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 7, failed: 0, total: 7 });
+    expect(payload.summary).toEqual({ passed: 8, failed: 0, total: 8 });
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -59,6 +59,11 @@ describe("LCX commercial answer pipeline", () => {
         }),
         expect.objectContaining({
           scenarioId: "retail_loss_recovery_blocks_action_stance",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "retail_loss_recovery_blocks_chinese_action_framework",
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
         }),
