@@ -210,6 +210,34 @@ type LearningSedimentationBridgeSnapshot = {
   protectedMemoryTouched?: unknown;
 };
 
+type LocalBrainManifestSnapshot = {
+  path: string;
+  exists: boolean;
+  mtimeMs?: number;
+  counts?: Record<string, unknown>;
+  sourceKinds?: Record<string, unknown>;
+  policy?: unknown;
+  notTouched?: unknown;
+  readError?: string;
+};
+
+type DatasetRuntimeFreshnessSnapshot = {
+  boundary: "dev_dataset_runtime_freshness_only";
+  latestDatasetEventAt: string;
+  latestTrainSliceEventAt: string;
+  onDiskDatasetNewerThanGuardLog: boolean;
+  onDiskTrainSliceNewerThanGuardLog: boolean;
+  trainSliceStaleAfterDatasetUpdate: boolean;
+  datasetTrainCount?: number;
+  trainSliceSourceTrainCount?: number;
+  datasetHasModuleLearningReceipts: boolean;
+  trainSliceBuiltFromModuleLearningDataset: boolean;
+  action:
+    | "dataset_and_train_slice_current"
+    | "wait_for_active_training_then_rebuild_train_slice"
+    | "rebuild_dataset_and_train_slice_when_idle";
+};
+
 type TrainingDecision = {
   id: string;
   lane: string;
@@ -241,6 +269,14 @@ const execFileAsync = promisify(execFile);
 const QWEN_MIGRATION_CURRENT_MODEL = "Qwen/Qwen3-0.6B" as const;
 const QWEN_MIGRATION_CANDIDATE_MODEL = "Qwen/Qwen3-1.7B" as const;
 const MIN_QWEN_1_7B_SMOKE_MEMORY_BYTES = 8 * 1024 * 1024 * 1024;
+const DEFAULT_LOCAL_BRAIN_DATA_DIR = path.join(
+  process.env.HOME ?? ".",
+  ".openclaw",
+  "local-brain-trainer",
+  "datasets",
+  "thought-flow-v1",
+);
+const DEFAULT_LOCAL_BRAIN_TRAIN_SLICE_DIR = `${DEFAULT_LOCAL_BRAIN_DATA_DIR}-train-slice`;
 
 function usage(): never {
   throw new Error(
@@ -790,6 +826,122 @@ function trainSliceSummary(event: JsonRecord | undefined): JsonRecord | undefine
   };
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+async function readManifestSnapshot(dirPath: string): Promise<LocalBrainManifestSnapshot> {
+  const manifestPath = path.join(dirPath, "manifest.json");
+  try {
+    const stat = await fs.stat(manifestPath);
+    const parsed = JSON.parse(await fs.readFile(manifestPath, "utf8")) as unknown;
+    const record = recordValue(parsed);
+    if (!record) {
+      return {
+        path: manifestPath,
+        exists: true,
+        mtimeMs: stat.mtimeMs,
+        readError: "manifest_not_object",
+      };
+    }
+    return {
+      path: manifestPath,
+      exists: true,
+      mtimeMs: stat.mtimeMs,
+      counts: recordValue(record.counts),
+      sourceKinds: recordValue(record.sourceKinds),
+      policy: record.policy,
+      notTouched: record.notTouched,
+    };
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : undefined;
+    return {
+      path: manifestPath,
+      exists: false,
+      readError: code ?? (error instanceof Error ? error.message : "manifest_read_failed"),
+    };
+  }
+}
+
+function eventResultOutDir(event: JsonRecord | undefined, fallback: string): string {
+  const result = recordValue(event?.result);
+  return typeof result?.outDir === "string" && result.outDir.trim() ? result.outDir : fallback;
+}
+
+function isManifestNewerThanEvent(manifest: LocalBrainManifestSnapshot, eventAt: string): boolean {
+  if (!manifest.exists || typeof manifest.mtimeMs !== "number" || !eventAt) {
+    return false;
+  }
+  const eventMs = Date.parse(eventAt);
+  return Number.isFinite(eventMs) && manifest.mtimeMs > eventMs;
+}
+
+function hasModuleLearningSourceKinds(sourceKinds: Record<string, unknown> | undefined): boolean {
+  return Boolean(
+    numberValue(sourceKinds?.module_learning_plan_receipt) ||
+    numberValue(sourceKinds?.module_learning_review_receipt),
+  );
+}
+
+function datasetRuntimeFreshnessSnapshot(params: {
+  latestDataset?: JsonRecord;
+  latestTrainSlice?: JsonRecord;
+  onDiskDataset: LocalBrainManifestSnapshot;
+  onDiskTrainSlice: LocalBrainManifestSnapshot;
+}): DatasetRuntimeFreshnessSnapshot {
+  const latestDatasetEventAt = eventTime(params.latestDataset);
+  const latestTrainSliceEventAt = eventTime(params.latestTrainSlice);
+  const datasetTrainCount = numberValue(params.onDiskDataset.counts?.train);
+  const trainSliceSourceTrainCount = numberValue(params.onDiskTrainSlice.counts?.sourceTrain);
+  const datasetHasModuleLearningReceipts = hasModuleLearningSourceKinds(
+    params.onDiskDataset.sourceKinds,
+  );
+  const trainSliceBuiltFromModuleLearningDataset =
+    datasetHasModuleLearningReceipts &&
+    typeof datasetTrainCount === "number" &&
+    datasetTrainCount === trainSliceSourceTrainCount;
+  const trainSliceStaleAfterDatasetUpdate =
+    params.onDiskDataset.exists &&
+    params.onDiskTrainSlice.exists &&
+    typeof datasetTrainCount === "number" &&
+    typeof trainSliceSourceTrainCount === "number" &&
+    datasetTrainCount !== trainSliceSourceTrainCount;
+  const onDiskDatasetNewerThanGuardLog = isManifestNewerThanEvent(
+    params.onDiskDataset,
+    latestDatasetEventAt,
+  );
+  const onDiskTrainSliceNewerThanGuardLog = isManifestNewerThanEvent(
+    params.onDiskTrainSlice,
+    latestTrainSliceEventAt,
+  );
+  return {
+    boundary: "dev_dataset_runtime_freshness_only",
+    latestDatasetEventAt,
+    latestTrainSliceEventAt,
+    onDiskDatasetNewerThanGuardLog,
+    onDiskTrainSliceNewerThanGuardLog,
+    trainSliceStaleAfterDatasetUpdate,
+    datasetTrainCount,
+    trainSliceSourceTrainCount,
+    datasetHasModuleLearningReceipts,
+    trainSliceBuiltFromModuleLearningDataset,
+    action: trainSliceStaleAfterDatasetUpdate
+      ? "wait_for_active_training_then_rebuild_train_slice"
+      : params.onDiskDataset.exists
+        ? "dataset_and_train_slice_current"
+        : "rebuild_dataset_and_train_slice_when_idle",
+  };
+}
+
 async function latestQuotaLogPath(): Promise<string | undefined> {
   const entries = await fs.readdir(DEFAULT_WORKSPACE_LOG_DIR).catch(() => []);
   return entries
@@ -1118,6 +1270,7 @@ function buildDecisions(params: {
   activeGuardAdapterTruth?: ActiveGuardAdapterTruthSnapshot;
   moduleLearningReview?: ModuleLearningReviewSnapshot;
   learningSedimentationBridge?: LearningSedimentationBridgeSnapshot;
+  datasetRuntimeFreshness?: DatasetRuntimeFreshnessSnapshot;
   guardLogPath: string;
   worktree: string;
 }): TrainingDecision[] {
@@ -1143,6 +1296,35 @@ function buildDecisions(params: {
       action: "hold_new_training_and_debug_overlap",
       reason:
         "local-brain-training-plan detected overlapping heavy local-brain eval while the guard is active.",
+      codexRepairEligible: false,
+    });
+  }
+
+  if (params.datasetRuntimeFreshness?.trainSliceStaleAfterDatasetUpdate) {
+    decisions.push({
+      id: "train_slice_stale_after_dataset_update",
+      lane: "training",
+      severity: "P3",
+      action: "wait_for_idle_then_rebuild_train_slice",
+      reason: [
+        `onDiskDatasetTrain=${params.datasetRuntimeFreshness.datasetTrainCount ?? "unknown"}`,
+        `trainSliceSourceTrain=${
+          params.datasetRuntimeFreshness.trainSliceSourceTrainCount ?? "unknown"
+        }`,
+        params.datasetRuntimeFreshness.datasetHasModuleLearningReceipts
+          ? "on-disk dataset includes module-learning receipts"
+          : "on-disk dataset does not include module-learning receipts",
+      ].join("; "),
+      codexRepairEligible: false,
+    });
+  } else if (params.datasetRuntimeFreshness?.onDiskDatasetNewerThanGuardLog) {
+    decisions.push({
+      id: "on_disk_dataset_newer_than_guard_log",
+      lane: "training",
+      severity: "info",
+      action: "treat_on_disk_manifest_as_newer_observability_than_guard_snapshot",
+      reason:
+        "The local dataset manifest is newer than the latest dataset event in the guard log; do not rely only on the guard-log snapshot for current dataset counts.",
       codexRepairEligible: false,
     });
   }
@@ -1455,6 +1637,18 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     guardEvents,
     (event) => event.name === "train_slice" && event.event === "step_ok",
   );
+  const onDiskLocalBrainDataset = await readManifestSnapshot(
+    eventResultOutDir(latestDataset, DEFAULT_LOCAL_BRAIN_DATA_DIR),
+  );
+  const onDiskTrainSlice = await readManifestSnapshot(
+    eventResultOutDir(latestTrainSlice, DEFAULT_LOCAL_BRAIN_TRAIN_SLICE_DIR),
+  );
+  const datasetRuntimeFreshness = datasetRuntimeFreshnessSnapshot({
+    latestDataset,
+    latestTrainSlice,
+    onDiskDataset: onDiskLocalBrainDataset,
+    onDiskTrainSlice,
+  });
   const latestEval = latestEvalSnapshot(guardEvents);
   const latestEvalTimeout = latestEvalTimeoutSnapshot(guardEvents);
   const latestPassingEval = latestPassingEvalSnapshot(guardEvents);
@@ -1514,6 +1708,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     activeGuardAdapterTruth,
     moduleLearningReview,
     learningSedimentationBridge,
+    datasetRuntimeFreshness,
     guardLogPath: options.guardLogPath,
     worktree,
   });
@@ -1532,6 +1727,9 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestGuardStartAt,
     latestDataset: datasetSummary(latestDataset),
     latestTrainSlice: trainSliceSummary(latestTrainSlice),
+    onDiskLocalBrainDataset,
+    onDiskTrainSlice,
+    datasetRuntimeFreshness,
     latestSmokeAt: eventTime(latestSmoke),
     latestEval,
     latestEvalTimeout,

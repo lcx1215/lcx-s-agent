@@ -439,6 +439,108 @@ describe("local-brain-training-plan", () => {
     );
   });
 
+  it("surfaces newer on-disk dataset manifests and stale train slices", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-plan-dataset-"));
+    const dataDir = path.join(fixtureRoot, "dataset");
+    const sliceDir = path.join(fixtureRoot, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.mkdir(sliceDir, { recursive: true });
+    await fs.writeFile(
+      path.join(dataDir, "manifest.json"),
+      JSON.stringify({
+        ok: true,
+        counts: { sourceFiles: 12, examples: 24, train: 22, valid: 1, test: 1 },
+        sourceKinds: {
+          brain_distillation_review: 10,
+          module_learning_plan_receipt: 2,
+          module_learning_review_receipt: 1,
+        },
+      }),
+    );
+    await fs.writeFile(
+      path.join(sliceDir, "manifest.json"),
+      JSON.stringify({
+        ok: true,
+        counts: {
+          sourceTrain: 18,
+          curatedSeen: 2,
+          nonReviewSeen: 4,
+          reviewSeen: 12,
+          trainWritten: 10,
+        },
+      }),
+    );
+
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+      {
+        at: "2026-05-09T10:01:00.000Z",
+        event: "step_ok",
+        name: "dataset",
+        result: {
+          ok: true,
+          outDir: dataDir,
+          counts: { sourceFiles: 9, examples: 20, train: 18, valid: 1, test: 1 },
+          sourceKinds: { brain_distillation_review: 10, curated_seed: 2 },
+        },
+      },
+      {
+        at: "2026-05-09T10:02:00.000Z",
+        event: "step_ok",
+        name: "train_slice",
+        result: {
+          ok: true,
+          sourceDataDir: dataDir,
+          outDir: sliceDir,
+          counts: { sourceTrain: 18, trainWritten: 10 },
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.latestDataset).toMatchObject({
+      counts: { train: 18 },
+      sourceKinds: { curated_seed: 2 },
+    });
+    expect(plan.onDiskLocalBrainDataset).toMatchObject({
+      exists: true,
+      counts: { train: 22 },
+      sourceKinds: {
+        module_learning_plan_receipt: 2,
+        module_learning_review_receipt: 1,
+      },
+    });
+    expect(plan.onDiskTrainSlice).toMatchObject({
+      exists: true,
+      counts: { sourceTrain: 18 },
+    });
+    expect(plan.datasetRuntimeFreshness).toMatchObject({
+      boundary: "dev_dataset_runtime_freshness_only",
+      trainSliceStaleAfterDatasetUpdate: true,
+      datasetTrainCount: 22,
+      trainSliceSourceTrainCount: 18,
+      datasetHasModuleLearningReceipts: true,
+      trainSliceBuiltFromModuleLearningDataset: false,
+      action: "wait_for_active_training_then_rebuild_train_slice",
+    });
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "train_slice_stale_after_dataset_update",
+          action: "wait_for_idle_then_rebuild_train_slice",
+          codexRepairEligible: false,
+        }),
+      ]),
+    );
+  });
+
   it("surfaces guard adapter mismatch against the selected clean adapter", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       {
