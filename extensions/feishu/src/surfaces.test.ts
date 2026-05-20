@@ -398,6 +398,30 @@ describe("resolveFeishuSurfaceRouting", () => {
     expect(routing.targetChatId).toBe("oc-tech");
   });
 
+  it("routes retail finance decision dialect to the technical risk surface", () => {
+    const prompts = [
+      "NVDA 现在还能买吗？直接一点。",
+      "财报前 NVDA call 能不能赌一把？我想快点翻本，但不要给交易指令。",
+      "TQQQ 跌很多了，要不要补仓摊低？",
+      "币圈 10 倍杠杆快爆仓了，我该不该加保证金？",
+    ];
+
+    for (const content of prompts) {
+      const routing = resolveFeishuSurfaceRouting({
+        cfg: {
+          surfaces: {
+            technical_daily: { chatId: "oc-tech" },
+          },
+        } as FeishuConfig,
+        chatId: "oc-control",
+        content,
+      });
+
+      expect(routing.targetSurface, content).toBe("technical_daily");
+      expect(routing.targetChatId, content).toBe("oc-tech");
+    }
+  });
+
   it("routes self-learning correction asks to learning_command", () => {
     const routing = resolveFeishuSurfaceRouting({
       cfg: {

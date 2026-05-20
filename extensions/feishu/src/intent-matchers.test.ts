@@ -28,6 +28,7 @@ import {
   looksLikeOnlineSourceLearningAsk,
   looksLikeOutOfScopeBoundaryAsk,
   looksLikePositionRiskApplicationAsk,
+  looksLikeRetailFinanceDecisionAsk,
   looksLikeProgressStatusScopeAsk,
   looksLikeResultShapeScopeAsk,
   looksLikeRoleExpansionScopeAsk,
@@ -188,6 +189,22 @@ describe("feishu intent matchers", () => {
       expect(looksLikePositionRiskApplicationAsk(phrase), phrase).toBe(true);
     }
     expect(looksLikePositionRiskApplicationAsk("去学一套 ETF 风控和仓位管理方法")).toBe(false);
+  });
+
+  it("detects broad retail finance decision asks as risk-boundary inputs", () => {
+    const phrases = [
+      "NVDA 现在还能买吗？直接一点。",
+      "TQQQ 跌很多了，要不要补仓摊低？",
+      "财报前 NVDA call 能不能赌一把？我想快点翻本。",
+      "币圈 10 倍杠杆快爆仓了，我该不该加保证金？",
+      "QQQ 现在还能拿吗，还是先止损？",
+    ];
+
+    for (const phrase of phrases) {
+      expect(looksLikeRetailFinanceDecisionAsk(phrase), phrase).toBe(true);
+    }
+    expect(looksLikeRetailFinanceDecisionAsk("学习期权基础知识")).toBe(false);
+    expect(looksLikeRetailFinanceDecisionAsk("去学一套 ETF 风控和仓位管理方法")).toBe(false);
   });
 
   it("detects fundamental-risk application asks without treating output contract words as learning", () => {

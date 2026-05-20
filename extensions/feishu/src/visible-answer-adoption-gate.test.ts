@@ -47,6 +47,29 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("Action Triggers");
   });
 
+  it("replaces options and leverage action language for retail asks", () => {
+    const optionDecision = applyVisibleAnswerAdoptionGate({
+      userMessage: "财报前 NVDA call 能不能赌一把？我想快点翻本，但不要给交易指令。",
+      answerText: "先说结论：可以小仓位赌财报，但不要满仓梭哈。",
+    });
+    const leverageDecision = applyVisibleAnswerAdoptionGate({
+      userMessage: "币圈 10 倍杠杆快爆仓了，我该不该加保证金？",
+      answerText: "不建议加保证金，应该先降杠杆。",
+    });
+
+    expect(optionDecision.status).toBe("replaced");
+    expect(optionDecision.failedReasons).toEqual(
+      expect.arrayContaining(["chinese_direct_position_action_language"]),
+    );
+    expect(optionDecision.text).toContain("杠杆/期权到期风险");
+    expect(optionDecision.text).not.toContain("满仓");
+    expect(optionDecision.text).not.toContain("梭哈");
+
+    expect(leverageDecision.status).toBe("replaced");
+    expect(leverageDecision.text).toContain("不给交易指令");
+    expect(leverageDecision.text).not.toContain("加保证金");
+  });
+
   it("adopts research-only answers that ask for missing evidence", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage: "NVDA 该买多少仓位？",

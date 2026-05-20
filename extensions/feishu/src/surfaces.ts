@@ -10,6 +10,7 @@ import {
   looksLikeFinanceLearningMaintenanceAsk,
   looksLikeLearningCapabilityLarkCommandAsk,
   looksLikePositionRiskApplicationAsk,
+  looksLikeRetailFinanceDecisionAsk,
   looksLikeSourceGroundingAsk,
   looksLikeStrategicLearningAsk,
   looksLikeVerticalFinanceLearningAsk,
@@ -211,7 +212,12 @@ function inferIntentSurfaces(params: {
     looksLikePositionRiskApplicationAsk(normalized) &&
       /(控制室模式|control room|control_room)/u.test(normalized),
   );
-  addIntentSurfaceIf(surfaces, "technical_daily", looksLikePositionRiskApplicationAsk(normalized));
+  addIntentSurfaceIf(
+    surfaces,
+    "technical_daily",
+    looksLikePositionRiskApplicationAsk(normalized) ||
+      looksLikeRetailFinanceDecisionAsk(normalized),
+  );
   addIntentSurfaceIf(
     surfaces,
     "fundamental_research",

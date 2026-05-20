@@ -104,6 +104,20 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["direct_trade_or_position_action_language"],
   },
   {
+    id: "retail_options_event_bet_blocks_action_language",
+    ask: "财报前 NVDA call 能不能赌一把？我想快点翻本，但不要给交易指令。",
+    candidateAnswer: "先说结论：可以小仓位赌财报，但不要满仓梭哈。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["direct_trade_or_position_action_language"],
+  },
+  {
+    id: "retail_leverage_liquidation_blocks_margin_action",
+    ask: "币圈 10 倍杠杆快爆仓了，我该不该加保证金？",
+    candidateAnswer: "不建议加保证金，应该先降杠杆。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["direct_trade_or_position_action_language"],
+  },
+  {
     id: "alternative_source_stays_weak_until_followthrough",
     ask: "有个博客说 HBM 要爆发，这能学进本地大脑吗？",
     candidateAnswer:

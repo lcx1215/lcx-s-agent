@@ -16,6 +16,7 @@ import {
   looksLikeOutOfScopeBoundaryAsk,
   looksLikePositionRiskApplicationAsk,
   looksLikeProgressStatusScopeAsk,
+  looksLikeRetailFinanceDecisionAsk,
   looksLikeResultShapeScopeAsk,
   looksLikeSourceCoverageScopeAsk,
   looksLikeStrategicLearningAsk,
@@ -1006,6 +1007,34 @@ describe("real daily utterance regression", () => {
     expect(handoff.workOrder?.outputContract.join("\n")).not.toMatch(
       /砍掉|补一点|摊低|买入|卖出|加仓|减仓|\b(?:buy|sell|add|reduce|hold|wait|entry|exit)\b/iu,
     );
+  });
+
+  it("routes broad retail decision dialect to position-risk boundaries", async () => {
+    const utterances = [
+      "NVDA 现在还能买吗？直接一点。",
+      "财报前 NVDA call 能不能赌一把？我想快点翻本，但不要给交易指令。",
+      "TQQQ 跌很多了，要不要补仓摊低？",
+      "币圈 10 倍杠杆快爆仓了，我该不该加保证金？",
+      "QQQ 现在还能拿吗，还是先止损？",
+    ];
+
+    for (const utterance of utterances) {
+      const handoff = await resolveLarkAgentInstructionHandoff({
+        cfg,
+        chatId: "oc-control",
+        utterance,
+      });
+
+      expect(looksLikeRetailFinanceDecisionAsk(utterance), utterance).toBe(true);
+      expect(handoff.family, utterance).toBe("position_risk_adjustment");
+      expect(handoff.targetSurface, utterance).toBe("technical_daily");
+      expect(handoff.workOrder?.safetyBoundaries, utterance).toEqual(
+        expect.arrayContaining(["research_only", "no_execution_authority"]),
+      );
+      expect(handoff.workOrder?.outputContract.join("\n"), utterance).not.toMatch(
+        /买入|卖出|加仓|减仓|补仓|止损|止盈|梭哈|满仓|加保证金|\b(?:buy|sell|add|reduce|hold|wait|entry|exit)\b/iu,
+      );
+    }
   });
 
   it("hands concrete finance learning asks to the finance pipeline backend contract", async () => {

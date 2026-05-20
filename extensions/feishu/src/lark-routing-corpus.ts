@@ -18,6 +18,7 @@ import {
   looksLikeOutOfScopeBoundaryAsk,
   looksLikePositionRiskApplicationAsk,
   looksLikeProgressStatusScopeAsk,
+  looksLikeRetailFinanceDecisionAsk,
   looksLikeResultShapeScopeAsk,
   looksLikeSourceCoverageScopeAsk,
 } from "./intent-matchers.js";
@@ -219,7 +220,7 @@ export const LARK_ROUTING_API_WORK_ORDER_CONFIDENCE_THRESHOLD = 0.6;
 export const LARK_ROUTING_DETERMINISTIC_FALLBACK_THRESHOLD = 0.85;
 
 function looksLikeTradingLanguageScopeAsk(text: string): boolean {
-  return /(买|买入|卖|卖出|减仓|加仓|仓位|持仓|下单|发单|成交|市价单|限价单|止损|止盈|止损腿|止盈腿|开盘|收盘|order|market order|limit order|stop(?:-limit)?|trailing stop|bracket|take[- ]?profit|profit taker|stop[- ]?loss|aapl|qqq|spy|tlt)/iu.test(
+  return /(买|买入|卖|卖出|减仓|加仓|补仓|仓位|持仓|下单|发单|成交|市价单|限价单|止损|止盈|止损腿|止盈腿|摊低|赌|梭哈|满仓|杠杆|保证金|爆仓|翻本|期权|认购|认沽|开盘|收盘|order|market order|limit order|stop(?:-limit)?|trailing stop|bracket|take[- ]?profit|profit taker|stop[- ]?loss|call|put|margin|leverage|liquidation|average down|aapl|nvda|tqqq|qqq|spy|tlt|btc|eth|crypto|币圈)/iu.test(
     text,
   );
 }
@@ -278,7 +279,8 @@ function resolveBackendToolContract(params: {
     params.family !== "market_capability_learning_intake" ||
     (!looksLikeFinanceLearningPipelineAsk(params.utterance) && !plannerRequestsFinancePipeline) ||
     (plannerRequestsFinancePipeline &&
-      looksLikeTradingLanguageScopeAsk(params.utterance) &&
+      (looksLikePositionRiskApplicationAsk(params.utterance) ||
+        looksLikeRetailFinanceDecisionAsk(params.utterance)) &&
       !looksLikeFinanceLearningPipelineAsk(params.utterance))
   ) {
     return undefined;
@@ -551,6 +553,9 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "现在持仓太集中，先给我一个减仓风险检查，不许下单。",
       "我持有 QQQ 已经亏了 8%，想加仓摊平但担心高估值、利率上行和流动性收紧；只做研究，先给风险检查清单。",
       "我买了 NVDA 在高位，现在亏20%，想快点回本。到底应该砍掉、继续拿着，还是补一点摊低成本？请直接一点，但不要给交易指令。",
+      "财报前 NVDA call 能不能赌一把？我想快点翻本，但不要给交易指令。",
+      "TQQQ 跌很多了，要不要补仓摊低？",
+      "币圈 10 倍杠杆快爆仓了，我该不该加保证金？",
     ],
     nearMisses: ["买 100 股 AAPL 市价单，收盘前必须成交。", "给我一个基本面总览"],
     fallback: "deterministic_first_then_unknown",
@@ -1210,6 +1215,34 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
       "Retail loss-recovery wording must route to position-risk research before the visible answer gate has to rescue it.",
   },
   {
+    id: "position-risk-006",
+    utterance: "财报前 NVDA call 能不能赌一把？我想快点翻本，但不要给交易指令。",
+    family: "position_risk_adjustment",
+    expectedSurface: "technical_daily",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+    notes:
+      "Retail options-event wording is a position-risk boundary case, not options education or trade advice.",
+  },
+  {
+    id: "position-risk-007",
+    utterance: "TQQQ 跌很多了，要不要补仓摊低？",
+    family: "position_risk_adjustment",
+    expectedSurface: "technical_daily",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+    notes: "Leveraged ETF average-down wording must route to risk gates.",
+  },
+  {
+    id: "position-risk-008",
+    utterance: "币圈 10 倍杠杆快爆仓了，我该不该加保证金？",
+    family: "position_risk_adjustment",
+    expectedSurface: "technical_daily",
+    expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
+    truthBoundary: "research_only",
+    notes: "Crypto leverage liquidation wording must route to no-execution risk boundaries.",
+  },
+  {
     id: "bracket-exit-001",
     utterance: "如果我要做 bracket order，止盈和止损腿分别应该怎么理解，只做方案不要执行。",
     family: "bracket_exit_plan",
@@ -1548,6 +1581,12 @@ function resolveHighSignalSemanticFamily(utterance: string): SemanticRouteCandid
     return buildHighSignalSemanticCandidate(
       "position_risk_adjustment",
       "position_risk_application_family",
+    );
+  }
+  if (looksLikeRetailFinanceDecisionAsk(normalized)) {
+    return buildHighSignalSemanticCandidate(
+      "position_risk_adjustment",
+      "retail_finance_decision_boundary_family",
     );
   }
   if (

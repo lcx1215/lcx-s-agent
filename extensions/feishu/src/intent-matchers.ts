@@ -53,6 +53,27 @@ export function looksLikePositionRiskApplicationAsk(text: string): boolean {
   return hasPositionRiskCue && hasMarketRiskCue && (hasApplicationCue || hasRetailDecisionCue);
 }
 
+export function looksLikeRetailFinanceDecisionAsk(text: string): boolean {
+  const normalized = normalizeFeishuIntentText(text);
+  const hasMarketSubject =
+    /\b(?:qqq|spy|tlt|iwm|nvda|msft|aapl|googl|meta|amzn|tsla|smh|soxx|nasdaq|etf|options?|call|put|earnings|crypto|btc|eth|leveraged|3x|tqqq|sqqq|soxl|margin)\b/iu.test(
+      normalized,
+    ) ||
+    /(纳指|标普|美股|a股|港股|股票|个股|指数|期权|财报|加密币|杠杆|保证金|融资)/u.test(normalized);
+  const hasRetailDecisionCue =
+    /(要不要|该不该|能不能|能买吗|还能买吗|怎么办|怎么做|直接告诉|直接一点|亏了|亏\s*\d+(?:\.\d+)?\s*%?|回本|快点回本|补不补|补一点|补仓|摊低|摊平|割肉|砍掉|砍仓|止损|止盈|梭哈|满仓|半仓|追高|抄底|赌财报|赌一把|快到期|爆仓|should i|what should i do|can i buy|can i hold|average down|cut loss|recover quickly|make.*back)/iu.test(
+      normalized,
+    );
+  const looksLikeLearningOrSourceTask =
+    /(学习|学一下|去学|learn|study|internalize|source|pipeline|orchestrator|论文|paper|arxiv|课程|教程|基础知识|知识体系|框架).{0,80}(期权|options?|etf|股票|金融|finance|风险|risk)|(?:期权|options?|etf|股票|金融|finance|风险|risk).{0,80}(学习|学一下|去学|learn|study|internalize|source|pipeline|orchestrator|论文|paper|arxiv|课程|教程|基础知识|知识体系|框架)/iu.test(
+      normalized,
+    ) ||
+    /(ds|data science|统计|样本外|out[-\s]?of[-\s]?sample|walk[-\s]?forward|bootstrap|交叉验证|cross[-\s]?validation|方法|方法论|什么结果才算|怎么检验|怎么验证|自欺欺人)/iu.test(
+      normalized,
+    );
+  return hasMarketSubject && hasRetailDecisionCue && !looksLikeLearningOrSourceTask;
+}
+
 export function looksLikeFundamentalRiskApplicationAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasCompanyCue =
@@ -679,7 +700,7 @@ export function looksLikeOutOfScopeBoundaryAsk(text: string): boolean {
 export function looksLikeHighStakesRiskScopeAsk(text: string): boolean {
   const normalized = normalizeFeishuIntentText(text);
   const hasHighStakesDomainCue =
-    /(交易|买入|卖出|买|卖|加仓|减仓|平仓|下单|账户|仓位|止损|止盈|法律|合同|合规|税务|医疗|诊断|用药|删除|删库|生产|线上|部署|重启|付款|转账|broker|brokerage|trade|trading|buy|sell|position|account|legal|law|compliance|tax|medical|diagnosis|medication|delete|drop database|production|deploy|restart|payment|transfer)/u.test(
+    /(交易|买入|卖出|买|卖|加仓|减仓|补仓|平仓|下单|账户|仓位|止损|止盈|摊低|赌|梭哈|满仓|杠杆|保证金|爆仓|翻本|期权|认购|认沽|法律|合同|合规|税务|医疗|诊断|用药|删除|删库|生产|线上|部署|重启|付款|转账|broker|brokerage|trade|trading|buy|sell|position|account|call|put|option|margin|leverage|liquidation|average down|legal|law|compliance|tax|medical|diagnosis|medication|delete|drop database|production|deploy|restart|payment|transfer)/u.test(
       normalized,
     );
   const hasActionOrAdviceCue =
