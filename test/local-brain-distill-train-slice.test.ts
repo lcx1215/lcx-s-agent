@@ -107,4 +107,55 @@ describe("local brain distill train slice", () => {
     await expect(parseJsonl(path.join(outDir, "valid.jsonl"))).resolves.toHaveLength(1);
     await expect(parseJsonl(path.join(outDir, "test.jsonl"))).resolves.toHaveLength(1);
   });
+
+  it("repeats module-learning receipts in the bounded training slice", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-module-slice-"));
+    const dataDir = path.join(fixtureRoot, "dataset");
+    const outDir = path.join(fixtureRoot, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(
+      path.join(dataDir, "train.jsonl"),
+      [
+        line("module_learning_plan_receipt", "module-plan-1"),
+        line("module_learning_review_receipt", "module-review-1"),
+        line("brain_distillation_review", "review-1"),
+      ].join(""),
+      "utf8",
+    );
+    await fs.writeFile(path.join(dataDir, "valid.jsonl"), line("curated_seed", "valid"), "utf8");
+    await fs.writeFile(path.join(dataDir, "test.jsonl"), line("curated_seed", "test"), "utf8");
+
+    await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-train-slice.ts",
+        "--data",
+        dataDir,
+        "--out",
+        outDir,
+        "--max-review-examples",
+        "1",
+        "--non-review-repeat",
+        "3",
+        "--json",
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: fixtureRoot },
+      },
+    );
+
+    const trainExamples = await parseJsonl(path.join(outDir, "train.jsonl"));
+    expect(
+      trainExamples.filter((entry) => entry.meta?.sourceKind === "module_learning_plan_receipt"),
+    ).toHaveLength(3);
+    expect(
+      trainExamples.filter((entry) => entry.meta?.sourceKind === "module_learning_review_receipt"),
+    ).toHaveLength(3);
+    expect(
+      trainExamples.filter((entry) => entry.meta?.sourceKind === "brain_distillation_review"),
+    ).toHaveLength(1);
+  });
 });

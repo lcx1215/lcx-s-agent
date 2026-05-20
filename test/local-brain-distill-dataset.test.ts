@@ -241,6 +241,121 @@ describe("local brain distill dataset", () => {
     expect(reviewedExample.prompt.length + reviewedExample.completion.length).toBeLessThan(6_000);
   });
 
+  it("feeds module-learning plan and review receipts into Qwen training material without claiming absorption", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-module-"));
+    const workspaceDir = path.join(fixtureRoot, "workspace");
+    const outDir = path.join(fixtureRoot, "dataset");
+    const planDir = path.join(
+      workspaceDir,
+      "memory",
+      "module-learning-pipeline-plan-receipts",
+      "2026-05-20",
+    );
+    const reviewDir = path.join(workspaceDir, "memory", "module-learning-pipeline-reviews");
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.mkdir(reviewDir, { recursive: true });
+
+    const row = {
+      receiptPath: "memory/module-learning-pipeline-plan-receipts/2026-05-20/options.json",
+      targetModule: "options_volatility",
+      moduleFamily: "finance_research",
+      status: "application_ready",
+      sourceUrlOrPath: "memory/research-sources/options.md",
+      learningIntent:
+        "Convert options volatility source learning into module-learning review without claiming eval absorption.",
+      actualReadingScope: "Local source plus retrieval/apply receipts only.",
+      moduleSpecificCapabilityRule:
+        "Options learning must separate IV and gamma observation from trade recommendation.",
+      requiredInputs: [
+        "iv_term_structure_skew_gamma_inputs",
+        "position_exposure_and_gap_risk_inputs",
+      ],
+      safetyBoundaries: ["research_only", "no_execution_authority", "no_trade_advice"],
+      missingEvidence: [
+        "training_or_eval_absorption_evidence",
+        "fresh_adjacent_application_task",
+        "keep_downrank_or_discard_decision",
+      ],
+      keepDownrankDiscardDecision: "not_decided",
+      weak: true,
+      failedReason: "application_ready",
+    };
+
+    await fs.writeFile(
+      path.join(planDir, "options.json"),
+      JSON.stringify({
+        ok: true,
+        boundary: "dev_module_learning_pipeline_plan",
+        ...row,
+        applicationValidationTask:
+          "Use options volatility learning on a fresh QQQ/TLT/NVDA portfolio-risk research task.",
+        claimBoundary:
+          "A module is not learned from storage alone; do not claim eval_absorbed without evidence.",
+      }),
+    );
+    await fs.writeFile(
+      path.join(reviewDir, "2026-05-20.json"),
+      JSON.stringify({
+        ok: true,
+        boundary: "module_learning_pipeline_review_only",
+        counts: { applicationReady: 1, evalAbsorbed: 0, weakModuleLearning: 1 },
+        rows: [row],
+      }),
+    );
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-dataset.ts",
+        "--workspace",
+        workspaceDir,
+        "--out",
+        outDir,
+        "--json",
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: fixtureRoot },
+      },
+    );
+
+    const manifest = JSON.parse(stdout) as { sourceKinds?: Record<string, number> };
+    expect(manifest.sourceKinds).toMatchObject({
+      module_learning_plan_receipt: 1,
+      module_learning_review_receipt: 1,
+    });
+
+    const trainExamples = (await parseJsonl(path.join(outDir, "train.jsonl"))) as Array<{
+      completion: string;
+      meta?: { sourceKind?: string };
+    }>;
+    const moduleExamples = trainExamples.filter((entry) =>
+      entry.meta?.sourceKind?.startsWith("module_learning_"),
+    );
+    expect(moduleExamples).toHaveLength(2);
+    for (const example of moduleExamples) {
+      const completion = JSON.parse(example.completion) as {
+        primary_modules?: string[];
+        missing_data?: string[];
+        risk_boundaries?: string[];
+        next_step?: string;
+      };
+      expect(completion.primary_modules).toContain("options_volatility");
+      expect(completion.primary_modules).toContain("source_registry");
+      expect(completion.missing_data).toEqual(
+        expect.arrayContaining([
+          "training_or_eval_absorption_evidence",
+          "fresh_adjacent_application_task",
+          "keep_downrank_or_discard_decision",
+        ]),
+      );
+      expect(completion.risk_boundaries).toContain("no_execution_authority");
+      expect(completion.next_step).toMatch(/eval_absorption|keep_downrank/u);
+    }
+  });
+
   it("collects newest review artifacts before applying max file limits", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-newest-"));
     const workspaceDir = path.join(fixtureRoot, "workspace");

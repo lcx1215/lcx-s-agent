@@ -657,6 +657,178 @@ function exampleFromApplyReceipt(
   };
 }
 
+function exampleFromModuleLearningPlanReceipt(
+  parsed: Record<string, unknown>,
+  sourcePath: string,
+): DistillExample | undefined {
+  const targetModule = readString(parsed.targetModule);
+  const learningIntent = readString(parsed.learningIntent);
+  const applicationTask = readString(parsed.applicationValidationTask);
+  if (!targetModule || !learningIntent) {
+    return undefined;
+  }
+  const missingEvidence = readStringArray(parsed.missingEvidence);
+  const requiredInputs = readStringArray(parsed.requiredInputs);
+  const safetyBoundaries = readStringArray(parsed.safetyBoundaries);
+  const status = readString(parsed.status) ?? "unknown";
+  const sourceSummary = truncate(
+    compactJson({
+      targetModule,
+      moduleFamily: readString(parsed.moduleFamily),
+      status,
+      sourceUrlOrPath: readString(parsed.sourceUrlOrPath),
+      actualReadingScope: readString(parsed.actualReadingScope),
+      moduleSpecificCapabilityRule: readString(parsed.moduleSpecificCapabilityRule),
+      evidenceFamilies: readStringArray(parsed.evidenceFamilies),
+      missingEvidence,
+      keepDownrankDiscardDecision: readString(parsed.keepDownrankDiscardDecision),
+      claimBoundary: readString(parsed.claimBoundary),
+    }),
+    1200,
+  );
+  return {
+    prompt: buildPrompt({
+      sourceKind: "module_learning_plan_receipt",
+      userAsk: applicationTask ?? learningIntent,
+      sourceSummary,
+    }),
+    completion: buildCompletion({
+      taskFamily: "module_learning_internalization",
+      primaryModules: [targetModule, "finance_learning_memory", "source_registry"],
+      supportingModules: ["eval_harness_design", "review_panel", "control_room_summary"],
+      requiredTools: [
+        "source_registry_lookup",
+        "finance_learning_capability_apply",
+        "local_brain_eval",
+      ],
+      missingData: compactList(
+        [
+          "module_learning_pipeline_review_status",
+          "training_or_eval_absorption_evidence",
+          "fresh_adjacent_application_task",
+          "keep_downrank_or_discard_decision",
+          ...missingEvidence,
+          ...requiredInputs,
+        ],
+        MAX_MISSING_DATA,
+      ),
+      riskBoundaries: normalizeRiskBoundaries([
+        ...safetyBoundaries,
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_language_corpus_modification",
+      ]),
+      nextStep:
+        status === "eval_absorbed"
+          ? "keep_review_absorption_evidence_and_apply_to_fresh_adjacent_task"
+          : "run_module_review_then_require_eval_absorption_and_keep_downrank_decision",
+      rejectedContext: [
+        "stored_source_only",
+        "language_routing_candidate_artifacts",
+        "old_lark_conversation_history",
+      ],
+    }),
+    meta: {
+      sourcePath,
+      sourceKind: "module_learning_plan_receipt",
+      generatedAt: readString(parsed.generatedAt),
+    },
+  };
+}
+
+function exampleFromModuleLearningReview(
+  parsed: Record<string, unknown>,
+  sourcePath: string,
+): DistillExample[] {
+  const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+  return rows
+    .slice(0, 24)
+    .map((row, index) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        return undefined;
+      }
+      const record = row as Record<string, unknown>;
+      const targetModule = readString(record.targetModule);
+      const learningIntent = readString(record.learningIntent);
+      if (!targetModule || !learningIntent) {
+        return undefined;
+      }
+      const missingEvidence = readStringArray(record.missingEvidence);
+      const safetyBoundaries = readStringArray(record.safetyBoundaries);
+      const status = readString(record.status) ?? "unknown";
+      const weak = readBoolean(record.weak) === true;
+      const sourceSummary = truncate(
+        compactJson({
+          targetModule,
+          status,
+          weak,
+          failedReason: readString(record.failedReason),
+          sourceUrlOrPath: readString(record.sourceUrlOrPath),
+          actualReadingScope: readString(record.actualReadingScope),
+          missingEvidence,
+          boundaryViolation: readBoolean(record.boundaryViolation),
+          keepDownrankDiscardDecision: readString(record.keepDownrankDiscardDecision),
+        }),
+        1000,
+      );
+      return {
+        prompt: buildPrompt({
+          sourceKind: "module_learning_review_receipt",
+          userAsk: learningIntent,
+          sourceSummary,
+        }),
+        completion: buildCompletion({
+          taskFamily: "module_learning_review_status",
+          primaryModules: [targetModule, "finance_learning_memory", "source_registry"],
+          supportingModules: ["eval_harness_design", "review_panel", "control_room_summary"],
+          requiredTools: [
+            "source_registry_lookup",
+            "finance_learning_capability_apply",
+            "local_brain_eval",
+            "review_panel",
+          ],
+          missingData: compactList(
+            [
+              "module_learning_pipeline_review_status",
+              ...(weak || status !== "eval_absorbed"
+                ? [
+                    "training_or_eval_absorption_evidence",
+                    "fresh_adjacent_application_task",
+                    "keep_downrank_or_discard_decision",
+                  ]
+                : []),
+              ...missingEvidence,
+            ],
+            MAX_MISSING_DATA,
+          ),
+          riskBoundaries: normalizeRiskBoundaries([
+            ...safetyBoundaries,
+            "no_protected_memory_write",
+            "no_provider_config_change",
+            "no_live_sender_change",
+            "no_language_corpus_modification",
+          ]),
+          nextStep:
+            weak || status !== "eval_absorbed"
+              ? "hold_module_learning_claim_until_eval_absorption_evidence_exists"
+              : "reuse_eval_absorbed_module_rule_on_fresh_adjacent_task",
+          rejectedContext: [
+            "stored_source_only",
+            "language_routing_candidate_artifacts",
+            "old_lark_conversation_history",
+          ],
+        }),
+        meta: {
+          sourcePath: `${sourcePath}#row-${index + 1}`,
+          sourceKind: "module_learning_review_receipt",
+          generatedAt: readString(parsed.generatedAt),
+        },
+      };
+    })
+    .filter((entry): entry is DistillExample => Boolean(entry));
+}
+
 function exampleFromAcceptedBrainCandidate(
   accepted: Record<string, unknown>,
   sourcePath: string,
@@ -860,6 +1032,16 @@ async function examplesFromFile(filePath: string, workspaceDir: string): Promise
       const example = exampleFromApplyReceipt(record, relativePath);
       return example ? [example] : [];
     }
+    if (record.boundary === "dev_module_learning_pipeline_plan") {
+      const example = exampleFromModuleLearningPlanReceipt(record, relativePath);
+      return example ? [example] : [];
+    }
+    if (
+      record.boundary === "module_learning_pipeline_review" ||
+      record.boundary === "module_learning_pipeline_review_only"
+    ) {
+      return exampleFromModuleLearningReview(record, relativePath);
+    }
     if (record.boundary === "brain_distillation_candidate") {
       return exampleFromBrainDistillationCandidate(record, relativePath);
     }
@@ -897,11 +1079,20 @@ function splitExamples(examples: DistillExample[]): {
   const reviewedBrain = examples
     .filter((example) => example.meta.sourceKind === "brain_distillation_review")
     .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
+  const moduleLearning = examples
+    .filter(
+      (example) =>
+        example.meta.sourceKind === "module_learning_plan_receipt" ||
+        example.meta.sourceKind === "module_learning_review_receipt",
+    )
+    .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
   const sorted = examples
     .filter(
       (example) =>
         example.meta.sourceKind !== "curated_seed" &&
-        example.meta.sourceKind !== "brain_distillation_review",
+        example.meta.sourceKind !== "brain_distillation_review" &&
+        example.meta.sourceKind !== "module_learning_plan_receipt" &&
+        example.meta.sourceKind !== "module_learning_review_receipt",
     )
     .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
   const testCount = Math.max(1, Math.floor(sorted.length * 0.1));
@@ -909,7 +1100,7 @@ function splitExamples(examples: DistillExample[]): {
   return {
     test: sorted.slice(0, testCount),
     valid: sorted.slice(testCount, testCount + validCount),
-    train: sorted.slice(testCount + validCount).concat(reviewedBrain, curated),
+    train: sorted.slice(testCount + validCount).concat(reviewedBrain, moduleLearning, curated),
   };
 }
 
@@ -1709,6 +1900,8 @@ const roots = [
   path.join(memoryDir, "feishu-work-receipts"),
   path.join(memoryDir, "lark-brain-distillation-candidates"),
   path.join(memoryDir, "lark-brain-distillation-reviews"),
+  path.join(memoryDir, "module-learning-pipeline-plan-receipts"),
+  path.join(memoryDir, "module-learning-pipeline-reviews"),
 ];
 const files = (await Promise.all(roots.map((root) => collectFiles(root, options.maxFiles)))).flat();
 const examples = (await collectExamplesFromFiles(files, options.workspaceDir)).concat(

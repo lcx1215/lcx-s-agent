@@ -44,6 +44,8 @@ const NON_REVIEW_SOURCE_KINDS_TO_REPEAT = new Set([
   "finance_learning_capability_apply_receipt",
   "feishu_work_receipt",
   "lark_language_handoff_receipt",
+  "module_learning_plan_receipt",
+  "module_learning_review_receipt",
 ]);
 
 function usage(): never {
