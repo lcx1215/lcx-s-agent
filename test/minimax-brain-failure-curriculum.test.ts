@@ -203,6 +203,53 @@ describe("minimax brain failure curriculum", () => {
     expect(summaryText).toContain("compact valid JSON is required before promotion");
   });
 
+  it("uses specific high-priority recipes for the retained promotion blocker set", async () => {
+    const logPath = await makeGuardLog([
+      {
+        at: "2026-05-20T16:57:14.919Z",
+        event: "step_non_passing",
+        name: "candidate_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          summary: {
+            passed: 205,
+            total: 205,
+            passRate: 1,
+            failedCaseIds: [],
+            parseRecoveredCaseIds: [
+              "core_senior_risk_packet_01",
+              "core_valuation_qc_boundary_04",
+              "core_valuation_qc_boundary_05",
+              "alternative_source_expansion_05",
+            ],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+
+    const prompts = await buildFailureCurriculumPrompts({
+      guardLogPath: logPath,
+      maxPrompts: 4,
+      startIndex: 55,
+    });
+    const promptText = prompts.map((prompt) => prompt.userMessage).join("\n");
+    const summaryText = prompts.map((prompt) => prompt.sourceSummary).join("\n");
+
+    expect(prompts.map((prompt) => prompt.id)).toEqual([
+      "failure_focus_core_senior_risk_packet_01_00055",
+      "failure_focus_core_valuation_qc_boundary_04_00056",
+      "failure_focus_core_valuation_qc_boundary_05_00057",
+      "failure_focus_alternative_source_expansion_05_00058",
+    ]);
+    expect(promptText).not.toContain("修复 eval 失败项");
+    expect(promptText).toContain("senior_trader_failure_focus_promotion_chain");
+    expect(promptText).toContain("valuation_assumption_inputs");
+    expect(promptText).toContain("模型分歧");
+    expect(promptText).toContain("do_not_claim_eval_absorbed_from_receipts");
+    expect(summaryText).toContain("compact valid JSON is required before promotion");
+  });
+
   it("returns no prompts when no failed eval evidence exists", async () => {
     const logPath = await makeGuardLog([
       {

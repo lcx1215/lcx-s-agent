@@ -382,9 +382,15 @@ describe("local-brain-training-plan", () => {
       sourceBlockedAdapter: "/tmp/adapter-r8",
       harvestCaseIds: ["plain_recent_stock_market_brief_preflight"],
       nextTeacherFocusCaseIds: ["plain_recent_stock_market_brief_preflight"],
+      accelerationMode: "targeted_eval_then_full_hardened_eval",
+      targetedEvalFirstCaseIds: ["plain_recent_stock_market_brief_preflight"],
+      targetedEvalCommand: expect.stringContaining(
+        "--case-id plain_recent_stock_market_brief_preflight",
+      ),
+      fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean",
       notPromotionProof: true,
       requiredNextStep:
-        "feed_harvested_cases_to_failure_focus_teacher_then_retrain_unified_adapter",
+        "feed_harvested_cases_to_failure_focus_teacher_then_run_targeted_eval_before_full_eval",
     });
     expect(plan.activeHeavyEvalCounts).toEqual({
       localBrainEval: 0,

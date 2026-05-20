@@ -66,6 +66,38 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
       "parse-recovered repair for research artifact QC eval family; trains compact valid JSON output plus number provenance and human-review boundary.",
   },
   {
+    caseId: "core_senior_risk_packet_01",
+    priority: 130,
+    userMessage:
+      "训练本地大脑修复 senior risk packet eval 的 parseRecovered 阻塞：只输出紧凑单行 planning JSON，必须覆盖 senior_trader_failure_focus_promotion_chain、portfolio_risk_gates、company_fundamentals_value、macro_rates_inflation、source_registry、review_panel、control_room_summary、position_weights_and_return_series、latest_filing_or_event_source、risk_gate_before_action_language、research_only 和 no_trade_advice；不要解释、不要 markdown、不要多余字段，JSON 必须一次闭合。",
+    sourceSummary:
+      "parse-recovered repair for senior risk packet promotion blocker; trains compact JSON closure, senior risk routing, source gaps, and no-trade boundary.",
+  },
+  {
+    caseId: "core_valuation_qc_boundary_04",
+    priority: 129,
+    userMessage:
+      "训练本地大脑修复 valuation QC boundary 04 的 parseRecovered 阻塞：只输出紧凑 planning JSON，必须把估值质量控制路由到 company_fundamentals_value、valuation_multiple_compression_chain、data_provenance_quality、source_registry、review_panel 和 portfolio_risk_gates；missing_data 必须包含 filing_or_issuer_source、field_definition_and_timestamp、valuation_assumption_inputs；risk_boundaries 必须包含 research_only、no_price_target_without_source 和 no_trade_advice；JSON 必须闭合，不要把估值故事写成人类长文。",
+    sourceSummary:
+      "parse-recovered repair for valuation QC boundary 04; trains valuation evidence gaps, data provenance, review handoff, and compact JSON.",
+  },
+  {
+    caseId: "core_valuation_qc_boundary_05",
+    priority: 128,
+    userMessage:
+      "训练本地大脑修复 valuation QC boundary 05 的 parseRecovered 阻塞：只输出紧凑 planning JSON，必须区分数据缺口、估值假设、过期记忆、模型分歧和 review 决策；模块只选 company_fundamentals_value、finance_learning_memory、data_provenance_quality、causal_map、review_panel、portfolio_risk_gates、control_room_summary；missing_data 包含 comparable_set_or_dcf_inputs、source_timestamp、memory_recall_scope_or_relevant_receipts；risk_boundaries 包含 research_only、do_not_promote_unverified_memory_claims、no_trade_advice；JSON 必须闭合。",
+    sourceSummary:
+      "parse-recovered repair for valuation QC boundary 05; trains stale-memory separation, assumption gaps, model disagreement routing, and compact JSON.",
+  },
+  {
+    caseId: "alternative_source_expansion_05",
+    priority: 127,
+    userMessage:
+      "训练本地大脑修复 alternative source expansion 05 的 parseRecovered 阻塞：只输出紧凑 planning JSON，必须把来源扩展限定为 official_public_primary_source_first、source_registry、actual_reading_scope、data_provenance_quality、finance_learning_memory、review_panel、control_room_summary；missing_data 包含 source_url_or_local_source_path、reading_scope、retrieval_or_apply_receipt；risk_boundaries 包含 research_only、do_not_claim_eval_absorbed_from_receipts、no_paywall_bypass、no_trade_advice；JSON 必须闭合，不要声称已经学会或已吸收。",
+    sourceSummary:
+      "parse-recovered repair for alternative source expansion blocker; trains source-intake honesty, reading scope, receipt boundary, and compact JSON.",
+  },
+  {
     caseId: "short_lark_commodity_learning_intake",
     priority: 120,
     userMessage:

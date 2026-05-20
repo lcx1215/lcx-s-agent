@@ -99,6 +99,10 @@ type QwenCapabilityConsolidationSnapshot = {
     sourceBlockedAdapter?: string;
     harvestCaseIds: string[];
     nextTeacherFocusCaseIds: string[];
+    accelerationMode: "targeted_eval_then_full_hardened_eval";
+    targetedEvalFirstCaseIds: string[];
+    targetedEvalCommand?: string;
+    fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean";
     notPromotionProof: true;
     requiredNextStep: string;
   };
@@ -637,6 +641,17 @@ function qwenCapabilityConsolidationSnapshot(params: {
       ]),
     );
   }
+  const targetedEvalFirstCaseIds = latestBlockedHarvestCaseIds.slice(0, 8);
+  const targetedEvalCommand =
+    latestBlockedCandidate?.adapterPath && targetedEvalFirstCaseIds.length > 0
+      ? [
+          "node --import tsx scripts/dev/local-brain-distill-eval.ts",
+          `--adapter '${latestBlockedCandidate.adapterPath}'`,
+          "--hardened",
+          `--case-id ${targetedEvalFirstCaseIds.join(",")}`,
+          "--summary-only --json --timeout-ms 180000",
+        ].join(" ")
+      : undefined;
   const blockedCapabilityFamilies = [...blockedCaseCounts.entries()]
     .map(([caseId, count]) => ({ caseId, count }))
     .toSorted((left, right) => right.count - left.count || left.caseId.localeCompare(right.caseId))
@@ -704,10 +719,14 @@ function qwenCapabilityConsolidationSnapshot(params: {
         latestBlockedHarvestCaseIds.length > 0
           ? latestBlockedHarvestCaseIds.slice(0, 8)
           : blockedCapabilityFamilies.map((entry) => entry.caseId).slice(0, 8),
+      accelerationMode: "targeted_eval_then_full_hardened_eval",
+      targetedEvalFirstCaseIds,
+      targetedEvalCommand,
+      fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean",
       notPromotionProof: true,
       requiredNextStep:
         latestBlockedHarvestCaseIds.length > 0 || blockedCapabilityFamilies.length > 0
-          ? "feed_harvested_cases_to_failure_focus_teacher_then_retrain_unified_adapter"
+          ? "feed_harvested_cases_to_failure_focus_teacher_then_run_targeted_eval_before_full_eval"
           : "wait_for_named_failed_or_parse_recovered_cases_before_harvest",
     },
     requiredAction,
