@@ -39,14 +39,14 @@ export type FinanceBrainOrchestrationPlan = {
 export const FINANCE_BRAIN_MODULES = [
   {
     id: "macro_rates_inflation",
-    role: "Read regime pressure from rates, inflation, central-bank path, duration, and real-yield evidence.",
+    role: "Read regime pressure from rates, inflation, central-bank path, Treasury supply, term premium, duration, and real-yield evidence.",
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_macro_rates_inflation_producer",
     ],
     triggerPatterns: [
-      /\b(?:macro|rates?|interest|inflation|fed|fomc|cpi|ppi|real yield|yield curve|duration)\b/u,
-      /宏观|利率|通胀|美联储|央行|收益率曲线|久期/u,
+      /\b(?:macro|rates?|interest|inflation|fed|fomc|cpi|ppi|real yield|yield curve|duration|treasury supply|issuance|refunding|term premium|fiscal deficit)\b/u,
+      /宏观|利率|通胀|美联储|央行|收益率曲线|久期|国债供给|美债供给|发债|再融资|期限溢价|财政赤字/u,
     ],
   },
   {
@@ -60,11 +60,11 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "cross_asset_liquidity",
-    role: "Connect liquidity and risk appetite across equities, rates, FX, commodities, and crypto without treating one market as a standalone signal.",
+    role: "Connect liquidity, hedging breakdown, forced deleveraging, and risk appetite across equities, rates, FX, commodities, and crypto without treating one market as a standalone signal.",
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
-      /\b(?:cross[- ]asset|risk appetite|liquidity transmission|spillover|correlation regime|global liquidity)\b/u,
-      /跨资产|风险偏好|流动性传导|外溢|相关性 regime|全球流动性/u,
+      /\b(?:cross[- ]asset|risk appetite|liquidity transmission|spillover|correlation regime|global liquidity|equity[- ]bond correlation|simultaneous selloff|forced deleveraging)\b/u,
+      /跨资产|风险偏好|流动性传导|外溢|相关性 regime|全球流动性|股债同跌|股债相关性|相关性失效|被迫去杠杆/u,
     ],
   },
   {
@@ -82,11 +82,11 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "global_index_regime",
-    role: "Read index concentration, breadth, constituents, weights, and major-index regime context.",
+    role: "Read index concentration, AI/mega-cap crowding, breadth, constituents, weights, and major-index regime context.",
     requiredTools: ["finance_framework_core_inspect", "finance_learning_capability_apply"],
     triggerPatterns: [
-      /\b(?:index concentration|mag7|mega[- ]cap|breadth|nasdaq|s&p|spx|global index|constituents?|weights?)\b/u,
-      /股市|股票市场|权益市场|大盘|全球指数|指数集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
+      /\b(?:index concentration|ai concentration|mag7|mega[- ]cap|breadth|nasdaq|s&p|spx|global index|constituents?|weights?)\b/u,
+      /股市|股票市场|权益市场|大盘|全球指数|指数集中度|AI集中度|权重|成分股|市场宽度|纳指|标普|巨头|宽度|MSCI/u,
     ],
   },
   {
@@ -118,14 +118,14 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "company_fundamentals_value",
-    role: "Inspect business quality, earnings, cash flow, balance sheet, valuation, moat, and thesis durability.",
+    role: "Inspect business quality, earnings, cash flow, balance sheet, valuation, moat, capex conversion, power/supply-chain constraints, and thesis durability.",
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_company_fundamentals_value_producer",
     ],
     triggerPatterns: [
-      /\b(?:fundamentals?|earnings?|revenue|margin|cash flow|valuation|moat|balance sheet|guidance|nvda|aapl|msft|tsla)\b/u,
-      /基本面|财报|收入|利润率|现金流|估值|护城河|资产负债|业绩/u,
+      /\b(?:fundamentals?|earnings?|revenue|margin|cash flow|valuation|moat|balance sheet|guidance|capex|hyperscaler|data center|power grid|electricity demand|hbm|nvda|aapl|msft|tsla)\b/u,
+      /基本面|财报|收入|利润率|现金流|估值|护城河|资产负债|业绩|资本开支|云厂商|数据中心|电力|电网|HBM|供应链/u,
     ],
   },
   {
@@ -139,14 +139,14 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "portfolio_risk_gates",
-    role: "Check sizing language, exposure, drawdown, concentration, correlation, risk budget, and survival gates.",
+    role: "Check sizing language, exposure, drawdown, leverage, concentration, correlation, risk budget, forced-deleveraging, and survival gates.",
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_portfolio_risk_gates_producer",
     ],
     triggerPatterns: [
-      /\b(?:portfolio|holdings?|position|sizing|exposure|drawdown|risk budget|correlation|rebalance|add|reduce|buy|sell)\b/u,
-      /组合|持仓|仓位|加仓|减仓|买|卖|风险预算|回撤|相关性|再平衡/u,
+      /\b(?:portfolio|holdings?|position|sizing|exposure|drawdown|risk budget|correlation|rebalance|leverage|margin|redemption|forced deleveraging|add|reduce|buy|sell)\b/u,
+      /组合|持仓|仓位|加仓|减仓|买|卖|风险预算|回撤|相关性|再平衡|杠杆|保证金|赎回|被迫去杠杆/u,
     ],
   },
   {
@@ -172,26 +172,26 @@ export const FINANCE_BRAIN_MODULES = [
   },
   {
     id: "credit_liquidity",
-    role: "Check credit spreads, funding stress, market liquidity, HY/IG pressure, and liquidity transmission.",
+    role: "Check credit spreads, funding stress, nonbank/private-credit leverage, market liquidity, HY/IG pressure, and liquidity transmission.",
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_credit_liquidity_producer",
     ],
     triggerPatterns: [
-      /\b(?:credit|spread|liquidity|funding|hy|ig|stress|debt|bank lending)\b/u,
-      /信用|利差|流动性|融资|债务|压力/u,
+      /\b(?:credit|spread|liquidity|funding|hy|ig|stress|debt|bank lending|private credit|nonbank|nbfi|leveraged loan|semiliquid|basis trade|hedge fund)\b/u,
+      /信用|利差|流动性|融资|债务|压力|私募信用|非银|杠杆贷款|半流动|基差交易|对冲基金/u,
     ],
   },
   {
     id: "commodities_oil_gold",
-    role: "Connect oil, gold, commodities, inflation hedge, energy, and terms-of-trade evidence.",
+    role: "Connect oil, gold, commodities, inventory, supply shocks, inflation hedge, energy, and terms-of-trade evidence.",
     requiredTools: [
       "finance_framework_core_inspect",
       "finance_framework_commodities_oil_gold_producer",
     ],
     triggerPatterns: [
-      /\b(?:commodity|commodities|oil|gold|energy|copper|inflation hedge)\b/u,
-      /商品|原油|黄金|能源|铜/u,
+      /\b(?:commodity|commodities|oil|gold|energy|copper|inventory|supply shock|strait of hormuz|opec|spr|inflation hedge)\b/u,
+      /商品|原油|黄金|能源|铜|库存|供给冲击|霍尔木兹|OPEC|战略储备/u,
     ],
   },
   {
@@ -208,8 +208,8 @@ export const FINANCE_BRAIN_MODULES = [
     role: "Handle catalysts, earnings windows, policy events, geopolitical shocks, and event follow-up timing.",
     requiredTools: ["finance_framework_core_inspect", "finance_framework_event_driven_producer"],
     triggerPatterns: [
-      /\b(?:event|catalyst|earnings|policy|meeting|geopolitical|headline|shock)\b/u,
-      /事件|催化|财报日|政策|会议|地缘|突发/u,
+      /\b(?:event|catalyst|earnings|guidance|budget revision|policy|meeting|geopolitical|headline|shock)\b/u,
+      /事件|催化|财报日|指引|预算|预算变化|政策|会议|地缘|突发/u,
     ],
   },
   {

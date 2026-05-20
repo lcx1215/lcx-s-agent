@@ -107,6 +107,94 @@ describe("planFinanceBrainOrchestration", () => {
     expect(plan.requiredTools).not.toContain("finance_framework_cross_asset_liquidity_producer");
   });
 
+  it("connects Treasury supply and term premium to rates, credit, ETF, math, risk, and review", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "美债再融资和财政赤字导致 Treasury supply 上来，term premium 抬升时，TLT、QQQ 和我的组合风险怎么拆？research-only。",
+      hasHoldingsOrPortfolioContext: true,
+      hasLocalMathInputs: true,
+      highStakesConclusion: true,
+    });
+
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining([
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "etf_regime",
+        "quant_math",
+        "portfolio_risk_gates",
+        "causal_map",
+      ]),
+    );
+    expect(plan.requiredTools).toEqual(
+      expect.arrayContaining([
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_etf_regime_producer",
+        "finance_data_gateway_snapshot",
+        "review_panel",
+      ]),
+    );
+  });
+
+  it("routes private-credit and nonbank leverage stress through liquidity and risk gates", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "private credit、NBFI、leveraged loans 和半流动基金如果出赎回压力，会不会通过非银杠杆和 forced deleveraging 影响 HYG、QQQ 和风险偏好？",
+      hasHoldingsOrPortfolioContext: true,
+      highStakesConclusion: true,
+    });
+
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining([
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "etf_regime",
+        "portfolio_risk_gates",
+        "quant_math",
+        "causal_map",
+      ]),
+    );
+    expect(plan.requiredTools).toEqual(expect.arrayContaining(["finance_data_gateway_snapshot"]));
+  });
+
+  it("links AI capex concentration to fundamentals, supply chain, index regime, and portfolio risk", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "AI capex、hyperscaler 预算、数据中心电力瓶颈和 HBM 供应链如果变化，会怎么影响 NVDA、QQQ 指数集中度和我的科技仓？",
+      hasHoldingsOrPortfolioContext: true,
+      highStakesConclusion: true,
+    });
+
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining([
+        "company_fundamentals_value",
+        "global_index_regime",
+        "event_driven",
+        "portfolio_risk_gates",
+        "quant_math",
+        "causal_map",
+      ]),
+    );
+  });
+
+  it("connects oil supply shocks to inflation, FX, cross-asset, ETF, and portfolio risk", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "霍尔木兹和 OPEC 供给冲击让 oil inventory 下降、能源通胀上来时，美元、TLT、QQQ、股债相关性可能失效和组合风险怎么连？",
+      hasHoldingsOrPortfolioContext: true,
+      highStakesConclusion: true,
+    });
+
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining([
+        "commodities_oil_gold",
+        "macro_rates_inflation",
+        "fx_currency_liquidity",
+        "cross_asset_liquidity",
+        "etf_regime",
+        "portfolio_risk_gates",
+        "causal_map",
+      ]),
+    );
+  });
+
   it("does not invent a heavy finance plan for non-finance text", () => {
     const plan = planFinanceBrainOrchestration({
       text: "帮我整理一下今天的 marketing meeting 标题和 security risk 待办。",

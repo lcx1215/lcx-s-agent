@@ -184,12 +184,36 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
       "targeted repair for rate-shock duration equity transmission with portfolio math gaps and no fake precision.",
   },
   {
+    caseId: "treasury_supply_term_premium_portfolio_risk",
+    priority: 95,
+    userMessage:
+      "训练本地大脑把美债供给、Treasury refunding、财政赤字和期限溢价接进已有利率血管：先要拍卖/再融资日历、期限溢价、实际利率、收益率曲线、来源时间戳，再拆 TLT 久期、QQQ 估值、美元/信用流动性、组合权重和反方证据；不能把国债供给 headline 当单独交易信号。",
+    sourceSummary:
+      "targeted repair for Treasury supply and term-premium shock routing through macro rates, credit, FX, ETF, math, portfolio risk, data provenance, and review.",
+  },
+  {
+    caseId: "private_credit_nonbank_leverage_stress_waterflow",
+    priority: 95,
+    userMessage:
+      "训练本地大脑把 private credit、NBFI、leveraged loans、半流动基金赎回、basis trade 和 forced deleveraging 接进信用/跨资产/组合风险血管：先要 borrower stress、估值、赎回压力、信用利差、资金流动性、HYG/ETF 敞口和组合权重；不能把信用 headline 直接写成确定传染或交易建议。",
+    sourceSummary:
+      "targeted repair for private credit and nonbank leverage stress with liquidity mismatch, cross-asset transmission, risk gates, and review.",
+  },
+  {
     caseId: "nvda_capex_supplier_second_order_risk",
     priority: 94,
     userMessage:
       "训练本地大脑分析 NVDA 与 AI capex 二阶风险：先要原始财报/指引/客户 capex 来源，再拆客户集中度、云厂商预算、供应链瓶颈、GPU 交付、毛利率、库存、竞争、估值、QQQ 权重传导、供应商/客户二阶影响和反方证据；缺来源就不编细节。",
     sourceSummary:
       "targeted repair for NVDA AI capex second-order risk with source-gated fundamentals and portfolio transmission.",
+  },
+  {
+    caseId: "ai_capex_power_grid_index_concentration_risk",
+    priority: 93,
+    userMessage:
+      "训练本地大脑把 AI capex、hyperscaler 预算、数据中心电力瓶颈、HBM/GPU 供应链和 QQQ 指数集中度接成一条研究血管：先要财报/指引/预算/电力和供应链来源，再拆基本面、估值敏感性、事件催化、能源约束、指数权重、组合重叠、反方证据和 review；不能把 AI 热度当 alpha。",
+    sourceSummary:
+      "targeted repair for AI capex power-grid and index-concentration risk routing through fundamentals, valuation, event, commodity/energy, index, portfolio, data provenance, and review.",
   },
   {
     caseId: "index_concentration_mag7_portfolio_risk",
@@ -214,6 +238,14 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
       "训练本地大脑处理数据供应商冲突：先列供应商、字段定义、时间戳、复权口径、币种、更新频率、异常值、可信优先级和需要人工 review 的冲突；不能随便选一个数据源当真相，也不能把冲突数据写成确定结论。",
     sourceSummary:
       "targeted repair for data vendor conflict reconciliation with timestamp, definition, and review gates.",
+  },
+  {
+    caseId: "energy_inflation_cross_asset_shock_risk",
+    priority: 87,
+    userMessage:
+      "训练本地大脑把霍尔木兹、OPEC、原油库存、SPR、能源价格、CPI/PCE 通胀、美元、TLT、QQQ 和股债相关性接成一条冲击水路：先要官方或一手来源、供需/库存/备用产能、通胀预期、利率、美元流动性、ETF regime 和组合权重；必须说明供给冲击下股债对冲可能失效，不给交易建议。",
+    sourceSummary:
+      "targeted repair for energy inflation cross-asset shock with commodity supply data, inflation transmission, FX, equity-bond hedge failure, portfolio risk, and review.",
   },
 ];
 

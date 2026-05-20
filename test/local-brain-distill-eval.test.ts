@@ -184,7 +184,7 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary).toMatchObject({ passed: 12, total: 12, promotionReady: true });
     expect(payload.evalRegistry).toMatchObject({
       boundary: "dev_eval_registry_expansion_plan_only",
-      currentCaseCount: 201,
+      currentCaseCount: 205,
       promotionTargetCaseCount: 200,
     });
     expect(payload.evalRegistry.suites).toEqual(
@@ -1046,6 +1046,55 @@ describe("local-brain-distill-eval", () => {
       "commodity_fx_inflation_inventory_portfolio_loop",
     ]);
     expect(payload.cases.every((entry) => entry.acceptance.ok)).toBe(true);
+  });
+
+  it("keeps current real-market stress families wired into existing finance modules", () => {
+    const requestedCaseIds = [
+      "treasury_supply_term_premium_portfolio_risk",
+      "private_credit_nonbank_leverage_stress_waterflow",
+      "ai_capex_power_grid_index_concentration_risk",
+      "energy_inflation_cross_asset_shock_risk",
+    ];
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        requestedCaseIds.join(","),
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+      cases: Array<{ id: string; acceptance: { ok: boolean } }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary.promotionReady).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual(requestedCaseIds);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "rate_shock_duration_equity_chain",
+        "nvda_capex_supplier_second_order_risk",
+        "commodity_fx_inflation_inventory_portfolio_loop",
+      ]),
+    );
+    for (const caseId of requestedCaseIds) {
+      expect(payload.cases.find((entry) => entry.id === caseId)?.acceptance.ok, caseId).toBe(true);
+    }
   });
 
   it("applies prerequisite hierarchy beyond commodity cases", () => {

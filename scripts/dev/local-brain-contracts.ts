@@ -259,6 +259,7 @@ function looksLikeExternalCoverage(text: string): boolean {
 
 function looksLikeCommodityFrameworkLearning(text: string): boolean {
   return (
+    !looksLikeEnergyInflationShockRisk(text) &&
     !looksLikeFullStackFinanceStressTest(text) &&
     !looksLikeCrossMarketFinance(text) &&
     !looksLikeEtfAsCompanyFundamentalTrap(text) &&
@@ -310,9 +311,11 @@ function looksLikeEtfAsCompanyFundamentalTrap(text: string): boolean {
 
 function looksLikeCompanyToPortfolioRisk(text: string): boolean {
   return (
+    !looksLikeAiCapexPowerGridConcentrationRisk(text) &&
     /(公司|基本面|价值投资|value investing|fundamental|capex|revenue|margin|earnings|估值|收入质量|客户集中度)/iu.test(
       text,
-    ) && /(组合|持仓|仓位|科技仓|etf sleeve|portfolio|sleeve|risk|风险|传导|连接|影响)/iu.test(text)
+    ) &&
+    /(组合|持仓|仓位|科技仓|etf sleeve|portfolio|sleeve|risk|风险|传导|连接|影响)/iu.test(text)
   );
 }
 
@@ -365,6 +368,10 @@ function looksLikeThesisCatalystLifecycle(text: string): boolean {
     looksLikeTechnicalTimingNotStandalone(text) ||
     looksLikeBacktestOverfitStrategyLearning(text) ||
     looksLikeCompanyToPortfolioRisk(text) ||
+    looksLikeTreasurySupplyTermPremiumRisk(text) ||
+    looksLikePrivateCreditNonbankLeverageRisk(text) ||
+    looksLikeAiCapexPowerGridConcentrationRisk(text) ||
+    looksLikeEnergyInflationShockRisk(text) ||
     looksLikePostMortemCorrection(text)
   ) {
     return false;
@@ -384,7 +391,11 @@ function looksLikeDataProvenanceQuality(text: string): boolean {
     looksLikeCurrentMarketDataFreshnessGap(text) ||
     looksLikeFilingResearchMissingEvidence(text) ||
     looksLikeAnalystReportLearning(text) ||
-    looksLikeSentimentMarketModuleLearning(text)
+    looksLikeSentimentMarketModuleLearning(text) ||
+    looksLikeTreasurySupplyTermPremiumRisk(text) ||
+    looksLikePrivateCreditNonbankLeverageRisk(text) ||
+    looksLikeAiCapexPowerGridConcentrationRisk(text) ||
+    looksLikeEnergyInflationShockRisk(text)
   ) {
     return false;
   }
@@ -403,7 +414,11 @@ function looksLikeResearchArtifactQc(text: string): boolean {
   if (
     looksLikePaperLearningWithSource(text) ||
     looksLikeExternalKnowledgeInternalizationProtocol(text) ||
-    looksLikeAnalystReportLearning(text)
+    looksLikeAnalystReportLearning(text) ||
+    looksLikeTreasurySupplyTermPremiumRisk(text) ||
+    looksLikePrivateCreditNonbankLeverageRisk(text) ||
+    looksLikeAiCapexPowerGridConcentrationRisk(text) ||
+    looksLikeEnergyInflationShockRisk(text)
   ) {
     return false;
   }
@@ -433,6 +448,52 @@ function looksLikePortfolioMacroRisk(text: string): boolean {
     /(qqq|tlt|nvda|持仓|组合|portfolio)/iu.test(text) &&
     /(利率|ai capex|美元流动性|流动性|通胀|credit|macro|未来两周|风险)/iu.test(text) &&
     /(tlt|美元流动性|流动性|credit|duration|久期|fed|通胀)/iu.test(text)
+  );
+}
+
+function looksLikeTreasurySupplyTermPremiumRisk(text: string): boolean {
+  return (
+    /(treasury supply|treasury issuance|refunding|term premium|fiscal deficit|bill supply|coupon supply|auction|美债供给|国债供给|财政赤字|再融资|发债|期限溢价|拍卖)/iu.test(
+      text,
+    ) && /(tlt|qqq|spy|duration|久期|收益率|利率|估值|portfolio|组合|持仓|风险|risk)/iu.test(text)
+  );
+}
+
+function looksLikePrivateCreditNonbankLeverageRisk(text: string): boolean {
+  return (
+    /(private credit|nonbank|nbfi|leveraged loans?|semiliquid|redemption|basis trade|hedge fund|forced deleveraging|私募信用|非银|杠杆贷款|半流动|赎回|基差交易|对冲基金|被迫去杠杆)/iu.test(
+      text,
+    ) &&
+    /(credit|liquidity|hyg|lqd|qqq|spy|etf|risk appetite|portfolio|组合|风险|流动性|信用|利差)/iu.test(
+      text,
+    )
+  );
+}
+
+function looksLikeAiCapexPowerGridConcentrationRisk(text: string): boolean {
+  const hasSpecificAiInfrastructureCue =
+    /(hyperscaler|data center|power grid|electricity demand|hbm|semiconductor equipment|gpu delivery|云厂商|数据中心|电力|电网|HBM|半导体设备|GPU交付)/iu.test(
+      text,
+    );
+  return (
+    /(ai capex|hyperscaler|data center|power grid|electricity demand|hbm|semiconductor equipment|gpu delivery|index concentration|mag7|云厂商|数据中心|电力|电网|HBM|半导体设备|GPU交付|指数集中度|AI集中度)/iu.test(
+      text,
+    ) &&
+    hasSpecificAiInfrastructureCue &&
+    /(nvda|qqq|soxx|smh|科技仓|基本面|估值|供应链|组合|portfolio|risk|风险|传导)/iu.test(text)
+  );
+}
+
+function looksLikeEnergyInflationShockRisk(text: string): boolean {
+  const hasEnergySupplyShockCue =
+    /(opec|strait of hormuz|hormuz|spr|supply shock|gasoline|inventory shock|能源价格|油价|OPEC|霍尔木兹|战略储备|供给冲击|汽油|原油库存冲击)/iu.test(
+      text,
+    );
+  return (
+    hasEnergySupplyShockCue &&
+    /(inflation|cpi|pce|rates|fed|dxy|美元|tlt|qqq|spy|portfolio|通胀|利率|美联储|组合|风险|股债同跌)/iu.test(
+      text,
+    )
   );
 }
 
@@ -574,6 +635,7 @@ function looksLikeModelReviewDisagreement(text: string): boolean {
 
 function looksLikeMacroEventRiskPreflight(text: string): boolean {
   return (
+    !looksLikeEnergyInflationShockRisk(text) &&
     /(fomc|cpi|议息|通胀数据|利率决议|事件风险|event risk)/iu.test(text) &&
     /(qqq|tlt|nvda|持有|组合|portfolio|仓位|etf|技术面)/iu.test(text) &&
     /(不要预测|不要.*涨跌|preflight|先拆|研究链路|research-only)/iu.test(text)
@@ -659,6 +721,14 @@ function looksLikePlainBuyHoldBoundary(text: string): boolean {
 }
 
 function looksLikeCrossMarketFinance(text: string): boolean {
+  if (
+    looksLikeTreasurySupplyTermPremiumRisk(text) ||
+    looksLikePrivateCreditNonbankLeverageRisk(text) ||
+    looksLikeAiCapexPowerGridConcentrationRisk(text) ||
+    looksLikeEnergyInflationShockRisk(text)
+  ) {
+    return false;
+  }
   const groups = [
     /(美股|us equities|us stocks?|nasdaq|s&p|spx|spy|qqq|iwm|nvda|msft|aapl)/iu.test(text),
     /(a股|a-share|沪深|上证|深证|创业板|科创|北向|人民币资产|中国权益)/iu.test(text),
@@ -674,6 +744,14 @@ function looksLikeCrossMarketFinance(text: string): boolean {
 }
 
 function looksLikeFullStackFinanceStressTest(text: string): boolean {
+  if (
+    looksLikeTreasurySupplyTermPremiumRisk(text) ||
+    looksLikePrivateCreditNonbankLeverageRisk(text) ||
+    looksLikeAiCapexPowerGridConcentrationRisk(text) ||
+    looksLikeEnergyInflationShockRisk(text)
+  ) {
+    return false;
+  }
   const hasFundamentalLayer =
     /(财报|10-q|10-k|earnings|filing|guidance|margin|revenue|收入|利润率|指引|估值|基本面|fundamental)/iu.test(
       text,
@@ -3417,6 +3495,254 @@ export function hardenLocalBrainPlanForAsk(
         "no_trade_advice",
       ]),
       next_step: "build_company_to_portfolio_causal_plan_then_require_fresh_evidence",
+    };
+  }
+
+  if (looksLikeTreasurySupplyTermPremiumRisk(text)) {
+    return {
+      ...safe,
+      task_family: "treasury_supply_term_premium_portfolio_risk",
+      primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "fx_currency_liquidity",
+        "etf_regime",
+        "global_index_regime",
+        "quant_math",
+        "portfolio_risk_gates",
+        "finance_data_gateway",
+        "data_provenance_quality",
+      ]),
+      supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+      required_tools: mergeUnique(arrayValue(safe.required_tools), [
+        "source_registry_lookup",
+        "finance_data_gateway_snapshot",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_fx_dollar_producer",
+        "finance_framework_etf_regime_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ]),
+      missing_data: mergeUnique(arrayValue(safe.missing_data), [
+        "treasury_issuance_refunding_and_auction_calendar",
+        "term_premium_real_yield_and_curve_inputs",
+        "current_rates_and_inflation_inputs",
+        "source_timestamp_and_vendor",
+        "target_etf_price_and_regime_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ]),
+      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_current_market_data",
+        "duration_and_term_premium_not_standalone_trade_signal",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ]),
+      next_step: "route_treasury_supply_to_rates_credit_fx_etf_math_and_risk_gates_before_summary",
+      rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
+        "old_lark_conversation_history",
+        "rate_move_as_single_trade_signal",
+        "unverified_treasury_auction_claim",
+        "trade_recommendation_without_evidence",
+      ]),
+    };
+  }
+
+  if (looksLikePrivateCreditNonbankLeverageRisk(text)) {
+    return {
+      ...safe,
+      task_family: "private_credit_nonbank_leverage_stress_waterflow",
+      primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "etf_regime",
+        "global_index_regime",
+        "quant_math",
+        "portfolio_risk_gates",
+        "finance_data_gateway",
+        "data_provenance_quality",
+      ]),
+      supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+      required_tools: mergeUnique(arrayValue(safe.required_tools), [
+        "source_registry_lookup",
+        "finance_data_gateway_snapshot",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_etf_regime_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ]),
+      missing_data: mergeUnique(arrayValue(safe.missing_data), [
+        "private_credit_borrower_stress_and_valuation_inputs",
+        "nonbank_leverage_and_redemption_pressure_inputs",
+        "credit_spreads_funding_and_liquidity_inputs",
+        "leveraged_etf_or_semiliquid_structure_exposure_map",
+        "source_timestamp_and_vendor",
+        "portfolio_weights_and_risk_limits",
+      ]),
+      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "private_credit_or_nbfi_stress_not_standalone_alpha",
+        "liquidity_mismatch_requires_source_and_review",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ]),
+      next_step: "map_private_credit_and_nonbank_leverage_to_liquidity_etf_risk_gates_and_review",
+      rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
+        "old_lark_conversation_history",
+        "credit_headline_as_certain_contagion",
+        "unverified_private_credit_loss_claim",
+        "trade_recommendation_without_evidence",
+      ]),
+    };
+  }
+
+  if (looksLikeAiCapexPowerGridConcentrationRisk(text)) {
+    return {
+      ...safe,
+      task_family: "ai_capex_power_grid_index_concentration_risk",
+      primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
+        "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "event_driven",
+        "global_index_regime",
+        "us_equity_market_structure",
+        "commodities_oil_gold",
+        "quant_math",
+        "portfolio_risk_gates",
+        "finance_data_gateway",
+        "data_provenance_quality",
+      ]),
+      supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+      required_tools: mergeUnique(arrayValue(safe.required_tools), [
+        "source_registry_lookup",
+        "finance_data_gateway_snapshot",
+        "finance_framework_company_fundamentals_value_producer",
+        "finance_framework_event_driven_producer",
+        "finance_framework_commodities_oil_gold_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ]),
+      missing_data: mergeUnique(arrayValue(safe.missing_data), [
+        "hyperscaler_capex_guidance_and_budget_sources",
+        "data_center_power_grid_and_energy_constraint_inputs",
+        "supply_chain_hbm_gpu_delivery_and_inventory_inputs",
+        "index_weight_concentration_and_overlap_inputs",
+        "latest_company_fundamental_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "portfolio_weights_and_risk_limits",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
+      ]),
+      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_filing_claims",
+        "ai_capex_story_not_standalone_alpha",
+        "index_concentration_requires_weights_evidence",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ]),
+      next_step:
+        "connect_ai_capex_to_fundamentals_power_supply_chain_index_concentration_and_portfolio_risk",
+      rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
+        "old_lark_conversation_history",
+        "ai_story_without_filing_or_capex_source",
+        "market_attention_as_causality",
+        "trade_recommendation_without_evidence",
+      ]),
+    };
+  }
+
+  if (looksLikeEnergyInflationShockRisk(text)) {
+    return {
+      ...safe,
+      task_family: "energy_inflation_cross_asset_shock_risk",
+      primary_modules: mergeUnique(arrayValue(safe.primary_modules), [
+        "commodities_oil_gold",
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "etf_regime",
+        "global_index_regime",
+        "quant_math",
+        "portfolio_risk_gates",
+        "finance_data_gateway",
+        "data_provenance_quality",
+      ]),
+      supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+      required_tools: mergeUnique(arrayValue(safe.required_tools), [
+        "source_registry_lookup",
+        "finance_data_gateway_snapshot",
+        "finance_framework_commodities_oil_gold_producer",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_fx_dollar_producer",
+        "finance_framework_etf_regime_producer",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ]),
+      missing_data: mergeUnique(arrayValue(safe.missing_data), [
+        "oil_supply_demand_inventory_and_spare_capacity_inputs",
+        "energy_inflation_cpi_pce_and_expectations_inputs",
+        "source_timestamp_and_vendor",
+        "current_rates_and_inflation_inputs",
+        "fx_dollar_and_cross_asset_liquidity_inputs",
+        "target_etf_price_and_regime_inputs",
+        "portfolio_weights_and_risk_limits",
+      ]),
+      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "commodity_framework_not_trade_signal",
+        "supply_shock_requires_official_or_primary_source",
+        "equity_bond_hedge_may_fail_under_supply_shock",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ]),
+      next_step: "route_energy_supply_shock_to_commodity_macro_fx_cross_asset_etf_and_risk_review",
+      rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
+        "old_lark_conversation_history",
+        "oil_headline_as_direct_equity_signal",
+        "unverified_energy_price_claim",
+        "trade_recommendation_without_evidence",
+      ]),
     };
   }
 
