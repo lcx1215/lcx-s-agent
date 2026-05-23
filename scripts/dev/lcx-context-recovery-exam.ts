@@ -181,6 +181,18 @@ function compactTrainingPlan(value: unknown) {
   const record = value as Record<string, unknown>;
   const latestEval = record.latestEval as Record<string, unknown> | undefined;
   const moduleLearningReview = record.moduleLearningReview as Record<string, unknown> | undefined;
+  const liveLarkBrainBinding =
+    record.liveLarkBrainBinding &&
+    typeof record.liveLarkBrainBinding === "object" &&
+    !Array.isArray(record.liveLarkBrainBinding)
+      ? (record.liveLarkBrainBinding as Record<string, unknown>)
+      : undefined;
+  const accelerationQueue =
+    record.evolutionAccelerationQueue &&
+    typeof record.evolutionAccelerationQueue === "object" &&
+    !Array.isArray(record.evolutionAccelerationQueue)
+      ? (record.evolutionAccelerationQueue as Record<string, unknown>)
+      : undefined;
   return {
     ok: record.ok,
     boundary: record.boundary,
@@ -198,6 +210,40 @@ function compactTrainingPlan(value: unknown) {
         }
       : undefined,
     moduleLearningCounts: moduleLearningReview?.counts,
+    liveLarkBrainBinding: liveLarkBrainBinding
+      ? {
+          boundary: liveLarkBrainBinding.boundary,
+          status: liveLarkBrainBinding.status,
+          action: liveLarkBrainBinding.action,
+          selectedCleanAdapter: liveLarkBrainBinding.selectedCleanAdapter,
+          missingProof: Array.isArray(liveLarkBrainBinding.missingProof)
+            ? liveLarkBrainBinding.missingProof
+            : [],
+        }
+      : undefined,
+    evolutionAcceleration: accelerationQueue
+      ? {
+          boundary: accelerationQueue.boundary,
+          activeTrainingOrEval: accelerationQueue.activeTrainingOrEval,
+          canStartHeavyWorkNow: accelerationQueue.canStartHeavyWorkNow,
+          fastestSafeNextAction: accelerationQueue.fastestSafeNextAction,
+          readyNowCount: accelerationQueue.readyNowCount,
+          idleOnlyCount: accelerationQueue.idleOnlyCount,
+          blockedCount: accelerationQueue.blockedCount,
+          stepIds: Array.isArray(accelerationQueue.steps)
+            ? accelerationQueue.steps
+                .map((step) => {
+                  if (!step || typeof step !== "object" || Array.isArray(step)) {
+                    return undefined;
+                  }
+                  const id = (step as Record<string, unknown>).id;
+                  return typeof id === "string" ? id : undefined;
+                })
+                .filter((id): id is string => typeof id === "string")
+                .slice(0, 8)
+            : [],
+        }
+      : undefined,
   };
 }
 
@@ -523,6 +569,11 @@ function compactModuleAbsorptionGate(value: unknown) {
           parseRecoveredCaseIds: latestEval.parseRecoveredCaseIds,
         }
       : undefined,
+    proofGapSummary: record.proofGapSummary,
+    nextProofQueue: Array.isArray(record.nextProofQueue) ? record.nextProofQueue.slice(0, 8) : [],
+    missingEvidenceByReceipt: Array.isArray(record.missingEvidenceByReceipt)
+      ? record.missingEvidenceByReceipt.slice(0, 8)
+      : [],
     blockers: record.blockers,
     nextActions: record.nextActions,
     liveTouched: record.liveTouched,
@@ -569,6 +620,11 @@ function compactLearningSedimentationAudit(value: unknown) {
       reviewFiles: modulePipeline.reviewFiles,
       evalAbsorbed: modulePipeline.evalAbsorbed,
       weakModuleLearning: modulePipeline.weakModuleLearning,
+      exactMissingProofReceipts: modulePipeline.exactMissingProofReceipts,
+      proofGapSummary: modulePipeline.proofGapSummary,
+      nextProofQueue: Array.isArray(modulePipeline.nextProofQueue)
+        ? modulePipeline.nextProofQueue.slice(0, 8)
+        : [],
       boundaryViolations: modulePipeline.boundaryViolations,
       latestReview: modulePipeline.latestReview,
     },
@@ -624,12 +680,41 @@ function buildNewWindowHandoffText(params: {
     (params.trainingPlan as Record<string, unknown> | undefined)?.decisionIds,
   );
   const latestEval = params.trainingPlan?.latestEval;
+  const evolutionAcceleration =
+    params.trainingPlan?.evolutionAcceleration &&
+    typeof params.trainingPlan.evolutionAcceleration === "object" &&
+    !Array.isArray(params.trainingPlan.evolutionAcceleration)
+      ? (params.trainingPlan.evolutionAcceleration as Record<string, unknown>)
+      : {};
+  const accelerationStepIds = stringArray(evolutionAcceleration.stepIds);
+  const liveLarkBrainBinding =
+    params.trainingPlan?.liveLarkBrainBinding &&
+    typeof params.trainingPlan.liveLarkBrainBinding === "object" &&
+    !Array.isArray(params.trainingPlan.liveLarkBrainBinding)
+      ? (params.trainingPlan.liveLarkBrainBinding as Record<string, unknown>)
+      : {};
+  const liveLarkMissingProof = stringArray(liveLarkBrainBinding.missingProof);
   const moduleLatestEval = params.moduleAbsorption?.latestEval;
   const moduleGateCounts =
     params.moduleAbsorption?.counts && typeof params.moduleAbsorption.counts === "object"
       ? (params.moduleAbsorption.counts as Record<string, unknown>)
       : {};
   const modulePipeline = params.learningSedimentation?.moduleLearningPipeline;
+  const moduleProofGapSummary =
+    params.moduleAbsorption?.proofGapSummary &&
+    typeof params.moduleAbsorption.proofGapSummary === "object" &&
+    !Array.isArray(params.moduleAbsorption.proofGapSummary)
+      ? (params.moduleAbsorption.proofGapSummary as Record<string, unknown>)
+      : modulePipeline?.proofGapSummary &&
+          typeof modulePipeline.proofGapSummary === "object" &&
+          !Array.isArray(modulePipeline.proofGapSummary)
+        ? (modulePipeline.proofGapSummary as Record<string, unknown>)
+        : {};
+  const moduleNextProofQueue = Array.isArray(params.moduleAbsorption?.nextProofQueue)
+    ? params.moduleAbsorption.nextProofQueue
+    : Array.isArray(modulePipeline?.nextProofQueue)
+      ? modulePipeline.nextProofQueue
+      : [];
   const sedimentationLatestReview =
     modulePipeline?.latestReview &&
     typeof modulePipeline.latestReview === "object" &&
@@ -679,15 +764,42 @@ function buildNewWindowHandoffText(params: {
     `latestEval=${scalarText(latestEval?.passed)}/${scalarText(latestEval?.total)} promotionReady=${scalarText(latestEval?.promotionReady)}`,
     `latestEvalParseRecovered=${stringArray(latestEval?.parseRecoveredCaseIds).join(",") || "none"}`,
     `decisionIds=${trainingDecisionIds.join(",") || "none"}`,
+    `liveLarkBrainBinding=${scalarText(liveLarkBrainBinding.status, "none")} action=${scalarText(liveLarkBrainBinding.action, "none")} selectedCleanAdapter=${scalarText(liveLarkBrainBinding.selectedCleanAdapter, "none")}`,
+    `liveLarkBrainBindingMissingProof=${liveLarkMissingProof.join(",") || "none"}`,
+    `evolutionAcceleration=${scalarText(evolutionAcceleration.fastestSafeNextAction, "none")} readyNow=${scalarText(evolutionAcceleration.readyNowCount)} idleOnly=${scalarText(evolutionAcceleration.idleOnlyCount)} blocked=${scalarText(evolutionAcceleration.blockedCount)} heavyAllowed=${scalarText(evolutionAcceleration.canStartHeavyWorkNow)}`,
+    `evolutionAccelerationSteps=${accelerationStepIds.join(",") || "none"}`,
     "",
     "## Module Learning Truth",
     `absorptionReady=${scalarText(params.moduleAbsorption?.absorptionReady)}`,
     `gateDecision=${scalarText(params.moduleAbsorption?.gateDecision)}`,
     `moduleGateCounts=plan=${scalarText(moduleGateCounts.planReceiptFiles)} reviewRows=${scalarText(moduleGateCounts.reviewRows)} evalAbsorbed=${scalarText(moduleGateCounts.evalAbsorbed)} weak=${scalarText(moduleGateCounts.weakReceiptCount)} missingAbsorption=${scalarText(moduleGateCounts.missingAbsorptionEvidenceReceipts)}`,
+    `moduleExactMissingProofReceipts=${scalarText(modulePipeline?.exactMissingProofReceipts)}`,
+    `moduleProofGapSummary=${
+      Object.entries(moduleProofGapSummary)
+        .flatMap(([key, value]) =>
+          typeof value === "number" && value > 0 ? [`${key}:${value}`] : [],
+        )
+        .join(",") || "none"
+    }`,
+    `moduleNextProofOwners=${
+      moduleNextProofQueue
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return undefined;
+          }
+          const record = entry as Record<string, unknown>;
+          const target = scalarText(record.targetModule, "unknown");
+          const owner = scalarText(record.nextProofOwner, "unknown");
+          return `${target}->${owner}`;
+        })
+        .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, 8)
+        .join(",") || "none"
+    }`,
     `moduleGateLatestEval=${scalarText(moduleLatestEval?.passed)}/${scalarText(moduleLatestEval?.total)} promotionReady=${scalarText(moduleLatestEval?.promotionReady)}`,
     `sedimentationAssessment=${scalarText(params.learningSedimentation?.assessment)}`,
     `sedimentationModulePipeline=${scalarText(modulePipeline?.planReceipts)}/${scalarText(modulePipeline?.reviewFiles)} planReview historicalEvalAbsorbed=${scalarText(modulePipeline?.evalAbsorbed)} weak=${scalarText(modulePipeline?.weakModuleLearning)} boundaryViolations=${scalarText(modulePipeline?.boundaryViolations)}`,
-    `sedimentationLatestReview=${scalarText(sedimentationLatestReview.path)} evalAbsorbed=${scalarText(sedimentationLatestReview.evalAbsorbed)} weak=${scalarText(sedimentationLatestReview.weakModuleLearning)} applicationReady=${scalarText(sedimentationLatestReview.applicationReady)}`,
+    `sedimentationLatestReview=${scalarText(sedimentationLatestReview.path)} evalAbsorbed=${scalarText(sedimentationLatestReview.evalAbsorbed)} weak=${scalarText(sedimentationLatestReview.weakModuleLearning)} applicationReady=${scalarText(sedimentationLatestReview.applicationReady)} exactMissingProof=${scalarText(sedimentationLatestReview.exactMissingProofReceipts)}`,
     `sedimentationGaps=${sedimentationGaps.join(",") || "none"}`,
     `blockers=${blockers.join(",") || "none"}`,
     `nextActions=${nextActions.join(" | ") || "none"}`,
@@ -1011,8 +1123,10 @@ async function main() {
       "sed -n '1,220p' ops/local-brain/README.md",
       "node --import tsx scripts/dev/lcx-mind-model.ts --json",
       "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
+      "node --import tsx scripts/dev/lcx-governance-autopilot.ts --json",
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+      "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
       "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
       "test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json",

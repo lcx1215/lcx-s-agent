@@ -33,6 +33,14 @@ describe("LCX commercial answer pipeline", () => {
       }),
     );
     expect(payload.summary).toEqual({ passed: 10, failed: 0, total: 10 });
+    expect(payload.contractFilters).toEqual(
+      expect.arrayContaining([
+        "provider_council_evidence_required",
+        "provider_outputs_not_faked",
+        "qwen_challenger_not_final_authority",
+        "qwen_challenge_patch_only",
+      ]),
+    );
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -95,7 +103,28 @@ describe("LCX commercial answer pipeline", () => {
         candidateAuthority: "model_candidate_not_final_authority",
         terminalDecision: "return_failed_reason",
         qwenRole: "challenger_only_not_final_authority",
-        maxTotalReviewRounds: 4,
+        maxTotalReviewRounds: 5,
+      }),
+    );
+    expect(payload.qwenChallengeContract).toEqual(
+      expect.objectContaining({
+        outputShape: "challenge_patch_only",
+        allowedActions: ["keep", "block", "downgrade", "ask_more_evidence", "local_patch"],
+        forbiddenActions: [
+          "replace_remote_candidate",
+          "rewrite_full_answer",
+          "become_final_authority",
+        ],
+      }),
+    );
+    expect(payload.remoteProviderCouncil).toEqual(
+      expect.objectContaining({
+        required: true,
+        roles: expect.arrayContaining([
+          expect.objectContaining({ role: "kimi", lane: "synthesis" }),
+          expect.objectContaining({ role: "minimax", lane: "challenge" }),
+          expect.objectContaining({ role: "deepseek", lane: "extraction" }),
+        ]),
       }),
     );
     expect(payload.failedReasons).toEqual(
@@ -104,6 +133,7 @@ describe("LCX commercial answer pipeline", () => {
     expect(payload.stages).toEqual(
       expect.arrayContaining([
         "local_memory_recall",
+        "provider_council_review",
         "qwen_challenger",
         "review_panel",
         "visible_answer_adoption_gate",
@@ -132,6 +162,7 @@ describe("LCX commercial answer pipeline", () => {
         "learning_sedimentation_review",
         "local_memory_recall",
         "local_brain_planner",
+        "provider_council_review",
         "qwen_challenger",
         "review_panel",
         "reply_flow_receipt",
@@ -160,6 +191,52 @@ describe("LCX commercial answer pipeline", () => {
         "local_memory_check_missing",
         "learning_sedimentation_review_missing",
       ]),
+    );
+  });
+
+  it("rejects fake three-model council claims without attributable role evidence", async () => {
+    const payload = await runPipeline([
+      "--ask",
+      "本地记忆说 QQQ 好，大模型说不好，听谁的？",
+      "--candidate-answer",
+      "三家大模型都看过了，所以听大模型就行。",
+    ]);
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(payload.failedReasons).toEqual(
+      expect.arrayContaining(["provider_council_claim_without_attributable_outputs"]),
+    );
+    expect(payload.stages).toEqual(expect.arrayContaining(["provider_council_review"]));
+  });
+
+  it("rejects answers that let local Qwen replace or fully rewrite the remote candidate", async () => {
+    const payload = await runPipeline([
+      "--ask",
+      "三家大模型给了候选答案后，本地千问应该怎么处理？",
+      "--candidate-answer",
+      "三家大模型分别给出证据缺口后，本地千问接管并重写最终答案。",
+    ]);
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(payload.failedReasons).toEqual(
+      expect.arrayContaining(["qwen_challenger_full_rewrite_or_final_authority_claim"]),
+    );
+    expect(payload.qwenChallengeContract).toEqual(
+      expect.objectContaining({
+        outputShape: "challenge_patch_only",
+        allowedActions: expect.arrayContaining(["keep", "block", "local_patch"]),
+        forbiddenActions: expect.arrayContaining(["rewrite_full_answer"]),
+      }),
     );
   });
 

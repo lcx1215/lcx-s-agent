@@ -30,6 +30,8 @@ export type FeishuReplyFlowRecord = {
   answerAuditBoundary?: string;
   answerAuditOwner?: string;
   answerAuditCandidateAuthority?: string;
+  answerAuditProviderCouncilRole?: string;
+  answerAuditProviderCouncilRounds?: number;
   answerAuditQwenRole?: string;
   answerAuditMaxTotalReviewRounds?: number;
   answerAuditTerminalDecision?: string;

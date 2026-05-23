@@ -40,6 +40,7 @@ type ModuleLearningPlanReceipt = {
   freshAdjacentApplicationTask?: string | null;
   keepDownrankDiscardDecision?: string | null;
   supersedesReceiptPath?: string | null;
+  moduleSpecificCapabilityRule?: string | null;
   missingEvidence?: unknown;
   safetyBoundaries?: unknown;
   existingToolBridge?: unknown;
@@ -86,6 +87,107 @@ function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function hasString(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasKeepDownrankDiscardDecision(value: unknown): boolean {
+  return value === "keep" || value === "downrank" || value === "discard";
+}
+
+function buildProofCompleteness(params: {
+  receipt: ModuleLearningPlanReceipt;
+  boundaryViolation: boolean;
+  structuredDataReviewTargetViolation: boolean;
+}) {
+  const safetyBoundaries = stringArrayValue(params.receipt.safetyBoundaries);
+  return {
+    source_registry_record: hasString(params.receipt.sourceRegistryRecordPath),
+    actual_reading_scope: hasString(params.receipt.actualReadingScope),
+    module_specific_capability_rule: hasString(params.receipt.moduleSpecificCapabilityRule),
+    capability_card_or_retrieval_receipt: hasString(params.receipt.retrievalReceiptPath),
+    application_validation_receipt: hasString(params.receipt.applicationValidationReceiptPath),
+    training_or_eval_absorption_evidence: hasString(
+      params.receipt.trainingOrEvalAbsorptionEvidencePath,
+    ),
+    fresh_adjacent_application_task: hasString(params.receipt.freshAdjacentApplicationTask),
+    keep_downrank_or_discard_decision: hasKeepDownrankDiscardDecision(
+      params.receipt.keepDownrankDiscardDecision,
+    ),
+    safety_boundary: safetyBoundaries.length > 0 && safetyBoundaries.includes("research_only"),
+    structured_review_target: !params.structuredDataReviewTargetViolation,
+    boundary_clean: !params.boundaryViolation,
+  };
+}
+
+function exactMissingProof(params: {
+  receipt: ModuleLearningPlanReceipt;
+  missingEvidence: string[];
+  boundaryViolation: boolean;
+  structuredDataReviewTargetViolation: boolean;
+}): string[] {
+  const completeness = buildProofCompleteness(params);
+  return [
+    ...params.missingEvidence,
+    ...Object.entries(completeness)
+      .filter(([, present]) => !present)
+      .map(([field]) => field),
+  ].filter((entry, index, array) => entry.length > 0 && array.indexOf(entry) === index);
+}
+
+function nextProofOwner(missingProof: string[]): string {
+  if (
+    missingProof.some((field) =>
+      [
+        "source_registry_record",
+        "source_url_or_local_source_path",
+        "actual_reading_scope",
+      ].includes(field),
+    )
+  ) {
+    return "source_registry_and_reading_scope";
+  }
+  if (
+    missingProof.some((field) =>
+      [
+        "module_specific_capability_rule",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "fresh_adjacent_application_task",
+      ].includes(field),
+    )
+  ) {
+    return "module_learning_pipeline_apply_validation";
+  }
+  if (missingProof.includes("training_or_eval_absorption_evidence")) {
+    return "local_brain_eval_or_training_absorption";
+  }
+  if (missingProof.includes("keep_downrank_or_discard_decision")) {
+    return "operator_keep_downrank_discard_decision";
+  }
+  if (
+    missingProof.some((field) =>
+      ["safety_boundary", "structured_review_target", "boundary_clean"].includes(field),
+    )
+  ) {
+    return "boundary_repair";
+  }
+  return "none";
+}
+
+function claimStatus(status: string): string {
+  if (status === "eval_absorbed") {
+    return "eval_absorbed";
+  }
+  if (status === "application_ready") {
+    return "application_ready";
+  }
+  if (status === "retrieval_ready") {
+    return "retrieval_ready";
+  }
+  return "receipt_only";
 }
 
 function normalizeTargetModule(value?: string): string | undefined {
@@ -249,16 +351,33 @@ export function buildModuleLearningPipelineReview(params: {
           financePipelineArgs.sourceType === "market_data_snapshot_source" ||
           financePipelineArgs.sourceType === "vendor_data_source")
       );
-    const weak = status !== "eval_absorbed" || structuredDataReviewTargetViolation;
     const boundaryViolation =
       receipt.liveTouched === true ||
       receipt.providerConfigTouched === true ||
       receipt.protectedMemoryTouched === true;
+    const missingEvidence = stringArrayValue(receipt.missingEvidence);
+    const proofCompleteness = buildProofCompleteness({
+      receipt,
+      boundaryViolation,
+      structuredDataReviewTargetViolation,
+    });
+    const missingProof = exactMissingProof({
+      receipt,
+      missingEvidence,
+      boundaryViolation,
+      structuredDataReviewTargetViolation,
+    });
+    const weak =
+      status !== "eval_absorbed" ||
+      structuredDataReviewTargetViolation ||
+      boundaryViolation ||
+      missingProof.length > 0;
     return {
       receiptPath,
       targetModule: receipt.targetModule,
       moduleFamily: receipt.moduleFamily ?? null,
       status,
+      claimStatus: claimStatus(status),
       sourceUrlOrPath: receipt.sourceUrlOrPath ?? null,
       learningIntent: receipt.learningIntent ?? null,
       actualReadingScope: receipt.actualReadingScope ?? null,
@@ -268,16 +387,22 @@ export function buildModuleLearningPipelineReview(params: {
       trainingOrEvalAbsorptionEvidencePath: receipt.trainingOrEvalAbsorptionEvidencePath ?? null,
       freshAdjacentApplicationTask: receipt.freshAdjacentApplicationTask ?? null,
       keepDownrankDiscardDecision: receipt.keepDownrankDiscardDecision ?? "not_decided",
+      moduleSpecificCapabilityRule: receipt.moduleSpecificCapabilityRule ?? null,
       supersedesReceiptPath: receipt.supersedesReceiptPath ?? null,
       superseded,
       supersededByReceiptPath,
-      missingEvidence: stringArrayValue(receipt.missingEvidence),
+      missingEvidence,
+      proofCompleteness,
+      exactMissingProof: missingProof,
+      nextProofOwner: nextProofOwner(missingProof),
       weak,
       failedReason: structuredDataReviewTargetViolation
         ? "data_provenance_receipt_missing_structured_review_target"
-        : weak
-          ? status
-          : null,
+        : missingProof.length > 0
+          ? missingProof[0]
+          : weak
+            ? status
+            : null,
       boundaryViolation,
       structuredDataReviewTargetViolation,
       safetyBoundaries: stringArrayValue(receipt.safetyBoundaries),
@@ -312,8 +437,10 @@ export function buildModuleLearningPipelineReview(params: {
         ? "receipt_boundary_violation"
         : row.structuredDataReviewTargetViolation
           ? "data_provenance_receipt_missing_structured_review_target"
-          : (row.missingEvidence[0] ?? row.status),
+          : (row.exactMissingProof[0] ?? row.status),
       missingEvidence: row.missingEvidence,
+      exactMissingProof: row.exactMissingProof,
+      nextProofOwner: row.nextProofOwner,
       action: row.structuredDataReviewTargetViolation
         ? "Route data_provenance_quality receipts through official_data_source, market_data_snapshot_source, or vendor_data_source with data_provenance_quality_review_input before claiming absorption."
         : row.status === "missing_evidence" || row.status === "stored_only"
@@ -323,6 +450,34 @@ export function buildModuleLearningPipelineReview(params: {
             : row.status === "application_ready"
               ? "Add Qwen eval or training absorption evidence plus keep/downrank/discard decision before claiming eval_absorbed."
               : "Fix receipt status or boundary fields before using this as module-learning evidence.",
+    }));
+  const proofGapSummary = rows.reduce<Record<string, number>>((summary, row) => {
+    for (const proof of row.exactMissingProof) {
+      summary[proof] = (summary[proof] ?? 0) + 1;
+    }
+    return summary;
+  }, {});
+  const nextProofQueue = rows
+    .filter((row) => row.exactMissingProof.length > 0 || row.weak || row.boundaryViolation)
+    .map((row) => ({
+      targetModule: row.targetModule,
+      receiptPath: row.receiptPath,
+      status: row.status,
+      claimStatus: row.claimStatus,
+      exactMissingProof: row.exactMissingProof,
+      nextProofOwner: row.nextProofOwner,
+      action:
+        row.nextProofOwner === "source_registry_and_reading_scope"
+          ? "Add or repair the source registry record and actual reading scope before retrieval/application claims."
+          : row.nextProofOwner === "module_learning_pipeline_apply_validation"
+            ? "Add module capability/retrieval/apply validation evidence and a fresh adjacent task."
+            : row.nextProofOwner === "local_brain_eval_or_training_absorption"
+              ? "Wait for or attach Qwen eval/training absorption evidence through the existing local-brain path."
+              : row.nextProofOwner === "operator_keep_downrank_discard_decision"
+                ? "Record an explicit keep/downrank/discard decision after reviewing the eval or application evidence."
+                : row.nextProofOwner === "boundary_repair"
+                  ? "Repair boundary or structured-review-target evidence before this receipt can count."
+                  : "No proof action required.",
     }));
   return {
     boundary: "module_learning_pipeline_review",
@@ -344,8 +499,11 @@ export function buildModuleLearningPipelineReview(params: {
       structuredDataReviewTargetViolations: rows.filter(
         (row) => row.structuredDataReviewTargetViolation,
       ).length,
+      exactMissingProofReceipts: rows.filter((row) => row.exactMissingProof.length > 0).length,
     },
     countsByStatus,
+    proofGapSummary,
+    nextProofQueue,
     rows,
     supersededRows,
     weakModuleLearning,

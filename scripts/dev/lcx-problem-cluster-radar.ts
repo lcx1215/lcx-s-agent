@@ -410,12 +410,87 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
   });
 }
 
+function evolutionAccelerationCluster(inputs: RadarInputs): ProblemCluster | undefined {
+  const payload = inputs.trainingPlan?.payload;
+  const queue = recordValue(payload?.evolutionAccelerationQueue);
+  if (!queue) {
+    return undefined;
+  }
+  const steps = arrayValue(queue.steps)
+    .map(recordValue)
+    .filter((step): step is Record<string, unknown> => Boolean(step));
+  const readyNowCount = numberValue(queue.readyNowCount) ?? 0;
+  const idleOnlyCount = numberValue(queue.idleOnlyCount) ?? 0;
+  const blockedCount = numberValue(queue.blockedCount) ?? 0;
+  const signals: ProblemSignal[] = [];
+  if (readyNowCount > 0) {
+    signals.push({
+      id: "evolution_acceleration_ready_now",
+      severity: "P3",
+      summary: "safe evolution acceleration work is ready now",
+      evidence: {
+        fastestSafeNextAction: queue.fastestSafeNextAction,
+        readyNowCount,
+        steps: steps
+          .filter((step) => step.status === "ready_now")
+          .map((step) => ({ id: step.id, lane: step.lane, command: step.command }))
+          .slice(0, 5),
+      },
+    });
+  }
+  if (idleOnlyCount > 0 || blockedCount > 0) {
+    signals.push({
+      id: "evolution_acceleration_idle_queue",
+      severity: "P3",
+      summary: "idle-only Qwen/agent acceleration queue is waiting on owner gates",
+      evidence: {
+        activeTrainingOrEval: queue.activeTrainingOrEval,
+        canStartHeavyWorkNow: queue.canStartHeavyWorkNow,
+        fastestSafeNextAction: queue.fastestSafeNextAction,
+        idleOnlyCount,
+        blockedCount,
+        steps: steps
+          .filter((step) =>
+            ["ready_when_idle", "blocked_by_active_training", "blocked_by_missing_proof"].includes(
+              stringValue(step.status) ?? "",
+            ),
+          )
+          .map((step) => ({
+            id: step.id,
+            lane: step.lane,
+            status: step.status,
+            executionClass: step.executionClass,
+            blockedByDecisionIds: step.blockedByDecisionIds,
+          }))
+          .slice(0, 8),
+      },
+    });
+  }
+  return problemCluster({
+    id: "evolution_acceleration_cluster",
+    family: "qwen_agent_evolution_acceleration",
+    ownerEntrypoint: "scripts/dev/local-brain-training-plan.ts",
+    sourceOwners: ["local-brain-training-plan"],
+    signals,
+    nextAction:
+      "Follow evolutionAccelerationQueue before launching broad work: run ready_now receipt/review steps immediately, and run idle-only heavy steps only after local-brain-training-plan shows no active guard/eval/MLX.",
+    actionability: readyNowCount > 0 ? "repair_now" : "blocked_by_owner_gate",
+    blockingReasons:
+      readyNowCount > 0
+        ? []
+        : blockedCount > 0
+          ? ["active_local_brain_guard_or_eval_or_missing_absorption_proof"]
+          : [],
+  });
+}
+
 function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | undefined {
   const payload = inputs.trainingPlan?.payload;
   const latestEval = recordValue(payload?.latestEval);
   const latestPassingEval = recordValue(payload?.latestPassingEval);
   const qwen = recordValue(payload?.qwenCapabilityConsolidation);
   const activeGuardAdapterTruth = recordValue(payload?.activeGuardAdapterTruth);
+  const liveLarkBrainBinding = recordValue(payload?.liveLarkBrainBinding);
   const signals: ProblemSignal[] = [];
   signals.push(
     ...decisionSignals(payload, {
@@ -426,6 +501,10 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
       latest_promoted_adapter_not_selected_clean: {
         severity: "P3",
         summary: "latest promoted adapter is no longer the selected clean runtime adapter",
+      },
+      live_lark_brain_binding_deferred: {
+        severity: "P3",
+        summary: "live Lark brain binding is not yet proven against the selected clean adapter",
       },
     }),
   );
@@ -497,6 +576,21 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
       },
     });
   }
+  const liveBindingStatus =
+    typeof liveLarkBrainBinding?.status === "string" ? liveLarkBrainBinding.status : undefined;
+  if (liveBindingStatus && !["ready_for_live_runtime_binding"].includes(liveBindingStatus)) {
+    signals.push({
+      id: "live_lark_brain_binding_not_ready",
+      severity: "P3",
+      summary: "live Lark must wait before consuming the selected clean local-brain adapter",
+      evidence: {
+        status: liveLarkBrainBinding?.status,
+        action: liveLarkBrainBinding?.action,
+        selectedCleanAdapter: liveLarkBrainBinding?.selectedCleanAdapter,
+        missingProof: liveLarkBrainBinding?.missingProof,
+      },
+    });
+  }
   return problemCluster({
     id: "adapter_promotion_truth_cluster",
     family: "adapter_promotion_and_runtime_truth",
@@ -504,11 +598,12 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
     sourceOwners: ["local-brain-training-plan"],
     signals,
     nextAction:
-      "Keep runtime on one clean latest-passing adapter and feed blocked challenger cases back through teacher/data/eval/promotion.",
+      "Keep runtime on one clean latest-passing adapter; bind live Lark to that selected clean adapter only after eval/MLX is idle, sidecar drift is zero, runtime is restarted, and live Lark proof is collected.",
     actionability:
       hasActiveHeavyLocalBrainProcess(payload) ||
       ownerDecisionRepairBlocked(payload, "guard_adapter_mismatch") ||
-      ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready")
+      ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready") ||
+      ownerDecisionRepairBlocked(payload, "live_lark_brain_binding_deferred")
         ? "blocked_by_owner_gate"
         : undefined,
     blockingReasons: [
@@ -518,6 +613,9 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
         : []),
       ...(ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready")
         ? ["training_plan_codex_repair_not_eligible"]
+        : []),
+      ...(ownerDecisionRepairBlocked(payload, "live_lark_brain_binding_deferred")
+        ? ["live_lark_brain_binding_waiting_for_owner_proof"]
         : []),
     ],
   });
@@ -543,6 +641,11 @@ function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | 
     (numberValue(auditLatestReview?.weakModuleLearning) ?? 0) === 0 &&
     (numberValue(auditLatestReview?.boundaryViolations) ?? 0) === 0;
   const sameDayEmptyButCumulativeClean = noSameDayModuleReceipts && cumulativeModuleLearningClean;
+  const gateProofGapSummary = recordValue(moduleGate?.proofGapSummary);
+  const auditProofGapSummary = recordValue(auditModuleLearning?.proofGapSummary);
+  const exactMissingProofReceipts =
+    (numberValue(gateCounts?.missingAbsorptionEvidenceReceipts) ?? 0) ||
+    (numberValue(auditModuleLearning?.exactMissingProofReceipts) ?? 0);
   const gateBlockers = sameDayEmptyButCumulativeClean
     ? stringArray(moduleGate?.blockers).filter(
         (blocker) => blocker !== "module_learning_review_missing",
@@ -570,6 +673,23 @@ function moduleLearningAbsorptionCluster(inputs: RadarInputs): ProblemCluster | 
         gateDecision: moduleGate.gateDecision,
         counts: moduleGate.counts,
         blockers: moduleGate.blockers,
+        proofGapSummary: gateProofGapSummary ?? auditProofGapSummary,
+        nextProofQueue: Array.isArray(moduleGate.nextProofQueue)
+          ? moduleGate.nextProofQueue.slice(0, 5)
+          : Array.isArray(auditModuleLearning?.nextProofQueue)
+            ? auditModuleLearning.nextProofQueue.slice(0, 5)
+            : [],
+      },
+    });
+  }
+  if (exactMissingProofReceipts > 0) {
+    signals.push({
+      id: "module_absorption_exact_missing_proof",
+      severity: "P2",
+      summary: "module-learning review exposes exact per-receipt missing proof",
+      evidence: {
+        exactMissingProofReceipts,
+        proofGapSummary: gateProofGapSummary ?? auditProofGapSummary,
       },
     });
   }
@@ -898,6 +1018,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
   const clusters = [
     ownerAvailabilityCluster(inputs),
     trainingEvalRuntimeCluster(inputs),
+    evolutionAccelerationCluster(inputs),
     adapterPromotionTruthCluster(inputs),
     moduleLearningAbsorptionCluster(inputs),
     architectureSupervisionCluster(inputs),

@@ -163,6 +163,9 @@ async function moduleReviewCounts(files: FileEntry[]) {
     evalAbsorbed: 0,
     weakModuleLearning: 0,
     boundaryViolations: 0,
+    exactMissingProofReceipts: 0,
+    proofGapSummary: {} as Record<string, number>,
+    nextProofQueue: [] as unknown[],
   };
   for (const file of files) {
     const parsed = await readJsonObject(file.path);
@@ -174,6 +177,22 @@ async function moduleReviewCounts(files: FileEntry[]) {
     summary.evalAbsorbed += numberValue(counts.evalAbsorbed);
     summary.weakModuleLearning += numberValue(counts.weakModuleLearning);
     summary.boundaryViolations += numberValue(counts.boundaryViolations);
+    summary.exactMissingProofReceipts += numberValue(counts.exactMissingProofReceipts);
+    const proofGapSummary =
+      parsed?.proofGapSummary &&
+      typeof parsed.proofGapSummary === "object" &&
+      !Array.isArray(parsed.proofGapSummary)
+        ? (parsed.proofGapSummary as Record<string, unknown>)
+        : {};
+    for (const [key, value] of Object.entries(proofGapSummary)) {
+      const count = numberValue(value);
+      if (count > 0) {
+        summary.proofGapSummary[key] = (summary.proofGapSummary[key] ?? 0) + count;
+      }
+    }
+    if (summary.nextProofQueue.length === 0 && Array.isArray(parsed?.nextProofQueue)) {
+      summary.nextProofQueue = parsed.nextProofQueue.slice(0, 10);
+    }
   }
   return summary;
 }
@@ -317,6 +336,9 @@ async function buildMap(workspaceDir: string) {
         evalAbsorbed: reviewCounts.evalAbsorbed,
         weakModuleLearning: reviewCounts.weakModuleLearning,
         boundaryViolations: reviewCounts.boundaryViolations,
+        exactMissingProofReceipts: reviewCounts.exactMissingProofReceipts,
+        proofGapSummary: reviewCounts.proofGapSummary,
+        nextProofQueueSize: reviewCounts.nextProofQueue.length,
       },
       nextGate: "lcx-module-learning-absorption-gate_must_return_absorptionReady_true",
     },

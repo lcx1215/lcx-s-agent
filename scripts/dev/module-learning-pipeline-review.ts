@@ -114,6 +114,25 @@ function renderText(details: Record<string, unknown>): string {
       )} reason=${stringValue(entry.failedReason)}`,
     );
   }
+  const proofGapSummary =
+    details.proofGapSummary && typeof details.proofGapSummary === "object"
+      ? (details.proofGapSummary as Record<string, unknown>)
+      : {};
+  for (const [proof, count] of Object.entries(proofGapSummary)
+    .filter(([, count]) => numberValue(count) > 0)
+    .slice(0, 10)) {
+    lines.push(`missing_proof ${proof}=${numberValue(count)}`);
+  }
+  const nextProofQueue = Array.isArray(details.nextProofQueue)
+    ? (details.nextProofQueue as Record<string, unknown>[])
+    : [];
+  for (const entry of nextProofQueue.slice(0, 5)) {
+    lines.push(
+      `next_proof target=${stringValue(entry.targetModule)} owner=${stringValue(
+        entry.nextProofOwner,
+      )} status=${stringValue(entry.status)}`,
+    );
+  }
   if (!details.updated) {
     lines.push("next=rerun without --no-write when the dry-run output is acceptable");
   }

@@ -6128,6 +6128,8 @@ export async function handleFeishuMessage(params: {
         answerAuditBoundary: larkAnswerAuditPolicy.boundary,
         answerAuditOwner: larkAnswerAuditPolicy.owner,
         answerAuditCandidateAuthority: larkAnswerAuditPolicy.candidateAuthority,
+        answerAuditProviderCouncilRole: larkAnswerAuditPolicy.providerCouncilRole,
+        answerAuditProviderCouncilRounds: larkAnswerAuditPolicy.providerCouncilRounds,
         answerAuditQwenRole: larkAnswerAuditPolicy.qwenRole,
         answerAuditMaxTotalReviewRounds: larkAnswerAuditPolicy.maxTotalReviewRounds,
         answerAuditTerminalDecision: larkAnswerAuditPolicy.terminalDecision,

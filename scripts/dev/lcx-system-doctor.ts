@@ -343,6 +343,36 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       providerConfigTouched: payload.providerConfigTouched,
     };
   }
+  if (name === "live-lark-brain-binding") {
+    const decision =
+      payload.decision && typeof payload.decision === "object" && !Array.isArray(payload.decision)
+        ? (payload.decision as Record<string, unknown>)
+        : {};
+    const liveBinding =
+      payload.liveLarkBrainBinding &&
+      typeof payload.liveLarkBrainBinding === "object" &&
+      !Array.isArray(payload.liveLarkBrainBinding)
+        ? (payload.liveLarkBrainBinding as Record<string, unknown>)
+        : {};
+    return {
+      ok: payload.ok,
+      boundary: payload.boundary,
+      decision: {
+        status: decision.status,
+        action: decision.action,
+        selectedCleanAdapter: decision.selectedCleanAdapter,
+        heavyActive: decision.heavyActive,
+        missingProof: decision.missingProof,
+        liveUserSeen: decision.liveUserSeen,
+      },
+      trainingPlanStatus: liveBinding.status,
+      liveSidecarDriftBefore: payload.liveSidecarDriftBefore,
+      nextCommand: payload.nextCommand,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
   if (name === "doctrine-consistency") {
     return {
       ok: payload.ok,
@@ -409,6 +439,13 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       counts: payload.counts,
       latestEval: payload.latestEval,
       blockers: payload.blockers,
+      proofGapSummary: payload.proofGapSummary,
+      nextProofQueue: Array.isArray(payload.nextProofQueue)
+        ? payload.nextProofQueue.slice(0, 5)
+        : [],
+      missingEvidenceByReceipt: Array.isArray(payload.missingEvidenceByReceipt)
+        ? payload.missingEvidenceByReceipt.slice(0, 5)
+        : [],
       notPromoted: payload.notPromoted,
       liveTouched: payload.liveTouched,
       providerConfigTouched: payload.providerConfigTouched,
@@ -599,6 +636,8 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
         latestTrainingSeedEval: plan.latestTrainingSeedEval,
         latestCandidateEval: plan.latestCandidateEval,
         qwenCapabilityConsolidation: plan.qwenCapabilityConsolidation,
+        liveLarkBrainBinding: plan.liveLarkBrainBinding,
+        evolutionAccelerationQueue: plan.evolutionAccelerationQueue,
         latestPromotionAt: plan.latestPromotionAt,
         latestPromotedAdapter: plan.latestPromotedAdapter,
         latestTeacher: plan.latestTeacher,
@@ -670,6 +709,7 @@ function localBrainCurrentAdapterFromTrainingPlan(trainingPlanCheck: CheckResult
       consolidationState: qwenCapability.consolidationState,
       latestPassingEval,
       latestPromotedAdapter: trainingPlanCheck.summary.latestPromotedAdapter,
+      liveLarkBrainBinding: trainingPlanCheck.summary.liveLarkBrainBinding,
       selectionMode: "training-plan-latest-passing",
       liveTouched: false,
       providerConfigTouched: false,
@@ -887,6 +927,10 @@ async function moduleLearningPipelineReviewCheck(): Promise<CheckResult> {
         weakModuleLearning: Array.isArray(details.weakModuleLearning)
           ? details.weakModuleLearning.slice(0, 5)
           : [],
+        proofGapSummary: details.proofGapSummary,
+        nextProofQueue: Array.isArray(details.nextProofQueue)
+          ? details.nextProofQueue.slice(0, 5)
+          : [],
         invalidReceipts: Array.isArray(details.invalidReceipts)
           ? details.invalidReceipts.slice(0, 5)
           : [],
@@ -921,11 +965,13 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/local-brain-distill-eval.ts",
     "scripts/dev/local-brain-plan.ts",
     "scripts/dev/local-brain-promotion-audit.ts",
+    "scripts/dev/lcx-live-lark-brain-binding.ts",
     "scripts/dev/lcx-agent-exam.ts",
     "scripts/dev/lcx-change-impact-plan.ts",
     "scripts/dev/lcx-local-paths.ts",
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-flow-graph.ts",
+    "scripts/dev/lcx-governance-autopilot.ts",
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/lcx-learning-sedimentation-bridge.ts",
     "scripts/dev/lcx-learning-sedimentation-audit.ts",
@@ -1102,6 +1148,14 @@ checks.push(
 );
 const currentAdapterCheck = localBrainCurrentAdapterFromTrainingPlan(trainingGuardCheck);
 checks.push(currentAdapterCheck);
+checks.push(
+  await runCommand({
+    name: "live-lark-brain-binding",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-live-lark-brain-binding.ts", "--json"],
+    parseJson: true,
+  }),
+);
 checks.push(
   options.brainPlan || options.deep
     ? await runCommand({

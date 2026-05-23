@@ -30,8 +30,10 @@ describe("summarizeRecentFeishuReplyFlowEvidence", () => {
         answerAuditBoundary: "bounded_answer_review",
         answerAuditOwner: "existing_lark_handoff_context_packet_review_panel",
         answerAuditCandidateAuthority: "model_candidate_not_final_authority",
+        answerAuditProviderCouncilRole: "required_for_high_value_or_evidence_sensitive_answer",
+        answerAuditProviderCouncilRounds: 1,
         answerAuditQwenRole: "challenger_only_not_final_authority",
-        answerAuditMaxTotalReviewRounds: 4,
+        answerAuditMaxTotalReviewRounds: 5,
         answerAuditTerminalDecision: "adopt_visible_reply_or_return_failed_reason",
         answerAuditHandoffReceiptPath: "memory/lark-language-handoff-receipts/2026-05-15/msg.json",
         answerAuditContextPacketPath: "memory/lark-context-packets/2026-05-15/msg.json",
@@ -64,8 +66,12 @@ describe("summarizeRecentFeishuReplyFlowEvidence", () => {
     expect(summary).toContain("Latest answer_audit: boundary=bounded_answer_review");
     expect(summary).toContain("owner=existing_lark_handoff_context_packet_review_panel");
     expect(summary).toContain("candidateAuthority=model_candidate_not_final_authority");
+    expect(summary).toContain(
+      "providerCouncilRole=required_for_high_value_or_evidence_sensitive_answer",
+    );
+    expect(summary).toContain("providerCouncilRounds=1");
     expect(summary).toContain("qwenRole=challenger_only_not_final_authority");
-    expect(summary).toContain("maxTotalReviewRounds=4");
+    expect(summary).toContain("maxTotalReviewRounds=5");
     expect(summary).toContain("terminalDecision=adopt_visible_reply_or_return_failed_reason");
     expect(summary).toContain("handoffReceiptPath=memory/lark-language-handoff-receipts");
     expect(summary).toContain("contextPacketPath=memory/lark-context-packets");

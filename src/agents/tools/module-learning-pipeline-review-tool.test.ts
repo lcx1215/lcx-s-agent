@@ -47,6 +47,9 @@ describe("module learning pipeline review tool", () => {
         trainingOrEvalAbsorptionEvidencePath: "ops/local-brain/eval/options.json",
         freshAdjacentApplicationTask: "Apply to a fresh FOMC gap-risk prompt.",
         keepDownrankDiscardDecision: "keep",
+        moduleSpecificCapabilityRule:
+          "Options learning requires IV, skew, event, liquidity, and risk-boundary evidence before reuse.",
+        safetyBoundaries: ["research_only", "no_execution_authority", "no_trade_advice"],
         missingEvidence: [],
         liveTouched: false,
         providerConfigTouched: false,
@@ -90,7 +93,7 @@ describe("module learning pipeline review tool", () => {
         boundary: "module_learning_pipeline_review_only",
         updated: true,
         reviewPath: "memory/module-learning-pipeline-reviews/2026-05-12.json",
-        counts: {
+        counts: expect.objectContaining({
           receiptFiles: 2,
           rawReceiptFiles: 3,
           supersededReceiptFiles: 0,
@@ -104,7 +107,23 @@ describe("module learning pipeline review tool", () => {
           weakModuleLearning: 1,
           boundaryViolations: 0,
           structuredDataReviewTargetViolations: 0,
-        },
+          exactMissingProofReceipts: 1,
+        }),
+        proofGapSummary: expect.objectContaining({
+          module_specific_capability_rule: 1,
+          capability_card_or_retrieval_receipt: 1,
+          application_validation_receipt: 1,
+          training_or_eval_absorption_evidence: 1,
+          fresh_adjacent_application_task: 1,
+          keep_downrank_or_discard_decision: 1,
+          safety_boundary: 1,
+        }),
+        nextProofQueue: expect.arrayContaining([
+          expect.objectContaining({
+            targetModule: "global_index_regime",
+            nextProofOwner: "module_learning_pipeline_apply_validation",
+          }),
+        ]),
         weakModuleLearning: expect.arrayContaining([
           expect.objectContaining({
             targetModule: "global_index_regime",
@@ -179,6 +198,9 @@ describe("module learning pipeline review tool", () => {
         freshAdjacentApplicationTask:
           "Apply data provenance learning to a fresh conflicting macro data ask.",
         keepDownrankDiscardDecision: "keep",
+        moduleSpecificCapabilityRule:
+          "Data provenance learning requires timestamp, field definition, source role, and conflict review before reuse.",
+        safetyBoundaries: ["research_only", "no_execution_authority", "no_trade_advice"],
         missingEvidence: [],
         financePipelineArgs: {
           sourceType: "official_data_source",
@@ -239,6 +261,9 @@ describe("module learning pipeline review tool", () => {
         trainingOrEvalAbsorptionEvidencePath: "ops/local-brain/eval/data.json",
         freshAdjacentApplicationTask: "Apply to a fresh conflicting macro data ask.",
         keepDownrankDiscardDecision: "keep",
+        moduleSpecificCapabilityRule:
+          "Data provenance learning requires timestamp, field definition, source role, and conflict review before reuse.",
+        safetyBoundaries: ["research_only", "no_execution_authority", "no_trade_advice"],
         missingEvidence: [],
         financePipelineArgs: {
           sourceType: "manual_article_source",

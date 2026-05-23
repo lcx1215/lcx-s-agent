@@ -137,6 +137,7 @@ describe("LCX mind model god-view architecture check", () => {
     expect(doctorSource).toContain('name: "context-recovery-exam"');
     expect(doctorSource).toContain("scripts/dev/lcx-mind-model.ts");
     expect(doctorSource).toContain("scripts/dev/lcx-flow-graph.ts");
+    expect(doctorSource).toContain("scripts/dev/lcx-governance-autopilot.ts");
     expect(doctorSource).toContain("scripts/dev/lcx-context-recovery-exam.ts");
     expect(headTailSource).toContain("mind_model_boundary");
     expect(headTailSource).toContain("flow_graph_boundary");
@@ -149,6 +150,8 @@ describe("LCX mind model god-view architecture check", () => {
     expect(runbook).toContain("workflow closure");
     expect(runbook).toContain("lcx-context-recovery-exam");
     expect(localOperator).toContain("mind_file");
+    expect(localOperator).toContain("governance_file");
+    expect(localOperator).toContain("governanceAutopilot");
     expect(localOperator).toContain("context_recovery_file");
     expect(localOperator).toContain("mindModel");
     expect(localOperator).toContain("contextRecovery");

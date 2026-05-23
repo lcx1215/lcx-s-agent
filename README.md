@@ -1,203 +1,164 @@
 # LCX Agent
 
-![LCX Agent 架构图](docs/assets/lcx-agent-architecture.png)
+![LCX Agent architecture](docs/assets/lcx-agent-architecture.png)
 
-[![LCX Agent 能力看板](docs/assets/lcx-agent-daily-progress-wave.svg)](docs/assets/lcx-agent-daily-progress-wave.svg)
+[![LCX Agent progress](docs/assets/lcx-agent-daily-progress-wave.svg)](docs/assets/lcx-agent-daily-progress-wave.svg)
 
-LCX Agent 是一个个人 AI 研究操作系统。它的核心不是某个单点模型，而是一套围绕长期运行设计的架构哲学：Harness 负责约束和验收，Hermes 负责消息和证据流转，本地大脑负责沉淀记忆，大模型负责拆解与审阅。
+LCX Agent is a personal AI research operating system built on top of the
+OpenClaw runtime. It uses Lark / Feishu as the main control room, routes natural
+language requests into specialist workflows, and keeps durable evidence about
+what was read, tested, learned, promoted, or blocked.
 
-它把飞书 / Lark 作为主控制室入口，把自然语言请求路由到研究、学习、运维和审计链路；同时把学习结果、证据、错误修正和运行状态保存成本地 artifact。它不是自动交易机器人，而是低频金融研究、筛选和风控辅助系统。
+The project is not an autonomous trading bot. Its finance scope is research
+only: ETF, major asset, macro, large-cap company, risk, and timing discipline.
+The goal is steady daily improvement with hard boundaries, not hype, hidden
+execution, or fake live proof.
 
-这个仓库是 `lcx1215/lcx-s-openclaw` 开发分支，用来设计、验证和迁移 LCX Agent 的长期运行能力。OpenClaw 在这里主要是底层 runtime 和多渠道 gateway，不是项目叙事的中心。
+## What It Does
 
-## 30 秒版本
+LCX Agent combines five layers:
 
-如果只用一句话介绍：
+| Layer        | Role                                                                     |
+| ------------ | ------------------------------------------------------------------------ |
+| Control room | Lark / Feishu natural-language entrypoint for one real user.             |
+| Harness      | Permission, risk, eval, promotion, and live-proof gates.                 |
+| Hermes       | Context packets, handoffs, receipts, review artifacts, and message flow. |
+| Local brain  | Qwen / MLX local adapter training, eval, and durable learning surfaces.  |
+| Governance   | Doctor, radar, mind model, flow graph, head-tail, and recovery checks.   |
 
-> LCX Agent = Harness 约束层 + Hermes 消息层 + 飞书控制室 + 本地大脑 + 金融研究工作流。
+The system is designed to answer a practical question every day: what can the
+agent safely understand, research, remember, and improve without confusing dev
+proof with live user-visible proof?
 
-它解决的问题不是“让大模型多说一点”，而是让一个长期运行的个人研究系统能稳定做到：
+The product rule is intentionally plain: 用户入口简单, internal roles can be
+specialized. The control-room answer should be readable first, with specialist
+detail, receipts, eval proof, and protocol labels kept behind operator surfaces
+unless the user explicitly asks for them.
 
-- 听懂自然语言请求，不要求用户记住复杂命令。
-- 把任务拆到研究、学习、运维、审计等内部模块。
-- 用 Harness 思路把能力关进可验证边界：权限、风险、质量门、dev/live 状态都要有证据。
-- 用 Hermes 思路传递消息、意图、上下文和 receipt，让模块之间靠 artifact 对齐，而不是靠聊天幻觉。
-- 用 MiniMax、Kimi、DeepSeek 等大模型做任务拆解、审阅和生成。
-- 用本地大脑沉淀记忆、模块化思考和可复用经验。
-- 把 dev-fixed 和 live-visible-fixed 分清楚，避免把本地通过误报成线上可见。
-- 修问题时优先收敛同类接口和流程契约，而不是只补当前触发样例。
-- 对金融研究保持低频、研究型、风险优先，不做自动交易。
+## Core Boundaries
 
-## 架构哲学：Harness + Hermes
+- `dev-fixed` is not `live-visible-fixed`.
+- A stored source is not learned capability.
+- A receipt is not model-weight absorption.
+- A `parseRecovered` eval case is not a clean promotion pass.
+- One runtime should use one selected clean local-brain adapter, not multiple
+  LoRA adapters stacked together.
+- Finance outputs are research-only and are not investment advice.
+- Current market, price, fundamental, ETF, option, macro, or vendor numbers must
+  carry provenance before reaching Qwen, Lark, memory, or a visible summary.
 
-LCX Agent 的设计更接近一个可长期运行的研究系统，而不是一个“调用 LLM 的聊天机器人”。
+## Main Operator Commands
 
-| 概念    | 在系统里的含义                                                                         |
-| ------- | -------------------------------------------------------------------------------------- |
-| Harness | 约束层。负责权限、风险门控、质量门、测试、eval、live 验收和失败显式化。                |
-| Hermes  | 消息层。负责把用户意图、模块计划、上下文包、handoff、receipt 和 review 结果传递清楚。  |
-| Brain   | 沉淀层。负责把高价值样本、修正笔记、能力卡和审阅结果变成可复用记忆。                   |
-| LLMs    | 推理层。MiniMax、Kimi、DeepSeek 等大模型负责拆解、生成、审阅，本地模型负责吸收和沉淀。 |
-| Runtime | 执行层。提供 gateway、channel、session、CLI 和工具调用能力。                           |
-
-这个分层的目的很简单：大模型可以强，但不能裸奔。它必须被 Harness 约束，被 Hermes 传递证据，被本地大脑沉淀经验，最后才变成用户能读懂的回复。
-
-## 核心能力
-
-| 能力                 | 说明                                                                        |
-| -------------------- | --------------------------------------------------------------------------- |
-| Harness 约束层       | 把权限、风险、质量门、eval、live 验收和失败显式化收成一套工程边界。         |
-| Hermes 消息层        | 在用户、路由、大脑、review 和 live 回路之间传递上下文、handoff 和 receipt。 |
-| 飞书 / Lark 控制室   | 用户在一个主群或主对话里说自然语言，系统内部完成分类、路由和回复。          |
-| Agent 任务路由       | 把请求分到语言理解、研究、学习、运维、审计、finance review 等链路。         |
-| 本地学习大脑         | 把有价值的材料蒸馏成样本、能力卡、修正笔记、review artifact 和评估记录。    |
-| 证据与 truth surface | 区分已搜索、已学习、已写入、仅推断、dev-fixed、live-visible-fixed 等状态。  |
-| 金融研究工作流       | 面向 ETF、主要资产和头部公司，强调基本面筛选、技术面择时和硬风险门控。      |
-
-## 一个真实链路
-
-用户可以在飞书里问：
-
-```text
-我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex 和美元流动性。
-先拆内部模块，给我 research-only 判断，不要交易建议。
-```
-
-系统期望做的事：
-
-1. 大模型先做任务拆解，识别这是宏观、ETF、个股、风险和 review 混合问题。
-2. 本地大脑给出模块计划，调用已有记忆、历史经验和相关能力卡。
-3. finance、math、memory、review 等模块分别参与，但不把内部 JSON 直接甩给用户。
-4. 最终回复先给人能读懂的摘要，再给必要的风险边界和后续检查点。
-5. Hermes 生成 handoff、context packet、receipt 和 review artifact，方便之后复盘和学习。
-6. Harness 检查边界：research-only、无交易建议、无假 live-visible-fixed、失败必须显式化。
-
-## 这个项目不是什么
-
-- 不是自动交易系统。
-- 不是高频策略或执行引擎。
-- 不是“学一切赚钱知识”的泛化机器人。
-- 不是把本地测试通过就宣称线上修好了的 demo。
-- 不是围绕底层框架品牌包装的 fork；底层 runtime 只是支撑，LCX Agent 的重点是 Harness、Hermes、记忆和研究工作流。
-
-所有金融输出都应视为 research-only，不构成投资建议。
-
-## 为什么区分 dev 和 live
-
-LCX Agent 长期运行在真实飞书 / Lark 回路里，所以“本地修了”和“用户真的看到了”必须分开。
-
-对人只需要记住三层：
-
-| 状态                 | 大白话含义                                                                     |
-| -------------------- | ------------------------------------------------------------------------------ |
-| dev-ready            | dev 仓本地测试、smoke 或模拟 Lark 回路已经通过。                               |
-| live-runtime-updated | live sidecar 已迁移到 dev 确认过的 git 快照，并且重启和 channel probe 已通过。 |
-| live-user-seen       | 真实 Lark/Feishu 用户入口已经看到正确回复。                                    |
-
-dev 仓不应该依赖真实 live Lark 才证明自己正确。dev 正确性主要靠单元测试、smoke、synthetic/replay Lark 输入、routing score、本地 reply formatting 和本地 brain eval。真实 Lark 只用于迁移后的最后验收。
-
-底层机器字段仍然保留更细状态：
-
-| 状态               | 含义                                                                   |
-| ------------------ | ---------------------------------------------------------------------- |
-| dev-fixed          | 开发仓里代码、测试或 smoke 已经通过。                                  |
-| migrated           | 改动已同步到 live sidecar。                                            |
-| probe-ok           | live gateway 已 build / restart，并且 `channels status --probe` 通过。 |
-| live-visible-fixed | 真实 Lark/Feishu 入站、路由、回复和可见输出都被验证。                  |
-
-这套边界能防止 silent failure：系统不能因为“生成过回复”就假装“用户已经收到回复”。
-
-## 当前工程重点
-
-当前默认方向是 baseline hardening，但这不等于只做小补丁。LCX Agent 的 baseline 是让系统稳定升级：该补接口补接口，该加 eval 加 eval，该整理模块整理模块，只要它能提升 L5 真实能力并留下证据。
-
-1. 消除静默失败。
-2. 把单点 bug 上升为问题族排查：同类入口、同类出口、共享 helper、receipt、测试和 live 可见面一起看。
-3. 用 Harness 收紧权限、风险、测试、eval 和 live 验收。
-4. 用 Hermes 收紧上下文包、handoff、receipt 和 review artifact 的传递。
-5. 保持语言 corpus、学习大脑 artifact、finance doctrine 互不污染。
-6. 让本地 Qwen / local brain 吃进大模型审阅和蒸馏结果。
-7. 用 MiniMax 等大模型额度做持续高质量任务拆解、审阅和训练样本沉淀。
-8. 对 live migration 留下可追踪证据，不把 dev-ready 说成 live-visible-fixed。
-9. 做新模块、新技能、新 eval、新 receipt 或新 workflow 前，先查仓库和本地 skills 里有没有类似工程；能复用或扩展就不要另造一套。
-10. 用 LCX Agent Mind Model 做 god-view 架构自检：每条主线必须同时有宏观规则、workflow 入口、proof/eval 面和边界字段，避免未来 Codex 或 Claude Code 只改一个小点却忘掉全局 workflow closure。
-11. 用压缩上下文恢复考试确认新 Codex/Claude Code 窗口不靠聊天历史也能恢复全局：本地 operator latest state 必须写入 `mindModel` 和 `contextRecovery` 摘要。
-12. Mind Model 还要检查 invariant registry：小 workflow、内容口径、训练重叠、临时 HOME 漂移、stored-only learning、未验证市场数据、dev/live 文案这些容易反复犯的错，都必须有头部规则、脚下入口、测试或 receipt 证据和边界字段。
-13. 用 LCX Agent Flow Graph 检查 task waterflow：任务进来以后不能 wrong-flow、漏 filter valve、跳过 receipt、无限回流或把 dev 证据升级成 live-user-seen；每类任务只流过该流过的模块，但必须经过该经过的过滤阀和 bounded feedback。
-14. 本机 Codex skills 分层使用：LCX 核心 skills 进入本仓 runbook，通用开发/部署/外部服务 skills 留在 Codex 全局按需调用；遇到 CLI-Anything、CLI-Hub、GUI/local software CLI 化或 agent-native software-control 评估，默认先用 `cli-anything-harvester`；本地大脑只学习 `skill_pattern_distillation` 这种可复用工作流，不把每个 skill 原文、外部服务权限或桌面控制权限吞进 runtime。
-15. Qwen 训练由 `lcx-qwen-training-operator` 这类 operator skill 监督：先查 active PID、overlap、guard log 新鲜度、teacher quota、dataset 和 promotion truth；24 小时进化指训练/eval/backoff/安全拉起闭环，不是 24 小时满负载硬烧。
-    运行时只能选一个干净的 `latest-passing` adapter；后续全 Qwen 能力要靠 teacher/dataset/eval/promotion 回流成下一代统一 clean adapter，不能把多个 r 并联上，也不能把带 `parseRecovered` 的 candidate 当成已上线能力。
-16. 复杂工程变更由 `lcx-workflow-waterflow-auditor` 这类 god-view skill 监督：小改动必须能回到水路图、head-tail、一头一尾 proof、记忆沉淀和 dev/live 边界，不能只修局部忘掉全局。
-17. 商用回答流水线由 `scripts/dev/lcx-commercial-answer-pipeline.ts` 做 dev 诊断 owner：模型答案只是候选，Qwen 只是 challenger，本地合约和 review panel 有有限轮次，最后只能 `adopt_visible_answer` 或 `return_failed_reason`。它专门防止短句问法被浅答、模型答案直接当最终答案、无限反复改写、raw JSON/internal label/后台运行细节露给用户；模块 id、receipt/handoff、消息 id、timeout ms、`retrieval/apply`、`eval/training absorption` 要翻译成普通用户能懂的来源、阅读范围、练习检查、审阅和后续复用。
-18. 模块学习吸收用 `lcx-module-learning-absorption-operator`：网上学习、论文、博客、采访、开源项目、alternative source 都走同一条 source registry / reading scope / retrieval / apply / eval absorption / keep-downrank-discard 链，不能把 stored-only 说成学会。
-19. 商用回答流水线用 `lcx-commercial-answer-pipeline-operator`：短句意图、大模型候选、Qwen challenger、本地 review、有限重试、failed reason 和 visible reply adoption 都由同一条流水线解释，不能另造平行 answer V2。
-20. Qwen adapter 真相用 `lcx-promotion-and-adapter-truth-operator`：`latest-passing`、`latest-promoted`、active guard adapter、parseRecovered、blocked challenger、promotion audit 分开看；`200/200` 带 parseRecovered 仍不能 promotion。
-21. 未来目标是世界级 agent 架构，但验收标准不是口号：用户入口简单，内部角色专业，volatile 状态只有一个事实 owner，学习沉淀有 source/retrieval/apply/eval/review 证据，所有回流有边界，dev/live/protected memory 不混，架构变更能被 mind model、flow graph、head-tail、doctor、training-plan、context recovery、problem cluster radar 和 live probe 共同解释。
-22. 未来智能体不能等用户逐个提醒这些架构检查。遇到非平凡工程、上下文恢复、训练/晋级判断、模块学习吸收、记忆沉淀、Lark/live 边界或“继续找问题”时，先自动跑 `lcx-problem-cluster-radar` 看当前问题簇，再按 cluster 的 `ownerEntrypoint` 去跑 owner 命令；如果 training-plan 显示 Qwen/MiniMax/MLX 正在跑，就只报告 PID 和 defer heavy eval，不启动重叠任务。
-23. 商用验收不能靠 Codex 手工扫红点。`scripts/dev/lcx-commercial-acceptance-harness.ts` 是产品级考官：它消费 commercial answer pipeline、problem radar、flow graph、mind model、live status、training plan 和 system doctor/provider council，不替代它们。它按 error budget 和 canary plan 判定 `readyForCommercialRelease`，把真实 Lark 自然学习题、固定验收短语、核心金融研究题分开看；不发送 Lark、不启动训练、不改 provider config、不碰 protected memory。
-24. 外部 agent 升级不能变成五套平行架构。`scripts/dev/lcx-external-agent-upgrade-radar.ts` 是 external agent upgrade radar：Agent Lightning、LongMemEval-V2 / AgentRunbook、LightMem / LycheeMemory、ClawBench / WildClawBench、Agent S / CLI-Anything 先映射到已有 owner，再做 source/license/reading scope/skill_pattern_distillation/eval/receipt。它不是 direct runtime authority：no direct install、no provider config、no live sender、no protected memory；只能证明 dev 架构接线，不能替代 live-user-seen。
-25. 自愈式“精密仪器”目标不是让模型自由发挥，而是让 owner 命令、radar、repair lock、context recovery、operator digest 和 live probe 串成闭环：owner 出错 -> problem cluster 暴露 -> 按 owner 修复 -> 跑 proof -> 刷新快照 -> 必要时 live probe。外部五个 agent 项目也必须进入这条闭环；context recovery 会检查它们的 autocue 和 external radar，problem radar 会把外部 radar drift 变成可修复问题簇。
-26. 以后系统改进的默认目标是减少人工提醒：Codex 或本地智能体遇到非平凡工程、继续打磨、找问题、更新快照、外部项目吸收、模块学习、Lark/live 验收时，应先跑现有 owner/radar/recovery 栈，自己发现 stale snapshot、drift、可修复 problem cluster 或 owner gate；能安全修就修，不能修就报告卡在哪个 owner gate，而不是等用户逐项提醒。
-27. 可以接受当前智能体不够聪明，但不能接受架构封死。未来新模型、新论文、新工具、新 skill、新 benchmark、新 computer-use/CLI 化能力都必须能通过同一条升级入口进来：先 `skill-harvester` / external upgrade radar 做来源、license、权限和重叠检查，再映射到已有 owner、补 eval/receipt、最后按 dev/live 边界迁移。默认不直接安装、不直接给运行时权限、不重写核心架构。
-
-上帝视角检查命令：
+Start with the local runbook:
 
 ```bash
-node --import tsx scripts/dev/lcx-mind-model.ts --json
-node --import tsx scripts/dev/lcx-flow-graph.ts --json
-node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
-node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
-node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
-node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json
-node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
-node --import tsx scripts/dev/local-brain-training-plan.ts --json
+sed -n '1,220p' ops/local-brain/README.md
 ```
 
-它们是 dev-only：只读，不碰 live sender、provider config、protected memory，也不能替代真实 Lark live-user-seen 验收。Flow graph 的 proof 名称是 `flow_graph_exam`，用于证明水路图的节点、过滤阀、receipt、回流规则和同哲学合并簇没有断。现在水路图还输出 `diagnosticIndex`：每条水流会告诉你它检测什么问题、事实 owner 是哪个入口、最快检查命令是什么、缺哪个 filter/receipt 会报警。它不是只画结构图，而是给 operator 快速定位系统断点。`lcx-problem-cluster-radar` 在这些 owner 上面做聚合：它不重新判断 Qwen、模块学习、上下文恢复或水路是否正确，只读取各 owner 的 JSON，把当前红灯合成 `problemClusters` / `actionableClusters` / `repairableSignals` / `pendingVerificationSignals`，例如 eval 超时、旧 eval 证据晚于新 guard、模块 absorption 未闭环、dirty worktree、operator recovery 警告，或者混合 blocked cluster 里仍可由 Codex 修的 teacher/output-contract 子信号。`pendingVerificationSignals` 表示 dev 已有晚于 owner 失败的修复提交，但还要等 owner 下一轮运行证明，不应让后面的窗口重复修同一个问题。`lcx-commercial-acceptance-harness` 再往上做商用判卷：不是新事实 owner，而是把答案流水线、雷达、live 状态、训练 overlap、provider council 和 canary 缺口合成一张 release readiness 表。这样 Codex 不需要靠人工扫日志才能知道“现在还有哪些中等问题簇”和“能不能按商用标准说 ready”。现在水路图至少覆盖 16 类核心水流：Lark 金融研究、模块学习、训练反馈、dev/live、上下文恢复、本地自动化、Lark 可读回复、商用回答流水线、商用验收考官、provider council、记忆修正、同类工程合并、外部 skill/agent 蒸馏、自动化 repair lock、金融数据网关对账、高级交易员失败族闭环。
+Recover current state in a compressed or new coding window:
 
-金融数据不能散落在各模块里直接给 Qwen 或 Lark 用。凡是当前行情、价格、财报、宏观、ETF、期权、指数权重、vendor 字段、仓位风险里会出现数字的路径，先走 `finance_data_gateway_snapshot`：每个字段必须带 provider role、source timestamp、timezone、field definition、unit/currency、adjusted status、source URL/artifact；主源、交叉校验源和官方/issuer 慢源不一致时进入 `data_provenance_quality`，不能硬写结论。
+```bash
+node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff
+node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
+```
 
-采访、博客、播客、社交情绪、管理层饭局和市场 attention 这类材料不是新开一条学习路线。它们属于 external finance learning 里的弱证据子类：可以沉淀成假设和研究检查项，但必须带 source type、reliability grade、原始来源或 transcript、官方 follow-up、基本面 follow-through、市场 follow-through window、retrieval/apply receipt、eval/training absorption、module-learning review 和 keep/downrank/discard 决策。缺这些证据时，只能保留为 hypothesis-only 或 downranked，不能当因果、alpha、仓位或 durable doctrine。
+The governance autopilot writes the latest machine-readable and one-screen
+handoff snapshots:
 
-## 系统提升和问题族修复纪律
+```text
+/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json
+/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json
+/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md
+```
 
-LCX Agent 不把 baseline hardening 理解成“只把当前触发样例补过去”。真正的 baseline 是让同一类错误不再从别的接口冒出来。
+Use those files for orientation, then rerun owner commands before acting on
+volatile runtime truth such as PIDs, active eval, selected adapters, and live
+binding status.
 
-当一个真实问题暴露出来时，默认按下面顺序处理：
+## Governance Stack
 
-1. 先判断这是单点 bug，还是共享契约失误。
-2. 如果是共享契约失误，修复范围必须覆盖同类入口、出口、状态文案、artifact、receipt 和回归测试。
-3. 用户可见面优先按人话输出，内部 family、route、failedReason、JSON、receipt path 只能作为证据放后面。
-4. 不因为“当前样例好了”就结束；至少要找 3 到 5 个相邻场景确认没有同类漏口。
-5. 如果缺口横跨语言入口、本地大脑、永久记忆、Lark 回复、eval 或 receipt，就按一条完整回路修，不把问题拆成互相推诿的小补丁。
-6. 用户给的例子只是问题族入口，不是修复边界。例如“大宗商品”要抽象成简单前置题、复杂题、相邻非同类题都能复用的通用规则。
-7. 抽象迁移必须留下五段式证据：`original example`、`abstracted failure family`、`adjacent non-identical scenario`、`shared contract`、`regression proof`。
-8. 短口语不是短逻辑。像“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”“Lark 回复看不懂”这类表层很短的话，默认先抽象成 `plain-language hidden-complexity intake`：确认范围、证据、模块、记忆、审阅、人话总结和回归证明，再决定具体工作流。
-9. 新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口之前，先查已有相似工程；优先复用、合并或扩展旧路径。哲学上一致的系统工程必须合并到一个 owner/cluster，不要开平行系统；确实要新建时说明旧路径为什么不够。
-10. 允许为了 L5 能力提升主动新增或重塑模块、CLI、评测、receipt、prompt、workflow glue 和文档入口。
-11. 大脑能力必须单调：难题会做，简单前置题必须更会做。复杂评测、训练 promotion 和学习 receipt 不能绕过对应的简单用户入口。
-12. 仍然禁止无关 provider、交易执行层、假 live-visible-fixed、保护记忆覆盖，以及没有验证指标的炫技式扩张。
+For non-trivial engineering, promotion, module learning, Lark/live, memory, or
+recovery work, run the owner stack instead of relying on chat history:
 
-简短说：范围要有边界，但不能小到只修症状。该收敛问题族时，就一次收干净；该升级系统能力时，就用测试、receipt 和真实回路证明它真的变强。
+```bash
+node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
+node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
+node --import tsx scripts/dev/local-brain-training-plan.ts --json
+node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
+node --import tsx scripts/dev/lcx-mind-model.ts --json
+node --import tsx scripts/dev/lcx-flow-graph.ts --json
+node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json
+node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
+```
 
-## 关键目录
+`lcx-governance-autopilot.ts` runs that stack as a read-only coordinator. It
+does not start training, rebuild train slices, mutate live sender, edit provider
+config, touch protected memory, or claim live-user-seen.
 
-| 路径                         | 作用                                                            |
-| ---------------------------- | --------------------------------------------------------------- |
-| `extensions/feishu/src/`     | 飞书 / Lark 控制室、路由、回复、语言 family 和 live channel。   |
-| `scripts/dev/`               | 本地大脑蒸馏、MiniMax quota 使用、system doctor、smoke/eval。   |
-| `src/agents/`                | agent runtime、工具目录、模型路由和系统提示组装。               |
-| `src/agents/tools/finance-*` | 金融学习、能力卡、source intake、review 和治理工具。            |
-| `src/hooks/bundled/`         | 定时学习、修正、记忆卫生、operating loop 和 workface artifact。 |
-| `src/auto-reply/`            | 用户可见的命令回复、状态回复和 truth surface。                  |
-| `docs/tools/`                | 开发工具和本地大脑训练说明。                                    |
-| `docs/assets/`               | README 图和项目展示素材。                                       |
+## Local Brain And Promotion
 
-受保护的工作记忆文件，例如 `memory/current-research-line.md`，不应被随手改写。它们是系统状态，不是草稿纸。
+Qwen local-brain work is supervised by `local-brain-training-plan` and related
+operator scripts. Before starting any heavy training, eval, or guard loop,
+check for active processes:
 
-## 开发与验证
+```bash
+ps -axo pid,ppid,stat,etime,command | rg \
+  'minimax-brain-training-guard|minimax-quota-brain-saturator|minimax-brain-teacher-batch|local-brain-distill-eval|mlx_lm (generate|lora)'
+```
 
-基础环境：Node 22+，pnpm。
+The promotion rule is strict: only a clean selected adapter with passing eval,
+no failed cases, no parse errors, and no parseRecovered cases can become the
+runtime starting point. Later useful capability must flow back through teacher
+data, dataset, eval, and promotion into the next unified clean adapter.
+
+## Lark / Feishu Live Proof
+
+Live proof is intentionally separate from dev proof.
+
+| State                  | Meaning                                                             |
+| ---------------------- | ------------------------------------------------------------------- |
+| `dev-ready`            | Local tests, smokes, replay, or evals passed in the dev repo.       |
+| `live-runtime-updated` | Live sidecar was synced, built, restarted, and probed.              |
+| `live-user-seen`       | A real post-migration Lark inbound and outbound reply was observed. |
+
+The approved live brain binding owner is:
+
+```bash
+node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
+```
+
+Only when it reports an idle `ready_for_apply` state should the bounded apply
+path be used:
+
+```bash
+node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json
+```
+
+## Finance Research Discipline
+
+LCX Agent is optimized for low-frequency research and risk control:
+
+- fundamentals for filtering;
+- technicals for timing;
+- macro and liquidity context for regime awareness;
+- hard risk gates for survival;
+- red-team invalidation before durable conclusions.
+
+Alternative sources such as interviews, blogs, podcasts, social attention, and
+market stories are weak evidence by default. They can create hypotheses and
+research checks, but they do not become causality, alpha, position sizing, or
+durable doctrine without source registry, reading scope, validation, review,
+eval or training absorption evidence, and keep/downrank/discard decisions.
+
+## Development
+
+Requirements:
+
+- Node.js 22+
+- pnpm 10+
+
+Install and run checks:
 
 ```bash
 pnpm install
@@ -205,142 +166,44 @@ pnpm tsgo
 pnpm test
 ```
 
-常用的 Lark/Feishu 回归测试：
+Common focused checks:
 
 ```bash
-pnpm vitest run extensions/feishu/src/bot.test.ts
-pnpm vitest run extensions/feishu/src/lark-api-route-provider.test.ts
-pnpm vitest run extensions/feishu/src/real-utterances-regression.test.ts
-pnpm vitest run extensions/feishu/src/intent-matchers.test.ts
-pnpm vitest run extensions/feishu/src/lark-language-handoff-receipts.test.ts
-pnpm vitest run extensions/feishu/src/surfaces.test.ts
+corepack pnpm exec oxfmt --check README.md AGENTS.md ops/local-brain/README.md
+corepack pnpm exec vitest run test/lcx-governance-autopilot.test.ts
+corepack pnpm exec vitest run test/lcx-live-lark-brain-binding.test.ts
+corepack pnpm exec vitest run test/local-brain-training-plan.test.ts
 ```
 
-商用回答流水线 dev 诊断：
+Lark / Feishu focused regressions:
 
 ```bash
-node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json
-node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts \
-  --ask "学习期权基础知识。" \
-  --candidate-answer "先联网找权威来源和实际阅读范围，登记 source registry，再沉淀概念、风险边界和练习；不是期权交易建议。" \
-  --json
+corepack pnpm exec vitest run extensions/feishu/src/lark-language-handoff-receipts.test.ts
+corepack pnpm exec vitest run extensions/feishu/src/lark-context-packet.test.ts
+corepack pnpm exec vitest run extensions/feishu/src/learning-council.test.ts
 ```
 
-这个命令不碰 live sender/provider/MLX。它只检查：短句是否被展开成真实工作流、当前行情是否标数据缺口、学习是否走来源登记、模型分歧是否按证据仲裁、候选答案能否进入可见回复。
+## Repository Map
 
-本地大脑 smoke / eval：
+| Path                     | Purpose                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `extensions/feishu/src/` | Lark / Feishu control-room, routing, reply, language, and live-channel code. |
+| `scripts/dev/`           | Local-brain training, eval, governance, doctor, radar, and promotion tools.  |
+| `src/agents/`            | Agent runtime, system prompt, tools, routing, and review surfaces.           |
+| `src/auto-reply/`        | User-visible command replies, truth surfaces, and reply-flow evidence.       |
+| `ops/local-brain/`       | Operator runbook for local-brain training, eval, guard, and recovery.        |
+| `docs/`                  | Broader OpenClaw and LCX Agent documentation.                                |
 
-```bash
-node --import tsx scripts/dev/lcx-system-doctor.ts --json
-node --import tsx scripts/dev/local-brain-distill-smoke.ts --json
-node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only --summary-only --json
-node --import tsx scripts/dev/local-brain-distill-eval.ts --adapter latest-passing --hardened --summary-only --json
-```
+## Project Lineage
 
-`--contract-only --summary-only` 的 dev 合约注册表目标是 200 个 case。200
-case 是语言入口、金融数据、记忆沉淀、alternative source、adversarial
-boundary 等问题族的回归网，不等于 Qwen 权重已经学会全部真实问法；权重吸收还要看
-adapter hardened eval 和 promotion 证据。
+This repository keeps OpenClaw as the runtime and gateway foundation while LCX
+Agent adds a personal research operating layer: Lark control room, durable
+learning, finance research discipline, local-brain promotion, and governance
+proof surfaces.
 
-MiniMax quota 持续消耗和训练样本沉淀：
+Historical `lobster_*` names, scripts, hook labels, and runtime handles may
+remain as compatibility artifacts until each path is migrated with live proof.
 
-```bash
-node --import tsx scripts/dev/minimax-quota-brain-saturator.ts --write
-node --import tsx scripts/dev/minimax-provider-quota-saturator.ts --lane coding-plan-search --write
-```
+## License
 
-## live promotion
-
-LCX Agent 不再推荐手动记忆“dev 仓同步 live 仓”的细碎步骤。常规只用一条命令：
-
-```bash
-pnpm lcx:live
-```
-
-这条命令会做：
-
-1. 如果 dev 工作树有未提交 WIP，自动创建当前 `HEAD` 的临时干净快照。
-2. 从干净 git 快照复制到 live sidecar，不把脏 WIP、protected memory、`dist` 或 receipt 混进去。
-3. 在 live sidecar 里安装依赖、build。
-4. 把 LaunchAgent 重装到 live sidecar。
-5. restart gateway。
-6. 跑 `channels status --probe`。
-7. 写入 promotion state、receipt 和下一条 Lark 验收短语。
-
-live sidecar 默认在：
-
-```bash
-~/.openclaw/live-sidecars/lcx-s-openclaw
-```
-
-默认 dry-run 不改 live：
-
-```bash
-pnpm lcx:promote-live
-```
-
-查看当前 promotion 状态：
-
-```bash
-pnpm lcx:live:status
-```
-
-`pnpm lcx:live:status` 是快速状态命令，只读 promotion state，并扫描 `~/.openclaw/logs/feishu-reply-flow.jsonl`。它不会默认跑慢 probe，所以适合日常反复检查。它会直接输出：
-
-- `liveStatus`: runtime promotion 和 probe 层状态。
-- `currentDevCommit`: 当前 dev 仓的 HEAD。
-- `liveMatchesCurrentDev`: 当前 dev HEAD 是否已经和最近一次 live promotion commit 一致。
-- `liveNeedsPromotion`: 当前 dev 仓是否还有未迁移到 live sidecar 的改动。
-- `devLiveDrift`: dev/live 不一致的原因，例如 `dev_commit_differs`、`current_dev_dirty` 或 `live_matches_current_dev`。
-- `statusModel`: 对人看的三层模型，固定是 `dev-ready -> live-runtime-updated -> live-user-seen`。
-- `devReady`: `lcx:live:status` 不跑 dev 测试，所以这里会显示 `not_checked_by_live_status`。
-- `liveRuntimeCommitMatched`: 当前 clean dev HEAD 是否和 live sidecar 记录的 commit 一样。
-- `liveRuntimeRestartCommandStatus`: 最近一次 live promotion 记录里的 restart 命令状态；它是证据字段，不等于真实用户验收。
-- `liveRuntimeProbePassed`: live sidecar 的 runtime/channel probe 是否通过。
-- `liveRuntimeUpdated`: 当前 clean dev HEAD 是否已经迁移到 live sidecar，并且 live runtime probe 已通过。
-- `liveUserSeen`: 当前 dev HEAD 对应的 live runtime 是否已经被真实 Lark/Feishu 可见回复验收。固定验收短语和迁移后的自然学习问题都可以作为真实可见回复证据，但二者要分开看。
-- `nextHumanStep`: 下一步该做 dev 测试、迁移 live，还是发真实 Lark 验收。
-- `liveVisibleStatus`: 真实 Lark/Feishu 入站和回复证据状态。
-- `acceptanceMatched`: 最新验收短语是否已经在真实回复里出现。它不要求自然学习问题也命中固定短语；自然问题看 `liveVisibleStatus=post_migration_reply_seen`。
-
-看到 `livePromotionStatus=promoted` 只代表曾经有一次 promotion 成功；如果同时看到 `liveNeedsPromotion=true`，说明当前 dev 仓还有更新没有进入 live sidecar，不能把当前 dev 修复说成 live 已修复。
-
-需要重新跑 channel probe 时，用深度状态命令：
-
-```bash
-pnpm lcx:live:status:probe
-```
-
-receipt 默认写到 live sidecar 的 `branches/_system/promotions/`，当前状态写到 `branches/_system/live-promotion-state.json`。repo 里的 `ops/live-handoff/promotions/` 是本地生成物，不进入 git。
-
-promotion 只代表 live runtime 已经切到某个 git 快照并完成探测。然后还必须发送真实 Lark/Feishu 消息，并检查：
-
-```bash
-~/.openclaw/logs/feishu-reply-flow.jsonl
-~/.openclaw/logs/gateway.log
-~/.openclaw/workspace/memory/
-```
-
-只有看到真实入站、路由、回复和用户可见结果，才能说 `live-user-seen`。旧文档里的 `live-fixed` 只能当口语简称，正式状态以 `live-visible-fixed` 为准；对人汇报时 `live-user-seen` 是同一件事的简单说法，不能用来替代 dev 验收。
-
-状态含义：
-
-| 状态               | 含义                                                        |
-| ------------------ | ----------------------------------------------------------- |
-| dev-fixed          | dev 仓代码和本地验证通过。                                  |
-| live-promoted      | live sidecar 已切到 promotion 对应的 git 快照。             |
-| probe-ok           | gateway 和 channel 探测通过。                               |
-| live-visible-fixed | 重启后的真实 Lark/Feishu 入站、路由、回复、可见输出都通过。 |
-
-对人汇报时优先说 `dev-ready`、`live-runtime-updated`、`live-user-seen`；底层字段只作为证据展开。
-
-## 底层 runtime
-
-LCX Agent 复用现有 agent runtime 和 gateway 能力，包括多渠道接入、CLI、工具、session、桌面 / 移动端基础能力，以及 live sidecar 运行方式。
-
-OpenClaw 是重要底座，但不是这个 README 的主角。LCX Agent 的主角是 Harness 约束、Hermes 消息流、本地大脑、证据审计和低频金融研究工作流。
-
-底层来源：
-
-- https://github.com/openclaw/openclaw
-- https://docs.openclaw.ai
+MIT.

@@ -57,6 +57,7 @@ finding issues" request, run the governance stack automatically:
 
 ```bash
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
@@ -70,6 +71,24 @@ entrypoint from each cluster for the actual repair. Do not make the radar a
 second source of truth. Do not run heavy eval/training from this checklist when
 `local-brain-training-plan` reports active Qwen/MiniMax/MLX work; report the
 active PID and defer heavy commands instead.
+
+The read-only governance autopilot owner is:
+
+```bash
+node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
+```
+
+It automatically triggers the owner stack, writes
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json`
+and refreshes
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json`,
+plus the one-screen compressed-context handoff
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md`,
+so heartbeat watchers and future coding windows do not need a parallel
+hand-built snapshot path. It is included in the local operator latest state as
+`governanceAutopilot`.
+It must stay `dev_governance_autopilot_only`: no live sender, provider config,
+protected memory, repo mutation, live apply, or overlapping training.
 
 If the task asks about external or newly added skills, use the runbook's skill inventory command:
 
@@ -138,9 +157,16 @@ before making claims or changes.
   doctor or training-plan output, local automation receipt, log anchor, or
   commit. Avoid "I remember" as evidence.
 - Keep the global picture compact: local launchd automation writes the hourly
-  machine truth to `lcx-local-operator-latest.json`; Codex should keep only one
-  visible high-level automation, `LCX Agent Operator Digest`, which reads local
-  state and reports concise blockers rather than opening one chat per lane.
+  machine truth to `lcx-local-operator-latest.json`; it also refreshes
+  `lcx-governance-autopilot-latest.json` so mind model, flow graph, radar,
+  impact plan, training truth, commercial acceptance, and live brain binding
+  stay visible without manual reminders. It also writes
+  `lcx-context-recovery-handoff-latest.md` as a one-screen current-state
+  capsule for compressed or new coding windows; the capsule is dev-only and
+  future agents must still rerun `local-brain-training-plan` before acting on
+  volatile PID, eval, adapter, or live-binding truth. Codex should keep only one visible
+  high-level automation, `LCX Agent Operator Digest`, which reads local state
+  and reports concise blockers rather than opening one chat per lane.
 - Do not upgrade evidence across boundaries: `dev-fixed` is not
   `live-visible-fixed`, a receipt is not model-weight absorption, a stored
   source is not learned knowledge, and `parseRecovered` is not a fully clean

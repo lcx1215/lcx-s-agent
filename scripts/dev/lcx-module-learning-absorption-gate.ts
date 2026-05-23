@@ -343,6 +343,10 @@ async function writeJson(params: {
 }
 
 function missingRowEvidence(row: JsonRecord): string[] {
+  const exactMissingProof = stringArrayValue(row.exactMissingProof);
+  if (exactMissingProof.length > 0) {
+    return exactMissingProof;
+  }
   const missing = new Set(stringArrayValue(row.missingEvidence));
   if (!stringValue(row.trainingOrEvalAbsorptionEvidencePath)) {
     missing.add("training_or_eval_absorption_evidence");
@@ -381,6 +385,7 @@ function buildGate(params: {
       targetModule: stringValue(row.targetModule) ?? "unknown",
       status: stringValue(row.status) ?? "unknown",
       missingEvidence: missingRowEvidence(row),
+      nextProofOwner: stringValue(row.nextProofOwner) ?? "unknown",
     }))
     .filter((entry) => entry.missingEvidence.length > 0);
   const boundaryViolations = numberValue(counts.boundaryViolations);
@@ -490,6 +495,10 @@ function buildGate(params: {
       : null,
     requiredCaseIds: REQUIRED_CASE_IDS,
     missingEvidenceByReceipt: missingEvidenceByReceipt.slice(0, 20),
+    proofGapSummary: recordValue(params.review?.proofGapSummary) ?? {},
+    nextProofQueue: Array.isArray(params.review?.nextProofQueue)
+      ? params.review.nextProofQueue.slice(0, 20)
+      : [],
     blockers: [...new Set(blockers)],
     nextActions: [...new Set(nextActions)],
     notPromoted: true,

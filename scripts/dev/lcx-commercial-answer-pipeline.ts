@@ -21,6 +21,7 @@ type PipelineStageId =
   | "learning_sedimentation_review"
   | "finance_data_gateway"
   | "local_brain_planner"
+  | "provider_council_review"
   | "model_candidate_answer"
   | "qwen_challenger"
   | "local_contract_audit"
@@ -36,6 +37,7 @@ type PipelineNeed = {
     | "learning_sedimentation_review"
     | "finance_data_gateway"
     | "model_disagreement_arbitration"
+    | "provider_council_review"
     | "review_panel"
     | "qwen_challenge";
   required: boolean;
@@ -48,6 +50,20 @@ type PipelineAuditCheck = {
   failedReason?: string;
   evidence: string;
 };
+
+const QWEN_CHALLENGE_PATCH_ACTIONS = [
+  "keep",
+  "block",
+  "downgrade",
+  "ask_more_evidence",
+  "local_patch",
+] as const;
+
+const QWEN_CHALLENGE_FORBIDDEN_ACTIONS = [
+  "replace_remote_candidate",
+  "rewrite_full_answer",
+  "become_final_authority",
+] as const;
 
 type PipelineScenario = {
   id: string;
@@ -137,7 +153,10 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "answer_audit",
   "bounded_answer_review",
   "candidate_answer_not_final_authority",
+  "provider_council_evidence_required",
+  "provider_outputs_not_faked",
   "qwen_challenger_not_final_authority",
+  "qwen_challenge_patch_only",
   "terminal_decision_required",
   "model_rewrite_budget_required",
   "no_raw_json_visible_reply",
@@ -221,6 +240,12 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
     modelDisagreement ||
     webOrExternalLearning ||
     freshOrCurrentData;
+  const providerCouncilReview =
+    modelDisagreement ||
+    webOrExternalLearning ||
+    (freshOrCurrentData && reviewPanel) ||
+    (orchestration.reviewTools.includes("review_panel") &&
+      (orchestration.primaryModules.length > 0 || orchestration.requiredTools.length > 0));
   const qwenChallenge = reviewPanel || localMemoryRecall || webOrExternalLearning;
 
   return [
@@ -257,6 +282,12 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
       reason: "model disagreement must be arbitrated by evidence, not model preference",
     },
     {
+      id: "provider_council_review",
+      required: providerCouncilReview,
+      reason:
+        "high-value, evidence-sensitive, or model-disagreement answers need separately attributable remote model roles before local/Qwen adoption",
+    },
+    {
       id: "review_panel",
       required: reviewPanel,
       reason: "high-risk or evidence-sensitive answers need a bounded local review gate",
@@ -281,6 +312,7 @@ function resolveRequiredStages(needs: PipelineNeed[]): PipelineStageId[] {
       : undefined,
     requiredNeedIds.has("finance_data_gateway") ? "finance_data_gateway" : undefined,
     "local_brain_planner",
+    requiredNeedIds.has("provider_council_review") ? "provider_council_review" : undefined,
     "model_candidate_answer",
     requiredNeedIds.has("qwen_challenge") ? "qwen_challenger" : undefined,
     "local_contract_audit",
@@ -356,6 +388,10 @@ function auditCandidate(params: {
     requiredNeedIds.has("model_disagreement_arbitration") &&
     includesPattern(candidateLower, /听大模型|trust the model|model is smarter|更聪明/u) &&
     !includesPattern(candidateLower, /证据|来源|时间戳|review|arbitration|分歧|排序|本地记忆/u);
+  const qwenRewriteAuthorityClaim = includesPattern(
+    candidateLower,
+    /\b(?:qwen|local qwen|local brain|local model)\b.{0,40}\b(?:rewrite|replace|final authority|final answer|take over)\b|(?:千问|本地(?:大脑|模型|llm|LLM)).{0,24}(?:重写|替换|接管|最终答案|最后拍板)/u,
+  );
 
   const checks: PipelineAuditCheck[] = [
     {
@@ -395,6 +431,16 @@ function auditCandidate(params: {
       evidence: pickedModelWithoutEvidence
         ? "candidate chooses the model by status instead of evidence"
         : "candidate does not make a model answer the final authority",
+    },
+    {
+      id: "qwen_challenger_patch_only",
+      ok: !qwenRewriteAuthorityClaim,
+      failedReason: qwenRewriteAuthorityClaim
+        ? "qwen_challenger_full_rewrite_or_final_authority_claim"
+        : undefined,
+      evidence: qwenRewriteAuthorityClaim
+        ? "candidate lets local Qwen replace or fully rewrite the remote candidate"
+        : "Qwen is constrained to keep/block/downgrade/ask_more_evidence/local_patch only",
     },
   ];
 
@@ -471,6 +517,29 @@ function auditCandidate(params: {
     });
   }
 
+  if (requiredNeedIds.has("provider_council_review")) {
+    const fakeProviderCouncilClaim = includesPattern(
+      candidateLower,
+      /三家(?:大)?模型|kimi.*minimax.*deepseek|minimax.*deepseek.*kimi|provider council|learning council|模型会审/u,
+    );
+    const providerEvidenceVisible = includesPattern(
+      candidateLower,
+      /分别|独立|各自|分歧|证据缺口|provider evidence|role outputs|runtime provider/u,
+    );
+    checks.push({
+      id: "provider_council_outputs_must_not_be_faked",
+      ok: !fakeProviderCouncilClaim || providerEvidenceVisible,
+      failedReason:
+        fakeProviderCouncilClaim && !providerEvidenceVisible
+          ? "provider_council_claim_without_attributable_outputs"
+          : undefined,
+      evidence:
+        fakeProviderCouncilClaim && !providerEvidenceVisible
+          ? "candidate claims remote model council review without separately attributable role evidence"
+          : "candidate does not fake completed Kimi/MiniMax/DeepSeek review",
+    });
+  }
+
   if (
     includesPattern(askLower, /学习|learn|study/u) &&
     !requiredNeedIds.has("web_or_external_learning")
@@ -519,9 +588,31 @@ function buildPipelineResult(ask: string, candidateAnswer: string) {
     ask,
     candidateAuthority: "model_candidate_not_final_authority",
     qwenRole: answerAuditPolicy.qwenRole,
+    qwenChallengeContract: {
+      outputShape: "challenge_patch_only",
+      allowedActions: QWEN_CHALLENGE_PATCH_ACTIONS,
+      forbiddenActions: QWEN_CHALLENGE_FORBIDDEN_ACTIONS,
+      patchScope:
+        "Qwen must inspect all local duties, but may only preserve, block, downgrade, request evidence, or propose a minimal local patch; it must not replace the remote candidate or rewrite the full final answer.",
+    },
     maxTotalReviewRounds: answerAuditPolicy.maxTotalReviewRounds,
     terminalDecision,
     failedReasons,
+    remoteProviderCouncil: {
+      required: needs.some((need) => need.id === "provider_council_review" && need.required),
+      roles: [
+        { role: "kimi", lane: "synthesis", responsibility: "bounded answer synthesis" },
+        { role: "minimax", lane: "challenge", responsibility: "risk and premise challenge" },
+        {
+          role: "deepseek",
+          lane: "extraction",
+          responsibility:
+            "claim_table, source_timestamp gaps, schema_violations, qwen_absorption_blockers, and trade-language leak extraction",
+        },
+      ],
+      boundary:
+        "Remote provider council must provide separately attributable role outputs before it is treated as completed; local Qwen challenges with patch-only actions, then local contracts reconcile and gate the final visible answer.",
+    },
     contractFilters: COMMERCIAL_ANSWER_PIPELINE_FILTERS,
     stages,
     needs,

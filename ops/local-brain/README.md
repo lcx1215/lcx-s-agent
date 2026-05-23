@@ -35,6 +35,7 @@ node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
@@ -97,6 +98,24 @@ get the cluster list, then follow each cluster's `ownerEntrypoint`; do not let
 the radar replace those owners. If the training plan shows active
 Qwen/MiniMax/MLX work, do not start a second heavy eval from this governance
 stack.
+The Governance Autopilot is the read-only automatic trigger for the same stack:
+
+```bash
+node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
+```
+
+It runs problem radar, commercial acceptance, change impact, training plan,
+live Lark brain binding, mind model, flow graph, head-tail, and context
+recovery; writes
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json`
+and refreshes
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json`
+and
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md`;
+and is refreshed by `/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh`
+inside `lcx-local-operator-latest.json` as `governanceAutopilot`. It is
+`dev_governance_autopilot_only`: read-only, no overlapping training, no live
+apply, no provider config, no protected memory, and no live sender changes.
 The Commercial Acceptance Harness is the product-grade exam above those owners:
 
 ```bash
@@ -178,6 +197,25 @@ blueprint lane.
    `lark-loop-diagnose`, channel probe, `feishu-reply-flow.jsonl`, and fresh
    real-user inbound/reply evidence. Synthetic replay and local smoke stay
    dev-only.
+
+   Live Lark brain binding has its own owner command:
+
+   ```bash
+   node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
+   ```
+
+   It reads `local-brain-training-plan.liveLarkBrainBinding` and is read-only by
+   default. When it reports `ready_for_apply`, the bounded idle-only apply path
+   is:
+
+   ```bash
+   node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json
+   ```
+
+   The apply path is allowed to sync/build/restart the live sidecar and run
+   `lark-loop-diagnose` only when eval/MLX is idle. It must still keep
+   `live-user-seen=false` until fresh real Lark inbound/outbound evidence exists.
+
 6. Product control room: default UX is one main control room with specialist
    detail on demand. Keep useful operator and specialist entrypoints, but every
    volatile status family needs one single factual owner and flow-graph
@@ -223,6 +261,12 @@ checks, fresh training-plan decisions, module-learning absorption blockers,
 flow-graph counts, strict dev/live/protected-memory boundaries, and the exact
 recovery commands. It is still dev/local evidence only; it does not prove
 `live-runtime-updated`, `live-user-seen`, or Qwen model-weight absorption.
+The governance autopilot also refreshes a shorter machine-written handoff
+capsule at
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md`.
+Use that capsule for fast orientation in a compressed or new coding window, but
+rerun `local-brain-training-plan` before acting on volatile PID, eval, adapter,
+or live-binding truth.
 
 ## First Command
 

@@ -210,7 +210,7 @@ export function renderLarkContextPacketNotice(
     `inheritanceReason=${packet.contextInheritance.reason}`,
     `effectiveSurface=${packet.surfaces.effectiveSurface ?? "none"}`,
     `backendTool=${packet.brainDispatch.targetBackendTool ?? "none"}`,
-    `answerAudit=maxTotalReviewRounds:${packet.answerAuditPolicy.maxTotalReviewRounds}; terminal:${packet.answerAuditPolicy.terminalDecision}; candidateAuthority:${packet.answerAuditPolicy.candidateAuthority}`,
+    `answerAudit=maxTotalReviewRounds:${packet.answerAuditPolicy.maxTotalReviewRounds}; terminal:${packet.answerAuditPolicy.terminalDecision}; candidateAuthority:${packet.answerAuditPolicy.candidateAuthority}; qwenPatchOnly:${packet.answerAuditPolicy.qwenChallengeContract.outputShape}`,
     `blockedContext=${packet.contextInheritance.blockedContext.join(",") || "none"}`,
     "Execution rule: use only allowedContext; if inheritanceMode is forbid_previous_task or explicit_continuation_required, ask for a concrete subject instead of continuing an old task.",
   ].join("\n");

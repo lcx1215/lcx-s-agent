@@ -59,20 +59,24 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-commercial-acceptance-harness\.ts$/u,
       /^scripts\/dev\/lcx-external-agent-upgrade-radar\.ts$/u,
       /^scripts\/dev\/lcx-flow-graph\.ts$/u,
+      /^scripts\/dev\/lcx-governance-autopilot\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
+      /^scripts\/dev\/lcx-live-lark-brain-binding\.ts$/u,
       /^scripts\/dev\/lcx-mind-model\.ts$/u,
       /^scripts\/dev\/lcx-problem-cluster-radar\.ts$/u,
       /^scripts\/dev\/lcx-system-doctor\.ts$/u,
       /^package\.json$/u,
       /^test\/lcx-commercial-acceptance-harness\.test\.ts$/u,
       /^test\/lcx-external-agent-upgrade-radar\.test\.ts$/u,
+      /^test\/lcx-governance-autopilot\.test\.ts$/u,
+      /^test\/lcx-live-lark-brain-binding\.test\.ts$/u,
       /^test\/lcx-problem-cluster-radar\.test\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "architecture-supervision-tests"],
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-      "pnpm vitest run test/lcx-change-impact-plan.test.ts test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/lcx-agent-exam.test.ts test/lcx-problem-cluster-radar.test.ts test/lcx-commercial-acceptance-harness.test.ts",
+      "pnpm vitest run test/lcx-change-impact-plan.test.ts test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/lcx-agent-exam.test.ts test/lcx-problem-cluster-radar.test.ts test/lcx-commercial-acceptance-harness.test.ts test/lcx-governance-autopilot.test.ts",
     ],
     deferredCommands: ["pnpm vitest run test/local-brain-distill-eval.test.ts"],
     safetyNotes: [
@@ -244,6 +248,13 @@ function parseArgs(args: string[]) {
 }
 
 async function gitChangedFiles(): Promise<string[]> {
+  const gitRoot = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: repoRoot,
+  }).catch(() => undefined);
+  if (!gitRoot || path.resolve(gitRoot.stdout.trim()) !== repoRoot) {
+    return [];
+  }
+
   const [diff, status] = await Promise.all([
     execFileAsync("git", ["diff", "--name-only", "HEAD"], { cwd: repoRoot }),
     execFileAsync("git", ["status", "--short"], { cwd: repoRoot }),

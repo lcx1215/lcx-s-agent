@@ -365,6 +365,17 @@ describe("local-brain-training-plan", () => {
       blockedCapabilityFamilies: [
         { caseId: "plain_recent_stock_market_brief_preflight", count: 1 },
       ],
+      monotonicIntelligenceGuard: {
+        boundary: "dev_qwen_monotonic_intelligence_guard_only",
+        guaranteeLevel: "runtime_monotonic_not_every_training_round",
+        runtimeInvariant: "never_replace_clean_champion_with_dirty_or_parse_recovered_challenger",
+        promotionInvariant: "new_runtime_requires_clean_full_hardened_eval_and_promotion_audit",
+        challengerPolicy: "harvest_failures_into_teacher_curriculum_until_clean",
+        currentRuntimeStatus: "clean_champion_serving",
+        latestChallengerStatus: "blocked_and_harvested",
+        noRegressionGate: true,
+        nextProofRequired: "targeted_eval_clean_then_full_hardened_eval_then_promotion_audit",
+      },
     });
     expect(plan.qwenCapabilityConsolidation.adapterLadder).toMatchObject({
       champion: {
@@ -391,6 +402,26 @@ describe("local-brain-training-plan", () => {
       notPromotionProof: true,
       requiredNextStep:
         "feed_harvested_cases_to_failure_focus_teacher_then_run_targeted_eval_before_full_eval",
+    });
+    expect(plan.evolutionAccelerationQueue).toMatchObject({
+      boundary: "dev_evolution_acceleration_queue_only",
+      objective: "shorten_safe_feedback_loop_without_overlapping_training",
+      activeTrainingOrEval: false,
+      canStartHeavyWorkNow: true,
+      fastestSafeNextAction: "targeted_challenger_eval_first",
+      steps: expect.arrayContaining([
+        expect.objectContaining({
+          id: "targeted_challenger_eval_first",
+          lane: "adapter_promotion",
+          status: "ready_when_idle",
+          executionClass: "idle_only_heavy_eval",
+          command: expect.stringContaining("--case-id plain_recent_stock_market_brief_preflight"),
+        }),
+        expect.objectContaining({
+          id: "keep_clean_champion_runtime",
+          status: "informational",
+        }),
+      ]),
     });
     expect(plan.activeHeavyEvalCounts).toEqual({
       localBrainEval: 0,
@@ -545,6 +576,17 @@ describe("local-brain-training-plan", () => {
         }),
       ]),
     );
+    expect(plan.evolutionAccelerationQueue).toMatchObject({
+      steps: expect.arrayContaining([
+        expect.objectContaining({
+          id: "rebuild_train_slice_after_idle",
+          lane: "training",
+          status: "ready_when_idle",
+          executionClass: "idle_only_training_data",
+          command: "node --import tsx scripts/dev/local-brain-distill-train-slice.ts --json",
+        }),
+      ]),
+    });
   });
 
   it("surfaces guard adapter mismatch against the selected clean adapter", async () => {
@@ -612,6 +654,87 @@ describe("local-brain-training-plan", () => {
           lane: "training",
           severity: "P2",
           codexRepairEligible: false,
+        }),
+      ]),
+    );
+  });
+
+  it("surfaces the live Lark brain binding gate for the selected clean adapter", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      {
+        at: "2026-05-09T09:40:00.000Z",
+        event: "step_ok",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-clean-r2",
+          summary: {
+            passed: 77,
+            total: 77,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T09:45:00.000Z",
+        event: "adapter_promoted_for_guard_session",
+        adapterPath: "/tmp/adapter-clean-r2",
+      },
+      {
+        at: "2026-05-09T10:00:00.000Z",
+        event: "guard_start",
+        options: {
+          currentAdapter: "/tmp/adapter-clean-r2",
+          trainingSeedAdapter: "/tmp/adapter-clean-r2",
+          trainingResumeAdapter: "/tmp/adapter-clean-r2",
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.liveLarkBrainBinding).toMatchObject({
+      boundary: "dev_live_lark_brain_binding_plan_only",
+      selectedCleanAdapter: "/tmp/adapter-clean-r2",
+      activeTrainingOrEval: false,
+      guardUsesSelectedCleanAdapter: true,
+      status: "ready_for_live_runtime_binding",
+      action: "bind_live_runtime_to_selected_clean_adapter_and_collect_lark_visible_proof",
+      liveTouched: false,
+      providerConfigTouched: false,
+      protectedMemoryTouched: false,
+    });
+    expect(plan.liveLarkBrainBinding.missingProof).toEqual(
+      expect.arrayContaining([
+        "live_sidecar_source_drift_zero_after_selected_adapter",
+        "fresh_real_lark_inbound_and_outbound_seen",
+      ]),
+    );
+    expect(plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "live_lark_brain_binding_ready",
+          lane: "live_runtime",
+          nextCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
+        }),
+      ]),
+    );
+    expect(plan.evolutionAccelerationQueue.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "bind_live_lark_to_selected_clean_brain",
+          lane: "live_runtime",
+          status: "ready_when_idle",
+          command: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
         }),
       ]),
     );
@@ -1090,6 +1213,17 @@ describe("local-brain-training-plan", () => {
           }),
         ]),
       );
+      expect(plan.evolutionAccelerationQueue).toMatchObject({
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            id: "close_module_learning_exact_proof_gaps",
+            lane: "module_learning",
+            status: "blocked_by_missing_proof",
+            executionClass: "read_only",
+            blockedByDecisionIds: ["module_learning_incomplete_evidence"],
+          }),
+        ]),
+      });
       await expect(
         fs.stat(path.join(worktree, `memory/module-learning-pipeline-reviews/${dateKey}.json`)),
       ).rejects.toThrow();
@@ -1224,6 +1358,19 @@ describe("local-brain-training-plan", () => {
           }),
         ]),
       );
+      expect(plan.evolutionAccelerationQueue).toMatchObject({
+        readyNowCount: 1,
+        fastestSafeNextAction: "bridge_module_learning_receipts_now",
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            id: "bridge_module_learning_receipts_now",
+            lane: "module_learning",
+            status: "ready_now",
+            executionClass: "workspace_receipt_write",
+            command: expect.stringContaining("--write-plan-receipts"),
+          }),
+        ]),
+      });
     } finally {
       await fs.rm(worktree, { recursive: true, force: true });
       await fs.rm(workspaceDir, { recursive: true, force: true });

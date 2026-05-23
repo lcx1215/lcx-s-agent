@@ -12,6 +12,8 @@ type FeishuReplyFlowRecord = {
   answerAuditBoundary?: string;
   answerAuditOwner?: string;
   answerAuditCandidateAuthority?: string;
+  answerAuditProviderCouncilRole?: string;
+  answerAuditProviderCouncilRounds?: number;
   answerAuditQwenRole?: string;
   answerAuditMaxTotalReviewRounds?: number;
   answerAuditTerminalDecision?: string;
@@ -200,6 +202,12 @@ async function summarizeJsonlReplyFlowEvidence(
     answerAudit?.answerAuditOwner ? `owner=${answerAudit.answerAuditOwner}` : null,
     answerAudit?.answerAuditCandidateAuthority
       ? `candidateAuthority=${answerAudit.answerAuditCandidateAuthority}`
+      : null,
+    answerAudit?.answerAuditProviderCouncilRole
+      ? `providerCouncilRole=${answerAudit.answerAuditProviderCouncilRole}`
+      : null,
+    typeof answerAudit?.answerAuditProviderCouncilRounds === "number"
+      ? `providerCouncilRounds=${answerAudit.answerAuditProviderCouncilRounds}`
       : null,
     answerAudit?.answerAuditQwenRole ? `qwenRole=${answerAudit.answerAuditQwenRole}` : null,
     typeof answerAudit?.answerAuditMaxTotalReviewRounds === "number"

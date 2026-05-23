@@ -30,11 +30,12 @@ function buildReviewerTasks(outputText: string) {
   return [
     {
       reviewer: "logic_and_expression",
+      providerLane: "kimi_synthesis",
       objective:
-        "Check whether the answer is coherent, concise, and directly answers the operator without hiding uncertainty.",
+        "Use the Kimi synthesis lane to check whether the answer is coherent, concise, and directly answers the operator without hiding uncertainty.",
       focus: ["claim clarity", "missing caveats", "overstatement", "actionable summary"],
       prompt: [
-        "Review the candidate output for logic and expression.",
+        "Kimi synthesis lane: review the candidate output for logic and expression.",
         "Return only defects, required edits, and a keep/discard recommendation.",
         "",
         outputText,
@@ -42,8 +43,9 @@ function buildReviewerTasks(outputText: string) {
     },
     {
       reviewer: "risk_and_countercase",
+      providerLane: "minimax_challenge",
       objective:
-        "Find portfolio-risk, regime, behavior, and counter-case failures before the output reaches the operator.",
+        "Use the MiniMax challenge lane to find portfolio-risk, regime, behavior, and counter-case failures before the output reaches the operator.",
       focus: [
         "risk boundary",
         "invalidating evidence",
@@ -51,7 +53,7 @@ function buildReviewerTasks(outputText: string) {
         "trade-authority leakage",
       ],
       prompt: [
-        "Review the candidate output for risk and counter-cases.",
+        "MiniMax challenge lane: review the candidate output for risk and counter-cases.",
         "Return the strongest objection, missing risk gate, and whether the output should be softened.",
         "",
         outputText,
@@ -59,17 +61,25 @@ function buildReviewerTasks(outputText: string) {
     },
     {
       reviewer: "math_and_evidence_consistency",
+      providerLane: "deepseek_extraction",
       objective:
-        "Check whether quantitative claims are backed by local tool outputs and evidence rather than model guesswork.",
+        "Use the DeepSeek extraction lane to produce a strict claim-table/schema/blocker audit: quantitative claims must be backed by local tool outputs and evidence rather than model guesswork, learning claims must not upgrade receipt/application_ready into eval_absorbed, and trade-like wording must be flagged.",
       focus: [
+        "claim_table extraction",
         "math/tool consistency",
         "citation to local results",
+        "source timestamp and field definition",
         "unsupported numbers",
+        "schema violations",
+        "qwen absorption blockers",
+        "trade-like language leaks",
         "evidence gaps",
       ],
       prompt: [
-        "Review the candidate output for math and evidence consistency.",
-        "Return any unsupported numeric claim, missing tool-result reference, or evidence mismatch.",
+        "DeepSeek extraction lane: review the candidate output for math and evidence consistency.",
+        "Return a compact extraction audit, not a rewritten final answer.",
+        "Required checks: unsupported numeric claim, missing tool-result reference, source timestamp/field-definition gap, application_ready falsely promoted to eval_absorbed, and trade-like language such as buy/sell/hold/add/reduce/wait/关注/值得.",
+        "If machine JSON is requested by the caller, use a single top-level JSON object with claim_table, unsupported_claims, conflicts, schema_violations, qwen_absorption_blockers, reusable_rules, next_validation_probe, and boundary. Do not wrap JSON in markdown fences.",
         "",
         outputText,
       ].join("\n"),
@@ -162,6 +172,27 @@ function buildPanelResult(params: {
     tier: tier.tier,
     tokenPolicy: tier.tokenPolicy,
     reviewers: tier.reviewers,
+    remoteProviderRoles:
+      tier.tier === "three_model_review"
+        ? [
+            {
+              role: "kimi",
+              lane: "synthesis",
+              responsibility: "main narrative, direct answer quality, and freshness caveats",
+            },
+            {
+              role: "minimax",
+              lane: "challenge",
+              responsibility: "counter-case, risk boundary, and overclaim detection",
+            },
+            {
+              role: "deepseek",
+              lane: "extraction",
+              responsibility:
+                "claim-table extraction, source timestamp gaps, schema violations, Qwen absorption blockers, trade-like language leaks, and reusable lesson extraction",
+            },
+          ]
+        : [],
     reasons: tier.reasons,
     reviewerTasks,
     localArbitration,
@@ -170,7 +201,7 @@ function buildPanelResult(params: {
       mergeRule:
         "Do not average reviewer opinions. If reviewers conflict, preserve the stricter risk/math objection and require a revised output before sending.",
       sendBoundary:
-        "This tool prepares the review panel work order and receipt; provider/model execution is intentionally outside this bounded tool.",
+        "This tool prepares the Kimi/MiniMax/DeepSeek review work orders and receipt; provider/model execution is intentionally outside this bounded tool. Do not claim provider review completed unless separately attributable provider findings are available.",
     },
   };
 }

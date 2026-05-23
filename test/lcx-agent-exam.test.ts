@@ -23,7 +23,7 @@ const cognitiveSources = {
   systemPrompt:
     "do not describe a run as learned/internalized when the status is not application_ready; retrievalFirstLearning.failedReason; weakLearningIntents.failedReason; usageReceiptPath",
   moduleLearningReviewTool:
-    "weakModuleLearning boundaryViolation languageCorpusUntouched protectedMemoryUntouched providerConfigTouched: false",
+    "weakModuleLearning exactMissingProof nextProofOwner proofGapSummary boundaryViolation languageCorpusUntouched protectedMemoryUntouched providerConfigTouched: false",
   larkSurfaces:
     "dev-fixed means local implementation or tests only; live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started, running, completed, blocked, or unproven",
   localBrainRunbook:

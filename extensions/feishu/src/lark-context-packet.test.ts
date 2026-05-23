@@ -176,15 +176,27 @@ describe("lark context packets", () => {
     expect(result.artifact.answerAuditPolicy).toMatchObject({
       boundary: "bounded_answer_review",
       candidateAuthority: "model_candidate_not_final_authority",
+      providerCouncilRole: "required_for_high_value_or_evidence_sensitive_answer",
       qwenRole: "challenger_only_not_final_authority",
+      qwenChallengeContract: {
+        outputShape: "challenge_patch_only",
+        allowedActions: ["keep", "block", "downgrade", "ask_more_evidence", "local_patch"],
+        forbiddenActions: [
+          "replace_remote_candidate",
+          "rewrite_full_answer",
+          "become_final_authority",
+        ],
+      },
+      providerCouncilRounds: 1,
       qwenChallengeRounds: 1,
       modelRewriteBudget: 2,
-      maxTotalReviewRounds: 4,
+      maxTotalReviewRounds: 5,
       terminalDecision: "adopt_visible_reply_or_return_failed_reason",
     });
     const notice = renderLarkContextPacketNotice(result.artifact);
-    expect(notice).toContain("answerAudit=maxTotalReviewRounds:4");
+    expect(notice).toContain("answerAudit=maxTotalReviewRounds:5");
     expect(notice).toContain("candidateAuthority:model_candidate_not_final_authority");
+    expect(notice).toContain("qwenPatchOnly:challenge_patch_only");
   });
 
   it("persists unknown continuation packets without injecting a model-facing notice", async () => {

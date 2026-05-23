@@ -201,6 +201,9 @@ describe("module-learning-pipeline-review CLI", () => {
           "memory/module-learning-absorption-evidence/2026-05-12/risk.json",
         freshAdjacentApplicationTask: "Apply this risk lesson to a fresh portfolio question.",
         keepDownrankDiscardDecision: "keep",
+        moduleSpecificCapabilityRule:
+          "Portfolio risk learning requires weights, limits, drawdown, liquidity, and invalidation evidence before reuse.",
+        safetyBoundaries: ["research_only", "no_execution_authority", "no_trade_advice"],
         supersedesReceiptPath: "memory/module-learning-pipeline-plan-receipts/2026-05-12/old.json",
         missingEvidence: [],
         liveTouched: false,
@@ -221,7 +224,9 @@ describe("module-learning-pipeline-review CLI", () => {
           supersededReceiptFiles: 1,
           evalAbsorbed: 1,
           weakModuleLearning: 0,
+          exactMissingProofReceipts: 0,
         }),
+        proofGapSummary: {},
       }),
     );
     expect(parsed.rows).toEqual([

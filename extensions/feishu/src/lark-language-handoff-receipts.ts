@@ -47,8 +47,19 @@ export type LarkAnswerAuditPolicy = {
   boundary: "bounded_answer_review";
   owner: "existing_lark_handoff_context_packet_review_panel";
   candidateAuthority: "model_candidate_not_final_authority";
+  providerCouncilRole: "not_requested" | "required_for_high_value_or_evidence_sensitive_answer";
   qwenRole: "challenger_only_not_final_authority" | "not_requested" | "blocked_by_local_contract";
+  qwenChallengeContract: {
+    outputShape: "challenge_patch_only";
+    allowedActions: readonly ["keep", "block", "downgrade", "ask_more_evidence", "local_patch"];
+    forbiddenActions: readonly [
+      "replace_remote_candidate",
+      "rewrite_full_answer",
+      "become_final_authority",
+    ];
+  };
   localContractAuditRounds: 1;
+  providerCouncilRounds: 0 | 1;
   qwenChallengeRounds: 0 | 1;
   modelRewriteBudget: 0 | 2;
   maxTotalReviewRounds: number;
@@ -62,6 +73,7 @@ export function buildLarkAnswerAuditPolicy(
 ): LarkAnswerAuditPolicy {
   const qwenStatus = handoff.workOrder?.validation.qwenChallenge.status;
   const qwenChallengeRounds = qwenStatus === "recommended" ? 1 : 0;
+  const providerCouncilRounds = handoff.workOrder ? 1 : 0;
   const qwenRole =
     qwenStatus === "recommended"
       ? "challenger_only_not_final_authority"
@@ -73,11 +85,25 @@ export function buildLarkAnswerAuditPolicy(
     boundary: "bounded_answer_review",
     owner: "existing_lark_handoff_context_packet_review_panel",
     candidateAuthority: "model_candidate_not_final_authority",
+    providerCouncilRole:
+      providerCouncilRounds === 1
+        ? "required_for_high_value_or_evidence_sensitive_answer"
+        : "not_requested",
     qwenRole,
+    qwenChallengeContract: {
+      outputShape: "challenge_patch_only",
+      allowedActions: ["keep", "block", "downgrade", "ask_more_evidence", "local_patch"],
+      forbiddenActions: [
+        "replace_remote_candidate",
+        "rewrite_full_answer",
+        "become_final_authority",
+      ],
+    },
     localContractAuditRounds: 1,
+    providerCouncilRounds,
     qwenChallengeRounds,
     modelRewriteBudget,
-    maxTotalReviewRounds: 1 + qwenChallengeRounds + modelRewriteBudget,
+    maxTotalReviewRounds: 1 + providerCouncilRounds + qwenChallengeRounds + modelRewriteBudget,
     terminalDecision: "adopt_visible_reply_or_return_failed_reason",
     stopConditions: [
       "missing_required_evidence",
@@ -89,6 +115,7 @@ export function buildLarkAnswerAuditPolicy(
     receiptSurfaces: [
       "lark_language_handoff_receipt",
       "lark_context_packet",
+      "model_council_provider_evidence",
       "feishu_reply_flow",
       "surface_line_or_brain_distillation_candidate",
     ],
@@ -100,12 +127,20 @@ function renderAnswerAuditPolicyLines(
 ): readonly string[] {
   const policy = buildLarkAnswerAuditPolicy({ workOrder });
   return [
-    `Answer audit budget: localContractAudit=${policy.localContractAuditRounds}; qwenChallenge=${policy.qwenChallengeRounds}; modelRewriteBudget<=${policy.modelRewriteBudget}; maxTotalReviewRounds=${policy.maxTotalReviewRounds}.`,
+    `Answer audit budget: localContractAudit=${policy.localContractAuditRounds}; providerCouncil=${policy.providerCouncilRounds}; qwenChallenge=${policy.qwenChallengeRounds}; modelRewriteBudget<=${policy.modelRewriteBudget}; maxTotalReviewRounds=${policy.maxTotalReviewRounds}.`,
+    policy.providerCouncilRole === "required_for_high_value_or_evidence_sensitive_answer"
+      ? "Remote council rule: for high-value finance, learning, source-sensitive, or model-disagreement answers, use separately attributable Kimi synthesis, MiniMax challenge, and DeepSeek extraction outputs before final adoption. If those role outputs are absent, state the provider council did not run and keep the answer provisional or return failedReason; never fake a completed council."
+      : "Remote council rule: provider council is not requested for this bounded answer.",
     `Authority rule: model answer is only a candidate; local contracts and review_panel decide final adoption; Qwen is ${
       policy.qwenRole === "challenger_only_not_final_authority"
         ? "challenger/helper, not final authority"
         : policy.qwenRole
     }.`,
+    `Qwen patch-only rule: allowed=${policy.qwenChallengeContract.allowedActions.join(
+      ",",
+    )}; forbidden=${policy.qwenChallengeContract.forbiddenActions.join(
+      ",",
+    )}. Qwen must do all local checks, but must not replace the remote candidate or rewrite the full final answer.`,
     "Stop rule: if required evidence is missing, sources conflict, safety boundary is hit, wrong surface/family is detected, or rewrite budget is exhausted, return failedReason/blockedReason; do not keep regenerating.",
   ];
 }

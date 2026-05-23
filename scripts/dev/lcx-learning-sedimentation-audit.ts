@@ -141,18 +141,25 @@ async function summarizeModuleLearningReviews(files: FileEntry[]): Promise<{
   evalAbsorbed: number;
   weakModuleLearning: number;
   boundaryViolations: number;
+  exactMissingProofReceipts: number;
+  proofGapSummary: Record<string, number>;
   latestReview?: {
     path: string;
     evalAbsorbed: number;
     weakModuleLearning: number;
     boundaryViolations: number;
     applicationReady: number;
+    exactMissingProofReceipts: number;
+    proofGapSummary: Record<string, number>;
+    nextProofQueue: unknown[];
   };
 }> {
   const summary = {
     evalAbsorbed: 0,
     weakModuleLearning: 0,
     boundaryViolations: 0,
+    exactMissingProofReceipts: 0,
+    proofGapSummary: {} as Record<string, number>,
     latestReview: undefined as
       | {
           path: string;
@@ -160,6 +167,9 @@ async function summarizeModuleLearningReviews(files: FileEntry[]): Promise<{
           weakModuleLearning: number;
           boundaryViolations: number;
           applicationReady: number;
+          exactMissingProofReceipts: number;
+          proofGapSummary: Record<string, number>;
+          nextProofQueue: unknown[];
         }
       | undefined,
   };
@@ -176,15 +186,37 @@ async function summarizeModuleLearningReviews(files: FileEntry[]): Promise<{
       typeof counts.boundaryViolations === "number" ? counts.boundaryViolations : 0;
     const applicationReady =
       typeof counts.applicationReady === "number" ? counts.applicationReady : 0;
+    const exactMissingProofReceipts =
+      typeof counts.exactMissingProofReceipts === "number" ? counts.exactMissingProofReceipts : 0;
+    const proofGapSummary =
+      parsed?.proofGapSummary &&
+      typeof parsed.proofGapSummary === "object" &&
+      !Array.isArray(parsed.proofGapSummary)
+        ? (parsed.proofGapSummary as Record<string, unknown>)
+        : {};
+    const normalizedProofGapSummary = Object.fromEntries(
+      Object.entries(proofGapSummary)
+        .map(([key, value]) => [key, typeof value === "number" ? value : 0] as const)
+        .filter(([, value]) => value > 0),
+    );
+    for (const [key, value] of Object.entries(normalizedProofGapSummary)) {
+      summary.proofGapSummary[key] = (summary.proofGapSummary[key] ?? 0) + value;
+    }
     summary.evalAbsorbed += evalAbsorbed;
     summary.weakModuleLearning += weakModuleLearning;
     summary.boundaryViolations += boundaryViolations;
+    summary.exactMissingProofReceipts += exactMissingProofReceipts;
     summary.latestReview ??= {
       path: file.path,
       evalAbsorbed,
       weakModuleLearning,
       boundaryViolations,
       applicationReady,
+      exactMissingProofReceipts,
+      proofGapSummary: normalizedProofGapSummary,
+      nextProofQueue: Array.isArray(parsed?.nextProofQueue)
+        ? parsed.nextProofQueue.slice(0, 10)
+        : [],
     };
   }
   return summary;
@@ -252,6 +284,10 @@ async function buildAudit(workspaceDir: string) {
     latestModuleReview?.weakModuleLearning ?? moduleReviewSummary.weakModuleLearning;
   const activeModuleBoundaryViolations =
     latestModuleReview?.boundaryViolations ?? moduleReviewSummary.boundaryViolations;
+  const activeExactMissingProofReceipts =
+    latestModuleReview?.exactMissingProofReceipts ?? moduleReviewSummary.exactMissingProofReceipts;
+  const activeProofGapSummary =
+    latestModuleReview?.proofGapSummary ?? moduleReviewSummary.proofGapSummary;
   const moduleLearningHasEvalAbsorption = activeModuleEvalAbsorbed > 0;
   const moduleLearningHasWeakReceipts = activeModuleWeakReceipts > 0;
   const moduleLearningCertifiable =
@@ -299,6 +335,17 @@ async function buildAudit(workspaceDir: string) {
             severity: "P2",
             meaning:
               "Some module-learning receipts are still stored_only, retrieval_ready, or application_ready; historical eval_absorbed receipts do not make the whole module pipeline certifiable.",
+          },
+        ]
+      : []),
+    ...(moduleLearningReviewed && activeExactMissingProofReceipts > 0
+      ? [
+          {
+            id: "module_learning_review_has_exact_missing_proof",
+            severity: "P2",
+            meaning:
+              "The latest module-learning review has per-receipt proof gaps; use proofGapSummary and nextProofQueue before claiming eval_absorbed.",
+            proofGapSummary: activeProofGapSummary,
           },
         ]
       : []),
@@ -362,8 +409,13 @@ async function buildAudit(workspaceDir: string) {
         reviewFiles: moduleReviews.length,
         evalAbsorbed: activeModuleEvalAbsorbed,
         weakModuleLearning: activeModuleWeakReceipts,
+        exactMissingProofReceipts: activeExactMissingProofReceipts,
+        proofGapSummary: activeProofGapSummary,
+        nextProofQueue: latestModuleReview?.nextProofQueue ?? [],
         cumulativeEvalAbsorbed: moduleReviewSummary.evalAbsorbed,
         cumulativeWeakModuleLearning: moduleReviewSummary.weakModuleLearning,
+        cumulativeExactMissingProofReceipts: moduleReviewSummary.exactMissingProofReceipts,
+        cumulativeProofGapSummary: moduleReviewSummary.proofGapSummary,
         boundaryViolations: activeModuleBoundaryViolations,
         cumulativeBoundaryViolations: moduleReviewSummary.boundaryViolations,
         latestReview: moduleReviewSummary.latestReview
@@ -373,6 +425,9 @@ async function buildAudit(workspaceDir: string) {
               weakModuleLearning: moduleReviewSummary.latestReview.weakModuleLearning,
               boundaryViolations: moduleReviewSummary.latestReview.boundaryViolations,
               applicationReady: moduleReviewSummary.latestReview.applicationReady,
+              exactMissingProofReceipts: moduleReviewSummary.latestReview.exactMissingProofReceipts,
+              proofGapSummary: moduleReviewSummary.latestReview.proofGapSummary,
+              nextProofQueue: moduleReviewSummary.latestReview.nextProofQueue,
             }
           : undefined,
       },
@@ -421,9 +476,16 @@ function renderText(audit: Awaited<ReturnType<typeof buildAudit>>): string {
       `module_review_files=${audit.chains.moduleLearningPipeline.reviewFiles}`,
       `module_eval_absorbed=${audit.chains.moduleLearningPipeline.evalAbsorbed}`,
       `module_weak_receipts=${audit.chains.moduleLearningPipeline.weakModuleLearning}`,
+      `module_exact_missing_proof_receipts=${audit.chains.moduleLearningPipeline.exactMissingProofReceipts}`,
       `module_latest_review=${audit.chains.moduleLearningPipeline.latestReview?.path ?? "none"}`,
       `module_latest_review_eval_absorbed=${audit.chains.moduleLearningPipeline.latestReview?.evalAbsorbed ?? 0}`,
       `module_latest_review_weak_receipts=${audit.chains.moduleLearningPipeline.latestReview?.weakModuleLearning ?? 0}`,
+      `module_latest_review_exact_missing_proof_receipts=${audit.chains.moduleLearningPipeline.latestReview?.exactMissingProofReceipts ?? 0}`,
+      `module_latest_review_proof_gaps=${
+        Object.keys(audit.chains.moduleLearningPipeline.latestReview?.proofGapSummary ?? {}).join(
+          ",",
+        ) || "none"
+      }`,
       `gaps=${audit.gaps.map((gap) => gap.id).join(",") || "none"}`,
     ].join("\n") + "\n"
   );

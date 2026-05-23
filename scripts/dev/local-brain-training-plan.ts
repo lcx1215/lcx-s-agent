@@ -67,6 +67,20 @@ type QwenCapabilityConsolidationSnapshot = {
   latestCleanCandidate?: EvalSnapshot;
   latestBlockedCandidate?: EvalSnapshot;
   blockedCapabilityFamilies: { caseId: string; count: number }[];
+  monotonicIntelligenceGuard: {
+    boundary: "dev_qwen_monotonic_intelligence_guard_only";
+    guaranteeLevel: "runtime_monotonic_not_every_training_round";
+    runtimeInvariant: "never_replace_clean_champion_with_dirty_or_parse_recovered_challenger";
+    promotionInvariant: "new_runtime_requires_clean_full_hardened_eval_and_promotion_audit";
+    challengerPolicy: "harvest_failures_into_teacher_curriculum_until_clean";
+    currentRuntimeStatus:
+      | "clean_champion_serving"
+      | "awaiting_clean_champion"
+      | "promotion_audit_needed_for_new_clean_challenger";
+    latestChallengerStatus: "none" | "clean_but_needs_promotion_audit" | "blocked_and_harvested";
+    noRegressionGate: boolean;
+    nextProofRequired: string;
+  };
   adapterLadder: {
     champion?: {
       adapterPath?: string;
@@ -133,6 +147,47 @@ type ActiveGuardAdapterTruthSnapshot = {
     | "guard_adapter_matches_selected_clean_adapter"
     | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
     | "no_active_guard_adapter_to_compare";
+};
+
+type LiveLarkBrainBindingSnapshot = {
+  boundary: "dev_live_lark_brain_binding_plan_only";
+  objective: "live_lark_reads_one_selected_clean_local_brain";
+  selectedCleanAdapter?: string;
+  selectedCleanEval?: Pick<
+    EvalSnapshot,
+    "at" | "name" | "adapterPath" | "passed" | "total" | "promotionReady"
+  >;
+  activeTrainingOrEval: boolean;
+  activeHeavyEvalCounts: {
+    localBrainEval: number;
+    externalLocalBrainEval: number;
+    mlx: number;
+  };
+  guardUsesSelectedCleanAdapter: boolean | null;
+  guardAdapterMismatchReasons: string[];
+  latestPromotedAdapter?: string;
+  latestPromotedAt?: string;
+  latestPromotedAdapterStillClean: boolean | null;
+  runtimePolicy: "live_lark_may_only_consume_selected_clean_adapter";
+  status:
+    | "blocked_no_selected_clean_adapter"
+    | "deferred_active_training_or_eval"
+    | "deferred_guard_adapter_mismatch"
+    | "deferred_latest_promotion_stale"
+    | "ready_for_live_runtime_binding";
+  action:
+    | "produce_clean_selected_adapter_before_live_binding"
+    | "wait_for_current_eval_then_bind_live_to_selected_clean_adapter"
+    | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
+    | "run_promotion_audit_then_bind_live_to_selected_clean_adapter"
+    | "bind_live_runtime_to_selected_clean_adapter_and_collect_lark_visible_proof";
+  missingProof: string[];
+  successCondition: string[];
+  statusCommand: string;
+  notTouched: string[];
+  liveTouched: false;
+  providerConfigTouched: false;
+  protectedMemoryTouched: false;
 };
 
 export type QwenBaseModelMigrationSnapshot = {
@@ -250,6 +305,42 @@ type TrainingDecision = {
   reason: string;
   codexRepairEligible: boolean;
   nextCommand?: string;
+};
+
+type EvolutionAccelerationStep = {
+  id: string;
+  lane: string;
+  priority: number;
+  status:
+    | "ready_now"
+    | "ready_when_idle"
+    | "blocked_by_active_training"
+    | "blocked_by_missing_proof"
+    | "informational";
+  executionClass:
+    | "read_only"
+    | "workspace_receipt_write"
+    | "idle_only_heavy_eval"
+    | "idle_only_training_data"
+    | "idle_only_read_only_audit";
+  reason: string;
+  guardCondition: string;
+  command?: string;
+  blockedByDecisionIds?: string[];
+  notTouched: string[];
+};
+
+type EvolutionAccelerationQueueSnapshot = {
+  boundary: "dev_evolution_acceleration_queue_only";
+  objective: "shorten_safe_feedback_loop_without_overlapping_training";
+  activeTrainingOrEval: boolean;
+  canStartHeavyWorkNow: boolean;
+  readyNowCount: number;
+  idleOnlyCount: number;
+  blockedCount: number;
+  fastestSafeNextAction: string;
+  steps: EvolutionAccelerationStep[];
+  notes: string[];
 };
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -673,6 +764,10 @@ function qwenCapabilityConsolidationSnapshot(params: {
         : params.latestPassingEval
           ? "keep_selected_clean_adapter_and_continue_consolidation"
           : "wait_for_hardened_eval";
+  const cleanChallengerNeedsAudit = Boolean(
+    latestCleanCandidate?.adapterPath &&
+    latestCleanCandidate.adapterPath !== params.latestPassingEval?.adapterPath,
+  );
   return {
     boundary: "dev_qwen_capability_consolidation_only",
     runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble",
@@ -686,6 +781,31 @@ function qwenCapabilityConsolidationSnapshot(params: {
     latestCleanCandidate,
     latestBlockedCandidate,
     blockedCapabilityFamilies,
+    monotonicIntelligenceGuard: {
+      boundary: "dev_qwen_monotonic_intelligence_guard_only",
+      guaranteeLevel: "runtime_monotonic_not_every_training_round",
+      runtimeInvariant: "never_replace_clean_champion_with_dirty_or_parse_recovered_challenger",
+      promotionInvariant: "new_runtime_requires_clean_full_hardened_eval_and_promotion_audit",
+      challengerPolicy: "harvest_failures_into_teacher_curriculum_until_clean",
+      currentRuntimeStatus: params.latestPassingEval
+        ? cleanChallengerNeedsAudit
+          ? "promotion_audit_needed_for_new_clean_challenger"
+          : "clean_champion_serving"
+        : "awaiting_clean_champion",
+      latestChallengerStatus: latestBlockedCandidate
+        ? "blocked_and_harvested"
+        : cleanChallengerNeedsAudit
+          ? "clean_but_needs_promotion_audit"
+          : "none",
+      noRegressionGate: Boolean(params.latestPassingEval) && !cleanChallengerNeedsAudit,
+      nextProofRequired: latestBlockedCandidate
+        ? "targeted_eval_clean_then_full_hardened_eval_then_promotion_audit"
+        : cleanChallengerNeedsAudit
+          ? "promotion_audit_before_runtime_replacement"
+          : params.latestPassingEval
+            ? "continue_failure_focus_and_preserve_clean_champion"
+            : "produce_first_clean_full_hardened_eval",
+    },
     adapterLadder: {
       champion: params.latestPassingEval
         ? {
@@ -736,6 +856,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
       "Blocked challenger capability is harvested into teacher curriculum and the next unified adapter, not served directly.",
       "All useful Qwen capability must be distilled back through teacher data, hardened eval, and promotion audit into one clean selected adapter.",
       "A newer 77/77 candidate with parseRecovered is useful training evidence, not a runtime replacement for the selected clean adapter.",
+      "Monotonic improvement is enforced at runtime by preserving the clean champion while each challenger must prove no-regression before replacement; individual training rounds may still be neutral or regress.",
     ],
   };
 }
@@ -818,6 +939,89 @@ function activeGuardAdapterTruthSnapshot(params: {
         : guardCurrentAdapter
           ? "guard_adapter_matches_selected_clean_adapter"
           : "no_active_guard_adapter_to_compare",
+  };
+}
+
+function liveLarkBrainBindingSnapshot(params: {
+  activeProcesses: ActiveTrainingProcess[];
+  activeHeavyEvalCounts: {
+    localBrainEval: number;
+    externalLocalBrainEval: number;
+    mlx: number;
+  };
+  qwenCapabilityConsolidation: QwenCapabilityConsolidationSnapshot;
+  activeGuardAdapterTruth: ActiveGuardAdapterTruthSnapshot;
+  latestPromotedAdapter?: string;
+  latestPromotedAt?: string;
+}): LiveLarkBrainBindingSnapshot {
+  const selectedCleanAdapter = params.qwenCapabilityConsolidation.selectedCleanAdapter;
+  const activeTrainingOrEval =
+    params.activeProcesses.length > 0 ||
+    params.activeHeavyEvalCounts.localBrainEval > 0 ||
+    params.activeHeavyEvalCounts.externalLocalBrainEval > 0 ||
+    params.activeHeavyEvalCounts.mlx > 0;
+  const guardAdapterMismatchReasons = params.activeGuardAdapterTruth.mismatchReasons;
+  const latestPromotedAdapterStillClean =
+    params.activeGuardAdapterTruth.latestPromotedAdapterStillClean;
+  const missingProof = [
+    selectedCleanAdapter ? undefined : "selected_clean_adapter",
+    activeTrainingOrEval ? "current_training_eval_or_mlx_finished" : undefined,
+    guardAdapterMismatchReasons.length > 0 ? "active_guard_uses_selected_clean_adapter" : undefined,
+    latestPromotedAdapterStillClean === false
+      ? "latest_promotion_audit_matches_selected_clean_adapter"
+      : undefined,
+    "live_sidecar_source_drift_zero_after_selected_adapter",
+    "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
+    "live_lark_loop_diagnose_ok_after_restart",
+    "fresh_real_lark_inbound_and_outbound_seen",
+  ].filter((entry): entry is string => Boolean(entry));
+  let status: LiveLarkBrainBindingSnapshot["status"];
+  let action: LiveLarkBrainBindingSnapshot["action"];
+  if (!selectedCleanAdapter) {
+    status = "blocked_no_selected_clean_adapter";
+    action = "produce_clean_selected_adapter_before_live_binding";
+  } else if (activeTrainingOrEval) {
+    status = "deferred_active_training_or_eval";
+    action = "wait_for_current_eval_then_bind_live_to_selected_clean_adapter";
+  } else if (guardAdapterMismatchReasons.length > 0) {
+    status = "deferred_guard_adapter_mismatch";
+    action = "wait_for_active_guard_then_restart_with_selected_clean_adapter";
+  } else if (latestPromotedAdapterStillClean === false) {
+    status = "deferred_latest_promotion_stale";
+    action = "run_promotion_audit_then_bind_live_to_selected_clean_adapter";
+  } else {
+    status = "ready_for_live_runtime_binding";
+    action = "bind_live_runtime_to_selected_clean_adapter_and_collect_lark_visible_proof";
+  }
+  return {
+    boundary: "dev_live_lark_brain_binding_plan_only",
+    objective: "live_lark_reads_one_selected_clean_local_brain",
+    selectedCleanAdapter,
+    selectedCleanEval: params.qwenCapabilityConsolidation.selectedCleanEval,
+    activeTrainingOrEval,
+    activeHeavyEvalCounts: params.activeHeavyEvalCounts,
+    guardUsesSelectedCleanAdapter: params.activeGuardAdapterTruth.guardUsesSelectedCleanAdapter,
+    guardAdapterMismatchReasons,
+    latestPromotedAdapter: params.latestPromotedAdapter,
+    latestPromotedAt: params.latestPromotedAt,
+    latestPromotedAdapterStillClean,
+    runtimePolicy: "live_lark_may_only_consume_selected_clean_adapter",
+    status,
+    action,
+    missingProof,
+    successCondition: [
+      "selectedCleanAdapter is promotionReady with failedCaseIds=[], parseErrorCaseIds=[], parseRecoveredCaseIds=[]",
+      "no active local-brain-distill-eval, mlx_lm generate, mlx_lm lora, or guard restart window",
+      "active guard uses selectedCleanAdapter or is restarted from it after idle",
+      "live sidecar source drift is zero and gateway/proxy restarted from live sidecar",
+      "live lark-loop-diagnose is ok",
+      "live-user-seen remains false until fresh real Lark inbound/outbound evidence exists",
+    ],
+    statusCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
+    notTouched: ["live_sender", "provider_config", "protected_memory", "formal_language_corpus"],
+    liveTouched: false,
+    providerConfigTouched: false,
+    protectedMemoryTouched: false,
   };
 }
 
@@ -1287,6 +1491,7 @@ function buildDecisions(params: {
   latestQuotaStatus?: QuotaStatusSnapshot;
   qwenBaseModelMigration?: QwenBaseModelMigrationSnapshot;
   activeGuardAdapterTruth?: ActiveGuardAdapterTruthSnapshot;
+  liveLarkBrainBinding?: LiveLarkBrainBindingSnapshot;
   moduleLearningReview?: ModuleLearningReviewSnapshot;
   learningSedimentationBridge?: LearningSedimentationBridgeSnapshot;
   datasetRuntimeFreshness?: DatasetRuntimeFreshnessSnapshot;
@@ -1375,6 +1580,29 @@ function buildDecisions(params: {
         `stalePromotion=${params.activeGuardAdapterTruth?.stalePromotionReasons.join(",")}`,
       ].join("; "),
       codexRepairEligible: false,
+    });
+  }
+
+  if (params.liveLarkBrainBinding) {
+    decisions.push({
+      id:
+        params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding"
+          ? "live_lark_brain_binding_ready"
+          : "live_lark_brain_binding_deferred",
+      lane: "live_runtime",
+      severity:
+        params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding" ? "info" : "P3",
+      action: params.liveLarkBrainBinding.action,
+      reason: [
+        `status=${params.liveLarkBrainBinding.status}`,
+        `selectedCleanAdapter=${params.liveLarkBrainBinding.selectedCleanAdapter ?? "unknown"}`,
+        `missingProof=${params.liveLarkBrainBinding.missingProof.join(",") || "none"}`,
+      ].join("; "),
+      codexRepairEligible: false,
+      nextCommand:
+        params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding"
+          ? params.liveLarkBrainBinding.statusCommand
+          : undefined,
     });
   }
 
@@ -1589,6 +1817,227 @@ function buildDecisions(params: {
   return decisions;
 }
 
+function buildEvolutionAccelerationQueue(params: {
+  activeProcesses: ActiveTrainingProcess[];
+  activeHeavyEvalCounts: {
+    localBrainEval: number;
+    externalLocalBrainEval: number;
+    mlx: number;
+  };
+  decisions: TrainingDecision[];
+  qwenCapabilityConsolidation: QwenCapabilityConsolidationSnapshot;
+  liveLarkBrainBinding: LiveLarkBrainBindingSnapshot;
+  datasetRuntimeFreshness: DatasetRuntimeFreshnessSnapshot;
+  moduleLearningReview: ModuleLearningReviewSnapshot;
+  learningSedimentationBridge: LearningSedimentationBridgeSnapshot;
+  qwenBaseModelMigration: QwenBaseModelMigrationSnapshot;
+}): EvolutionAccelerationQueueSnapshot {
+  const activeTrainingOrEval = params.activeProcesses.length > 0;
+  const activeHeavyWork =
+    activeTrainingOrEval ||
+    params.activeHeavyEvalCounts.localBrainEval > 0 ||
+    params.activeHeavyEvalCounts.externalLocalBrainEval > 0 ||
+    params.activeHeavyEvalCounts.mlx > 0;
+  const canStartHeavyWorkNow = !activeHeavyWork;
+  const decisionIds = new Set(params.decisions.map((decision) => decision.id));
+  const steps: EvolutionAccelerationStep[] = [];
+  const commonNotTouched = [
+    "live_sender",
+    "provider_config",
+    "protected_memory",
+    "formal_language_corpus",
+  ];
+
+  const targetedEvalCommand =
+    params.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand;
+  const targetedEvalCaseIds =
+    params.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalFirstCaseIds;
+  if (targetedEvalCommand && targetedEvalCaseIds.length > 0) {
+    steps.push({
+      id: "targeted_challenger_eval_first",
+      lane: "adapter_promotion",
+      priority: 10,
+      status: canStartHeavyWorkNow ? "ready_when_idle" : "blocked_by_active_training",
+      executionClass: "idle_only_heavy_eval",
+      reason:
+        "Run only the parseRecovered/failed challenger cases before spending time on a full hardened eval.",
+      guardCondition: "no active guard, local-brain-distill-eval, mlx_lm generate, or mlx_lm lora",
+      command: targetedEvalCommand,
+      blockedByDecisionIds: canStartHeavyWorkNow ? [] : ["training_already_active"],
+      notTouched: commonNotTouched,
+    });
+  }
+
+  if (params.datasetRuntimeFreshness.trainSliceStaleAfterDatasetUpdate) {
+    steps.push({
+      id: "rebuild_train_slice_after_idle",
+      lane: "training",
+      priority: 20,
+      status: canStartHeavyWorkNow ? "ready_when_idle" : "blocked_by_active_training",
+      executionClass: "idle_only_training_data",
+      reason:
+        "The on-disk dataset has newer module-learning receipts than the current train slice; rebuild the slice before the next training run.",
+      guardCondition: "repo clean and no active local-brain guard/eval/MLX process",
+      command: "node --import tsx scripts/dev/local-brain-distill-train-slice.ts --json",
+      blockedByDecisionIds: canStartHeavyWorkNow ? [] : ["training_already_active"],
+      notTouched: commonNotTouched,
+    });
+  }
+
+  steps.push({
+    id: "bind_live_lark_to_selected_clean_brain",
+    lane: "live_runtime",
+    priority: 25,
+    status:
+      params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding"
+        ? "ready_when_idle"
+        : params.liveLarkBrainBinding.activeTrainingOrEval
+          ? "blocked_by_active_training"
+          : "blocked_by_missing_proof",
+    executionClass: "idle_only_read_only_audit",
+    reason:
+      "Make live Lark consume the single selected clean local-brain adapter only after eval/MLX is idle and live proof can be collected.",
+    guardCondition:
+      "selected clean adapter, no active eval/MLX, zero live-sidecar drift, restarted live runtime, then real Lark visible proof",
+    command: params.liveLarkBrainBinding.statusCommand,
+    blockedByDecisionIds:
+      params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding"
+        ? []
+        : params.liveLarkBrainBinding.activeTrainingOrEval
+          ? ["training_already_active", "live_lark_brain_binding_deferred"]
+          : ["live_lark_brain_binding_deferred"],
+    notTouched: commonNotTouched,
+  });
+
+  const bridgeCandidateCount = numberValue(params.learningSedimentationBridge.candidateCount) ?? 0;
+  const reviewCounts = params.moduleLearningReview.counts ?? {};
+  const reviewReceiptFiles = numberValue(reviewCounts.receiptFiles) ?? 0;
+  const weakModuleLearning = numberValue(reviewCounts.weakModuleLearning) ?? 0;
+  const exactMissingProofReceipts = numberValue(reviewCounts.exactMissingProofReceipts) ?? 0;
+  if (bridgeCandidateCount > 0 && reviewReceiptFiles === 0) {
+    steps.push({
+      id: "bridge_module_learning_receipts_now",
+      lane: "module_learning",
+      priority: 30,
+      status: "ready_now",
+      executionClass: "workspace_receipt_write",
+      reason:
+        "Finance-learning apply receipts can enter the module-learning review chain without starting training or eval.",
+      guardCondition: "write only normal workspace module-learning receipts and rerun review/gate",
+      command:
+        "node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --write-plan-receipts --json && node --import tsx scripts/dev/module-learning-pipeline-review.ts --json && node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json",
+      blockedByDecisionIds: [],
+      notTouched: commonNotTouched,
+    });
+  } else if (weakModuleLearning > 0 || exactMissingProofReceipts > 0) {
+    steps.push({
+      id: "close_module_learning_exact_proof_gaps",
+      lane: "module_learning",
+      priority: 30,
+      status: "blocked_by_missing_proof",
+      executionClass: "read_only",
+      reason:
+        "Module-learning receipts are reviewable but not eval_absorbed; use exact proof gaps before claiming absorption.",
+      guardCondition:
+        "add per-receipt eval/training evidence, fresh adjacent application task, and keep/downrank/discard decision",
+      command:
+        "node --import tsx scripts/dev/module-learning-pipeline-review.ts --json && node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json",
+      blockedByDecisionIds: decisionIds.has("module_learning_incomplete_evidence")
+        ? ["module_learning_incomplete_evidence"]
+        : [],
+      notTouched: commonNotTouched,
+    });
+  }
+
+  if (decisionIds.has("promotion_candidate_ready")) {
+    steps.push({
+      id: "read_only_promotion_audit",
+      lane: "adapter_promotion",
+      priority: 40,
+      status: canStartHeavyWorkNow ? "ready_when_idle" : "blocked_by_active_training",
+      executionClass: "idle_only_read_only_audit",
+      reason:
+        "Promotion-ready eval still needs the read-only promotion audit before any stable/runtime claim changes.",
+      guardCondition: "no active local-brain eval/MLX and no guard adapter mismatch",
+      command: "node --import tsx scripts/dev/local-brain-promotion-audit.ts --json",
+      blockedByDecisionIds: canStartHeavyWorkNow ? [] : ["training_already_active"],
+      notTouched: commonNotTouched,
+    });
+  }
+
+  if (params.qwenBaseModelMigration.decision === "ready_for_no_adapter_smoke") {
+    steps.push({
+      id: "qwen_1_7b_no_adapter_smoke",
+      lane: "qwen_migration",
+      priority: 70,
+      status: "ready_when_idle",
+      executionClass: "idle_only_heavy_eval",
+      reason:
+        "Only run a no-adapter load/inference smoke before any Qwen 1.7B LoRA work; this is migration evidence, not runtime promotion.",
+      guardCondition: "repo clean and no active local-brain guard/eval/MLX process",
+      command: params.qwenBaseModelMigration.allowedNextCommand,
+      blockedByDecisionIds: [],
+      notTouched: commonNotTouched,
+    });
+  } else if (params.qwenBaseModelMigration.decision === "blocked_training_active") {
+    steps.push({
+      id: "qwen_1_7b_migration_wait",
+      lane: "qwen_migration",
+      priority: 70,
+      status: "blocked_by_active_training",
+      executionClass: "idle_only_heavy_eval",
+      reason:
+        "Qwen 1.7B migration can speed future learning, but even the smoke must wait for the current local-brain loop to finish.",
+      guardCondition: "wait for current guard/eval/MLX to finish",
+      blockedByDecisionIds: ["qwen_base_model_migration_blocked_active_training"],
+      notTouched: commonNotTouched,
+    });
+  }
+
+  steps.push({
+    id: "keep_clean_champion_runtime",
+    lane: "adapter_promotion",
+    priority: 90,
+    status: "informational",
+    executionClass: "read_only",
+    reason:
+      "Fast evolution still preserves monotonic runtime: keep the clean champion while blocked challengers are harvested into the next unified adapter.",
+    guardCondition: "do not serve multiple LoRA adapters or promote parseRecovered candidates",
+    blockedByDecisionIds: [],
+    notTouched: commonNotTouched,
+  });
+
+  const sortedSteps = steps.toSorted((left, right) => left.priority - right.priority);
+  const readyNowCount = sortedSteps.filter((step) => step.status === "ready_now").length;
+  const idleOnlyCount = sortedSteps.filter((step) => step.status === "ready_when_idle").length;
+  const blockedCount = sortedSteps.filter((step) =>
+    ["blocked_by_active_training", "blocked_by_missing_proof"].includes(step.status),
+  ).length;
+  const fastestSafeNextAction =
+    sortedSteps.find((step) => step.status === "ready_now")?.id ??
+    (activeHeavyWork
+      ? "wait_for_current_training_eval_then_run_idle_queue"
+      : (sortedSteps.find((step) => step.status === "ready_when_idle")?.id ??
+        "continue_observability_no_acceleration_step"));
+
+  return {
+    boundary: "dev_evolution_acceleration_queue_only",
+    objective: "shorten_safe_feedback_loop_without_overlapping_training",
+    activeTrainingOrEval,
+    canStartHeavyWorkNow,
+    readyNowCount,
+    idleOnlyCount,
+    blockedCount,
+    fastestSafeNextAction,
+    steps: sortedSteps,
+    notes: [
+      "This queue schedules existing owner commands; it does not start training by itself.",
+      "Heavy eval, LoRA training, train-slice rebuild, and Qwen migration smoke stay idle-only.",
+      "Module-learning receipts can move faster, but application_ready is still not eval_absorbed.",
+    ],
+  };
+}
+
 async function learningSedimentationBridgeSnapshot(
   workspaceDir: string,
 ): Promise<LearningSedimentationBridgeSnapshot> {
@@ -1699,6 +2148,14 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestPromotedAt,
   });
   const activeHeavyEval = activeHeavyEvalSummary(activeProcesses);
+  const liveLarkBrainBinding = liveLarkBrainBindingSnapshot({
+    activeProcesses,
+    activeHeavyEvalCounts: activeHeavyEval.counts,
+    qwenCapabilityConsolidation,
+    activeGuardAdapterTruth,
+    latestPromotedAdapter,
+    latestPromotedAt,
+  });
   const latestTeacher = latestTeacherSnapshot(quotaEvents);
   const latestQuotaStatus = latestQuotaStatusSnapshot(quotaEvents);
   const latestGuardStartAt = eventTime(latestGuardStart);
@@ -1725,11 +2182,23 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestQuotaStatus,
     qwenBaseModelMigration,
     activeGuardAdapterTruth,
+    liveLarkBrainBinding,
     moduleLearningReview,
     learningSedimentationBridge,
     datasetRuntimeFreshness,
     guardLogPath: options.guardLogPath,
     worktree,
+  });
+  const evolutionAccelerationQueue = buildEvolutionAccelerationQueue({
+    activeProcesses,
+    activeHeavyEvalCounts: activeHeavyEval.counts,
+    decisions,
+    qwenCapabilityConsolidation,
+    liveLarkBrainBinding,
+    datasetRuntimeFreshness,
+    moduleLearningReview,
+    learningSedimentationBridge,
+    qwenBaseModelMigration,
   });
   const repairDecisions = decisions.filter((decision) => decision.codexRepairEligible);
   return {
@@ -1759,6 +2228,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestCandidateEval,
     qwenCapabilityConsolidation,
     activeGuardAdapterTruth,
+    liveLarkBrainBinding,
     latestPromotionAt: latestPromotedAt,
     latestPromotedAdapter,
     latestEvalIsCurrentForGuardStart:
@@ -1770,6 +2240,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     moduleLearningReview,
     learningSedimentationBridge,
     decisions,
+    evolutionAccelerationQueue,
     codexAutoRepair: {
       eligible: repairDecisions.length > 0,
       repairDecisionIds: repairDecisions.map((decision) => decision.id),

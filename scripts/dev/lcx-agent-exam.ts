@@ -306,10 +306,13 @@ function buildModuleLearningLane(moduleCommand: CommandResult): ExamLane {
   const boundaryViolations = numberValue(counts.boundaryViolations) ?? 0;
   const applicationReady = numberValue(counts.applicationReady) ?? 0;
   const evalAbsorbed = numberValue(counts.evalAbsorbed) ?? 0;
+  const exactMissingProofReceipts = numberValue(counts.exactMissingProofReceipts) ?? 0;
+  const proofGapSummary = asRecord(review.proofGapSummary);
+  const nextProofQueue = asArray(review.nextProofQueue);
   const status =
     boundaryViolations > 0 || invalid > 0
       ? "fail"
-      : weak > 0 || receiptFiles === 0 || evalAbsorbed === 0
+      : weak > 0 || exactMissingProofReceipts > 0 || receiptFiles === 0 || evalAbsorbed === 0
         ? "warn"
         : "pass";
   return {
@@ -322,6 +325,15 @@ function buildModuleLearningLane(moduleCommand: CommandResult): ExamLane {
       `weakModuleLearning=${weak}`,
       `applicationReady=${applicationReady}`,
       `evalAbsorbed=${evalAbsorbed}`,
+      `exactMissingProofReceipts=${exactMissingProofReceipts}`,
+      `proofGapSummary=${Object.keys(proofGapSummary).join(",") || "none"}`,
+      `nextProofOwners=${
+        nextProofQueue
+          .map((entry) => stringValue(asRecord(entry).nextProofOwner, ""))
+          .filter((owner) => owner.length > 0)
+          .slice(0, 8)
+          .join(",") || "none"
+      }`,
       `invalidReceipts=${invalid}`,
       `boundaryViolations=${boundaryViolations}`,
       `updated=${String(review.updated === true)}`,
@@ -331,17 +343,21 @@ function buildModuleLearningLane(moduleCommand: CommandResult): ExamLane {
         ? "当前 module-learning review 有 eval_absorbed 收据，且没有发现弱内化或边界违规。"
         : receiptFiles === 0
           ? "今天没有模块学习 review 输入收据；不能说所有模块都已经吸收新知识。"
-          : evalAbsorbed === 0
-            ? "当前 review 只有非 eval_absorbed 证据，不能把 stored_only/retrieval_ready/application_ready 升级成模块学会。"
-            : "模块学习还有弱收据、坏收据或边界违规，不能升级成 eval_absorbed。",
+          : exactMissingProofReceipts > 0
+            ? "当前 review 已暴露逐条 proof gap；不能把缺 source/retrieval/apply/eval/decision 的收据升级成模块学会。"
+            : evalAbsorbed === 0
+              ? "当前 review 只有非 eval_absorbed 证据，不能把 stored_only/retrieval_ready/application_ready 升级成模块学会。"
+              : "模块学习还有弱收据、坏收据或边界违规，不能升级成 eval_absorbed。",
     nextAction:
       status === "pass"
         ? "保留 no-write review 作为每日检查，继续要求 fresh adjacent application。"
         : weak > 0
           ? "补 per-receipt eval/training、fresh adjacent application、keep/downrank/discard 证据，再允许 eval_absorbed。"
-          : evalAbsorbed === 0 && receiptFiles > 0
-            ? "补 per-receipt eval/training absorption 和 keep/downrank/discard，再从 application_ready 升级。"
-            : "补真实 module_learning_pipeline_plan/application/eval 证据，再写 review receipt。",
+          : exactMissingProofReceipts > 0
+            ? "按 proofGapSummary/nextProofQueue 补 exact missing proof，再允许 absorption gate 放行。"
+            : evalAbsorbed === 0 && receiptFiles > 0
+              ? "补 per-receipt eval/training absorption 和 keep/downrank/discard，再从 application_ready 升级。"
+              : "补真实 module_learning_pipeline_plan/application/eval 证据，再写 review receipt。",
   };
 }
 
@@ -374,10 +390,20 @@ function buildLearningSedimentationInventoryLane(
   const latestReviewEvalAbsorbed = numberValue(latestReview.evalAbsorbed) ?? 0;
   const latestReviewWeak = numberValue(latestReview.weakModuleLearning) ?? 0;
   const latestReviewApplicationReady = numberValue(latestReview.applicationReady) ?? 0;
+  const exactMissingProofReceipts = numberValue(modulePipeline.exactMissingProofReceipts) ?? 0;
+  const latestReviewExactMissingProofReceipts =
+    numberValue(latestReview.exactMissingProofReceipts) ?? 0;
+  const proofGapSummary = asRecord(modulePipeline.proofGapSummary);
+  const latestProofGapSummary = asRecord(latestReview.proofGapSummary);
   const gaps = asArray(audit.gaps)
     .map((gap) => stringValue(asRecord(gap).id, ""))
     .filter((id) => id.length > 0);
-  const status = boundaryViolations > 0 ? "fail" : evalAbsorbed > 0 && weak === 0 ? "pass" : "warn";
+  const status =
+    boundaryViolations > 0
+      ? "fail"
+      : evalAbsorbed > 0 && weak === 0 && exactMissingProofReceipts === 0
+        ? "pass"
+        : "warn";
   return {
     lane: "learning_sedimentation_inventory",
     status,
@@ -388,11 +414,15 @@ function buildLearningSedimentationInventoryLane(
       `planReceipts=${planReceipts}`,
       `historicalEvalAbsorbed=${evalAbsorbed}`,
       `weakModuleLearning=${weak}`,
+      `exactMissingProofReceipts=${exactMissingProofReceipts}`,
+      `proofGapSummary=${Object.keys(proofGapSummary).join(",") || "none"}`,
       `boundaryViolations=${boundaryViolations}`,
       `latestReview=${latestReviewPath}`,
       `latestReview.evalAbsorbed=${latestReviewEvalAbsorbed}`,
       `latestReview.weakModuleLearning=${latestReviewWeak}`,
       `latestReview.applicationReady=${latestReviewApplicationReady}`,
+      `latestReview.exactMissingProofReceipts=${latestReviewExactMissingProofReceipts}`,
+      `latestReview.proofGapSummary=${Object.keys(latestProofGapSummary).join(",") || "none"}`,
       `gaps=${gaps.join(",") || "none"}`,
     ],
     issue:
@@ -521,6 +551,9 @@ function buildMemorySedimentationLane(sources?: CognitiveIntegritySources): Exam
   ]);
   const moduleReviewOk = hasAll(sources.moduleLearningReviewTool, [
     "weakModuleLearning",
+    "exactMissingProof",
+    "nextProofOwner",
+    "proofGapSummary",
     "boundaryViolation",
     "languageCorpusUntouched",
     "protectedMemoryUntouched",

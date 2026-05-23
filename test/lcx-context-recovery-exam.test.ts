@@ -86,8 +86,10 @@ describe("LCX compressed context recovery exam", () => {
       expect.arrayContaining([
         "node --import tsx scripts/dev/lcx-mind-model.ts --json",
         "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
+        "node --import tsx scripts/dev/lcx-governance-autopilot.ts --json",
         "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
         "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+        "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
         "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
       ]),
@@ -119,18 +121,28 @@ describe("LCX compressed context recovery exam", () => {
           liveUserSeen?: boolean;
           liveMatchesCurrentDev?: boolean;
         };
-        trainingPlan: { decisionIds: string[] };
+        trainingPlan: {
+          decisionIds: string[];
+          evolutionAcceleration?: {
+            fastestSafeNextAction?: string;
+            stepIds: string[];
+          };
+        };
         moduleAbsorption: { blockers: string[] };
         learningSedimentation: {
           assessment: string;
           moduleLearningPipeline: {
             evalAbsorbed: number;
             weakModuleLearning: number;
+            exactMissingProofReceipts: number;
+            proofGapSummary: Record<string, number>;
+            nextProofQueue: unknown[];
             boundaryViolations: number;
             latestReview?: {
               path: string;
               evalAbsorbed: number;
               weakModuleLearning: number;
+              exactMissingProofReceipts?: number;
             };
           };
           gaps: string[];
@@ -168,6 +180,9 @@ describe("LCX compressed context recovery exam", () => {
       expect.objectContaining({
         evalAbsorbed: expect.any(Number),
         weakModuleLearning: expect.any(Number),
+        exactMissingProofReceipts: expect.any(Number),
+        proofGapSummary: expect.any(Object),
+        nextProofQueue: expect.any(Array),
         boundaryViolations: expect.any(Number),
       }),
     );
@@ -179,9 +194,19 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.handoffForNewWindow.text).toContain("volatileOwner=lcx-promote-live");
     expect(payload.handoffForNewWindow.text).toContain("liveRuntimeUpdated=");
     expect(payload.handoffForNewWindow.text).toContain("liveUserSeen=");
+    expect(payload.handoffForNewWindow.text).toContain("liveLarkBrainBinding=");
+    expect(payload.handoffForNewWindow.text).toContain("liveLarkBrainBindingMissingProof=");
     expect(payload.handoffForNewWindow.text).toContain("deferredCommands=");
     expect(payload.handoffForNewWindow.text).toContain("safetyNotes=");
     expect(payload.handoffForNewWindow.text).toContain("moduleGateCounts=");
+    expect(payload.handoffForNewWindow.text).toContain("moduleExactMissingProofReceipts=");
+    expect(payload.handoffForNewWindow.text).toContain("moduleProofGapSummary=");
+    expect(payload.handoffForNewWindow.text).toContain("moduleNextProofOwners=");
+    expect(payload.handoffForNewWindow.text).toContain("evolutionAcceleration=");
+    expect(payload.handoffForNewWindow.text).toContain("evolutionAccelerationSteps=");
+    expect(
+      Array.isArray(payload.handoffForNewWindow.trainingPlan.evolutionAcceleration?.stepIds),
+    ).toBe(true);
     expect(payload.handoffForNewWindow.text).toContain("sedimentationAssessment=");
     expect(payload.handoffForNewWindow.text).toContain("sedimentationModulePipeline=");
     expect(payload.handoffForNewWindow.text).toContain("historicalEvalAbsorbed=");
@@ -203,6 +228,8 @@ describe("LCX compressed context recovery exam", () => {
     expect(runbook).toContain("compressed-window proof");
     expect(doctorSource).toContain("context-recovery-exam");
     expect(doctorSource).toContain("flow-graph-exam");
+    expect(doctorSource).toContain("lcx-governance-autopilot");
+    expect(doctorSource).toContain("liveLarkBrainBinding");
     expect(recoverySource).toContain("local_operator_latest_is_fresh");
     expect(recoverySource).toContain("local_operator_latest_matches_current_workflow_surface");
     expect(recoverySource).toContain("fresh_training_plan_decision_visible_after_recovery");
@@ -224,6 +251,8 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("volatileOwner=lcx-promote-live");
     expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
     expect(localOperator).toContain("NODE_FLOW_FILE");
+    expect(localOperator).toContain("NODE_GOVERNANCE_FILE");
+    expect(localOperator).toContain("governanceAutopilot");
     expect(localOperator).toContain("volatileOwner");
     expect(localOperator).toContain("learningSedimentationBridge");
     expect(localOperator).toContain("compressedContextRecovered");

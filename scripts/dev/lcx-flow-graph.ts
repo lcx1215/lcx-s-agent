@@ -50,6 +50,7 @@ type FlowNodeId =
   | "training_plan"
   | "change_impact_plan"
   | "local_operator_loop"
+  | "governance_autopilot"
   | "automation_cleanup"
   | "system_doctor"
   | "operator_latest_receipt"
@@ -110,6 +111,7 @@ type FlowFilterId =
   | "bounded_answer_review"
   | "candidate_answer_not_final_authority"
   | "qwen_challenger_not_final_authority"
+  | "qwen_challenge_patch_only"
   | "terminal_decision_required"
   | "model_rewrite_budget_required"
   | "no_raw_json_visible_reply"
@@ -243,6 +245,7 @@ const NODE_IDS: FlowNodeId[] = [
   "training_plan",
   "change_impact_plan",
   "local_operator_loop",
+  "governance_autopilot",
   "automation_cleanup",
   "system_doctor",
   "operator_latest_receipt",
@@ -304,6 +307,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "bounded_answer_review",
   "candidate_answer_not_final_authority",
   "qwen_challenger_not_final_authority",
+  "qwen_challenge_patch_only",
   "terminal_decision_required",
   "model_rewrite_budget_required",
   "no_raw_json_visible_reply",
@@ -520,12 +524,13 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     id: "local_automation_digest_waterflow",
     family: "local_operator_to_single_digest",
     objective:
-      "Local automation should gather cleanup, doctor, training plan, mind model, flow graph, and context recovery into one latest receipt and one digest.",
+      "Local automation should gather cleanup, governance autopilot, doctor, training plan, mind model, flow graph, and context recovery into one latest receipt and one digest.",
     start: "local_operator_loop",
     end: "operator_digest",
     requiredNodes: [
       "local_operator_loop",
       "automation_cleanup",
+      "governance_autopilot",
       "system_doctor",
       "training_plan",
       "mind_model",
@@ -536,14 +541,20 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     requiredFilters: ["single_digest_only", "error_receipt_required", "training_overlap_guard"],
     edges: [
       ["local_operator_loop", "automation_cleanup"],
-      ["automation_cleanup", "system_doctor"],
+      ["automation_cleanup", "governance_autopilot"],
+      ["governance_autopilot", "system_doctor"],
       ["system_doctor", "training_plan"],
       ["training_plan", "mind_model"],
       ["mind_model", "flow_graph"],
       ["flow_graph", "operator_latest_receipt"],
       ["operator_latest_receipt", "operator_digest"],
     ],
-    receipts: ["lcx-local-operator-loop", "lcx-local-operator-latest", "LCX Agent Operator Digest"],
+    receipts: [
+      "lcx-local-operator-loop",
+      "lcx-governance-autopilot-latest",
+      "lcx-local-operator-latest",
+      "LCX Agent Operator Digest",
+    ],
   },
   {
     id: "lark_visible_language_waterflow",
@@ -604,6 +615,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "ingress_lark_feishu",
       "intent_classifier",
       "local_brain_planner",
+      "model_council",
+      "provider_evidence",
       "model_candidate_answer",
       "answer_audit_budget",
       "local_contract_audit",
@@ -616,7 +629,9 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     requiredFilters: [
       "bounded_answer_review",
       "candidate_answer_not_final_authority",
+      "provider_evidence_required",
       "qwen_challenger_not_final_authority",
+      "qwen_challenge_patch_only",
       "model_rewrite_budget_required",
       "terminal_decision_required",
       "visible_text_no_internal_labels",
@@ -632,7 +647,9 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     edges: [
       ["ingress_lark_feishu", "intent_classifier"],
       ["intent_classifier", "local_brain_planner"],
-      ["local_brain_planner", "model_candidate_answer"],
+      ["local_brain_planner", "model_council"],
+      ["model_council", "provider_evidence"],
+      ["provider_evidence", "model_candidate_answer"],
       ["model_candidate_answer", "answer_audit_budget"],
       ["answer_audit_budget", "local_contract_audit"],
       ["local_contract_audit", "review_panel"],
@@ -1098,12 +1115,14 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "answer audit",
       "model_candidate_not_final_authority",
       "challenger_only_not_final_authority",
+      "challenge_patch_only",
       "terminalDecision",
       "failedReason",
     ],
     mergeFilters: [
       "candidate_answer_not_final_authority",
       "qwen_challenger_not_final_authority",
+      "qwen_challenge_patch_only",
       "terminal_decision_required",
       "bounded_answer_review",
     ],
@@ -1203,6 +1222,8 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "lcx-context-recovery-exam",
       "lcx-problem-cluster-radar",
       "lcx-change-impact-plan",
+      "lcx-governance-autopilot",
+      "lcx-live-lark-brain-binding",
       "lcx-system-doctor",
       "lcx-agent-exam",
     ],
@@ -1211,7 +1232,9 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/dev/lcx-change-impact-plan.ts",
       "scripts/dev/lcx-context-recovery-exam.ts",
       "scripts/dev/lcx-flow-graph.ts",
+      "scripts/dev/lcx-governance-autopilot.ts",
       "scripts/dev/lcx-head-tail-consistency.ts",
+      "scripts/dev/lcx-live-lark-brain-binding.ts",
       "scripts/dev/lcx-mind-model.ts",
       "scripts/dev/lcx-problem-cluster-radar.ts",
       "scripts/dev/lcx-system-doctor.ts",
@@ -1219,7 +1242,9 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "test/lcx-change-impact-plan.test.ts",
       "test/lcx-context-recovery-exam.test.ts",
       "test/lcx-flow-graph.test.ts",
+      "test/lcx-governance-autopilot.test.ts",
       "test/lcx-head-tail-consistency.test.ts",
+      "test/lcx-live-lark-brain-binding.test.ts",
       "test/lcx-mind-model.test.ts",
       "test/lcx-problem-cluster-radar.test.ts",
       "test/lcx-system-doctor-train-slice.test.ts",
@@ -1413,7 +1438,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   training_failure_feedback_waterflow: "scripts/dev/local-brain-training-plan.ts",
   dev_to_live_lark_waterflow: "scripts/dev/lcx-promote-live.ts",
   compressed_context_recovery_waterflow: "scripts/dev/lcx-context-recovery-exam.ts",
-  local_automation_digest_waterflow: "/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh",
+  local_automation_digest_waterflow: "scripts/dev/lcx-governance-autopilot.ts",
   lark_visible_language_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
   commercial_answer_pipeline_waterflow: "scripts/dev/lcx-commercial-answer-pipeline.ts",
   commercial_acceptance_harness_waterflow: "scripts/dev/lcx-commercial-acceptance-harness.ts",
@@ -1436,7 +1461,7 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
   compressed_context_recovery_waterflow:
     "node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json",
   local_automation_digest_waterflow:
-    "test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json",
+    "node --import tsx scripts/dev/lcx-governance-autopilot.ts --json",
   lark_visible_language_waterflow:
     "node --import tsx src/commands/capabilities/lark-loop-diagnose.ts --json",
   commercial_answer_pipeline_waterflow:
@@ -1462,7 +1487,9 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
   head: ["AGENTS.md", "README.md", "ops/local-brain/README.md", "src/agents/system-prompt.ts"],
   workflow: [
     "scripts/dev/lcx-flow-graph.ts",
+    "scripts/dev/lcx-governance-autopilot.ts",
     "scripts/dev/lcx-mind-model.ts",
+    "scripts/dev/lcx-live-lark-brain-binding.ts",
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-system-doctor.ts",
@@ -1481,13 +1508,16 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/module-learning-pipeline-plan.ts",
     "scripts/dev/module-learning-pipeline-review.ts",
     "scripts/dev/lcx-promote-live.ts",
+    "scripts/dev/lcx-live-lark-brain-binding.ts",
     "src/commands/capabilities/lark-loop-diagnose.ts",
     "src/agents/finance-data-gateway.ts",
     "src/agents/tools/finance-data-gateway-tool.ts",
   ],
   proof: [
     "scripts/dev/lcx-flow-graph.ts",
+    "scripts/dev/lcx-governance-autopilot.ts",
     "test/lcx-flow-graph.test.ts",
+    "test/lcx-governance-autopilot.test.ts",
     "test/lcx-mind-model.test.ts",
     "test/lcx-context-recovery-exam.test.ts",
     "test/lcx-commercial-answer-pipeline.test.ts",
@@ -1500,6 +1530,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "test/local-brain-distill-eval.test.ts",
     "test/local-brain-contracts.test.ts",
     "test/lcx-promote-live-status.test.ts",
+    "test/lcx-live-lark-brain-binding.test.ts",
   ],
   boundary: [
     "AGENTS.md",

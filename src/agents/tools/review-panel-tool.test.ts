@@ -9,6 +9,7 @@ type ReviewPanelDetails = {
   tier: string;
   tokenPolicy: string;
   reviewerTasks: unknown[];
+  remoteProviderRoles: unknown[];
   receiptPath: string | null;
   providerCallsMade: boolean;
   localArbitration: null | {
@@ -63,6 +64,18 @@ describe("createReviewPanelTool", () => {
     });
     expect(details.reviewerTasks).toHaveLength(3);
     expect(JSON.stringify(details.reviewerTasks)).toContain("math and evidence consistency");
+    expect(JSON.stringify(details.reviewerTasks)).toContain("claim_table");
+    expect(JSON.stringify(details.reviewerTasks)).toContain("qwen_absorption_blockers");
+    expect(JSON.stringify(details.reviewerTasks)).toContain("Kimi synthesis lane");
+    expect(JSON.stringify(details.reviewerTasks)).toContain("MiniMax challenge lane");
+    expect(JSON.stringify(details.reviewerTasks)).toContain("DeepSeek extraction lane");
+    expect(details.remoteProviderRoles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "kimi", lane: "synthesis" }),
+        expect.objectContaining({ role: "minimax", lane: "challenge" }),
+        expect.objectContaining({ role: "deepseek", lane: "extraction" }),
+      ]),
+    );
     expect(details.localArbitration).toBeNull();
   });
 

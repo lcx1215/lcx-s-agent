@@ -70,6 +70,7 @@ const HEAD_SURFACES = [
 const WORKFLOW_SURFACES = [
   "scripts/dev/lcx-mind-model.ts",
   "scripts/dev/lcx-flow-graph.ts",
+  "scripts/dev/lcx-governance-autopilot.ts",
   "scripts/dev/lcx-change-impact-plan.ts",
   "scripts/dev/lcx-local-paths.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
@@ -106,6 +107,7 @@ const PROOF_SURFACES = [
   ...WORKFLOW_SURFACES,
   "test/lcx-context-recovery-exam.test.ts",
   "test/lcx-flow-graph.test.ts",
+  "test/lcx-governance-autopilot.test.ts",
   "test/lcx-head-tail-consistency.test.ts",
   "test/lcx-mind-model.test.ts",
   "test/lcx-problem-cluster-radar.test.ts",
@@ -138,6 +140,7 @@ const BOUNDARY_SURFACES = [
   "scripts/dev/lcx-promote-live.ts",
   "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   "scripts/dev/lcx-flow-graph.ts",
+  "scripts/dev/lcx-governance-autopilot.ts",
   "scripts/dev/lcx-commercial-acceptance-harness.ts",
   "scripts/dev/lcx-commercial-answer-pipeline.ts",
   "scripts/dev/lcx-system-doctor.ts",
@@ -297,18 +300,47 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     ],
     workflowTerms: [
       "lcx-local-operator-loop",
+      "lcx-governance-autopilot",
       "codex-archive",
       "automation_or_operator_loop",
       "lcx-context-recovery-exam",
       "mind_file",
+      "governanceAutopilot",
     ],
-    proofTerms: ["local_automation", "automation_or_operator_loop", "mindModel", "contextRecovery"],
+    proofTerms: [
+      "local_automation",
+      "automation_or_operator_loop",
+      "mindModel",
+      "contextRecovery",
+      "autoTriggeredOwnerCommands",
+    ],
     boundaryTerms: [
       "dev_automation_coordination_only",
       "dev_context_recovery_exam_only",
       "liveTouched",
     ],
     nextAction: "Read local operator receipts first; keep Codex visible automation as one digest.",
+  },
+  {
+    id: "governance_autopilot_auto_update",
+    masterLane: "local_automation",
+    objective:
+      "Automatically trigger and refresh the read-only governance stack so waterflow, mind model, radar, impact plan, training truth, and live-binding truth stay current without manual reminders.",
+    headTerms: ["Governance Stack Autopilot", "local operator", "automatically"],
+    workflowTerms: [
+      "lcx-governance-autopilot",
+      "lcx-governance-autopilot-latest",
+      "governanceAutopilot",
+      "autoTriggeredOwnerCommands",
+    ],
+    proofTerms: [
+      "dev_governance_autopilot_only",
+      "test/lcx-governance-autopilot.test.ts",
+      "latestStatePath",
+    ],
+    boundaryTerms: ["readOnly", "noOverlappingTrainingStarted", "liveTouched"],
+    nextAction:
+      "Let the local operator refresh governanceAutopilot; use its owner list before adding another parallel diagnostic.",
   },
   {
     id: "protected_boundary",

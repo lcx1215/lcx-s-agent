@@ -100,6 +100,15 @@ describe("runFeishuLearningCouncil", () => {
         timeout: 300,
       }),
     });
+    expect(String(mockCallGateway.mock.calls[1]?.[0]?.params?.extraSystemPrompt)).toContain(
+      "application_ready",
+    );
+    expect(String(mockCallGateway.mock.calls[1]?.[0]?.params?.extraSystemPrompt)).toContain(
+      "eval_absorbed",
+    );
+    expect(String(mockCallGateway.mock.calls[1]?.[0]?.params?.extraSystemPrompt)).toContain(
+      "source timestamp",
+    );
     expect(mockCallGateway.mock.calls[2]?.[0]).toMatchObject({
       method: "agent",
       params: expect.objectContaining({

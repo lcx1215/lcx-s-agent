@@ -88,14 +88,26 @@ describe("lark language handoff receipts", () => {
         boundary: "bounded_answer_review",
         owner: "existing_lark_handoff_context_packet_review_panel",
         candidateAuthority: "model_candidate_not_final_authority",
+        providerCouncilRole: "required_for_high_value_or_evidence_sensitive_answer",
         qwenRole: "challenger_only_not_final_authority",
+        qwenChallengeContract: {
+          outputShape: "challenge_patch_only",
+          allowedActions: ["keep", "block", "downgrade", "ask_more_evidence", "local_patch"],
+          forbiddenActions: [
+            "replace_remote_candidate",
+            "rewrite_full_answer",
+            "become_final_authority",
+          ],
+        },
+        providerCouncilRounds: 1,
         qwenChallengeRounds: 1,
         modelRewriteBudget: 2,
-        maxTotalReviewRounds: 4,
+        maxTotalReviewRounds: 5,
         terminalDecision: "adopt_visible_reply_or_return_failed_reason",
         receiptSurfaces: expect.arrayContaining([
           "lark_language_handoff_receipt",
           "lark_context_packet",
+          "model_council_provider_evidence",
           "feishu_reply_flow",
         ]),
       },
@@ -268,8 +280,15 @@ describe("lark language handoff receipts", () => {
     expect(notice).toContain("do not expose module ids");
     expect(notice).toContain("message ids, timeout milliseconds");
     expect(notice).toContain("Answer audit budget");
+    expect(notice).toContain("Remote council rule");
+    expect(notice).toContain("Kimi synthesis");
+    expect(notice).toContain("MiniMax challenge");
+    expect(notice).toContain("DeepSeek extraction");
     expect(notice).toContain("model answer is only a candidate");
     expect(notice).toContain("Qwen is not_requested");
+    expect(notice).toContain("Qwen patch-only rule");
+    expect(notice).toContain("keep,block,downgrade,ask_more_evidence,local_patch");
+    expect(notice).toContain("rewrite_full_answer");
     expect(notice).toContain("return failedReason/blockedReason");
     expect(notice).toContain("do not keep regenerating");
     expect(notice).toContain("concise judgment");
