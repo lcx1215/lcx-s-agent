@@ -6,20 +6,26 @@ type CandidateId =
   | "longmemeval_agentrunbook_memory_regression"
   | "lightweight_memory_comparison"
   | "clawbench_real_task_regression"
-  | "computer_use_cli_bridge";
+  | "computer_use_cli_bridge"
+  | "multi_agent_framework_orchestration_guardrails"
+  | "prediction_market_research_intake"
+  | "prediction_market_strategy_audit";
 
 type AdoptionMode =
   | "trace_export_probe"
   | "memory_regression_probe"
   | "memory_comparison_probe"
   | "real_task_benchmark_probe"
-  | "computer_use_cli_probe";
+  | "computer_use_cli_probe"
+  | "multi_agent_orchestration_probe"
+  | "prediction_market_research_probe"
+  | "strategy_audit_probe";
 
 type ExternalUpgradeCandidate = {
   id: CandidateId;
   label: string;
   sourceUrls: string[];
-  sourceKind: "paper" | "github" | "paper_and_github";
+  sourceKind: "paper" | "github" | "paper_and_github" | "docs_product_and_paper";
   claimedCapability: string;
   adoptionMode: AdoptionMode;
   existingOwner: string;
@@ -235,6 +241,167 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     liveBoundary:
       "live agent may autocue the harvester skill after sync; no desktop-control authority is granted without a concrete tested wrapper",
   },
+  {
+    id: "multi_agent_framework_orchestration_guardrails",
+    label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
+    sourceUrls: [
+      "https://docs.langchain.com/oss/python/langchain/multi-agent",
+      "https://openai.github.io/openai-agents-python/handoffs/",
+      "https://docs.crewai.com/introduction",
+      "https://learn.microsoft.com/agent-framework/overview/agent-framework-overview",
+    ],
+    sourceKind: "docs_product_and_paper",
+    claimedCapability:
+      "multi-agent routing, supervisor, handoff, and role-orchestration patterns for complex workflows",
+    adoptionMode: "multi_agent_orchestration_probe",
+    existingOwner: "flow graph, commercial answer pipeline, and problem-cluster radar",
+    ownerEntrypoint: "scripts/dev/lcx-flow-graph.ts",
+    ownerUseTrigger:
+      "When a future task asks for LangGraph, OpenAI Agents handoffs, CrewAI crews, Microsoft Agent Framework, supervisor routing, or multi-agent orchestration, map the pattern through flow graph and existing owners before adding agents.",
+    autocueTerms: [
+      "LangGraph",
+      "OpenAI Agents handoffs",
+      "CrewAI",
+      "Microsoft Agent Framework",
+      "multi-agent",
+      "supervisor routing",
+    ],
+    distilledPattern:
+      "use specialist roles and handoffs only as workflow structure while keeping volatile truth in one owner per state family",
+    firstDevProbe:
+      "classify one LCX workflow into supervisor, handoff, worker, owner-truth, and terminal-decision nodes without changing runtime",
+    requiredReceipts: [
+      "lcx-flow-graph",
+      "lcx-commercial-answer-pipeline",
+      "lcx-problem-cluster-radar",
+      "skill_pattern_distillation",
+    ],
+    requiredFilters: [
+      "single_owner_required",
+      "terminal_decision_required",
+      "bounded_answer_review",
+      "no_provider_config_change",
+      "no_live_sender_change",
+    ],
+    riskBoundaries: [
+      "no_parallel_agent_framework",
+      "no_hidden_tool_authority",
+      "no_provider_config_change",
+      "no_live_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "live can benefit from clearer role routing only after dev owner checks and migration; this radar grants no live agent framework authority",
+  },
+  {
+    id: "prediction_market_research_intake",
+    label: "Polymarket research intake tools",
+    sourceUrls: [
+      "https://docs.polymarket.com/api-reference",
+      "https://docs.polymarket.com/developers/CLOB/clients/%3Aslug%2A",
+      "https://polyclaw.cloud/",
+      "https://www.forezai.com/",
+      "https://polymark.et/product/polyseer",
+    ],
+    sourceKind: "docs_product_and_paper",
+    claimedCapability:
+      "prediction-market topic, resolution criteria, close date, liquidity, orderbook, and evidence intake for research",
+    adoptionMode: "prediction_market_research_probe",
+    existingOwner: "finance data gateway, source registry, and data provenance review",
+    ownerEntrypoint: "src/agents/finance-data-gateway.ts",
+    ownerUseTrigger:
+      "When a future task mentions Polymarket, PolyClaw, Polybot, Polyseer, prediction markets, CLOB, orderbooks, or market probabilities, route it through research-only finance data provenance before any conclusion.",
+    autocueTerms: [
+      "Polymarket",
+      "PolyClaw",
+      "Polybot",
+      "Polyseer",
+      "prediction market",
+      "CLOB",
+      "orderbook",
+    ],
+    distilledPattern:
+      "treat prediction markets as weak but useful research sources requiring resolution criteria, timestamp, liquidity, source evidence, and counterevidence",
+    firstDevProbe:
+      "create a paper-only prediction-market research packet with market metadata, source timestamps, liquidity caveats, and no execution authority",
+    requiredReceipts: [
+      "source_registry",
+      "finance-data-gateway",
+      "data_provenance_quality",
+      "review_panel",
+      "control_room_summary",
+    ],
+    requiredFilters: [
+      "research_only_boundary",
+      "no_trade_advice",
+      "fresh_timestamp_required",
+      "field_definition_required",
+      "market_microstructure_warning_required",
+      "no_wallet_or_order_execution",
+    ],
+    riskBoundaries: [
+      "research_only",
+      "no_wallet_connection",
+      "no_order_placement",
+      "no_copy_trading",
+      "no_latency_arbitrage",
+      "no_provider_config_change",
+      "no_live_sender_change",
+    ],
+    liveBoundary:
+      "live may summarize research packets after migration, but no wallet, order, private-key, or trading action is enabled",
+  },
+  {
+    id: "prediction_market_strategy_audit",
+    label: "PolyBench / PolySwarm prediction-market strategy audit",
+    sourceUrls: ["https://arxiv.org/abs/2604.14199", "https://arxiv.org/abs/2604.03888"],
+    sourceKind: "paper",
+    claimedCapability:
+      "prediction-market benchmark, multi-agent debate, strategy simulation, and calibration patterns",
+    adoptionMode: "strategy_audit_probe",
+    existingOwner: "commercial acceptance harness, eval harness design, and review panel",
+    ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+    ownerUseTrigger:
+      "When a future task asks for Polymarket strategy, PolyBench, PolySwarm, prediction-market bots, or market-making ideas, keep it paper-only and route to strategy audit, overfit checks, and review.",
+    autocueTerms: [
+      "PolyBench",
+      "PolySwarm",
+      "Polymarket strategy",
+      "prediction-market bot",
+      "market-making",
+      "paper trading",
+    ],
+    distilledPattern:
+      "audit strategies with calibration, slippage, liquidity, resolution-risk, sample-out, and failure logs before treating any result as useful research",
+    firstDevProbe:
+      "score one paper-only strategy artifact for overfit, sample-out, slippage, liquidity, and no-execution compliance",
+    requiredReceipts: [
+      "source_registry",
+      "data_provenance_quality",
+      "strategy_experiment_audit",
+      "eval_harness_design",
+      "review_panel",
+    ],
+    requiredFilters: [
+      "research_only_boundary",
+      "no_trade_advice",
+      "paper_only_backtest_required",
+      "sample_out_validation_required",
+      "market_microstructure_warning_required",
+      "no_wallet_or_order_execution",
+    ],
+    riskBoundaries: [
+      "research_only",
+      "no_wallet_connection",
+      "no_order_placement",
+      "no_copy_trading",
+      "no_latency_arbitrage",
+      "no_provider_config_change",
+      "no_live_sender_change",
+    ],
+    liveBoundary:
+      "strategy audit can only become a visible research summary after review; it must never execute, size, copy, or route orders",
+  },
 ];
 
 function missingFor(candidate: ExternalUpgradeCandidate): string[] {
@@ -287,6 +454,9 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
     "lightweight_memory_comparison",
     "clawbench_real_task_regression",
     "computer_use_cli_bridge",
+    "multi_agent_framework_orchestration_guardrails",
+    "prediction_market_research_intake",
+    "prediction_market_strategy_audit",
   ];
   const missingExpected = expectedIds.filter((id) => !ids.has(id));
   const missingFields = verdicts.flatMap((candidate) =>
@@ -308,9 +478,9 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
   );
   return [
     {
-      id: "five_external_candidates_registered",
-      ok: verdicts.length === 5 && missingExpected.length === 0,
-      summary: "exactly five external upgrade candidates are registered",
+      id: "expected_external_candidates_registered",
+      ok: verdicts.length === expectedIds.length && missingExpected.length === 0,
+      summary: "all expected external upgrade candidates are registered",
       evidence: { count: verdicts.length, missingExpected },
     },
     {

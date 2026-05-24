@@ -77,6 +77,10 @@ type FlowNodeId =
   | "single_owner_contract"
   | "parallel_path_reject"
   | "external_agent_source"
+  | "prediction_market_source"
+  | "resolution_criteria_review"
+  | "market_microstructure_review"
+  | "strategy_experiment_audit"
   | "external_upgrade_radar"
   | "license_scope_review"
   | "workflow_distillation"
@@ -118,6 +122,7 @@ type FlowFilterId =
   | "reply_flow_audit_required"
   | "provider_evidence_required"
   | "no_provider_config_change"
+  | "no_live_sender_change"
   | "source_conflict_visible"
   | "fresh_timestamp_required"
   | "field_definition_required"
@@ -132,6 +137,10 @@ type FlowFilterId =
   | "license_scope_required"
   | "untrusted_source_isolation"
   | "human_signoff_checkpoint"
+  | "no_wallet_or_order_execution"
+  | "market_microstructure_warning_required"
+  | "paper_only_backtest_required"
+  | "sample_out_validation_required"
   | "commercial_error_budget_required"
   | "product_canary_suite_required"
   | "automation_schedule_gate"
@@ -272,6 +281,10 @@ const NODE_IDS: FlowNodeId[] = [
   "single_owner_contract",
   "parallel_path_reject",
   "external_agent_source",
+  "prediction_market_source",
+  "resolution_criteria_review",
+  "market_microstructure_review",
+  "strategy_experiment_audit",
   "external_upgrade_radar",
   "license_scope_review",
   "workflow_distillation",
@@ -314,6 +327,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "reply_flow_audit_required",
   "provider_evidence_required",
   "no_provider_config_change",
+  "no_live_sender_change",
   "source_conflict_visible",
   "fresh_timestamp_required",
   "field_definition_required",
@@ -328,6 +342,10 @@ const FILTER_IDS: FlowFilterId[] = [
   "license_scope_required",
   "untrusted_source_isolation",
   "human_signoff_checkpoint",
+  "no_wallet_or_order_execution",
+  "market_microstructure_warning_required",
+  "paper_only_backtest_required",
+  "sample_out_validation_required",
   "commercial_error_budget_required",
   "product_canary_suite_required",
   "automation_schedule_gate",
@@ -992,6 +1010,62 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "prediction_market_research_only_waterflow",
+    family: "prediction_market_research_and_strategy_audit",
+    objective:
+      "Polymarket and prediction-market sources may enrich research packets and paper-only strategy audits, but must never become wallet, order, copy-trading, or latency-arbitrage authority.",
+    start: "prediction_market_source",
+    end: "control_room_summary",
+    requiredNodes: [
+      "prediction_market_source",
+      "source_registry",
+      "actual_reading_scope",
+      "resolution_criteria_review",
+      "finance_data_gateway",
+      "data_provenance_quality_review",
+      "market_microstructure_review",
+      "strategy_experiment_audit",
+      "review_panel",
+      "control_room_summary",
+    ],
+    requiredFilters: [
+      "source_evidence_gate",
+      "research_only_boundary",
+      "no_trade_advice",
+      "fresh_timestamp_required",
+      "field_definition_required",
+      "market_microstructure_warning_required",
+      "paper_only_backtest_required",
+      "sample_out_validation_required",
+      "no_wallet_or_order_execution",
+      "no_provider_config_change",
+      "no_live_sender_change",
+    ],
+    edges: [
+      ["prediction_market_source", "source_registry"],
+      ["source_registry", "actual_reading_scope"],
+      ["actual_reading_scope", "resolution_criteria_review"],
+      ["resolution_criteria_review", "finance_data_gateway"],
+      ["finance_data_gateway", "data_provenance_quality_review"],
+      ["data_provenance_quality_review", "market_microstructure_review"],
+      ["market_microstructure_review", "strategy_experiment_audit"],
+      ["strategy_experiment_audit", "review_panel"],
+      ["review_panel", "control_room_summary"],
+    ],
+    feedbackEdges: [
+      ["review_panel", "source_registry"],
+      ["strategy_experiment_audit", "market_microstructure_review"],
+    ],
+    receipts: [
+      "lcx-external-agent-upgrade-radar",
+      "finance-data-gateway",
+      "source_registry",
+      "data_provenance_quality",
+      "strategy_experiment_audit",
+      "review_panel",
+    ],
+  },
+  {
     id: "automation_repair_lock_waterflow",
     family: "codex_auto_repair_and_schedule_guard",
     objective:
@@ -1172,6 +1246,27 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "license",
     ],
     mergeFilters: ["license_scope_required", "untrusted_source_isolation"],
+  },
+  {
+    id: "prediction_market_research_cluster",
+    philosophy:
+      "prediction-market tools, CLOB data, benchmarks, and strategies are weak-evidence research sources plus paper-only audits, not execution systems",
+    ownerScenario: "prediction_market_research_only_waterflow",
+    ownerNode: "market_microstructure_review",
+    sameClassTerms: [
+      "Polymarket",
+      "prediction market",
+      "market_microstructure_warning",
+      "strategy_experiment_audit",
+      "no_wallet_or_order_execution",
+    ],
+    mergeFilters: [
+      "research_only_boundary",
+      "no_trade_advice",
+      "market_microstructure_warning_required",
+      "paper_only_backtest_required",
+      "no_wallet_or_order_execution",
+    ],
   },
   {
     id: "finance_data_quality_cluster",
@@ -1415,6 +1510,18 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/hooks/bundled/lobster-brain-registry.finance-article-source-registry.test.ts",
     ],
   },
+  {
+    id: "prediction_market_research_entrypoints",
+    ownerCluster: "prediction_market_research_cluster",
+    ownerPath: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+    watchedPathTerms: [
+      "prediction-market",
+      "polymarket",
+      "market-microstructure",
+      "strategy-experiment",
+    ],
+    allowedPaths: ["scripts/dev/lcx-external-agent-upgrade-radar.ts"],
+  },
 ];
 
 const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
@@ -1429,6 +1536,11 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
     familyIds: ["dev_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
     reason:
       "the lark-loop-diagnose test is the shared proof surface for visible reply audit and dev/live evidence.",
+  },
+  {
+    path: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+    familyIds: ["external_skill_learning_entrypoints", "prediction_market_research_entrypoints"],
+    reason: "external-agent upgrade radar also owns prediction-market source intake boundaries.",
   },
 ];
 
@@ -1448,6 +1560,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   senior_trader_failure_focus_waterflow: "scripts/dev/local-brain-distill-eval.ts",
   similar_engineering_consolidation_waterflow: "scripts/dev/lcx-change-impact-plan.ts",
   external_agent_skill_distillation_waterflow: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+  prediction_market_research_only_waterflow: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   automation_repair_lock_waterflow: "scripts/dev/lcx-automation-repair-lock.ts",
 };
 
@@ -1478,6 +1591,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
   similar_engineering_consolidation_waterflow:
     "node --import tsx scripts/dev/lcx-change-impact-plan.ts --json",
   external_agent_skill_distillation_waterflow:
+    "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
+  prediction_market_research_only_waterflow:
     "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
   automation_repair_lock_waterflow:
     "node --import tsx scripts/dev/lcx-automation-repair-lock.ts --mode status --json",

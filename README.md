@@ -45,7 +45,10 @@ unless the user explicitly asks for them.
   LoRA adapters stacked together.
 - Finance outputs are research-only and are not investment advice.
 - Current market, price, fundamental, ETF, option, macro, or vendor numbers must
-  carry provenance before reaching Qwen, Lark, memory, or a visible summary.
+  pass `finance_data_gateway_snapshot` / 金融数据网关 and carry provenance before
+  reaching Qwen, Lark, memory, or a visible summary.
+- Polymarket and prediction-market sources are research inputs only: no wallet
+  connection, no order placement, no copy trading, and no latency arbitrage.
 
 ## Main Operator Commands
 
@@ -150,6 +153,13 @@ market stories are weak evidence by default. They can create hypotheses and
 research checks, but they do not become causality, alpha, position sizing, or
 durable doctrine without source registry, reading scope, validation, review,
 eval or training absorption evidence, and keep/downrank/discard decisions.
+
+Prediction-market material follows the same rule with extra execution
+boundaries. Polymarket-style markets can be used for source registry, resolution
+criteria, close-date context, liquidity/orderbook snapshots, microstructure
+warnings, counterevidence, and paper-only strategy audits. They cannot become a
+trading engine, wallet/key path, copy-trading feed, position-sizing authority,
+or same-day prediction shortcut.
 
 ## Development
 

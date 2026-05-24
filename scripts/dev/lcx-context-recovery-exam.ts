@@ -1060,15 +1060,15 @@ async function main() {
         externalAgentUpgradeRadar.ok &&
         externalAgentUpgradeRadar.payload?.ok === true &&
         (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
-          ?.registeredCandidateCount === 5 &&
+          ?.registeredCandidateCount === 8 &&
         (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
-          ?.architectureIntegratedCount === 5 &&
+          ?.architectureIntegratedCount === 8 &&
         (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
           ?.runtimeAuthorityGrantedCount === 0 &&
         (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
           ?.perfectIntegrationClaim === false,
       summary:
-        "compressed recovery must know the five external agent upgrades are autocued and routed through existing owners",
+        "compressed recovery must know external agent and prediction-market upgrades are autocued and routed through existing owners",
       evidence: {
         externalAgentUpgradeRadar: compactExternalAgentUpgradeRadar(
           externalAgentUpgradeRadar.payload,

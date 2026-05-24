@@ -250,6 +250,21 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "prediction_market_research_only_waterflow",
+          receipts: expect.arrayContaining([
+            "lcx-external-agent-upgrade-radar",
+            "finance-data-gateway",
+            "strategy_experiment_audit",
+          ]),
+          requiredFilters: expect.arrayContaining([
+            "research_only_boundary",
+            "no_trade_advice",
+            "no_wallet_or_order_execution",
+            "market_microstructure_warning_required",
+            "paper_only_backtest_required",
+          ]),
+        }),
+        expect.objectContaining({
           id: "automation_repair_lock_waterflow",
           requiredFilters: expect.arrayContaining([
             "automation_schedule_gate",
@@ -439,6 +454,19 @@ describe("LCX flow graph exam", () => {
           ownerEntrypoint: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
           fastCheck: "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
           evidenceReceipts: expect.arrayContaining(["lcx-external-agent-upgrade-radar"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "prediction_market_research_only_waterflow",
+          ownerEntrypoint: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+          fastCheck: "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
+          evidenceReceipts: expect.arrayContaining([
+            "lcx-external-agent-upgrade-radar",
+            "finance-data-gateway",
+          ]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:no_wallet_or_order_execution",
+            "missing_or_skipped_filter:market_microstructure_warning_required",
+          ]),
         }),
       ]),
     );

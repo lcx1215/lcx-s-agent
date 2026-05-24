@@ -945,15 +945,16 @@ function externalAgentUpgradeCluster(inputs: RadarInputs): ProblemCluster | unde
       },
     });
   }
-  if (numberValue(summary?.registeredCandidateCount) !== 5) {
+  if (numberValue(summary?.registeredCandidateCount) !== 8) {
     signals.push({
       id: "external_agent_candidate_count_drift",
       severity: "P2",
-      summary: "the five external agent upgrade candidates are not all registered",
+      summary:
+        "the expected external agent and prediction-market upgrade candidates are not all registered",
       evidence: summary,
     });
   }
-  if (numberValue(summary?.architectureIntegratedCount) !== 5) {
+  if (numberValue(summary?.architectureIntegratedCount) !== 8) {
     signals.push({
       id: "external_agent_owner_mapping_drift",
       severity: "P2",

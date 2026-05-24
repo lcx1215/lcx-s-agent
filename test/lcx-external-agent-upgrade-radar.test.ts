@@ -49,7 +49,7 @@ async function runRadar() {
 }
 
 describe("lcx-external-agent-upgrade-radar", () => {
-  it("maps all five external projects into existing LCX owner lanes", async () => {
+  it("maps all external projects and market-research sources into existing LCX owner lanes", async () => {
     const payload = await runRadar();
 
     expect(payload).toEqual(
@@ -65,8 +65,8 @@ describe("lcx-external-agent-upgrade-radar", () => {
     expect(payload.summary).toEqual(
       expect.objectContaining({
         failed: 0,
-        registeredCandidateCount: 5,
-        architectureIntegratedCount: 5,
+        registeredCandidateCount: 8,
+        architectureIntegratedCount: 8,
         runtimeAuthorityGrantedCount: 0,
         perfectIntegrationClaim: false,
       }),
@@ -74,7 +74,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
     expect(payload.perfectIntegrationReason).toContain("live migration");
     expect(payload.checks).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "five_external_candidates_registered", ok: true }),
+        expect.objectContaining({ id: "expected_external_candidates_registered", ok: true }),
         expect.objectContaining({ id: "all_candidates_map_to_existing_owners", ok: true }),
         expect.objectContaining({ id: "automatic_use_triggers_present", ok: true }),
         expect.objectContaining({ id: "direct_runtime_adoption_blocked", ok: true }),
@@ -86,6 +86,9 @@ describe("lcx-external-agent-upgrade-radar", () => {
       "lightweight_memory_comparison",
       "clawbench_real_task_regression",
       "computer_use_cli_bridge",
+      "multi_agent_framework_orchestration_guardrails",
+      "prediction_market_research_intake",
+      "prediction_market_strategy_audit",
     ]);
     expect(payload.candidates).toEqual(
       expect.arrayContaining([
@@ -109,6 +112,18 @@ describe("lcx-external-agent-upgrade-radar", () => {
           label: "Agent S / HKUDS CLI-Anything",
           ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
         }),
+        expect.objectContaining({
+          label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
+          ownerEntrypoint: "scripts/dev/lcx-flow-graph.ts",
+        }),
+        expect.objectContaining({
+          label: "Polymarket research intake tools",
+          ownerEntrypoint: "src/agents/finance-data-gateway.ts",
+        }),
+        expect.objectContaining({
+          label: "PolyBench / PolySwarm prediction-market strategy audit",
+          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+        }),
       ]),
     );
   });
@@ -126,6 +141,41 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect(candidate.blockedDirectAdoption, candidate.id).toBe(true);
       expect(candidate.riskBoundaries, candidate.id).toEqual(
         expect.arrayContaining(["no_provider_config_change", "no_live_sender_change"]),
+      );
+    }
+  });
+
+  it("blocks prediction-market research from becoming wallet, order, or trade-execution authority", async () => {
+    const payload = await runRadar();
+    const predictionMarketCandidates = payload.candidates.filter((candidate) =>
+      candidate.id.startsWith("prediction_market_"),
+    );
+
+    expect(predictionMarketCandidates.map((candidate) => candidate.id)).toEqual([
+      "prediction_market_research_intake",
+      "prediction_market_strategy_audit",
+    ]);
+    for (const candidate of predictionMarketCandidates) {
+      expect(candidate.requiredReceipts).toEqual(
+        expect.arrayContaining(["source_registry", "data_provenance_quality", "review_panel"]),
+      );
+      expect(candidate.requiredFilters).toEqual(
+        expect.arrayContaining([
+          "research_only_boundary",
+          "no_trade_advice",
+          "no_wallet_or_order_execution",
+          "market_microstructure_warning_required",
+        ]),
+      );
+      expect(candidate.riskBoundaries).toEqual(
+        expect.arrayContaining([
+          "no_wallet_connection",
+          "no_order_placement",
+          "no_copy_trading",
+          "no_latency_arbitrage",
+          "no_live_sender_change",
+          "no_provider_config_change",
+        ]),
       );
     }
   });

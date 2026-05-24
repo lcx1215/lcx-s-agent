@@ -118,11 +118,16 @@ External agent upgrade radar: when evaluating new GitHub/arXiv agent projects,
 use `node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json`
 before adopting them. Current high-value candidates are Agent Lightning,
 LongMemEval-V2 / AgentRunbook, LightMem / LycheeMemory,
-ClawBench / WildClawBench, and Agent S / CLI-Anything. They are not direct
-runtime authority: no direct install, no provider config, no live sender, and no
-protected memory changes. Distill only reusable workflow patterns into existing
-LCX owners such as problem radar, context recovery, learning sedimentation,
-commercial acceptance, skill-harvester, and cli-anything-harvester.
+ClawBench / WildClawBench, Agent S / CLI-Anything, multi-agent orchestration
+frameworks such as LangGraph / OpenAI Agents / CrewAI / Microsoft Agent
+Framework, and prediction-market research sources such as Polymarket,
+PolyClaw, Polybot, Polyseer, PolyBench, and PolySwarm. They are not direct
+runtime authority: no direct install, no provider config, no live sender, no
+protected memory changes, no wallet connection, no order placement, no copy
+trading, and no latency arbitrage. Distill only reusable workflow patterns into
+existing LCX owners such as problem radar, context recovery, learning
+sedimentation, commercial acceptance, flow graph, finance data gateway,
+skill-harvester, and cli-anything-harvester.
 
 Keep skill placement explicit: core LCX skills guide this repo's operator work;
 general Codex skills stay global support tools unless the runbook classifies
@@ -132,6 +137,14 @@ CLI-Anything-style wrappers stay Codex-side auxiliary tools until a concrete
 wrapper has an owner, JSON contract, safety boundary, and local verification;
 LCX Agent may distill the reusable workflow pattern, but not inherit broad
 desktop-control authority by default.
+Prediction-market and Polymarket-style tools may enter only as weak-evidence
+research intake or paper-only strategy audit. They must carry market id or URL,
+resolution criteria, close date/timezone, orderbook/liquidity timestamp, source
+timestamp, microstructure warning, slippage/fee assumptions, sample-out
+validation, counterevidence, review-panel status, and keep/downrank/discard
+decision before a visible summary. They must never become trading execution,
+wallet/private-key, order-routing, copy-trading, sizing, or latency-arbitrage
+authority.
 The live/local reply path should not rely only on weak-model memory for common
 LCX skills: deterministic skill preflight may cue one matching installed skill
 before the model answers, while explicit `/skill` commands still take priority.
@@ -290,7 +303,7 @@ shortcuts.
   repair locks, and finance data gateway reconciliation.
 - Finance data waterflow is mandatory before using current, priced,
   fundamental, macro, ETF, options, or vendor-sourced numbers. It must pass
-  `finance_data_gateway_snapshot` or an equivalent future owner, preserve source
+  `finance_data_gateway_snapshot` or an equivalent future 金融数据网关 owner, preserve source
   timestamp, field definition, unit/currency, adjusted status, provider role,
   and official/issuer reference scope, and route conflicted values to
   `data_provenance_quality` instead of letting Qwen or Lark infer numbers.

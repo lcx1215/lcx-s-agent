@@ -384,7 +384,10 @@ function looksLikeThesisCatalystLifecycle(text: string): boolean {
 }
 
 function looksLikeDataProvenanceQuality(text: string): boolean {
-  if (looksLikeExternalFinancialAgentPatternLearning(text)) {
+  if (
+    looksLikeExternalFinancialAgentPatternLearning(text) ||
+    looksLikePredictionMarketResearchStrategyLearning(text)
+  ) {
     return false;
   }
   if (
@@ -412,6 +415,7 @@ function looksLikeResearchArtifactQc(text: string): boolean {
     return false;
   }
   if (
+    looksLikePredictionMarketResearchStrategyLearning(text) ||
     looksLikePaperLearningWithSource(text) ||
     looksLikeExternalKnowledgeInternalizationProtocol(text) ||
     looksLikeAnalystReportLearning(text) ||
@@ -528,6 +532,9 @@ function looksLikeSourceGroundingAudit(text: string): boolean {
 }
 
 function looksLikeDataConflictReconciliation(text: string): boolean {
+  if (looksLikePredictionMarketResearchStrategyLearning(text)) {
+    return false;
+  }
   if (
     /(采访|访谈|interview|博客|blog|substack|播客|podcast|饭局|晚餐|炸鸡|chimaek|kkanbu|viral)/iu.test(
       text,
@@ -813,6 +820,18 @@ function looksLikeExternalFinancialAgentPatternLearning(text: string): boolean {
       text,
     );
   return namesExternalAgent && asksToLearnOrApply;
+}
+
+function looksLikePredictionMarketResearchStrategyLearning(text: string): boolean {
+  const namesPredictionMarketSource =
+    /(polymarket|polybench|polyswarm|polyclaw|polybot|polyseer|prediction market|预测市场|clob|orderbook|订单簿|market[- ]?making|paper trading)/iu.test(
+      text,
+    );
+  const asksToLearnAuditOrApply =
+    /(学习|吸收|沉淀|接入|做上|策略|strategy|audit|审计|回测|backtest|研究|research|intake|source|registry|内化|distill|learn)/iu.test(
+      text,
+    );
+  return namesPredictionMarketSource && asksToLearnAuditOrApply;
 }
 
 function looksLikePaperLearningWithSource(text: string): boolean {
@@ -2353,6 +2372,77 @@ export function hardenLocalBrainPlanForAsk(
         "model_internal_learning_claim_without_training_eval_evidence",
         "cloud_skill_sharing_by_default",
         "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikePredictionMarketResearchStrategyLearning(text)) {
+    return {
+      ...safe,
+      task_family: "prediction_market_research_strategy_distillation",
+      primary_modules: [
+        "source_registry",
+        "data_provenance_quality",
+        "research_artifact_qc",
+        "quant_math",
+        "portfolio_risk_gates",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: [
+        "finance_learning_memory",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "eval_harness_design",
+        "causal_map",
+      ],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_data_gateway",
+        "license_and_write_scope_review",
+        "strategy_experiment_audit",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "market_url_or_market_id",
+        "resolution_criteria",
+        "close_date_and_timezone",
+        "orderbook_or_liquidity_snapshot_timestamp",
+        "source_url_or_local_source_path",
+        "actual_reading_scope",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "sample_out_validation_plan",
+        "slippage_liquidity_and_fees_assumptions",
+        "counterevidence_and_resolution_risk",
+        "paper_only_application_validation_receipt",
+        "keep_downrank_or_discard_decision",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_trade_advice",
+        "no_execution_authority",
+        "no_wallet_connection",
+        "no_order_placement",
+        "no_copy_trading",
+        "no_latency_arbitrage",
+        "paper_only_backtest_required",
+        "market_microstructure_warning_required",
+        "sample_out_validation_required",
+        "no_provider_config_change",
+        "no_live_sender_change",
+        "no_protected_memory_write",
+        "no_model_internal_learning_claim_without_eval",
+      ],
+      next_step:
+        "collect_prediction_market_source_resolution_liquidity_timestamp_and_paper_only_strategy_audit_before_any_research_summary",
+      rejected_context: [
+        "wallet_or_private_key_connection",
+        "order_execution_or_copy_trading",
+        "latency_arbitrage_or_market_making_authority",
+        "same_day_price_prediction",
+        "unverified_market_probability_as_truth",
+        "old_lark_conversation_history",
       ],
     };
   }

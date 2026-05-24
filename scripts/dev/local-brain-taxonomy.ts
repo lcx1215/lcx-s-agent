@@ -176,6 +176,7 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "External financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision.",
   "All module learning uses the same internalization chain, not only factor modules: every target module needs source registry, actual reading scope, module-specific capability rule, retrieval receipt, application validation, local-brain eval or training absorption evidence, fresh adjacent task, module_learning_pipeline_review status, safety boundary, and keep/downrank/discard decision before anyone claims the module learned it.",
   "Advanced trader research chains must not stop at broad fundamentals: DCF/comps/modeling asks use financial_modeling_valuation_qc, thesis/catalyst/invalidation asks use thesis_catalyst_lifecycle, vendor/field/timestamp conflicts use data_provenance_quality, and reports/spreadsheets/tables/narrative artifacts use research_artifact_qc before a visible control-room summary.",
+  "Prediction-market and Polymarket sources are research-only weak evidence: require market id or URL, resolution criteria, close date/timezone, orderbook/liquidity timestamp, market microstructure warning, paper-only strategy audit, sample-out validation, slippage/fee assumptions, counterevidence, no wallet connection, no order placement, no copy trading, and no latency arbitrage.",
 ] as const;
 
 const BASE_CONTRACT_HINT_INDEXES = [0, 1, 2, 3, 4, 5] as const;
@@ -193,6 +194,11 @@ const CONTRACT_HINT_SELECTORS: Array<{
     indexes: [8, 9, 10, 16],
     pattern:
       /美股|a股|指数|加密|期权|大宗|商品|黄金|原油|美元|外汇|事件|技术|跨市场|估值|DCF|comps|模型|财务模型|研报|口径|字段|时间戳|催化|失效|crypto|option|commodity|gold|oil|dollar|fx|event|technical|cross-market|valuation|modeling|thesis|catalyst|provenance|timestamp|artifact|spreadsheet|report/iu,
+  },
+  {
+    indexes: [9, 12, 17],
+    pattern:
+      /polymarket|polybench|polyswarm|polyclaw|polybot|polyseer|prediction market|预测市场|clob|orderbook|订单簿|market[- ]?making|paper trading/iu,
   },
   {
     indexes: [9],

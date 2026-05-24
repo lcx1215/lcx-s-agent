@@ -453,23 +453,40 @@ building a new path:
 node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json
 ```
 
-The current five source families are Agent Lightning, LongMemEval-V2 /
-AgentRunbook, LightMem / LycheeMemory, ClawBench / WildClawBench, and Agent S /
-CLI-Anything. They must land in existing owners such as problem radar, context
-recovery, learning sedimentation, commercial acceptance, skill-harvester, and
-cli-anything-harvester. This is not direct runtime authority: no direct install,
-no provider config, no live sender, and no protected memory mutation. Treat the
-radar as dev-only architecture wiring until a concrete probe, eval/receipt,
-live migration, and fresh Lark visible proof all exist.
+The current source families are Agent Lightning, LongMemEval-V2 / AgentRunbook,
+LightMem / LycheeMemory, ClawBench / WildClawBench, Agent S / CLI-Anything,
+multi-agent orchestration frameworks such as LangGraph / OpenAI Agents /
+CrewAI / Microsoft Agent Framework, and prediction-market research sources such
+as Polymarket, PolyClaw, Polybot, Polyseer, PolyBench, and PolySwarm. They must
+land in existing owners such as problem radar, context recovery, learning
+sedimentation, commercial acceptance, flow graph, finance data gateway,
+skill-harvester, and cli-anything-harvester. This is not direct runtime
+authority: no direct install, no provider config, no live sender, no protected
+memory mutation, no wallet connection, no order placement, no copy trading, and
+no latency arbitrage. Treat the radar as dev-only architecture wiring until a
+concrete probe, eval/receipt, live migration, and fresh Lark visible proof all
+exist.
 
 Future agents should not wait for the user to remember these names. Natural
 language mentions of Agent Lightning, LongMemEval/AgentRunbook,
-LightMem/LycheeMemory, ClawBench/WildClawBench, Agent S, or CLI-Anything must
-autocue `skill-harvester` or `cli-anything-harvester`, run the external upgrade
-radar, and then follow the named owner. `lcx-context-recovery-exam` verifies this
-autocue path; `lcx-problem-cluster-radar` consumes the external radar so missing
-candidates, owner drift, direct runtime authority, or "perfect integration"
-overclaims become repairable clusters instead of silent architecture debt.
+LightMem/LycheeMemory, ClawBench/WildClawBench, Agent S, CLI-Anything,
+LangGraph, OpenAI Agents handoffs, CrewAI, Microsoft Agent Framework,
+Polymarket, PolyClaw, Polybot, Polyseer, PolyBench, PolySwarm, prediction
+markets, CLOB, or orderbooks must autocue `skill-harvester`,
+`cli-anything-harvester`, finance data provenance, or the flow graph as
+appropriate, run the external upgrade radar, and then follow the named owner.
+`lcx-context-recovery-exam` verifies this autocue path;
+`lcx-problem-cluster-radar` consumes the external radar so missing candidates,
+owner drift, direct runtime authority, or "perfect integration" overclaims
+become repairable clusters instead of silent architecture debt.
+
+Prediction-market sources are weak evidence, not trading instructions. A valid
+research packet needs market id or URL, resolution criteria, close
+date/timezone, source timestamp, orderbook/liquidity timestamp, microstructure
+warning, slippage/fee assumptions, sample-out validation, counterevidence,
+review-panel status, and keep/downrank/discard decision. Strategy work stays
+paper-only and must not connect wallets, place orders, copy trades, route
+private keys, size positions, or chase latency arbitrage.
 
 The default operator goal is proactive error discovery and snapshot refresh.
 For non-trivial engineering, "continue", system hardening, live migration,

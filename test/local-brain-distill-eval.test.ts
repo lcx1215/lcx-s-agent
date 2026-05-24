@@ -1322,6 +1322,49 @@ describe("local-brain-distill-eval", () => {
     expect(payload.summary.promotionReady).toBe(true);
   });
 
+  it("routes prediction-market and Polymarket strategy sources through research-only audit gates", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "prediction_market_research_strategy_distillation",
+        "--summary-only",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { promotionReady: boolean; total: number };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.hierarchy.requestedCaseIds).toEqual([
+      "prediction_market_research_strategy_distillation",
+    ]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "external_knowledge_internalization_protocol",
+        "external_agent_upgrade_five_project_distillation",
+        "source_coverage_actual_reading_scope",
+      ]),
+    );
+    expect(payload.summary.total).toBeGreaterThanOrEqual(5);
+    expect(payload.summary.promotionReady).toBe(true);
+  });
+
   it("requires abstraction-transfer evals to include adjacent prerequisites", () => {
     const result = spawnSync(
       process.execPath,
