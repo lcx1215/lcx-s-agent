@@ -139,12 +139,16 @@ LCX Agent may distill the reusable workflow pattern, but not inherit broad
 desktop-control authority by default.
 Prediction-market and Polymarket-style tools may enter only as weak-evidence
 research intake or paper-only strategy audit. They must carry market id or URL,
-resolution criteria, close date/timezone, orderbook/liquidity timestamp, source
-timestamp, microstructure warning, slippage/fee assumptions, sample-out
-validation, counterevidence, review-panel status, and keep/downrank/discard
-decision before a visible summary. They must never become trading execution,
-wallet/private-key, order-routing, copy-trading, sizing, or latency-arbitrage
-authority.
+one real market metadata packet, resolution criteria, resolution ambiguity
+review, close date/timezone, orderbook/liquidity timestamp, source timestamp,
+thin-liquidity downrank thresholds, microstructure warning, slippage/fee
+assumptions, sample-out validation, counterevidence, paper-strategy failure
+log, review-panel status, and keep/downrank/discard decision before a visible
+summary. Ambiguous resolution blocks conclusions. Thin orderbooks are
+downranked. Strategy results without fees, slippage, and sample-out proof become
+failure logs, not alpha. They must never become trading execution,
+wallet/private-key, order-routing, copy-trading, sizing, forecast authority, or
+latency-arbitrage authority.
 The live/local reply path should not rely only on weak-model memory for common
 LCX skills: deterministic skill preflight may cue one matching installed skill
 before the model answers, while explicit `/skill` commands still take priority.

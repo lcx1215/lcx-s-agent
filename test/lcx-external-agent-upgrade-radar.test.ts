@@ -165,6 +165,8 @@ describe("lcx-external-agent-upgrade-radar", () => {
           "no_trade_advice",
           "no_wallet_or_order_execution",
           "market_microstructure_warning_required",
+          "thin_liquidity_downrank_required",
+          "ambiguous_resolution_blocks_conclusion",
         ]),
       );
       expect(candidate.riskBoundaries).toEqual(
@@ -178,5 +180,25 @@ describe("lcx-external-agent-upgrade-radar", () => {
         ]),
       );
     }
+  });
+
+  it("requires paper-only prediction-market strategies to fail without fees, slippage, and sample-out proof", async () => {
+    const payload = await runRadar();
+    const strategyAudit = payload.candidates.find(
+      (candidate) => candidate.id === "prediction_market_strategy_audit",
+    );
+
+    expect(strategyAudit).toEqual(
+      expect.objectContaining({
+        firstDevProbe: expect.stringContaining("failure log"),
+      }),
+    );
+    expect(strategyAudit?.requiredFilters).toEqual(
+      expect.arrayContaining([
+        "paper_only_backtest_required",
+        "fees_slippage_and_sample_out_required",
+        "thin_liquidity_downrank_required",
+      ]),
+    );
   });
 });

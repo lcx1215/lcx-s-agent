@@ -262,6 +262,9 @@ describe("LCX flow graph exam", () => {
             "no_wallet_or_order_execution",
             "market_microstructure_warning_required",
             "paper_only_backtest_required",
+            "thin_liquidity_downrank_required",
+            "ambiguous_resolution_blocks_conclusion",
+            "fees_slippage_and_sample_out_required",
           ]),
         }),
         expect.objectContaining({

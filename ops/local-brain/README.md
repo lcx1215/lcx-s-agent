@@ -481,12 +481,17 @@ owner drift, direct runtime authority, or "perfect integration" overclaims
 become repairable clusters instead of silent architecture debt.
 
 Prediction-market sources are weak evidence, not trading instructions. A valid
-research packet needs market id or URL, resolution criteria, close
-date/timezone, source timestamp, orderbook/liquidity timestamp, microstructure
-warning, slippage/fee assumptions, sample-out validation, counterevidence,
-review-panel status, and keep/downrank/discard decision. Strategy work stays
-paper-only and must not connect wallets, place orders, copy trades, route
-private keys, size positions, or chase latency arbitrage.
+research packet needs market id or URL, one real market metadata packet,
+resolution criteria, resolution ambiguity review, close date/timezone, source
+timestamp, orderbook/liquidity timestamp, thin-liquidity downrank thresholds,
+microstructure warning, slippage/fee assumptions, sample-out validation,
+counterevidence, paper-strategy failure log, review-panel status, and
+keep/downrank/discard decision. Ambiguous resolution blocks conclusions. Thin
+orderbooks are downranked. Strategy work stays paper-only; if fees, slippage,
+sample-out proof, or failure logs are missing, the strategy is rejected as
+research evidence. It must not connect wallets, place orders, copy trades, route
+private keys, size positions, claim forecast authority, or chase latency
+arbitrage.
 
 The default operator goal is proactive error discovery and snapshot refresh.
 For non-trivial engineering, "continue", system hardening, live migration,

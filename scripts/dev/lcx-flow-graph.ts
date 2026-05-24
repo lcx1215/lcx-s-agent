@@ -141,6 +141,9 @@ type FlowFilterId =
   | "market_microstructure_warning_required"
   | "paper_only_backtest_required"
   | "sample_out_validation_required"
+  | "thin_liquidity_downrank_required"
+  | "ambiguous_resolution_blocks_conclusion"
+  | "fees_slippage_and_sample_out_required"
   | "commercial_error_budget_required"
   | "product_canary_suite_required"
   | "automation_schedule_gate"
@@ -346,6 +349,9 @@ const FILTER_IDS: FlowFilterId[] = [
   "market_microstructure_warning_required",
   "paper_only_backtest_required",
   "sample_out_validation_required",
+  "thin_liquidity_downrank_required",
+  "ambiguous_resolution_blocks_conclusion",
+  "fees_slippage_and_sample_out_required",
   "commercial_error_budget_required",
   "product_canary_suite_required",
   "automation_schedule_gate",
@@ -1037,6 +1043,9 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "market_microstructure_warning_required",
       "paper_only_backtest_required",
       "sample_out_validation_required",
+      "thin_liquidity_downrank_required",
+      "ambiguous_resolution_blocks_conclusion",
+      "fees_slippage_and_sample_out_required",
       "no_wallet_or_order_execution",
       "no_provider_config_change",
       "no_live_sender_change",
@@ -1257,6 +1266,8 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "Polymarket",
       "prediction market",
       "market_microstructure_warning",
+      "thin_liquidity_downrank",
+      "ambiguous_resolution_blocks_conclusion",
       "strategy_experiment_audit",
       "no_wallet_or_order_execution",
     ],
@@ -1265,6 +1276,9 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "no_trade_advice",
       "market_microstructure_warning_required",
       "paper_only_backtest_required",
+      "thin_liquidity_downrank_required",
+      "ambiguous_resolution_blocks_conclusion",
+      "fees_slippage_and_sample_out_required",
       "no_wallet_or_order_execution",
     ],
   },

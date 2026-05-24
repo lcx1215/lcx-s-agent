@@ -1437,4 +1437,39 @@ describe("hardenLocalBrainPlanForAsk", () => {
       ]),
     );
   });
+
+  it("hardens prediction-market learning with liquidity, resolution, and paper-strategy QC gates", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "加强 Polymarket 预测市场研究链：拿一个真实市场做样例包，盘口太薄要降权，结算规则不清楚要挡结论，策略回测缺费用、滑点或样本外就只能失败记录，不能下单。",
+      },
+    );
+
+    expect(plan.task_family).toBe("prediction_market_research_strategy_distillation");
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "example_market_metadata_packet",
+        "resolution_ambiguity_review",
+        "thin_liquidity_downrank_thresholds",
+        "spread_depth_volume_fee_and_slippage_snapshot",
+        "paper_strategy_failure_log",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "thin_liquidity_downrank_required",
+        "ambiguous_resolution_blocks_conclusion",
+        "fees_slippage_and_sample_out_required",
+        "market_probability_not_forecast",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining([
+        "ambiguous_resolution_treated_as_clean_signal",
+        "thin_orderbook_treated_as_strong_signal",
+        "strategy_profit_claim_without_fees_slippage_or_sample_out",
+      ]),
+    );
+  });
 });

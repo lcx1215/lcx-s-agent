@@ -321,9 +321,9 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "orderbook",
     ],
     distilledPattern:
-      "treat prediction markets as weak but useful research sources requiring resolution criteria, timestamp, liquidity, source evidence, and counterevidence",
+      "treat prediction markets as weak but useful research sources requiring a real market metadata packet, resolution criteria, timestamp, liquidity, source evidence, ambiguous-resolution review, thin-liquidity downranking, and counterevidence",
     firstDevProbe:
-      "create a paper-only prediction-market research packet with market metadata, source timestamps, liquidity caveats, and no execution authority",
+      "create a paper-only prediction-market research packet with market metadata, source timestamps, resolution ambiguity review, thin-liquidity downrank decision, liquidity caveats, and no execution authority",
     requiredReceipts: [
       "source_registry",
       "finance-data-gateway",
@@ -337,6 +337,8 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "fresh_timestamp_required",
       "field_definition_required",
       "market_microstructure_warning_required",
+      "thin_liquidity_downrank_required",
+      "ambiguous_resolution_blocks_conclusion",
       "no_wallet_or_order_execution",
     ],
     riskBoundaries: [
@@ -345,6 +347,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_order_placement",
       "no_copy_trading",
       "no_latency_arbitrage",
+      "market_probability_not_forecast",
       "no_provider_config_change",
       "no_live_sender_change",
     ],
@@ -374,7 +377,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     distilledPattern:
       "audit strategies with calibration, slippage, liquidity, resolution-risk, sample-out, and failure logs before treating any result as useful research",
     firstDevProbe:
-      "score one paper-only strategy artifact for overfit, sample-out, slippage, liquidity, and no-execution compliance",
+      "score one paper-only strategy artifact and write a failure log when fees, slippage, sample-out, thin-liquidity, or no-execution compliance is missing",
     requiredReceipts: [
       "source_registry",
       "data_provenance_quality",
@@ -388,6 +391,9 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "paper_only_backtest_required",
       "sample_out_validation_required",
       "market_microstructure_warning_required",
+      "thin_liquidity_downrank_required",
+      "ambiguous_resolution_blocks_conclusion",
+      "fees_slippage_and_sample_out_required",
       "no_wallet_or_order_execution",
     ],
     riskBoundaries: [
@@ -396,6 +402,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_order_placement",
       "no_copy_trading",
       "no_latency_arbitrage",
+      "market_probability_not_forecast",
       "no_provider_config_change",
       "no_live_sender_change",
     ],
