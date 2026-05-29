@@ -67,11 +67,17 @@ type DirectApiPayload = {
   text?: unknown;
   output_text?: unknown;
   message?: { content?: unknown };
+  usage?: unknown;
   choices?: Array<{
     text?: unknown;
     message?: { content?: unknown };
     delta?: { content?: unknown };
   }>;
+};
+
+type TeacherCallResult = {
+  text: string;
+  usage?: unknown;
 };
 
 const DEFAULT_WORKSPACE = path.join(process.env.HOME ?? ".", ".openclaw", "workspace");
@@ -605,7 +611,7 @@ function readOpenClawAgentPayload(raw: string): string {
 async function callMinimaxViaOpenClawAgent(
   options: CliOptions,
   input: TeacherPrompt,
-): Promise<string> {
+): Promise<TeacherCallResult> {
   const sessionId = `minimax-teacher-${input.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const raw = await runCommand("node", [
     "scripts/run-node.mjs",
@@ -624,7 +630,7 @@ async function callMinimaxViaOpenClawAgent(
     "--timeout",
     String(options.timeoutSeconds),
   ]);
-  return readOpenClawAgentPayload(raw);
+  return { text: readOpenClawAgentPayload(raw) };
 }
 
 function collectStringLeaves(value: unknown, output: string[] = [], depth = 0): string[] {
@@ -712,7 +718,19 @@ export function extractMiniMaxTeacherTextFromResponse(responseText: string): str
   );
 }
 
-async function callMinimaxDirectApi(options: CliOptions, input: TeacherPrompt): Promise<string> {
+function extractMiniMaxTeacherUsageFromResponse(responseText: string): unknown {
+  try {
+    const payload = JSON.parse(responseText) as DirectApiPayload;
+    return payload.usage;
+  } catch {
+    return undefined;
+  }
+}
+
+async function callMinimaxDirectApi(
+  options: CliOptions,
+  input: TeacherPrompt,
+): Promise<TeacherCallResult> {
   let apiKey = options.apiKey;
   if (!apiKey) {
     const cfg = loadConfig();
@@ -752,10 +770,16 @@ async function callMinimaxDirectApi(options: CliOptions, input: TeacherPrompt): 
   if (!response.ok) {
     throw new Error(`MiniMax teacher call failed ${response.status}: ${text.slice(0, 500)}`);
   }
-  return extractMiniMaxTeacherTextFromResponse(text);
+  return {
+    text: extractMiniMaxTeacherTextFromResponse(text),
+    usage: extractMiniMaxTeacherUsageFromResponse(text),
+  };
 }
 
-async function callMinimaxTeacher(options: CliOptions, input: TeacherPrompt): Promise<string> {
+async function callMinimaxTeacher(
+  options: CliOptions,
+  input: TeacherPrompt,
+): Promise<TeacherCallResult> {
   return options.source === "openclaw-agent"
     ? callMinimaxViaOpenClawAgent(options, input)
     : callMinimaxDirectApi(options, input);
@@ -2771,7 +2795,7 @@ async function callTeacherWithFallback(
   options: CliOptions,
   directApiFallbackPromptIds: string[],
   input: TeacherPrompt,
-): Promise<string> {
+): Promise<TeacherCallResult> {
   try {
     return await callMinimaxTeacher(options, input);
   } catch (error) {
@@ -2812,6 +2836,7 @@ async function main(): Promise<void> {
   const acceptedCandidates: LarkBrainDistillationCandidate[] = [];
   const failures: Array<{ id: string; error: string }> = [];
   const directApiFallbackPromptIds: string[] = [];
+  const providerUsageReceipts: Array<{ id: string; usage: unknown }> = [];
 
   async function processTeacherPrompt(prompt: TeacherPrompt): Promise<void> {
     let lastError: unknown;
@@ -2821,10 +2846,14 @@ async function main(): Promise<void> {
           const raw = options.mock
             ? JSON.stringify(mockTeacherPlan(prompt))
             : await callTeacherWithFallback(options, directApiFallbackPromptIds, prompt);
+          const teacherText = typeof raw === "string" ? raw : raw.text;
+          if (typeof raw !== "string" && raw.usage !== undefined) {
+            providerUsageReceipts.push({ id: prompt.id, usage: raw.usage });
+          }
           acceptedCandidates.push(
             makeAcceptedCandidate(
               prompt,
-              hardenTeacherPlanForPrompt(prompt, normalizeTeacherPlan(extractJson(raw))),
+              hardenTeacherPlanForPrompt(prompt, normalizeTeacherPlan(extractJson(teacherText))),
             ),
           );
           lastError = undefined;
@@ -2923,6 +2952,7 @@ async function main(): Promise<void> {
     partialWriteRefused,
     acceptedCandidates: acceptedCandidates.length,
     failures: hardFailures,
+    providerUsageReceipts,
     liveTouched: false,
     providerConfigTouched: false,
     originalPipelineReplaced: false,

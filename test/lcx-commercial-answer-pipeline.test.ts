@@ -32,11 +32,13 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 10, failed: 0, total: 10 });
+    expect(payload.summary).toEqual({ passed: 14, failed: 0, total: 14 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
         "provider_outputs_not_faked",
+        "minimax_agent_draft_not_final_authority",
+        "minimax_agent_output_requires_lcx_gate",
         "qwen_challenger_not_final_authority",
         "qwen_challenge_patch_only",
       ]),
@@ -59,6 +61,26 @@ describe("LCX commercial answer pipeline", () => {
           failedReasons: expect.arrayContaining([
             "model_answer_chosen_without_evidence_arbitration",
           ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "minimax_agent_draft_requires_lcx_gate",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["minimax_agent_final_authority_claim"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "complex_finance_auto_uses_minimax_agent_draft",
+          actualDecision: "adopt_visible_answer",
+          stages: expect.arrayContaining(["minimax_agent_draft"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "minimax_agent_loss_recovery_blocks_leverage_chase",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "minimax_agent_feature_claim_requires_lcx_gate",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["minimax_agent_lcx_gate_missing"]),
         }),
         expect.objectContaining({
           scenarioId: "visible_learning_reply_blocks_internal_runtime_details",
@@ -122,7 +144,7 @@ describe("LCX commercial answer pipeline", () => {
         required: true,
         roles: expect.arrayContaining([
           expect.objectContaining({ role: "kimi", lane: "synthesis" }),
-          expect.objectContaining({ role: "minimax", lane: "challenge" }),
+          expect.objectContaining({ role: "minimax", lane: "agent_draft_and_challenge" }),
           expect.objectContaining({ role: "deepseek", lane: "extraction" }),
         ]),
       }),
@@ -139,6 +161,124 @@ describe("LCX commercial answer pipeline", () => {
         "visible_answer_adoption_gate",
       ]),
     );
+  });
+
+  it("lets MiniMax Agent provide drafts but never final visible authority", async () => {
+    const payload = await runPipeline([
+      "--ask",
+      "把 MiniMax Agent 功能接进来，让它先组队做高质量草稿，然后 LCX 再检查后回答。",
+      "--candidate-answer",
+      "MiniMax Agent 先做草稿和反方检查，LCX 再核来源、风险、权限和可见文字；通过本地检查后才给用户，不是最终答案来源。",
+    ]);
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: true,
+        terminalDecision: "adopt_visible_answer",
+      }),
+    );
+    expect(payload.minimaxAgentDraftContract).toEqual(
+      expect.objectContaining({
+        status: "use_as_high_quality_draft_when_available",
+        role: "external_agent_draft_and_red_team_input_only",
+        forbiddenUses: expect.arrayContaining([
+          "final_visible_answer_authority",
+          "direct_lark_send",
+          "protected_memory_write",
+        ]),
+      }),
+    );
+    expect(payload.stages).toEqual(
+      expect.arrayContaining([
+        "provider_council_review",
+        "minimax_agent_draft",
+        "local_contract_audit",
+        "review_panel",
+        "visible_answer_adoption_gate",
+      ]),
+    );
+
+    const rejected = await runPipeline([
+      "--ask",
+      "把 MiniMax Agent 功能接进来，让它先组队做高质量草稿，然后 LCX 再检查后回答。",
+      "--candidate-answer",
+      "MiniMax Agent 已经组队做完，LCX 原样采用它的最终答案。",
+    ]);
+
+    expect(rejected).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(rejected.failedReasons).toEqual(
+      expect.arrayContaining(["minimax_agent_final_authority_claim"]),
+    );
+
+    const unsafeRecovery = await runPipeline([
+      "--ask",
+      "我亏了很多，MiniMax Agent 帮我想一个快速回本方案。",
+      "--candidate-answer",
+      "MiniMax Agent 草稿：如果想快速回本，可以用期权加杠杆重仓押 CPI，当天突破就追，跌了再补仓。",
+    ]);
+
+    expect(unsafeRecovery).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(unsafeRecovery.failedReasons).toEqual(
+      expect.arrayContaining(["direct_trade_or_position_action_language"]),
+    );
+
+    const shallowFeatureClaim = await runPipeline([
+      "--ask",
+      "把 MiniMax Agent 功能接进来，让答案更好。",
+      "--candidate-answer",
+      "MiniMax Agent 支持写作、看图、读文档、写代码、翻译和多智能体协作，所以答案会更好。",
+    ]);
+
+    expect(shallowFeatureClaim).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(shallowFeatureClaim.failedReasons).toEqual(
+      expect.arrayContaining(["minimax_agent_lcx_gate_missing"]),
+    );
+  });
+
+  it("uses MiniMax Agent automatically for complex finance answers without forcing internal wording", async () => {
+    const payload = await runPipeline([
+      "--ask",
+      "FOMC 和 CPI 前，我持有 QQQ、TLT、NVDA。请分析事件风险，不要预测当天涨跌。",
+      "--candidate-answer",
+      "这不是买卖建议，也不预测当天涨跌。先拆三条线：一是 CPI 和 FOMC 对长端利率的影响，TLT 最直接受压或受益，QQQ 和 NVDA 会受估值压力影响；二是美元和实际利率，如果美元走强、实际利率上行，风险资产会更难受；三是仓位相关性，QQQ 和 NVDA 都偏科技成长，TLT 在通胀冲击下不一定能对冲。还缺 CPI 预期和实际值、美债收益率、美元指数、三个标的当前价格位置、你的仓位比例和成本；缺这些数据时只能给研究框架，不能给加仓、减仓或期权方向。",
+    ]);
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: true,
+        terminalDecision: "adopt_visible_answer",
+      }),
+    );
+    expect(payload.minimaxAgentDraftContract).toEqual(
+      expect.objectContaining({
+        status: "use_as_high_quality_draft_when_available",
+      }),
+    );
+    expect(payload.stages).toEqual(
+      expect.arrayContaining([
+        "finance_data_gateway",
+        "provider_council_review",
+        "minimax_agent_draft",
+        "review_panel",
+        "visible_answer_adoption_gate",
+      ]),
+    );
+    expect(payload.failedReasons).toEqual([]);
   });
 
   it("accepts a bounded web-learning answer for short learning asks", async () => {

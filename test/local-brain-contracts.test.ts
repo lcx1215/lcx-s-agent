@@ -106,6 +106,93 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.rejected_context).toContain("direct_buy_sell_answer");
   });
 
+  it("routes synthetic single-stock curve analysis to technical timing without trade advice", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "纯合成单个股60日OHLCV曲线测试，不涉及实时行情：前20天价格缓慢上行但成交量递减；第25天放量跳空上破前高，三天后回补缺口；第35天反弹但未创新高；第45天跌破20日均线后缩量横盘；第55天放量长下影线守住前低。请判断趋势阶段、量价背离、支撑阻力、假突破、二次确认、失效条件、还缺哪些OHLCV字段和均线/波动率输入，并说明技术面只能作为 timing，必须接基本面和组合风险门；禁止买卖建议。",
+      },
+    );
+
+    expect(plan.task_family).toBe("single_stock_curve_technical_timing_preflight");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "technical_timing",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "source_registry",
+        "data_provenance_quality",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "single_stock_ohlcv_price_volume_series",
+        "moving_average_volatility_and_gap_inputs",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "latest_company_fundamental_inputs",
+        "position_weights_cost_basis_and_risk_limits",
+        "invalidation_condition_for_timing_signal",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "technical_timing_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining(["direct_buy_sell_answer", "technical_timing_as_standalone_alpha"]),
+    );
+  });
+
+  it("turns potential-stock asks into opportunity research without becoming a buy list", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "帮我找未来 6-18 个月潜在好股，不止半导体，也看能源、医疗、金融、工业和小中盘，研究胆子要大但别直接喊买。",
+      },
+    );
+
+    expect(plan.task_family).toBe("offensive_stock_opportunity_research");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "technical_timing",
+        "portfolio_risk_gates",
+        "source_registry",
+        "review_panel",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "candidate_universe_and_exclusion_rules",
+        "sector_scope_and_style_bucket",
+        "latest_company_fundamental_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
+        "upside_driver_and_market_mispricing_hypothesis",
+        "red_team_invalidation_evidence",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "opportunity_ranking_not_buy_list",
+        "small_position_trial_requires_user_constraints",
+        "red_team_invalidation_required",
+        "no_trade_advice",
+      ]),
+    );
+    expect(plan.rejected_context).toEqual(
+      expect.arrayContaining([
+        "overly_conservative_refusal_only",
+        "direct_buy_list_without_sources",
+      ]),
+    );
+  });
+
   it("expands broad finance asks into dedicated module coverage", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

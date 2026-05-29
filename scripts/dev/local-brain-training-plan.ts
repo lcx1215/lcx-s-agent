@@ -335,12 +335,37 @@ type EvolutionAccelerationQueueSnapshot = {
   objective: "shorten_safe_feedback_loop_without_overlapping_training";
   activeTrainingOrEval: boolean;
   canStartHeavyWorkNow: boolean;
+  activeNonIdleProgress: ActiveNonIdleProgressSnapshot;
   readyNowCount: number;
   idleOnlyCount: number;
   blockedCount: number;
   fastestSafeNextAction: string;
   steps: EvolutionAccelerationStep[];
   notes: string[];
+};
+
+type ActiveNonIdleProgressSnapshot = {
+  boundary: "dev_active_non_idle_progress_only";
+  isEmptyWait: false;
+  status:
+    | "active_eval_in_progress"
+    | "blocked_challenger_harvested_and_next_eval_running"
+    | "owner_action_ready_now"
+    | "idle_action_ready"
+    | "observability_only";
+  activeProcessCount: number;
+  activeEvalAdapters: string[];
+  activeEvalPids: number[];
+  activeMlxPids: number[];
+  latestBlockedAdapter?: string;
+  latestBlockedAt?: string;
+  latestBlockedCaseIds: string[];
+  selectedCleanAdapter?: string;
+  selectedCleanPromotionReady?: boolean;
+  nextIdleAction?: string;
+  nextIdleCommand?: string;
+  watchFor: string[];
+  reason: string;
 };
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -358,7 +383,11 @@ const normalizeWorkspaceDir = (value?: string): string => {
 const buildRepairLockCommand = (worktree: string): string =>
   `node --import tsx scripts/dev/lcx-automation-repair-lock.ts --mode acquire --lane local-brain-training-plan --worktree ${quoteShellArg(worktree)} --json`;
 const buildMediumTrainingCommand = (logPath: string): string =>
-  `node --import tsx scripts/dev/minimax-brain-training-guard.ts --duration-minutes 285 --batch-limit 20 --teacher-profile minimax-plus-brain --teacher-duration-minutes 12 --teacher-concurrency 6 --teacher-sidecar --teacher-sidecar-max-calls 900 --teacher-sidecar-batch-limit 36 --teacher-sidecar-concurrency 8 --train-every 2 --eval-every 1 --train-iters 40 --load-max 100 --train-load-max 12 --log ${quoteShellArg(logPath)}`;
+  `node --import tsx scripts/dev/minimax-brain-training-guard.ts --duration-minutes 285 --batch-limit 20 --teacher-profile minimax-plus-brain --teacher-duration-minutes 12 --teacher-concurrency 6 --teacher-sidecar --teacher-sidecar-max-calls 900 --teacher-sidecar-batch-limit 36 --teacher-sidecar-concurrency 8 --train-every 2 --eval-every 1 --evolution-cooldown-minutes 10 --train-iters 40 --load-max 100 --train-load-max 12 --log ${quoteShellArg(logPath)}`;
+const extractAdapterFromCommand = (command: string): string | undefined => {
+  const match = /--adapter(?:-path)?\s+(?:"([^"]+)"|'([^']+)'|(\S+))/u.exec(command);
+  return match?.[1] ?? match?.[2] ?? match?.[3];
+};
 
 const execFileAsync = promisify(execFile);
 const QWEN_MIGRATION_CURRENT_MODEL = "Qwen/Qwen3-0.6B" as const;
@@ -474,6 +503,24 @@ function latestEvent(
   return events
     .filter(predicate)
     .toSorted((left, right) => eventTime(right).localeCompare(eventTime(left)))[0];
+}
+
+function evolutionCooldownSummary(event: JsonRecord | undefined): JsonRecord | undefined {
+  if (!event) {
+    return undefined;
+  }
+  return {
+    at: eventTime(event),
+    round: typeof event.round === "number" ? event.round : undefined,
+    durationMs: typeof event.durationMs === "number" ? event.durationMs : undefined,
+    requestedDurationMs:
+      typeof event.requestedDurationMs === "number" ? event.requestedDurationMs : undefined,
+    reason: stringField(event, "reason"),
+    ownerWindow: asStringArray(event.ownerWindow),
+    heavyWorkPaused: event.heavyWorkPaused === true,
+    liveTouched: false,
+    providerConfigTouched: false,
+  };
 }
 
 function asStringArray(value: unknown): string[] {
@@ -1334,6 +1381,30 @@ function activeHeavyEvalSummary(activeProcesses: ActiveTrainingProcess[]) {
   };
 }
 
+export function activeGuardEvolutionCooldownSnapshot(activeProcesses: ActiveTrainingProcess[]) {
+  const guards = activeProcesses.filter((process) => process.role === "guard");
+  const missingCooldown = guards.filter(
+    (process) => !process.command.includes("--evolution-cooldown-minutes"),
+  );
+  return {
+    boundary: "dev_active_guard_evolution_cooldown_only",
+    activeGuardCount: guards.length,
+    activeGuardHasEvolutionCooldown: guards.length > 0 && missingCooldown.length === 0,
+    guardsMissingCooldownFlag: missingCooldown.length,
+    missingCooldownPids: missingCooldown
+      .map((process) => process.pid)
+      .filter((pid): pid is number => typeof pid === "number"),
+    action:
+      missingCooldown.length > 0
+        ? "do_not_restart_current_guard_wait_for_next_launchd_start"
+        : "cooldown_flag_present_or_no_active_guard",
+    reason:
+      missingCooldown.length > 0
+        ? "active guard was launched before the work-then-evolve cooldown flag; current work should finish naturally"
+        : "active guard command already carries the work-then-evolve cooldown flag or no guard is active",
+  };
+}
+
 function qwenMigrationCandidateCachePath(homeDir = process.env.HOME ?? os.homedir()): string {
   const hfHome = process.env.HF_HOME;
   const hubDir = hfHome
@@ -1500,6 +1571,7 @@ function buildDecisions(params: {
 }): TrainingDecision[] {
   const decisions: TrainingDecision[] = [];
   const active = params.activeProcesses.length > 0;
+  const activeGuardEvolutionCooldown = activeGuardEvolutionCooldownSnapshot(params.activeProcesses);
   decisions.push({
     id: active ? "training_already_active" : "training_not_active",
     lane: "training",
@@ -1520,6 +1592,18 @@ function buildDecisions(params: {
       action: "hold_new_training_and_debug_overlap",
       reason:
         "local-brain-training-plan detected overlapping heavy local-brain eval while the guard is active.",
+      codexRepairEligible: false,
+    });
+  }
+
+  if (activeGuardEvolutionCooldown.guardsMissingCooldownFlag > 0) {
+    decisions.push({
+      id: "active_guard_missing_evolution_cooldown_flag",
+      lane: "training_guard",
+      severity: "P3",
+      action: "do_not_restart_current_guard_wait_for_next_launchd_start",
+      reason:
+        "The active guard command lacks --evolution-cooldown-minutes, so this already-running process cannot prove work-then-evolve cooldown. Let it finish naturally; the updated launchd/owner command should add the flag on the next start.",
       codexRepairEligible: false,
     });
   }
@@ -2019,12 +2103,75 @@ function buildEvolutionAccelerationQueue(params: {
       ? "wait_for_current_training_eval_then_run_idle_queue"
       : (sortedSteps.find((step) => step.status === "ready_when_idle")?.id ??
         "continue_observability_no_acceleration_step"));
+  const activeEvalProcesses = params.activeProcesses.filter(
+    (process) => process.role === "local_brain_eval",
+  );
+  const activeMlxProcesses = params.activeProcesses.filter((process) => process.role === "mlx");
+  const activeEvalAdapters = [
+    ...new Set(
+      [...activeEvalProcesses, ...activeMlxProcesses]
+        .map((process) => extractAdapterFromCommand(process.command))
+        .filter((adapter): adapter is string => Boolean(adapter)),
+    ),
+  ];
+  const latestBlocked = params.qwenCapabilityConsolidation.adapterLadder.latestBlockedChallenger;
+  const latestBlockedEval = latestBlocked?.eval;
+  const latestBlockedCaseIds = params.qwenCapabilityConsolidation.capabilityHarvest.harvestCaseIds;
+  const readyNowStep = sortedSteps.find((step) => step.status === "ready_now");
+  const nextIdleStep = sortedSteps.find((step) =>
+    ["ready_when_idle", "blocked_by_active_training"].includes(step.status),
+  );
+  const activeNonIdleProgress: ActiveNonIdleProgressSnapshot = {
+    boundary: "dev_active_non_idle_progress_only",
+    isEmptyWait: false,
+    status: activeHeavyWork
+      ? latestBlockedCaseIds.length > 0
+        ? "blocked_challenger_harvested_and_next_eval_running"
+        : "active_eval_in_progress"
+      : readyNowStep
+        ? "owner_action_ready_now"
+        : nextIdleStep
+          ? "idle_action_ready"
+          : "observability_only",
+    activeProcessCount: params.activeProcesses.length,
+    activeEvalAdapters,
+    activeEvalPids: activeEvalProcesses
+      .map((process) => process.pid)
+      .filter((pid): pid is number => typeof pid === "number"),
+    activeMlxPids: activeMlxProcesses
+      .map((process) => process.pid)
+      .filter((pid): pid is number => typeof pid === "number"),
+    latestBlockedAdapter: latestBlocked?.adapterPath,
+    latestBlockedAt: latestBlockedEval?.at,
+    latestBlockedCaseIds,
+    selectedCleanAdapter: params.qwenCapabilityConsolidation.selectedCleanAdapter,
+    selectedCleanPromotionReady:
+      params.qwenCapabilityConsolidation.selectedCleanEval?.promotionReady,
+    nextIdleAction: readyNowStep?.id ?? nextIdleStep?.id,
+    nextIdleCommand: readyNowStep?.command ?? nextIdleStep?.command,
+    watchFor: [
+      "active_eval_or_mlx_finished",
+      "latest_candidate_parse_recovered_or_failed_changed",
+      "targeted_eval_cases_become_clean",
+      "live_binding_owner_status_ready_for_apply",
+    ],
+    reason: activeHeavyWork
+      ? latestBlockedCaseIds.length > 0
+        ? `Latest blocked challenger cases are harvested (${latestBlockedCaseIds.join(",")}); current eval/MLX is still active, so the next command stays queued until idle.`
+        : "Current guard/eval/MLX is active; keep observing process progress and run the queued owner step immediately after idle."
+      : readyNowStep
+        ? `Owner step is ready now: ${readyNowStep.id}.`
+        : nextIdleStep
+          ? `Idle-only owner step is ready: ${nextIdleStep.id}.`
+          : "No acceleration step is currently available; continue observability.",
+  };
 
   return {
     boundary: "dev_evolution_acceleration_queue_only",
     objective: "shorten_safe_feedback_loop_without_overlapping_training",
     activeTrainingOrEval,
     canStartHeavyWorkNow,
+    activeNonIdleProgress,
     readyNowCount,
     idleOnlyCount,
     blockedCount,
@@ -2091,7 +2238,12 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const worktree = normalizeWorktree(options.worktree);
   const workspaceDir = normalizeWorkspaceDir(options.workspaceDir);
   const activeProcesses = await activeTrainingProcesses(options.processCheck);
+  const latestGuardEvent = latestEvent(guardEvents, () => true);
   const latestGuardStart = latestEvent(guardEvents, (event) => event.event === "guard_start");
+  const latestEvolutionCooldown = latestEvent(
+    guardEvents,
+    (event) => event.event === "evolution_cooldown",
+  );
   const latestGuardFailure = latestEvent(guardEvents, (event) => event.event === "guard_failed");
   const latestDataset = latestEvent(
     guardEvents,
@@ -2148,6 +2300,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestPromotedAt,
   });
   const activeHeavyEval = activeHeavyEvalSummary(activeProcesses);
+  const activeGuardEvolutionCooldown = activeGuardEvolutionCooldownSnapshot(activeProcesses);
   const liveLarkBrainBinding = liveLarkBrainBindingSnapshot({
     activeProcesses,
     activeHeavyEvalCounts: activeHeavyEval.counts,
@@ -2213,6 +2366,18 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     activeHeavyEvalCounts: activeHeavyEval.counts,
     overlappingHeavyEval: activeHeavyEval.overlappingHeavyEval,
     latestGuardStartAt,
+    latestGuardEvent: latestGuardEvent
+      ? {
+          at: eventTime(latestGuardEvent),
+          event: latestGuardEvent.event,
+          name: latestGuardEvent.name,
+          round: latestGuardEvent.round,
+        }
+      : undefined,
+    latestEvolutionCooldown: evolutionCooldownSummary(latestEvolutionCooldown),
+    evolutionCooldownActive:
+      latestGuardEvent?.event === "evolution_cooldown" && activeProcesses.length > 0,
+    activeGuardEvolutionCooldown,
     latestDataset: datasetSummary(latestDataset),
     latestTrainSlice: trainSliceSummary(latestTrainSlice),
     onDiskLocalBrainDataset,

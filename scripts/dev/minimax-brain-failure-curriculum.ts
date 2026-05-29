@@ -122,6 +122,14 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
       "targeted repair for human-like finance decomposition with memory activation, causal layers, missing data, review, and readable summary.",
   },
   {
+    caseId: "offensive_stock_opportunity_research",
+    priority: 115,
+    userMessage:
+      "训练本地大脑处理“推荐股/潜在好股/美光 vs SK 海力士/跨行业机会”这类问题：研究胆子要大，不止看半导体，也要能覆盖能源、医疗、金融、工业、消费、软件、小中盘和周期股；先做 6-18 个月候选池、行业/风格桶、市场可能漏看的 mispricing hypothesis、上涨驱动、基本面质量、估值区间、安全边际、催化剂、反证、技术 timing 背景和机会分级；但不能输出买入清单、仓位比例或下单语言，小仓位试错也必须先要用户约束和风险预算。",
+    sourceSummary:
+      "targeted repair for cross-sector offensive stock-opportunity research; trains forward-looking watchlist generation while keeping research-only risk gates and no-trade boundary.",
+  },
+  {
     caseId: "local_memory_knowledge_activation",
     priority: 114,
     userMessage:

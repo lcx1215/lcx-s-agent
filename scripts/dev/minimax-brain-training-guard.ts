@@ -20,6 +20,7 @@ type CliOptions = {
   durationAutoUpgraded: boolean;
   trainEvery: number;
   evalEvery: number;
+  evolutionCooldownMinutes: number;
   trainIters: number;
   loadMax: number;
   trainLoadMax: number;
@@ -100,6 +101,7 @@ const HARDENED_EVAL_STEP_TIMEOUT_MS = 60 * 60 * 1000;
 const HARDENED_EVAL_IDLE_TIMEOUT_MS = 12 * 60 * 1000;
 const STABLE_EVAL_TIMEOUT_BACKOFF_MS = 5 * 60_000;
 const STABLE_EVAL_NON_PASSING_BACKOFF_MS = 5 * 60_000;
+const DEFAULT_EVOLUTION_COOLDOWN_MINUTES = 10;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 
@@ -122,6 +124,7 @@ function usage(): never {
       "  --teacher-sidecar-concurrency N       sidecar concurrency, default 8",
       "  --train-every N         train every N rounds, default 2",
       "  --eval-every N          eval current/new adapter every N rounds, default 1",
+      "  --evolution-cooldown-minutes N  pause after each round for owner-led evolution, default 10",
       "  --train-iters N         MLX LoRA iters, default 40",
       "  --train-slice-dir DIR   bounded balanced MLX train data dir, default <data>-train-slice",
       "  --train-slice-max-review-examples N  review examples kept in local train slice, default 1024",
@@ -193,6 +196,7 @@ function parseArgs(args: string[]): CliOptions {
     durationAutoUpgraded: false,
     trainEvery: 2,
     evalEvery: 1,
+    evolutionCooldownMinutes: DEFAULT_EVOLUTION_COOLDOWN_MINUTES,
     trainIters: 40,
     loadMax: DEFAULT_LOAD_MAX,
     trainLoadMax: DEFAULT_TRAIN_LOAD_MAX,
@@ -257,6 +261,9 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--eval-every") {
       options.evalEvery = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--evolution-cooldown-minutes") {
+      options.evolutionCooldownMinutes = readPositiveInteger(readValue(args, index));
       index += 1;
     } else if (arg === "--train-iters") {
       options.trainIters = readPositiveInteger(readValue(args, index));
@@ -1433,6 +1440,43 @@ async function runJsonStep(
   return parsed;
 }
 
+async function runEvolutionCooldown(
+  options: CliOptions,
+  round: number,
+  deadline: number,
+): Promise<void> {
+  if (options.evolutionCooldownMinutes <= 0) {
+    return;
+  }
+  const requestedDurationMs = options.evolutionCooldownMinutes * 60_000;
+  const remainingMs = Math.max(0, deadline - Date.now());
+  const durationMs = Math.min(requestedDurationMs, remainingMs);
+  if (durationMs <= 0) {
+    return;
+  }
+  await appendLog(options.logPath, {
+    event: "evolution_cooldown",
+    round,
+    durationMs,
+    requestedDurationMs,
+    reason: "work_then_evolve_window_before_next_heavy_round",
+    ownerWindow: [
+      "governance_autopilot",
+      "monotonic_data_ledger",
+      "module_learning_review",
+      "promotion_truth",
+      "live_binding_readiness",
+    ],
+    heavyWorkPaused: true,
+    liveTouched: false,
+    providerConfigTouched: false,
+  });
+  process.stdout.write(
+    `[minimax-guard] round=${round} evolution_cooldown=${Math.round(durationMs / 1000)}s\n`,
+  );
+  await sleep(durationMs);
+}
+
 function systemLoad1m(): number {
   return os.loadavg()[0] ?? 0;
 }
@@ -2119,6 +2163,7 @@ try {
                 providerConfigTouched: false,
               });
               await sleep(backoff.durationMs);
+              await runEvolutionCooldown(options, round, deadline);
               continue;
             }
           }
@@ -2152,6 +2197,7 @@ try {
           liveTouched: false,
           providerConfigTouched: false,
         });
+        await runEvolutionCooldown(options, round, deadline);
         continue;
       }
       if (shouldRunRecoveryTrain) {
@@ -2175,6 +2221,7 @@ try {
           liveTouched: false,
           providerConfigTouched: false,
         });
+        await runEvolutionCooldown(options, round, deadline);
         continue;
       }
       if (!resumeAdapter && !options.bootstrapIfMissing) {
@@ -2187,6 +2234,7 @@ try {
           liveTouched: false,
           providerConfigTouched: false,
         });
+        await runEvolutionCooldown(options, round, deadline);
         continue;
       }
       const candidateAdapter = adapterPathForRound(options, round);
@@ -2227,6 +2275,7 @@ try {
             liveTouched: false,
             providerConfigTouched: false,
           });
+          await runEvolutionCooldown(options, round, deadline);
           continue;
         }
         await appendLog(options.logPath, {
@@ -2240,6 +2289,7 @@ try {
           providerConfigTouched: false,
         });
         await sleep(TRAIN_SKIP_BACKOFF_MS);
+        await runEvolutionCooldown(options, round, deadline);
         continue;
       }
       const candidateEval = await runJsonStep(
@@ -2390,6 +2440,7 @@ try {
         });
       }
     }
+    await runEvolutionCooldown(options, round, deadline);
   }
   await appendLog(options.logPath, {
     event: "guard_complete",

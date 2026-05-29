@@ -190,6 +190,19 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain("local_mlx_train_resource_guard_skip");
   });
 
+  it("keeps a per-round evolution window instead of immediately pressuring the next round", async () => {
+    const source = await fs.readFile(
+      path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("DEFAULT_EVOLUTION_COOLDOWN_MINUTES = 10");
+    expect(source).toContain("--evolution-cooldown-minutes");
+    expect(source).toContain('event: "evolution_cooldown"');
+    expect(source).toContain("work_then_evolve_window_before_next_heavy_round");
+    expect(source).toContain("runEvolutionCooldown(options, round, deadline)");
+  });
+
   it("trains local Qwen from a bounded balanced slice instead of the full noisy corpus", async () => {
     const source = await fs.readFile(
       path.resolve(import.meta.dirname, "..", "scripts/dev/minimax-brain-training-guard.ts"),

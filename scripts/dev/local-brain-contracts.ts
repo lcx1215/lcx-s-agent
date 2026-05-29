@@ -717,6 +717,7 @@ function looksLikePlainBuyHoldBoundary(text: string): boolean {
   return (
     !looksLikePaperLearningWithSource(text) &&
     !looksLikeExternalKnowledgeInternalizationProtocol(text) &&
+    !looksLikeOffensiveStockOpportunityResearch(text) &&
     !looksLikeMacroEventRiskPreflight(text) &&
     !looksLikeFullStackFinanceStressTest(text) &&
     !looksLikeCrossMarketFinance(text) &&
@@ -724,6 +725,41 @@ function looksLikePlainBuyHoldBoundary(text: string): boolean {
       text,
     ) &&
     /(股票|个股|qqq|spy|nvda|msft|aapl|tlt|etf|stock|position|仓位|持仓)?/iu.test(text)
+  );
+}
+
+function looksLikeOffensiveStockOpportunityResearch(text: string): boolean {
+  if (
+    looksLikeFullStackFinanceStressTest(text) ||
+    looksLikeBroadFinanceModuleCoverage(text) ||
+    looksLikeCrossMarketFinance(text) ||
+    looksLikeFinancialModelingValuationQc(text) ||
+    looksLikeThesisCatalystLifecycle(text) ||
+    looksLikeDataProvenanceQuality(text) ||
+    looksLikeResearchArtifactQc(text) ||
+    looksLikeExternalFinancialAgentPatternLearning(text)
+  ) {
+    return false;
+  }
+  const asksForOpportunity =
+    /(推荐股|好股|潜在.{0,8}股|选股|股票池|观察池|跨行业|全市场|行业轮动|watchlist|stock pick|stock screen|opportunit|mispricing|upside|alpha candidate|被低估|低估|弹性|前瞻|冒险|小仓位|试错)/iu.test(
+      text,
+    );
+  const namesThematicOpportunity =
+    /(美光|micron|\bmu\b|sk\s*海力士|海力士|hynix|三星|samsung|hbm|dram|nand|存储|半导体|ai\s*supply chain|ai\s*供应链|能源|油气|电力|公用事业|医疗|医药|生物科技|金融|银行|保险|工业|军工|航空|消费|零售|软件|网络安全|小盘|中盘|周期股|commodity producer|energy|utility|healthcare|biotech|financials?|banks?|insurance|industrials?|defen[cs]e|consumer|software|cybersecurity|small caps?|mid caps?)/iu.test(
+      text,
+    ) &&
+    /(对比|谁更好|谁更有弹性|机会|潜在|好股|选股|推荐|研究|估值|周期|前瞻|冒险|轮动|被低估|mispricing|upside)/iu.test(
+      text,
+    );
+  return (
+    !looksLikePaperLearningWithSource(text) &&
+    !looksLikeExternalKnowledgeInternalizationProtocol(text) &&
+    !looksLikePredictionMarketResearchStrategyLearning(text) &&
+    (asksForOpportunity || namesThematicOpportunity) &&
+    /(股票|个股|公司|美股|行业|板块|科技股|equity|stock|company|sector|candidate|watchlist|screen|研究|推荐|找|pick|idea|idea generation)/iu.test(
+      text,
+    )
   );
 }
 
@@ -913,6 +949,7 @@ function looksLikeCurrentMarketDataFreshnessGap(text: string): boolean {
     ) || /现在.{0,16}(怎么看|走势|涨跌|价格|行情|market|price)/iu.test(text);
   return (
     asksForFreshMarketData &&
+    !looksLikeSingleStockCurveTechnicalTiming(text) &&
     !looksLikeFullStackFinanceStressTest(text) &&
     !looksLikeCrossMarketFinance(text) &&
     !looksLikeFilingResearchMissingEvidence(text) &&
@@ -992,6 +1029,28 @@ function looksLikeTechnicalTimingNotStandalone(text: string): boolean {
       text,
     ) &&
     /(单独|只看|only|standalone|独立|alpha|预测|择时|timing|入场|出场|买点|卖点)/iu.test(text)
+  );
+}
+
+function looksLikeSingleStockCurveTechnicalTiming(text: string): boolean {
+  const namesSingleStock =
+    /(单个股|单只个股|个股|单只股票|single[-_ ]?stock|single[-_ ]?company|stock curve)/iu.test(
+      text,
+    );
+  const namesCurveSurface =
+    /(ohlcv|k线|蜡烛图|曲线|价量|量价|成交量|volume|均线|ma\b|20日线|20日均线|趋势|trend|支撑|阻力|support|resistance|跳空|缺口|gap|前高|前低|长下影|下影线|突破|breakout|回补|二次确认|假突破)/iu.test(
+      text,
+    );
+  const asksForDiagnosis =
+    /(考验|测试|判断|诊断|拆解|分析|趋势阶段|量价背离|支撑阻力|假突破|二次确认|失效条件|invalidation|failure condition)/iu.test(
+      text,
+    );
+  return (
+    !looksLikeFullStackFinanceStressTest(text) &&
+    !looksLikeCrossMarketFinance(text) &&
+    namesSingleStock &&
+    namesCurveSurface &&
+    asksForDiagnosis
   );
 }
 
@@ -1330,6 +1389,68 @@ export function hardenLocalBrainPlanForAsk(
         "generic_market_commentary_without_scope_or_sources",
         "unverified_current_market_claim",
         "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+
+  if (looksLikeOffensiveStockOpportunityResearch(text)) {
+    return {
+      ...safe,
+      task_family: "offensive_stock_opportunity_research",
+      primary_modules: [
+        "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "us_equity_market_structure",
+        "technical_timing",
+        "data_provenance_quality",
+        "source_registry",
+        "portfolio_risk_gates",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["finance_learning_memory", "causal_map", "event_driven", "quant_math"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_data_gateway_snapshot",
+        "finance_learning_capability_apply",
+        "review_panel",
+        "local_brain_eval",
+      ],
+      missing_data: [
+        "candidate_universe_and_exclusion_rules",
+        "sector_scope_and_style_bucket",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "latest_company_fundamental_inputs",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "valuation_range_and_margin_of_safety_inputs",
+        "thesis_catalyst_calendar_and_invalidation_evidence",
+        "upside_driver_and_market_mispricing_hypothesis",
+        "red_team_invalidation_evidence",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "position_weights_cost_basis_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_current_market_data",
+        "opportunity_ranking_not_buy_list",
+        "small_position_trial_requires_user_constraints",
+        "technical_timing_not_standalone_alpha",
+        "red_team_invalidation_required",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step: "build_watchlist_rank_opportunities_then_red_team_risk_gate_before_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "overly_conservative_refusal_only",
+        "direct_buy_list_without_sources",
+        "lottery_ticket_story_without_fundamentals",
+        "single_indicator_stock_pick",
+        "model_guessed_position_size",
       ],
     };
   }
@@ -3097,11 +3218,61 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
+  if (looksLikeSingleStockCurveTechnicalTiming(text)) {
+    return {
+      ...safe,
+      task_family: "single_stock_curve_technical_timing_preflight",
+      primary_modules: [
+        "technical_timing",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "source_registry",
+        "data_provenance_quality",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "finance_learning_memory", "quant_math"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_data_gateway_snapshot",
+        "finance_framework_company_fundamentals_value_producer",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "single_stock_ohlcv_price_volume_series",
+        "moving_average_volatility_and_gap_inputs",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "latest_company_fundamental_inputs",
+        "position_weights_cost_basis_and_risk_limits",
+        "invalidation_condition_for_timing_signal",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "technical_timing_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step:
+        "diagnose_single_stock_curve_as_timing_context_then_attach_fundamentals_portfolio_risk_and_review_before_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "direct_buy_sell_answer",
+        "technical_timing_as_standalone_alpha",
+        "technical_pattern_as_trade_recommendation",
+        "unverified_current_market_claim",
+      ],
+    };
+  }
+
   if (looksLikeTechnicalTimingNotStandalone(text)) {
     return {
       ...safe,
       task_family: "technical_timing_not_standalone_alpha",
       primary_modules: [
+        "technical_timing",
         "source_registry",
         "finance_data_gateway",
         "data_provenance_quality",

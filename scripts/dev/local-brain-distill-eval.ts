@@ -1,6 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
   LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
@@ -87,6 +90,27 @@ const LOCAL_BRAIN_EVAL_CONTRACT_HINT_MAX_COUNT = 5;
 const LOCAL_BRAIN_EVAL_CONTRACT_HINT_CHAR_BUDGET = 1_600;
 const LOCAL_BRAIN_EVAL_SINGLE_HINT_CHAR_BUDGET = 360;
 const QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG = '{"enable_thinking":false}';
+const LOCAL_BRAIN_EVAL_PROMPT_CACHE_VERSION = "v1";
+const LOCAL_BRAIN_EVAL_PROMPT_CACHE_DIR = path.join(
+  DEFAULT_WORKSPACE_DIR,
+  "cache",
+  "local-brain-prompt-cache",
+);
+const LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX =
+  [
+    "You are the LCX Agent local auxiliary thought-flow model.",
+    "Task: produce a concise control-room planning packet for the main agent.",
+    "Do not answer the user's finance question directly.",
+    "/no_think",
+    "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
+    "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 8 words, and always close the final brace.",
+    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
+    "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
+    "primary_modules, supporting_modules, and required_tools must use exact recommended module ids only; do not invent prefixes like finance_framework_*.",
+    "For finance tasks, choose concrete recommended module ids instead of generic finance labels or the full taxonomy.",
+    "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
+  ].join("\n") + "\n";
 const TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS = new Set([
   "single_company_fundamental_risk",
   "plain_single_stock_position_sizing_preflight",
@@ -311,6 +335,71 @@ const EVAL_CASES: EvalCase[] = [
     sourceSummary: "clean_context_eval_no_old_lark_history",
     requiredModules: REQUIRED_FINANCE_MODULES,
     minModuleMatches: 3,
+  },
+  {
+    id: "offensive_stock_opportunity_research",
+    userAsk:
+      "帮我找未来 6-18 个月潜在好股，不止半导体，也包括能源、医疗、金融、工业、消费、软件、小中盘和周期股。研究胆子要大，但不能直接给买卖建议：先做跨行业候选池、上涨驱动、市场可能漏看的点、基本面和估值证据、催化剂、反证、技术 timing 背景和小仓位试错边界。",
+    sourceSummary:
+      "offensive stock opportunity research should build a cross-sector research-only watchlist with mispricing hypothesis, upside drivers, evidence, catalyst path, invalidation, and risk gates instead of conservative refusal or buy-list output.",
+    requiredModules: [
+      "company_fundamentals_value",
+      "financial_modeling_valuation_qc",
+      "thesis_catalyst_lifecycle",
+      "us_equity_market_structure",
+      "technical_timing",
+      "data_provenance_quality",
+      "source_registry",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 8,
+    requiredMissingData: [
+      "candidate_universe_and_exclusion_rules",
+      "sector_scope_and_style_bucket",
+      "fresh_market_data_snapshot",
+      "latest_company_fundamental_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "upside_driver_and_market_mispricing_hypothesis",
+      "red_team_invalidation_evidence",
+      "position_weights_cost_basis_and_risk_limits",
+    ],
+    requiredRiskBoundaries: [
+      "opportunity_ranking_not_buy_list",
+      "small_position_trial_requires_user_constraints",
+      "red_team_invalidation_required",
+      "no_trade_advice",
+    ],
+  },
+  {
+    id: "single_stock_curve_technical_timing_preflight",
+    userAsk:
+      "纯合成单个股60日OHLCV曲线测试，不涉及实时行情：前20天价格缓慢上行但成交量递减；第25天放量跳空上破前高，三天后回补缺口；第35天反弹但未创新高；第45天跌破20日均线后缩量横盘；第55天放量长下影线守住前低。请判断趋势阶段、量价背离、支撑阻力、假突破、二次确认、失效条件、还缺哪些OHLCV字段和均线/波动率输入，并说明技术面只能作为 timing，必须接基本面和组合风险门；禁止买卖建议。",
+    sourceSummary:
+      "single-stock synthetic OHLCV curve diagnosis must route to technical_timing while keeping fundamentals, provenance, portfolio risk, review, and no-trade boundaries attached.",
+    requiredModules: [
+      "technical_timing",
+      "company_fundamentals_value",
+      "portfolio_risk_gates",
+      "source_registry",
+      "data_provenance_quality",
+      "review_panel",
+    ],
+    minModuleMatches: 6,
+    requiredMissingData: [
+      "single_stock_ohlcv_price_volume_series",
+      "moving_average_volatility_and_gap_inputs",
+      "price_volume_breadth_and_technical_regime_inputs",
+      "latest_company_fundamental_inputs",
+      "position_weights_cost_basis_and_risk_limits",
+      "invalidation_condition_for_timing_signal",
+    ],
+    requiredRiskBoundaries: [
+      "technical_timing_not_standalone_alpha",
+      "risk_gate_before_action_language",
+      "no_trade_advice",
+    ],
   },
   {
     id: "unseen_etf_timing_framework",
@@ -2929,6 +3018,44 @@ const GENERATED_EVAL_EXPANSION_CASES = [
     ],
   }),
   ...expandEvalTemplate({
+    idPrefix: "offensive_stock_opportunity_expansion",
+    canonicalAsk: "帮我找未来 6-18 个月潜在好股，不止半导体，研究胆子要大，但不能直接给买卖建议。",
+    sourceSummary: "offensive stock opportunity expansion prompt variant.",
+    prerequisiteCaseIds: ["offensive_stock_opportunity_research"],
+    requiredModules: [
+      "company_fundamentals_value",
+      "financial_modeling_valuation_qc",
+      "thesis_catalyst_lifecycle",
+      "source_registry",
+      "data_provenance_quality",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+    ],
+    minModuleMatches: 7,
+    requiredMissingData: [
+      "candidate_universe_and_exclusion_rules",
+      "sector_scope_and_style_bucket",
+      "latest_company_fundamental_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "upside_driver_and_market_mispricing_hypothesis",
+      "red_team_invalidation_evidence",
+    ],
+    requiredRiskBoundaries: [
+      "opportunity_ranking_not_buy_list",
+      "small_position_trial_requires_user_constraints",
+      "red_team_invalidation_required",
+      "no_trade_advice",
+    ],
+    userAsks: [
+      "美光、SK 海力士、三星这条 HBM/DRAM 线谁更有弹性？",
+      "帮我做一个跨行业高弹性观察池，先说市场可能漏看什么。",
+      "我想找潜在翻倍股，先按研究候选和反证拆，不要喊买。",
+      "哪些能源、医疗、金融、工业和消费股值得进观察池？",
+      "小中盘和周期股里有没有被低估的机会，先列失败条件和风险门。",
+    ],
+  }),
+  ...expandEvalTemplate({
     idPrefix: "short_lark_commodity_scope",
     canonicalAsk: "学习大宗商品。",
     sourceSummary: "short commodity framework no-regression prompt variant.",
@@ -3494,9 +3621,9 @@ const GENERATED_EVAL_EXPANSION_CASES = [
   }),
 ].flat();
 
-if (GENERATED_EVAL_EXPANSION_CASES.length !== 118) {
+if (GENERATED_EVAL_EXPANSION_CASES.length !== 123) {
   throw new Error(
-    `generated eval expansion expected 118 cases, got ${GENERATED_EVAL_EXPANSION_CASES.length}`,
+    `generated eval expansion expected 123 cases, got ${GENERATED_EVAL_EXPANSION_CASES.length}`,
   );
 }
 
@@ -3740,12 +3867,25 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
     ["plain_language_hidden_complexity_intake", "plain_recent_stock_market_brief_preflight"],
   ],
   [
+    "offensive_stock_opportunity_research",
+    [
+      "plain_recent_stock_market_brief_preflight",
+      "single_company_fundamental_risk",
+      "financial_modeling_valuation_qc_chain",
+      "thesis_catalyst_lifecycle_review",
+    ],
+  ],
+  [
     "plain_buy_hold_research_boundary",
     [
       "plain_language_hidden_complexity_intake",
       "plain_recent_stock_market_brief_preflight",
       "plain_single_stock_position_sizing_preflight",
     ],
+  ],
+  [
+    "single_stock_curve_technical_timing_preflight",
+    ["plain_buy_hold_research_boundary", "single_company_fundamental_risk"],
   ],
   ["china_property_credit_a_share_us_tech_spillover", ["cross_market_us_a_index_crypto_analysis"]],
   ["paper_claim_conflicts_with_local_memory_rule", ["paper_learning_internalization_absorption"]],
@@ -3991,7 +4131,7 @@ function maxTokensForEvalCase(evalCase: EvalCase, mode: "standard" | "timeout_re
     : LOCAL_BRAIN_EVAL_MAX_TOKENS;
 }
 
-function buildPrompt(evalCase: EvalCase): string {
+function buildPromptSuffix(evalCase: EvalCase): string {
   const contractHints = selectCompactEvalContractHints(evalCase).join(" ");
   const promptModuleIds = normalizeLocalBrainModuleList([
     ...evalCase.requiredModules,
@@ -4000,30 +4140,18 @@ function buildPrompt(evalCase: EvalCase): string {
   const requiredMissingData = evalCase.requiredMissingData ?? [];
   const requiredRiskBoundaries = evalCase.requiredRiskBoundaries ?? [];
   return [
-    "You are the LCX Agent local auxiliary thought-flow model.",
-    "Task: produce a concise control-room planning packet for the main agent.",
-    "Do not answer the user's finance question directly.",
-    "/no_think",
-    "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
-    "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 8 words, and always close the final brace.",
     `Output contract: ${outputContractHintsFor(evalCase).join(" ")}`,
-    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
-    "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     isParseStabilityCompactEvalCase(evalCase)
       ? "Parse-stability compact eval: include only required ids, keep every value short, and close the JSON object without trailing text."
       : undefined,
-    "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`,
-    "primary_modules, supporting_modules, and required_tools must use exact recommended module ids only; do not invent prefixes like finance_framework_*.",
     requiredMissingData.length > 0
       ? `Required missing_data ids for this case: ${requiredMissingData.join(", ")}. Include these ids exactly; do not paraphrase or expand them.`
       : "If no concrete input is missing, keep missing_data compact and do not invent data gaps.",
     requiredRiskBoundaries.length > 0
       ? `Required risk_boundaries for this case: ${requiredRiskBoundaries.join(", ")}. Include research_only plus these ids exactly; do not paraphrase.`
       : "Always include research_only; add only directly relevant compact risk boundary ids.",
-    "For finance tasks, choose concrete recommended module ids instead of generic finance labels or the full taxonomy.",
     `Relevant compact contract hints: ${contractHints}`,
-    "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
     "",
     "source_kind: clean_eval",
     `user_or_task: ${evalCase.userAsk}`,
@@ -4031,6 +4159,10 @@ function buildPrompt(evalCase: EvalCase): string {
   ]
     .filter((line): line is string => typeof line === "string")
     .join("\n");
+}
+
+function buildPrompt(evalCase: EvalCase): string {
+  return `${LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX}${buildPromptSuffix(evalCase)}`;
 }
 
 function buildTimeoutRetryPrompt(evalCase: EvalCase): string {
@@ -4060,13 +4192,121 @@ function buildTimeoutRetryPrompt(evalCase: EvalCase): string {
   ].join("\n");
 }
 
-function runGenerate(
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function cacheSafeSlug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .slice(0, 80) || "unknown"
+  );
+}
+
+function promptCacheFileFor(options: CliOptions): string | undefined {
+  if (process.env.LOCAL_BRAIN_EVAL_PROMPT_CACHE === "0") {
+    return undefined;
+  }
+  const adapterKey = options.adapterPath
+    ? `adapter-${hashText(options.adapterPath)}`
+    : "no-adapter";
+  const cacheName = [
+    LOCAL_BRAIN_EVAL_PROMPT_CACHE_VERSION,
+    cacheSafeSlug(options.model),
+    adapterKey,
+    hashText(LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX),
+  ].join("-");
+  return path.join(LOCAL_BRAIN_EVAL_PROMPT_CACHE_DIR, `${cacheName}.safetensors`);
+}
+
+function runChildCapture(command: string, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, 750).unref();
+      finish(new Error(`child command timed out after ${timeoutMs}ms: ${args.join(" ")}`));
+    }, timeoutMs);
+    function finish(error?: Error): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (error) {
+        reject(error);
+      } else {
+        resolve(stdout);
+      }
+    }
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      finish(new Error(`${String(error)}\n${stderr}`));
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        finish();
+      } else {
+        finish(new Error(`child command exited ${code}\n${stderr}`));
+      }
+    });
+  });
+}
+
+async function ensurePromptCache(options: CliOptions, promptCacheFile: string): Promise<void> {
+  if (existsSync(promptCacheFile)) {
+    return;
+  }
+  mkdirSync(path.dirname(promptCacheFile), { recursive: true });
+  const args = [
+    "-m",
+    "mlx_lm",
+    "cache_prompt",
+    "--model",
+    options.model,
+    "--prompt-cache-file",
+    promptCacheFile,
+    "--prompt",
+    LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX,
+  ];
+  if (options.adapterPath) {
+    args.splice(5, 0, "--adapter-path", options.adapterPath);
+  }
+  await runChildCapture(options.pythonBin, args, Math.min(options.timeoutMs, 180_000));
+}
+
+async function runGenerate(
   options: CliOptions,
   evalCase: EvalCase,
   mode: "standard" | "timeout_retry" = "standard",
 ): Promise<string> {
+  const promptCacheFile = mode === "standard" ? promptCacheFileFor(options) : undefined;
+  if (promptCacheFile) {
+    await ensurePromptCache(options, promptCacheFile);
+  }
   const prompt =
-    mode === "timeout_retry" ? buildTimeoutRetryPrompt(evalCase) : buildPrompt(evalCase);
+    mode === "timeout_retry"
+      ? buildTimeoutRetryPrompt(evalCase)
+      : promptCacheFile
+        ? buildPromptSuffix(evalCase)
+        : buildPrompt(evalCase);
   const maxTokens = maxTokensForEvalCase(evalCase, mode);
   return new Promise((resolve, reject) => {
     const args = [
@@ -4086,6 +4326,9 @@ function runGenerate(
       "--chat-template-config",
       QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG,
     ];
+    if (promptCacheFile) {
+      args.push("--prompt-cache-file", promptCacheFile);
+    }
     if (options.adapterPath) {
       args.splice(5, 0, "--adapter-path", options.adapterPath);
     }

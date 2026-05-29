@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  activeGuardEvolutionCooldownSnapshot,
   buildLocalBrainTrainingPlan,
   buildQwenBaseModelMigrationPlan,
 } from "../scripts/dev/local-brain-training-plan.js";
@@ -25,6 +26,41 @@ async function writeJson(
 }
 
 describe("local-brain-training-plan", () => {
+  it("detects an active guard launched before the evolution cooldown flag", () => {
+    expect(
+      activeGuardEvolutionCooldownSnapshot([
+        {
+          pid: 101,
+          command: "node --import tsx scripts/dev/minimax-brain-training-guard.ts",
+          role: "guard",
+        },
+      ]),
+    ).toMatchObject({
+      boundary: "dev_active_guard_evolution_cooldown_only",
+      activeGuardCount: 1,
+      activeGuardHasEvolutionCooldown: false,
+      guardsMissingCooldownFlag: 1,
+      missingCooldownPids: [101],
+      action: "do_not_restart_current_guard_wait_for_next_launchd_start",
+    });
+
+    expect(
+      activeGuardEvolutionCooldownSnapshot([
+        {
+          pid: 102,
+          command:
+            "node --import tsx scripts/dev/minimax-brain-training-guard.ts --evolution-cooldown-minutes 10",
+          role: "guard",
+        },
+      ]),
+    ).toMatchObject({
+      activeGuardCount: 1,
+      activeGuardHasEvolutionCooldown: true,
+      guardsMissingCooldownFlag: 0,
+      action: "cooldown_flag_present_or_no_active_guard",
+    });
+  });
+
   it("blocks Qwen 1.7B migration probes while training is active", async () => {
     const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-qwen-migration-home-"));
     const cacheDir = path.join(homeDir, ".cache/huggingface/hub/models--Qwen--Qwen3-1.7B");
@@ -474,6 +510,46 @@ describe("local-brain-training-plan", () => {
         }),
       ]),
     );
+  });
+
+  it("surfaces guard evolution cooldown as a first-class pause window", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
+      { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },
+      {
+        at: "2026-05-09T10:05:00.000Z",
+        event: "evolution_cooldown",
+        round: 2,
+        durationMs: 600000,
+        requestedDurationMs: 600000,
+        reason: "work_then_evolve_window_before_next_heavy_round",
+        ownerWindow: ["governance_autopilot", "monotonic_data_ledger"],
+        heavyWorkPaused: true,
+        liveTouched: false,
+        providerConfigTouched: false,
+      },
+    ]);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath: await writeJsonl("lcx-training-plan-quota-", []),
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.latestGuardEvent).toMatchObject({
+      at: "2026-05-09T10:05:00.000Z",
+      event: "evolution_cooldown",
+      round: 2,
+    });
+    expect(plan.latestEvolutionCooldown).toMatchObject({
+      round: 2,
+      durationMs: 600000,
+      reason: "work_then_evolve_window_before_next_heavy_round",
+      ownerWindow: ["governance_autopilot", "monotonic_data_ledger"],
+      heavyWorkPaused: true,
+      liveTouched: false,
+      providerConfigTouched: false,
+    });
   });
 
   it("surfaces newer on-disk dataset manifests and stale train slices", async () => {

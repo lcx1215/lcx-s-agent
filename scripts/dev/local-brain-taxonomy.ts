@@ -167,6 +167,7 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "Complex finance tasks should be decomposed like a careful human analyst: clarify objective, recall memory, split causal layers, identify missing evidence, run review, then summarize.",
   "Plain-language hidden-complexity intake is a generic failure family: when a user gives a short example, first identify original example, abstracted failure family, adjacent non-identical scenario, shared contract, and regression proof; expand the request into scope, evidence, modules, memory, review, and user-visible summary instead of answering only the literal phrase.",
   "Plain short finance asks such as analyzing recent stock market, deciding how much of a stock to hold, or asking whether to buy or keep holding are not simple answers: expand them into market scope, timestamped data, user constraints, fundamentals, valuation, technical timing, portfolio risk gates, source registry, review panel, and a plain research-only summary; never invent current market facts, position percentages, buy/sell points, or trade advice.",
+  "Offensive stock-opportunity asks such as recommending stocks, finding potential winners, comparing Micron versus SK Hynix, or screening outside semiconductors should not collapse into a conservative refusal: build a cross-sector research-only watchlist with mispricing hypothesis, upside driver, fundamental/valuation evidence, catalyst path, technical timing context, red-team invalidation, and risk-gated opportunity tiering; do not output a buy list, position size, or execution instruction.",
   "All-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel; do not let a harder task bypass simpler prerequisite modules.",
   "Current market, price, fundamental, macro, ETF, options, index-weight, vendor, or portfolio-risk numbers must go through finance_data_gateway before Qwen or Lark uses them: require primary source, cross-check source, official or issuer reference when applicable, source timestamp, timezone, field definition, unit/currency, adjusted status, and conflict routing to data_provenance_quality.",
   "Cross-market finance tasks spanning US equities, A-shares, indices, or crypto must include the concrete market-structure modules, cross_asset_liquidity, risk gates, fresh data gaps, and no_high_leverage_crypto.",
@@ -191,27 +192,32 @@ const CONTRACT_HINT_SELECTORS: Array<{
       /短|口语|看不懂|lark|feishu|飞书|最近股市|持仓|拿|买|卖|大宗商品|plain|recent stock|buy|hold|position sizing|visible reply/iu,
   },
   {
-    indexes: [8, 9, 10, 16],
+    indexes: [8, 9, 10, 11, 17],
     pattern:
       /美股|a股|指数|加密|期权|大宗|商品|黄金|原油|美元|外汇|事件|技术|跨市场|估值|DCF|comps|模型|财务模型|研报|口径|字段|时间戳|催化|失效|crypto|option|commodity|gold|oil|dollar|fx|event|technical|cross-market|valuation|modeling|thesis|catalyst|provenance|timestamp|artifact|spreadsheet|report/iu,
   },
   {
-    indexes: [9, 12, 17],
+    indexes: [7, 8, 11, 17],
+    pattern:
+      /推荐股|好股|潜在.*股|选股|股票池|观察池|跨行业|全市场|行业轮动|watchlist|stock pick|stock screen|opportunity|mispricing|upside|弹性|前瞻|冒险|小仓位|美光|micron|mu\b|海力士|hynix|hbm|dram|nand|能源|油气|电力|医疗|医药|生物科技|金融|银行|保险|工业|军工|消费|软件|网络安全|小盘|中盘|周期股/iu,
+  },
+  {
+    indexes: [10, 13, 18],
     pattern:
       /polymarket|polybench|polyswarm|polyclaw|polybot|polyseer|prediction market|预测市场|clob|orderbook|订单簿|market[- ]?making|paper trading/iu,
   },
   {
-    indexes: [9],
+    indexes: [10],
     pattern:
       /当前|最新|今天|现在|价格|行情|报价|市场数据|实时|vendor|供应商|source timestamp|field definition|指数权重|成分股|current|latest|today|price|quote|market data|fresh data|index weight|constituent/iu,
   },
   {
-    indexes: [12, 13, 15],
+    indexes: [13, 14, 16],
     pattern:
       /论文|arxiv|ssrn|github|huggingface|开源|source|capability|receipt|skill|paper|open-source|framework|dataset|eval|内化链条|学习链条|吸收链条|所有模块|其他模块|因子模块/iu,
   },
   {
-    indexes: [14],
+    indexes: [15],
     pattern:
       /anthropic|financial agent|financial-services|hermes|harness|外部.*agent|金融.*agent|架构哲学/iu,
   },

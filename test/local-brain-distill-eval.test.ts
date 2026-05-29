@@ -62,6 +62,86 @@ describe("local-brain-distill-eval", () => {
     });
   });
 
+  it("covers single-stock synthetic curve timing as a bounded eval case", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "single_stock_curve_technical_timing_preflight",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+      cases: Array<{
+        id: string;
+        parsed: {
+          primary_modules: string[];
+          supporting_modules: string[];
+          required_tools: string[];
+          missing_data: string[];
+          risk_boundaries: string[];
+          rejected_context: string[];
+        };
+      }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary.promotionReady).toBe(true);
+    expect(payload.summary.passed).toBe(payload.summary.total);
+    expect(payload.hierarchy.requestedCaseIds).toEqual([
+      "single_stock_curve_technical_timing_preflight",
+    ]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "plain_buy_hold_research_boundary",
+        "single_company_fundamental_risk",
+      ]),
+    );
+    const targetCase = payload.cases.find(
+      (entry) => entry.id === "single_stock_curve_technical_timing_preflight",
+    );
+    const modules = [
+      ...(targetCase?.parsed.primary_modules ?? []),
+      ...(targetCase?.parsed.supporting_modules ?? []),
+      ...(targetCase?.parsed.required_tools ?? []),
+    ];
+    expect(modules).toEqual(
+      expect.arrayContaining([
+        "technical_timing",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "source_registry",
+        "data_provenance_quality",
+        "review_panel",
+      ]),
+    );
+    expect(targetCase?.parsed.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "technical_timing_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ]),
+    );
+    expect(targetCase?.parsed.rejected_context).toEqual(
+      expect.arrayContaining(["direct_buy_sell_answer", "technical_timing_as_standalone_alpha"]),
+    );
+  });
+
   it("keeps local-memory activation promotion-ready in contract-only eval", () => {
     const result = spawnSync(
       process.execPath,
@@ -201,6 +281,73 @@ describe("local-brain-distill-eval", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps offensive stock opportunity research gated but non-passive", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--contract-only",
+        "--case-id",
+        "offensive_stock_opportunity_research",
+        "--json",
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      summary: { passed: number; total: number; promotionReady: boolean };
+      hierarchy: {
+        requestedCaseIds: string[];
+        autoIncludedPrerequisiteCaseIds: string[];
+      };
+      cases: Array<{
+        id: string;
+        parsed: {
+          missing_data: string[];
+          risk_boundaries: string[];
+          rejected_context: string[];
+        };
+      }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.summary.promotionReady).toBe(true);
+    expect(payload.summary.passed).toBe(payload.summary.total);
+    expect(payload.hierarchy.requestedCaseIds).toEqual(["offensive_stock_opportunity_research"]);
+    expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
+      expect.arrayContaining([
+        "plain_recent_stock_market_brief_preflight",
+        "single_company_fundamental_risk",
+        "financial_modeling_valuation_qc_chain",
+        "thesis_catalyst_lifecycle_review",
+      ]),
+    );
+    const targetCase = payload.cases.find(
+      (entry) => entry.id === "offensive_stock_opportunity_research",
+    );
+    expect(targetCase?.parsed.missing_data).toEqual(
+      expect.arrayContaining([
+        "sector_scope_and_style_bucket",
+        "upside_driver_and_market_mispricing_hypothesis",
+        "red_team_invalidation_evidence",
+      ]),
+    );
+    expect(targetCase?.parsed.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "opportunity_ranking_not_buy_list",
+        "small_position_trial_requires_user_constraints",
+        "no_trade_advice",
+      ]),
+    );
+    expect(targetCase?.parsed.rejected_context).toContain("overly_conservative_refusal_only");
   });
 
   it("extracts the first balanced JSON object from noisy model output", () => {
@@ -471,7 +618,7 @@ describe("local-brain-distill-eval", () => {
       fakePython,
       [
         "#!/bin/sh",
-        'printf "%s\\n" "$@" > "$EVAL_FAKE_PYTHON_LOG"',
+        'printf "%s\\n" "$@" >> "$EVAL_FAKE_PYTHON_LOG"',
         "cat <<'JSON'",
         '{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":[],"required_tools":["finance_learning_memory"],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_lark_conversation_history"]}',
         "JSON",
@@ -508,6 +655,8 @@ describe("local-brain-distill-eval", () => {
       const loggedArgs = readFileSync(argLog, "utf8");
       expect(loggedArgs).toContain("--chat-template-config");
       expect(loggedArgs).toContain('{"enable_thinking":false}');
+      expect(loggedArgs).toContain("--prompt-cache-file");
+      expect(loggedArgs).toContain("cache_prompt");
       expect(loggedArgs).toContain("/no_think");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -847,6 +996,10 @@ describe("local-brain-distill-eval", () => {
       {
         cwd: path.resolve(__dirname, ".."),
         encoding: "utf8",
+        env: {
+          ...process.env,
+          LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0",
+        },
       },
     );
 
@@ -936,6 +1089,10 @@ describe("local-brain-distill-eval", () => {
       {
         cwd: path.resolve(__dirname, ".."),
         encoding: "utf8",
+        env: {
+          ...process.env,
+          LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0",
+        },
       },
     );
 
