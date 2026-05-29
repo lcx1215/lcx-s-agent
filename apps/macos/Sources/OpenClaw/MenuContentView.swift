@@ -129,6 +129,11 @@ struct MenuContent: View {
                 Label("Open Lobster Panel", systemImage: "chart.bar.doc.horizontal")
             }
             .disabled(!self.state.canvasEnabled)
+            Button {
+                LCXAgentControlRoomWindow.open()
+            } label: {
+                Label("Open LCX Control Room", systemImage: "sparkles.rectangle.stack")
+            }
             if self.state.canvasEnabled {
                 Button {
                     Task { @MainActor in

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LCX 老板驾驶舱</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="deck-shell">
+      <aside class="team-rail" aria-label="团队列表">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <strong>LCX</strong>
+            <span>老板驾驶舱</span>
+          </div>
+        </div>
+        <nav id="team-list" class="team-list"></nav>
+        <section class="rail-card">
+          <span>当前边界</span>
+          <strong>只读展示</strong>
+          <p>不发 Lark，不改供应商，不碰受保护记忆，不做交易执行。</p>
+        </section>
+      </aside>
+
+      <section class="main-stage">
+        <header class="topbar">
+          <div>
+            <p class="date-line" id="date-line">读取中...</p>
+            <h1>LCX 老板驾驶舱</h1>
+          </div>
+          <div class="top-actions">
+            <button id="refresh" class="icon-button" type="button" aria-label="刷新">↻</button>
+            <span id="sync-pill" class="sync-pill">等待状态</span>
+          </div>
+        </header>
+
+        <section class="hero-grid">
+          <article class="supervision-map">
+            <div class="section-head">
+              <div>
+                <h2>实时监督地图</h2>
+                <p id="brief-line">读取老板总览中...</p>
+              </div>
+              <span class="live-dot">LIVE</span>
+            </div>
+            <div id="status-lanes" class="status-lanes"></div>
+            <div class="xp-strip">
+              <div>
+                <span>进化经验条</span>
+                <strong id="xp-label">计算中...</strong>
+              </div>
+              <div class="xp-track"><span id="xp-bar"></span></div>
+              <small id="xp-detail">等待数据</small>
+            </div>
+            <div id="supervision-cards" class="supervision-cards"></div>
+          </article>
+
+          <aside class="question-panel">
+            <div class="section-head compact">
+              <h2>一键问责</h2>
+              <span>点问题，直接看责任链</span>
+            </div>
+            <div id="question-buttons" class="question-buttons"></div>
+          <article class="answer-card">
+              <span id="answer-label">当前回答</span>
+              <strong id="answer-title">选择一个问题</strong>
+              <p id="answer-body">系统会用老板能看懂的话回答，不展示原始日志。</p>
+            </article>
+            <article class="cost-card">
+              <span>真实成本账本</span>
+              <strong id="cost-title">读取中</strong>
+              <p id="cost-body">只把有证据的调用算成确认项，估算 Token 单独列。</p>
+            </article>
+            <article class="approval-card">
+              <span>老板审批</span>
+              <div class="approval-grid">
+                <button type="button">只读检查</button>
+                <button type="button">写普通记录</button>
+                <button type="button">等训练结束</button>
+                <button type="button">拒绝放权</button>
+              </div>
+            </article>
+          </aside>
+        </section>
+
+        <section class="bottom-grid">
+          <article class="museum">
+            <div class="section-head compact">
+              <h2>失败案例博物馆</h2>
+              <span id="failure-state">读取中</span>
+            </div>
+            <div id="failure-cards" class="failure-cards"></div>
+          </article>
+          <article class="arena">
+            <div class="section-head compact">
+              <h2>模型竞技场</h2>
+              <span>展示样例，不自动放权</span>
+            </div>
+            <div id="arena-table" class="arena-table"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

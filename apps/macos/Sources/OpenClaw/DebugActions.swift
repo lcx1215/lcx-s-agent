@@ -23,6 +23,11 @@ enum DebugActions {
     }
 
     @MainActor
+    static func openLCXAgentControlRoom() {
+        LCXAgentControlRoomWindow.open()
+    }
+
+    @MainActor
     static func openLog() {
         let path = self.pinoLogPath()
         let url = URL(fileURLWithPath: path)
