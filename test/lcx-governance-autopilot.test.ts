@@ -98,6 +98,7 @@ async function runAutopilot() {
         writtenArtifacts?: string[];
         latestWrittenReceipt?: { signalKey?: string; status?: string };
         trainingCaseBuilder?: { absorptionStatus?: string };
+        patchCandidateBuilder?: { absorptionStatus?: string; action?: string };
       };
       monotonicDataLedger?: {
         appendDecision?: string;
@@ -240,6 +241,9 @@ describe("LCX governance autopilot", () => {
     );
     expect(payload.owners.selfRepairHands?.trainingCaseBuilder?.absorptionStatus).toBe(
       "candidate_only_not_in_train_slice",
+    );
+    expect(payload.owners.selfRepairHands?.patchCandidateBuilder?.absorptionStatus).toBe(
+      "candidate_only_not_applied_to_repo",
     );
     expect(payload.owners.monotonicDataLedger).toEqual(
       expect.objectContaining({
@@ -411,6 +415,7 @@ describe("LCX governance autopilot", () => {
     expect(handoff).toContain("## Self-Repair Hands");
     expect(handoff).toContain("autoWriteTriggered");
     expect(handoff).toContain("ownerPolicy.whenAutoWrite");
+    expect(handoff).toContain("patchCandidateBuilder");
     expect(handoff).toContain("candidate_eval_dirty_cases");
     expect(handoff).toContain("module_learning_incomplete_evidence");
     expect(handoff).toContain("skillopt_static_or_parse_gap");

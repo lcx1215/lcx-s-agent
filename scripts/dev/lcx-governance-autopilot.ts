@@ -467,6 +467,7 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
     const hands = recordValue(payload.hands);
     const memoryCleaner = recordValue(hands?.memoryCleaner);
     const trainingCaseBuilder = recordValue(hands?.trainingCaseBuilder);
+    const patchCandidateBuilder = recordValue(hands?.patchCandidateBuilder);
     const supervision = recordValue(payload.supervision);
     return {
       status: payload.status,
@@ -487,6 +488,14 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
             action: trainingCaseBuilder.action,
             path: trainingCaseBuilder.path,
             absorptionStatus: trainingCaseBuilder.absorptionStatus,
+          }
+        : undefined,
+      patchCandidateBuilder: patchCandidateBuilder
+        ? {
+            canWriteWithoutCodex: patchCandidateBuilder.canWriteWithoutCodex,
+            action: patchCandidateBuilder.action,
+            path: patchCandidateBuilder.path,
+            absorptionStatus: patchCandidateBuilder.absorptionStatus,
           }
         : undefined,
       supervision,
@@ -974,8 +983,11 @@ function buildContextRecoveryHandoff({
     `- trainingCaseBuilder: ${inlineValue(
       recordValue(selfRepairHandsCompact?.trainingCaseBuilder)?.action,
     )}`,
+    `- patchCandidateBuilder: ${inlineValue(
+      recordValue(selfRepairHandsCompact?.patchCandidateBuilder)?.action,
+    )}`,
     `- nextSafeAction: ${inlineValue(selfRepairHandsCompact?.nextSafeAction)}`,
-    "- boundary: dev_self_repair_hands_only; can auto-write allowed correction and training-candidate packets only when owner signals change, or with explicit --write",
+    "- boundary: dev_self_repair_hands_only; can auto-write allowed correction, training-candidate, and patch-candidate packets only when owner signals change, or with explicit --write",
     "",
     "## Monotonic Data Ledger",
     `- latestPath: ${inlineValue(MONOTONIC_DATA_LEDGER_LATEST_PATH)}`,

@@ -540,10 +540,11 @@ diagnostic to run.
   receipt or commit.
 - Self-repair hands are allowed only as dev-scoped maintenance hands:
   `lcx-self-repair-hands` may write memory correction/downrank notes and
-  training/eval candidate packets under allowed workspace state, log, and
-  memory/self-repair paths. These packets are candidate-only, not train-slice,
-  model absorption, protected-memory truth, live sender changes, provider
-  config changes, repo source edits, or training authority.
+  training/eval candidate packets, plus repo patch candidate plans, under
+  allowed workspace state, log, and memory/self-repair paths. These packets are
+  candidate-only, not train-slice, model absorption, protected-memory truth,
+  live sender changes, provider config changes, repo source edits, git
+  index/commit authority, or training authority.
 - Owner strategy for automatic self-repair writes: only
   `lcx-governance-autopilot` may auto-add `--write` to
   `lcx-self-repair-hands`, and only when a current owner signal changes:
@@ -552,8 +553,8 @@ diagnostic to run.
   key is `signalKey`; one signal writes at most once. If there is no owner
   signal, the same signal was already written, or the action would touch repo
   source, live sender, provider config, protected memory, formal language
-  corpus, training processes, train-slice direct writes, or model-weight
-  absorption claims, automatic `--write` must not run.
+  corpus, training processes, train-slice direct writes, git index/commit, or
+  model-weight absorption claims, automatic `--write` must not run.
 - A repaired owner signal is not the same as a verified owner signal. If a
   commit or receipt is newer than the latest owner failure but the owner has not
   rerun yet, radar should classify it as `pending_owner_verification` instead

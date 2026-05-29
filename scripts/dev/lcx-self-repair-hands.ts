@@ -38,8 +38,9 @@ function usage(): never {
       "       [--workspace-dir DIR] [--signal-key TEXT] [--issue TEXT] [--observed-failure TEXT]",
       "       [--replacement-rule TEXT] [--domain TEXT]",
       "",
-      "Builds or writes the two safe LCX self-repair hands:",
-      "1) memory correction/downrank note, 2) training/eval candidate packet.",
+      "Builds or writes the three safe LCX self-repair hands:",
+      "1) memory correction/downrank note, 2) training/eval candidate packet,",
+      "3) repo patch candidate plan.",
       "It never edits repo source, live sender, provider config, protected memory,",
       "formal language corpus, or training processes.",
     ].join("\n"),
@@ -283,6 +284,65 @@ function buildTrainingCandidate(input: SelfRepairInput, candidateId: string) {
   };
 }
 
+function buildPatchCandidate(input: SelfRepairInput, patchCandidateId: string) {
+  return {
+    id: patchCandidateId,
+    kind: "lcx-self-repair-repo-patch-candidate",
+    boundary: "dev_repo_patch_candidate_only_not_applied",
+    checkedAt: input.checkedAt,
+    signalKey: input.signalKey,
+    issue: input.issue,
+    domain: input.domain,
+    source: "lcx_self_repair_patch_candidate_builder",
+    purpose:
+      "Let LCX Agent propose a bounded repo repair plan that Codex and owner surfaces can review before any source edit.",
+    proposedPatchContract: {
+      failureFamily: input.observedFailure,
+      replacementRule: input.replacementRule,
+      candidateOnly: true,
+      canEditRepoSource: false,
+      canCommit: false,
+      ownerReviewRequired: true,
+      filesToInspect: [
+        "scripts/dev/local-brain-contracts.ts",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/dev/lcx-skillopt-lite.ts",
+        "scripts/dev/lcx-governance-autopilot.ts",
+        "test/focused-owner-test-for-this-failure.test.ts",
+      ],
+      requiredChecks: [
+        "pnpm vitest run test/lcx-self-repair-hands.test.ts test/lcx-owner-control-map.test.ts",
+        "run focused owner test named by the candidate before applying a repo patch",
+        "rerun lcx-governance-autopilot after any accepted repo patch",
+      ],
+      stopConditions: [
+        "active_training_or_eval_reads_mutable_repo_code",
+        "patch_would_touch_live_sender",
+        "patch_would_touch_provider_config",
+        "patch_would_touch_protected_memory",
+        "patch_would_start_training_or_mlx",
+        "patch_has_no_owner_lane_or_test",
+      ],
+    },
+    nextOwnerReview: [
+      "classify candidate into owner lane",
+      "let Codex inspect the exact proposed files",
+      "convert to repo patch only after active heavy work is idle or the patch is proven not to affect active runtime",
+      "run focused tests before commit",
+    ],
+    notTouched: [
+      "repo_source",
+      "git_index",
+      "git_commit",
+      "live_sender",
+      "provider_config",
+      "protected_memory",
+      "formal_language_corpus",
+      "training_processes",
+    ],
+  };
+}
+
 function selfRepairPaths(workspaceDir: string) {
   return {
     latestJsonPath:
@@ -325,12 +385,21 @@ export function buildSelfRepairHandsReceipt(input: SelfRepairInput) {
     "training-candidates",
     `${stamp}-${baseSlug}.json`,
   );
+  const patchCandidatePath = path.join(
+    workspaceDir,
+    "memory",
+    "self-repair",
+    "patch-candidates",
+    `${stamp}-${baseSlug}.json`,
+  );
   const correctionMarkdown = buildCorrectionMarkdown(input, correctionId);
   const trainingCandidate = buildTrainingCandidate(input, candidateId);
+  const patchCandidate = buildPatchCandidate(input, `patch_candidate_${hashShort(baseSlug)}`);
   const writtenArtifacts = input.write
     ? [
         correctionPath,
         candidatePath,
+        patchCandidatePath,
         paths.latestJsonPath,
         paths.latestMarkdownPath,
         paths.jsonlPath,
@@ -342,11 +411,12 @@ export function buildSelfRepairHandsReceipt(input: SelfRepairInput) {
     `checkedAt: ${input.checkedAt}`,
     "boundary: dev_self_repair_hands_only",
     "",
-    "一句话：LCX Agent 现在可以自己写允许范围内的记忆纠错/降权记录和训练/评测候选题包，但不能自己改 repo 源码、启动训练、碰 live/provider/protected memory。",
+    "一句话：LCX Agent 现在可以自己写允许范围内的记忆纠错/降权记录、训练/评测候选题包、repo 补丁候选计划，但不能自己改 repo 源码、提交、启动训练、碰 live/provider/protected memory。",
     "",
-    "## 两只手",
+    "## 三只手",
     `- 记忆清洁手：${input.write ? "已写入" : "可写入"} ${correctionPath}`,
     `- 题库修复手：${input.write ? "已写入" : "可写入"} ${candidatePath}`,
+    `- 补丁候选手：${input.write ? "已写入" : "可写入"} ${patchCandidatePath}`,
     "",
     "## 监督入口",
     `- latestJson: ${paths.latestJsonPath}`,
@@ -354,11 +424,12 @@ export function buildSelfRepairHandsReceipt(input: SelfRepairInput) {
     `- jsonl: ${paths.jsonlPath}`,
     "",
     "## 下一步",
-    "- Codex 或总控读取 latest/jsonl 后，只能审查和吸收到 owner-approved 训练/评测路径。",
+    "- Codex 或总控读取 latest/jsonl 后，只能审查并吸收到 owner-approved 训练/评测或 repo patch 路径。",
     "- 下一轮训练必须等候当前重活结束，并且等候训练计划确认安全。",
     "",
     "## 不允许",
     "- 不改 repo source",
+    "- 不 git add/commit/push",
     "- 不碰 live sender/provider config/protected memory/formal language corpus",
     "- 不启动 guard/eval/MLX/lora",
     "",
@@ -398,6 +469,15 @@ export function buildSelfRepairHandsReceipt(input: SelfRepairInput) {
         absorptionStatus: "candidate_only_not_in_train_slice",
         candidate: trainingCandidate,
       },
+      patchCandidateBuilder: {
+        ok: true,
+        canWriteWithoutCodex: true,
+        action: "write_repo_patch_candidate_plan",
+        path: patchCandidatePath,
+        relativePath: relativeToWorkspace(workspaceDir, patchCandidatePath),
+        absorptionStatus: "candidate_only_not_applied_to_repo",
+        candidate: patchCandidate,
+      },
     },
     supervision: {
       codexCanReview: true,
@@ -414,10 +494,12 @@ export function buildSelfRepairHandsReceipt(input: SelfRepairInput) {
     jsonlPath: paths.jsonlPath,
     markdown,
     nextSafeAction: input.write
-      ? "review_self_repair_packets_then_absorb_through_owner_approved_train_eval_path"
-      : "rerun_with_write_when_owner_allows_memory_and_candidate_packet_writes",
+      ? "review_self_repair_packets_then_absorb_through_owner_approved_train_eval_or_patch_path"
+      : "rerun_with_write_when_owner_allows_memory_candidate_and_patch_plan_writes",
     notTouched: [
       "repo_source",
+      "git_index",
+      "git_commit",
       "live_sender",
       "provider_config",
       "protected_memory",
@@ -436,9 +518,11 @@ export async function writeSelfRepairHandsReceipt(receipt: SelfRepairHandsReceip
   const workspaceDir = path.resolve(receipt.workspaceDir);
   const correctionPath = receipt.hands.memoryCleaner.path;
   const candidatePath = receipt.hands.trainingCaseBuilder.path;
+  const patchCandidatePath = receipt.hands.patchCandidateBuilder.path;
   for (const filePath of [
     correctionPath,
     candidatePath,
+    patchCandidatePath,
     receipt.latestJsonPath,
     receipt.latestMarkdownPath,
     receipt.jsonlPath,
@@ -447,12 +531,17 @@ export async function writeSelfRepairHandsReceipt(receipt: SelfRepairHandsReceip
   }
   await fs.mkdir(path.dirname(correctionPath), { recursive: true });
   await fs.mkdir(path.dirname(candidatePath), { recursive: true });
+  await fs.mkdir(path.dirname(patchCandidatePath), { recursive: true });
   await fs.mkdir(path.dirname(receipt.latestJsonPath), { recursive: true });
   await fs.mkdir(path.dirname(receipt.jsonlPath), { recursive: true });
   await fs.writeFile(correctionPath, `${receipt.hands.memoryCleaner.correctionMarkdown}\n`);
   await fs.writeFile(
     candidatePath,
     `${JSON.stringify(receipt.hands.trainingCaseBuilder.candidate, null, 2)}\n`,
+  );
+  await fs.writeFile(
+    patchCandidatePath,
+    `${JSON.stringify(receipt.hands.patchCandidateBuilder.candidate, null, 2)}\n`,
   );
   await fs.writeFile(receipt.latestJsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
   await fs.writeFile(receipt.latestMarkdownPath, `${receipt.markdown}\n`);

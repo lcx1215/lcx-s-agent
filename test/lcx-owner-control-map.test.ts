@@ -107,6 +107,9 @@ describe("LCX owner control map", () => {
     expect(map.markdown).toContain("是否需要你授权");
     expect(map.markdown).toContain("每次总控跑完自动刷新");
     expect(map.markdown).toContain("什么时候自动写");
+    expect(map.markdown).toContain("补丁候选手");
+    expect(map.markdown).toContain("训练/评测/补丁路径");
+    expect(map.markdown).toContain("git index/commit");
     expect(map.markdown).toContain("总控决定什么时候自动加 --write");
     expect(map.markdown).toContain("同一个 signalKey 已写过就不重复写");
     expect(map.markdown).toContain("候选小考出现失败");

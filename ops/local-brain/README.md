@@ -150,10 +150,11 @@ Governance autopilot may auto-add
 candidate eval has failed/dirty/recovered cases, module-learning evidence is
 incomplete, or SkillOpt reports a static/format gate gap. The de-duplication
 key is `signalKey`, so the same signal writes at most once. The output is only
-memory correction/downrank notes, training/eval candidate packets, state, and
-logs under the workspace. It must not touch repo source, live sender, provider
-config, protected memory, formal language corpus, training processes,
-train-slice direct writes, or model-weight absorption claims.
+memory correction/downrank notes, training/eval candidate packets, repo patch
+candidate plans, state, and logs under the workspace. It must not touch repo
+source, git index/commit, live sender, provider config, protected memory,
+formal language corpus, training processes, train-slice direct writes, or
+model-weight absorption claims.
 The Commercial Acceptance Harness is the product-grade exam above those owners:
 
 ```bash

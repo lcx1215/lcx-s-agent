@@ -8,7 +8,7 @@ import {
 } from "../scripts/dev/lcx-self-repair-hands.ts";
 
 describe("LCX self-repair hands", () => {
-  it("builds a supervised dry-run for memory correction and training candidate creation", () => {
+  it("builds a supervised dry-run for memory correction, training candidates, and patch candidates", () => {
     const receipt = buildSelfRepairHandsReceipt({
       checkedAt: "2026-05-29T06:00:00.000Z",
       workspaceDir: "/tmp/lcx-self-repair",
@@ -38,9 +38,18 @@ describe("LCX self-repair hands", () => {
     expect(receipt.hands.trainingCaseBuilder.candidate.absorptionStatus).toBe(
       "candidate_only_not_in_train_slice",
     );
+    expect(receipt.hands.patchCandidateBuilder.canWriteWithoutCodex).toBe(true);
+    expect(receipt.hands.patchCandidateBuilder.candidate.boundary).toBe(
+      "dev_repo_patch_candidate_only_not_applied",
+    );
+    expect(
+      receipt.hands.patchCandidateBuilder.candidate.proposedPatchContract.canEditRepoSource,
+    ).toBe(false);
     expect(receipt.notTouched).toEqual(
       expect.arrayContaining([
         "repo_source",
+        "git_index",
+        "git_commit",
         "live_sender",
         "provider_config",
         "protected_memory",
@@ -69,6 +78,12 @@ describe("LCX self-repair hands", () => {
     const candidate = JSON.parse(
       await fs.readFile(receipt.hands.trainingCaseBuilder.path, "utf8"),
     ) as { boundary: string; absorptionStatus: string };
+    const patchCandidate = JSON.parse(
+      await fs.readFile(receipt.hands.patchCandidateBuilder.path, "utf8"),
+    ) as {
+      boundary: string;
+      proposedPatchContract: { ownerReviewRequired: boolean; canCommit: boolean };
+    };
     const latest = JSON.parse(await fs.readFile(receipt.latestJsonPath, "utf8")) as {
       status: string;
       writtenArtifacts: string[];
@@ -80,10 +95,14 @@ describe("LCX self-repair hands", () => {
     expect(correction).toContain("dev_self_repair_memory_correction_only");
     expect(candidate.boundary).toBe("dev_training_candidate_only_not_absorbed");
     expect(candidate.absorptionStatus).toBe("candidate_only_not_in_train_slice");
+    expect(patchCandidate.boundary).toBe("dev_repo_patch_candidate_only_not_applied");
+    expect(patchCandidate.proposedPatchContract.ownerReviewRequired).toBe(true);
+    expect(patchCandidate.proposedPatchContract.canCommit).toBe(false);
     expect(latest.status).toBe("write_completed");
     expect(latest.signalKey).toBe("test_blog_alpha_overclaim");
     expect(latest.writtenArtifacts).toEqual(expect.arrayContaining(receipt.writtenArtifacts));
-    expect(markdown).toContain("LCX Self-Repair Hands");
+    expect(markdown).toContain("三只手");
+    expect(markdown).toContain("补丁候选手");
     expect(jsonl).toContain("lcx-self-repair-hands");
     for (const filePath of receipt.writtenArtifacts) {
       expect(path.relative(workspaceDir, filePath).startsWith("..")).toBe(false);

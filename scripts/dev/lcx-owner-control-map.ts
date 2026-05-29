@@ -222,27 +222,27 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
 
   addIf(items, selfRepairStatus.length > 0, {
     id: "self_repair_memory_and_training_candidate_hands",
-    title: "记忆清洁手和题库修复手",
+    title: "记忆清洁手、题库修复手和补丁候选手",
     status: "codex_can_act_when_safe",
     ownerCanSee: true,
     ownerCanDirectNow: true,
     codexCanActWhenSafe: true,
     supervisor:
-      "总控决定什么时候自动加 --write；自修手只写允许目录；Codex 负责审查候选能不能进入正式训练/评测。",
+      "总控决定什么时候自动加 --write；自修手只写允许目录；Codex 负责审查候选能不能进入正式训练/评测/补丁路径。",
     evidenceNow:
-      "self-repair latest/jsonl、记忆纠错/降权 note、训练/评测候选 packet、总控 owner 写入策略。",
+      "self-repair latest/jsonl、记忆纠错/降权 note、训练/评测候选 packet、repo 补丁候选 packet、总控 owner 写入策略。",
     reason:
       selfRepairStatus === "write_completed" ||
       selfRepairLatestWritten?.status === "write_completed"
-        ? `LCX Agent 已经能自己写允许范围内的记忆纠错和训练候选文件。什么时候自动写：${selfRepairAutoWriteRules}。`
-        : `LCX Agent 已经有可写能力演练；当前总控只做 dry-run，未写入新的候选文件。什么时候自动写：${selfRepairAutoWriteRules}。`,
+        ? `LCX Agent 已经能自己写允许范围内的记忆纠错、训练候选和补丁候选文件。什么时候自动写：${selfRepairAutoWriteRules}。`
+        : `LCX Agent 已经有三只手可写能力演练；当前总控只做 dry-run，未写入新的候选文件。什么时候自动写：${selfRepairAutoWriteRules}。`,
     nextControl: "只有总控 owner 信号变化时才自动加 --write；同一个 signalKey 已写过就不重复写。",
     proceedWhen:
       "只写 workspace memory/self-repair、state、logs；候选通过轻量检查；训练计划确认没有重活后才能进入下一段链路。",
     stopWhen:
-      "没有 owner 信号、同一个信号已经写过、试图改 repo 源码、受保护记忆、provider 配置、live sender、formal language corpus，或直接启动训练。",
+      "没有 owner 信号、同一个信号已经写过、试图改 repo 源码、git index/commit、受保护记忆、provider 配置、live sender、formal language corpus，或直接启动训练。",
     ownerAuthorization:
-      "写普通自修候选不需要；吸收到正式训练、改 repo 源码、启动训练或 live 变更需要 owner 门禁。",
+      "写普通自修候选不需要；吸收到正式训练、把补丁候选应用到 repo、启动训练或 live 变更需要 owner 门禁。",
   });
 
   addIf(items, parseIssueCount > 0, {
