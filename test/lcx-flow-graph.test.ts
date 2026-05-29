@@ -149,9 +149,10 @@ describe("LCX flow graph exam", () => {
         }),
         expect.objectContaining({
           id: "training_failure_feedback_waterflow",
-          feedbackEdgeCount: 2,
+          feedbackEdgeCount: 3,
           requiredFilters: expect.arrayContaining([
             "training_overlap_guard",
+            "work_then_evolve_cooldown_required",
             "parse_recovered_no_promotion",
             "promotion_ready_required",
           ]),
@@ -161,6 +162,39 @@ describe("LCX flow graph exam", () => {
           requiredFilters: expect.arrayContaining([
             "dev_ready_not_live_user_seen",
             "real_lark_inbound_required",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "skillopt_runtime_self_use_waterflow",
+          feedbackEdgeCount: 2,
+          receipts: expect.arrayContaining([
+            "lcx-skillopt-lite",
+            "skillopt-autocue",
+            "lcx-live-lark-brain-binding",
+          ]),
+          requiredFilters: expect.arrayContaining([
+            "skillopt_best_skill_required",
+            "skillopt_context_not_weight_absorption",
+            "skillopt_live_proof_required",
+            "dev_ready_not_live_user_seen",
+            "real_lark_inbound_required",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "universe_index_total_coverage_waterflow",
+          receipts: expect.arrayContaining([
+            "lcx-universe-index-latest",
+            "lcx-change-impact-plan",
+            "lcx-governance-autopilot-latest",
+          ]),
+          requiredFilters: expect.arrayContaining([
+            "inventory_only_no_delete",
+            "owner_coverage_required",
+            "artifact_staleness_visible",
+            "single_owner_required",
+            "protected_memory_guard",
+            "no_provider_config_change",
+            "no_live_sender_change",
           ]),
         }),
         expect.objectContaining({
@@ -178,6 +212,8 @@ describe("LCX flow graph exam", () => {
           receipts: expect.arrayContaining(["commercial_answer_pipeline", "review_panel"]),
           requiredFilters: expect.arrayContaining([
             "candidate_answer_not_final_authority",
+            "minimax_agent_draft_not_final_authority",
+            "minimax_agent_output_requires_lcx_gate",
             "qwen_challenger_not_final_authority",
             "terminal_decision_required",
             "no_raw_json_visible_reply",
@@ -216,6 +252,22 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "self_repair_hands_waterflow",
+          receipts: expect.arrayContaining([
+            "lcx-self-repair-hands-latest",
+            "lcx-governance-autopilot-latest",
+            "lcx-owner-control-map-latest",
+          ]),
+          requiredFilters: expect.arrayContaining([
+            "self_repair_write_allowlist_required",
+            "explicit_self_repair_write_flag_required",
+            "training_candidate_not_absorbed",
+            "protected_memory_guard",
+            "training_overlap_guard",
+            "model_weight_absorption_not_claimed",
+          ]),
+        }),
+        expect.objectContaining({
           id: "finance_data_gateway_waterflow",
           requiredFilters: expect.arrayContaining([
             "fresh_timestamp_required",
@@ -229,6 +281,7 @@ describe("LCX flow graph exam", () => {
           requiredFilters: expect.arrayContaining([
             "fresh_timestamp_required",
             "retrieval_apply_eval_review_required",
+            "work_then_evolve_cooldown_required",
             "parse_recovered_no_promotion",
             "promotion_ready_required",
           ]),
@@ -247,6 +300,10 @@ describe("LCX flow graph exam", () => {
           requiredFilters: expect.arrayContaining([
             "license_scope_required",
             "untrusted_source_isolation",
+            "blacktech_is_pattern_intake_only",
+            "runtime_authority_not_granted",
+            "model_weight_absorption_not_claimed",
+            "tool_permission_audit_required",
           ]),
         }),
         expect.objectContaining({
@@ -283,6 +340,15 @@ describe("LCX flow graph exam", () => {
           ownerScenario: "compressed_context_recovery_waterflow",
           mergeFilters: expect.arrayContaining([
             "same_philosophy_merge_required",
+            "single_owner_required",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "universe_inventory_cluster",
+          ownerScenario: "universe_index_total_coverage_waterflow",
+          mergeFilters: expect.arrayContaining([
+            "inventory_only_no_delete",
+            "owner_coverage_required",
             "single_owner_required",
           ]),
         }),
@@ -331,7 +397,21 @@ describe("LCX flow graph exam", () => {
           id: "architecture_supervision_entrypoints",
           ownerCluster: "architecture_supervision_cluster",
           ownerPath: "scripts/dev/lcx-mind-model.ts",
-          watchedPathTerms: expect.arrayContaining(["lcx-flow-graph", "lcx-head-tail-consistency"]),
+          watchedPathTerms: expect.arrayContaining([
+            "lcx-flow-graph",
+            "lcx-head-tail-consistency",
+            "lcx-universe-index",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "universe_inventory_entrypoints",
+          ownerCluster: "universe_inventory_cluster",
+          ownerPath: "scripts/dev/lcx-universe-index.ts",
+          watchedPathTerms: expect.arrayContaining(["lcx-universe-index", "garbageCandidates"]),
+          allowedPaths: expect.arrayContaining([
+            "scripts/dev/lcx-universe-index.ts",
+            "test/lcx-universe-index.test.ts",
+          ]),
         }),
         expect.objectContaining({
           id: "learning_sedimentation_entrypoints",
@@ -346,12 +426,15 @@ describe("LCX flow graph exam", () => {
             "commercial-answer",
             "visible-answer-adoption",
             "skill-autocue",
+            "skillopt-autocue",
           ]),
           allowedPaths: expect.arrayContaining([
             "extensions/feishu/src/visible-answer-adoption-gate.ts",
             "extensions/feishu/src/visible-answer-adoption-gate.test.ts",
             "src/auto-reply/reply/skill-autocue.ts",
             "src/auto-reply/reply/skill-autocue.test.ts",
+            "src/auto-reply/reply/skillopt-autocue.ts",
+            "src/auto-reply/reply/skillopt-autocue.test.ts",
           ]),
         }),
         expect.objectContaining({
@@ -429,7 +512,33 @@ describe("LCX flow graph exam", () => {
           fastCheck: "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:training_overlap_guard",
+            "missing_or_skipped_filter:work_then_evolve_cooldown_required",
             "unbounded_or_unreviewed_feedback",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "skillopt_runtime_self_use_waterflow",
+          ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
+          fastCheck:
+            "node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json",
+          evidenceReceipts: expect.arrayContaining([
+            "lcx-skillopt-lite",
+            "skillopt-autocue",
+            "lcx-live-lark-brain-binding",
+          ]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:skillopt_context_not_weight_absorption",
+            "missing_or_skipped_filter:skillopt_live_proof_required",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "universe_index_total_coverage_waterflow",
+          ownerEntrypoint: "scripts/dev/lcx-universe-index.ts",
+          fastCheck: "node --import tsx scripts/dev/lcx-universe-index.ts --json",
+          evidenceReceipts: expect.arrayContaining(["lcx-universe-index-latest"]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:inventory_only_no_delete",
+            "missing_or_skipped_filter:owner_coverage_required",
           ]),
         }),
         expect.objectContaining({
@@ -450,6 +559,19 @@ describe("LCX flow graph exam", () => {
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:commercial_error_budget_required",
             "missing_or_skipped_filter:product_canary_suite_required",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "self_repair_hands_waterflow",
+          ownerEntrypoint: "scripts/dev/lcx-self-repair-hands.ts",
+          fastCheck: "node --import tsx scripts/dev/lcx-self-repair-hands.ts --json",
+          evidenceReceipts: expect.arrayContaining([
+            "lcx-self-repair-hands-latest",
+            "lcx-owner-control-map-latest",
+          ]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:self_repair_write_allowlist_required",
+            "missing_or_skipped_filter:training_candidate_not_absorbed",
           ]),
         }),
         expect.objectContaining({
@@ -489,6 +611,7 @@ describe("LCX flow graph exam", () => {
     expect(mindModelSource).toContain("flow_graph");
     expect(headTailSource).toContain("flow_graph_boundary");
     expect(agents).toContain("LCX Agent Flow Graph");
+    expect(agents).toContain("LCX Agent Universe Index Doctrine");
     expect(agents).toContain("wrong-flow");
     expect(agents).toContain("same_philosophy_merge_required");
     expect(agents).toContain("finance_data_gateway_snapshot");

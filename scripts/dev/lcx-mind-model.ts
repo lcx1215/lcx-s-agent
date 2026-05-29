@@ -72,12 +72,15 @@ const WORKFLOW_SURFACES = [
   "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-governance-autopilot.ts",
   "scripts/dev/lcx-change-impact-plan.ts",
+  "scripts/dev/lcx-universe-index.ts",
+  "scripts/dev/lcx-skillopt-lite.ts",
   "scripts/dev/lcx-local-paths.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/lcx-head-tail-consistency.ts",
   "scripts/dev/lcx-problem-cluster-radar.ts",
   "scripts/dev/lcx-commercial-acceptance-harness.ts",
   "scripts/dev/lcx-commercial-answer-pipeline.ts",
+  "scripts/dev/lcx-self-repair-hands.ts",
   "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   "scripts/dev/lcx-learning-sedimentation-bridge.ts",
   "scripts/dev/lcx-learning-sedimentation-audit.ts",
@@ -98,6 +101,8 @@ const WORKFLOW_SURFACES = [
   LOCAL_CODEX_ARCHIVE,
   "scripts/dev/lcx-promote-live.ts",
   "extensions/feishu/src/lark-language-handoff-receipts.ts",
+  "src/auto-reply/reply/get-reply-run.ts",
+  "src/auto-reply/reply/skillopt-autocue.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
   "src/commands/capabilities/lark-loop-diagnose.ts",
@@ -108,11 +113,15 @@ const PROOF_SURFACES = [
   "test/lcx-context-recovery-exam.test.ts",
   "test/lcx-flow-graph.test.ts",
   "test/lcx-governance-autopilot.test.ts",
+  "test/lcx-universe-index.test.ts",
+  "test/lcx-skillopt-lite.test.ts",
+  "src/auto-reply/reply/skillopt-autocue.test.ts",
   "test/lcx-head-tail-consistency.test.ts",
   "test/lcx-mind-model.test.ts",
   "test/lcx-problem-cluster-radar.test.ts",
   "test/lcx-commercial-acceptance-harness.test.ts",
   "test/lcx-commercial-answer-pipeline.test.ts",
+  "test/lcx-self-repair-hands.test.ts",
   "extensions/feishu/src/lark-language-handoff-receipts.test.ts",
   "test/lcx-external-agent-upgrade-radar.test.ts",
   "test/lcx-agent-exam.test.ts",
@@ -141,11 +150,15 @@ const BOUNDARY_SURFACES = [
   "scripts/dev/lcx-external-agent-upgrade-radar.ts",
   "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-governance-autopilot.ts",
+  "scripts/dev/lcx-universe-index.ts",
+  "scripts/dev/lcx-skillopt-lite.ts",
   "scripts/dev/lcx-commercial-acceptance-harness.ts",
   "scripts/dev/lcx-commercial-answer-pipeline.ts",
+  "scripts/dev/lcx-self-repair-hands.ts",
   "scripts/dev/lcx-system-doctor.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/local-brain-training-plan.ts",
+  "src/auto-reply/reply/skillopt-autocue.ts",
   "scripts/dev/minimax-brain-teacher-batch.ts",
   "scripts/dev/lcx-automation-repair-lock.ts",
   "extensions/feishu/src/lark-language-handoff-receipts.ts",
@@ -236,6 +249,38 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     boundaryTerms: ["languageCorpusUntouched", "protectedMemoryUntouched", "noExecutionAuthority"],
     nextAction:
       "Use module-learning plan/review before claiming a module learned anything from a source.",
+  },
+  {
+    id: "self_repair_hands",
+    masterLane: "memory_sedimentation",
+    objective:
+      "Let the agent write bounded memory correction/downrank notes and training/eval candidate packets while keeping them supervised, candidate-only, and outside protected/live/provider/training authority.",
+    headTerms: [
+      "Self-repair hands",
+      "memory correction/downrank notes",
+      "training/eval candidate packets",
+    ],
+    workflowTerms: [
+      "lcx-self-repair-hands",
+      "selfRepairHands",
+      "lcx-self-repair-hands-latest",
+      "lcx-owner-control-map-latest",
+    ],
+    proofTerms: [
+      "test/lcx-self-repair-hands.test.ts",
+      "candidate_only_not_in_train_slice",
+      "canWriteWithoutCodex",
+      "self_repair_hands_waterflow",
+    ],
+    boundaryTerms: [
+      "dev_self_repair_hands_only",
+      "protectedMemoryTouched",
+      "providerConfigTouched",
+      "liveTouched",
+      "training_candidate_not_absorbed",
+    ],
+    nextAction:
+      "Review self-repair packets through governance/autopilot and owner-control before any owner-approved eval or train-slice absorption.",
   },
   {
     id: "lark_feishu_live_boundary",
@@ -330,17 +375,52 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     workflowTerms: [
       "lcx-governance-autopilot",
       "lcx-governance-autopilot-latest",
+      "lcx-local-failure-trace-latest",
+      "lcx-owner-brief-latest",
+      "lcx-owner-control-map-latest",
       "governanceAutopilot",
       "autoTriggeredOwnerCommands",
     ],
     proofTerms: [
       "dev_governance_autopilot_only",
+      "dev_local_failure_trace_index_only",
+      "dev_owner_brief_readable_summary_only",
+      "dev_owner_control_map_only",
       "test/lcx-governance-autopilot.test.ts",
       "latestStatePath",
     ],
     boundaryTerms: ["readOnly", "noOverlappingTrainingStarted", "liveTouched"],
     nextAction:
       "Let the local operator refresh governanceAutopilot; use its owner list before adding another parallel diagnostic.",
+  },
+  {
+    id: "universe_index_total_coverage",
+    masterLane: "global_doctrine_and_runbook",
+    objective:
+      "Give future agents one inventory owner for all repo files, code surfaces, runtime artifacts, live sidecar files, owner coverage, and cleanup candidates.",
+    headTerms: [
+      "LCX Agent Universe Index Doctrine",
+      "all files, all code, all artifacts",
+      "lcx-universe-index",
+    ],
+    workflowTerms: [
+      "lcx-universe-index",
+      "dev_universe_index_only",
+      "garbageCandidates",
+      "ownerCoverage",
+    ],
+    proofTerms: [
+      "test/lcx-universe-index.test.ts",
+      "universe_index_recovers_total_inventory",
+      "dev_universe_index_only",
+    ],
+    boundaryTerms: [
+      "inventory and cleanup candidates only",
+      "no delete/migration/live authority",
+      "liveTouched",
+    ],
+    nextAction:
+      "Run lcx-universe-index before broad cleanup or full-system review; route any candidate to its owner instead of deleting or migrating directly.",
   },
   {
     id: "protected_boundary",
@@ -377,6 +457,26 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     boundaryTerms: ["dev_flow_graph_only", "liveTouched", "providerConfigTouched"],
     nextAction:
       "Run lcx-flow-graph when a task family could wrong-flow, skip a filter, or recirculate without a guard.",
+  },
+  {
+    id: "skillopt_runtime_self_use",
+    masterLane: "lark_feishu_visible_reply",
+    objective:
+      "Let eval-derived SkillOpt SOPs guide the live/local reply planner immediately while keeping model-weight absorption and LiveLark proof separate.",
+    headTerms: ["SkillOpt-lite", "runtime hook", "not Qwen weight absorption"],
+    workflowTerms: ["lcx-skillopt-lite", "skillopt-autocue", "get-reply-run", "best_skill.md"],
+    proofTerms: [
+      "test/lcx-skillopt-lite.test.ts",
+      "skillopt-autocue.test.ts",
+      "ready_via_preflight_context_injection",
+    ],
+    boundaryTerms: [
+      "dev_skillopt_preflight_only",
+      "not model-weight absorption",
+      "not live-user-seen proof",
+    ],
+    nextAction:
+      "Keep SkillOpt as deterministic preflight context until targeted eval, training/promotion truth, live runtime sync, and real Lark proof pass.",
   },
   {
     id: "world_class_agent_architecture",
@@ -416,16 +516,31 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "Fold useful GitHub, arXiv, memory, benchmark, and computer-use projects into existing LCX owners without granting runtime authority.",
     headTerms: [
       "external agent upgrade radar",
+      "AutoSkill",
+      "Skills-Coach",
       "Agent Lightning",
       "LongMemEval-V2",
+      "MemX",
+      "OpenTelemetry GenAI",
+      "AgentSight",
+      "OWASP Agentic",
+      "SMCP",
       "ClawBench",
       "CLI-Anything",
       "multi-agent orchestration",
       "Polymarket",
       "prediction market",
+      "blacktech mechanism",
     ],
     workflowTerms: [
       "lcx-external-agent-upgrade-radar",
+      "SkillOpt v2 lifecycle",
+      "unified trajectory schema",
+      "secure tool/skill permission",
+      "automatic trigger",
+      "owner gate",
+      "autopilot surface",
+      "next automation action",
       "github_project_capability_intake",
       "skill-harvester",
       "cli-anything-harvester",
@@ -434,6 +549,9 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     ],
     proofTerms: [
       "registeredCandidateCount",
+      "blacktechMechanismCount",
+      "blacktechRuntimeAuthorityGrantedCount",
+      "blacktechAutopilotRoutedCount",
       "perfectIntegrationClaim",
       "runtimeAuthorityGrantedCount",
       "test/lcx-external-agent-upgrade-radar.test.ts",
@@ -605,6 +723,60 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Require source registry, retrieval/apply receipt, eval/training evidence, and review status.",
+  },
+  {
+    id: "skillopt_preflight_is_not_absorption_or_live_proof",
+    category: "boundary",
+    objective:
+      "SkillOpt runtime preflight can improve the next answer immediately, but must not be upgraded into model-weight absorption, adapter promotion, or live-user-seen proof.",
+    termsBySurface: {
+      head: ["SkillOpt-lite", "not Qwen weight absorption", "LiveLark proof"],
+      workflow: [
+        "dev_skillopt_preflight_only",
+        "resolveSkillOptAutoCue",
+        "applySkillOptAutoCueToBody",
+        "lcx-skillopt-lite",
+      ],
+      proof: [
+        "ready_via_preflight_context_injection",
+        "skillopt-autocue.test.ts",
+        "test/lcx-skillopt-lite.test.ts",
+      ],
+      boundary: [
+        "dev_skillopt_preflight_only",
+        "not model-weight absorption",
+        "not live-user-seen proof",
+      ],
+    },
+    nextAction:
+      "Use SkillOpt preflight for immediate planning only; require targeted eval, clean promotion truth, live sync, and real Lark evidence before stronger claims.",
+  },
+  {
+    id: "universe_index_is_inventory_not_delete_authority",
+    category: "boundary",
+    objective:
+      "The universe index may find every file, artifact, sidecar, and cleanup candidate, but it must not delete, migrate live runtime, or change authority by itself.",
+    termsBySurface: {
+      head: [
+        "LCX Agent Universe Index Doctrine",
+        "all files, all code, all artifacts",
+        "not deletion authority",
+      ],
+      workflow: [
+        "dev_universe_index_only",
+        "garbageCandidates",
+        "no delete/migration/live authority",
+      ],
+      proof: ["test/lcx-universe-index.test.ts", "universe_index_recovers_total_inventory"],
+      boundary: [
+        "inventory and cleanup candidates only",
+        "liveTouched",
+        "providerConfigTouched",
+        "protectedMemoryTouched",
+      ],
+    },
+    nextAction:
+      "Treat universe-index output as a map; cleanup or migration still needs the matching owner gate and explicit proof.",
   },
   {
     id: "mind_model_changes_have_targeted_tests",

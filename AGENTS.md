@@ -9,6 +9,7 @@ When a new Codex coding window enters this repo without prior chat context, star
 ```bash
 sed -n '1,220p' ops/local-brain/README.md
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff
+node --import tsx scripts/dev/lcx-universe-index.ts --json
 node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
@@ -60,6 +61,9 @@ node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
 node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
+node --import tsx scripts/dev/lcx-universe-index.ts --json
+node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json
+node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
@@ -80,15 +84,49 @@ node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 
 It automatically triggers the owner stack, writes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json`
+and the universe inventory snapshot
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-universe-index-latest.json`,
 and refreshes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json`,
 plus the one-screen compressed-context handoff
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md`,
+plus the compact local failure trace latest file
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-local-failure-trace-latest.json`
+and append-only log
+`/Users/liuchengxu/.openclaw/workspace/logs/lcx-local-failure-trace.jsonl`,
+plus the plain-Chinese owner brief
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-brief-latest.md`
+and JSON companion
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-brief-latest.json`,
+plus the owner control map
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.md`
+and JSON companion
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.json`,
 so heartbeat watchers and future coding windows do not need a parallel
 hand-built snapshot path. It is included in the local operator latest state as
 `governanceAutopilot`.
 It must stay `dev_governance_autopilot_only`: no live sender, provider config,
 protected memory, repo mutation, live apply, or overlapping training.
+
+## TS Main Control / Python Engine Boundary
+
+LCX Agent should use TypeScript as the main control plane. TS owns routing,
+orchestration, safety gates, governance checks, user-visible flow, reporting,
+and future-agent recovery. Python may remain as an engine only: training, MLX
+or model execution, numerical/data computation, and isolated skill tools.
+
+Run this check whenever Python or workflow ownership changes:
+
+```bash
+node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json
+```
+
+The check classifies every Python file as `保留`, `包装`, or `迁走`. `保留`
+means Python is still doing engine work. `包装` means the Python file can
+survive only behind a named TS owner. `迁走` means the file is workflow control
+and should move to TS. New Python files are not acceptable until this check
+names one of those three choices. This is `dev_ts_python_boundary_only`: no
+live sender, provider config, protected memory, or training authority.
 
 If the task asks about external or newly added skills, use the runbook's skill inventory command:
 
@@ -116,18 +154,35 @@ Use the matching skill before acting:
 
 External agent upgrade radar: when evaluating new GitHub/arXiv agent projects,
 use `node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json`
-before adopting them. Current high-value candidates are Agent Lightning,
-LongMemEval-V2 / AgentRunbook, LightMem / LycheeMemory,
-ClawBench / WildClawBench, Agent S / CLI-Anything, multi-agent orchestration
-frameworks such as LangGraph / OpenAI Agents / CrewAI / Microsoft Agent
-Framework, and prediction-market research sources such as Polymarket,
-PolyClaw, Polybot, Polyseer, PolyBench, and PolySwarm. They are not direct
-runtime authority: no direct install, no provider config, no live sender, no
-protected memory changes, no wallet connection, no order placement, no copy
-trading, and no latency arbitrage. Distill only reusable workflow patterns into
-existing LCX owners such as problem radar, context recovery, learning
-sedimentation, commercial acceptance, flow graph, finance data gateway,
+before adopting them. Current high-value candidates include AutoSkill /
+Skills-Coach, Agent Lightning, LongMemEval-V2 / AgentRunbook, MemX-style
+local-first memory provenance, LightMem / LycheeMemory, OpenTelemetry GenAI /
+AgentSight, OWASP Agentic / SMCP, ClawBench / WildClawBench, Agent S /
+CLI-Anything, multi-agent orchestration frameworks such as LangGraph / OpenAI
+Agents / CrewAI / Microsoft Agent Framework, and prediction-market research
+sources such as Polymarket, PolyClaw, Polybot, Polyseer, PolyBench, and
+PolySwarm. They are not direct runtime authority: no direct install, no provider
+config, no live sender, no protected memory changes, no wallet connection, no
+order placement, no copy trading, and no latency arbitrage. Distill only
+reusable workflow patterns into existing LCX owners such as SkillOpt-lite,
+governance autopilot, problem radar, context recovery, learning sedimentation,
+commercial acceptance, flow graph, finance data gateway, security review,
 skill-harvester, and cli-anything-harvester.
+
+The six prioritized blacktech mechanisms are SkillOpt v2 lifecycle,
+native-runtime long-task battery, unified trajectory schema, local-first memory
+provenance, agent trace/side-effect observability, and secure tool/skill
+permissioning. Treat them as architecture intake only until their owner proof
+chain passes. Do not upgrade them into model-weight absorption, LiveLark proof,
+provider config, protected-memory write, live sender, wallet, order,
+desktop-control, or training authority by naming the mechanism.
+Each mechanism must also carry an automatic workflow contract in
+`lcx-external-agent-upgrade-radar`: automatic trigger, owner gate, autopilot
+surface, next safe dev probe, next automation action, required proof chain, and
+forbidden authorities. `lcx-governance-autopilot` and context recovery must
+surface these contracts so future agents can use the mechanisms without the
+user remembering their names, while `lcx-problem-cluster-radar` must flag any
+missing automatic contract as repairable architecture drift.
 
 Keep skill placement explicit: core LCX skills guide this repo's operator work;
 general Codex skills stay global support tools unless the runbook classifies
@@ -152,8 +207,54 @@ latency-arbitrage authority.
 The live/local reply path should not rely only on weak-model memory for common
 LCX skills: deterministic skill preflight may cue one matching installed skill
 before the model answers, while explicit `/skill` commands still take priority.
+SkillOpt-lite may also cue eval-derived SOP skills from
+`/Users/liuchengxu/.openclaw/workspace/memory/skillopt-lite/` before the answer
+planner runs. Treat this as immediate context injection only: it can guide the
+next agent right away, but it is not Qwen weight absorption, selected-clean
+adapter promotion, or LiveLark proof until the SkillOpt proof chain passes
+targeted eval, regression eval, train-slice/training evidence, clean promotion
+truth, live runtime binding, and fresh real Lark inbound/outbound evidence.
+The actual runtime hook is the normal reply path in
+`src/auto-reply/reply/get-reply-run.ts`, which reads matched SkillOpt
+`best_skill.md` files through `src/auto-reply/reply/skillopt-autocue.ts`. Keep
+that hook source-compatible with the live sidecar so accepted SkillOpt behavior
+flows through live promotion/sync instead of requiring a later manual format
+move.
+Mind model and flow graph must treat this as its own supervised waterflow:
+eval failures may create SkillOpt SOPs, the runtime hook may use them as
+preflight context immediately, but weight absorption, selected adapter
+promotion, live runtime update, and real Lark proof remain separate owner gates.
 
 Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.
+
+## LCX Agent Universe Index Doctrine
+
+When the user asks for the whole agent, all files, all code, all artifacts, all
+outputs, all garbage, or "一切的一切", start from one owner:
+
+```bash
+node --import tsx scripts/dev/lcx-universe-index.ts --json
+```
+
+This is the highest-level inventory owner. It indexes repo tracked and visible
+files, dirty and untracked files, owner coverage through `lcx-change-impact-plan`,
+workspace state/log/memory/tmp artifacts, live sidecar files, latest governance
+and local-operator snapshots, stale snapshot candidates, large runtime
+artifacts, and `garbageCandidates`.
+
+The universe index is not deletion authority. It is inventory and cleanup
+candidates only, with no delete/migration/live authority. It must report
+`dev_universe_index_only`, `liveTouched=false`, `providerConfigTouched=false`,
+and `protectedMemoryTouched=false`. Cleanup, live migration, provider changes,
+protected-memory edits, train-slice rebuilds, adapter promotion, and
+Lark-visible claims still require their existing owner gates and proof surfaces.
+
+Use the universe index before broad cleanup, broad architecture review,
+compressed-context recovery, or a future-agent "read everything fast" request.
+Then route each candidate to its owner lane: change-impact for changed files,
+mind model and flow graph for architecture coverage, training plan for volatile
+Qwen/MiniMax/MLX truth, live binding or live probe for LiveLark truth, and module
+learning owners for stored/learned capability boundaries.
 
 ## Context-Limited Continuity Doctrine
 
@@ -163,7 +264,7 @@ before making claims or changes.
 
 - Start every non-trivial LCX Agent session from fixed evidence: `AGENTS.md`,
   `ops/local-brain/README.md`, `lcx-context-recovery-exam --handoff`,
-  `lcx-system-doctor`, `local-brain-training-plan`, and
+  `lcx-universe-index`, `lcx-system-doctor`, `local-brain-training-plan`, and
   `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
 - Classify every small fix into one current master lane before coding:
   Qwen training, MiniMax teacher, adapter promotion, Lark/Feishu visible reply,
@@ -359,6 +460,20 @@ control-room summary wording. The terminal decision is always either
 `adopt_visible_answer` or `return_failed_reason`; never let model rewrites loop
 without a budget, never treat Qwen as final authority, and never expose raw
 JSON/module labels as the user-visible answer.
+MiniMax Agent may be used as a higher-quality external draft and red-team input
+for this pipeline, but its output is not final authority. LCX must still run
+local contract audit, source/data gates, Qwen patch-only challenge when needed,
+review panel, and the visible answer adoption gate before any MiniMax Agent
+draft reaches the user. It must not directly send Lark replies, change provider
+config, write protected memory, or gain trade/execution authority.
+Because this operator treats MiniMax capacity as monthly fixed-cost capacity,
+use MiniMax Agent aggressively for complex finance answers by default. Event
+risk, current market context, portfolio/position questions, options/leverage or
+loss-recovery asks, earnings, macro/liquidity/rates, model disagreement, source
+conflict, and high-value research summaries should receive MiniMax draft and
+red-team pressure before LCX local gates decide the final visible answer. Do not
+route tiny factual replies through a heavy agent team, and do not expose
+internal agent machinery in the visible reply.
 
 ## World-Class Agent Architecture Doctrine
 
@@ -423,6 +538,22 @@ diagnostic to run.
   the failure family, acquire repair ownership when required, patch the shared
   contract, run targeted proof, refresh the relevant snapshot, and leave a
   receipt or commit.
+- Self-repair hands are allowed only as dev-scoped maintenance hands:
+  `lcx-self-repair-hands` may write memory correction/downrank notes and
+  training/eval candidate packets under allowed workspace state, log, and
+  memory/self-repair paths. These packets are candidate-only, not train-slice,
+  model absorption, protected-memory truth, live sender changes, provider
+  config changes, repo source edits, or training authority.
+- Owner strategy for automatic self-repair writes: only
+  `lcx-governance-autopilot` may auto-add `--write` to
+  `lcx-self-repair-hands`, and only when a current owner signal changes:
+  candidate eval has failed/dirty/recovered cases, module-learning evidence is
+  incomplete, or SkillOpt reports a static/format gate gap. The de-duplication
+  key is `signalKey`; one signal writes at most once. If there is no owner
+  signal, the same signal was already written, or the action would touch repo
+  source, live sender, provider config, protected memory, formal language
+  corpus, training processes, train-slice direct writes, or model-weight
+  absorption claims, automatic `--write` must not run.
 - A repaired owner signal is not the same as a verified owner signal. If a
   commit or receipt is newer than the latest owner failure but the owner has not
   rerun yet, radar should classify it as `pending_owner_verification` instead
@@ -430,17 +561,29 @@ diagnostic to run.
 - Stale snapshots are not harmless. Context recovery and local operator digest
   must compare current owner outputs against stored snapshots and force refresh
   before a future agent relies on old machine truth.
-- External agent projects must be absorbed through the same instrument. Current
-  five candidates are Agent Lightning, LongMemEval-V2 / AgentRunbook,
-  LightMem / LycheeMemory, ClawBench / WildClawBench, and Agent S /
-  CLI-Anything. They must trigger `skill-harvester` or
-  `cli-anything-harvester`, then pass
+- External agent projects and blacktech mechanisms must be absorbed through the
+  same instrument. Current source candidates include AutoSkill / Skills-Coach,
+  Agent Lightning, LongMemEval-V2 / AgentRunbook, MemX-style memory provenance,
+  LightMem / LycheeMemory, OpenTelemetry GenAI / AgentSight, OWASP Agentic /
+  SMCP, ClawBench / WildClawBench, Agent S / CLI-Anything, multi-agent
+  orchestration frameworks, and prediction-market research sources. They must
+  trigger `skill-harvester`, `cli-anything-harvester`, finance data provenance,
+  or security threat-model review as appropriate, then pass
   `lcx-external-agent-upgrade-radar`, owner mapping, receipts, evals, and
   boundary checks before any runtime pattern is trusted.
+- The six blacktech mechanisms currently tracked by the radar are SkillOpt v2
+  lifecycle, native-runtime long-task battery, unified trajectory schema,
+  local-first memory provenance, agent trace/side-effect observability, and
+  secure tool/skill permissioning. They are not live capability, model-weight
+  absorption, provider config, protected memory, live sender, wallet/order,
+  desktop-control, or training authority until their named owner proof chain
+  passes.
 - `lcx-problem-cluster-radar` must include the external upgrade radar as an
   input owner. If candidate count, owner mapping, runtime-authority boundary, or
-  "perfect integration" wording drifts, the radar should surface a repairable
-  cluster without waiting for the user to notice.
+  "perfect integration" wording drifts, or if any blacktech mechanism loses its
+  automatic trigger, owner gate, autopilot surface, or next automation action,
+  the radar should surface a repairable cluster without waiting for the user to
+  notice.
 - This doctrine is still dev governance. It cannot claim live-user-seen,
   provider health, model-weight absorption, or protected-memory writes without
   the existing proof gates.
@@ -484,6 +627,17 @@ diagnostic to run.
 - Only learn material that compounds decision quality in this order: market structure and regime understanding, ETF / major-asset behavior, high-quality fundamental reading and risk extraction, timing discipline and invalidation logic, hard risk-control lessons, reusable research patterns, and operational lessons from system failures.
 - Learning is only valuable if it improves future judgment.
 - Capability must be monotonic in normal difficulty order: if the local brain can handle a complex task, it must also handle the simpler prerequisite task. Do not allow a complex eval, promotion, or receipt to pass while the simple adjacent user ask fails.
+- Monotonic improvement claims must be backed by the monotonic data ledger, not
+  by vibes or chat memory:
+  `node --import tsx scripts/dev/lcx-monotonic-data-ledger.ts --json`.
+  When writing proof is safe, use `--write` to append one de-duplicated JSONL
+  row under the workspace log and refresh
+  `/Users/liuchengxu/.openclaw/workspace/state/lcx-monotonic-data-ledger-latest.json`.
+  The ledger must record dataset counts, train-slice counts, SkillOpt accepted
+  and pending packets, blocked/rejected/downranked evidence, and promotion
+  truth for each observed round. It proves data accounting only: data growth is
+  not model-weight absorption, live Lark proof, provider health, or protected
+  memory authority.
 - For every new complex brain loop, add or reuse a simple prerequisite eval. Local-brain promotion must run the prerequisite together with the complex case, not as an optional separate check.
 - Convert learning into concise lessons, reusable decision rules, correction notes, follow-up items, and stale/downrank decisions.
 - Online learning internalization is module-wide, not factor-only: every module that claims to learn from an external source must leave the same source registry, actual reading scope, module-specific capability rule, retrieval receipt, apply validation, local-brain eval or training absorption evidence, fresh adjacent application task, safety boundary, and keep/downrank/discard decision. A stored file or summary alone is not module learning.
@@ -498,6 +652,12 @@ diagnostic to run.
   direct causality, standalone alpha, trade/sizing authority, or durable doctrine
   by themselves.
 - Daily progress must be concrete, not theatrical.
+- Evolution is not continuous pressure. Local-brain guard loops should follow
+  work-then-evolve rhythm: after each heavy train/eval round, leave an explicit
+  evolution cooldown window for governance autopilot, monotonic data ledger,
+  module-learning review, promotion truth, live-binding readiness, and context
+  handoff to settle. Do not treat that pause as wasted idle time or immediately
+  refill it with overlapping heavy work.
 
 ## Baseline-Hardening Mode
 

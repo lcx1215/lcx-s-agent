@@ -48,6 +48,7 @@ import { routeReply } from "./route-reply.js";
 import { buildBareSessionResetPrompt } from "./session-reset-prompt.js";
 import { buildQueuedSystemPrompt, ensureSkillSnapshot } from "./session-updates.js";
 import { applySkillAutoCueToBody, resolveSkillAutoCue } from "./skill-autocue.js";
+import { applySkillOptAutoCueToBody, resolveSkillOptAutoCue } from "./skillopt-autocue.js";
 import { resolveTypingMode } from "./typing-mode.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
 import type { TypingController } from "./typing.js";
@@ -398,6 +399,16 @@ export async function runPreparedReply(
     prefixedBodyBase = applySkillAutoCueToBody({
       body: prefixedBodyBase,
       cue: skillAutoCue,
+    });
+  }
+  const skillOptAutoCue = await resolveSkillOptAutoCue({
+    body: effectiveBaseBody,
+    workspaceDir,
+  });
+  if (skillOptAutoCue) {
+    prefixedBodyBase = applySkillOptAutoCueToBody({
+      body: prefixedBodyBase,
+      cue: skillOptAutoCue,
     });
   }
   const prefixedBody = [threadContextNote, prefixedBodyBase].filter(Boolean).join("\n\n");

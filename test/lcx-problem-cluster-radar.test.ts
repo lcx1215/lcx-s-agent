@@ -901,6 +901,68 @@ describe("lcx-problem-cluster-radar", () => {
     expect(result.blockedClusters).toContain("evolution_acceleration_cluster");
   });
 
+  it("treats work-then-evolve cooldown as a deliberate watch window, not a blocked repair", () => {
+    const result = buildProblemClusterRadar({
+      trainingPlan: owner("local-brain-training-plan", {
+        boundary: "dev_local_brain_training_plan_only",
+        activeProcesses: [{ pid: 101, role: "guard" }],
+        latestEvolutionCooldown: {
+          at: "2026-05-28T04:30:00.000Z",
+          reason: "work_then_evolve_window_before_next_heavy_round",
+        },
+        evolutionCooldownActive: true,
+        latestEval: { passed: 213, total: 213, promotionReady: true, parseRecoveredCaseIds: [] },
+        decisions: [{ id: "training_already_active", codexRepairEligible: false }],
+        evolutionAccelerationQueue: {
+          boundary: "dev_evolution_acceleration_queue_only",
+          activeTrainingOrEval: true,
+          canStartHeavyWorkNow: false,
+          readyNowCount: 0,
+          idleOnlyCount: 0,
+          blockedCount: 0,
+          fastestSafeNextAction: "honor_work_then_evolve_cooldown",
+          steps: [],
+        },
+      }),
+      moduleAbsorption: owner("lcx-module-learning-absorption-gate", {
+        absorptionReady: true,
+        blockers: [],
+      }),
+      mindModel: owner("lcx-mind-model", { actionableFailures: [] }),
+      flowGraph: owner("lcx-flow-graph", { actionableFailures: [] }),
+      contextRecovery: owner("lcx-context-recovery-exam", { actionableFailures: [] }),
+      learningSedimentationAudit: owner("lcx-learning-sedimentation-audit", {
+        sufficientForCurrentUse: true,
+        gaps: [],
+      }),
+      learningSedimentationMap: owner("lcx-learning-sedimentation-map", {
+        riskyConflations: [],
+      }),
+      systemMemoryGate: owner("lcx-system-memory-sedimentation-gate", {
+        recallClaimReady: true,
+        blockers: [],
+      }),
+      changeImpact: owner("lcx-change-impact-plan", {
+        changedFiles: [],
+        unmatchedFiles: [],
+      }),
+    });
+
+    const cluster = result.clusters.find((entry) => entry.id === "evolution_acceleration_cluster");
+    expect(cluster).toEqual(
+      expect.objectContaining({
+        severity: "P3",
+        actionability: "watch",
+        blockingReasons: [],
+      }),
+    );
+    expect(cluster?.signals.map((signal) => signal.id)).toContain(
+      "work_then_evolve_cooldown_active",
+    );
+    expect(result.blockedClusters).not.toContain("evolution_acceleration_cluster");
+    expect(result.summary.evolutionCooldownActive).toBe(true);
+  });
+
   it("surfaces real sedimentation audit gap objects with their severity", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
@@ -965,6 +1027,9 @@ describe("lcx-problem-cluster-radar", () => {
           registeredCandidateCount: 4,
           architectureIntegratedCount: 4,
           runtimeAuthorityGrantedCount: 1,
+          blacktechMechanismCount: 3,
+          blacktechRuntimeAuthorityGrantedCount: 1,
+          blacktechAutopilotRoutedCount: 2,
           perfectIntegrationClaim: true,
         },
       }),
@@ -982,10 +1047,45 @@ describe("lcx-problem-cluster-radar", () => {
     expect(cluster?.signals.map((signal) => signal.id)).toEqual(
       expect.arrayContaining([
         "external_agent_candidate_count_drift",
-        "external_agent_owner_mapping_drift",
+        "external_agent_github_cli_candidate_missing",
         "external_agent_runtime_authority_granted",
+        "external_agent_blacktech_mechanism_count_drift",
+        "external_agent_github_cli_control_plane_missing",
+        "external_agent_blacktech_runtime_authority_granted",
+        "external_agent_blacktech_autopilot_contract_drift",
         "external_agent_perfect_integration_overclaim",
       ]),
+    );
+  });
+
+  it("accepts the GitHub CLI blacktech control plane when it is gated and owner-routed", () => {
+    const result = buildProblemClusterRadar({
+      externalAgentUpgrade: owner("lcx-external-agent-upgrade-radar", {
+        ok: true,
+        boundary: "dev_external_agent_upgrade_radar_only",
+        summary: {
+          registeredCandidateCount: 13,
+          architectureIntegratedCount: 13,
+          runtimeAuthorityGrantedCount: 0,
+          blacktechMechanismCount: 7,
+          blacktechRuntimeAuthorityGrantedCount: 0,
+          blacktechAutopilotRoutedCount: 7,
+          perfectIntegrationClaim: false,
+        },
+        candidates: [
+          { id: "github_cli_agentic_workflow_control" },
+          { id: "prediction_market_research_intake" },
+        ],
+        blacktechMechanisms: [
+          { id: "github_cli_agentic_control_plane" },
+          { id: "secure_tool_skill_permission_layer" },
+        ],
+      }),
+    });
+
+    expect(result.actionableClusters).not.toContain("external_agent_upgrade_cluster");
+    expect(result.clusters.find((entry) => entry.id === "external_agent_upgrade_cluster")).toBe(
+      undefined,
     );
   });
 

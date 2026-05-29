@@ -126,3 +126,4 @@ ops/live-handoff/promotions/
 # Synthing
 **/.stfolder/
 # Keeps generated output, local credentials, caches, and runtime state out of git.
+tmp-lcx-owner-dashboard*.png

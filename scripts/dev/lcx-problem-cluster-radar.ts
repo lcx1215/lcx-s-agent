@@ -348,6 +348,10 @@ function trainingEvalRuntimeCluster(inputs: RadarInputs): ProblemCluster | undef
       severity: "P1",
       summary: "overlapping heavy eval or training process detected",
     },
+    active_guard_missing_evolution_cooldown_flag: {
+      severity: "P3",
+      summary: "active guard was launched without the work-then-evolve cooldown flag",
+    },
     output_contract_or_parser_failure: {
       severity: "P2",
       summary: "eval or guard evidence has output-contract/parser failures that need repair",
@@ -416,6 +420,8 @@ function evolutionAccelerationCluster(inputs: RadarInputs): ProblemCluster | und
   if (!queue) {
     return undefined;
   }
+  const latestEvolutionCooldown = recordValue(payload?.latestEvolutionCooldown);
+  const evolutionCooldownActive = booleanValue(payload?.evolutionCooldownActive) === true;
   const steps = arrayValue(queue.steps)
     .map(recordValue)
     .filter((step): step is Record<string, unknown> => Boolean(step));
@@ -423,6 +429,18 @@ function evolutionAccelerationCluster(inputs: RadarInputs): ProblemCluster | und
   const idleOnlyCount = numberValue(queue.idleOnlyCount) ?? 0;
   const blockedCount = numberValue(queue.blockedCount) ?? 0;
   const signals: ProblemSignal[] = [];
+  if (evolutionCooldownActive) {
+    signals.push({
+      id: "work_then_evolve_cooldown_active",
+      severity: "P3",
+      summary: "local-brain guard is in the deliberate evolution cooldown between heavy rounds",
+      evidence: {
+        latestEvolutionCooldown,
+        fastestSafeNextAction: queue.fastestSafeNextAction,
+        activeTrainingOrEval: queue.activeTrainingOrEval,
+      },
+    });
+  }
   if (readyNowCount > 0) {
     signals.push({
       id: "evolution_acceleration_ready_now",
@@ -473,10 +491,15 @@ function evolutionAccelerationCluster(inputs: RadarInputs): ProblemCluster | und
     sourceOwners: ["local-brain-training-plan"],
     signals,
     nextAction:
-      "Follow evolutionAccelerationQueue before launching broad work: run ready_now receipt/review steps immediately, and run idle-only heavy steps only after local-brain-training-plan shows no active guard/eval/MLX.",
-    actionability: readyNowCount > 0 ? "repair_now" : "blocked_by_owner_gate",
-    blockingReasons:
+      "Follow evolutionAccelerationQueue before launching broad work: honor work-then-evolve cooldown windows, run ready_now receipt/review steps immediately, and run idle-only heavy steps only after local-brain-training-plan shows no active guard/eval/MLX.",
+    actionability:
       readyNowCount > 0
+        ? "repair_now"
+        : evolutionCooldownActive
+          ? undefined
+          : "blocked_by_owner_gate",
+    blockingReasons:
+      readyNowCount > 0 || evolutionCooldownActive
         ? []
         : blockedCount > 0
           ? ["active_local_brain_guard_or_eval_or_missing_absorption_proof"]
@@ -932,6 +955,16 @@ function externalAgentUpgradeCluster(inputs: RadarInputs): ProblemCluster | unde
   }
   const payload = inputs.externalAgentUpgrade?.payload;
   const summary = recordValue(payload?.summary);
+  const candidateIds = arrayValue(payload?.candidates)
+    .map((candidate) => recordValue(candidate)?.id)
+    .filter((id): id is string => typeof id === "string");
+  const blacktechMechanismIds = arrayValue(payload?.blacktechMechanisms)
+    .map((mechanism) => recordValue(mechanism)?.id)
+    .filter((id): id is string => typeof id === "string");
+  const registeredCandidateCount = numberValue(summary?.registeredCandidateCount);
+  const architectureIntegratedCount = numberValue(summary?.architectureIntegratedCount);
+  const blacktechMechanismCount = numberValue(summary?.blacktechMechanismCount);
+  const blacktechAutopilotRoutedCount = numberValue(summary?.blacktechAutopilotRoutedCount);
   const signals: ProblemSignal[] = [];
   if (payload && payload.ok !== true) {
     signals.push({
@@ -945,16 +978,20 @@ function externalAgentUpgradeCluster(inputs: RadarInputs): ProblemCluster | unde
       },
     });
   }
-  if (numberValue(summary?.registeredCandidateCount) !== 8) {
+  if (registeredCandidateCount === undefined || registeredCandidateCount < 13) {
     signals.push({
       id: "external_agent_candidate_count_drift",
       severity: "P2",
       summary:
-        "the expected external agent and prediction-market upgrade candidates are not all registered",
+        "the expected external agent, blacktech, and prediction-market upgrade candidates are not all registered",
       evidence: summary,
     });
   }
-  if (numberValue(summary?.architectureIntegratedCount) !== 8) {
+  if (
+    architectureIntegratedCount === undefined ||
+    registeredCandidateCount === undefined ||
+    architectureIntegratedCount !== registeredCandidateCount
+  ) {
     signals.push({
       id: "external_agent_owner_mapping_drift",
       severity: "P2",
@@ -962,11 +999,57 @@ function externalAgentUpgradeCluster(inputs: RadarInputs): ProblemCluster | unde
       evidence: summary,
     });
   }
+  if (!candidateIds.includes("github_cli_agentic_workflow_control")) {
+    signals.push({
+      id: "external_agent_github_cli_candidate_missing",
+      severity: "P2",
+      summary:
+        "GitHub CLI / GitHub Agentic Workflows is not recovered as a gated external upgrade candidate",
+      evidence: { candidateIds },
+    });
+  }
   if (numberValue(summary?.runtimeAuthorityGrantedCount) !== 0) {
     signals.push({
       id: "external_agent_runtime_authority_granted",
       severity: "P1",
       summary: "an external agent project received runtime authority without the required gates",
+      evidence: summary,
+    });
+  }
+  if (blacktechMechanismCount === undefined || blacktechMechanismCount < 7) {
+    signals.push({
+      id: "external_agent_blacktech_mechanism_count_drift",
+      severity: "P2",
+      summary: "the expected blacktech mechanisms are not all tracked by the radar",
+      evidence: summary,
+    });
+  }
+  if (!blacktechMechanismIds.includes("github_cli_agentic_control_plane")) {
+    signals.push({
+      id: "external_agent_github_cli_control_plane_missing",
+      severity: "P2",
+      summary: "GitHub CLI control plane is not recovered as a gated blacktech mechanism",
+      evidence: { blacktechMechanismIds },
+    });
+  }
+  if (numberValue(summary?.blacktechRuntimeAuthorityGrantedCount) !== 0) {
+    signals.push({
+      id: "external_agent_blacktech_runtime_authority_granted",
+      severity: "P1",
+      summary: "a blacktech mechanism received runtime authority without the required gates",
+      evidence: summary,
+    });
+  }
+  if (
+    blacktechAutopilotRoutedCount === undefined ||
+    blacktechMechanismCount === undefined ||
+    blacktechAutopilotRoutedCount !== blacktechMechanismCount
+  ) {
+    signals.push({
+      id: "external_agent_blacktech_autopilot_contract_drift",
+      severity: "P2",
+      summary:
+        "the blacktech mechanisms are not all wired with automatic trigger, owner gate, autopilot surface, and next action",
       evidence: summary,
     });
   }
@@ -1064,6 +1147,9 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
         "lcx-change-impact-plan",
         "lcx-external-agent-upgrade-radar",
       ],
+      evolutionCooldownActive:
+        booleanValue(inputs.trainingPlan?.payload?.evolutionCooldownActive) === true,
+      latestEvolutionCooldown: inputs.trainingPlan?.payload?.latestEvolutionCooldown,
     },
     clusters,
     actionableClusters: repairableClusters.map((cluster) => cluster.id),

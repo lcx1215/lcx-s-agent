@@ -2,21 +2,31 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 type CandidateId =
+  | "skillopt_v2_autoskill_coach"
   | "agent_lightning_trace_credit"
   | "longmemeval_agentrunbook_memory_regression"
+  | "local_first_memory_provenance"
   | "lightweight_memory_comparison"
+  | "agent_trace_observability"
+  | "secure_tool_skill_permission_layer"
   | "clawbench_real_task_regression"
   | "computer_use_cli_bridge"
+  | "github_cli_agentic_workflow_control"
   | "multi_agent_framework_orchestration_guardrails"
   | "prediction_market_research_intake"
   | "prediction_market_strategy_audit";
 
 type AdoptionMode =
+  | "skill_lifecycle_probe"
   | "trace_export_probe"
   | "memory_regression_probe"
+  | "memory_provenance_probe"
   | "memory_comparison_probe"
+  | "agent_trace_probe"
+  | "secure_tool_permission_probe"
   | "real_task_benchmark_probe"
   | "computer_use_cli_probe"
+  | "github_cli_agentic_workflow_probe"
   | "multi_agent_orchestration_probe"
   | "prediction_market_research_probe"
   | "strategy_audit_probe";
@@ -47,6 +57,41 @@ type CandidateVerdict = ExternalUpgradeCandidate & {
   blockedDirectAdoption: boolean;
 };
 
+type BlacktechMechanismId =
+  | "skillopt_v2_lifecycle"
+  | "real_runtime_battery"
+  | "unified_trajectory_schema"
+  | "local_first_memory_provenance"
+  | "agent_trace_observability"
+  | "secure_tool_skill_permission_layer"
+  | "github_cli_agentic_control_plane";
+
+type BlacktechMechanism = {
+  id: BlacktechMechanismId;
+  priority: number;
+  label: string;
+  sourceCandidates: CandidateId[];
+  ownerEntrypoint: string;
+  automaticTrigger: string;
+  ownerGate: string;
+  autopilotSurface: string;
+  doctrineTerms: string[];
+  currentStatus: "owner_wired_dev_only" | "partially_wired_dev_only";
+  nextSafeDevProbe: string;
+  nextAutomationAction: string;
+  blockedUntilIdle?: string;
+  requiredProofChain: string[];
+  forbiddenAuthorities: string[];
+  liveBoundary: string;
+};
+
+type BlacktechVerdict = BlacktechMechanism & {
+  runtimeAuthority: "not_granted";
+  liveReady: false;
+  modelWeightAbsorbed: false;
+  missing: string[];
+};
+
 type RadarCheck = {
   id: string;
   ok: boolean;
@@ -58,6 +103,54 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 
 const CANDIDATES: ExternalUpgradeCandidate[] = [
+  {
+    id: "skillopt_v2_autoskill_coach",
+    label: "AutoSkill / Skills-Coach",
+    sourceUrls: ["https://arxiv.org/abs/2603.01145", "https://huggingface.co/papers/2604.27488"],
+    sourceKind: "paper",
+    claimedCapability:
+      "derive reusable skills from interaction traces, generate variants, optimize skills, compare execution, and evaluate traceably",
+    adoptionMode: "skill_lifecycle_probe",
+    existingOwner: "SkillOpt-lite, failure curriculum, and local-brain promotion truth",
+    ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
+    ownerUseTrigger:
+      "When a future task asks for SkillOpt v2, AutoSkill, Skills-Coach, self-evolving skills, or SOP expansion, route through lcx-skillopt-lite and keep preflight, eval, train-slice, promotion, and LiveLark proof separate.",
+    autocueTerms: [
+      "SkillOpt v2",
+      "AutoSkill",
+      "Skills-Coach",
+      "self-evolving skills",
+      "SOP expansion",
+    ],
+    distilledPattern:
+      "turn real mistakes into skill packets with variant tasks, static gates, targeted eval, regression eval, train-slice evidence, clean promotion truth, and live preflight cue",
+    firstDevProbe:
+      "extend one existing SkillOpt packet with generated adjacent validation cases and compare original versus optimized SOP before any training claim",
+    requiredReceipts: [
+      "lcx-skillopt-lite",
+      "local-brain-distill-eval",
+      "local-brain-training-plan",
+      "local-brain-promotion-audit",
+      "skillopt-autocue",
+    ],
+    requiredFilters: [
+      "targeted_eval_required",
+      "regression_eval_required",
+      "train_slice_evidence_required",
+      "promotion_ready_required",
+      "real_lark_proof_required",
+    ],
+    riskBoundaries: [
+      "dev_skillopt_lite_only",
+      "skillopt_preflight_not_weight_absorption",
+      "no_provider_config_change",
+      "no_live_sender_change",
+      "protected_memory_guard",
+      "no_direct_training_start",
+    ],
+    liveBoundary:
+      "SkillOpt SOPs may cue the live/local reply planner only after source sync; model-weight absorption and live-user-seen still require separate owner proof",
+  },
   {
     id: "agent_lightning_trace_credit",
     label: "Agent Lightning",
@@ -135,6 +228,52 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "live can use the same prompt doctrine after migration, but memory regression proof remains dev-only until a real Lark prompt uses it",
   },
   {
+    id: "local_first_memory_provenance",
+    label: "MemX / ground-truth-preserving memory",
+    sourceUrls: ["https://arxiv.org/abs/2603.16171", "https://arxiv.org/abs/2604.04853"],
+    sourceKind: "paper",
+    claimedCapability:
+      "local-first, explainable, provenance-aware memory retrieval with conservative miss handling and conflict preservation",
+    adoptionMode: "memory_provenance_probe",
+    existingOwner: "source registry, memory sedimentation, and context recovery",
+    ownerEntrypoint: "scripts/dev/lcx-learning-sedimentation-audit.ts",
+    ownerUseTrigger:
+      "When a future task asks for MemX, memory provenance, explainable retrieval, stale-rule downranking, or ground-truth-preserving memory, route through source registry and memory sedimentation owners before changing storage.",
+    autocueTerms: [
+      "MemX",
+      "memory provenance",
+      "explainable retrieval",
+      "ground-truth memory",
+      "stale rule downrank",
+    ],
+    distilledPattern:
+      "attach source, timestamp, conflict state, applicability scope, and keep/downrank/discard decision to memory recall instead of trusting extracted summaries",
+    firstDevProbe:
+      "take one stale finance rule and produce a provenance packet with source, scope, conflict, downrank decision, and adjacent eval requirement",
+    requiredReceipts: [
+      "source_registry",
+      "lcx-learning-sedimentation-audit",
+      "lcx-system-memory-sedimentation-gate",
+      "lcx-context-recovery-exam",
+    ],
+    requiredFilters: [
+      "source_timestamp_required",
+      "conflict_preservation_required",
+      "stale_memory_downrank_required",
+      "stored_only_is_not_learning",
+      "protected_memory_guard",
+    ],
+    riskBoundaries: [
+      "no_new_memory_daemon_by_default",
+      "no_protected_memory_write",
+      "no_storage_only_learning_claim",
+      "no_provider_config_change",
+      "no_live_sender_change",
+    ],
+    liveBoundary:
+      "Live may use provenance wording only after sync; this radar does not mutate protected memory or claim learned memory",
+  },
+  {
     id: "lightweight_memory_comparison",
     label: "LightMem / LycheeMemory",
     sourceUrls: ["https://arxiv.org/abs/2604.07798", "https://github.com/LycheeMem/LycheeMem"],
@@ -170,6 +309,104 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     liveBoundary:
       "live prompt can mention the boundary after sync; no external memory daemon is enabled or trusted by this change",
+  },
+  {
+    id: "agent_trace_observability",
+    label: "OpenTelemetry GenAI / AgentSight",
+    sourceUrls: [
+      "https://opentelemetry.io/docs/specs/semconv/gen-ai/",
+      "https://arxiv.org/abs/2508.02736",
+    ],
+    sourceKind: "paper_and_github",
+    claimedCapability:
+      "connect agent decisions, model calls, tool calls, PIDs, file side effects, errors, and security-relevant behavior into traceable spans",
+    adoptionMode: "agent_trace_probe",
+    existingOwner: "governance autopilot, universe index, and problem-cluster radar",
+    ownerEntrypoint: "scripts/dev/lcx-governance-autopilot.ts",
+    ownerUseTrigger:
+      "When a future task asks for OpenTelemetry, AgentSight, trace spans, side-effect attribution, or agent observability, add lightweight LCX trace receipts first and avoid eBPF or network interception by default.",
+    autocueTerms: [
+      "OpenTelemetry",
+      "AgentSight",
+      "agent trace",
+      "side-effect attribution",
+      "observability",
+    ],
+    distilledPattern:
+      "normalize owner command, model call, tool call, process, file write, artifact, and boundary events into a local trace receipt for later failure attribution",
+    firstDevProbe:
+      "emit one local owner-run trace row from governance autopilot linking owner id, command, exit code, parsed status, boundary, and artifact path",
+    requiredReceipts: [
+      "lcx-governance-autopilot",
+      "lcx-universe-index",
+      "lcx-problem-cluster-radar",
+      "agent_trace_receipt",
+    ],
+    requiredFilters: [
+      "local_trace_only",
+      "no_tls_interception_by_default",
+      "side_effect_boundary_required",
+      "single_owner_required",
+    ],
+    riskBoundaries: [
+      "no_ebpf_or_tls_interception_without_explicit_approval",
+      "no_provider_config_change",
+      "no_live_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "Live trace summaries require explicit migration and redaction; dev trace receipts alone are not live-visible proof",
+  },
+  {
+    id: "secure_tool_skill_permission_layer",
+    label: "OWASP Agentic Top 10 / SMCP",
+    sourceUrls: [
+      "https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/",
+      "https://arxiv.org/abs/2602.01129",
+    ],
+    sourceKind: "paper_and_github",
+    claimedCapability:
+      "agent security controls for tool poisoning, prompt injection, privilege escalation, authentication, policy enforcement, and audit logging",
+    adoptionMode: "secure_tool_permission_probe",
+    existingOwner: "skill harvester, CLI-Anything harvester, and security threat model",
+    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+    ownerUseTrigger:
+      "When a future task asks to add tools, MCP servers, CLI wrappers, desktop control, external skills, or agent permissions, run security ownership/threat-model checks before granting authority.",
+    autocueTerms: [
+      "OWASP Agentic",
+      "SMCP",
+      "secure MCP",
+      "tool poisoning",
+      "agent permission",
+      "prompt injection",
+    ],
+    distilledPattern:
+      "treat every new tool or skill as untrusted until it has identity, allowlist, least privilege, audit log, uninstall path, and owner boundary",
+    firstDevProbe:
+      "score one proposed CLI wrapper or MCP server against tool allowlist, write scope, credential scope, prompt-injection risk, audit log, and uninstall path",
+    requiredReceipts: [
+      "security-threat-model",
+      "security-ownership-map",
+      "skill-harvester",
+      "cli-anything-harvester",
+      "agent_permission_audit",
+    ],
+    requiredFilters: [
+      "tool_allowlist_required",
+      "least_privilege_required",
+      "credential_scope_required",
+      "audit_log_required",
+      "uninstall_path_required",
+    ],
+    riskBoundaries: [
+      "no_untrusted_tool_authority",
+      "no_global_install",
+      "no_provider_config_change",
+      "no_live_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "Live can only use a new tool after security receipts, source sync, and explicit live migration; this radar grants no authority",
   },
   {
     id: "clawbench_real_task_regression",
@@ -240,6 +477,66 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     liveBoundary:
       "live agent may autocue the harvester skill after sync; no desktop-control authority is granted without a concrete tested wrapper",
+  },
+  {
+    id: "github_cli_agentic_workflow_control",
+    label: "GitHub CLI / GitHub Agentic Workflows",
+    sourceUrls: [
+      "https://cli.github.com/manual/gh_extension",
+      "https://github.github.io/gh-aw/reference/gh-aw-as-mcp-server/",
+      "https://github.com/github/github-mcp-server",
+      "https://github.com/features/copilot/cli",
+    ],
+    sourceKind: "docs_product_and_paper",
+    claimedCapability:
+      "turn GitHub issues, pull requests, MCP tools, Copilot CLI, and gh extensions into an agent-facing control plane",
+    adoptionMode: "github_cli_agentic_workflow_probe",
+    existingOwner:
+      "GitHub CLI wrapper planning, CLI-Anything harvester, and secure tool permission layer",
+    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+    ownerUseTrigger:
+      "When a future task asks where GitHub CLI lives, asks to use gh, Copilot CLI, gh-aw, GitHub MCP, gh extensions, PR agents, issue agents, or GitHub agent workflow automation, first classify the command as read-only discovery, local-only wrapper, remote write, or agent delegation before any execution.",
+    autocueTerms: [
+      "GitHub CLI",
+      "gh cli",
+      "gh extension",
+      "gh-aw",
+      "GitHub Agentic Workflows",
+      "GitHub MCP",
+      "Copilot CLI",
+      "PR agent",
+      "issue agent",
+    ],
+    distilledPattern:
+      "use gh as a transparent operator console: read-only repo/issue/PR discovery first, then JSON wrapper contract, permission scope review, dry-run receipt, and explicit owner approval before remote writes or agent delegation",
+    firstDevProbe:
+      "run a read-only gh capability inventory that reports gh version, auth scope status, installed extensions, repo identity, and which commands would be remote-write blocked",
+    requiredReceipts: [
+      "cli-anything-harvester",
+      "security-threat-model",
+      "github_cli_capability_inventory",
+      "agent_permission_audit",
+      "owner_control_map",
+    ],
+    requiredFilters: [
+      "read_only_discovery_first",
+      "remote_write_requires_owner_approval",
+      "credential_scope_required",
+      "repo_scope_required",
+      "dry_run_receipt_required",
+      "human_review_before_agent_delegation",
+    ],
+    riskBoundaries: [
+      "no_gh_remote_write_by_default",
+      "no_issue_or_pr_mutation_without_owner_command",
+      "no_copilot_agent_assignment_without_owner_command",
+      "no_mcp_server_install_without_security_receipt",
+      "no_provider_config_change",
+      "no_live_sender_change",
+      "protected_memory_guard",
+    ],
+    liveBoundary:
+      "GitHub CLI may become an operator-side control panel after wrapper tests and permission receipts, but it never becomes live Lark, provider, protected-memory, or trading authority by default",
   },
   {
     id: "multi_agent_framework_orchestration_guardrails",
@@ -411,6 +708,321 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
   },
 ];
 
+const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
+  {
+    id: "skillopt_v2_lifecycle",
+    priority: 1,
+    label: "SkillOpt v2 lifecycle",
+    sourceCandidates: ["skillopt_v2_autoskill_coach"],
+    ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
+    automaticTrigger:
+      "When user feedback, failed cases, repeated wrong answers, or SkillOpt/AutoSkill/Skills-Coach wording appears, governance autopilot reads SkillOpt-lite before any eval or training action.",
+    ownerGate:
+      "active eval/MLX must be idle before targeted eval, train-slice rebuild, adapter promotion, or LiveLark binding; preflight cue stays dev-only while busy",
+    autopilotSurface:
+      "lcx-governance-autopilot owners.skillOptLite plus owners.externalAgentUpgrade.nextBlacktechProbes",
+    doctrineTerms: [
+      "real mistakes become skills",
+      "variant tasks",
+      "compare original versus optimized SOP",
+      "targeted eval",
+      "train-slice",
+      "LiveLark preflight cue",
+    ],
+    currentStatus: "partially_wired_dev_only",
+    nextSafeDevProbe:
+      "extend one accepted SkillOpt packet with generated adjacent validation cases, comparative execution, and a traceable eval receipt",
+    nextAutomationAction:
+      "autopilot should surface the exact SkillOpt nextIdleCommand, then run at most that one command only after active eval/MLX is idle and owner gates are clean",
+    blockedUntilIdle:
+      "targeted eval, train-slice, adapter promotion, and live binding must wait until eval/MLX is idle",
+    requiredProofChain: [
+      "accepted_skillopt_candidate",
+      "generated_variant_tasks",
+      "original_vs_optimized_sop_comparison",
+      "targeted_eval_clean",
+      "regression_eval_clean",
+      "train_slice_contains_skillopt_evidence",
+      "new_adapter_hardened_eval_clean",
+      "promotionReady_true_without_failed_or_parseRecovered",
+      "live_preflight_cue_source_synced",
+      "fresh_real_lark_inbound_and_outbound_seen",
+    ],
+    forbiddenAuthorities: [
+      "model_weight_absorption_claim_without_training",
+      "live_visible_fixed_claim_without_lark_proof",
+      "provider_config_change",
+      "protected_memory_write",
+      "direct_trading_authority",
+    ],
+    liveBoundary:
+      "Immediate SkillOpt preflight can improve planning, but learned capability and LiveLark usage require separate promotion and live-proof owners.",
+  },
+  {
+    id: "real_runtime_battery",
+    priority: 2,
+    label: "Native-runtime long-task battery",
+    sourceCandidates: ["clawbench_real_task_regression"],
+    ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+    automaticTrigger:
+      "When a task claims product-grade, live-visible, long-horizon, runtime, or commercial acceptance readiness, autopilot includes the commercial acceptance harness.",
+    ownerGate:
+      "canary tasks may inspect dev/runtime state, but cannot create live-user-seen, install untrusted tasks, or mutate provider/live/protected surfaces",
+    autopilotSurface:
+      "lcx-governance-autopilot owners.commercialAcceptance and context handoff commercial gates",
+    doctrineTerms: [
+      "real CLI/browser/runtime tasks",
+      "environment-state grading",
+      "long-horizon canaries",
+      "visible reply proof",
+    ],
+    currentStatus: "owner_wired_dev_only",
+    nextSafeDevProbe:
+      "add one LCX real-runtime canary that grades owner command output, artifact state, visible boundary wording, and no forbidden side effects",
+    nextAutomationAction:
+      "autopilot should keep runtime canary gaps visible through commercial acceptance and problem radar until a bounded canary fixture and side-effect audit exist",
+    requiredProofChain: [
+      "task_fixture",
+      "deterministic_state_check",
+      "semantic_visible_answer_check",
+      "side_effect_audit",
+      "commercial_acceptance_gate",
+      "context_recovery_handoff",
+    ],
+    forbiddenAuthorities: [
+      "leaderboard_driven_runtime_install",
+      "untrusted_task_execution",
+      "live_user_seen_claim_from_dev_canary",
+      "provider_config_change",
+      "protected_memory_write",
+    ],
+    liveBoundary:
+      "Real-runtime canaries are dev proof until a migrated LiveLark path sees fresh real inbound and outbound evidence.",
+  },
+  {
+    id: "unified_trajectory_schema",
+    priority: 3,
+    label: "Unified trajectory schema",
+    sourceCandidates: ["agent_lightning_trace_credit", "agent_trace_observability"],
+    ownerEntrypoint: "scripts/dev/lcx-governance-autopilot.ts",
+    automaticTrigger:
+      "Every governance autopilot run already has owner id, command, exit status, parsed compact output, digest material, and artifact paths; future trace export must reuse this surface.",
+    ownerGate:
+      "trajectory export is offline evidence only and must not start RL, SFT, eval, training, provider calls, or live sender changes",
+    autopilotSurface:
+      "lcx-governance-autopilot receipt, evolution promotion digest, and context recovery handoff",
+    doctrineTerms: [
+      "owner command trace",
+      "credit assignment",
+      "tool call and PID linkage",
+      "training transition export",
+    ],
+    currentStatus: "partially_wired_dev_only",
+    nextSafeDevProbe:
+      "emit one local trajectory receipt that links owner id, command, exit, parsed boundary, changed artifact, and blamed failure cluster",
+    nextAutomationAction:
+      "autopilot should expose missing trace_schema and failure_cluster_link as dev-only next probes instead of inventing a parallel telemetry daemon",
+    requiredProofChain: [
+      "owner_run_trace",
+      "artifact_side_effect_scope",
+      "failure_cluster_link",
+      "credit_assignment_label",
+      "rejected_or_trainable_transition_decision",
+      "no_runtime_training_started",
+    ],
+    forbiddenAuthorities: [
+      "runtime_rl_server",
+      "direct_training_start",
+      "provider_config_change",
+      "live_sender_change",
+      "protected_memory_write",
+    ],
+    liveBoundary:
+      "Trajectory export is offline dev evidence; live behavior changes only after normal eval, promotion, and LiveLark gates.",
+  },
+  {
+    id: "local_first_memory_provenance",
+    priority: 4,
+    label: "Local-first memory provenance",
+    sourceCandidates: [
+      "local_first_memory_provenance",
+      "longmemeval_agentrunbook_memory_regression",
+      "lightweight_memory_comparison",
+    ],
+    ownerEntrypoint: "scripts/dev/lcx-learning-sedimentation-audit.ts",
+    automaticTrigger:
+      "When source registry, memory conflict, stale rule, retrieval, downrank, or MemX wording appears, route through sedimentation audit and module-learning review before durable claims.",
+    ownerGate:
+      "stored source, retrieved memory, or receipt is not model absorption; protected memory remains blocked unless the existing protected-memory owner explicitly permits it",
+    autopilotSurface:
+      "lcx-governance-autopilot owners.learningSedimentationAudit, moduleLearningAbsorptionGate, contextRecovery",
+    doctrineTerms: [
+      "source timestamp",
+      "conflict preservation",
+      "stale memory downrank",
+      "keep/downrank/discard",
+      "context recovery regression",
+    ],
+    currentStatus: "partially_wired_dev_only",
+    nextSafeDevProbe:
+      "produce a provenance packet for one stale finance-memory rule with source, scope, conflict, downrank decision, and adjacent eval case",
+    nextAutomationAction:
+      "autopilot should report missing source_registry_record, actual_reading_scope, retrieval/apply validation, and keep/downrank/discard proof before any absorption claim",
+    requiredProofChain: [
+      "source_registry_record",
+      "actual_reading_scope",
+      "retrieval_receipt",
+      "apply_validation",
+      "conflict_or_staleness_decision",
+      "module_learning_pipeline_review",
+      "eval_or_training_absorption_evidence",
+    ],
+    forbiddenAuthorities: [
+      "new_memory_daemon_by_default",
+      "protected_memory_write",
+      "stored_only_learning_claim",
+      "provider_config_change",
+      "live_sender_change",
+    ],
+    liveBoundary:
+      "Live may read migrated provenance cues, but protected memory and model absorption stay behind existing proof gates.",
+  },
+  {
+    id: "agent_trace_observability",
+    priority: 5,
+    label: "Agent trace and side-effect observability",
+    sourceCandidates: ["agent_trace_observability"],
+    ownerEntrypoint: "scripts/dev/lcx-governance-autopilot.ts",
+    automaticTrigger:
+      "When a workflow writes state, claims ownership, runs owner commands, or reports blocked/unblocked status, autopilot should preserve command, PID, artifact, and boundary evidence.",
+    ownerGate:
+      "only redacted local trace receipts are allowed by default; no eBPF, TLS interception, network export, provider config, protected memory, or live sender authority",
+    autopilotSurface:
+      "lcx-governance-autopilot material digest and future redacted local trace receipt",
+    doctrineTerms: [
+      "agent span",
+      "tool span",
+      "PID",
+      "file side effect",
+      "boundary",
+      "failure attribution",
+    ],
+    currentStatus: "partially_wired_dev_only",
+    nextSafeDevProbe:
+      "write a redacted local trace receipt for one governance autopilot run without eBPF, TLS interception, or extra provider calls",
+    nextAutomationAction:
+      "autopilot should keep trace observability as a local receipt gap until redaction, artifact scope, and boundary flags pass",
+    requiredProofChain: [
+      "trace_schema",
+      "owner_command_span",
+      "artifact_write_span",
+      "pid_snapshot",
+      "boundary_flags",
+      "redaction_check",
+    ],
+    forbiddenAuthorities: [
+      "ebpf_or_tls_interception_without_explicit_approval",
+      "network_trace_export_by_default",
+      "provider_config_change",
+      "protected_memory_write",
+      "live_sender_change",
+    ],
+    liveBoundary:
+      "Dev traces may explain operator behavior; live trace summaries require explicit redaction and migration proof.",
+  },
+  {
+    id: "secure_tool_skill_permission_layer",
+    priority: 6,
+    label: "Secure tool and skill permission layer",
+    sourceCandidates: ["secure_tool_skill_permission_layer", "computer_use_cli_bridge"],
+    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+    automaticTrigger:
+      "When a task proposes a CLI wrapper, MCP server, external skill, browser/desktop bridge, credentialed tool, or install, route through skill-harvester plus security threat-model gates first.",
+    ownerGate:
+      "untrusted tools need allowlist, write-scope, credential-scope, prompt-injection, audit-log, and uninstall proof before any runtime or live authority",
+    autopilotSurface:
+      "external agent upgrade radar, skill-harvester boundary, and future security review receipt",
+    doctrineTerms: [
+      "tool allowlist",
+      "least privilege",
+      "credential scope",
+      "audit log",
+      "uninstall path",
+      "prompt injection defense",
+    ],
+    currentStatus: "owner_wired_dev_only",
+    nextSafeDevProbe:
+      "score one proposed CLI wrapper, MCP server, or external skill through allowlist, write scope, credential scope, audit log, and uninstall path",
+    nextAutomationAction:
+      "autopilot should block direct adoption and surface the security review owner until the tool permission receipt exists",
+    requiredProofChain: [
+      "source_license_scope",
+      "tool_allowlist_entry",
+      "credential_scope_review",
+      "write_scope_review",
+      "prompt_injection_test",
+      "audit_log_receipt",
+      "uninstall_path",
+    ],
+    forbiddenAuthorities: [
+      "untrusted_tool_authority",
+      "global_install",
+      "provider_config_change",
+      "protected_memory_write",
+      "live_sender_change",
+      "wallet_or_order_execution",
+    ],
+    liveBoundary:
+      "No new tool or skill becomes live authority without security receipts, owner mapping, source sync, and explicit migration.",
+  },
+  {
+    id: "github_cli_agentic_control_plane",
+    priority: 7,
+    label: "GitHub CLI agentic control plane",
+    sourceCandidates: ["github_cli_agentic_workflow_control"],
+    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+    automaticTrigger:
+      "When GitHub CLI, gh extension, GitHub MCP, gh-aw, Copilot CLI, issue agent, PR agent, or remote repo automation wording appears, external upgrade radar routes it to CLI-Anything plus security review before any write-capable command.",
+    ownerGate:
+      "read-only gh inventory is allowed; remote issue/PR writes, Copilot agent assignment, MCP server install, extension install, token scope expansion, and workflow dispatch require explicit owner command and receipt",
+    autopilotSurface:
+      "lcx-governance-autopilot owners.externalAgentUpgrade.nextBlacktechProbes plus future github_cli_capability_inventory receipt",
+    doctrineTerms: [
+      "gh as operator console",
+      "read-only discovery first",
+      "remote write owner approval",
+      "credential scope",
+      "extension install review",
+      "agent delegation gate",
+    ],
+    currentStatus: "partially_wired_dev_only",
+    nextSafeDevProbe:
+      "add a read-only GitHub CLI capability inventory that reports gh version, auth scope status, installed extensions, current repo remote, and blocked remote-write commands",
+    nextAutomationAction:
+      "autopilot should surface GitHub CLI as an available but gated operator console, then refuse issue/PR mutation or Copilot delegation unless an owner command explicitly unlocks that lane",
+    requiredProofChain: [
+      "gh_version_detected",
+      "auth_scope_inventory",
+      "repo_scope_inventory",
+      "installed_extension_inventory",
+      "remote_write_blocklist",
+      "dry_run_receipt",
+      "owner_approval_for_remote_write",
+    ],
+    forbiddenAuthorities: [
+      "gh_issue_or_pr_write_without_owner_command",
+      "copilot_agent_assignment_without_owner_command",
+      "mcp_server_install_without_security_receipt",
+      "token_scope_expansion",
+      "provider_config_change",
+      "protected_memory_write",
+      "live_sender_change",
+    ],
+    liveBoundary:
+      "GitHub CLI control-plane proof is dev/operator-only; it cannot prove live-user-seen or grant remote repository write authority by itself.",
+  },
+];
+
 function missingFor(candidate: ExternalUpgradeCandidate): string[] {
   const missing: string[] = [];
   if (candidate.sourceUrls.length === 0) {
@@ -453,14 +1065,67 @@ function candidateVerdicts(): CandidateVerdict[] {
   }));
 }
 
+function blacktechMissingFor(mechanism: BlacktechMechanism): string[] {
+  const missing: string[] = [];
+  if (mechanism.sourceCandidates.length === 0) {
+    missing.push("source_candidates");
+  }
+  if (!mechanism.ownerEntrypoint) {
+    missing.push("owner_entrypoint");
+  }
+  if (!mechanism.automaticTrigger) {
+    missing.push("automatic_trigger");
+  }
+  if (!mechanism.ownerGate) {
+    missing.push("owner_gate");
+  }
+  if (!mechanism.autopilotSurface) {
+    missing.push("autopilot_surface");
+  }
+  if (mechanism.doctrineTerms.length === 0) {
+    missing.push("doctrine_terms");
+  }
+  if (!mechanism.nextSafeDevProbe) {
+    missing.push("next_safe_dev_probe");
+  }
+  if (!mechanism.nextAutomationAction) {
+    missing.push("next_automation_action");
+  }
+  if (mechanism.requiredProofChain.length === 0) {
+    missing.push("required_proof_chain");
+  }
+  if (mechanism.forbiddenAuthorities.length === 0) {
+    missing.push("forbidden_authorities");
+  }
+  if (!mechanism.liveBoundary) {
+    missing.push("live_boundary");
+  }
+  return missing;
+}
+
+function blacktechVerdicts(): BlacktechVerdict[] {
+  return BLACKTECH_MECHANISMS.map((mechanism) => ({
+    ...mechanism,
+    runtimeAuthority: "not_granted",
+    liveReady: false,
+    modelWeightAbsorbed: false,
+    missing: blacktechMissingFor(mechanism),
+  }));
+}
+
 function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
   const ids = new Set(verdicts.map((candidate) => candidate.id));
   const expectedIds: CandidateId[] = [
+    "skillopt_v2_autoskill_coach",
     "agent_lightning_trace_credit",
     "longmemeval_agentrunbook_memory_regression",
+    "local_first_memory_provenance",
     "lightweight_memory_comparison",
+    "agent_trace_observability",
+    "secure_tool_skill_permission_layer",
     "clawbench_real_task_regression",
     "computer_use_cli_bridge",
+    "github_cli_agentic_workflow_control",
     "multi_agent_framework_orchestration_guardrails",
     "prediction_market_research_intake",
     "prediction_market_strategy_audit",
@@ -535,9 +1200,87 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
   ];
 }
 
+function buildBlacktechChecks(
+  mechanisms: readonly BlacktechVerdict[],
+  candidateVerdicts: readonly CandidateVerdict[],
+): RadarCheck[] {
+  const mechanismIds = new Set(mechanisms.map((mechanism) => mechanism.id));
+  const candidateIds = new Set(candidateVerdicts.map((candidate) => candidate.id));
+  const expectedIds: BlacktechMechanismId[] = [
+    "skillopt_v2_lifecycle",
+    "real_runtime_battery",
+    "unified_trajectory_schema",
+    "local_first_memory_provenance",
+    "agent_trace_observability",
+    "secure_tool_skill_permission_layer",
+    "github_cli_agentic_control_plane",
+  ];
+  const missingExpected = expectedIds.filter((id) => !mechanismIds.has(id));
+  const missingFields = mechanisms.flatMap((mechanism) =>
+    mechanism.missing.map((field) => `${mechanism.id}:${field}`),
+  );
+  const missingSourceCandidates = mechanisms.flatMap((mechanism) =>
+    mechanism.sourceCandidates
+      .filter((candidateId) => !candidateIds.has(candidateId))
+      .map((candidateId) => `${mechanism.id}:${candidateId}`),
+  );
+  const unsafeAuthority = mechanisms.filter(
+    (mechanism) =>
+      mechanism.runtimeAuthority !== "not_granted" ||
+      mechanism.liveReady ||
+      mechanism.modelWeightAbsorbed,
+  );
+  const missingAutomationContract = mechanisms.filter(
+    (mechanism) =>
+      !mechanism.automaticTrigger ||
+      !mechanism.ownerGate ||
+      !mechanism.autopilotSurface ||
+      !mechanism.nextAutomationAction,
+  );
+  return [
+    {
+      id: "expected_blacktech_mechanisms_registered",
+      ok: mechanisms.length === expectedIds.length && missingExpected.length === 0,
+      summary: "the prioritized blacktech mechanisms are registered",
+      evidence: { count: mechanisms.length, missingExpected },
+    },
+    {
+      id: "blacktech_sources_map_to_candidates",
+      ok: missingSourceCandidates.length === 0,
+      summary: "every blacktech mechanism maps back to registered source candidates",
+      evidence: { missingSourceCandidates },
+    },
+    {
+      id: "blacktech_owner_and_proof_contract_complete",
+      ok: missingFields.length === 0,
+      summary:
+        "each blacktech mechanism has owner, doctrine, probe, proof, boundary, and forbidden authority fields",
+      evidence: { missingFields },
+    },
+    {
+      id: "blacktech_runtime_authority_blocked",
+      ok: unsafeAuthority.length === 0,
+      summary:
+        "blacktech mechanisms are architecture intake only, not runtime/live/model-weight authority",
+      evidence: unsafeAuthority.map((mechanism) => mechanism.id),
+    },
+    {
+      id: "blacktech_autopilot_contract_complete",
+      ok: missingAutomationContract.length === 0,
+      summary:
+        "each blacktech mechanism has automatic trigger, owner gate, autopilot surface, and next automation action",
+      evidence: missingAutomationContract.map((mechanism) => mechanism.id),
+    },
+  ];
+}
+
 export function buildExternalAgentUpgradeRadar() {
   const candidates = candidateVerdicts();
-  const checks = buildChecks(candidates);
+  const blacktechMechanisms = blacktechVerdicts();
+  const checks = [
+    ...buildChecks(candidates),
+    ...buildBlacktechChecks(blacktechMechanisms, candidates),
+  ];
   const failed = checks.filter((check) => !check.ok);
   return {
     ok: failed.length === 0,
@@ -553,6 +1296,23 @@ export function buildExternalAgentUpgradeRadar() {
       runtimeAuthorityGrantedCount: candidates.filter(
         (candidate) => candidate.runtimeAuthority !== "not_granted",
       ).length,
+      blacktechMechanismCount: blacktechMechanisms.length,
+      blacktechReadyDevOnlyCount: blacktechMechanisms.filter(
+        (mechanism) => mechanism.currentStatus === "owner_wired_dev_only",
+      ).length,
+      blacktechPartialDevOnlyCount: blacktechMechanisms.filter(
+        (mechanism) => mechanism.currentStatus === "partially_wired_dev_only",
+      ).length,
+      blacktechRuntimeAuthorityGrantedCount: blacktechMechanisms.filter(
+        (mechanism) => mechanism.runtimeAuthority !== "not_granted",
+      ).length,
+      blacktechAutopilotRoutedCount: blacktechMechanisms.filter(
+        (mechanism) =>
+          mechanism.automaticTrigger &&
+          mechanism.ownerGate &&
+          mechanism.autopilotSurface &&
+          mechanism.nextAutomationAction,
+      ).length,
       perfectIntegrationClaim: false,
     },
     architectureFit: "fully_integrated_into_existing_lcx_owner_stack",
@@ -560,11 +1320,25 @@ export function buildExternalAgentUpgradeRadar() {
       "No external project should be called perfectly integrated until a concrete dev probe, eval/receipt, live migration, and fresh Lark visible proof all pass. This radar proves architecture wiring, not live-user-seen behavior.",
     checks,
     candidates,
+    blacktechMechanisms,
     nextDevProbes: candidates.map((candidate) => ({
       id: candidate.id,
       ownerEntrypoint: candidate.ownerEntrypoint,
       firstDevProbe: candidate.firstDevProbe,
     })),
+    nextBlacktechProbes: blacktechMechanisms
+      .toSorted((a, b) => a.priority - b.priority)
+      .map((mechanism) => ({
+        id: mechanism.id,
+        priority: mechanism.priority,
+        ownerEntrypoint: mechanism.ownerEntrypoint,
+        automaticTrigger: mechanism.automaticTrigger,
+        ownerGate: mechanism.ownerGate,
+        autopilotSurface: mechanism.autopilotSurface,
+        nextSafeDevProbe: mechanism.nextSafeDevProbe,
+        nextAutomationAction: mechanism.nextAutomationAction,
+        blockedUntilIdle: mechanism.blockedUntilIdle,
+      })),
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -580,6 +1354,7 @@ function renderText(payload: ReturnType<typeof buildExternalAgentUpgradeRadar>):
     `external agent upgrade radar ${payload.ok ? "ok" : "failed"}`,
     `boundary=${payload.boundary}`,
     `registeredCandidateCount=${payload.summary.registeredCandidateCount}`,
+    `blacktechMechanismCount=${payload.summary.blacktechMechanismCount}`,
     `architectureFit=${payload.architectureFit}`,
     `perfectIntegrationClaim=${payload.summary.perfectIntegrationClaim}`,
     `runtimeAuthorityGrantedCount=${payload.summary.runtimeAuthorityGrantedCount}`,
@@ -591,6 +1366,12 @@ function renderText(payload: ReturnType<typeof buildExternalAgentUpgradeRadar>):
     ...payload.candidates.map(
       (candidate) =>
         `- ${candidate.label}: owner=${candidate.ownerEntrypoint}; mode=${candidate.adoptionMode}; authority=${candidate.runtimeAuthority}`,
+    ),
+    "",
+    "Blacktech mechanisms:",
+    ...payload.blacktechMechanisms.map(
+      (mechanism) =>
+        `- ${mechanism.priority}. ${mechanism.label}: owner=${mechanism.ownerEntrypoint}; status=${mechanism.currentStatus}; authority=${mechanism.runtimeAuthority}`,
     ),
   ];
   return lines.join("\n");

@@ -33,11 +33,13 @@ god-view check:
 ```bash
 node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
+node --import tsx scripts/dev/lcx-universe-index.ts --json
 node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
 node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
+node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-audit.ts --json
@@ -74,6 +76,20 @@ required filters, evidence receipts, failure signals, and the
 `dev_flow_graph_only` boundary. If a future window sees a workflow symptom, it
 should use this index to find the owner path first instead of creating another
 parallel doctor.
+The LCX Agent Universe Index is the fastest total-coverage inventory:
+
+```bash
+node --import tsx scripts/dev/lcx-universe-index.ts --json
+```
+
+Use it when the task says all files, all code, all artifacts, all outputs, all
+garbage, or "一切的一切". It indexes repo tracked and visible files, dirty and
+untracked files, owner coverage, workspace state/log/memory/tmp artifacts, live
+sidecar files, stale snapshots, large runtime artifacts, and
+`garbageCandidates`. It is `dev_universe_index_only`: inventory and cleanup
+candidates only, no delete/migration/live authority, and always
+`liveTouched=false`, `providerConfigTouched=false`, `protectedMemoryTouched=false`.
+Route candidates back to the matching owner before repair or cleanup.
 The Problem Cluster Radar is the current-issue aggregator for that governance
 stack:
 
@@ -104,18 +120,40 @@ The Governance Autopilot is the read-only automatic trigger for the same stack:
 node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 ```
 
-It runs problem radar, commercial acceptance, change impact, training plan,
-live Lark brain binding, mind model, flow graph, head-tail, and context
-recovery; writes
+It runs problem radar, commercial acceptance, change impact, universe index,
+external agent/blacktech upgrade radar, training plan, live Lark brain binding,
+mind model, flow graph, head-tail, and context recovery; writes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json`
 and refreshes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json`
 and
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md`;
+it also writes the compact local failure index card
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-local-failure-trace-latest.json`
+and appends
+`/Users/liuchengxu/.openclaw/workspace/logs/lcx-local-failure-trace.jsonl`;
+and it writes the plain-Chinese owner brief
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-brief-latest.md`
+with JSON at
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-brief-latest.json`;
+it also writes the owner control map
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.md`
+with JSON at
+`/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.json`;
 and is refreshed by `/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh`
 inside `lcx-local-operator-latest.json` as `governanceAutopilot`. It is
 `dev_governance_autopilot_only`: read-only, no overlapping training, no live
 apply, no provider config, no protected memory, and no live sender changes.
+Owner write policy for the self-repair hands is intentionally narrow.
+Governance autopilot may auto-add
+`--write` to `lcx-self-repair-hands` only when a current owner signal changes:
+candidate eval has failed/dirty/recovered cases, module-learning evidence is
+incomplete, or SkillOpt reports a static/format gate gap. The de-duplication
+key is `signalKey`, so the same signal writes at most once. The output is only
+memory correction/downrank notes, training/eval candidate packets, state, and
+logs under the workspace. It must not touch repo source, live sender, provider
+config, protected memory, formal language corpus, training processes,
+train-slice direct writes, or model-weight absorption claims.
 The Commercial Acceptance Harness is the product-grade exam above those owners:
 
 ```bash
@@ -128,13 +166,25 @@ not a new truth owner, does not send Lark messages, and does not start training.
 Treat `blocked` gates as explicit acceptance gaps: post-migration natural Lark
 canary missing, provider degradation, active Qwen guard, or owner-gated module
 learning states are not green release proof.
-It should not stay at only six obvious waterflows. The current minimum is 16
-core waterflows, including Lark visible language, commercial answer pipeline,
-commercial acceptance harness, provider council evidence, memory
-correction/downrank, same-philosophy engineering consolidation, external skill
-or agent distillation, automation repair locks, and finance data gateway
-reconciliation. The same-philosophy consolidation clusters enforce that related
+It should not stay at only six obvious waterflows. The current minimum is 17
+core waterflows, including universe index total coverage, Lark visible language,
+commercial answer pipeline, commercial acceptance harness, provider council
+evidence, memory correction/downrank, same-philosophy engineering
+consolidation, external skill or agent distillation, automation repair locks,
+and finance data gateway reconciliation. The same-philosophy consolidation clusters enforce that related
 mechanisms merge into one owner scenario instead of becoming parallel systems.
+
+The TS/Python boundary check keeps code ownership from scattering:
+
+```bash
+node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json
+```
+
+Plain rule: TS is the main control room; Python is the engine room. Python is
+allowed for training, MLX/model runs, data computation, and isolated tool
+engines. Old Python workflow scripts must either be wrapped by a named TS owner
+or moved to TS. The output lists `保留`, `包装`, and `迁走`; any new Python file
+that is not classified is a red light.
 
 Commercial-grade convergence does not mean deleting useful entrypoints. Keep
 separate product/operator surfaces for the control room, doctor, training plan,
@@ -192,6 +242,20 @@ blueprint lane.
    model/Qwen review, source gates, or control-room summaries. It is dev-only:
    it does not call providers, live sender, or MLX, and it does not prove
    live-user-seen.
+   MiniMax Agent, when available, is allowed to raise answer quality as an
+   external draft maker and red-team reviewer. Its output is still only a
+   candidate: LCX must run local contract audit, source/data gates, Qwen
+   patch-only challenge when needed, review panel, and visible answer adoption
+   before the draft reaches the user. MiniMax Agent must not become final
+   visible-answer authority, send Lark replies directly, change provider config,
+   write protected memory, or gain trade/execution authority.
+   Because MiniMax is a fixed monthly-capacity resource for this operator, use
+   it aggressively on complex finance answers by default: event risk, current
+   market context, portfolio/position questions, options/leverage/loss-recovery
+   asks, earnings, macro/liquidity/rates, model disagreement, source conflict,
+   and high-value research summaries should all get MiniMax Agent draft/red-team
+   pressure before the local adoption gate. Do not spend that pressure on tiny
+   factual replies or let the visible answer mention internal agent machinery.
 
 5. Live observability summary: Lark proof must converge through
    `lark-loop-diagnose`, channel probe, `feishu-reply-flow.jsonl`, and fresh
@@ -453,32 +517,64 @@ building a new path:
 node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json
 ```
 
-The current source families are Agent Lightning, LongMemEval-V2 / AgentRunbook,
-LightMem / LycheeMemory, ClawBench / WildClawBench, Agent S / CLI-Anything,
-multi-agent orchestration frameworks such as LangGraph / OpenAI Agents /
-CrewAI / Microsoft Agent Framework, and prediction-market research sources such
-as Polymarket, PolyClaw, Polybot, Polyseer, PolyBench, and PolySwarm. They must
-land in existing owners such as problem radar, context recovery, learning
-sedimentation, commercial acceptance, flow graph, finance data gateway,
-skill-harvester, and cli-anything-harvester. This is not direct runtime
-authority: no direct install, no provider config, no live sender, no protected
-memory mutation, no wallet connection, no order placement, no copy trading, and
-no latency arbitrage. Treat the radar as dev-only architecture wiring until a
-concrete probe, eval/receipt, live migration, and fresh Lark visible proof all
-exist.
+The current source families include AutoSkill / Skills-Coach, Agent Lightning,
+LongMemEval-V2 / AgentRunbook, MemX-style local-first memory provenance,
+LightMem / LycheeMemory, OpenTelemetry GenAI / AgentSight, OWASP Agentic /
+SMCP, ClawBench / WildClawBench, Agent S / CLI-Anything, multi-agent
+orchestration frameworks such as LangGraph / OpenAI Agents / CrewAI /
+Microsoft Agent Framework, and prediction-market research sources such as
+Polymarket, PolyClaw, Polybot, Polyseer, PolyBench, and PolySwarm. They must
+land in existing owners such as SkillOpt-lite, governance autopilot, problem
+radar, context recovery, learning sedimentation, commercial acceptance, flow
+graph, finance data gateway, security review, skill-harvester, and
+cli-anything-harvester. This is not direct runtime authority: no direct install,
+no provider config, no live sender, no protected memory mutation, no wallet
+connection, no order placement, no copy trading, and no latency arbitrage.
+Treat the radar as dev-only architecture wiring until a concrete probe,
+eval/receipt, live migration, and fresh Lark visible proof all exist.
+
+The radar also tracks six prioritized blacktech mechanisms:
+
+```text
+1. SkillOpt v2 lifecycle
+2. native-runtime long-task battery
+3. unified trajectory schema
+4. local-first memory provenance
+5. agent trace and side-effect observability
+6. secure tool/skill permission layer
+```
+
+These mechanisms are owner slots, not granted authority. SkillOpt v2 still
+needs targeted eval, regression eval, train-slice, clean promotion, and
+LiveLark proof before model-weight or live claims. Runtime batteries are dev
+canaries until real Lark proof. Trajectory and trace receipts are local
+observability, not a runtime RL server or eBPF/TLS interception. Secure tool
+permissioning blocks untrusted tools until allowlist, least privilege,
+credential scope, audit log, and uninstall path are proven.
+Every mechanism must expose the same automatic workflow contract through
+`lcx-external-agent-upgrade-radar`: automatic trigger, owner gate, autopilot
+surface, next safe dev probe, next automation action, proof chain, and
+forbidden authorities. `lcx-governance-autopilot` and context recovery surface
+that contract in their compact outputs, and `lcx-problem-cluster-radar` treats
+missing contract fields as architecture drift. This is what lets future
+operators use the mechanisms automatically instead of relying on chat memory.
 
 Future agents should not wait for the user to remember these names. Natural
-language mentions of Agent Lightning, LongMemEval/AgentRunbook,
-LightMem/LycheeMemory, ClawBench/WildClawBench, Agent S, CLI-Anything,
+language mentions of AutoSkill, Skills-Coach, Agent Lightning,
+LongMemEval/AgentRunbook, MemX, memory provenance, LightMem/LycheeMemory,
+OpenTelemetry, AgentSight, OWASP Agentic, SMCP, ClawBench/WildClawBench,
+Agent S, CLI-Anything,
 LangGraph, OpenAI Agents handoffs, CrewAI, Microsoft Agent Framework,
 Polymarket, PolyClaw, Polybot, Polyseer, PolyBench, PolySwarm, prediction
 markets, CLOB, or orderbooks must autocue `skill-harvester`,
-`cli-anything-harvester`, finance data provenance, or the flow graph as
-appropriate, run the external upgrade radar, and then follow the named owner.
+`cli-anything-harvester`, finance data provenance, security review,
+SkillOpt-lite, governance autopilot, or the flow graph as appropriate, run the
+external upgrade radar, and then follow the named owner.
 `lcx-context-recovery-exam` verifies this autocue path;
 `lcx-problem-cluster-radar` consumes the external radar so missing candidates,
-owner drift, direct runtime authority, or "perfect integration" overclaims
-become repairable clusters instead of silent architecture debt.
+owner drift, direct runtime authority, missing blacktech autopilot contracts, or
+"perfect integration" overclaims become repairable clusters instead of silent
+architecture debt.
 
 Prediction-market sources are weak evidence, not trading instructions. A valid
 research packet needs market id or URL, one real market metadata packet,
@@ -786,6 +882,38 @@ waterflow, agent brain learning, Lark live proof, runtime drift, finance
 learning, CLI-Anything, and skill harvesting should be cued to one installed
 skill before the model answers. Explicit `/skill ...` commands still win.
 
+SkillOpt-lite extends that preflight with eval-derived SOP skills under
+`/Users/liuchengxu/.openclaw/workspace/memory/skillopt-lite/`. It can be used in
+three separate ways, and these boundaries must stay separate:
+
+- immediate preflight: load the matched `best_skill.md` as context before answer
+  planning; this is usable by the next agent immediately, but is not model
+  weight absorption.
+- runtime self-use hook: the live/local reply runner calls
+  `src/auto-reply/reply/skillopt-autocue.ts` from
+  `src/auto-reply/reply/get-reply-run.ts`, so accepted SkillOpt SOP files in the
+  shared workspace can guide the same answer path that LiveLark uses after
+  source sync/promotion. Do not add a second live-only skill format.
+- governance coverage: `lcx-mind-model` and `lcx-flow-graph` must keep the
+  SkillOpt runtime hook visible as a supervised waterflow, not only as a helper
+  script. Context recovery and governance autopilot should therefore preserve
+  both the immediate preflight boundary and the stronger proof chain.
+- SkillOpt family: failed, parse-error, and parseRecovered eval cases may grow
+  narrow skills such as finance data provenance, local-memory conflict,
+  sentiment/vendor source gates, module-learning absorption, and live Lark
+  boundary checks.
+- proof chain: a candidate skill only becomes a learned runtime capability after
+  targeted eval, regression eval, train-slice/training evidence, clean hardened
+  adapter promotion truth, and then the live Lark binding owner proves real
+  inbound/outbound Lark evidence.
+
+Fast inspection:
+
+```bash
+node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json
+node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json --task "NVDA 还能不能拿，要不要买一点？"
+```
+
 ## External And General Skills
 
 Some useful skills are not LCX-specific, but future coding windows should still know they exist. Load them only when the task matches:
@@ -892,7 +1020,9 @@ prevents a newer weak candidate from replacing an older stronger seed such as a
 
 Use this for the normal medium-intensity local loop. The MiniMax teacher now runs as a
 continuous sidecar, so slow local Qwen eval/train steps do not leave the 5-hour MiniMax
-window idle.
+window idle. The guard also keeps a short evolution window after each round so
+owner checks, monotonic ledger, module-learning review, promotion truth, and
+live-binding readiness can settle before the next heavy round starts.
 
 ```bash
 node --import tsx scripts/dev/minimax-brain-training-guard.ts \
@@ -907,6 +1037,7 @@ node --import tsx scripts/dev/minimax-brain-training-guard.ts \
   --teacher-sidecar-concurrency 8 \
   --train-every 2 \
   --eval-every 1 \
+  --evolution-cooldown-minutes 10 \
   --train-iters 40 \
   --load-max 100 \
   --train-load-max 12 \

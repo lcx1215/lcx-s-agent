@@ -45,6 +45,8 @@ const TAIL_SURFACE_FILES = [
   "scripts/dev/lcx-mind-model.ts",
   "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
+  "scripts/dev/lcx-self-repair-hands.ts",
+  "scripts/dev/lcx-ts-python-boundary.ts",
   "scripts/dev/finance-data-gateway-smoke.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
@@ -173,6 +175,16 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
     tailTerms: ["memory_sedimentation", "module_learning_memory"],
   },
   {
+    id: "self_repair_hands_boundary",
+    headTerms: ["Self-repair hands", "training/eval candidate packets"],
+    tailTerms: [
+      "lcx-self-repair-hands",
+      "dev_self_repair_hands_only",
+      "candidate_only_not_in_train_slice",
+      "self_repair_hands_waterflow",
+    ],
+  },
+  {
     id: "mind_model_boundary",
     headTerms: ["LCX Agent Mind Model", "god-view", "workflow closure"],
     tailTerms: [
@@ -193,6 +205,16 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
       "requiredFilters",
       "feedbackEdges",
       "ILLEGAL_EDGES",
+    ],
+  },
+  {
+    id: "ts_python_boundary",
+    headTerms: ["TS Main Control", "Python Engine", "lcx-ts-python-boundary"],
+    tailTerms: [
+      "dev_ts_python_boundary_only",
+      "keep_python_engine",
+      "wrap_with_ts_owner",
+      "migrate_to_ts_control",
     ],
   },
 ];

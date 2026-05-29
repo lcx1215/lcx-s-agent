@@ -32,10 +32,14 @@ type FlowNodeId =
   | "brain_distillation_review"
   | "dataset_builder"
   | "qwen_training"
+  | "evolution_cooldown"
   | "hardened_eval"
   | "promotion_gate"
   | "adapter_resolver"
   | "failure_curriculum"
+  | "skillopt_candidate_edit"
+  | "skillopt_best_skill"
+  | "skillopt_runtime_preflight"
   | "dev_change"
   | "dev_tests"
   | "live_migration"
@@ -45,12 +49,18 @@ type FlowNodeId =
   | "new_codex_window"
   | "fixed_evidence_recovery"
   | "operator_latest_state"
+  | "universe_index"
+  | "repo_inventory"
+  | "artifact_inventory"
+  | "owner_coverage_map"
+  | "cleanup_candidate_review"
   | "mind_model"
   | "flow_graph"
   | "training_plan"
   | "change_impact_plan"
   | "local_operator_loop"
   | "governance_autopilot"
+  | "local_failure_trace"
   | "automation_cleanup"
   | "system_doctor"
   | "operator_latest_receipt"
@@ -65,6 +75,7 @@ type FlowNodeId =
   | "readability_review"
   | "provider_evidence"
   | "model_council"
+  | "minimax_agent_draft"
   | "provider_boundary"
   | "source_conflict_review"
   | "memory_recall"
@@ -72,6 +83,11 @@ type FlowNodeId =
   | "memory_write_gate"
   | "correction_note"
   | "stale_memory_downrank"
+  | "self_repair_hands"
+  | "self_repair_memory_cleaner"
+  | "self_repair_training_case_builder"
+  | "training_eval_candidate_packet"
+  | "self_repair_latest_receipt"
   | "prior_work_search"
   | "similar_mechanism_merge"
   | "single_owner_contract"
@@ -82,9 +98,12 @@ type FlowNodeId =
   | "market_microstructure_review"
   | "strategy_experiment_audit"
   | "external_upgrade_radar"
+  | "blacktech_mechanism_map"
   | "license_scope_review"
   | "workflow_distillation"
   | "local_skill_candidate"
+  | "trajectory_or_trace_receipt"
+  | "security_permission_review"
   | "acceptance_eval"
   | "commercial_acceptance_harness"
   | "schedule_gate"
@@ -101,6 +120,7 @@ type FlowFilterId =
   | "retrieval_apply_eval_review_required"
   | "per_receipt_absorption_evidence_required"
   | "training_overlap_guard"
+  | "work_then_evolve_cooldown_required"
   | "parse_recovered_no_promotion"
   | "promotion_ready_required"
   | "step_timeout_visible"
@@ -121,6 +141,9 @@ type FlowFilterId =
   | "no_raw_json_visible_reply"
   | "reply_flow_audit_required"
   | "provider_evidence_required"
+  | "minimax_agent_draft_not_final_authority"
+  | "minimax_agent_output_requires_lcx_gate"
+  | "minimax_agent_runtime_claim_requires_receipt"
   | "no_provider_config_change"
   | "no_live_sender_change"
   | "source_conflict_visible"
@@ -129,6 +152,9 @@ type FlowFilterId =
   | "three_source_reconciliation_required"
   | "conflicted_data_blocks_conclusion"
   | "memory_write_freshness_gate"
+  | "self_repair_write_allowlist_required"
+  | "explicit_self_repair_write_flag_required"
+  | "training_candidate_not_absorbed"
   | "system_memory_not_module_learning"
   | "correction_note_required"
   | "prior_work_reuse_required"
@@ -136,6 +162,11 @@ type FlowFilterId =
   | "single_owner_required"
   | "license_scope_required"
   | "untrusted_source_isolation"
+  | "blacktech_is_pattern_intake_only"
+  | "runtime_authority_not_granted"
+  | "model_weight_absorption_not_claimed"
+  | "live_proof_required"
+  | "tool_permission_audit_required"
   | "human_signoff_checkpoint"
   | "no_wallet_or_order_execution"
   | "market_microstructure_warning_required"
@@ -147,7 +178,13 @@ type FlowFilterId =
   | "commercial_error_budget_required"
   | "product_canary_suite_required"
   | "automation_schedule_gate"
-  | "repair_lock_required";
+  | "repair_lock_required"
+  | "skillopt_best_skill_required"
+  | "skillopt_context_not_weight_absorption"
+  | "skillopt_live_proof_required"
+  | "inventory_only_no_delete"
+  | "owner_coverage_required"
+  | "artifact_staleness_visible";
 
 type SurfaceGroup = "head" | "workflow" | "proof" | "boundary";
 
@@ -239,10 +276,14 @@ const NODE_IDS: FlowNodeId[] = [
   "brain_distillation_review",
   "dataset_builder",
   "qwen_training",
+  "evolution_cooldown",
   "hardened_eval",
   "promotion_gate",
   "adapter_resolver",
   "failure_curriculum",
+  "skillopt_candidate_edit",
+  "skillopt_best_skill",
+  "skillopt_runtime_preflight",
   "dev_change",
   "dev_tests",
   "live_migration",
@@ -252,12 +293,18 @@ const NODE_IDS: FlowNodeId[] = [
   "new_codex_window",
   "fixed_evidence_recovery",
   "operator_latest_state",
+  "universe_index",
+  "repo_inventory",
+  "artifact_inventory",
+  "owner_coverage_map",
+  "cleanup_candidate_review",
   "mind_model",
   "flow_graph",
   "training_plan",
   "change_impact_plan",
   "local_operator_loop",
   "governance_autopilot",
+  "local_failure_trace",
   "automation_cleanup",
   "system_doctor",
   "operator_latest_receipt",
@@ -272,6 +319,7 @@ const NODE_IDS: FlowNodeId[] = [
   "readability_review",
   "provider_evidence",
   "model_council",
+  "minimax_agent_draft",
   "provider_boundary",
   "source_conflict_review",
   "memory_recall",
@@ -279,6 +327,11 @@ const NODE_IDS: FlowNodeId[] = [
   "memory_write_gate",
   "correction_note",
   "stale_memory_downrank",
+  "self_repair_hands",
+  "self_repair_memory_cleaner",
+  "self_repair_training_case_builder",
+  "training_eval_candidate_packet",
+  "self_repair_latest_receipt",
   "prior_work_search",
   "similar_mechanism_merge",
   "single_owner_contract",
@@ -289,9 +342,12 @@ const NODE_IDS: FlowNodeId[] = [
   "market_microstructure_review",
   "strategy_experiment_audit",
   "external_upgrade_radar",
+  "blacktech_mechanism_map",
   "license_scope_review",
   "workflow_distillation",
   "local_skill_candidate",
+  "trajectory_or_trace_receipt",
+  "security_permission_review",
   "acceptance_eval",
   "commercial_acceptance_harness",
   "schedule_gate",
@@ -309,6 +365,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "retrieval_apply_eval_review_required",
   "per_receipt_absorption_evidence_required",
   "training_overlap_guard",
+  "work_then_evolve_cooldown_required",
   "parse_recovered_no_promotion",
   "promotion_ready_required",
   "step_timeout_visible",
@@ -329,6 +386,9 @@ const FILTER_IDS: FlowFilterId[] = [
   "no_raw_json_visible_reply",
   "reply_flow_audit_required",
   "provider_evidence_required",
+  "minimax_agent_draft_not_final_authority",
+  "minimax_agent_output_requires_lcx_gate",
+  "minimax_agent_runtime_claim_requires_receipt",
   "no_provider_config_change",
   "no_live_sender_change",
   "source_conflict_visible",
@@ -337,6 +397,9 @@ const FILTER_IDS: FlowFilterId[] = [
   "three_source_reconciliation_required",
   "conflicted_data_blocks_conclusion",
   "memory_write_freshness_gate",
+  "self_repair_write_allowlist_required",
+  "explicit_self_repair_write_flag_required",
+  "training_candidate_not_absorbed",
   "system_memory_not_module_learning",
   "correction_note_required",
   "prior_work_reuse_required",
@@ -344,6 +407,11 @@ const FILTER_IDS: FlowFilterId[] = [
   "single_owner_required",
   "license_scope_required",
   "untrusted_source_isolation",
+  "blacktech_is_pattern_intake_only",
+  "runtime_authority_not_granted",
+  "model_weight_absorption_not_claimed",
+  "live_proof_required",
+  "tool_permission_audit_required",
   "human_signoff_checkpoint",
   "no_wallet_or_order_execution",
   "market_microstructure_warning_required",
@@ -356,6 +424,12 @@ const FILTER_IDS: FlowFilterId[] = [
   "product_canary_suite_required",
   "automation_schedule_gate",
   "repair_lock_required",
+  "skillopt_best_skill_required",
+  "skillopt_context_not_weight_absorption",
+  "skillopt_live_proof_required",
+  "inventory_only_no_delete",
+  "owner_coverage_required",
+  "artifact_staleness_visible",
 ];
 
 const FLOW_SCENARIOS: FlowScenario[] = [
@@ -458,6 +532,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "brain_distillation_review",
       "dataset_builder",
       "qwen_training",
+      "evolution_cooldown",
       "hardened_eval",
       "promotion_gate",
       "adapter_resolver",
@@ -465,6 +540,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
     requiredFilters: [
       "training_overlap_guard",
+      "work_then_evolve_cooldown_required",
       "parse_recovered_no_promotion",
       "promotion_ready_required",
       "step_timeout_visible",
@@ -473,13 +549,15 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["teacher_quota", "brain_distillation_review"],
       ["brain_distillation_review", "dataset_builder"],
       ["dataset_builder", "qwen_training"],
-      ["qwen_training", "hardened_eval"],
+      ["qwen_training", "evolution_cooldown"],
+      ["evolution_cooldown", "hardened_eval"],
       ["hardened_eval", "promotion_gate"],
       ["promotion_gate", "adapter_resolver"],
     ],
     feedbackEdges: [
       ["hardened_eval", "failure_curriculum"],
-      ["failure_curriculum", "teacher_quota"],
+      ["failure_curriculum", "evolution_cooldown"],
+      ["evolution_cooldown", "teacher_quota"],
     ],
     receipts: [
       "minimax-brain-training-guard",
@@ -517,6 +595,59 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     receipts: ["live-promotion", "feishu-reply-flow"],
   },
   {
+    id: "skillopt_runtime_self_use_waterflow",
+    family: "skillopt_eval_to_live_reply_preflight",
+    objective:
+      "Accepted SkillOpt SOPs from eval failures should enter the live/local reply planner as deterministic preflight context while model-weight absorption, adapter promotion, and live-user-seen proof stay gated.",
+    start: "hardened_eval",
+    end: "live_user_seen",
+    requiredNodes: [
+      "hardened_eval",
+      "failure_curriculum",
+      "skillopt_candidate_edit",
+      "skillopt_best_skill",
+      "skillopt_runtime_preflight",
+      "dev_tests",
+      "live_migration",
+      "build_restart_probe",
+      "real_lark_inbound",
+      "live_user_seen",
+    ],
+    requiredFilters: [
+      "training_overlap_guard",
+      "parse_recovered_no_promotion",
+      "skillopt_best_skill_required",
+      "skillopt_context_not_weight_absorption",
+      "skillopt_live_proof_required",
+      "dev_ready_not_live_user_seen",
+      "live_runtime_probe_required",
+      "real_lark_inbound_required",
+      "no_internal_runtime_details_visible",
+    ],
+    edges: [
+      ["hardened_eval", "failure_curriculum"],
+      ["failure_curriculum", "skillopt_candidate_edit"],
+      ["skillopt_candidate_edit", "skillopt_best_skill"],
+      ["skillopt_best_skill", "skillopt_runtime_preflight"],
+      ["skillopt_runtime_preflight", "dev_tests"],
+      ["dev_tests", "live_migration"],
+      ["live_migration", "build_restart_probe"],
+      ["build_restart_probe", "real_lark_inbound"],
+      ["real_lark_inbound", "live_user_seen"],
+    ],
+    feedbackEdges: [
+      ["real_lark_inbound", "skillopt_runtime_preflight"],
+      ["skillopt_candidate_edit", "failure_curriculum"],
+    ],
+    receipts: [
+      "lcx-skillopt-lite",
+      "skillopt-autocue",
+      "lcx-governance-autopilot-latest",
+      "lcx-live-lark-brain-binding",
+      "feishu-reply-flow",
+    ],
+  },
+  {
     id: "compressed_context_recovery_waterflow",
     family: "future_agent_state_recovery",
     objective:
@@ -545,16 +676,64 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     receipts: ["lcx-local-operator-latest", "lcx-context-recovery-exam", "lcx-flow-graph"],
   },
   {
+    id: "universe_index_total_coverage_waterflow",
+    family: "repo_runtime_artifact_total_inventory",
+    objective:
+      "A broad full-system review must first build one read-only index of repo files, code surfaces, runtime artifacts, live sidecar files, owner coverage, and cleanup candidates before any cleanup or repair action.",
+    start: "fixed_evidence_recovery",
+    end: "cleanup_candidate_review",
+    requiredNodes: [
+      "fixed_evidence_recovery",
+      "universe_index",
+      "repo_inventory",
+      "artifact_inventory",
+      "owner_coverage_map",
+      "cleanup_candidate_review",
+      "change_impact_plan",
+      "mind_model",
+      "flow_graph",
+    ],
+    requiredFilters: [
+      "inventory_only_no_delete",
+      "owner_coverage_required",
+      "artifact_staleness_visible",
+      "same_philosophy_merge_required",
+      "single_owner_required",
+      "protected_memory_guard",
+      "no_provider_config_change",
+      "no_live_sender_change",
+    ],
+    edges: [
+      ["fixed_evidence_recovery", "universe_index"],
+      ["universe_index", "repo_inventory"],
+      ["universe_index", "artifact_inventory"],
+      ["universe_index", "owner_coverage_map"],
+      ["repo_inventory", "cleanup_candidate_review"],
+      ["artifact_inventory", "cleanup_candidate_review"],
+      ["owner_coverage_map", "change_impact_plan"],
+      ["change_impact_plan", "mind_model"],
+      ["mind_model", "flow_graph"],
+      ["flow_graph", "cleanup_candidate_review"],
+    ],
+    feedbackEdges: [["cleanup_candidate_review", "change_impact_plan"]],
+    receipts: [
+      "lcx-universe-index-latest",
+      "lcx-change-impact-plan",
+      "lcx-governance-autopilot-latest",
+    ],
+  },
+  {
     id: "local_automation_digest_waterflow",
     family: "local_operator_to_single_digest",
     objective:
-      "Local automation should gather cleanup, governance autopilot, doctor, training plan, mind model, flow graph, and context recovery into one latest receipt and one digest.",
+      "Local automation should gather cleanup, governance autopilot, local failure trace, owner brief, doctor, training plan, mind model, flow graph, and context recovery into one latest receipt and one digest.",
     start: "local_operator_loop",
     end: "operator_digest",
     requiredNodes: [
       "local_operator_loop",
       "automation_cleanup",
       "governance_autopilot",
+      "local_failure_trace",
       "system_doctor",
       "training_plan",
       "mind_model",
@@ -566,6 +745,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     edges: [
       ["local_operator_loop", "automation_cleanup"],
       ["automation_cleanup", "governance_autopilot"],
+      ["governance_autopilot", "local_failure_trace"],
       ["governance_autopilot", "system_doctor"],
       ["system_doctor", "training_plan"],
       ["training_plan", "mind_model"],
@@ -576,6 +756,10 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     receipts: [
       "lcx-local-operator-loop",
       "lcx-governance-autopilot-latest",
+      "lcx-local-failure-trace-latest",
+      "lcx-local-failure-trace",
+      "lcx-owner-brief-latest",
+      "lcx-owner-control-map-latest",
       "lcx-local-operator-latest",
       "LCX Agent Operator Digest",
     ],
@@ -641,6 +825,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "local_brain_planner",
       "model_council",
       "provider_evidence",
+      "minimax_agent_draft",
       "model_candidate_answer",
       "answer_audit_budget",
       "local_contract_audit",
@@ -654,6 +839,9 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "bounded_answer_review",
       "candidate_answer_not_final_authority",
       "provider_evidence_required",
+      "minimax_agent_draft_not_final_authority",
+      "minimax_agent_output_requires_lcx_gate",
+      "minimax_agent_runtime_claim_requires_receipt",
       "qwen_challenger_not_final_authority",
       "qwen_challenge_patch_only",
       "model_rewrite_budget_required",
@@ -673,7 +861,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["intent_classifier", "local_brain_planner"],
       ["local_brain_planner", "model_council"],
       ["model_council", "provider_evidence"],
-      ["provider_evidence", "model_candidate_answer"],
+      ["provider_evidence", "minimax_agent_draft"],
+      ["minimax_agent_draft", "model_candidate_answer"],
       ["model_candidate_answer", "answer_audit_budget"],
       ["answer_audit_budget", "local_contract_audit"],
       ["local_contract_audit", "review_panel"],
@@ -827,6 +1016,64 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "self_repair_hands_waterflow",
+    family: "memory_correction_and_training_candidate_self_repair",
+    objective:
+      "The agent may write only allowlisted memory correction/downrank notes and training/eval candidate packets, then surface them to governance and owner control without claiming train-slice or model absorption.",
+    start: "memory_recall",
+    end: "owner_coverage_map",
+    requiredNodes: [
+      "memory_recall",
+      "source_conflict_review",
+      "self_repair_hands",
+      "memory_write_gate",
+      "self_repair_memory_cleaner",
+      "correction_note",
+      "stale_memory_downrank",
+      "self_repair_training_case_builder",
+      "training_eval_candidate_packet",
+      "self_repair_latest_receipt",
+      "governance_autopilot",
+      "owner_coverage_map",
+    ],
+    requiredFilters: [
+      "memory_write_freshness_gate",
+      "self_repair_write_allowlist_required",
+      "explicit_self_repair_write_flag_required",
+      "training_candidate_not_absorbed",
+      "protected_memory_guard",
+      "no_provider_config_change",
+      "no_live_sender_change",
+      "training_overlap_guard",
+      "model_weight_absorption_not_claimed",
+    ],
+    edges: [
+      ["memory_recall", "source_conflict_review"],
+      ["source_conflict_review", "self_repair_hands"],
+      ["self_repair_hands", "memory_write_gate"],
+      ["memory_write_gate", "self_repair_memory_cleaner"],
+      ["self_repair_memory_cleaner", "correction_note"],
+      ["correction_note", "stale_memory_downrank"],
+      ["self_repair_hands", "self_repair_training_case_builder"],
+      ["self_repair_training_case_builder", "training_eval_candidate_packet"],
+      ["stale_memory_downrank", "self_repair_latest_receipt"],
+      ["training_eval_candidate_packet", "self_repair_latest_receipt"],
+      ["self_repair_latest_receipt", "governance_autopilot"],
+      ["governance_autopilot", "owner_coverage_map"],
+    ],
+    feedbackEdges: [
+      ["owner_coverage_map", "self_repair_hands"],
+      ["training_eval_candidate_packet", "review_panel"],
+    ],
+    receipts: [
+      "lcx-self-repair-hands-latest",
+      "lcx-self-repair-hands-jsonl",
+      "lcx-governance-autopilot-latest",
+      "lcx-owner-control-map-latest",
+      "self_repair_training_candidate",
+    ],
+  },
+  {
     id: "finance_data_gateway_waterflow",
     family: "timestamped_finance_data_reconciliation",
     objective:
@@ -891,6 +1138,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "brain_distillation_review",
       "dataset_builder",
       "qwen_training",
+      "evolution_cooldown",
       "hardened_eval",
       "promotion_gate",
       "review_panel",
@@ -902,6 +1150,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "field_definition_required",
       "no_unverified_current_market_data",
       "retrieval_apply_eval_review_required",
+      "work_then_evolve_cooldown_required",
       "parse_recovered_no_promotion",
       "promotion_ready_required",
       "no_trade_advice",
@@ -919,7 +1168,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["teacher_quota", "brain_distillation_review"],
       ["brain_distillation_review", "dataset_builder"],
       ["dataset_builder", "qwen_training"],
-      ["qwen_training", "hardened_eval"],
+      ["qwen_training", "evolution_cooldown"],
+      ["evolution_cooldown", "hardened_eval"],
       ["hardened_eval", "promotion_gate"],
       ["promotion_gate", "review_panel"],
       ["review_panel", "control_room_summary"],
@@ -985,14 +1235,22 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "license_scope_review",
       "actual_reading_scope",
       "external_upgrade_radar",
+      "blacktech_mechanism_map",
       "workflow_distillation",
       "local_skill_candidate",
+      "trajectory_or_trace_receipt",
+      "security_permission_review",
       "review_panel",
       "acceptance_eval",
     ],
     requiredFilters: [
       "license_scope_required",
       "untrusted_source_isolation",
+      "blacktech_is_pattern_intake_only",
+      "runtime_authority_not_granted",
+      "model_weight_absorption_not_claimed",
+      "live_proof_required",
+      "tool_permission_audit_required",
       "human_signoff_checkpoint",
       "no_provider_config_change",
       "protected_memory_guard",
@@ -1002,9 +1260,14 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["source_registry", "license_scope_review"],
       ["license_scope_review", "actual_reading_scope"],
       ["actual_reading_scope", "external_upgrade_radar"],
-      ["external_upgrade_radar", "workflow_distillation"],
+      ["external_upgrade_radar", "blacktech_mechanism_map"],
+      ["blacktech_mechanism_map", "workflow_distillation"],
       ["workflow_distillation", "local_skill_candidate"],
+      ["workflow_distillation", "trajectory_or_trace_receipt"],
+      ["workflow_distillation", "security_permission_review"],
       ["local_skill_candidate", "review_panel"],
+      ["trajectory_or_trace_receipt", "review_panel"],
+      ["security_permission_review", "review_panel"],
       ["review_panel", "acceptance_eval"],
     ],
     feedbackEdges: [["acceptance_eval", "workflow_distillation"]],
@@ -1157,9 +1420,31 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "lcx-mind-model",
       "lcx-flow-graph",
       "lcx-head-tail-consistency",
+      "lcx-universe-index",
       "lcx-system-doctor",
     ],
     mergeFilters: ["same_philosophy_merge_required", "single_owner_required"],
+  },
+  {
+    id: "universe_inventory_cluster",
+    philosophy:
+      "repo inventory, runtime artifacts, live sidecar files, owner coverage, and cleanup candidates are one read-only index, not separate ad hoc scans",
+    ownerScenario: "universe_index_total_coverage_waterflow",
+    ownerNode: "universe_index",
+    sameClassTerms: [
+      "lcx-universe-index",
+      "repo_inventory",
+      "artifact_inventory",
+      "ownerCoverage",
+      "garbageCandidates",
+      "dev_universe_index_only",
+    ],
+    mergeFilters: [
+      "inventory_only_no_delete",
+      "owner_coverage_required",
+      "artifact_staleness_visible",
+      "single_owner_required",
+    ],
   },
   {
     id: "learning_internalization_cluster",
@@ -1333,6 +1618,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "lcx-change-impact-plan",
       "lcx-governance-autopilot",
       "lcx-live-lark-brain-binding",
+      "lcx-universe-index",
       "lcx-system-doctor",
       "lcx-agent-exam",
     ],
@@ -1347,6 +1633,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/dev/lcx-mind-model.ts",
       "scripts/dev/lcx-problem-cluster-radar.ts",
       "scripts/dev/lcx-system-doctor.ts",
+      "scripts/dev/lcx-universe-index.ts",
       "test/lcx-agent-exam.test.ts",
       "test/lcx-change-impact-plan.test.ts",
       "test/lcx-context-recovery-exam.test.ts",
@@ -1357,7 +1644,15 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "test/lcx-mind-model.test.ts",
       "test/lcx-problem-cluster-radar.test.ts",
       "test/lcx-system-doctor-train-slice.test.ts",
+      "test/lcx-universe-index.test.ts",
     ],
+  },
+  {
+    id: "universe_inventory_entrypoints",
+    ownerCluster: "universe_inventory_cluster",
+    ownerPath: "scripts/dev/lcx-universe-index.ts",
+    watchedPathTerms: ["lcx-universe-index", "universe-index", "garbageCandidates"],
+    allowedPaths: ["scripts/dev/lcx-universe-index.ts", "test/lcx-universe-index.test.ts"],
   },
   {
     id: "learning_sedimentation_entrypoints",
@@ -1399,6 +1694,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "commercial-answer",
       "visible-answer-adoption",
       "skill-autocue",
+      "skillopt-autocue",
     ],
     allowedPaths: [
       "extensions/feishu/src/lark-context-packet.test.ts",
@@ -1410,8 +1706,11 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "extensions/feishu/src/visible-answer-adoption-gate.ts",
       "src/auto-reply/reply/feishu-reply-flow-evidence.test.ts",
       "src/auto-reply/reply/feishu-reply-flow-evidence.ts",
+      "src/auto-reply/reply/get-reply-run.ts",
       "src/auto-reply/reply/skill-autocue.test.ts",
       "src/auto-reply/reply/skill-autocue.ts",
+      "src/auto-reply/reply/skillopt-autocue.test.ts",
+      "src/auto-reply/reply/skillopt-autocue.ts",
       "scripts/dev/lcx-commercial-answer-pipeline.ts",
       "src/commands/capabilities.lark-loop-diagnose.test.ts",
       "src/commands/capabilities/lark-loop-diagnose.ts",
@@ -1556,6 +1855,18 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
     familyIds: ["external_skill_learning_entrypoints", "prediction_market_research_entrypoints"],
     reason: "external-agent upgrade radar also owns prediction-market source intake boundaries.",
   },
+  {
+    path: "scripts/dev/lcx-universe-index.ts",
+    familyIds: ["architecture_supervision_entrypoints", "universe_inventory_entrypoints"],
+    reason:
+      "universe index is both part of the architecture supervision stack and the owner for total inventory.",
+  },
+  {
+    path: "test/lcx-universe-index.test.ts",
+    familyIds: ["architecture_supervision_entrypoints", "universe_inventory_entrypoints"],
+    reason:
+      "the universe-index test is the shared proof for architecture wiring and inventory ownership.",
+  },
 ];
 
 const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
@@ -1563,13 +1874,16 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   module_learning_internalization_waterflow: "scripts/dev/module-learning-pipeline-review.ts",
   training_failure_feedback_waterflow: "scripts/dev/local-brain-training-plan.ts",
   dev_to_live_lark_waterflow: "scripts/dev/lcx-promote-live.ts",
+  skillopt_runtime_self_use_waterflow: "scripts/dev/lcx-skillopt-lite.ts",
   compressed_context_recovery_waterflow: "scripts/dev/lcx-context-recovery-exam.ts",
+  universe_index_total_coverage_waterflow: "scripts/dev/lcx-universe-index.ts",
   local_automation_digest_waterflow: "scripts/dev/lcx-governance-autopilot.ts",
   lark_visible_language_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
   commercial_answer_pipeline_waterflow: "scripts/dev/lcx-commercial-answer-pipeline.ts",
   commercial_acceptance_harness_waterflow: "scripts/dev/lcx-commercial-acceptance-harness.ts",
   provider_council_evidence_waterflow: "extensions/feishu/src/learning-council.ts",
   memory_correction_downrank_waterflow: "scripts/dev/lcx-system-memory-sedimentation-gate.ts",
+  self_repair_hands_waterflow: "scripts/dev/lcx-self-repair-hands.ts",
   finance_data_gateway_waterflow: "src/agents/finance-data-gateway.ts",
   senior_trader_failure_focus_waterflow: "scripts/dev/local-brain-distill-eval.ts",
   similar_engineering_consolidation_waterflow: "scripts/dev/lcx-change-impact-plan.ts",
@@ -1585,8 +1899,12 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
   training_failure_feedback_waterflow:
     "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
   dev_to_live_lark_waterflow: "node --import tsx scripts/dev/lcx-promote-live.ts --status --json",
+  skillopt_runtime_self_use_waterflow:
+    "node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json",
   compressed_context_recovery_waterflow:
     "node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json",
+  universe_index_total_coverage_waterflow:
+    "node --import tsx scripts/dev/lcx-universe-index.ts --json",
   local_automation_digest_waterflow:
     "node --import tsx scripts/dev/lcx-governance-autopilot.ts --json",
   lark_visible_language_waterflow:
@@ -1598,6 +1916,7 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
   provider_council_evidence_waterflow: "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
   memory_correction_downrank_waterflow:
     "node --import tsx scripts/dev/lcx-system-memory-sedimentation-gate.ts --json",
+  self_repair_hands_waterflow: "node --import tsx scripts/dev/lcx-self-repair-hands.ts --json",
   finance_data_gateway_waterflow:
     "node --import tsx scripts/dev/finance-data-gateway-smoke.ts --json",
   senior_trader_failure_focus_waterflow:
@@ -1617,11 +1936,14 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
   workflow: [
     "scripts/dev/lcx-flow-graph.ts",
     "scripts/dev/lcx-governance-autopilot.ts",
+    "scripts/dev/lcx-skillopt-lite.ts",
     "scripts/dev/lcx-mind-model.ts",
     "scripts/dev/lcx-live-lark-brain-binding.ts",
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-system-doctor.ts",
+    "scripts/dev/lcx-self-repair-hands.ts",
+    "scripts/dev/lcx-universe-index.ts",
     "scripts/dev/lcx-commercial-answer-pipeline.ts",
     "scripts/dev/lcx-commercial-acceptance-harness.ts",
     "scripts/dev/lcx-learning-sedimentation-bridge.ts",
@@ -1639,6 +1961,8 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-promote-live.ts",
     "scripts/dev/lcx-live-lark-brain-binding.ts",
     "src/commands/capabilities/lark-loop-diagnose.ts",
+    "src/auto-reply/reply/get-reply-run.ts",
+    "src/auto-reply/reply/skillopt-autocue.ts",
     "src/agents/finance-data-gateway.ts",
     "src/agents/tools/finance-data-gateway-tool.ts",
   ],
@@ -1647,8 +1971,12 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-governance-autopilot.ts",
     "test/lcx-flow-graph.test.ts",
     "test/lcx-governance-autopilot.test.ts",
+    "test/lcx-skillopt-lite.test.ts",
+    "src/auto-reply/reply/skillopt-autocue.test.ts",
     "test/lcx-mind-model.test.ts",
     "test/lcx-context-recovery-exam.test.ts",
+    "test/lcx-self-repair-hands.test.ts",
+    "test/lcx-universe-index.test.ts",
     "test/lcx-commercial-answer-pipeline.test.ts",
     "test/lcx-commercial-acceptance-harness.test.ts",
     "test/lcx-learning-sedimentation-bridge.test.ts",
@@ -1666,9 +1994,13 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "README.md",
     "ops/local-brain/README.md",
     "scripts/dev/lcx-flow-graph.ts",
+    "scripts/dev/lcx-universe-index.ts",
+    "scripts/dev/lcx-skillopt-lite.ts",
+    "scripts/dev/lcx-self-repair-hands.ts",
     "scripts/dev/lcx-promote-live.ts",
     "scripts/dev/local-brain-training-plan.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
+    "src/auto-reply/reply/skillopt-autocue.ts",
   ],
 };
 
@@ -1860,6 +2192,7 @@ function feedbackCheck(): FlowCheck {
       !scenario.requiredFilters.some((filter) =>
         [
           "training_overlap_guard",
+          "work_then_evolve_cooldown_required",
           "retrieval_apply_eval_review_required",
           "fresh_operator_state_required",
           "source_evidence_gate",

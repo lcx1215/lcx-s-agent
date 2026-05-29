@@ -4,11 +4,31 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  buildLocalFailureTraceReceipt,
+  summarizeTraceForHandoff,
+  type LocalFailureTraceReceipt,
+  writeLocalFailureTraceReceipt,
+} from "./lcx-local-failure-trace.ts";
+import {
   CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   DEFAULT_WORKSPACE_DIR,
   EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
   GOVERNANCE_AUTOPILOT_LATEST_PATH,
+  LOCAL_FAILURE_TRACE_JSONL_PATH,
+  LOCAL_FAILURE_TRACE_LATEST_PATH,
+  MONOTONIC_DATA_LEDGER_JSONL_PATH,
+  MONOTONIC_DATA_LEDGER_LATEST_PATH,
+  OWNER_BRIEF_LATEST_JSON_PATH,
+  OWNER_BRIEF_LATEST_MARKDOWN_PATH,
+  OWNER_CONTROL_MAP_LATEST_JSON_PATH,
+  OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+  SELF_REPAIR_HANDS_JSONL_PATH,
+  SELF_REPAIR_HANDS_LATEST_PATH,
+  SELF_REPAIR_HANDS_MARKDOWN_PATH,
+  UNIVERSE_INDEX_LATEST_PATH,
 } from "./lcx-local-paths.ts";
+import { buildOwnerBrief, writeOwnerBrief } from "./lcx-owner-brief.ts";
+import { buildOwnerControlMap, writeOwnerControlMap } from "./lcx-owner-control-map.ts";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -19,7 +39,13 @@ type OwnerId =
   | "problemRadar"
   | "commercialAcceptance"
   | "changeImpact"
+  | "universeIndex"
+  | "externalAgentUpgrade"
   | "trainingPlan"
+  | "skillOptLite"
+  | "selfRepairHands"
+  | "monotonicDataLedger"
+  | "providerCouncilAcceleration"
   | "liveLarkBrainBinding"
   | "mindModel"
   | "flowGraph"
@@ -45,6 +71,61 @@ type OwnerRun = {
   error?: string;
 };
 
+type SelfRepairAutoSignal = {
+  policyTriggerId: string;
+  signalKey: string;
+  issue: string;
+  observedFailure: string;
+  replacementRule: string;
+  domain: string;
+};
+
+const SELF_REPAIR_HANDS_OWNER_WRITE_POLICY = {
+  owner: "lcx-governance-autopilot",
+  targetOwner: "selfRepairHands",
+  command: "node --import tsx scripts/dev/lcx-self-repair-hands.ts --write --json",
+  whenAutoWrite: [
+    {
+      id: "candidate_eval_dirty_cases",
+      sourceOwner: "trainingPlan",
+      condition:
+        "latestCandidateEval has failedCaseIds, parseErrorCaseIds, or parseRecoveredCaseIds",
+      signalKeyPrefix: "candidate_eval_dirty_cases:",
+    },
+    {
+      id: "module_learning_incomplete_evidence",
+      sourceOwner: "trainingPlan",
+      condition: "decisionIds includes module_learning_incomplete_evidence",
+      signalKeyPrefix: "module_learning_incomplete_evidence:",
+    },
+    {
+      id: "skillopt_static_or_parse_gap",
+      sourceOwner: "skillOptLite",
+      condition: "staticGateOk is false or parseRecoveredCount is greater than 0",
+      signalKeyPrefix: "skillopt_static_or_parse_gap:",
+    },
+  ],
+  dedupeKey: "signalKey",
+  writeOncePerSignalKey: true,
+  allowedWriteRoots: [
+    "workspace/memory/self-repair",
+    "workspace/state/lcx-self-repair-hands-*",
+    "workspace/logs/lcx-self-repair-hands.jsonl",
+  ],
+  deniedAuthorities: [
+    "repo_source",
+    "live_sender",
+    "provider_config",
+    "protected_memory",
+    "formal_language_corpus",
+    "training_processes",
+    "train_slice_direct_write",
+    "model_weight_absorption_claim",
+  ],
+  afterWriteGate:
+    "owner_review_then_owner_approved_eval_or_train_slice_only_after_training_plan_idle_safe",
+} as const;
+
 const OWNER_COMMANDS: OwnerCommand[] = [
   {
     id: "problemRadar",
@@ -65,9 +146,45 @@ const OWNER_COMMANDS: OwnerCommand[] = [
     required: true,
   },
   {
+    id: "universeIndex",
+    script: "scripts/dev/lcx-universe-index.ts",
+    args: ["--json"],
+    required: true,
+  },
+  {
+    id: "externalAgentUpgrade",
+    script: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+    args: ["--json"],
+    required: true,
+  },
+  {
     id: "trainingPlan",
     script: "scripts/dev/local-brain-training-plan.ts",
     args: ["--json"],
+    required: true,
+  },
+  {
+    id: "skillOptLite",
+    script: "scripts/dev/lcx-skillopt-lite.ts",
+    args: ["--phase", "candidate-edit", "--no-write", "--json"],
+    required: true,
+  },
+  {
+    id: "selfRepairHands",
+    script: "scripts/dev/lcx-self-repair-hands.ts",
+    args: ["--json"],
+    required: true,
+  },
+  {
+    id: "monotonicDataLedger",
+    script: "scripts/dev/lcx-monotonic-data-ledger.ts",
+    args: ["--write", "--json"],
+    required: true,
+  },
+  {
+    id: "providerCouncilAcceleration",
+    script: "scripts/dev/lcx-provider-council-acceleration.ts",
+    args: ["--profile", "aggressive", "--no-write", "--json"],
     required: true,
   },
   {
@@ -116,6 +233,7 @@ type HandoffReceipt = {
   summary: {
     activeTrainingOrEval: boolean;
     fastestSafeNextAction: unknown;
+    activeNonIdleProgress?: unknown;
     structuralOwnerFailures: string[];
     blockedClusters: unknown;
     blockedGates: unknown;
@@ -211,6 +329,60 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
     };
   }
 
+  if (id === "universeIndex") {
+    const summary = recordValue(payload.summary);
+    const repo = recordValue(payload.repo);
+    const ownerCoverage = recordValue(payload.ownerCoverage);
+    const garbageCandidates = recordValue(payload.garbageCandidates);
+    return {
+      summary: payload.summary,
+      latestStatePath: payload.latestStatePath,
+      trackedFiles: summary?.trackedFiles,
+      visibleFiles: summary?.visibleFiles,
+      dirtyFiles: summary?.dirtyFiles,
+      untrackedFiles: summary?.untrackedFiles,
+      workspaceArtifactFiles: summary?.workspaceArtifactFiles,
+      liveSidecarFiles: summary?.liveSidecarFiles,
+      unmatchedChangedFiles: summary?.unmatchedChangedFiles,
+      staleRuntimeCandidates: summary?.staleRuntimeCandidates,
+      largeRuntimeCandidates: summary?.largeRuntimeCandidates,
+      staleSnapshots: summary?.staleSnapshots,
+      repoBranch: repo?.branch,
+      changedFiles: repo?.changedFiles,
+      untrackedRepoFiles: garbageCandidates?.untrackedRepoFiles,
+      unmatchedChangedFileList: garbageCandidates?.unmatchedChangedFiles,
+      staleSnapshotsList: garbageCandidates?.staleSnapshots,
+      governanceOwnerCount: ownerCoverage?.governanceOwnerCount,
+      nextSafeCommands: payload.nextSafeCommands,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+
+  if (id === "externalAgentUpgrade") {
+    const summary = recordValue(payload.summary);
+    return {
+      summary: payload.summary,
+      architectureFit: payload.architectureFit,
+      perfectIntegrationClaim: summary?.perfectIntegrationClaim,
+      registeredCandidateCount: summary?.registeredCandidateCount,
+      architectureIntegratedCount: summary?.architectureIntegratedCount,
+      runtimeAuthorityGrantedCount: summary?.runtimeAuthorityGrantedCount,
+      blacktechMechanismCount: summary?.blacktechMechanismCount,
+      blacktechReadyDevOnlyCount: summary?.blacktechReadyDevOnlyCount,
+      blacktechPartialDevOnlyCount: summary?.blacktechPartialDevOnlyCount,
+      blacktechRuntimeAuthorityGrantedCount: summary?.blacktechRuntimeAuthorityGrantedCount,
+      blacktechAutopilotRoutedCount: summary?.blacktechAutopilotRoutedCount,
+      blacktechMechanisms: payload.blacktechMechanisms,
+      nextBlacktechProbes: payload.nextBlacktechProbes,
+      nextDevProbes: payload.nextDevProbes,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+
   if (id === "trainingPlan") {
     const liveLarkBrainBinding = recordValue(payload.liveLarkBrainBinding);
     const accelerationQueue = recordValue(payload.evolutionAccelerationQueue);
@@ -219,6 +391,10 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
     return {
       activeProcessCount: arrayValue(payload.activeProcesses).length,
       activeHeavyEvalCounts: payload.activeHeavyEvalCounts,
+      latestGuardEvent: payload.latestGuardEvent,
+      latestEvolutionCooldown: payload.latestEvolutionCooldown,
+      evolutionCooldownActive: payload.evolutionCooldownActive,
+      activeGuardEvolutionCooldown: payload.activeGuardEvolutionCooldown,
       selectedCleanAdapter:
         payload.selectedCleanAdapter ?? liveLarkBrainBinding?.selectedCleanAdapter,
       decisionIds: decisionIds(payload),
@@ -243,12 +419,146 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
         ? {
             activeTrainingOrEval: accelerationQueue.activeTrainingOrEval,
             canStartHeavyWorkNow: accelerationQueue.canStartHeavyWorkNow,
+            activeNonIdleProgress: accelerationQueue.activeNonIdleProgress,
             fastestSafeNextAction: accelerationQueue.fastestSafeNextAction,
             readyNowCount: accelerationQueue.readyNowCount,
             idleOnlyCount: accelerationQueue.idleOnlyCount,
             blockedCount: accelerationQueue.blockedCount,
           }
         : undefined,
+    };
+  }
+
+  if (id === "skillOptLite") {
+    return {
+      phase: payload.phase,
+      status: payload.status,
+      accepted: payload.accepted,
+      skillId: payload.skillId,
+      requestedSkillId: payload.requestedSkillId,
+      matchedSkillIds: payload.matchedSkillIds,
+      skillFamilyCount: payload.skillFamilyCount,
+      activeProcessCount: payload.activeProcessCount,
+      latestCandidateAdapter: payload.latestCandidateAdapter,
+      latestCandidatePromotionReady: payload.latestCandidatePromotionReady,
+      parseRecoveredCount: payload.parseRecoveredCount,
+      trainCaseCount: payload.trainCaseCount,
+      validationCaseCount: payload.validationCaseCount,
+      regressionCaseCount: payload.regressionCaseCount,
+      staticGateOk: payload.staticGateOk,
+      staticGateScore: payload.staticGateScore,
+      staticGateMissingTokens: payload.staticGateMissingTokens,
+      bestSkillPath: payload.bestSkillPath,
+      candidatePath: payload.candidatePath,
+      skillPackets: payload.skillPackets,
+      instantPreflight: payload.instantPreflight,
+      proofChain: payload.proofChain,
+      absorptionPlan: payload.absorptionPlan,
+      liveLarkProofPlan: payload.liveLarkProofPlan,
+      nextIdleAction: payload.nextIdleAction,
+      nextIdleCommand: payload.nextIdleCommand,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+
+  if (id === "selfRepairHands") {
+    const hands = recordValue(payload.hands);
+    const memoryCleaner = recordValue(hands?.memoryCleaner);
+    const trainingCaseBuilder = recordValue(hands?.trainingCaseBuilder);
+    const supervision = recordValue(payload.supervision);
+    return {
+      status: payload.status,
+      signalKey: payload.signalKey,
+      issue: payload.issue,
+      domain: payload.domain,
+      allowlistedWriteRoots: payload.allowlistedWriteRoots,
+      memoryCleaner: memoryCleaner
+        ? {
+            canWriteWithoutCodex: memoryCleaner.canWriteWithoutCodex,
+            action: memoryCleaner.action,
+            path: memoryCleaner.path,
+          }
+        : undefined,
+      trainingCaseBuilder: trainingCaseBuilder
+        ? {
+            canWriteWithoutCodex: trainingCaseBuilder.canWriteWithoutCodex,
+            action: trainingCaseBuilder.action,
+            path: trainingCaseBuilder.path,
+            absorptionStatus: trainingCaseBuilder.absorptionStatus,
+          }
+        : undefined,
+      supervision,
+      latestWrittenReceipt: payload.latestWrittenReceipt,
+      writtenArtifacts: payload.writtenArtifacts,
+      nextSafeAction: payload.nextSafeAction,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+
+  if (id === "monotonicDataLedger") {
+    const dataset = recordValue(payload.dataset);
+    const datasetCounts = recordValue(dataset?.counts);
+    const trainSlice = recordValue(payload.trainSlice);
+    const trainSliceCounts = recordValue(trainSlice?.counts);
+    const dispositions = recordValue(payload.dispositions);
+    const promotion = recordValue(payload.promotion);
+    const latestCandidateEval = recordValue(promotion?.latestCandidateEval);
+    const deltaFromPrevious = recordValue(payload.deltaFromPrevious);
+    return {
+      appendDecision: payload.appendDecision,
+      guaranteeLevel: payload.guaranteeLevel,
+      entryKey: payload.entryKey,
+      datasetExamples: datasetCounts?.examples,
+      datasetTrain: datasetCounts?.train,
+      datasetSourceFiles: datasetCounts?.sourceFiles,
+      datasetSourceKindCount: dataset?.sourceKindCount,
+      trainSliceWritten: trainSliceCounts?.trainWritten,
+      trainSliceSourceTrain: trainSliceCounts?.sourceTrain,
+      acceptedSkillOptPackets: dispositions?.acceptedSkillOptPackets,
+      pendingSkillOptEvalPackets: dispositions?.pendingSkillOptEvalPackets,
+      acceptedSkillIds: dispositions?.acceptedSkillIds,
+      rejectedOrBlockedCurrentCandidateCases: dispositions?.rejectedOrBlockedCurrentCandidateCases,
+      blockedAdapterCandidates: dispositions?.blockedAdapterCandidates,
+      cleanAdapterCandidates: dispositions?.cleanAdapterCandidates,
+      downrankedOrWeakModuleLearningCount: dispositions?.downrankedOrWeakModuleLearningCount,
+      moduleLearningApplicationReady: dispositions?.moduleLearningApplicationReady,
+      moduleLearningEvalAbsorbed: dispositions?.moduleLearningEvalAbsorbed,
+      selectedCleanAdapter: promotion?.selectedCleanAdapter,
+      latestCandidatePromotionReady: latestCandidateEval?.promotionReady,
+      latestCandidateFailedCaseIds: latestCandidateEval?.failedCaseIds,
+      latestCandidateParseRecoveredCaseIds: latestCandidateEval?.parseRecoveredCaseIds,
+      deltaFromPrevious,
+      proofBoundaries: payload.proofBoundaries,
+      materialChangeSignalCount: payload.materialChangeSignalCount,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+
+  if (id === "providerCouncilAcceleration") {
+    return {
+      status: payload.status,
+      action: payload.action,
+      profile: payload.profile,
+      gitClean: payload.gitClean,
+      activeEvalOrMlx: payload.activeEvalOrMlx,
+      activePidCounts: payload.activePidCounts,
+      latestCouncil: payload.latestCouncil,
+      freshCompleteCouncil: payload.freshCompleteCouncil,
+      dailyUse: payload.dailyUse,
+      hardBlocks: payload.hardBlocks,
+      canRunProviderCouncilNow: payload.canRunProviderCouncilNow,
+      blockedCaseIds: payload.blockedCaseIds,
+      outputsFeed: payload.outputsFeed,
+      nextSafeCommand: payload.nextSafeCommand,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
     };
   }
 
@@ -351,6 +661,92 @@ async function runOwner(command: OwnerCommand): Promise<OwnerRun> {
       };
     }
   }
+}
+
+async function runSelfRepairAutoWrite(signal: SelfRepairAutoSignal): Promise<OwnerRun> {
+  return runOwner({
+    id: "selfRepairHands",
+    script: "scripts/dev/lcx-self-repair-hands.ts",
+    args: [
+      "--write",
+      "--json",
+      "--signal-key",
+      signal.signalKey,
+      "--issue",
+      signal.issue,
+      "--observed-failure",
+      signal.observedFailure,
+      "--replacement-rule",
+      signal.replacementRule,
+      "--domain",
+      signal.domain,
+    ],
+    required: true,
+  });
+}
+
+function selfRepairLatestSignalKey(selfRepairCompact: Record<string, unknown> | undefined) {
+  const latestWritten = recordValue(selfRepairCompact?.latestWrittenReceipt);
+  return typeof latestWritten?.signalKey === "string" ? latestWritten.signalKey : undefined;
+}
+
+function buildSelfRepairAutoSignal(
+  byOwner: Partial<Record<OwnerId, OwnerRun>>,
+): SelfRepairAutoSignal | undefined {
+  const trainingCompact = byOwner.trainingPlan?.compact ?? {};
+  const skillOptCompact = byOwner.skillOptLite?.compact ?? {};
+  const decisionIdList = stringArray(trainingCompact.decisionIds);
+  const latestCandidateEval = recordValue(trainingCompact.latestCandidateEval);
+  const failedCaseIds = stringArray(latestCandidateEval?.failedCaseIds);
+  const parseErrorCaseIds = stringArray(latestCandidateEval?.parseErrorCaseIds);
+  const parseRecoveredCaseIds = stringArray(latestCandidateEval?.parseRecoveredCaseIds);
+  const dirtyCaseIds = [...failedCaseIds, ...parseErrorCaseIds, ...parseRecoveredCaseIds].filter(
+    (caseId, index, array) => array.indexOf(caseId) === index,
+  );
+
+  if (dirtyCaseIds.length > 0) {
+    const compactCases = dirtyCaseIds.slice(0, 8).join(",");
+    return {
+      policyTriggerId: "candidate_eval_dirty_cases",
+      signalKey: `candidate_eval_dirty_cases:${compactCases}`,
+      issue: "candidate_eval_dirty_cases_auto_self_repair",
+      domain: "candidate_eval_memory_and_training_case_repair",
+      observedFailure: `Candidate eval has dirty or recovered cases: ${compactCases}. These must become correction/downrank notes and training/eval candidate packets before any train-slice or promotion claim.`,
+      replacementRule:
+        "Preserve the selected clean adapter; write candidate-only self-repair material for dirty eval cases, require owner review, and absorb only through approved eval/train-slice paths after heavy work is idle.",
+    };
+  }
+
+  if (decisionIdList.includes("module_learning_incomplete_evidence")) {
+    return {
+      policyTriggerId: "module_learning_incomplete_evidence",
+      signalKey: "module_learning_incomplete_evidence:self_repair_candidate",
+      issue: "module_learning_incomplete_evidence_auto_self_repair",
+      domain: "module_learning_memory_and_training_candidate_repair",
+      observedFailure:
+        "Module-learning evidence is incomplete, so stored receipts or summaries must not be treated as model absorption or durable truth.",
+      replacementRule:
+        "Write a correction/downrank note and a training/eval candidate packet that require source registry, retrieval/apply evidence, adjacent application, review, and keep/downrank/discard before reuse.",
+    };
+  }
+
+  if (
+    skillOptCompact.staticGateOk === false ||
+    Number(skillOptCompact.parseRecoveredCount ?? 0) > 0
+  ) {
+    return {
+      policyTriggerId: "skillopt_static_or_parse_gap",
+      signalKey: "skillopt_static_or_parse_gap:self_repair_candidate",
+      issue: "skillopt_static_or_parse_gap_auto_self_repair",
+      domain: "skillopt_training_candidate_repair",
+      observedFailure:
+        "SkillOpt-lite reports a static gate or parse-recovery gap, so the candidate rule must stay as supervised material instead of runtime or model-weight authority.",
+      replacementRule:
+        "Write candidate-only self-repair material for the SkillOpt gap, then wait for targeted eval and owner acceptance before training or live use.",
+    };
+  }
+
+  return undefined;
 }
 
 function ownerMap(owners: readonly OwnerRun[]) {
@@ -461,18 +857,31 @@ function buildContextRecoveryHandoff({
   gitStatusLines,
   activePids,
   digestMaterial,
+  universeIndexCompact,
   trainingCompact,
+  skillOptCompact,
+  monotonicDataLedgerCompact,
+  providerCouncilAccelerationCompact,
   liveBindingCompact,
+  externalAgentUpgradeCompact,
+  localFailureTrace,
 }: {
   receipt: HandoffReceipt;
   gitStatusLines: string[];
   activePids: ActivePidSummary;
   digestMaterial: Record<string, unknown>;
+  universeIndexCompact: Record<string, unknown> | undefined;
   trainingCompact: Record<string, unknown> | undefined;
+  skillOptCompact: Record<string, unknown> | undefined;
+  monotonicDataLedgerCompact: Record<string, unknown> | undefined;
+  providerCouncilAccelerationCompact: Record<string, unknown> | undefined;
   liveBindingCompact: Record<string, unknown> | undefined;
+  externalAgentUpgradeCompact: Record<string, unknown> | undefined;
+  localFailureTrace: LocalFailureTraceReceipt;
 }) {
   const latestCandidateEval = recordValue(trainingCompact?.latestCandidateEval);
   const evolutionAcceleration = recordValue(trainingCompact?.evolutionAcceleration);
+  const activeNonIdleProgress = recordValue(evolutionAcceleration?.activeNonIdleProgress);
   return [
     "# LCX Context Recovery Handoff",
     "",
@@ -483,12 +892,34 @@ function buildContextRecoveryHandoff({
     `branch: ${gitStatusLines[0] ?? "unknown"}`,
     `dirtyCount: ${Math.max(0, gitStatusLines.length - 1)}`,
     "",
+    "## Universe Index",
+    `- latestStatePath: ${inlineValue(universeIndexCompact?.latestStatePath)}`,
+    `- trackedFiles: ${inlineValue(universeIndexCompact?.trackedFiles)}`,
+    `- visibleFiles: ${inlineValue(universeIndexCompact?.visibleFiles)}`,
+    `- dirtyFiles: ${inlineValue(universeIndexCompact?.dirtyFiles)}`,
+    `- untrackedFiles: ${inlineValue(universeIndexCompact?.untrackedFiles)}`,
+    `- workspaceArtifactFiles: ${inlineValue(universeIndexCompact?.workspaceArtifactFiles)}`,
+    `- liveSidecarFiles: ${inlineValue(universeIndexCompact?.liveSidecarFiles)}`,
+    `- unmatchedChangedFiles: ${inlineValue(universeIndexCompact?.unmatchedChangedFiles)}`,
+    `- staleRuntimeCandidates: ${inlineValue(universeIndexCompact?.staleRuntimeCandidates)}`,
+    `- staleSnapshots: ${inlineValue(universeIndexCompact?.staleSnapshots)}`,
+    "- boundary: dev_universe_index_only; inventory and cleanup candidates only, no delete/migration/live authority",
+    "",
     "## Active PIDs",
     ...activePidHandoffLines(activePids),
     "",
     "## Training Truth",
     `- activeTrainingOrEval: ${inlineValue(receipt.summary.activeTrainingOrEval)}`,
     `- fastestSafeNextAction: ${inlineValue(receipt.summary.fastestSafeNextAction)}`,
+    `- activeNonIdleStatus: ${inlineValue(activeNonIdleProgress?.status)}`,
+    `- activeNonIdleReason: ${inlineValue(activeNonIdleProgress?.reason)}`,
+    `- activeEvalAdapters: ${inlineValue(activeNonIdleProgress?.activeEvalAdapters)}`,
+    `- latestBlockedCaseIds: ${inlineValue(activeNonIdleProgress?.latestBlockedCaseIds)}`,
+    `- nextIdleAction: ${inlineValue(activeNonIdleProgress?.nextIdleAction)}`,
+    `- evolutionCooldownActive: ${inlineValue(trainingCompact?.evolutionCooldownActive)}`,
+    `- latestEvolutionCooldown: ${inlineValue(trainingCompact?.latestEvolutionCooldown)}`,
+    `- latestGuardEvent: ${inlineValue(trainingCompact?.latestGuardEvent)}`,
+    `- activeGuardEvolutionCooldown: ${inlineValue(trainingCompact?.activeGuardEvolutionCooldown)}`,
     `- selectedCleanAdapter: ${inlineValue(trainingCompact?.selectedCleanAdapter)}`,
     `- latestCandidateAdapter: ${inlineValue(latestCandidateEval?.adapterPath)}`,
     `- promotionReady: ${inlineValue(latestCandidateEval?.promotionReady)}`,
@@ -498,6 +929,94 @@ function buildContextRecoveryHandoff({
     `- guardUsesSelectedCleanAdapter: ${inlineValue(trainingCompact?.guardUsesSelectedCleanAdapter)}`,
     `- decisionIds: ${inlineValue(trainingCompact?.decisionIds)}`,
     `- canStartHeavyWorkNow: ${inlineValue(evolutionAcceleration?.canStartHeavyWorkNow)}`,
+    "",
+    "## SkillOpt-lite",
+    `- status: ${inlineValue(skillOptCompact?.status)}`,
+    `- skillId: ${inlineValue(skillOptCompact?.skillId)}`,
+    `- matchedSkillIds: ${inlineValue(skillOptCompact?.matchedSkillIds)}`,
+    `- skillFamilyCount: ${inlineValue(skillOptCompact?.skillFamilyCount)}`,
+    `- accepted: ${inlineValue(skillOptCompact?.accepted)}`,
+    `- phase: ${inlineValue(skillOptCompact?.phase)}`,
+    `- staticGateOk: ${inlineValue(skillOptCompact?.staticGateOk)}`,
+    `- parseRecoveredCount: ${inlineValue(skillOptCompact?.parseRecoveredCount)}`,
+    `- trainCaseCount: ${inlineValue(skillOptCompact?.trainCaseCount)}`,
+    `- validationCaseCount: ${inlineValue(skillOptCompact?.validationCaseCount)}`,
+    `- regressionCaseCount: ${inlineValue(skillOptCompact?.regressionCaseCount)}`,
+    `- bestSkillPath: ${inlineValue(skillOptCompact?.bestSkillPath)}`,
+    `- candidatePath: ${inlineValue(skillOptCompact?.candidatePath)}`,
+    `- nextIdleAction: ${inlineValue(skillOptCompact?.nextIdleAction)}`,
+    `- nextIdleCommand: ${inlineValue(skillOptCompact?.nextIdleCommand)}`,
+    `- instantPreflightStatus: ${inlineValue(recordValue(skillOptCompact?.instantPreflight)?.status)}`,
+    `- modelAbsorptionStatus: ${inlineValue(recordValue(skillOptCompact?.absorptionPlan)?.status)}`,
+    `- liveLarkProofStatus: ${inlineValue(recordValue(skillOptCompact?.liveLarkProofPlan)?.status)}`,
+    "- boundary: dev_skillopt_lite_only; immediate preflight is SOP context, not model-weight absorption or live proof",
+    "",
+    "## Self-Repair Hands",
+    `- latestPath: ${inlineValue(SELF_REPAIR_HANDS_LATEST_PATH)}`,
+    `- markdownPath: ${inlineValue(SELF_REPAIR_HANDS_MARKDOWN_PATH)}`,
+    `- jsonlPath: ${inlineValue(SELF_REPAIR_HANDS_JSONL_PATH)}`,
+    `- autoWriteTriggered: ${inlineValue(selfRepairAutoWriteRun !== undefined)}`,
+    `- autoSignal: ${inlineValue(selfRepairAutoSignal)}`,
+    `- ownerPolicy.whenAutoWrite: ${inlineValue(
+      SELF_REPAIR_HANDS_OWNER_WRITE_POLICY.whenAutoWrite.map((rule) => rule.id),
+    )}`,
+    `- ownerPolicy.dedupeKey: ${inlineValue(SELF_REPAIR_HANDS_OWNER_WRITE_POLICY.dedupeKey)}`,
+    `- ownerPolicy.writeOncePerSignalKey: ${inlineValue(
+      SELF_REPAIR_HANDS_OWNER_WRITE_POLICY.writeOncePerSignalKey,
+    )}`,
+    `- ownerPolicy.afterWriteGate: ${inlineValue(
+      SELF_REPAIR_HANDS_OWNER_WRITE_POLICY.afterWriteGate,
+    )}`,
+    `- status: ${inlineValue(selfRepairHandsCompact?.status)}`,
+    `- latestWrittenStatus: ${inlineValue(selfRepairLatestWritten?.status)}`,
+    `- latestWrittenSignalKey: ${inlineValue(selfRepairLatestWritten?.signalKey)}`,
+    `- memoryCleaner: ${inlineValue(recordValue(selfRepairHandsCompact?.memoryCleaner)?.action)}`,
+    `- trainingCaseBuilder: ${inlineValue(
+      recordValue(selfRepairHandsCompact?.trainingCaseBuilder)?.action,
+    )}`,
+    `- nextSafeAction: ${inlineValue(selfRepairHandsCompact?.nextSafeAction)}`,
+    "- boundary: dev_self_repair_hands_only; can auto-write allowed correction and training-candidate packets only when owner signals change, or with explicit --write",
+    "",
+    "## Monotonic Data Ledger",
+    `- latestPath: ${inlineValue(MONOTONIC_DATA_LEDGER_LATEST_PATH)}`,
+    `- jsonlPath: ${inlineValue(MONOTONIC_DATA_LEDGER_JSONL_PATH)}`,
+    `- appendDecision: ${inlineValue(monotonicDataLedgerCompact?.appendDecision)}`,
+    `- guaranteeLevel: ${inlineValue(monotonicDataLedgerCompact?.guaranteeLevel)}`,
+    `- datasetExamples: ${inlineValue(monotonicDataLedgerCompact?.datasetExamples)}`,
+    `- datasetTrain: ${inlineValue(monotonicDataLedgerCompact?.datasetTrain)}`,
+    `- trainSliceWritten: ${inlineValue(monotonicDataLedgerCompact?.trainSliceWritten)}`,
+    `- acceptedSkillOptPackets: ${inlineValue(monotonicDataLedgerCompact?.acceptedSkillOptPackets)}`,
+    `- pendingSkillOptEvalPackets: ${inlineValue(monotonicDataLedgerCompact?.pendingSkillOptEvalPackets)}`,
+    `- blockedAdapterCandidates: ${inlineValue(monotonicDataLedgerCompact?.blockedAdapterCandidates)}`,
+    `- deltaFromPrevious: ${inlineValue(monotonicDataLedgerCompact?.deltaFromPrevious)}`,
+    "- boundary: dev_monotonic_data_ledger_only; data growth is not model absorption or live proof",
+    "",
+    summarizeTraceForHandoff(localFailureTrace),
+    "",
+    "## Blacktech Upgrade Radar",
+    `- architectureFit: ${inlineValue(externalAgentUpgradeCompact?.architectureFit)}`,
+    `- registeredCandidateCount: ${inlineValue(externalAgentUpgradeCompact?.registeredCandidateCount)}`,
+    `- blacktechMechanismCount: ${inlineValue(externalAgentUpgradeCompact?.blacktechMechanismCount)}`,
+    `- blacktechReadyDevOnlyCount: ${inlineValue(externalAgentUpgradeCompact?.blacktechReadyDevOnlyCount)}`,
+    `- blacktechPartialDevOnlyCount: ${inlineValue(externalAgentUpgradeCompact?.blacktechPartialDevOnlyCount)}`,
+    `- blacktechAutopilotRoutedCount: ${inlineValue(externalAgentUpgradeCompact?.blacktechAutopilotRoutedCount)}`,
+    `- runtimeAuthorityGrantedCount: ${inlineValue(externalAgentUpgradeCompact?.runtimeAuthorityGrantedCount)}`,
+    `- blacktechRuntimeAuthorityGrantedCount: ${inlineValue(externalAgentUpgradeCompact?.blacktechRuntimeAuthorityGrantedCount)}`,
+    `- perfectIntegrationClaim: ${inlineValue(externalAgentUpgradeCompact?.perfectIntegrationClaim)}`,
+    `- nextBlacktechProbes: ${inlineValue(externalAgentUpgradeCompact?.nextBlacktechProbes)}`,
+    "- boundary: dev_external_agent_upgrade_radar_only; external blacktech is pattern intake, not runtime/live/provider/protected-memory authority",
+    "",
+    "## Provider Council Acceleration",
+    `- status: ${inlineValue(providerCouncilAccelerationCompact?.status)}`,
+    `- action: ${inlineValue(providerCouncilAccelerationCompact?.action)}`,
+    `- profile: ${inlineValue(providerCouncilAccelerationCompact?.profile)}`,
+    `- gitClean: ${inlineValue(providerCouncilAccelerationCompact?.gitClean)}`,
+    `- activeEvalOrMlx: ${inlineValue(providerCouncilAccelerationCompact?.activeEvalOrMlx)}`,
+    `- freshCompleteCouncil: ${inlineValue(providerCouncilAccelerationCompact?.freshCompleteCouncil)}`,
+    `- hardBlocks: ${inlineValue(providerCouncilAccelerationCompact?.hardBlocks)}`,
+    `- outputsFeed: ${inlineValue(providerCouncilAccelerationCompact?.outputsFeed)}`,
+    `- nextSafeCommand: ${inlineValue(providerCouncilAccelerationCompact?.nextSafeCommand)}`,
+    "- boundary: dev_provider_council_acceleration_only; --write may call Kimi/MiniMax/DeepSeek once when gates are clean",
     "",
     "## Live Binding",
     `- status: ${inlineValue(liveBindingCompact?.status)}`,
@@ -519,7 +1038,7 @@ function buildContextRecoveryHandoff({
     "",
     "## Next Safe Action",
     activePids.eval.length > 0 || activePids.mlx.length > 0
-      ? "- wait: active eval or MLX generate is running; do not mutate repo, promote, live-apply, or start training."
+      ? `- non-empty wait: ${inlineValue(activeNonIdleProgress?.reason)}`
       : `- ${inlineValue(receipt.summary.fastestSafeNextAction)}`,
     "",
     "## Missing Proof",
@@ -536,8 +1055,20 @@ function buildContextRecoveryHandoff({
 }
 
 const options = parseArgs(process.argv.slice(2));
-const owners = await Promise.all(OWNER_COMMANDS.map((command) => runOwner(command)));
-const byOwner = ownerMap(owners);
+let owners = await Promise.all(OWNER_COMMANDS.map((command) => runOwner(command)));
+let byOwner = ownerMap(owners);
+const selfRepairAutoSignal = buildSelfRepairAutoSignal(byOwner);
+const selfRepairAutoWriteNeeded =
+  selfRepairAutoSignal !== undefined &&
+  selfRepairLatestSignalKey(byOwner.selfRepairHands?.compact) !== selfRepairAutoSignal.signalKey;
+let selfRepairAutoWriteRun: OwnerRun | undefined;
+if (selfRepairAutoWriteNeeded && selfRepairAutoSignal) {
+  selfRepairAutoWriteRun = await runSelfRepairAutoWrite(selfRepairAutoSignal);
+  owners = owners.map((owner) =>
+    owner.id === "selfRepairHands" ? selfRepairAutoWriteRun! : owner,
+  );
+  byOwner = ownerMap(owners);
+}
 const requiredParseFailures = owners.filter(
   (owner) => OWNER_COMMANDS.find((command) => command.id === owner.id)?.required && !owner.parsed,
 );
@@ -554,7 +1085,19 @@ const receipt = {
   checkedAt: new Date().toISOString(),
   workspaceDir: DEFAULT_WORKSPACE_DIR,
   latestStatePath: GOVERNANCE_AUTOPILOT_LATEST_PATH,
+  universeIndexLatestPath: UNIVERSE_INDEX_LATEST_PATH,
   evolutionPromotionDigestPath: EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
+  monotonicDataLedgerLatestPath: MONOTONIC_DATA_LEDGER_LATEST_PATH,
+  monotonicDataLedgerJsonlPath: MONOTONIC_DATA_LEDGER_JSONL_PATH,
+  localFailureTraceLatestPath: LOCAL_FAILURE_TRACE_LATEST_PATH,
+  localFailureTraceJsonlPath: LOCAL_FAILURE_TRACE_JSONL_PATH,
+  selfRepairHandsLatestPath: SELF_REPAIR_HANDS_LATEST_PATH,
+  selfRepairHandsMarkdownPath: SELF_REPAIR_HANDS_MARKDOWN_PATH,
+  selfRepairHandsJsonlPath: SELF_REPAIR_HANDS_JSONL_PATH,
+  ownerBriefLatestJsonPath: OWNER_BRIEF_LATEST_JSON_PATH,
+  ownerBriefLatestMarkdownPath: OWNER_BRIEF_LATEST_MARKDOWN_PATH,
+  ownerControlMapLatestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
+  ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   autoTriggeredOwnerCommands: OWNER_COMMANDS.map((command) => command.id),
   ownerCommands: owners.map((owner) => ({
@@ -566,7 +1109,25 @@ const receipt = {
     boundary: owner.boundary,
   })),
   triggerPolicy: {
-    readOnly: true,
+    readOnly: false,
+    repoReadOnly: true,
+    workspaceStateWrites: [
+      "governance_autopilot_latest",
+      "evolution_promotion_digest_latest",
+      "context_recovery_handoff_latest",
+      "monotonic_data_ledger_latest",
+      "monotonic_data_ledger_jsonl",
+      "local_failure_trace_latest",
+      "local_failure_trace_jsonl",
+      "self_repair_hands_latest_when_write_requested",
+      "self_repair_hands_jsonl_when_write_requested",
+      "self_repair_hands_markdown_when_write_requested",
+      "self_repair_hands_auto_candidate_when_owner_signal_changes",
+      "owner_brief_latest_json",
+      "owner_brief_latest_markdown",
+      "owner_control_map_latest_json",
+      "owner_control_map_latest_markdown",
+    ],
     autoUpdateLatestState: true,
     activeTrainingOrEval,
     heavyWorkDeferred: activeTrainingOrEval,
@@ -574,6 +1135,15 @@ const receipt = {
     liveApplyDeferred: activeTrainingOrEval,
     evolutionPromotionDigestUpdated: true,
     contextRecoveryHandoffUpdated: true,
+    monotonicDataLedgerWriteEnabled: true,
+    localFailureTraceWriteEnabled: true,
+    selfRepairHandsAutoWriteEnabled: true,
+    selfRepairHandsWriteRequiresOwnerSignalOrExplicitWriteFlag: true,
+    selfRepairHandsOwnerWritePolicy: SELF_REPAIR_HANDS_OWNER_WRITE_POLICY,
+    selfRepairHandsAutoWriteTriggered: selfRepairAutoWriteRun !== undefined,
+    selfRepairHandsAutoSignal: selfRepairAutoSignal,
+    ownerBriefWriteEnabled: true,
+    ownerControlMapWriteEnabled: true,
     noOverlappingTrainingStarted: true,
     noRepoMutationRequired: true,
   },
@@ -589,9 +1159,49 @@ const receipt = {
     blockedGates: byOwner.commercialAcceptance?.compact.blockedGates ?? [],
     affectedLanes: byOwner.changeImpact?.compact.affectedLanes ?? [],
     unmatchedFiles: byOwner.changeImpact?.compact.unmatchedFiles ?? [],
+    universeIndexDirtyFiles: byOwner.universeIndex?.compact.dirtyFiles,
+    universeIndexUnmatchedChangedFiles: byOwner.universeIndex?.compact.unmatchedChangedFiles,
+    universeIndexStaleRuntimeCandidates: byOwner.universeIndex?.compact.staleRuntimeCandidates,
+    externalUpgradeBlacktechMechanismCount:
+      byOwner.externalAgentUpgrade?.compact.blacktechMechanismCount,
+    externalUpgradeRuntimeAuthorityGrantedCount:
+      byOwner.externalAgentUpgrade?.compact.runtimeAuthorityGrantedCount,
+    externalUpgradeBlacktechRuntimeAuthorityGrantedCount:
+      byOwner.externalAgentUpgrade?.compact.blacktechRuntimeAuthorityGrantedCount,
+    externalUpgradeBlacktechAutopilotRoutedCount:
+      byOwner.externalAgentUpgrade?.compact.blacktechAutopilotRoutedCount,
+    externalUpgradePerfectIntegrationClaim:
+      byOwner.externalAgentUpgrade?.compact.perfectIntegrationClaim,
     liveLarkBrainBindingStatus: byOwner.liveLarkBrainBinding?.compact.status,
+    skillOptLiteStatus: byOwner.skillOptLite?.compact.status,
+    skillOptLiteNextIdleAction: byOwner.skillOptLite?.compact.nextIdleAction,
+    selfRepairHandsAutoWriteTriggered: selfRepairAutoWriteRun !== undefined,
+    selfRepairHandsAutoSignal: selfRepairAutoSignal,
+    selfRepairHandsOwnerWritePolicy: SELF_REPAIR_HANDS_OWNER_WRITE_POLICY,
+    selfRepairHandsStatus: byOwner.selfRepairHands?.compact.status,
+    selfRepairHandsLatestWrittenStatus: recordValue(
+      byOwner.selfRepairHands?.compact.latestWrittenReceipt,
+    )?.status,
+    selfRepairHandsLatestWrittenSignalKey: recordValue(
+      byOwner.selfRepairHands?.compact.latestWrittenReceipt,
+    )?.signalKey,
+    selfRepairHandsNextSafeAction: byOwner.selfRepairHands?.compact.nextSafeAction,
+    monotonicDataLedgerAppendDecision: byOwner.monotonicDataLedger?.compact.appendDecision,
+    monotonicDataLedgerDatasetExamples: byOwner.monotonicDataLedger?.compact.datasetExamples,
+    monotonicDataLedgerTrainSliceWritten: byOwner.monotonicDataLedger?.compact.trainSliceWritten,
+    monotonicDataLedgerAcceptedSkillOptPackets:
+      byOwner.monotonicDataLedger?.compact.acceptedSkillOptPackets,
+    monotonicDataLedgerBlockedAdapterCandidates:
+      byOwner.monotonicDataLedger?.compact.blockedAdapterCandidates,
+    providerCouncilAccelerationStatus: byOwner.providerCouncilAcceleration?.compact.status,
+    providerCouncilAccelerationAction: byOwner.providerCouncilAcceleration?.compact.action,
+    evolutionCooldownActive: byOwner.trainingPlan?.compact.evolutionCooldownActive,
+    latestEvolutionCooldown: byOwner.trainingPlan?.compact.latestEvolutionCooldown,
+    latestGuardEvent: byOwner.trainingPlan?.compact.latestGuardEvent,
     fastestSafeNextAction: recordValue(byOwner.trainingPlan?.compact.evolutionAcceleration)
       ?.fastestSafeNextAction,
+    activeNonIdleProgress: recordValue(byOwner.trainingPlan?.compact.evolutionAcceleration)
+      ?.activeNonIdleProgress,
   },
   owners: Object.fromEntries(owners.map((owner) => [owner.id, owner.compact])),
   notTouched: [
@@ -611,6 +1221,13 @@ const [gitStatusLines, activePids] = await Promise.all([
   activePidSummary(),
 ]);
 const trainingCompact = recordValue(receipt.owners.trainingPlan);
+const skillOptCompact = recordValue(receipt.owners.skillOptLite);
+const selfRepairHandsCompact = recordValue(receipt.owners.selfRepairHands);
+const selfRepairLatestWritten = recordValue(selfRepairHandsCompact?.latestWrittenReceipt);
+const monotonicDataLedgerCompact = recordValue(receipt.owners.monotonicDataLedger);
+const universeIndexCompact = recordValue(receipt.owners.universeIndex);
+const externalAgentUpgradeCompact = recordValue(receipt.owners.externalAgentUpgrade);
+const providerCouncilAccelerationCompact = recordValue(receipt.owners.providerCouncilAcceleration);
 const liveBindingCompact = recordValue(receipt.owners.liveLarkBrainBinding);
 const mindModelCompact = recordValue(receipt.owners.mindModel);
 const flowGraphCompact = recordValue(receipt.owners.flowGraph);
@@ -628,10 +1245,62 @@ const digestMaterial = {
   blockedGates: receipt.summary.blockedGates,
   liveLarkBrainBindingStatus: receipt.summary.liveLarkBrainBindingStatus,
   fastestSafeNextAction: receipt.summary.fastestSafeNextAction,
+  evolutionCooldownActive: trainingCompact?.evolutionCooldownActive,
+  latestEvolutionCooldown: trainingCompact?.latestEvolutionCooldown,
+  latestGuardEvent: trainingCompact?.latestGuardEvent,
   selectedCleanAdapter: trainingCompact?.selectedCleanAdapter,
   decisionIds: trainingCompact?.decisionIds ?? [],
   latestCandidateEval: trainingCompact?.latestCandidateEval,
   guardUsesSelectedCleanAdapter: trainingCompact?.guardUsesSelectedCleanAdapter,
+  skillOptLiteStatus: skillOptCompact?.status,
+  skillOptLiteAccepted: skillOptCompact?.accepted,
+  skillOptLiteMatchedSkillIds: skillOptCompact?.matchedSkillIds,
+  skillOptLiteSkillFamilyCount: skillOptCompact?.skillFamilyCount,
+  skillOptLiteStaticGateOk: skillOptCompact?.staticGateOk,
+  skillOptLiteParseRecoveredCount: skillOptCompact?.parseRecoveredCount,
+  skillOptLiteNextIdleAction: skillOptCompact?.nextIdleAction,
+  selfRepairHandsAutoWriteTriggered: selfRepairAutoWriteRun !== undefined,
+  selfRepairHandsAutoSignal: selfRepairAutoSignal,
+  selfRepairHandsOwnerWritePolicy: SELF_REPAIR_HANDS_OWNER_WRITE_POLICY,
+  selfRepairHandsStatus: selfRepairHandsCompact?.status,
+  selfRepairHandsLatestWrittenStatus: selfRepairLatestWritten?.status,
+  selfRepairHandsLatestWrittenSignalKey: selfRepairLatestWritten?.signalKey,
+  selfRepairHandsNextSafeAction: selfRepairHandsCompact?.nextSafeAction,
+  monotonicDataLedgerLatestPath: MONOTONIC_DATA_LEDGER_LATEST_PATH,
+  monotonicDataLedgerJsonlPath: MONOTONIC_DATA_LEDGER_JSONL_PATH,
+  monotonicDataLedgerAppendDecision: monotonicDataLedgerCompact?.appendDecision,
+  monotonicDataLedgerGuaranteeLevel: monotonicDataLedgerCompact?.guaranteeLevel,
+  monotonicDataLedgerDatasetExamples: monotonicDataLedgerCompact?.datasetExamples,
+  monotonicDataLedgerDatasetTrain: monotonicDataLedgerCompact?.datasetTrain,
+  monotonicDataLedgerTrainSliceWritten: monotonicDataLedgerCompact?.trainSliceWritten,
+  monotonicDataLedgerAcceptedSkillOptPackets: monotonicDataLedgerCompact?.acceptedSkillOptPackets,
+  monotonicDataLedgerPendingSkillOptEvalPackets:
+    monotonicDataLedgerCompact?.pendingSkillOptEvalPackets,
+  monotonicDataLedgerBlockedAdapterCandidates: monotonicDataLedgerCompact?.blockedAdapterCandidates,
+  monotonicDataLedgerDeltaFromPrevious: monotonicDataLedgerCompact?.deltaFromPrevious,
+  universeIndexDirtyFiles: universeIndexCompact?.dirtyFiles,
+  universeIndexUnmatchedChangedFiles: universeIndexCompact?.unmatchedChangedFiles,
+  universeIndexStaleRuntimeCandidates: universeIndexCompact?.staleRuntimeCandidates,
+  universeIndexStaleSnapshots: universeIndexCompact?.staleSnapshots,
+  externalUpgradeBlacktechMechanismCount: externalAgentUpgradeCompact?.blacktechMechanismCount,
+  externalUpgradeBlacktechReadyDevOnlyCount:
+    externalAgentUpgradeCompact?.blacktechReadyDevOnlyCount,
+  externalUpgradeBlacktechPartialDevOnlyCount:
+    externalAgentUpgradeCompact?.blacktechPartialDevOnlyCount,
+  externalUpgradeBlacktechAutopilotRoutedCount:
+    externalAgentUpgradeCompact?.blacktechAutopilotRoutedCount,
+  externalUpgradeRuntimeAuthorityGrantedCount:
+    externalAgentUpgradeCompact?.runtimeAuthorityGrantedCount,
+  externalUpgradeBlacktechRuntimeAuthorityGrantedCount:
+    externalAgentUpgradeCompact?.blacktechRuntimeAuthorityGrantedCount,
+  externalUpgradePerfectIntegrationClaim: externalAgentUpgradeCompact?.perfectIntegrationClaim,
+  providerCouncilAccelerationStatus: providerCouncilAccelerationCompact?.status,
+  providerCouncilAccelerationAction: providerCouncilAccelerationCompact?.action,
+  providerCouncilAccelerationHardBlocks: providerCouncilAccelerationCompact?.hardBlocks,
+  providerCouncilAccelerationFreshCompleteCouncil:
+    providerCouncilAccelerationCompact?.freshCompleteCouncil,
+  providerCouncilAccelerationDailyUse: providerCouncilAccelerationCompact?.dailyUse,
+  providerCouncilAccelerationNextSafeCommand: providerCouncilAccelerationCompact?.nextSafeCommand,
   liveBindingMissingProof: liveBindingCompact?.missingProof ?? [],
   mindModelFailed: recordValue(mindModelCompact?.summary)?.failed,
   flowGraphFailed: recordValue(flowGraphCompact?.summary)?.failed,
@@ -667,6 +1336,77 @@ const evolutionPromotionDigest = {
   providerConfigTouched: receipt.providerConfigTouched,
   protectedMemoryTouched: receipt.protectedMemoryTouched,
 };
+const localFailureTrace = buildLocalFailureTraceReceipt({
+  checkedAt: receipt.checkedAt,
+  workspaceDir: DEFAULT_WORKSPACE_DIR,
+  repo: {
+    cwd: repoRoot,
+    statusShortBranch: gitStatusLines[0] ?? "",
+    dirtyCount: Math.max(0, gitStatusLines.length - 1),
+  },
+  activePidSummary: activePids,
+  source: "governance_autopilot",
+  sourceArtifacts: [
+    GOVERNANCE_AUTOPILOT_LATEST_PATH,
+    EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
+    MONOTONIC_DATA_LEDGER_LATEST_PATH,
+    MONOTONIC_DATA_LEDGER_JSONL_PATH,
+    CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+  ],
+  writtenArtifacts: [
+    GOVERNANCE_AUTOPILOT_LATEST_PATH,
+    EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
+    MONOTONIC_DATA_LEDGER_LATEST_PATH,
+    MONOTONIC_DATA_LEDGER_JSONL_PATH,
+    CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+    LOCAL_FAILURE_TRACE_LATEST_PATH,
+    LOCAL_FAILURE_TRACE_JSONL_PATH,
+    OWNER_BRIEF_LATEST_JSON_PATH,
+    OWNER_BRIEF_LATEST_MARKDOWN_PATH,
+    OWNER_CONTROL_MAP_LATEST_JSON_PATH,
+    OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+  ],
+  ownerCommands: receipt.ownerCommands,
+  summary: receipt.summary,
+  boundaryFlags: {
+    liveTouched: receipt.liveTouched,
+    providerConfigTouched: receipt.providerConfigTouched,
+    protectedMemoryTouched: receipt.protectedMemoryTouched,
+  },
+});
+const ownerControlMap = buildOwnerControlMap({
+  checkedAt: receipt.checkedAt,
+  governance: receipt,
+  localFailureTrace,
+  paths: {
+    latestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+    latestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
+    sourcePaths: [
+      GOVERNANCE_AUTOPILOT_LATEST_PATH,
+      EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
+      LOCAL_FAILURE_TRACE_LATEST_PATH,
+      MONOTONIC_DATA_LEDGER_LATEST_PATH,
+      CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+    ],
+  },
+});
+const ownerBrief = buildOwnerBrief({
+  checkedAt: receipt.checkedAt,
+  governance: receipt,
+  localFailureTrace,
+  paths: {
+    latestMarkdownPath: OWNER_BRIEF_LATEST_MARKDOWN_PATH,
+    latestJsonPath: OWNER_BRIEF_LATEST_JSON_PATH,
+    ownerControlMapMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+    sourcePaths: [
+      GOVERNANCE_AUTOPILOT_LATEST_PATH,
+      EVOLUTION_PROMOTION_DIGEST_LATEST_PATH,
+      LOCAL_FAILURE_TRACE_LATEST_PATH,
+      MONOTONIC_DATA_LEDGER_LATEST_PATH,
+      CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+    ],
+  },
+});
 
 await fs.mkdir(path.dirname(GOVERNANCE_AUTOPILOT_LATEST_PATH), { recursive: true });
 await fs.writeFile(GOVERNANCE_AUTOPILOT_LATEST_PATH, `${JSON.stringify(receipt, null, 2)}\n`);
@@ -683,10 +1423,19 @@ await fs.writeFile(
     gitStatusLines,
     activePids,
     digestMaterial,
+    universeIndexCompact,
     trainingCompact,
+    skillOptCompact,
+    monotonicDataLedgerCompact,
+    providerCouncilAccelerationCompact,
     liveBindingCompact,
+    externalAgentUpgradeCompact,
+    localFailureTrace,
   })}\n`,
 );
+await writeLocalFailureTraceReceipt(localFailureTrace);
+await writeOwnerControlMap(ownerControlMap);
+await writeOwnerBrief(ownerBrief);
 
 if (options.json) {
   console.log(JSON.stringify(receipt, null, 2));

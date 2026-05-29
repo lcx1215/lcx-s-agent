@@ -28,6 +28,12 @@ async function runPlanArgs(args: string[]) {
       commands: string[];
     }>;
     unmatchedFiles: string[];
+    strayGate: {
+      ok: boolean;
+      rule: string;
+      unmatchedChangedFiles: string[];
+      nextAction: string;
+    };
     recommendedFastCommands: string[];
     deferredCommands: string[];
     safetyNotes: string[];
@@ -67,6 +73,7 @@ describe("lcx-change-impact-plan", () => {
     const payload = await runPlan("scripts/dev/lcx-flow-graph.ts");
 
     expect(payload.ok).toBe(true);
+    expect(payload.strayGate.ok).toBe(true);
     expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook"]);
     expect(payload.impacts).toEqual(
       expect.arrayContaining([
@@ -86,17 +93,119 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
-  it("classifies the external agent upgrade radar as architecture supervision", async () => {
-    const payload = await runPlan("scripts/dev/lcx-external-agent-upgrade-radar.ts");
+  it("fails the stray gate when a changed file has no owner lane", async () => {
+    const payload = await runPlan("tmp/unknown-stray-output.txt");
+
+    expect(payload.ok).toBe(false);
+    expect(payload.unmatchedFiles).toEqual(["tmp/unknown-stray-output.txt"]);
+    expect(payload.strayGate).toEqual(
+      expect.objectContaining({
+        ok: false,
+        rule: "every changed file must match at least one owner lane",
+        unmatchedChangedFiles: ["tmp/unknown-stray-output.txt"],
+      }),
+    );
+    expect(payload.strayGate.nextAction).toContain("add an owner rule");
+  });
+
+  it("routes Python changes through the TS/Python boundary check", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "lobster_orchestrator.py",
+      "scripts/branch_freshness.py",
+    ]);
 
     expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
     expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "ts_python_boundary",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: ["lobster_orchestrator.py", "scripts/branch_freshness.py"],
+          requiredChecks: ["ts-python-boundary"],
+          commands: ["node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json"],
+        }),
+      ]),
+    );
+  });
+
+  it("classifies the external agent upgrade radar as architecture supervision", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+      "scripts/dev/lcx-github-cli-capability-inventory.ts",
+      "test/lcx-github-cli-capability-inventory.test.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook", "test_surface"]);
     expect(payload.impacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "architecture_supervision_stack",
           lane: "global_doctrine_and_runbook",
-          matchedFiles: ["scripts/dev/lcx-external-agent-upgrade-radar.ts"],
+          matchedFiles: [
+            "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+            "scripts/dev/lcx-github-cli-capability-inventory.ts",
+            "test/lcx-github-cli-capability-inventory.test.ts",
+          ],
+        }),
+      ]),
+    );
+  });
+
+  it("classifies SkillOpt-lite SOP training as architecture supervision", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "scripts/dev/lcx-skillopt-lite.ts",
+      "scripts/dev/lcx-provider-council-acceleration.ts",
+      "test/lcx-skillopt-lite.test.ts",
+      "test/lcx-provider-council-acceleration.test.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook", "test_surface"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_stack",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: [
+            "scripts/dev/lcx-provider-council-acceleration.ts",
+            "scripts/dev/lcx-skillopt-lite.ts",
+            "test/lcx-provider-council-acceleration.test.ts",
+            "test/lcx-skillopt-lite.test.ts",
+          ],
+          commands: expect.arrayContaining([
+            expect.stringContaining("test/lcx-skillopt-lite.test.ts"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("classifies the universe index as the global architecture inventory owner", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "scripts/dev/lcx-universe-index.ts",
+      "test/lcx-universe-index.test.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook", "test_surface"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_stack",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: ["scripts/dev/lcx-universe-index.ts", "test/lcx-universe-index.test.ts"],
+          commands: expect.arrayContaining([
+            expect.stringContaining("test/lcx-universe-index.test.ts"),
+          ]),
         }),
       ]),
     );
@@ -132,6 +241,120 @@ describe("lcx-change-impact-plan", () => {
           id: "test_file_changed",
           lane: "test_surface",
           matchedFiles: ["test/lcx-promote-live-status.test.ts"],
+        }),
+      ]),
+    );
+  });
+
+  it("routes SkillOpt runtime self-use hooks to the Lark visible reply lane", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "src/auto-reply/reply/get-reply-run.ts",
+      "src/auto-reply/reply/skillopt-autocue.ts",
+      "src/auto-reply/reply/skillopt-autocue.test.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["lark_feishu_visible_reply", "test_surface"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "lark_feishu_visible_surface",
+          lane: "lark_feishu_visible_reply",
+          matchedFiles: [
+            "src/auto-reply/reply/get-reply-run.ts",
+            "src/auto-reply/reply/skillopt-autocue.test.ts",
+            "src/auto-reply/reply/skillopt-autocue.ts",
+          ],
+          commands: expect.arrayContaining([
+            "pnpm vitest run src/auto-reply/reply/skill-autocue.test.ts src/auto-reply/reply/skillopt-autocue.test.ts",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "test_file_changed",
+          lane: "test_surface",
+          matchedFiles: ["src/auto-reply/reply/skillopt-autocue.test.ts"],
+        }),
+      ]),
+    );
+  });
+
+  it("routes owner dashboard observability files instead of leaving them unmatched", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "apps/web/lcx-agent-farm/index.html",
+      "scripts/dev/lcx-farm-web-server.ts",
+      "scripts/dev/lcx-owner-control-map.ts",
+      "scripts/dev/lcx-real-cost-ledger.ts",
+      "test/lcx-owner-control-map.test.ts",
+      "test/lcx-real-cost-ledger.test.ts",
+      "tmp-lcx-owner-dashboard.png",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["local_automation", "test_surface"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "owner_control_room_surface",
+          lane: "local_automation",
+          matchedFiles: [
+            "apps/web/lcx-agent-farm/index.html",
+            "scripts/dev/lcx-farm-web-server.ts",
+            "scripts/dev/lcx-owner-control-map.ts",
+            "scripts/dev/lcx-real-cost-ledger.ts",
+            "test/lcx-owner-control-map.test.ts",
+            "test/lcx-real-cost-ledger.test.ts",
+            "tmp-lcx-owner-dashboard.png",
+          ],
+          safetyNotes: expect.arrayContaining([
+            expect.stringContaining("screenshots should be deleted or explicitly kept"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("routes macOS owner control-room files as local UI, not live proof", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "apps/macos/Sources/OpenClaw/LCXAgentControlRoom.swift",
+      "apps/macos/Sources/OpenClaw/LCXAgentControlRoomView.swift",
+      "apps/macos/StandaloneLCXAgentFarm/App.swift",
+      "apps/macos/Tests/OpenClawIPCTests/LCXAgentControlRoomTests.swift",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["local_automation"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "macos_owner_control_room",
+          lane: "local_automation",
+          requiredChecks: ["macos-control-room-build-or-test"],
+          safetyNotes: expect.arrayContaining([
+            expect.stringContaining("do not treat them as live Lark proof"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("routes local ignore hygiene through the runbook lane", async () => {
+    const payload = await runPlan(".gitignore");
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "doctrine_or_runbook",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: [".gitignore"],
         }),
       ]),
     );

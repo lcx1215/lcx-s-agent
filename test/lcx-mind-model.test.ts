@@ -80,8 +80,11 @@ describe("LCX mind model god-view architecture check", () => {
         expect.objectContaining({ id: "mind_model_self_supervision", ok: true }),
         expect.objectContaining({ id: "local_brain_training", ok: true }),
         expect.objectContaining({ id: "module_learning_memory", ok: true }),
+        expect.objectContaining({ id: "self_repair_hands", ok: true }),
         expect.objectContaining({ id: "lark_feishu_live_boundary", ok: true }),
         expect.objectContaining({ id: "flow_graph_waterflow_supervision", ok: true }),
+        expect.objectContaining({ id: "skillopt_runtime_self_use", ok: true }),
+        expect.objectContaining({ id: "universe_index_total_coverage", ok: true }),
         expect.objectContaining({ id: "world_class_agent_architecture", ok: true }),
         expect.objectContaining({ id: "external_agent_upgrade_distillation", ok: true }),
       ]),
@@ -106,6 +109,14 @@ describe("LCX mind model god-view architecture check", () => {
         }),
         expect.objectContaining({
           id: "module_learning_cannot_be_stored_only",
+          ok: true,
+        }),
+        expect.objectContaining({
+          id: "skillopt_preflight_is_not_absorption_or_live_proof",
+          ok: true,
+        }),
+        expect.objectContaining({
+          id: "universe_index_is_inventory_not_delete_authority",
           ok: true,
         }),
         expect.objectContaining({

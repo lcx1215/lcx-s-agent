@@ -86,7 +86,9 @@ describe("LCX compressed context recovery exam", () => {
       expect.arrayContaining([
         "node --import tsx scripts/dev/lcx-mind-model.ts --json",
         "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
+        "node --import tsx scripts/dev/lcx-universe-index.ts --json",
         "node --import tsx scripts/dev/lcx-governance-autopilot.ts --json",
+        "node --import tsx scripts/dev/lcx-self-repair-hands.ts --json",
         "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
         "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
         "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
@@ -96,7 +98,7 @@ describe("LCX compressed context recovery exam", () => {
     );
     expect(Array.isArray(payload.actionableWarnings)).toBe(true);
     expect(Array.isArray(payload.warnings)).toBe(true);
-  });
+  }, 240_000);
 
   it("can emit a compact new-window handoff from the existing recovery owner", async () => {
     const { stdout } = await runJsonScriptWithArgs("scripts/dev/lcx-context-recovery-exam.ts", [
@@ -147,6 +149,13 @@ describe("LCX compressed context recovery exam", () => {
           };
           gaps: string[];
         };
+        selfRepairHands: {
+          boundary: string;
+          status: string;
+          absorptionStatus: string;
+          latestJsonPath: string;
+          jsonlPath: string;
+        };
         text: string;
       };
     };
@@ -186,6 +195,12 @@ describe("LCX compressed context recovery exam", () => {
         boundaryViolations: expect.any(Number),
       }),
     );
+    expect(payload.handoffForNewWindow.selfRepairHands).toEqual(
+      expect.objectContaining({
+        boundary: "dev_self_repair_hands_only",
+        absorptionStatus: "candidate_only_not_in_train_slice",
+      }),
+    );
     expect(payload.handoffForNewWindow.text).toContain("# LCX New-Window Handoff");
     expect(payload.handoffForNewWindow.text).toContain("do not start overlapping");
     expect(payload.handoffForNewWindow.text).toContain("context handoff is dev/local evidence");
@@ -213,6 +228,11 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.handoffForNewWindow.text).toContain("sedimentationLatestReview=");
     expect(payload.handoffForNewWindow.text).toContain("sedimentationGaps=");
     expect(payload.handoffForNewWindow.text).toContain("informationalWarnings=");
+    expect(payload.handoffForNewWindow.text).toContain("Self-Repair Hands");
+    expect(payload.handoffForNewWindow.text).toContain("owner=lcx-self-repair-hands");
+    expect(payload.handoffForNewWindow.text).toContain(
+      "absorptionStatus=candidate_only_not_in_train_slice",
+    );
   }, 240_000);
 
   it("keeps the recovery exam visible in durable doctrine and local automation", async () => {
@@ -235,7 +255,13 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("fresh_training_plan_decision_visible_after_recovery");
     expect(recoverySource).toContain("runtime_lcx_operator_skills_available_and_autocued");
     expect(recoverySource).toContain("external_agent_upgrade_radar_recovered_and_autocued");
+    expect(recoverySource).toContain("self_repair_hands_recovered_and_supervised");
+    expect(recoverySource).toContain("lcx-self-repair-hands");
     expect(recoverySource).toContain("lcx-external-agent-upgrade-radar");
+    expect(recoverySource).toContain("github_cli_agentic_workflow_control");
+    expect(recoverySource).toContain("github_cli_agentic_control_plane");
+    expect(recoverySource).toContain("externalAgentCandidateIds");
+    expect(recoverySource).toContain("externalAgentBlacktechIds");
     expect(recoverySource).toContain("operatorDecisionIdsMatchCurrent");
     expect(recoverySource).toContain("operator_training_plan_snapshot_differs_from_current");
     expect(recoverySource).toContain("operator_training_state_snapshot_differs_from_current");
@@ -245,6 +271,8 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("compressed_digest_not_realtime_training_authority");
     expect(recoverySource).toContain("MAX_OPERATOR_STATE_AGE_MS");
     expect(recoverySource).toContain("flow_graph_recovers_task_waterflows");
+    expect(recoverySource).toContain("universe_index_recovers_total_inventory");
+    expect(recoverySource).toContain("lcx-universe-index");
     expect(recoverySource).toContain("lcx-problem-cluster-radar");
     expect(recoverySource).toContain("currentLiveStatusSnapshot");
     expect(recoverySource).toContain("Live Boundary Truth");

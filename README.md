@@ -122,6 +122,9 @@ data, dataset, eval, and promotion into the next unified clean adapter.
 
 Live proof is intentionally separate from dev proof.
 
+正式状态以 `live-visible-fixed` 为准。旧文档里的 `live-fixed` 只能当口语简称，
+不能作为验收状态名。
+
 | State                  | Meaning                                                             |
 | ---------------------- | ------------------------------------------------------------------- |
 | `dev-ready`            | Local tests, smokes, replay, or evals passed in the dev repo.       |

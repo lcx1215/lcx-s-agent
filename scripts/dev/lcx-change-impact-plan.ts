@@ -37,6 +37,7 @@ const PATH_RULES: PathRule[] = [
     lane: "global_doctrine_and_runbook",
     patterns: [
       /^AGENTS\.md$/u,
+      /^\.gitignore$/u,
       /^README\.md$/u,
       /^ops\/local-brain\/README\.md$/u,
       /^docs\/tools\/finance-learning-pipeline-runbook\.md$/u,
@@ -59,30 +60,50 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-commercial-acceptance-harness\.ts$/u,
       /^scripts\/dev\/lcx-external-agent-upgrade-radar\.ts$/u,
       /^scripts\/dev\/lcx-flow-graph\.ts$/u,
+      /^scripts\/dev\/lcx-github-cli-capability-inventory\.ts$/u,
       /^scripts\/dev\/lcx-governance-autopilot\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
       /^scripts\/dev\/lcx-live-lark-brain-binding\.ts$/u,
       /^scripts\/dev\/lcx-mind-model\.ts$/u,
       /^scripts\/dev\/lcx-problem-cluster-radar\.ts$/u,
+      /^scripts\/dev\/lcx-provider-council-acceleration\.ts$/u,
+      /^scripts\/dev\/lcx-skillopt-lite\.ts$/u,
       /^scripts\/dev\/lcx-system-doctor\.ts$/u,
+      /^scripts\/dev\/lcx-ts-python-boundary\.ts$/u,
+      /^scripts\/dev\/lcx-universe-index\.ts$/u,
       /^package\.json$/u,
       /^test\/lcx-commercial-acceptance-harness\.test\.ts$/u,
       /^test\/lcx-external-agent-upgrade-radar\.test\.ts$/u,
+      /^test\/lcx-github-cli-capability-inventory\.test\.ts$/u,
       /^test\/lcx-governance-autopilot\.test\.ts$/u,
       /^test\/lcx-live-lark-brain-binding\.test\.ts$/u,
       /^test\/lcx-problem-cluster-radar\.test\.ts$/u,
+      /^test\/lcx-provider-council-acceleration\.test\.ts$/u,
+      /^test\/lcx-skillopt-lite\.test\.ts$/u,
+      /^test\/lcx-ts-python-boundary\.test\.ts$/u,
+      /^test\/lcx-universe-index\.test\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "architecture-supervision-tests"],
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-      "pnpm vitest run test/lcx-change-impact-plan.test.ts test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/lcx-agent-exam.test.ts test/lcx-problem-cluster-radar.test.ts test/lcx-commercial-acceptance-harness.test.ts test/lcx-governance-autopilot.test.ts",
+      "pnpm vitest run test/lcx-change-impact-plan.test.ts test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/lcx-agent-exam.test.ts test/lcx-problem-cluster-radar.test.ts test/lcx-commercial-acceptance-harness.test.ts test/lcx-governance-autopilot.test.ts test/lcx-external-agent-upgrade-radar.test.ts test/lcx-skillopt-lite.test.ts test/lcx-provider-council-acceleration.test.ts test/lcx-ts-python-boundary.test.ts test/lcx-universe-index.test.ts",
     ],
     deferredCommands: ["pnpm vitest run test/local-brain-distill-eval.test.ts"],
     safetyNotes: [
       "Run deferred local-brain-distill-eval tests only after local-brain-training-plan shows no active guard/eval/MLX process; do not create overlapping heavy eval.",
     ],
     headTailRequired: true,
+  },
+  {
+    id: "ts_python_boundary",
+    lane: "global_doctrine_and_runbook",
+    patterns: [/\.pyi?$/u],
+    requiredChecks: ["ts-python-boundary"],
+    commands: ["node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json"],
+    safetyNotes: [
+      "Python changes must be classified as keep, wrap, or migrate; TS remains the control plane.",
+    ],
   },
   {
     id: "local_brain_micro_surface",
@@ -114,6 +135,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-learning-sedimentation-audit\.ts$/u,
       /^scripts\/dev\/lcx-learning-sedimentation-map\.ts$/u,
       /^scripts\/dev\/lcx-module-learning-absorption-gate\.ts$/u,
+      /^scripts\/dev\/lcx-self-repair-hands\.ts$/u,
       /^scripts\/dev\/lcx-system-memory-sedimentation-gate\.ts$/u,
       /^src\/agents\/tools\/module-learning-pipeline-/u,
       /^test\/module-learning-pipeline-/u,
@@ -121,12 +143,13 @@ const PATH_RULES: PathRule[] = [
       /^test\/lcx-learning-sedimentation-audit\.test\.ts$/u,
       /^test\/lcx-learning-sedimentation-map\.test\.ts$/u,
       /^test\/lcx-module-learning-absorption-gate\.test\.ts$/u,
+      /^test\/lcx-self-repair-hands\.test\.ts$/u,
       /^test\/lcx-system-memory-sedimentation-gate\.test\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "module-learning-tests"],
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
-      "pnpm vitest run test/lcx-learning-sedimentation-bridge.test.ts test/lcx-learning-sedimentation-audit.test.ts test/lcx-learning-sedimentation-map.test.ts test/lcx-module-learning-absorption-gate.test.ts test/lcx-system-memory-sedimentation-gate.test.ts src/agents/tools/module-learning-pipeline-plan-tool.test.ts src/agents/tools/module-learning-pipeline-review-tool.test.ts test/module-learning-pipeline-plan-cli.test.ts test/module-learning-pipeline-review-cli.test.ts",
+      "pnpm vitest run test/lcx-learning-sedimentation-bridge.test.ts test/lcx-learning-sedimentation-audit.test.ts test/lcx-learning-sedimentation-map.test.ts test/lcx-module-learning-absorption-gate.test.ts test/lcx-self-repair-hands.test.ts test/lcx-system-memory-sedimentation-gate.test.ts src/agents/tools/module-learning-pipeline-plan-tool.test.ts src/agents/tools/module-learning-pipeline-review-tool.test.ts test/module-learning-pipeline-plan-cli.test.ts test/module-learning-pipeline-review-cli.test.ts",
     ],
     headTailRequired: true,
   },
@@ -153,12 +176,16 @@ const PATH_RULES: PathRule[] = [
     patterns: [
       /^scripts\/dev\/lcx-commercial-answer-pipeline\.ts$/u,
       /^extensions\/feishu\//u,
+      /^src\/auto-reply\/reply\/get-reply-run\.ts$/u,
       /^src\/auto-reply\/reply\/skill-autocue\.ts$/u,
+      /^src\/auto-reply\/reply\/skillopt-autocue\.ts$/u,
+      /^src\/auto-reply\/reply\/skillopt-autocue\.test\.ts$/u,
       /^src\/auto-reply\/reply\/feishu-reply-flow-evidence\.ts$/u,
       /^src\/commands\/capabilities\/lark-/u,
     ],
     requiredChecks: ["lark-regression-tests", "dev-live-boundary-check"],
     commands: [
+      "pnpm vitest run src/auto-reply/reply/skill-autocue.test.ts src/auto-reply/reply/skillopt-autocue.test.ts",
       "pnpm vitest run extensions/feishu/src/bot.test.ts extensions/feishu/src/lark-api-route-provider.test.ts extensions/feishu/src/real-utterances-regression.test.ts",
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
     ],
@@ -169,12 +196,64 @@ const PATH_RULES: PathRule[] = [
     lane: "local_automation",
     patterns: [
       /^scripts\/dev\/lcx-local-operator/u,
+      /^scripts\/dev\/lcx-local-failure-trace\.ts$/u,
+      /^scripts\/dev\/lcx-monotonic-data-ledger\.ts$/u,
       /^scripts\/dev\/codex-archive/u,
       /^ops\/local-automation/u,
     ],
     requiredChecks: ["automation-smoke", "doctor"],
     commands: ["node --import tsx scripts/dev/lcx-system-doctor.ts --json"],
     risk: "elevated",
+  },
+  {
+    id: "owner_control_room_surface",
+    lane: "local_automation",
+    patterns: [
+      /^apps\/web\//u,
+      /^scripts\/dev\/lcx-farm-web-server\.ts$/u,
+      /^scripts\/dev\/lcx-owner-brief\.ts$/u,
+      /^scripts\/dev\/lcx-owner-control-map\.ts$/u,
+      /^scripts\/dev\/lcx-real-cost-ledger\.ts$/u,
+      /^test\/lcx-local-failure-trace\.test\.ts$/u,
+      /^test\/lcx-monotonic-data-ledger\.test\.ts$/u,
+      /^test\/lcx-owner-brief\.test\.ts$/u,
+      /^test\/lcx-owner-control-map\.test\.ts$/u,
+      /^test\/lcx-real-cost-ledger\.test\.ts$/u,
+      /^tmp-lcx-owner-dashboard.*\.png$/u,
+    ],
+    requiredChecks: ["owner-dashboard-smoke", "observability-tests"],
+    commands: [
+      "pnpm vitest run test/lcx-local-failure-trace.test.ts test/lcx-monotonic-data-ledger.test.ts test/lcx-owner-brief.test.ts test/lcx-owner-control-map.test.ts test/lcx-real-cost-ledger.test.ts",
+      "node --import tsx scripts/dev/lcx-real-cost-ledger.ts --json",
+    ],
+    safetyNotes: [
+      "Owner dashboard files are read-only observability surfaces; screenshots should be deleted or explicitly kept before commit.",
+    ],
+  },
+  {
+    id: "macos_owner_control_room",
+    lane: "local_automation",
+    patterns: [
+      /^apps\/macos\/Sources\/OpenClaw\/DebugActions\.swift$/u,
+      /^apps\/macos\/Sources\/OpenClaw\/LCXAgentControlRoom\.swift$/u,
+      /^apps\/macos\/Sources\/OpenClaw\/LCXAgentControlRoomView\.swift$/u,
+      /^apps\/macos\/Sources\/OpenClaw\/MenuContentView\.swift$/u,
+      /^apps\/macos\/StandaloneLCXAgentFarm\//u,
+      /^apps\/macos\/Tests\/OpenClawIPCTests\/LCXAgentControlRoomTests\.swift$/u,
+    ],
+    requiredChecks: ["macos-control-room-build-or-test"],
+    commands: ["xcodebuild -list"],
+    safetyNotes: [
+      "macOS control-room files are local UI only; do not treat them as live Lark proof.",
+    ],
+    risk: "elevated",
+  },
+  {
+    id: "operator_runbook_docs",
+    lane: "global_doctrine_and_runbook",
+    patterns: [/^ops\/codex-remote-devbox-and-browser-runbook\.md$/u],
+    requiredChecks: ["doctrine-consistency"],
+    commands: ["node --import tsx scripts/dev/lcx-doctrine-consistency.ts --json"],
   },
   {
     id: "live_or_provider_boundary",
@@ -334,14 +413,24 @@ async function main() {
   const unmatchedFiles = changedFiles.filter(
     (file) => !impacts.some((impact) => impact.matchedFiles.includes(file)),
   );
+  const strayGate = {
+    ok: unmatchedFiles.length === 0,
+    rule: "every changed file must match at least one owner lane",
+    unmatchedChangedFiles: unmatchedFiles,
+    nextAction:
+      unmatchedFiles.length === 0
+        ? "none"
+        : "add an owner rule, move the file under an owned path, ignore generated output, or delete the artifact",
+  };
   const result = {
-    ok: true,
+    ok: strayGate.ok,
     boundary: "dev_change_impact_plan_only",
     checkedAt: new Date().toISOString(),
     changedFiles,
     affectedLanes: [...new Set(impacts.map((impact) => impact.lane))],
     impacts,
     unmatchedFiles,
+    strayGate,
     recommendedFastCommands:
       impacts.length > 0
         ? uniqueCommands(impacts)
@@ -351,9 +440,11 @@ async function main() {
     escalation: {
       runFullDoctor:
         impacts.some((impact) => impact.risk === "elevated" || impact.headTailRequired) ||
-        changedFiles.length > 6,
-      reason:
-        impacts.length === 0
+        changedFiles.length > 6 ||
+        !strayGate.ok,
+      reason: !strayGate.ok
+        ? "unmatched changed files are not allowed; every changed file needs one owner lane"
+        : impacts.length === 0
           ? "no mapped impact; inspect manually if files are not trivial"
           : "mapped micro-change lanes produced focused checks",
     },

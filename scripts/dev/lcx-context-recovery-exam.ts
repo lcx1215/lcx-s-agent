@@ -6,7 +6,12 @@ import { promisify } from "node:util";
 import { buildWorkspaceSkillSnapshot } from "../../src/agents/skills.ts";
 import { resolveSkillAutoCue } from "../../src/auto-reply/reply/skill-autocue.ts";
 import { loadConfig } from "../../src/config/config.ts";
-import { LOCAL_OPERATOR_LATEST_PATH } from "./lcx-local-paths.ts";
+import {
+  LOCAL_OPERATOR_LATEST_PATH,
+  SELF_REPAIR_HANDS_JSONL_PATH,
+  SELF_REPAIR_HANDS_LATEST_PATH,
+  SELF_REPAIR_HANDS_MARKDOWN_PATH,
+} from "./lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -66,6 +71,10 @@ const REQUIRED_AUTOCUE_PROBES = [
   },
   {
     body: "把 Agent Lightning、LongMemEval、LightMem、ClawBench 这些外部 agent 架构巩固融入智能体",
+    expectedSkill: "skill-harvester",
+  },
+  {
+    body: "把 SkillOpt v2、真实 runtime battery、trajectory schema、MemX、OpenTelemetry、OWASP Agentic 这些黑科技融入现有智能体准则",
     expectedSkill: "skill-harvester",
   },
   {
@@ -472,6 +481,71 @@ async function currentExternalAgentUpgradeRadarSnapshot(): Promise<{
   }
 }
 
+async function currentSelfRepairHandsSnapshot(): Promise<{
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: string;
+}> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-self-repair-hands.ts", "--json"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    );
+    return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
+function compactSelfRepairHands(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const hands =
+    record.hands && typeof record.hands === "object" && !Array.isArray(record.hands)
+      ? (record.hands as Record<string, unknown>)
+      : {};
+  const memoryCleaner =
+    hands.memoryCleaner &&
+    typeof hands.memoryCleaner === "object" &&
+    !Array.isArray(hands.memoryCleaner)
+      ? (hands.memoryCleaner as Record<string, unknown>)
+      : {};
+  const trainingCaseBuilder =
+    hands.trainingCaseBuilder &&
+    typeof hands.trainingCaseBuilder === "object" &&
+    !Array.isArray(hands.trainingCaseBuilder)
+      ? (hands.trainingCaseBuilder as Record<string, unknown>)
+      : {};
+  const latestWrittenReceipt =
+    record.latestWrittenReceipt &&
+    typeof record.latestWrittenReceipt === "object" &&
+    !Array.isArray(record.latestWrittenReceipt)
+      ? (record.latestWrittenReceipt as Record<string, unknown>)
+      : undefined;
+  return {
+    ok: record.ok,
+    boundary: record.boundary,
+    status: record.status,
+    issue: record.issue,
+    domain: record.domain,
+    memoryCleanerAction: memoryCleaner.action,
+    trainingCaseBuilderAction: trainingCaseBuilder.action,
+    absorptionStatus: trainingCaseBuilder.absorptionStatus,
+    latestWrittenStatus: latestWrittenReceipt?.status,
+    latestWrittenAt: latestWrittenReceipt?.checkedAt,
+    latestJsonPath: record.latestJsonPath,
+    latestMarkdownPath: record.latestMarkdownPath,
+    jsonlPath: record.jsonlPath,
+    nextSafeAction: record.nextSafeAction,
+    liveTouched: record.liveTouched,
+    providerConfigTouched: record.providerConfigTouched,
+    protectedMemoryTouched: record.protectedMemoryTouched,
+  };
+}
+
 function compactExternalAgentUpgradeRadar(value: unknown) {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -481,6 +555,24 @@ function compactExternalAgentUpgradeRadar(value: unknown) {
     record.summary && typeof record.summary === "object" && !Array.isArray(record.summary)
       ? (record.summary as Record<string, unknown>)
       : {};
+  const candidates = Array.isArray(record.candidates)
+    ? record.candidates
+        .map((candidate) =>
+          candidate && typeof candidate === "object"
+            ? (candidate as Record<string, unknown>).id
+            : undefined,
+        )
+        .filter((id): id is string => typeof id === "string")
+    : [];
+  const blacktechMechanisms = Array.isArray(record.blacktechMechanisms)
+    ? record.blacktechMechanisms
+        .map((mechanism) =>
+          mechanism && typeof mechanism === "object"
+            ? (mechanism as Record<string, unknown>).id
+            : undefined,
+        )
+        .filter((id): id is string => typeof id === "string")
+    : [];
   return {
     ok: record.ok,
     boundary: record.boundary,
@@ -488,7 +580,12 @@ function compactExternalAgentUpgradeRadar(value: unknown) {
     registeredCandidateCount: summary.registeredCandidateCount,
     architectureIntegratedCount: summary.architectureIntegratedCount,
     runtimeAuthorityGrantedCount: summary.runtimeAuthorityGrantedCount,
+    blacktechMechanismCount: summary.blacktechMechanismCount,
+    blacktechRuntimeAuthorityGrantedCount: summary.blacktechRuntimeAuthorityGrantedCount,
+    blacktechAutopilotRoutedCount: summary.blacktechAutopilotRoutedCount,
     perfectIntegrationClaim: summary.perfectIntegrationClaim,
+    recoveredCandidateIds: candidates,
+    recoveredBlacktechMechanismIds: blacktechMechanisms,
     liveTouched: record.liveTouched,
     providerConfigTouched: record.providerConfigTouched,
     protectedMemoryTouched: record.protectedMemoryTouched,
@@ -667,6 +764,7 @@ function buildNewWindowHandoffText(params: {
   liveStatus?: ReturnType<typeof compactLiveStatus>;
   moduleAbsorption?: ReturnType<typeof compactModuleAbsorptionGate>;
   learningSedimentation?: ReturnType<typeof compactLearningSedimentationAudit>;
+  selfRepairHands?: ReturnType<typeof compactSelfRepairHands>;
   flowGraphEvidence?: Record<string, unknown>;
 }): string {
   const changedFiles = stringArray(params.changeImpact?.changedFiles);
@@ -804,6 +902,21 @@ function buildNewWindowHandoffText(params: {
     `blockers=${blockers.join(",") || "none"}`,
     `nextActions=${nextActions.join(" | ") || "none"}`,
     "",
+    "## Self-Repair Hands",
+    "owner=lcx-self-repair-hands",
+    `status=${scalarText(params.selfRepairHands?.status)}`,
+    `latestWrittenStatus=${scalarText(params.selfRepairHands?.latestWrittenStatus, "none")}`,
+    `latestWrittenAt=${scalarText(params.selfRepairHands?.latestWrittenAt, "none")}`,
+    `memoryCleanerAction=${scalarText(params.selfRepairHands?.memoryCleanerAction, "none")}`,
+    `trainingCaseBuilderAction=${scalarText(
+      params.selfRepairHands?.trainingCaseBuilderAction,
+      "none",
+    )}`,
+    `absorptionStatus=${scalarText(params.selfRepairHands?.absorptionStatus, "none")}`,
+    `selfRepairLatestJson=${scalarText(params.selfRepairHands?.latestJsonPath, "none")}`,
+    `selfRepairJsonl=${scalarText(params.selfRepairHands?.jsonlPath, "none")}`,
+    `selfRepairNextSafeAction=${scalarText(params.selfRepairHands?.nextSafeAction, "none")}`,
+    "",
     "## Architecture Truth",
     `flowGraphScenarios=${scalarText(params.flowGraphEvidence?.scenarios)}`,
     `flowGraphNodes=${scalarText(params.flowGraphEvidence?.nodes)}`,
@@ -882,6 +995,43 @@ async function flowGraphCheck(): Promise<RecoveryCheck> {
   }
 }
 
+async function universeIndexCheck(): Promise<RecoveryCheck> {
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-universe-index.ts", "--json", "--no-write"],
+      { cwd: repoRoot, env: process.env, maxBuffer: 64 * 1024 * 1024 },
+    );
+    const payload = JSON.parse(stdout) as Record<string, unknown>;
+    const summary = payload.summary as Record<string, unknown> | undefined;
+    const ownerCoverage = payload.ownerCoverage as Record<string, unknown> | undefined;
+    return {
+      id: "universe_index_recovers_total_inventory",
+      ok: payload.ok === true && payload.boundary === "dev_universe_index_only",
+      summary:
+        "lcx-universe-index must recover repo files, runtime artifacts, live sidecar inventory, and owner coverage without chat context",
+      evidence: {
+        boundary: payload.boundary,
+        trackedFiles: summary?.trackedFiles,
+        visibleFiles: summary?.visibleFiles,
+        dirtyFiles: summary?.dirtyFiles,
+        workspaceArtifactFiles: summary?.workspaceArtifactFiles,
+        liveSidecarFiles: summary?.liveSidecarFiles,
+        unmatchedChangedFiles: summary?.unmatchedChangedFiles,
+        governanceOwnerCount: ownerCoverage?.governanceOwnerCount,
+      },
+    };
+  } catch (error) {
+    return {
+      id: "universe_index_recovers_total_inventory",
+      ok: false,
+      summary:
+        "lcx-universe-index must recover repo files, runtime artifacts, live sidecar inventory, and owner coverage without chat context",
+      evidence: String(error),
+    };
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const [
@@ -891,8 +1041,10 @@ async function main() {
     latestState,
     mindModel,
     flowGraph,
+    universeIndex,
     currentTrainingPlan,
     externalAgentUpgradeRadar,
+    currentSelfRepairHands,
   ] = await Promise.all([
     readText(path.join(repoRoot, "AGENTS.md")),
     readText(path.join(repoRoot, "ops/local-brain/README.md")),
@@ -900,8 +1052,10 @@ async function main() {
     readJson(LOCAL_OPERATOR_LATEST),
     mindModelCheck(),
     flowGraphCheck(),
+    universeIndexCheck(),
     currentTrainingPlanSnapshot(),
     currentExternalAgentUpgradeRadarSnapshot(),
+    currentSelfRepairHandsSnapshot(),
   ]);
 
   const latestMindModel = latestState?.mindModel as Record<string, unknown> | undefined;
@@ -931,6 +1085,34 @@ async function main() {
     latestTraining === undefined ||
     operatorTrainingVolatileMatches(operatorTrainingSnapshot, currentTrainingVolatileSnapshot);
 
+  const externalAgentSummary =
+    externalAgentUpgradeRadar.payload?.summary &&
+    typeof externalAgentUpgradeRadar.payload.summary === "object" &&
+    !Array.isArray(externalAgentUpgradeRadar.payload.summary)
+      ? (externalAgentUpgradeRadar.payload.summary as Record<string, unknown>)
+      : {};
+  const externalAgentCandidateIds = Array.isArray(externalAgentUpgradeRadar.payload?.candidates)
+    ? externalAgentUpgradeRadar.payload.candidates
+        .map((candidate) =>
+          candidate && typeof candidate === "object"
+            ? (candidate as Record<string, unknown>).id
+            : undefined,
+        )
+        .filter((id): id is string => typeof id === "string")
+    : [];
+  const externalAgentBlacktechIds = Array.isArray(
+    externalAgentUpgradeRadar.payload?.blacktechMechanisms,
+  )
+    ? externalAgentUpgradeRadar.payload.blacktechMechanisms
+        .map((mechanism) =>
+          mechanism && typeof mechanism === "object"
+            ? (mechanism as Record<string, unknown>).id
+            : undefined,
+        )
+        .filter((id): id is string => typeof id === "string")
+    : [];
+  const selfRepairHands = compactSelfRepairHands(currentSelfRepairHands.payload);
+
   const checks: RecoveryCheck[] = [
     {
       id: "fixed_evidence_recovery_commands_present",
@@ -941,6 +1123,7 @@ async function main() {
         "lcx-local-operator-latest.json",
         "lcx-mind-model",
         "lcx-flow-graph",
+        "lcx-universe-index",
       ]),
       summary: "AGENTS and runbook must tell a new window how to recover state",
     },
@@ -956,6 +1139,7 @@ async function main() {
     },
     mindModel,
     flowGraph,
+    universeIndex,
     {
       id: "local_operator_latest_is_readable",
       ok:
@@ -1059,21 +1243,46 @@ async function main() {
       ok:
         externalAgentUpgradeRadar.ok &&
         externalAgentUpgradeRadar.payload?.ok === true &&
-        (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
-          ?.registeredCandidateCount === 8 &&
-        (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
-          ?.architectureIntegratedCount === 8 &&
-        (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
-          ?.runtimeAuthorityGrantedCount === 0 &&
-        (externalAgentUpgradeRadar.payload.summary as Record<string, unknown> | undefined)
-          ?.perfectIntegrationClaim === false,
+        typeof externalAgentSummary.registeredCandidateCount === "number" &&
+        externalAgentSummary.registeredCandidateCount >= 13 &&
+        externalAgentSummary.architectureIntegratedCount ===
+          externalAgentSummary.registeredCandidateCount &&
+        externalAgentSummary.runtimeAuthorityGrantedCount === 0 &&
+        typeof externalAgentSummary.blacktechMechanismCount === "number" &&
+        externalAgentSummary.blacktechMechanismCount >= 7 &&
+        externalAgentSummary.blacktechRuntimeAuthorityGrantedCount === 0 &&
+        externalAgentSummary.blacktechAutopilotRoutedCount ===
+          externalAgentSummary.blacktechMechanismCount &&
+        externalAgentSummary.perfectIntegrationClaim === false &&
+        externalAgentCandidateIds.includes("github_cli_agentic_workflow_control") &&
+        externalAgentBlacktechIds.includes("github_cli_agentic_control_plane"),
       summary:
-        "compressed recovery must know external agent and prediction-market upgrades are autocued and routed through existing owners",
+        "compressed recovery must know external agent, GitHub CLI, and prediction-market upgrades are autocued and routed through existing owners",
       evidence: {
         externalAgentUpgradeRadar: compactExternalAgentUpgradeRadar(
           externalAgentUpgradeRadar.payload,
         ),
         error: externalAgentUpgradeRadar.error,
+      },
+    },
+    {
+      id: "self_repair_hands_recovered_and_supervised",
+      ok:
+        currentSelfRepairHands.ok &&
+        selfRepairHands?.ok === true &&
+        selfRepairHands.boundary === "dev_self_repair_hands_only" &&
+        selfRepairHands.absorptionStatus === "candidate_only_not_in_train_slice" &&
+        selfRepairHands.latestJsonPath === SELF_REPAIR_HANDS_LATEST_PATH &&
+        selfRepairHands.latestMarkdownPath === SELF_REPAIR_HANDS_MARKDOWN_PATH &&
+        selfRepairHands.jsonlPath === SELF_REPAIR_HANDS_JSONL_PATH &&
+        selfRepairHands.liveTouched === false &&
+        selfRepairHands.providerConfigTouched === false &&
+        selfRepairHands.protectedMemoryTouched === false,
+      summary:
+        "compressed recovery must expose self-repair hands as supervised memory correction and training/eval candidate writers, not autonomous training or protected-memory authority",
+      evidence: {
+        selfRepairHands,
+        error: currentSelfRepairHands.error,
       },
     },
   ];
@@ -1123,7 +1332,9 @@ async function main() {
       "sed -n '1,220p' ops/local-brain/README.md",
       "node --import tsx scripts/dev/lcx-mind-model.ts --json",
       "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
+      "node --import tsx scripts/dev/lcx-universe-index.ts --json",
       "node --import tsx scripts/dev/lcx-governance-autopilot.ts --json",
+      "node --import tsx scripts/dev/lcx-self-repair-hands.ts --json",
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
       "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
@@ -1176,6 +1387,7 @@ async function main() {
         liveStatus,
         moduleAbsorption,
         learningSedimentation,
+        selfRepairHands,
         text: buildNewWindowHandoffText({
           result,
           changeImpact: handoffChangeImpact,
@@ -1183,6 +1395,7 @@ async function main() {
           liveStatus,
           moduleAbsorption,
           learningSedimentation,
+          selfRepairHands,
           flowGraphEvidence: currentFlowEvidence,
         }),
         errors: {
