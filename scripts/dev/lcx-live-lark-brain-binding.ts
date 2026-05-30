@@ -142,6 +142,18 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+async function readJson(filePath: string): Promise<JsonRecord | undefined> {
+  try {
+    return JSON.parse(await fs.readFile(filePath, "utf8")) as JsonRecord;
+  } catch {
+    return undefined;
+  }
+}
+
 function activeProcessSummary(trainingPlan: JsonRecord | undefined) {
   const activeProcesses = Array.isArray(trainingPlan?.activeProcesses)
     ? trainingPlan.activeProcesses
@@ -242,7 +254,12 @@ export function buildLiveLarkBrainBindingDecision(params: {
       : "debug_live_runtime_probe_before_claiming_bound",
     selectedCleanAdapter,
     missingProof: missingProof.filter(
-      (entry) => entry !== "live_lark_loop_diagnose_ok_after_restart",
+      (entry) =>
+        ![
+          "live_sidecar_source_drift_zero_after_selected_adapter",
+          "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
+          "live_lark_loop_diagnose_ok_after_restart",
+        ].includes(entry),
     ),
     heavyActive,
     activeProcessSummary: active,
@@ -377,6 +394,31 @@ async function main(options: CliOptions): Promise<JsonRecord> {
   liveSidecarDriftBefore = driftBefore.stdout
     .split("\n")
     .find((line) => line.startsWith("summary "));
+
+  const previousSnapshot = options.apply ? undefined : await readJson(options.snapshotPath);
+  const previousExternalChannel = recordValue(previousSnapshot?.externalChannelBinding);
+  const previousDiagnose = recordValue(previousSnapshot?.larkLoopDiagnose);
+  const previousChannelStillMatches =
+    stringValue(previousExternalChannel?.status) ===
+      "channel_runtime_probe_ok_user_visible_pending" &&
+    stringValue(previousExternalChannel?.selectedCleanAdapter) === decision.selectedCleanAdapter &&
+    liveSidecarDriftBefore?.includes("missing=0") === true &&
+    liveSidecarDriftBefore?.includes("different=0") &&
+    booleanValue(previousDiagnose?.ok) === true;
+  if (!options.apply && decision.status === "ready_for_apply" && previousChannelStillMatches) {
+    decision = buildLiveLarkBrainBindingDecision({
+      trainingPlan,
+      apply: true,
+      larkLoopDiagnoseOk: true,
+      liveTouched: false,
+    });
+    larkLoopDiagnose = {
+      ok: true,
+      preservedFromPreviousApply: true,
+      nextBlocker: previousDiagnose?.nextBlocker,
+      boundaries: previousDiagnose?.boundaries,
+    };
+  }
 
   if (options.apply && decision.status === "ready_for_apply") {
     const syncApply = await runCommand(SYNC_DOCTOR, ["--apply"], REPO_ROOT);

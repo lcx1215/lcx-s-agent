@@ -77,6 +77,12 @@ describe("lcx-live-lark-brain-binding", () => {
       liveUserSeen: false,
     });
     expect(decision.missingProof).not.toContain("live_lark_loop_diagnose_ok_after_restart");
+    expect(decision.missingProof).not.toContain(
+      "live_sidecar_source_drift_zero_after_selected_adapter",
+    );
+    expect(decision.missingProof).not.toContain(
+      "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
+    );
     expect(decision.missingProof).toContain("fresh_real_lark_inbound_and_outbound_seen");
   });
 });

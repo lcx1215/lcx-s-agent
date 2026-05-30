@@ -69,6 +69,13 @@ function baseInputs() {
         liveMatchesCurrentDev: true,
       },
     }),
+    liveBindingStatus: owner("lcx-live-lark-brain-binding", {
+      externalChannelBinding: {
+        status: "channel_runtime_probe_ok_user_visible_pending",
+        userVisibleObserved: true,
+        missingProof: [],
+      },
+    }),
     trainingPlan: owner("local-brain-training-plan", {
       activeProcesses: [],
       overlappingHeavyEval: false,
@@ -165,6 +172,13 @@ describe("lcx-commercial-acceptance-harness", () => {
         acceptanceMatched: false,
       },
     });
+    inputs.liveBindingStatus = owner("lcx-live-lark-brain-binding", {
+      externalChannelBinding: {
+        status: "channel_runtime_probe_ok_user_visible_pending",
+        userVisibleObserved: false,
+        missingProof: ["fresh_real_lark_inbound_and_outbound_user_visible_observed"],
+      },
+    });
 
     const result = buildCommercialAcceptanceHarness(inputs);
 
@@ -179,6 +193,42 @@ describe("lcx-commercial-acceptance-harness", () => {
         }),
       ]),
     );
+  });
+
+  it("uses the external-channel binding owner before the legacy promote-live commit gate", () => {
+    const inputs = baseInputs();
+    inputs.liveStatus = owner("lcx-promote-live", {
+      operatorStatus: {
+        liveRuntimeUpdated: false,
+        liveUserSeen: false,
+      },
+      externalChannelStatus: {
+        externalChannelBound: false,
+        userVisibleObserved: false,
+      },
+      visibleProof: {
+        status: "waiting_for_real_lark",
+        freshInboundCount: 0,
+        freshOutboundResultCount: 0,
+        acceptanceMatched: false,
+      },
+      devLiveDrift: {
+        liveMatchesCurrentDev: false,
+      },
+    });
+    inputs.liveBindingStatus = owner("lcx-live-lark-brain-binding", {
+      externalChannelBinding: {
+        status: "channel_runtime_probe_ok_user_visible_pending",
+        userVisibleObserved: false,
+        missingProof: ["fresh_real_lark_inbound_and_outbound_user_visible_observed"],
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.blockedGates).not.toContain("external_channel_not_bound");
+    expect(result.blockedGates).toContain("post_migration_lark_canary_missing");
   });
 
   it("blocks release when the Lark external channel is not bound", () => {
@@ -200,6 +250,13 @@ describe("lcx-commercial-acceptance-harness", () => {
       },
       devLiveDrift: {
         liveMatchesCurrentDev: false,
+      },
+    });
+    inputs.liveBindingStatus = owner("lcx-live-lark-brain-binding", {
+      externalChannelBinding: {
+        status: "ready_for_channel_bind_apply",
+        userVisibleObserved: false,
+        missingProof: ["lark_external_channel_gateway_restarted_after_selected_adapter"],
       },
     });
 

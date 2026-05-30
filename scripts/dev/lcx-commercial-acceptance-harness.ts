@@ -35,6 +35,7 @@ type HarnessInputs = {
   flowGraph?: OwnerSnapshot;
   mindModel?: OwnerSnapshot;
   liveStatus?: OwnerSnapshot;
+  liveBindingStatus?: OwnerSnapshot;
   trainingPlan?: OwnerSnapshot;
   systemDoctor?: OwnerSnapshot;
 };
@@ -90,6 +91,10 @@ function stringArray(value: unknown): string[] {
 
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function numberValue(value: unknown): number | undefined {
@@ -282,26 +287,39 @@ function radarGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
   };
 }
 
-function liveStatusGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+function liveStatusGate(
+  snapshot: OwnerSnapshot | undefined,
+  bindingSnapshot: OwnerSnapshot | undefined,
+): AcceptanceGate {
   if (!snapshot?.payload) {
     return ownerUnavailableGate("lcx-promote-live", snapshot);
   }
   const operatorStatus = recordValue(snapshot.payload.operatorStatus);
   const externalChannelStatus = recordValue(snapshot.payload.externalChannelStatus);
+  const binding = recordValue(bindingSnapshot?.payload?.externalChannelBinding);
   const visibleProof = recordValue(snapshot.payload.visibleProof);
   const devLiveDrift = recordValue(snapshot.payload.devLiveDrift);
   const legacyLiveRuntimeUpdated = booleanValue(operatorStatus?.liveRuntimeUpdated) === true;
   const legacyLiveUserSeen = booleanValue(operatorStatus?.liveUserSeen) === true;
+  const bindingChannelBound =
+    stringValue(binding?.status) === "channel_runtime_probe_ok_user_visible_pending";
+  const bindingUserVisibleObserved = booleanValue(binding?.userVisibleObserved) === true;
   const externalChannelBound =
-    booleanValue(externalChannelStatus?.externalChannelBound) ?? legacyLiveRuntimeUpdated;
+    bindingChannelBound ||
+    booleanValue(externalChannelStatus?.externalChannelBound) === true ||
+    legacyLiveRuntimeUpdated;
   const userVisibleObserved =
-    booleanValue(externalChannelStatus?.userVisibleObserved) ?? legacyLiveUserSeen;
+    bindingUserVisibleObserved ||
+    booleanValue(externalChannelStatus?.userVisibleObserved) === true ||
+    legacyLiveUserSeen;
   const externalChannelEvidence = {
     channel: "lark",
     role: "owner_agent_communication_medium",
     desiredPath: "selected_clean_brain_to_lark_external_channel_to_user_visible_observed",
     externalChannelBound,
     userVisibleObserved,
+    bindingStatus: binding?.status,
+    bindingMissingProof: binding?.missingProof,
     legacyGateIds: {
       externalChannelNotBound: "live_runtime_not_updated",
       userVisibleObserved: "live_user_seen",
@@ -314,9 +332,10 @@ function liveStatusGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
       id: "external_channel_not_bound",
       status: "blocked",
       severity: "P1",
-      owner: "scripts/dev/lcx-promote-live.ts",
+      owner: "scripts/dev/lcx-live-lark-brain-binding.ts + scripts/dev/lcx-promote-live.ts",
       evidence: {
         externalChannel: externalChannelEvidence,
+        externalChannelBinding: binding,
         externalChannelStatus,
         operatorStatus,
         devLiveDrift,
@@ -330,9 +349,10 @@ function liveStatusGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
       id: "post_migration_lark_canary_missing",
       status: "blocked",
       severity: "P2",
-      owner: "scripts/dev/lcx-promote-live.ts",
+      owner: "scripts/dev/lcx-live-lark-brain-binding.ts + scripts/dev/lcx-promote-live.ts",
       evidence: {
         externalChannel: externalChannelEvidence,
+        externalChannelBinding: binding,
         externalChannelStatus,
         operatorStatus,
         liveVisibleStatus: visibleProof?.status,
@@ -348,9 +368,10 @@ function liveStatusGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
     id: "user_visible_observed",
     status: "passed",
     severity: "info",
-    owner: "scripts/dev/lcx-promote-live.ts",
+    owner: "scripts/dev/lcx-live-lark-brain-binding.ts + scripts/dev/lcx-promote-live.ts",
     evidence: {
       externalChannel: externalChannelEvidence,
+      externalChannelBinding: binding,
       externalChannelStatus,
       operatorStatus,
       liveVisibleStatus: visibleProof?.status,
@@ -467,7 +488,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     commercialAnswerGate(inputs.commercialAnswerPipeline),
     architectureGate(inputs.flowGraph, inputs.mindModel),
     radarGate(inputs.problemRadar),
-    liveStatusGate(inputs.liveStatus),
+    liveStatusGate(inputs.liveStatus, inputs.liveBindingStatus),
     trainingGuardGate(inputs.trainingPlan),
     providerCouncilGate(inputs.systemDoctor),
   ];
@@ -573,6 +594,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     flowGraph,
     mindModel,
     liveStatus,
+    liveBindingStatus,
     trainingPlan,
     systemDoctor,
   ] = await Promise.all([
@@ -591,6 +613,9 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
       "scripts/dev/lcx-promote-live.ts",
       options.withLiveProbe ? ["--status", "--json", "--with-probe"] : ["--status", "--json"],
     ),
+    runJsonOwner("lcx-live-lark-brain-binding", "scripts/dev/lcx-live-lark-brain-binding.ts", [
+      "--json",
+    ]),
     runJsonOwner("local-brain-training-plan", "scripts/dev/local-brain-training-plan.ts", [
       "--json",
     ]),
@@ -609,6 +634,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     flowGraph,
     mindModel,
     liveStatus,
+    liveBindingStatus,
     trainingPlan,
     systemDoctor,
   };
