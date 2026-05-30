@@ -2,7 +2,9 @@
 
 Use this when the chat context is gone and you need to quickly resume LCX local-brain work.
 
-This runbook is dev/local only. It does not prove live Lark visibility, does not touch live sender config, does not edit provider config, and does not write protected memory.
+This runbook is dev/local only. It does not prove `user-visible-observed`, does
+not touch the external sender compatibility path, does not edit provider config,
+and does not write protected memory.
 
 ## Fast Micro-Change Loop
 
@@ -52,24 +54,27 @@ This is a read-only `dev_mind_model_only` architecture audit. It checks whether
 each main lane still has workflow closure across four surfaces: macro rule,
 workflow entrypoint, proof/eval surface, and boundary flag. It covers context
 recovery, change-impact planning, Qwen training, MiniMax teacher, adapter
-promotion, Lark/Feishu live boundary, local automation, memory sedimentation,
-finance research capability, and protected-memory/provider/live-sender
-boundaries. It reports `liveTouched=false`, `providerConfigTouched=false`, and
-`protectedMemoryTouched=false`; it does not prove live-visible-fixed.
+promotion, Lark/Feishu external-channel/user-visible boundary, local automation,
+memory sedimentation, finance research capability, and
+protected-memory/provider/external-sender boundaries. It reports
+`liveTouched=false`, `providerConfigTouched=false`, and
+`protectedMemoryTouched=false`; it does not prove `user-visible-observed` or
+legacy `live-visible-fixed`.
 It also checks the invariant registry for repeated failure families: surface
 files must exist, local operator state must be fresh, temporary test HOME values
 must not hide the real operator files, overlapping local-brain training must
-stay visible, dev/live wording must stay separate, content claims need source
-or unverified flags, and stored sources must not be treated as learned module
-capability.
+stay visible, dev/external-channel/user-visible wording must stay separate,
+content claims need source or unverified flags, and stored sources must not be
+treated as learned module capability.
 
 The LCX Agent Flow Graph is the waterflow exam. It verifies that each task
 family has a start node, terminal node, required modules, filter valve list,
 receipts, and bounded feedback edges. It is designed to catch wrong-flow before
-it becomes a visible bug: dev proof must not jump to live-user-seen, stored
-source must not jump to learned capability, hardened eval must not skip
-promotion gate, and training/eval loops must not recirculate without overlap
-guards or timeout/error receipts. Its proof surface is `flow_graph_exam`.
+it becomes a visible bug: dev proof must not jump to `user-visible-observed` or
+legacy `live-user-seen`, stored source must not jump to learned capability,
+hardened eval must not skip promotion gate, and training/eval loops must not
+recirculate without overlap guards or timeout/error receipts. Its proof surface
+is `flow_graph_exam`.
 It also emits `diagnosticIndex`. Treat that as the fast operator triage table:
 scenario family, detected failure class, owner entrypoint, fast check command,
 required filters, evidence receipts, failure signals, and the
@@ -108,10 +113,11 @@ sub-signal are active problem clusters without manually rediscovering them from
 raw logs. A blocked mixed cluster must not hide a sub-signal whose owner already
 marked `codexRepairEligible=true`.
 Run it automatically before non-trivial repairs, training/promotion judgments,
-module-learning absorption claims, memory sedimentation claims, Lark/live
-boundary claims, and broad "find more problems" work. Start with the radar to
-get the cluster list, then follow each cluster's `ownerEntrypoint`; do not let
-the radar replace those owners. If the training plan shows active
+module-learning absorption claims, memory sedimentation claims, Lark
+external-channel/user-visible boundary claims, and broad "find more problems"
+work. Start with the radar to get the cluster list, then follow each cluster's
+`ownerEntrypoint`; do not let the radar replace those owners. If the training
+plan shows active
 Qwen/MiniMax/MLX work, do not start a second heavy eval from this governance
 stack.
 The Governance Autopilot is the read-only automatic trigger for the same stack:
@@ -121,8 +127,8 @@ node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 ```
 
 It runs problem radar, commercial acceptance, change impact, universe index,
-external agent/blacktech upgrade radar, training plan, live Lark brain binding,
-mind model, flow graph, head-tail, and context recovery; writes
+external agent/blacktech upgrade radar, training plan, Lark external-channel
+binding, mind model, flow graph, head-tail, and context recovery; writes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json`
 and refreshes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json`
@@ -142,8 +148,9 @@ with JSON at
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.json`;
 and is refreshed by `/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh`
 inside `lcx-local-operator-latest.json` as `governanceAutopilot`. It is
-`dev_governance_autopilot_only`: read-only, no overlapping training, no live
-apply, no provider config, no protected memory, and no live sender changes.
+`dev_governance_autopilot_only`: read-only, no overlapping training, no
+external-channel apply, no provider config, no protected memory, and no
+external sender compatibility changes.
 Owner write policy for the self-repair hands is intentionally narrow.
 Governance autopilot may auto-add
 `--write` to `lcx-self-repair-hands` only when a current owner signal changes:
@@ -152,9 +159,9 @@ incomplete, or SkillOpt reports a static/format gate gap. The de-duplication
 key is `signalKey`, so the same signal writes at most once. The output is only
 memory correction/downrank notes, training/eval candidate packets, repo patch
 candidate plans, state, and logs under the workspace. It must not touch repo
-source, git index/commit, live sender, provider config, protected memory,
-formal language corpus, training processes, train-slice direct writes, or
-model-weight absorption claims.
+source, git index/commit, external sender compatibility path, provider config,
+protected memory, formal language corpus, training processes, train-slice
+direct writes, or model-weight absorption claims.
 The Commercial Acceptance Harness is the product-grade exam above those owners:
 
 ```bash
@@ -162,8 +169,9 @@ node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 ```
 
 It consumes commercial answer pipeline, problem radar, flow graph, mind model,
-live status, training plan, and system doctor/provider council evidence. It is
-not a new truth owner, does not send Lark messages, and does not start training.
+external-channel status, training plan, and system doctor/provider council
+evidence. It is not a new truth owner, does not send Lark messages, and does
+not start training.
 Treat `blocked` gates as explicit acceptance gaps: post-migration natural Lark
 canary missing, provider degradation, active Qwen guard, or owner-gated module
 learning states are not green release proof.
@@ -207,12 +215,13 @@ World-class agent architecture is the target standard for future work, but it is
 operational, not a slogan. In this repo it means: single factual owner per volatile
 state family, simple control-room UX, specialized internal roles, source/eval
 proof before durable claims, bounded feedback instead of open-ended loops,
-recoverable state after context loss, and strict dev/live/protected-memory
-boundaries. Use `lcx-mind-model`, `lcx-flow-graph`,
-`lcx-head-tail-consistency`, `lcx-system-doctor`, `local-brain-training-plan`,
-`lcx-context-recovery-exam`, `lcx-problem-cluster-radar`, and live probes as the
-governance stack. If these surfaces disagree, treat it as architecture debt
-before expanding features.
+recoverable state after context loss, and strict
+dev/external-channel/user-visible/protected-memory boundaries. Use
+`lcx-mind-model`, `lcx-flow-graph`, `lcx-head-tail-consistency`,
+`lcx-system-doctor`, `local-brain-training-plan`,
+`lcx-context-recovery-exam`, `lcx-problem-cluster-radar`, and the
+external-channel binding/probe owner as the governance stack. If these surfaces
+disagree, treat it as architecture debt before expanding features.
 
 ## Commercial L5 Blueprint
 
@@ -247,8 +256,8 @@ blueprint lane.
 
    Use it before touching answer composition, Lark visible reply wording,
    model/Qwen review, source gates, or control-room summaries. It is dev-only:
-   it does not call providers, live sender, or MLX, and it does not prove
-   live-user-seen.
+   it does not call providers, the external sender compatibility path, or MLX,
+   and it does not prove `user-visible-observed` or legacy `live-user-seen`.
    MiniMax Agent, when available, is allowed to raise answer quality as an
    external draft maker and red-team reviewer. Its output is still only a
    candidate: LCX must run local contract audit, source/data gates, Qwen
@@ -264,28 +273,33 @@ blueprint lane.
    pressure before the local adoption gate. Do not spend that pressure on tiny
    factual replies or let the visible answer mention internal agent machinery.
 
-5. Live observability summary: Lark proof must converge through
+5. External-channel observability summary: Lark proof must converge through
    `lark-loop-diagnose`, channel probe, `feishu-reply-flow.jsonl`, and fresh
    real-user inbound/reply evidence. Synthetic replay and local smoke stay
    dev-only.
 
-   Live Lark brain binding has its own owner command:
+   Lark external-channel binding has its own owner command:
 
    ```bash
    node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
    ```
 
-   It reads `local-brain-training-plan.liveLarkBrainBinding` and is read-only by
-   default. When it reports `ready_for_apply`, the bounded idle-only apply path
-   is:
+   It reads `local-brain-training-plan.liveLarkBrainBinding` for backward
+   compatibility and is read-only by default. When it reports `ready_for_apply`,
+   the bounded idle-only apply path is:
 
    ```bash
    node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json
    ```
 
-   The apply path is allowed to sync/build/restart the live sidecar and run
-   `lark-loop-diagnose` only when eval/MLX is idle. It must still keep
-   `live-user-seen=false` until fresh real Lark inbound/outbound evidence exists.
+   The apply path is allowed to sync/build/restart the external-channel sidecar
+   and run `lark-loop-diagnose` only when eval/MLX is idle. It may prove
+   `external-channel-bound`, but it must still keep `user-visible-observed=false`
+   until fresh real Lark inbound/outbound evidence exists.
+
+   This binding owner is canonical for `external-channel-bound`.
+   `lcx-promote-live.ts` remains a legacy promotion/drift compatibility surface;
+   it must not override a clean `lcx-live-lark-brain-binding.ts` apply result.
 
 6. Product control room: default UX is one main control room with specialist
    detail on demand. Keep useful operator and specialist entrypoints, but every
@@ -293,14 +307,15 @@ blueprint lane.
    consolidated entrypoint coverage.
 7. Product-grade acceptance: run
    `node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json`
-   to judge release readiness across answer quality, radar clusters, live
-   status, training overlap, provider council, and canary gaps. It reports
+   to judge release readiness across answer quality, radar clusters,
+   external-channel status, training overlap, provider council, and canary gaps.
+   It reports
    `readyForCommercialRelease`; blocked gates are evidence, not a reason to
    claim green.
 
 `lcx-agent-exam --json` reports this plan as `commercialBlueprint` so a future
-window can see which item is ready, blocked, needs receipts, or needs live
-proof without rereading the chat.
+window can see which item is ready, blocked, needs receipts, or needs
+external-channel/user-visible proof without rereading the chat.
 
 The finance data gateway owner is `finance_data_gateway_snapshot`. Use it before
 current market, price, fundamentals, macro, ETF, options, index-weight, vendor,
@@ -329,15 +344,17 @@ node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff --json
 
 The handoff snapshot includes dirty files, affected lanes, unmatched-file
 checks, fresh training-plan decisions, module-learning absorption blockers,
-flow-graph counts, strict dev/live/protected-memory boundaries, and the exact
-recovery commands. It is still dev/local evidence only; it does not prove
-`live-runtime-updated`, `live-user-seen`, or Qwen model-weight absorption.
+flow-graph counts, strict dev/external-channel/user-visible/protected-memory
+boundaries, and the exact recovery commands. It is still dev/local evidence
+only; it does not prove `external-channel-bound`, `user-visible-observed`,
+legacy `live-runtime-updated`, legacy `live-user-seen`, or Qwen model-weight
+absorption.
 The governance autopilot also refreshes a shorter machine-written handoff
 capsule at
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md`.
 Use that capsule for fast orientation in a compressed or new coding window, but
 rerun `local-brain-training-plan` before acting on volatile PID, eval, adapter,
-or live-binding truth.
+or external-channel binding truth.
 
 ## First Command
 
@@ -374,7 +391,7 @@ one of the existing lanes: keep the medium guard running, feed MiniMax
 failure-focus curriculum, run teacher-quality repair, run promotion audit, or
 enter Codex auto-repair mode through the repo repair lock. Use this plan before
 creating a new training script, eval lane, automation prompt, or one-off fix.
-It is dev/local only and must not be used to claim live Lark success.
+It is dev/local only and must not be used to claim `user-visible-observed`.
 When `lcx-problem-cluster-radar` reports `pendingVerificationSignals`, treat it
 as dev repaired but not owner-verified: do not patch the same lane again until
 the owning training, teacher, eval, or promotion command reruns and clears or
@@ -428,7 +445,7 @@ The system-memory sedimentation gate is a read-only
 memory/correction/downrank evidence and protected repo memory cleanliness. It
 may report `system_memory_recall_ready`, but it always keeps
 `moduleLearningClaimAllowed=false`; system recall is not module learning, Qwen
-weight absorption, or live-visible proof.
+weight absorption, or user-visible proof.
 
 The absorption gate is a read-only
 `dev_module_learning_absorption_gate_only` check. It joins the latest
@@ -449,10 +466,11 @@ audit, module-learning review, thinking-hierarchy integrity, work-status
 boundary integrity, memory-sedimentation integrity, automation coordination,
 Lark/Feishu boundary, and optional L5 evidence into one table-like verdict. It
 does not start training, does not run heavy MLX eval, does not touch provider
-config, and does not prove live-visible-fixed. Use `--live` only when you
-intentionally want channel/Lark probe evidence, and still require fresh real
-inbound plus visible reply before claiming live-visible-fixed. Use `--l5` for
-the heavier local L5 regression battery.
+config, and does not prove `user-visible-observed` or legacy
+`live-visible-fixed`. Use `--live` only when you intentionally want
+channel/Lark probe evidence, and still require fresh real inbound plus visible
+reply before claiming `user-visible-observed`. Use `--l5` for the heavier local
+L5 regression battery.
 
 The default system doctor includes doctrine-consistency and head-tail
 consistency gates. Doctrine consistency fails when active entrypoints drift back
@@ -460,9 +478,10 @@ toward stale stage wording, tiny symptom-patch rules, static brain adapters,
 invalid eval commands, upstream package identity, or missing L5 regression skill
 wiring. Head-tail consistency fails when macro doctrine/prompt/runbook changes
 and micro implementation tails no longer supervise each other. It covers module
-learning and broader engineering details: dev/live boundary, protected memory,
-Lark/Feishu visible reply, local automation, memory sedimentation, finance
-capability, eval/review output, and fast change-impact planning.
+learning and broader engineering details: dev/external-channel/user-visible
+boundary, protected memory, Lark/Feishu visible reply, local automation, memory
+sedimentation, finance capability, eval/review output, and fast change-impact
+planning.
 
 ## Context Recovery And Daily Continuity
 
@@ -484,11 +503,12 @@ The intended daily structure is:
   action.
 - Small repairs must name their master lane before coding: Qwen training,
   MiniMax teacher, adapter promotion, Lark/Feishu reply, local automation,
-  memory sedimentation, finance capability, or dev/live boundary.
+  memory sedimentation, finance capability, or dev/external-channel/user-visible
+  boundary.
 - Durable proof beats chat memory. Prefer tests, smoke/eval output,
   `lcx-system-doctor`, `local-brain-training-plan`, local automation receipts,
   log anchors, and git commits.
-- Keep evidence labels strict: dev/local proof is not live-visible proof;
+- Keep evidence labels strict: dev/local proof is not user-visible proof;
   source storage is not learning; system-level internalization is not Qwen
   weight absorption; `parseRecovered` is not a clean promotion pass.
 
@@ -607,7 +627,7 @@ Keep the architecture upgrade-ready even when the current local brain is small.
 Future models, tools, papers, benchmarks, skills, and desktop/CLI-control
 upgrades should enter through `skill-harvester`, source/license/write-scope
 review, `lcx-external-agent-upgrade-radar`, existing-owner mapping, eval or
-receipt proof, and dev/live migration gates. Do not install, trust, or serve a
+receipt proof, and dev/external-channel/user-visible migration gates. Do not install, trust, or serve a
 new technology directly because it looks promising; make it a bounded pattern
 inside the existing owner stack first.
 
@@ -724,7 +744,7 @@ memory/module-learning-pipeline-reviews/<YYYY-MM-DD>.json
 The review flags weak module-learning receipts that are still `stored_only`,
 `retrieval_ready`, or `application_ready`, plus any receipt that claims live,
 provider config, or protected-memory mutation. Treat that review as dev/local
-status evidence only; it is not live-visible proof and it does not mean Qwen
+status evidence only; it is not user-visible proof and it does not mean Qwen
 weights absorbed the lesson unless eval or training evidence is present.
 
 The default system doctor runs the same review in no-write mode:
@@ -777,7 +797,7 @@ node --import tsx scripts/dev/module-learning-pipeline-review.ts --json
 
 Use `--no-write` for a dry run. The script writes only
 `~/.openclaw/workspace/memory/module-learning-pipeline-reviews/<YYYY-MM-DD>.json`
-by default; it must not be used as live proof or model-weight absorption proof
+by default; it must not be used as user-visible proof or model-weight absorption proof
 by itself. Use `--workspace PATH` only for isolated tests or an explicit
 alternate local workspace.
 
@@ -885,7 +905,7 @@ the local runtime can see and autocue the skill before claiming the agent will
 use it without reminders.
 The local reply path also has deterministic skill preflight for common LCX
 operator asks. Natural-language requests about Qwen training, whole-system
-waterflow, agent brain learning, Lark live proof, runtime drift, finance
+waterflow, agent brain learning, Lark user-visible proof, runtime drift, finance
 learning, CLI-Anything, and skill harvesting should be cued to one installed
 skill before the model answers. Explicit `/skill ...` commands still win.
 
@@ -896,10 +916,10 @@ three separate ways, and these boundaries must stay separate:
 - immediate preflight: load the matched `best_skill.md` as context before answer
   planning; this is usable by the next agent immediately, but is not model
   weight absorption.
-- runtime self-use hook: the live/local reply runner calls
+- runtime self-use hook: the external-channel/local reply runner calls
   `src/auto-reply/reply/skillopt-autocue.ts` from
   `src/auto-reply/reply/get-reply-run.ts`, so accepted SkillOpt SOP files in the
-  shared workspace can guide the same answer path that LiveLark uses after
+  shared workspace can guide the same answer path that Lark uses after bounded
   source sync/promotion. Do not add a second live-only skill format.
 - governance coverage: `lcx-mind-model` and `lcx-flow-graph` must keep the
   SkillOpt runtime hook visible as a supervised waterflow, not only as a helper
@@ -907,12 +927,12 @@ three separate ways, and these boundaries must stay separate:
   both the immediate preflight boundary and the stronger proof chain.
 - SkillOpt family: failed, parse-error, and parseRecovered eval cases may grow
   narrow skills such as finance data provenance, local-memory conflict,
-  sentiment/vendor source gates, module-learning absorption, and live Lark
-  boundary checks.
+  sentiment/vendor source gates, module-learning absorption, and Lark
+  external-channel boundary checks.
 - proof chain: a candidate skill only becomes a learned runtime capability after
   targeted eval, regression eval, train-slice/training evidence, clean hardened
-  adapter promotion truth, and then the live Lark binding owner proves real
-  inbound/outbound Lark evidence.
+  adapter promotion truth, and then the Lark external-channel binding owner
+  plus fresh inbound/outbound Lark evidence proves `user-visible-observed`.
 
 Fast inspection:
 
@@ -1029,7 +1049,8 @@ Use this for the normal medium-intensity local loop. The MiniMax teacher now run
 continuous sidecar, so slow local Qwen eval/train steps do not leave the 5-hour MiniMax
 window idle. The guard also keeps a short evolution window after each round so
 owner checks, monotonic ledger, module-learning review, promotion truth, and
-live-binding readiness can settle before the next heavy round starts.
+external-channel binding readiness can settle before the next heavy round
+starts.
 
 ```bash
 node --import tsx scripts/dev/minimax-brain-training-guard.ts \
@@ -1131,7 +1152,7 @@ dev_local_brain_promotion_audit_only
 ```
 
 Treat `promotionDecision=safe` as dev promotion-audit evidence only. It does not
-promote an adapter by itself and it is not live-visible proof.
+promote an adapter by itself and it is not user-visible proof.
 
 ### Capability Hierarchy Gate
 
@@ -1176,8 +1197,8 @@ node --import tsx scripts/dev/local-brain-distill-eval.ts \
 ```
 
 `200/200 promotionReady=true` under `--contract-only` means the dev routing and
-output contract closed for those cases. It is not live-user-seen proof and not
-model-weight absorption proof.
+output contract closed for those cases. It is not `user-visible-observed` proof
+and not model-weight absorption proof.
 
 When a user provides one concrete example, treat it as a seed for a generic
 capability contract, not as the whole repair scope. The fix should cover the

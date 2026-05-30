@@ -12,7 +12,7 @@ what was read, tested, learned, promoted, or blocked.
 The project is not an autonomous trading bot. Its finance scope is research
 only: ETF, major asset, macro, large-cap company, risk, and timing discipline.
 The goal is steady daily improvement with hard boundaries, not hype, hidden
-execution, or fake live proof.
+execution, or fake user-visible proof.
 
 ## What It Does
 
@@ -21,14 +21,14 @@ LCX Agent combines five layers:
 | Layer        | Role                                                                     |
 | ------------ | ------------------------------------------------------------------------ |
 | Control room | Lark / Feishu natural-language entrypoint for one real user.             |
-| Harness      | Permission, risk, eval, promotion, and live-proof gates.                 |
+| Harness      | Permission, risk, eval, promotion, and user-visible proof gates.         |
 | Hermes       | Context packets, handoffs, receipts, review artifacts, and message flow. |
 | Local brain  | Qwen / MLX local adapter training, eval, and durable learning surfaces.  |
 | Governance   | Doctor, radar, mind model, flow graph, head-tail, and recovery checks.   |
 
 The system is designed to answer a practical question every day: what can the
 agent safely understand, research, remember, and improve without confusing dev
-proof with live user-visible proof?
+proof, external-channel binding, and real user-visible proof?
 
 The product rule is intentionally plain: 用户入口简单, internal roles can be
 specialized. The control-room answer should be readable first, with specialist
@@ -78,13 +78,14 @@ handoff snapshots:
 ```
 
 Use those files for orientation, then rerun owner commands before acting on
-volatile runtime truth such as PIDs, active eval, selected adapters, and live
-binding status.
+volatile runtime truth such as PIDs, active eval, selected adapters, and
+external-channel binding status.
 
 ## Governance Stack
 
-For non-trivial engineering, promotion, module learning, Lark/live, memory, or
-recovery work, run the owner stack instead of relying on chat history:
+For non-trivial engineering, promotion, module learning, Lark external-channel,
+memory, or recovery work, run the owner stack instead of relying on chat
+history:
 
 ```bash
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
@@ -99,8 +100,9 @@ node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 ```
 
 `lcx-governance-autopilot.ts` runs that stack as a read-only coordinator. It
-does not start training, rebuild train slices, mutate live sender, edit provider
-config, touch protected memory, or claim user-visible-observed.
+does not start training, rebuild train slices, mutate the external sender
+compatibility path, edit provider config, touch protected memory, or claim
+user-visible-observed.
 
 ## Local Brain And Promotion
 
@@ -136,7 +138,7 @@ Forward status names are `dev-ready`, `external-channel-bound`, and
 | `external-channel-bound` | Lark/Feishu channel is bound to the selected clean brain.         |
 | `user-visible-observed`  | A real Lark inbound and outbound reply was observed by the owner. |
 
-The approved live brain binding owner is:
+The approved Lark external-channel binding owner is:
 
 ```bash
 node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
@@ -148,6 +150,14 @@ path be used:
 ```bash
 node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json
 ```
+
+That binding owner is the canonical source for `external-channel-bound`.
+`lcx-promote-live.ts` remains a legacy promotion/drift compatibility surface
+during migration; it must not override a clean
+`lcx-live-lark-brain-binding.ts` apply result. Commercial acceptance may treat
+the channel as bound while still blocking release on
+`post_migration_lark_canary_missing` until fresh real inbound/outbound Lark
+evidence proves `user-visible-observed`.
 
 ## Finance Research Discipline
 
@@ -209,14 +219,14 @@ corepack pnpm exec vitest run extensions/feishu/src/learning-council.test.ts
 
 ## Repository Map
 
-| Path                     | Purpose                                                                      |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `extensions/feishu/src/` | Lark / Feishu control-room, routing, reply, language, and live-channel code. |
-| `scripts/dev/`           | Local-brain training, eval, governance, doctor, radar, and promotion tools.  |
-| `src/agents/`            | Agent runtime, system prompt, tools, routing, and review surfaces.           |
-| `src/auto-reply/`        | User-visible command replies, truth surfaces, and reply-flow evidence.       |
-| `ops/local-brain/`       | Operator runbook for local-brain training, eval, guard, and recovery.        |
-| `docs/`                  | Broader OpenClaw and LCX Agent documentation.                                |
+| Path                     | Purpose                                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `extensions/feishu/src/` | Lark / Feishu control-room, routing, reply, language, and external-channel compatibility code. |
+| `scripts/dev/`           | Local-brain training, eval, governance, doctor, radar, and promotion tools.                    |
+| `src/agents/`            | Agent runtime, system prompt, tools, routing, and review surfaces.                             |
+| `src/auto-reply/`        | User-visible command replies, truth surfaces, and reply-flow evidence.                         |
+| `ops/local-brain/`       | Operator runbook for local-brain training, eval, guard, and recovery.                          |
+| `docs/`                  | Broader OpenClaw and LCX Agent documentation.                                                  |
 
 ## Project Lineage
 

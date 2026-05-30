@@ -23,8 +23,8 @@ The `lcx-context-recovery-exam --handoff` command is the fast one-screen
 handoff for future windows. It is owned by the existing context-recovery exam,
 not a parallel memory lane. It must show dirty files, affected lanes,
 unmatched-file checks, fresh training-plan truth, module-learning blockers,
-flow-graph counts, and strict dev/live/protected-memory boundaries before a
-new agent starts modifying files.
+flow-graph counts, and strict dev/external-channel/user-visible/protected-memory
+boundaries before a new agent starts modifying files.
 The training plan command is the shared coordinator for repeated training
 failures: it classifies whether the next step is continue training,
 failure-focus sample generation, teacher-quality repair, promotion audit, or
@@ -53,8 +53,8 @@ post-migration Lark evidence.
 Future Codex, Claude Code, and LCX Agent operator flows should not wait for the
 user to ask for each architecture check by name. For any non-trivial engineering
 task, compressed-context handoff, training/promotion judgment, module-learning
-claim, memory sedimentation claim, Lark/live boundary claim, or "continue
-finding issues" request, run the governance stack automatically:
+claim, memory sedimentation claim, Lark external-channel/user-visible claim, or
+"continue finding issues" request, run the governance stack automatically:
 
 ```bash
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
@@ -105,8 +105,9 @@ and JSON companion
 so heartbeat watchers and future coding windows do not need a parallel
 hand-built snapshot path. It is included in the local operator latest state as
 `governanceAutopilot`.
-It must stay `dev_governance_autopilot_only`: no live sender, provider config,
-protected memory, repo mutation, live apply, or overlapping training.
+It must stay `dev_governance_autopilot_only`: no external sender compatibility
+mutation, provider config, protected memory, repo mutation, external-channel
+apply, or overlapping training.
 
 ## TS Main Control / Python Engine Boundary
 
@@ -141,7 +142,8 @@ Use the matching skill before acting:
 - `agent-brain-eval` for judging local-brain learning/internalization.
 - `finance-learning-researcher` for finance, ETF, quant, source-gated learning.
 - `lark-live-loop-debugger` and `lark-post-migration-probe` for Feishu/Lark proof.
-- `agent-runtime-drift-auditor` for dev/live/runtime drift.
+- `agent-runtime-drift-auditor` for dev/external-channel/runtime drift,
+  including legacy live-sidecar compatibility checks.
 - `lcx-qwen-training-operator` for Qwen 24-hour training supervision, overlap prevention, launchd/operator checks, and promotion truth.
 - `lcx-workflow-waterflow-auditor` for god-view workflow, waterflow, head-tail, memory sedimentation, and macro/micro consistency checks.
 - `lcx-module-learning-absorption-operator` for online/source learning, module internalization, and stored-only vs eval-absorbed truth.
@@ -217,13 +219,14 @@ truth, external-channel binding, and fresh real Lark inbound/outbound evidence.
 The actual runtime hook is the normal reply path in
 `src/auto-reply/reply/get-reply-run.ts`, which reads matched SkillOpt
 `best_skill.md` files through `src/auto-reply/reply/skillopt-autocue.ts`. Keep
-that hook source-compatible with the live sidecar so accepted SkillOpt behavior
-flows through live promotion/sync instead of requiring a later manual format
-move.
+that hook source-compatible with the external-channel sidecar so accepted
+SkillOpt behavior flows through the bounded channel binding/sync path instead
+of requiring a later manual format move.
 Mind model and flow graph must treat this as its own supervised waterflow:
 eval failures may create SkillOpt SOPs, the runtime hook may use them as
 preflight context immediately, but weight absorption, selected adapter
-promotion, live runtime update, and real Lark proof remain separate owner gates.
+promotion, external-channel binding, and real Lark user-visible proof remain
+separate owner gates.
 
 Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.
 
@@ -253,8 +256,8 @@ Use the universe index before broad cleanup, broad architecture review,
 compressed-context recovery, or a future-agent "read everything fast" request.
 Then route each candidate to its owner lane: change-impact for changed files,
 mind model and flow graph for architecture coverage, training plan for volatile
-Qwen/MiniMax/MLX truth, live binding or live probe for LiveLark truth, and module
-learning owners for stored/learned capability boundaries.
+Qwen/MiniMax/MLX truth, external-channel binding/probe owner for Lark channel
+truth, and module learning owners for stored/learned capability boundaries.
 
 ## Cross-Border Cloud Control Doctrine
 
@@ -299,6 +302,14 @@ Keep this architecture boring and auditable:
 - The old live repo and live sidecar drift must be retired, not maintained as a
   parallel lane. A controlled one-time sync is allowed only to keep service
   alive during cutover; it must not restore the live repo's status.
+- Canonical Lark channel truth belongs to
+  `scripts/dev/lcx-live-lark-brain-binding.ts`. It may prove
+  `external-channel-bound` after a clean idle apply, build/restart, and probe.
+  `scripts/dev/lcx-promote-live.ts` remains a legacy promotion/drift
+  compatibility surface during migration and must not override the binding
+  owner. Commercial acceptance may clear external-channel binding while still
+  blocking release on `post_migration_lark_canary_missing` until fresh real
+  inbound/outbound Lark evidence proves `user-visible-observed`.
 - China cloud may be used only for mirror backup, static status/dashboard
   hosting, or domestic model/data assistance. It must not become the main
   OpenAI/Codex execution point, the canonical repo, the canonical `~/.openclaw`
@@ -333,26 +344,28 @@ before making claims or changes.
 - Classify every small fix into one current master lane before coding:
   Qwen training, MiniMax teacher, adapter promotion, Lark/Feishu visible reply,
   local automation, memory sedimentation, finance research capability, or
-  dev/live boundary. If a change cannot be attached to a master lane, do not
-  make it unless the user explicitly asks for unrelated cleanup.
+  dev/external-channel/user-visible boundary. If a change cannot be attached to
+  a master lane, do not make it unless the user explicitly asks for unrelated
+  cleanup.
 - Every fix must leave a durable proof surface: focused test, smoke/eval,
   doctor or training-plan output, local automation receipt, log anchor, or
   commit. Avoid "I remember" as evidence.
 - Keep the global picture compact: local launchd automation writes the hourly
   machine truth to `lcx-local-operator-latest.json`; it also refreshes
   `lcx-governance-autopilot-latest.json` so mind model, flow graph, radar,
-  impact plan, training truth, commercial acceptance, and live brain binding
+  impact plan, training truth, commercial acceptance, and external-channel binding
   stay visible without manual reminders. It also writes
   `lcx-context-recovery-handoff-latest.md` as a one-screen current-state
   capsule for compressed or new coding windows; the capsule is dev-only and
   future agents must still rerun `local-brain-training-plan` before acting on
-  volatile PID, eval, adapter, or live-binding truth. Codex should keep only one visible
-  high-level automation, `LCX Agent Operator Digest`, which reads local state
-  and reports concise blockers rather than opening one chat per lane.
+  volatile PID, eval, adapter, or external-channel binding truth. Codex should
+  keep only one visible high-level automation, `LCX Agent Operator Digest`,
+  which reads local state and reports concise blockers rather than opening one
+  chat per lane.
 - Do not upgrade evidence across boundaries: `dev-fixed` is not
-  `live-visible-fixed`, a receipt is not model-weight absorption, a stored
-  source is not learned knowledge, and `parseRecovered` is not a fully clean
-  promotion pass.
+  `user-visible-observed`, legacy `live-visible-fixed` is only a compatibility
+  label, a receipt is not model-weight absorption, a stored source is not
+  learned knowledge, and `parseRecovered` is not a fully clean promotion pass.
 - Before adding a new module, prompt, eval, receipt, automation, or memory lane,
   search existing repo and local skill machinery first. Prefer extending the
   existing source-registry, capability-card, retrieval/apply, eval, runbook,
@@ -372,9 +385,10 @@ before making claims or changes.
   `node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json`. The
   check must fail if macro doctrine/prompt/runbook language and micro
   taxonomy/eval/teacher/module-learning schema stop supervising each other.
-  This rule is not limited to modules: dev/live boundary, protected memory,
-  Lark/Feishu visible reply, local automation, memory sedimentation, and
-  finance capability changes must also have a head rule and a tail proof path.
+  This rule is not limited to modules: dev/external-channel/user-visible
+  boundary, protected memory, Lark/Feishu visible reply, local automation,
+  memory sedimentation, and finance capability changes must also have a head
+  rule and a tail proof path.
 
 ## LCX Agent Mind Model Doctrine
 
@@ -402,7 +416,8 @@ surface, and boundary flag.
   must name the exact head/workflow/proof/boundary terms that would catch future
   drift. This includes small workflow details, visible content mistakes,
   temporary test-HOME drift, stale receipts, stored-only learning claims,
-  unverified market claims, and dev/live wording mistakes.
+  unverified market claims, and dev/external-channel/user-visible wording
+  mistakes.
 - The problem cluster radar must sit above the governance stack as an
   aggregator, not a duplicate owner. It should report `problemClusters`,
   `actionableClusters`, `repairableSignals`, `ownerEntrypoint`, `sourceOwners`,
@@ -439,7 +454,8 @@ surface, and boundary flag.
   letting future agents rely on old machine truth.
 - The mind model is dev_mind_model_only: it reports `liveTouched=false`,
   `providerConfigTouched=false`, and `protectedMemoryTouched=false`. It cannot
-  prove live-visible-fixed or model-weight absorption.
+  prove `user-visible-observed`, legacy `live-visible-fixed`, or model-weight
+  absorption.
 
 ## LCX Agent Flow Graph Doctrine
 
@@ -453,7 +469,8 @@ shortcuts.
 
 - Run the flow graph exam when a workflow change could alter task routing,
   filters, receipts, feedback loops, module learning, Lark/Feishu replies,
-  Qwen/MiniMax training, local automation, or dev/live proof:
+  Qwen/MiniMax training, local automation, or
+  dev/external-channel/user-visible proof:
   `node --import tsx scripts/dev/lcx-flow-graph.ts --json`.
 - Every supported waterflow must name its start node, terminal node, required
   modules, required filters, receipts, and any bounded feedback edges.
@@ -465,7 +482,8 @@ shortcuts.
   architecture map.
 - Waterflow coverage must keep expanding toward real task families instead of
   only the first six obvious paths. Current core families include visible
-  finance research, module learning, training feedback, dev/live proof,
+  finance research, module learning, training feedback,
+  dev/external-channel/user-visible proof,
   compressed-context recovery, local automation digest, Lark visible language,
   provider council evidence, memory correction/downrank, same-philosophy
   engineering consolidation, external skill/agent distillation, automation
@@ -481,14 +499,15 @@ shortcuts.
   filters such as `same_philosophy_merge_required` and
   `single_owner_required`. Do not let head-tail, mind model, flow graph,
   context recovery, doctor, operator digest, learning internalization, or
-  dev/live proof become competing parallel systems.
+  dev/external-channel/user-visible proof become competing parallel systems.
 - Wrong-flow is a P2 class issue. Examples: dev proof jumps to
-  `live-user-seen`, stored source jumps to learned capability, hardened eval
-  skips the promotion gate, or a failed eval loops back into teacher/training
-  without overlap guards and visible timeout/error receipts.
+  `user-visible-observed` or legacy `live-user-seen`, stored source jumps to
+  learned capability, hardened eval skips the promotion gate, or a failed eval
+  loops back into teacher/training without overlap guards and visible
+  timeout/error receipts.
 - Flow graph checks are dev_flow_graph_only. They can prove architecture
-  closure, but not live-user-seen, provider success, protected-memory writes, or
-  model-weight absorption.
+  closure, but not `user-visible-observed`, legacy `live-user-seen`, provider
+  success, protected-memory writes, or model-weight absorption.
 
 ## Commercial-Grade Entrypoint Convergence
 
@@ -554,12 +573,14 @@ recoverable, auditable, and honest under real use.
   boundary. If any segment is missing, treat it as architecture debt.
 - Every durable claim must be downgradeable or falsifiable: stale memory can be
   downranked, weak eval can block promotion, source conflicts can stop a finance
-  conclusion, and live proof can fail independently from dev proof.
+  conclusion, and user-visible/external-channel proof can fail independently
+  from dev proof.
 - The agent should learn workflow patterns, not blindly absorb tools, providers,
   papers, prompts, or chat history as authority.
 - User-facing quality must stay boring and dependable: concise control-room
   summary first, specialist detail on demand, no internal labels, no raw JSON
-  leaks, no fake live-user-seen, and no hidden execution authority.
+  leaks, no fake `user-visible-observed` or legacy `live-user-seen`, and no
+  hidden execution authority.
   Lark/Feishu visible replies must also hide runtime machinery by default:
   module ids, receipt/handoff labels, message ids, timeout milliseconds,
   `retrieval/apply`, `answer_audit`, and `eval/training absorption` are
@@ -570,18 +591,19 @@ recoverable, auditable, and honest under real use.
   cleanliness: fewer duplicate truth sources, clearer recovery, stronger evals,
   cleaner receipts, lower false-positive alarms, and no protected-memory,
   provider-config, or live-sender drift.
-- Mind model, flow graph, head-tail, doctor, training plan, context recovery, and
-  problem cluster radar, plus live probe when explicitly in live scope, are the
-  governance stack for this standard. If they disagree, the disagreement is a
-  P2 architecture issue before feature expansion.
+- Mind model, flow graph, head-tail, doctor, training plan, context recovery,
+  problem cluster radar, and the external-channel probe/binding owner when
+  explicitly in Lark scope are the governance stack for this standard. If they
+  disagree, the disagreement is a P2 architecture issue before feature
+  expansion.
 
 ## Precision-Instrument Self-Healing Doctrine
 
 The long-term architecture target is a self-maintaining instrument: owner
 commands expose truth, radars aggregate drift, repair locks serialize fixes,
-context recovery refreshes stale snapshots, and live probes prove user-visible
-runtime behavior. The system should not depend on the user remembering which
-diagnostic to run.
+context recovery refreshes stale snapshots, and external-channel probes prove
+user-visible runtime behavior. The system should not depend on the user
+remembering which diagnostic to run.
 
 - Self-healing starts from owner truth, not from free-form model confidence. A
   broken downstream surface must point back to the first failed owner command
@@ -596,8 +618,8 @@ diagnostic to run.
   intake slots for future models, tools, papers, skills, benchmarks, and
   workflow upgrades. New technology should enter through source/license/review,
   `skill-harvester`, `lcx-external-agent-upgrade-radar`, existing owner mapping,
-  eval/receipt proof, and bounded live migration instead of requiring a rewrite
-  or creating a parallel system.
+  eval/receipt proof, and bounded external-channel migration instead of
+  requiring a rewrite or creating a parallel system.
 - Every self-repair loop must be bounded: identify the failed owner, classify
   the failure family, acquire repair ownership when required, patch the shared
   contract, run targeted proof, refresh the relevant snapshot, and leave a
@@ -639,19 +661,20 @@ diagnostic to run.
 - The six blacktech mechanisms currently tracked by the radar are SkillOpt v2
   lifecycle, native-runtime long-task battery, unified trajectory schema,
   local-first memory provenance, agent trace/side-effect observability, and
-  secure tool/skill permissioning. They are not live capability, model-weight
-  absorption, provider config, protected memory, live sender, wallet/order,
-  desktop-control, or training authority until their named owner proof chain
-  passes.
+  secure tool/skill permissioning. They are not user-visible capability,
+  model-weight absorption, provider config, protected memory, external sender
+  authority, wallet/order, desktop-control, or training authority until their
+  named owner proof chain passes.
 - `lcx-problem-cluster-radar` must include the external upgrade radar as an
   input owner. If candidate count, owner mapping, runtime-authority boundary, or
   "perfect integration" wording drifts, or if any blacktech mechanism loses its
   automatic trigger, owner gate, autopilot surface, or next automation action,
   the radar should surface a repairable cluster without waiting for the user to
   notice.
-- This doctrine is still dev governance. It cannot claim live-user-seen,
-  provider health, model-weight absorption, or protected-memory writes without
-  the existing proof gates.
+- This doctrine is still dev governance. It cannot claim
+  `user-visible-observed` or legacy `live-user-seen`, provider health,
+  model-weight absorption, or protected-memory writes without the existing
+  proof gates.
 
 ## Mission
 
@@ -701,8 +724,8 @@ diagnostic to run.
   The ledger must record dataset counts, train-slice counts, SkillOpt accepted
   and pending packets, blocked/rejected/downranked evidence, and promotion
   truth for each observed round. It proves data accounting only: data growth is
-  not model-weight absorption, live Lark proof, provider health, or protected
-  memory authority.
+  not model-weight absorption, Lark user-visible proof, provider health, or
+  protected memory authority.
 - For every new complex brain loop, add or reuse a simple prerequisite eval. Local-brain promotion must run the prerequisite together with the complex case, not as an optional separate check.
 - Convert learning into concise lessons, reusable decision rules, correction notes, follow-up items, and stale/downrank decisions.
 - Online learning internalization is module-wide, not factor-only: every module that claims to learn from an external source must leave the same source registry, actual reading scope, module-specific capability rule, retrieval receipt, apply validation, local-brain eval or training absorption evidence, fresh adjacent application task, safety boundary, and keep/downrank/discard decision. A stored file or summary alone is not module learning.
@@ -720,9 +743,9 @@ diagnostic to run.
 - Evolution is not continuous pressure. Local-brain guard loops should follow
   work-then-evolve rhythm: after each heavy train/eval round, leave an explicit
   evolution cooldown window for governance autopilot, monotonic data ledger,
-  module-learning review, promotion truth, live-binding readiness, and context
-  handoff to settle. Do not treat that pause as wasted idle time or immediately
-  refill it with overlapping heavy work.
+  module-learning review, promotion truth, external-channel binding readiness,
+  and context handoff to settle. Do not treat that pause as wasted idle time or
+  immediately refill it with overlapping heavy work.
 
 ## Baseline-Hardening Mode
 
@@ -768,8 +791,8 @@ diagnostic to run.
 - Every abstraction-transfer repair must identify the original example, the abstracted failure family, at least one adjacent non-identical scenario, the shared contract being changed, and the regression proof. This is the engineering version of human abstraction: example -> family -> transfer -> proof.
 - If a weakness spans language intake, local brain planning, memory retrieval, visible reply formatting, eval, and receipts, repair the whole loop instead of fixing only the first failing file.
 - Prefer reusable contracts and regression surfaces over one-off prompt patches.
-- Every system-improvement change must still leave proof: targeted tests, smoke/eval output, receipt, CLI diagnosis, or a named live acceptance path.
-- Keep hard safety boundaries intact: research-only finance behavior, no hidden trading authority, no fake live-visible-fixed claims, no protected-memory overwrite, no provider/config expansion unless the user explicitly asks for that class of change.
+- Every system-improvement change must still leave proof: targeted tests, smoke/eval output, receipt, CLI diagnosis, or a named external-channel/user-visible acceptance path.
+- Keep hard safety boundaries intact: research-only finance behavior, no hidden trading authority, no fake `user-visible-observed` or legacy `live-visible-fixed` claims, no protected-memory overwrite, no provider/config expansion unless the user explicitly asks for that class of change.
 
 ## Prior-Work Reuse Doctrine
 
@@ -803,7 +826,7 @@ diagnostic to run.
 - Explain why the failure mode is dangerous.
 - Make the failure explicit.
 - Decide whether the issue is a single local bug or a shared interface / workflow contract failure.
-- If it is a contract failure, repair the class of failures across sibling routes, visible outputs, artifacts, receipts, tests, and live proof surfaces.
+- If it is a contract failure, repair the class of failures across sibling routes, visible outputs, artifacts, receipts, tests, and external-channel/user-visible proof surfaces.
 - Apply a bounded failure-family repair. Bounded means no unrelated expansion; it does not mean stopping at the first touched line or the first passing example.
 - Add proof tests.
 - Avoid unrelated rewrites. Use broader repair only when the verified failure family crosses multiple shared paths.
