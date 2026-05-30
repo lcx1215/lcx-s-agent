@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -48,6 +49,15 @@ const DEFAULT_REJECTED_CONTEXT = [
   "language_routing_candidate_artifacts",
   "unsupported_execution_language",
 ];
+const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
+  curated_seed: "gold_curated",
+  brain_distillation_review: "teacher_distillation_review",
+  finance_learning_capability_apply_receipt: "workflow_receipt",
+  feishu_work_receipt: "workflow_receipt",
+  lark_language_handoff_receipt: "workflow_receipt",
+  module_learning_plan_receipt: "plan_only_receipt",
+  module_learning_review_receipt: "review_only_receipt",
+};
 
 function usage(): never {
   throw new Error(
@@ -104,6 +114,151 @@ function parseArgs(args: string[]): CliOptions {
   options.workspaceDir = path.resolve(options.workspaceDir);
   options.outDir = path.resolve(options.outDir);
   return options;
+}
+
+function trustTierForSourceKind(sourceKind: string): string {
+  return SOURCE_KIND_TRUST_TIERS[sourceKind] ?? "unknown_or_unclassified";
+}
+
+function sourceKindCounts(examples: DistillExample[]): Record<string, number> {
+  return examples.reduce<Record<string, number>>((acc, example) => {
+    acc[example.meta.sourceKind] = (acc[example.meta.sourceKind] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+function trustTierCounts(examples: DistillExample[]): Record<string, number> {
+  return examples.reduce<Record<string, number>>((acc, example) => {
+    const tier = trustTierForSourceKind(example.meta.sourceKind);
+    acc[tier] = (acc[tier] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function normalizedContent(value: string): string {
+  return value.replace(/\s+/gu, " ").trim().toLowerCase();
+}
+
+function completionRecord(example: DistillExample): Record<string, unknown> | undefined {
+  const parsed = safeJsonParse(example.completion);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : undefined;
+}
+
+function qualityTierForTeacherReview(example: DistillExample): string {
+  const completion = completionRecord(example);
+  if (!completion) {
+    return "parse_invalid";
+  }
+  const taskFamily = readString(completion.task_family);
+  const primaryModules = readStringArray(completion.primary_modules);
+  const supportingModules = readStringArray(completion.supporting_modules);
+  const requiredTools = readStringArray(completion.required_tools);
+  const missingData = readStringArray(completion.missing_data);
+  const riskBoundaries = readStringArray(completion.risk_boundaries);
+  const nextStep = readString(completion.next_step);
+  if (!taskFamily || primaryModules.length === 0 || !nextStep) {
+    return "contract_incomplete";
+  }
+  if (!riskBoundaries.includes("research_only")) {
+    return "boundary_incomplete";
+  }
+  if (missingData.length > MAX_MISSING_DATA || riskBoundaries.length > MAX_RISK_BOUNDARIES) {
+    return "overwide_contract";
+  }
+  if (requiredTools.length === 0 && supportingModules.length === 0) {
+    return "weak_tooling";
+  }
+  return "contract_complete_high_signal";
+}
+
+function failureFamilyForTeacherReview(example: DistillExample): string {
+  const completion = completionRecord(example);
+  const taskFamily = readString(completion?.task_family) ?? "";
+  const primaryModules = readStringArray(completion?.primary_modules);
+  const supportingModules = readStringArray(completion?.supporting_modules);
+  const requiredTools = readStringArray(completion?.required_tools);
+  const riskBoundaries = readStringArray(completion?.risk_boundaries);
+  const text = normalizedContent(
+    [taskFamily, ...primaryModules, ...supportingModules, ...requiredTools, ...riskBoundaries].join(
+      " ",
+    ),
+  );
+  if (/skill_pattern_distillation|external_agent|cli_anything|skill_harvester/u.test(text)) {
+    return "agent_skill_distillation";
+  }
+  if (/lark|feishu|reply|visible|old_lark|context|language/u.test(text)) {
+    return "lark_visible_workflow";
+  }
+  if (/learning|internalization|receipt|retrieval|module_learning|sedimentation/u.test(text)) {
+    return "module_learning_absorption";
+  }
+  if (/source|vendor|provenance|filing|data_quality|timestamp|official/u.test(text)) {
+    return "finance_source_quality";
+  }
+  if (/portfolio|risk_gate|qqq|tlt|nvda|position|weight/u.test(text)) {
+    return "portfolio_risk";
+  }
+  if (/macro|rates|inflation|credit|liquidity|commodity|oil|gold|fx|cross_asset/u.test(text)) {
+    return "macro_cross_asset";
+  }
+  if (/fundamental|valuation|company|margin|revenue|fcf|roic/u.test(text)) {
+    return "company_fundamentals";
+  }
+  return "general_workflow";
+}
+
+function teacherReviewQualitySummary(examples: DistillExample[]): Record<string, unknown> {
+  const teacherExamples = examples.filter(
+    (example) => example.meta.sourceKind === "brain_distillation_review",
+  );
+  const qualityTiers: Record<string, number> = {};
+  const failureFamilies: Record<string, number> = {};
+  const signatureSources = new Map<string, string[]>();
+  for (const example of teacherExamples) {
+    qualityTiers[qualityTierForTeacherReview(example)] =
+      (qualityTiers[qualityTierForTeacherReview(example)] ?? 0) + 1;
+    failureFamilies[failureFamilyForTeacherReview(example)] =
+      (failureFamilies[failureFamilyForTeacherReview(example)] ?? 0) + 1;
+    const signature = hashText(
+      `${normalizedContent(example.prompt)}\n${normalizedContent(example.completion)}`,
+    );
+    signatureSources.set(signature, [
+      ...(signatureSources.get(signature) ?? []),
+      example.meta.sourcePath,
+    ]);
+  }
+  const duplicateGroups = [...signatureSources.entries()]
+    .filter(([, sourcePaths]) => sourcePaths.length > 1)
+    .map(([signature, sourcePaths]) => ({
+      signature,
+      count: sourcePaths.length,
+      sampleSourcePaths: sourcePaths.slice(0, 5),
+    }))
+    .toSorted(
+      (left, right) => right.count - left.count || left.signature.localeCompare(right.signature),
+    );
+  return {
+    boundary: "dev_teacher_distillation_review_quality_summary_only",
+    sourceKind: "brain_distillation_review",
+    total: teacherExamples.length,
+    qualityTiers,
+    failureFamilies,
+    dedup: {
+      method: "normalized_prompt_completion_sha256_16",
+      uniqueContent: signatureSources.size,
+      duplicateGroups: duplicateGroups.length,
+      duplicateExamples: duplicateGroups.reduce((sum, group) => sum + group.count - 1, 0),
+      topDuplicateGroups: duplicateGroups.slice(0, 8),
+    },
+    selectionBoundary:
+      "teacher review quality stats guide bounded sampling; they are not promotion or absorption proof",
+  };
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -1713,6 +1868,430 @@ function buildSeedExamples(): DistillExample[] {
       nextStep: "route_energy_supply_shock_to_inflation_fx_etf_and_portfolio_risk_review",
     },
     {
+      userAsk:
+        "本地训练池 6818、训练切片 2960、curated_seed 192、teacher review 6234、eval 213/213，这些分别代表什么？不要把样本数、训练权重和通过证明混在一起。",
+      sourceSummary:
+        "Qwen curriculum seed for local-brain sample trust accounting; separate dataset pool, train-slice weighting, gold samples, teacher material, and eval proof.",
+      taskFamily: "local_brain_sample_trust_accounting",
+      primaryModules: ["agent_workflow_memory", "eval_harness_design", "review_panel"],
+      supportingModules: ["control_room_summary", "source_registry"],
+      requiredTools: ["local_brain_training_plan", "local_brain_dataset_manifest", "review_panel"],
+      missingData: [
+        "current_dataset_manifest",
+        "current_train_slice_manifest",
+        "latest_hardened_eval_summary",
+      ],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "dataset_count_not_quality_claim",
+        "teacher_review_not_absorption_proof",
+        "eval_pass_not_training_sample_count",
+      ],
+      nextStep:
+        "read_dataset_and_slice_manifests_then_report_gold_teacher_receipt_and_eval_proof_separately",
+    },
+    {
+      userAsk:
+        "老师蒸馏样本越堆越多，会不会把本地脑带偏？先做质量分层、去重、按失败族抽样，不要全量压过金样本。",
+      sourceSummary:
+        "Qwen curriculum seed for teacher-distillation quality control; teacher material must be bounded, stratified, deduped, and downstream-eval gated.",
+      taskFamily: "teacher_distillation_quality_control",
+      primaryModules: ["eval_harness_design", "agent_workflow_memory", "review_panel"],
+      supportingModules: ["source_registry", "control_room_summary"],
+      requiredTools: [
+        "local_brain_train_slice_builder",
+        "teacher_review_quality_audit",
+        "review_panel",
+      ],
+      missingData: [
+        "teacher_review_failure_family_counts",
+        "duplicate_or_near_duplicate_teacher_reviews",
+        "downstream_eval_family_coverage",
+      ],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "do_not_train_unbounded_teacher_style",
+        "quality_tier_before_weight",
+        "promotion_requires_eval_not_teacher_acceptance",
+      ],
+      nextStep:
+        "stratify_teacher_reviews_by_quality_and_failure_family_before_selecting_bounded_train_slice",
+    },
+    {
+      userAsk:
+        "如果新增了商品、期权、仓位、外部学习这些蒸馏样本，怎么确认不是只存了教材而是真的会了？",
+      sourceSummary:
+        "Qwen curriculum seed for eval-family expansion after new training material; every new capability family needs adjacent eval proof.",
+      taskFamily: "eval_family_expansion_after_training_material",
+      primaryModules: ["eval_harness_design", "finance_learning_memory", "review_panel"],
+      supportingModules: ["source_registry", "control_room_summary"],
+      requiredTools: ["local_brain_hardened_eval", "targeted_eval_case_selector", "review_panel"],
+      missingData: [
+        "new_training_material_family_ids",
+        "adjacent_prerequisite_eval_cases",
+        "latest_candidate_failed_or_recovered_case_ids",
+      ],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "stored_material_not_learned_capability",
+        "simple_prerequisite_eval_required",
+        "parse_recovered_blocks_promotion",
+      ],
+      nextStep:
+        "map_new_material_to_prerequisite_and_adjacent_eval_cases_before_claiming_absorption",
+    },
+    {
+      userAsk:
+        "module-learning plan receipt 和 review receipt 都进了训练池，这是不是说明模块已经学会了？",
+      sourceSummary:
+        "Qwen curriculum seed for module-learning truth boundary; plan/review receipts are workflow evidence, not eval-absorbed learning.",
+      taskFamily: "module_learning_receipt_truth_boundary",
+      primaryModules: ["finance_learning_memory", "source_registry", "review_panel"],
+      supportingModules: ["eval_harness_design", "control_room_summary"],
+      requiredTools: [
+        "module_learning_pipeline_review",
+        "module_learning_absorption_gate",
+        "local_brain_eval",
+      ],
+      missingData: [
+        "retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "fresh_adjacent_application_task",
+      ],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "plan_receipt_not_absorption",
+        "review_receipt_not_live_capability",
+        "keep_downrank_or_discard_required",
+      ],
+      nextStep:
+        "report_plan_review_application_and_eval_absorption_as_separate_statuses_before_any_learning_claim",
+    },
+    {
+      userAsk: "能不能直接告诉我该不该买 NVDA？",
+      sourceSummary:
+        "short finance boundary seed; buy/sell wording must become research-only gaps, risk gates, and no trade advice.",
+      taskFamily: "plain_buy_sell_research_boundary",
+      primaryModules: ["company_fundamentals_value", "portfolio_risk_gates", "review_panel"],
+      supportingModules: ["source_registry", "control_room_summary"],
+      requiredTools: ["finance_data_gateway_snapshot", "review_panel"],
+      missingData: [
+        "latest_10q_10k_or_earnings_release",
+        "position_weights_cost_basis_and_risk_limits",
+        "fresh_market_data_snapshot",
+      ],
+      riskBoundaries: [...BOUNDARIES, "no_trade_advice", "risk_gate_before_action_language"],
+      nextStep: "convert_buy_sell_request_to_research_plan_and_missing_inputs",
+    },
+    {
+      userAsk: "现在大盘怎么样，一句话说。",
+      sourceSummary:
+        "short market-status seed; must not invent current market data or skip source timestamps.",
+      taskFamily: "plain_recent_market_brief_boundary",
+      primaryModules: ["macro_rates_inflation", "etf_regime", "portfolio_risk_gates"],
+      supportingModules: ["finance_data_gateway", "source_registry", "control_room_summary"],
+      requiredTools: ["finance_data_gateway_snapshot", "review_panel"],
+      missingData: ["fresh_market_data_snapshot", "source_timestamp_and_vendor"],
+      riskBoundaries: [...BOUNDARIES, "no_unverified_current_market_claims", "no_trade_advice"],
+      nextStep: "request_or_collect_timestamped_market_snapshot_before_summary",
+    },
+    {
+      userAsk: "我只有 6818 个样本，是不是都很高质量？",
+      sourceSummary:
+        "sample-count boundary seed; total pool count is not quality, weighting, or promotion proof.",
+      taskFamily: "dataset_count_quality_boundary",
+      primaryModules: ["agent_workflow_memory", "eval_harness_design", "review_panel"],
+      supportingModules: ["control_room_summary"],
+      requiredTools: ["local_brain_dataset_manifest", "local_brain_train_slice_manifest"],
+      missingData: ["sample_trust_tier_counts", "teacher_review_quality_summary"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "dataset_count_not_quality_claim",
+        "sample_source_kind_required",
+      ],
+      nextStep: "separate_pool_count_source_tier_slice_weight_and_eval_proof",
+    },
+    {
+      userAsk: "teacher review 有 6000 多条，那是不是比 curated_seed 更可靠？",
+      sourceSummary:
+        "teacher-vs-gold seed; teacher volume must not outrank hand-curated gold samples without quality and eval gates.",
+      taskFamily: "teacher_volume_not_gold_quality",
+      primaryModules: ["eval_harness_design", "review_panel", "agent_workflow_memory"],
+      supportingModules: ["source_registry", "control_room_summary"],
+      requiredTools: ["teacher_review_quality_audit", "local_brain_train_slice_manifest"],
+      missingData: ["teacher_review_quality_tiers", "duplicate_teacher_review_groups"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "teacher_volume_not_quality",
+        "curated_seed_highest_trust",
+        "promotion_requires_eval_not_teacher_acceptance",
+      ],
+      nextStep: "rank_teacher_reviews_by_quality_and_keep_curated_seed_as_highest_trust",
+    },
+    {
+      userAsk: "训练切片 2960 是不是等于只学了 2960 条？",
+      sourceSummary:
+        "train-slice weighting seed; slice rows are weighted training input, not unique sample count or learning proof.",
+      taskFamily: "train_slice_weighting_boundary",
+      primaryModules: ["agent_workflow_memory", "eval_harness_design"],
+      supportingModules: ["control_room_summary", "review_panel"],
+      requiredTools: ["local_brain_train_slice_manifest"],
+      missingData: ["source_train_count", "written_source_kind_counts", "repeat_policy"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "train_slice_rows_not_unique_samples",
+        "training_input_not_absorption_proof",
+      ],
+      nextStep: "report_unique_pool_slice_written_rows_repeat_policy_and_eval_separately",
+    },
+    {
+      userAsk: "213/213 过了，是不是新知识都已经吸收了？",
+      sourceSummary:
+        "eval-proof boundary seed; passing current eval proves behavior on covered cases only, not all new knowledge.",
+      taskFamily: "eval_pass_coverage_boundary",
+      primaryModules: ["eval_harness_design", "review_panel"],
+      supportingModules: ["finance_learning_memory", "control_room_summary"],
+      requiredTools: ["local_brain_hardened_eval", "eval_registry_suite_summary"],
+      missingData: ["eval_capability_suite_coverage", "new_material_family_to_case_map"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "eval_pass_not_universal_absorption",
+        "coverage_family_required",
+      ],
+      nextStep: "map_passed_cases_to_capability_suites_before_absorption_claim",
+    },
+    {
+      userAsk: "parseRecovered 也算能用吧？",
+      sourceSummary:
+        "promotion cleanliness seed; parseRecovered blocks promotion and must not become runtime capability proof.",
+      taskFamily: "parse_recovered_promotion_boundary",
+      primaryModules: ["eval_harness_design", "review_panel"],
+      supportingModules: ["control_room_summary"],
+      requiredTools: ["local_brain_hardened_eval", "promotion_audit"],
+      missingData: ["parse_recovered_case_ids", "failed_case_ids"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "parse_recovered_blocks_promotion",
+        "single_clean_adapter_only",
+      ],
+      nextStep: "keep_clean_champion_until_no_failed_parse_or_recovered_cases",
+    },
+    {
+      userAsk: "Lark 里我说“最近市场”，它能不能自动知道我指 QQQ/TLT/NVDA？",
+      sourceSummary:
+        "short Lark context seed; local memory may cue scope but must not invent current data or old chat facts.",
+      taskFamily: "short_lark_market_scope_boundary",
+      primaryModules: ["control_room_summary", "finance_learning_memory", "portfolio_risk_gates"],
+      supportingModules: ["source_registry", "review_panel"],
+      requiredTools: ["memory_recall_scope", "finance_data_gateway_snapshot", "review_panel"],
+      missingData: ["memory_recall_scope_or_relevant_receipts", "fresh_market_data_snapshot"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "old_lark_context_rejected",
+        "no_unverified_current_market_claims",
+      ],
+      nextStep: "use_relevant_memory_scope_then_require_fresh_data_for_current_market",
+    },
+    {
+      userAsk: "我问“大宗商品”，别只回答原油，要怎么分模块？",
+      sourceSummary:
+        "commodity scope seed; commodities route through oil, gold, inflation, FX, and portfolio risk before summary.",
+      taskFamily: "commodity_scope_module_boundary",
+      primaryModules: [
+        "commodities_oil_gold",
+        "macro_rates_inflation",
+        "fx_currency_liquidity",
+        "portfolio_risk_gates",
+      ],
+      supportingModules: ["finance_data_gateway", "source_registry", "review_panel"],
+      requiredTools: ["finance_data_gateway_snapshot", "review_panel"],
+      missingData: [
+        "commodity_sub_asset_scope",
+        "source_timestamp_and_vendor",
+        "portfolio_exposure_context_if_relevant",
+      ],
+      riskBoundaries: [...BOUNDARIES, "commodity_framework_not_trade_signal", "no_trade_advice"],
+      nextStep: "clarify_commodity_scope_then_route_to_macro_fx_and_portfolio_risk",
+    },
+    {
+      userAsk: "期权 IV 很高，是不是该卖波动率？",
+      sourceSummary:
+        "options boundary seed; options research cannot become execution or sizing advice.",
+      taskFamily: "options_volatility_execution_boundary",
+      primaryModules: ["options_volatility", "portfolio_risk_gates", "review_panel"],
+      supportingModules: ["finance_data_gateway", "source_registry", "control_room_summary"],
+      requiredTools: ["finance_data_gateway_snapshot", "review_panel"],
+      missingData: [
+        "options_chain_timestamp_and_vendor",
+        "position_weights_and_risk_limits",
+        "volatility_regime_inputs",
+      ],
+      riskBoundaries: [...BOUNDARIES, "no_options_execution_advice", "no_trade_advice"],
+      nextStep: "frame_iv_as_research_risk_not_trade_execution",
+    },
+    {
+      userAsk: "我应该加仓还是减仓？",
+      sourceSummary:
+        "position sizing boundary seed; missing portfolio inputs must block action language.",
+      taskFamily: "position_sizing_missing_inputs_boundary",
+      primaryModules: ["portfolio_risk_gates", "quant_math", "review_panel"],
+      supportingModules: ["finance_data_gateway", "control_room_summary"],
+      requiredTools: ["portfolio_risk_snapshot", "review_panel"],
+      missingData: [
+        "position_weights_cost_basis_and_risk_limits",
+        "return_series_or_price_history",
+        "invalidation_level_or_rebalance_rule",
+      ],
+      riskBoundaries: [...BOUNDARIES, "risk_gate_before_action_language", "no_trade_advice"],
+      nextStep: "ask_for_portfolio_inputs_and_return_research_only_risk_framework",
+    },
+    {
+      userAsk: "网上有人说 AI capex 要崩，直接记住这个结论吗？",
+      sourceSummary:
+        "alternative source seed; social or blog claims stay hypothesis-only until source and follow-through checks pass.",
+      taskFamily: "alternative_source_hypothesis_boundary",
+      primaryModules: ["source_registry", "company_fundamentals_value", "review_panel"],
+      supportingModules: ["causal_map", "portfolio_risk_gates"],
+      requiredTools: ["source_registry_record", "review_panel"],
+      missingData: [
+        "source_url_or_local_source_path",
+        "source_reliability_grade",
+        "official_followup_or_primary_source",
+      ],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "alternative_source_hypothesis_only",
+        "no_standalone_alpha_from_social_claims",
+      ],
+      nextStep: "treat_attention_story_as_hypothesis_until_source_and_followthrough_proof",
+    },
+    {
+      userAsk: "研报目标价很高，本地脑能直接学成买入规则吗？",
+      sourceSummary:
+        "sell-side report seed; target price is not doctrine without assumptions, sensitivity, red team, and review.",
+      taskFamily: "analyst_report_learning_boundary",
+      primaryModules: ["source_registry", "financial_modeling_valuation_qc", "review_panel"],
+      supportingModules: ["company_fundamentals_value", "portfolio_risk_gates"],
+      requiredTools: [
+        "source_registry_record",
+        "finance_learning_retrieval_review",
+        "review_panel",
+      ],
+      missingData: [
+        "source_url_or_local_source_path",
+        "assumptions_and_valuation_sensitivity",
+        "red_team_invalidation_evidence",
+      ],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "analyst_target_not_trade_rule",
+        "keep_downrank_or_discard_required",
+      ],
+      nextStep: "extract_assumptions_sensitivity_and_red_team_before_any_reusable_rule",
+    },
+    {
+      userAsk: "如果两个数据源 ETF 权重不一样，就用哪个？",
+      sourceSummary:
+        "data conflict seed; ETF weights require issuer/official priority, timestamps, field definitions, and units.",
+      taskFamily: "etf_weight_data_conflict_boundary",
+      primaryModules: ["data_provenance_quality", "etf_regime", "portfolio_risk_gates"],
+      supportingModules: ["source_registry", "review_panel"],
+      requiredTools: ["finance_data_gateway_snapshot", "source_registry_lookup", "review_panel"],
+      missingData: [
+        "source_timestamp_and_vendor",
+        "field_definition_and_adjusted_status",
+        "official_or_issuer_reference",
+      ],
+      riskBoundaries: [...BOUNDARIES, "vendor_conflict_requires_provenance_gate"],
+      nextStep: "prefer_official_scope_after_timestamp_field_and_unit_reconciliation",
+    },
+    {
+      userAsk: "有一条 receipt 就能证明 live 修好了吗？",
+      sourceSummary:
+        "dev/live boundary seed; receipts prove dev artifacts, not live-visible Lark behavior.",
+      taskFamily: "receipt_not_live_visible_boundary",
+      primaryModules: ["ops_audit", "lark_live_loop_debugger", "review_panel"],
+      supportingModules: ["control_room_summary"],
+      requiredTools: ["lark_loop_diagnose", "feishu_reply_flow_audit"],
+      missingData: ["fresh_real_lark_inbound_and_outbound_seen", "live_runtime_restart_proof"],
+      riskBoundaries: [...BOUNDARIES, "dev_fixed_not_live_visible_fixed"],
+      nextStep: "require_fresh_lark_inbound_outbound_before_live_visible_claim",
+    },
+    {
+      userAsk: "能不能把 r6 的能力和 r2 一起用，两个 LoRA 不是更强吗？",
+      sourceSummary:
+        "adapter monotonicity seed; runtime must not serve dirty ensembles or parseRecovered challengers.",
+      taskFamily: "single_clean_adapter_runtime_boundary",
+      primaryModules: ["eval_harness_design", "review_panel"],
+      supportingModules: ["control_room_summary"],
+      requiredTools: ["promotion_audit", "local_brain_hardened_eval"],
+      missingData: ["latest_clean_adapter", "latest_candidate_failed_or_recovered_case_ids"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "single_clean_adapter_only",
+        "no_dirty_lora_ensemble",
+        "parse_recovered_blocks_promotion",
+      ],
+      nextStep: "keep_selected_clean_adapter_until_challenger_passes_full_clean_promotion",
+    },
+    {
+      userAsk: "训练还在跑时，能不能顺手重建切片或跑 eval？",
+      sourceSummary:
+        "overlap prevention seed; active guard/eval/MLX blocks rebuild, eval, provider writes, and live apply.",
+      taskFamily: "heavy_process_overlap_boundary",
+      primaryModules: ["ops_audit", "eval_harness_design", "agent_workflow_memory"],
+      supportingModules: ["control_room_summary"],
+      requiredTools: ["local_brain_training_plan", "process_check"],
+      missingData: ["active_guard_eval_or_mlx_pid_state"],
+      riskBoundaries: [...BOUNDARIES, "do_not_start_overlapping_training_or_eval"],
+      nextStep: "check_active_pids_and_wait_for_idle_before_heavy_work",
+    },
+    {
+      userAsk: "teacher 样本重复很多，会不会训练时反复灌同一种错法？",
+      sourceSummary:
+        "teacher dedup seed; duplicate review content needs hash stats and bounded sampling before training.",
+      taskFamily: "teacher_review_dedup_boundary",
+      primaryModules: ["eval_harness_design", "agent_workflow_memory", "review_panel"],
+      supportingModules: ["source_registry", "control_room_summary"],
+      requiredTools: ["teacher_review_quality_audit", "local_brain_train_slice_manifest"],
+      missingData: ["duplicate_teacher_review_groups", "failure_family_counts"],
+      riskBoundaries: [...BOUNDARIES, "dedup_before_teacher_weight", "quality_tier_before_weight"],
+      nextStep: "hash_teacher_reviews_and_sample_by_failure_family_before_weighting",
+    },
+    {
+      userAsk: "如果 eval 总分过了，但金融边界族没覆盖，能上线吗？",
+      sourceSummary:
+        "eval suite seed; total score must be broken down by capability family before runtime or learning claims.",
+      taskFamily: "eval_suite_family_coverage_boundary",
+      primaryModules: ["eval_harness_design", "review_panel"],
+      supportingModules: ["portfolio_risk_gates", "control_room_summary"],
+      requiredTools: ["local_brain_hardened_eval", "eval_registry_suite_summary"],
+      missingData: ["capability_suite_pass_rates", "finance_boundary_case_coverage"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "total_eval_score_not_enough",
+        "capability_family_coverage_required",
+      ],
+      nextStep: "report_suite_level_pass_fail_before_any_runtime_or_absorption_claim",
+    },
+    {
+      userAsk: "如果一个复杂题过了，简单前置题没测，可以算进步吗？",
+      sourceSummary:
+        "monotonic eval seed; complex capability requires simple prerequisite and adjacent case proof.",
+      taskFamily: "monotonic_prerequisite_eval_boundary",
+      primaryModules: ["eval_harness_design", "review_panel"],
+      supportingModules: ["control_room_summary"],
+      requiredTools: ["local_brain_hardened_eval", "targeted_eval_case_selector"],
+      missingData: ["simple_prerequisite_case", "adjacent_non_identical_scenario"],
+      riskBoundaries: [
+        ...BOUNDARIES,
+        "simple_prerequisite_eval_required",
+        "proof_required_before_claiming_transfer",
+      ],
+      nextStep: "run_prerequisite_and_adjacent_eval_with_complex_case",
+    },
+    {
       userAsk: "去学习这篇金融论文并沉淀成规则，但我还没给链接或本地文件。",
       sourceSummary:
         "external source learning request without URL or local path; must use source registry and fail cleanly before reading.",
@@ -1918,6 +2497,7 @@ await writeJsonl(path.join(options.outDir, "train.jsonl"), splits.train);
 await writeJsonl(path.join(options.outDir, "valid.jsonl"), splits.valid);
 await writeJsonl(path.join(options.outDir, "test.jsonl"), splits.test);
 
+const allSourceKinds = sourceKindCounts(examples);
 const manifest = {
   ok: true,
   boundary: "local_auxiliary_thought_flow_only",
@@ -1930,10 +2510,26 @@ const manifest = {
     valid: splits.valid.length,
     test: splits.test.length,
   },
-  sourceKinds: examples.reduce<Record<string, number>>((acc, example) => {
-    acc[example.meta.sourceKind] = (acc[example.meta.sourceKind] ?? 0) + 1;
-    return acc;
-  }, {}),
+  sourceKinds: allSourceKinds,
+  trainSourceKinds: sourceKindCounts(splits.train),
+  teacherReviewQuality: teacherReviewQualitySummary(examples),
+  sampleTrust: {
+    boundary: "dev_local_brain_sample_trust_summary_only",
+    sourceTrustTiers: SOURCE_KIND_TRUST_TIERS,
+    sourceTrustTierCounts: trustTierCounts(examples),
+    trainTrustTierCounts: trustTierCounts(splits.train),
+    highestTrustSourceKind: "curated_seed",
+    largestTeacherSourceKind: "brain_distillation_review",
+    hardEvalProofSeparateFromTrainingSamples: true,
+    teacherDistillationIsTrainingMaterialNotPromotionProof: true,
+    planAndReviewReceiptsAreWorkflowEvidenceNotAbsorptionProof: true,
+    recommendedNextHardening: [
+      "expand_curated_seed_gold_set",
+      "keep_teacher_reviews_bounded_in_train_slice",
+      "stratify_teacher_reviews_by_failure_family_and_quality",
+      "grow_hardened_eval_by_capability_family",
+    ],
+  },
   notTouched: [
     "live_sender",
     "provider_config",

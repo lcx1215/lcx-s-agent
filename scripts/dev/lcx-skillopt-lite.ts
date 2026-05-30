@@ -756,7 +756,7 @@ function renderText(details: Record<string, unknown>): string {
 
 function targetedEvalCommand(caseIds: string[], regressionCaseIds: string[]): string {
   if (caseIds.length > 0) {
-    return `node --import tsx scripts/dev/local-brain-distill-eval.ts --case-id ${caseIds.join(",")} --summary-only --json --timeout-ms 180000`;
+    return `node --import tsx scripts/dev/local-brain-distill-eval.ts --adapter latest-passing --hardened --case-id ${caseIds.join(",")} --summary-only --json --timeout-ms 180000`;
   }
   return `node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only --case-id ${regressionCaseIds.join(",")} --json`;
 }

@@ -568,6 +568,14 @@ describe("local-brain-training-plan", () => {
           module_learning_plan_receipt: 2,
           module_learning_review_receipt: 1,
         },
+        sampleTrust: {
+          boundary: "dev_local_brain_sample_trust_summary_only",
+          teacherDistillationIsTrainingMaterialNotPromotionProof: true,
+        },
+        teacherReviewQuality: {
+          boundary: "dev_teacher_distillation_review_quality_summary_only",
+          total: 10,
+        },
       }),
     );
     await fs.writeFile(
@@ -580,6 +588,15 @@ describe("local-brain-training-plan", () => {
           nonReviewSeen: 4,
           reviewSeen: 12,
           trainWritten: 10,
+        },
+        writtenSourceKinds: { brain_distillation_review: 4, curated_seed: 2 },
+        sampleTrust: {
+          boundary: "dev_local_brain_sample_trust_summary_only",
+          hardEvalProofSeparateFromTrainingSamples: true,
+        },
+        teacherReviewQuality: {
+          boundary: "dev_teacher_distillation_review_quality_summary_only",
+          writtenSlice: { total: 4 },
         },
       }),
     );
@@ -629,10 +646,21 @@ describe("local-brain-training-plan", () => {
         module_learning_plan_receipt: 2,
         module_learning_review_receipt: 1,
       },
+      sampleTrust: {
+        teacherDistillationIsTrainingMaterialNotPromotionProof: true,
+      },
+      teacherReviewQuality: {
+        total: 10,
+      },
     });
     expect(plan.onDiskTrainSlice).toMatchObject({
       exists: true,
       counts: { sourceTrain: 18 },
+      writtenSourceKinds: { brain_distillation_review: 4, curated_seed: 2 },
+      sampleTrust: { hardEvalProofSeparateFromTrainingSamples: true },
+      teacherReviewQuality: {
+        writtenSlice: { total: 4 },
+      },
     });
     expect(plan.datasetRuntimeFreshness).toMatchObject({
       boundary: "dev_dataset_runtime_freshness_only",

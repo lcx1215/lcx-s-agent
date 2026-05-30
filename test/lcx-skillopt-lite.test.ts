@@ -204,6 +204,8 @@ describe("lcx-skillopt-lite CLI", () => {
         boundary: "dev_skillopt_proof_chain_only",
       }),
     );
+    expect(parsed.nextIdleCommand).toContain("--adapter latest-passing");
+    expect(parsed.nextIdleCommand).toContain("--hardened");
     expect(parsed.absorptionPlan).toEqual(
       expect.objectContaining({
         status: "not_absorbed_until_training_and_promotion_truth",

@@ -3712,6 +3712,62 @@ function buildEvalRegistrySummary() {
   };
 }
 
+type EvalCaseResult = {
+  id: string;
+  acceptance: { ok: boolean };
+  parseRecovered?: boolean;
+  parseError?: unknown;
+};
+
+function buildEvalCapabilitySuiteResults(caseResults: EvalCaseResult[]) {
+  const evaluatedById = new Map(caseResults.map((entry) => [entry.id, entry]));
+  const suites = EVAL_REGISTRY_SUITES.map((suite) => {
+    const suiteCaseIds = EVAL_CASES.filter(suite.matches).map((evalCase) => evalCase.id);
+    const evaluated = suiteCaseIds
+      .map((caseId) => evaluatedById.get(caseId))
+      .filter((entry): entry is EvalCaseResult => Boolean(entry));
+    const passed = evaluated.filter((entry) => entry.acceptance.ok);
+    const failed = evaluated.filter((entry) => !entry.acceptance.ok);
+    const parseRecovered = evaluated.filter((entry) => entry.parseRecovered === true);
+    return {
+      id: suite.id,
+      description: suite.description,
+      registryCaseCount: suiteCaseIds.length,
+      targetCaseCount: suite.targetCaseCount,
+      evaluated: evaluated.length,
+      passed: passed.length,
+      failed: failed.length,
+      passRate: evaluated.length > 0 ? Number((passed.length / evaluated.length).toFixed(3)) : null,
+      failedCaseIds: failed.map((entry) => entry.id),
+      parseRecoveredCaseIds: parseRecovered.map((entry) => entry.id),
+      status:
+        evaluated.length === 0
+          ? "not_evaluated"
+          : failed.length === 0 && parseRecovered.length === 0
+            ? "clean"
+            : "blocked",
+      sampleEvaluatedCaseIds: evaluated.map((entry) => entry.id).slice(0, 12),
+    };
+  });
+  const matchedCaseIds = new Set(
+    caseResults
+      .filter((result) => {
+        const evalCase = EVAL_CASE_BY_ID.get(result.id);
+        return evalCase ? EVAL_REGISTRY_SUITES.some((suite) => suite.matches(evalCase)) : false;
+      })
+      .map((result) => result.id),
+  );
+  return {
+    boundary: "dev_eval_capability_suite_results_only",
+    suiteMembership: "overlapping",
+    totalEvaluatedCases: caseResults.length,
+    suites,
+    unassignedEvaluatedCaseIds: caseResults
+      .map((result) => result.id)
+      .filter((caseId) => !matchedCaseIds.has(caseId)),
+  };
+}
+
 function mergeUniqueStrings(...groups: readonly string[][]): string[] {
   const seen = new Set<string>();
   const merged: string[] = [];
@@ -4922,6 +4978,7 @@ const result = {
       .map((entry) => entry.id),
     parseRecoveredCaseIds: parseRecoveredCases.map((entry) => entry.id),
     failedCaseDiagnostics,
+    capabilitySuites: buildEvalCapabilitySuiteResults(caseResults),
     promotionReady: failedCases.length === 0 && parseRecoveredCases.length === 0,
   },
   evalRegistry: buildEvalRegistrySummary(),

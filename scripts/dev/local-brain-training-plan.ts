@@ -36,6 +36,7 @@ type EvalSnapshot = {
   parseErrorCaseIds: string[];
   parseRecoveredCaseIds: string[];
   parseErrorSamples: string[];
+  capabilitySuites?: unknown;
 };
 
 type EvalTimeoutSnapshot = {
@@ -275,6 +276,10 @@ type LocalBrainManifestSnapshot = {
   mtimeMs?: number;
   counts?: Record<string, unknown>;
   sourceKinds?: Record<string, unknown>;
+  trainSourceKinds?: Record<string, unknown>;
+  writtenSourceKinds?: Record<string, unknown>;
+  teacherReviewQuality?: unknown;
+  sampleTrust?: unknown;
   policy?: unknown;
   notTouched?: unknown;
   readError?: string;
@@ -599,6 +604,7 @@ function evalSnapshotFromEvent(event: JsonRecord): EvalSnapshot | undefined {
     parseErrorCaseIds,
     parseRecoveredCaseIds,
     parseErrorSamples,
+    capabilitySuites: summaryRecord.capabilitySuites,
   };
 }
 
@@ -1092,6 +1098,10 @@ function trainSliceSummary(event: JsonRecord | undefined): JsonRecord | undefine
     outDir: record.outDir,
     policy: record.policy,
     counts: record.counts,
+    sourceKinds: record.sourceKinds,
+    writtenSourceKinds: record.writtenSourceKinds,
+    teacherReviewQuality: record.teacherReviewQuality,
+    sampleTrust: record.sampleTrust,
     notTouched: record.notTouched,
   };
 }
@@ -1126,6 +1136,10 @@ async function readManifestSnapshot(dirPath: string): Promise<LocalBrainManifest
       mtimeMs: stat.mtimeMs,
       counts: recordValue(record.counts),
       sourceKinds: recordValue(record.sourceKinds),
+      trainSourceKinds: recordValue(record.trainSourceKinds),
+      writtenSourceKinds: recordValue(record.writtenSourceKinds),
+      teacherReviewQuality: record.teacherReviewQuality,
+      sampleTrust: record.sampleTrust,
       policy: record.policy,
       notTouched: record.notTouched,
     };
@@ -2097,12 +2111,11 @@ function buildEvolutionAccelerationQueue(params: {
   const blockedCount = sortedSteps.filter((step) =>
     ["blocked_by_active_training", "blocked_by_missing_proof"].includes(step.status),
   ).length;
-  const fastestSafeNextAction =
-    sortedSteps.find((step) => step.status === "ready_now")?.id ??
-    (activeHeavyWork
-      ? "wait_for_current_training_eval_then_run_idle_queue"
-      : (sortedSteps.find((step) => step.status === "ready_when_idle")?.id ??
-        "continue_observability_no_acceleration_step"));
+  const fastestSafeNextAction = activeHeavyWork
+    ? (sortedSteps.find((step) => step.status === "ready_now")?.id ??
+      "wait_for_current_training_eval_then_run_idle_queue")
+    : (sortedSteps.find((step) => step.status === "ready_now" || step.status === "ready_when_idle")
+        ?.id ?? "continue_observability_no_acceleration_step");
   const activeEvalProcesses = params.activeProcesses.filter(
     (process) => process.role === "local_brain_eval",
   );

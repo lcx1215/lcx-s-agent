@@ -91,12 +91,34 @@ describe("local brain distill train slice", () => {
 
     const manifest = JSON.parse(stdout) as {
       counts: { trainWritten: number; reviewSelected: number; curatedWritten: number };
+      writtenSourceKinds: Record<string, number>;
+      sampleTrust: {
+        writtenTrustTierCounts: Record<string, number>;
+        teacherDistillationIsTrainingMaterialNotPromotionProof: boolean;
+      };
+      teacherReviewQuality: {
+        sourceTrain: { total: number; dedup: { uniqueContent: number } };
+        writtenSlice: { total: number; dedup: { uniqueContent: number } };
+      };
     };
     expect(manifest.counts).toMatchObject({
       trainWritten: 12,
       reviewSelected: 2,
       curatedWritten: 6,
     });
+    expect(manifest.writtenSourceKinds).toMatchObject({
+      curated_seed: 6,
+      brain_distillation_review: 2,
+    });
+    expect(manifest.sampleTrust.writtenTrustTierCounts).toMatchObject({
+      gold_curated: 6,
+      teacher_distillation_review: 2,
+      workflow_receipt: 4,
+    });
+    expect(manifest.sampleTrust.teacherDistillationIsTrainingMaterialNotPromotionProof).toBe(true);
+    expect(manifest.teacherReviewQuality.sourceTrain.total).toBe(5);
+    expect(manifest.teacherReviewQuality.writtenSlice.total).toBe(2);
+    expect(manifest.teacherReviewQuality.writtenSlice.dedup.uniqueContent).toBe(2);
 
     const trainExamples = await parseJsonl(path.join(outDir, "train.jsonl"));
     expect(trainExamples).toHaveLength(12);

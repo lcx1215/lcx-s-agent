@@ -61,6 +61,10 @@ describe("local brain distill dataset", () => {
     expect(source).toContain("nonbank_leverage_and_redemption_pressure_inputs");
     expect(source).toContain("data_center_power_grid_and_energy_constraint_inputs");
     expect(source).toContain("equity_bond_hedge_may_fail_under_supply_shock");
+    expect(source).toContain("local_brain_sample_trust_accounting");
+    expect(source).toContain("teacher_distillation_quality_control");
+    expect(source).toContain("eval_family_expansion_after_training_material");
+    expect(source).toContain("module_learning_receipt_truth_boundary");
   });
 
   it("writes parseable seed splits for downstream smoke checks", async () => {
@@ -108,6 +112,23 @@ describe("local brain distill dataset", () => {
     await expect(parseJsonl(path.join(outDir, "train.jsonl"))).resolves.not.toHaveLength(0);
     await expect(parseJsonl(path.join(outDir, "valid.jsonl"))).resolves.not.toHaveLength(0);
     await expect(parseJsonl(path.join(outDir, "test.jsonl"))).resolves.not.toHaveLength(0);
+
+    const manifest = JSON.parse(await fs.readFile(path.join(outDir, "manifest.json"), "utf8")) as {
+      sampleTrust?: {
+        sourceTrustTierCounts?: Record<string, number>;
+        hardEvalProofSeparateFromTrainingSamples?: boolean;
+      };
+      sourceKinds?: Record<string, number>;
+      teacherReviewQuality?: {
+        total?: number;
+        qualityTiers?: Record<string, number>;
+        dedup?: { uniqueContent?: number; duplicateGroups?: number };
+      };
+    };
+    expect(manifest.sampleTrust?.sourceTrustTierCounts?.gold_curated).toBeGreaterThan(0);
+    expect(manifest.sampleTrust?.hardEvalProofSeparateFromTrainingSamples).toBe(true);
+    expect(manifest.sourceKinds?.curated_seed).toBeGreaterThanOrEqual(300);
+    expect(manifest.teacherReviewQuality?.dedup?.uniqueContent).toBeGreaterThanOrEqual(0);
 
     const trainExamples = await parseJsonl(path.join(outDir, "train.jsonl"));
     const canonicalQuantGap = trainExamples.some((entry) => {

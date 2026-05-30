@@ -41,7 +41,15 @@ describe("local-brain-distill-eval", () => {
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout) as {
       ok: boolean;
-      summary: { passed: number; total: number; promotionReady: boolean };
+      summary: {
+        passed: number;
+        total: number;
+        promotionReady: boolean;
+        capabilitySuites: {
+          boundary: string;
+          suites: Array<{ id: string; evaluated: number; passed: number; status: string }>;
+        };
+      };
       hierarchy: {
         requestedCaseIds: string[];
         autoIncludedPrerequisiteCaseIds: string[];
@@ -56,6 +64,10 @@ describe("local-brain-distill-eval", () => {
     };
     expect(payload.ok).toBe(true);
     expect(payload.summary).toMatchObject({ passed: 2, total: 2, promotionReady: true });
+    expect(payload.summary.capabilitySuites.boundary).toBe(
+      "dev_eval_capability_suite_results_only",
+    );
+    expect(payload.summary.capabilitySuites.suites.some((suite) => suite.evaluated > 0)).toBe(true);
     expect(payload.hierarchy).toMatchObject({
       requestedCaseIds: ["broad_finance_module_taxonomy_coverage"],
       autoIncludedPrerequisiteCaseIds: ["portfolio_mixed_q_t_nvda"],
