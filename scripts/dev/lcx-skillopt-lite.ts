@@ -193,7 +193,7 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
     ],
     triggerPatterns: [/记忆|之前|学过|本地|receipt|memory|recall|stale|downrank|discard/iu],
     capabilityRule:
-      "local memory can cue scope and hypotheses, but current facts, model absorption, protected memory, and live proof each need their own owner evidence.",
+      "local memory can cue scope and hypotheses, but current facts, model absorption, protected memory, and user-visible proof each need their own owner evidence.",
   },
   sentiment_vendor_source_gate_preflight: {
     id: "sentiment_vendor_source_gate_preflight",
@@ -305,34 +305,34 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
   },
   live_lark_boundary_preflight: {
     id: "live_lark_boundary_preflight",
-    title: "Live Lark Boundary Preflight",
+    title: "Lark External Channel Boundary Preflight",
     purpose:
-      "Keep dev, eval, selected clean adapter, sidecar drift, runtime restart, and real Lark evidence separated.",
+      "Keep dev, eval, selected clean adapter, external-channel drift, channel restart, and real Lark user-visible evidence separated.",
     requiredModules: [
-      "live_lark_brain_binding",
+      "lark_external_channel_binding",
       "source_registry",
       "review_panel",
       "control_room_summary",
     ],
     requiredRiskBoundaries: [
-      "dev_fixed_not_live_visible_fixed",
+      "dev_ready_not_user_visible_observed",
       "single_clean_adapter_only",
       "no_parse_recovered_runtime",
       "fresh_real_lark_inbound_and_outbound_required",
       "no_live_sender_write_without_owner_gate",
     ],
     rejectedContexts: [
-      "dev_probe_as_live_user_seen",
+      "channel_probe_as_user_visible_observed",
       "multiple_lora_runtime",
-      "dirty_candidate_live_binding",
+      "dirty_candidate_external_channel_binding",
       "provider_config_or_live_sender_drift",
     ],
     requiredMissingData: [
       "selected_clean_adapter",
-      "live_sidecar_source_drift_zero_after_selected_adapter",
-      "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
-      "live_lark_loop_diagnose_ok_after_restart",
-      "fresh_real_lark_inbound_and_outbound_seen",
+      "external_channel_source_drift_zero_after_selected_adapter",
+      "lark_external_channel_gateway_restarted_after_selected_adapter",
+      "lark_external_channel_diagnose_ok_after_restart",
+      "fresh_real_lark_inbound_and_outbound_user_visible_observed",
     ],
     regressionCaseIds: [
       "plain_buy_hold_research_boundary",
@@ -340,18 +340,18 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       "adversarial_memory_model_conflict_06",
     ],
     triggerExamples: [
-      "LiveLark 现在是不是已经用上了？",
-      "dev 通过和 live-visible-fixed 有什么区别？",
-      "不能把 parseRecovered candidate 接进 live。",
+      "Lark 现在是不是已经连到最好的本地脑了？",
+      "dev-ready 和 user-visible-observed 有什么区别？",
+      "不能把 parseRecovered candidate 接进 Lark 外部通道。",
     ],
     casePatterns: [
-      /live_lark|live_runtime|lark|feishu|live_user_seen|parse_recovered|adapter_mismatch/u,
+      /live_lark|live_runtime|external_channel|user_visible|lark|feishu|live_user_seen|parse_recovered|adapter_mismatch/u,
     ],
     triggerPatterns: [
-      /飞书|Lark|LiveLark|live|上线|可见|sidecar|adapter|LoRA|parseRecovered|dev-fixed|live-visible/iu,
+      /飞书|Lark|LiveLark|live|外部通道|可见|sidecar|adapter|LoRA|parseRecovered|dev-ready|live-visible|user-visible/iu,
     ],
     capabilityRule:
-      "Live Lark proof requires one selected clean adapter, zero sidecar drift, restarted live runtime, diagnose success, and fresh real inbound/outbound evidence.",
+      "Lark external-channel proof requires one selected clean adapter, zero channel drift, restarted/probed channel gateway, diagnose success, and fresh real inbound/outbound user-visible evidence.",
   },
 };
 
@@ -570,7 +570,7 @@ function buildCaseSplit(
       "technical_timing_as_standalone_alpha",
       "receipt_as_eval_absorbed",
       "parse_recovered_as_promotion_ready",
-      "live_probe_as_live_user_seen",
+      "channel_probe_as_user_visible_observed",
     ],
   };
 }
@@ -597,7 +597,7 @@ function renderSkillMarkdown(
     `- latest_candidate_adapter: ${latestCandidate}`,
     `- latest_candidate_promotion_ready: ${truth.promotionReady === true ? "true" : "false"}`,
     `- latest_parse_recovered_count: ${parseRecoveredCount}`,
-    "- this skill cannot promote an adapter, write protected memory, touch provider config, or prove live Lark visibility",
+    "- this skill cannot promote an adapter, write protected memory, touch provider config, or prove user-visible-observed",
     "",
     "## Trigger Examples",
     ...spec.triggerExamples.map((entry) => `- ${entry}`),
@@ -681,11 +681,13 @@ function buildCandidateEditLines(trainCases: string[]): string[] {
   }
   if (
     [...cases].some((caseId) =>
-      /live_lark|live_runtime|adapter_mismatch|parse_recovered/u.test(caseId),
+      /live_lark|live_runtime|external_channel|user_visible|adapter_mismatch|parse_recovered/u.test(
+        caseId,
+      ),
     )
   ) {
     lines.push(
-      "- dev proof, selected-clean adapter proof, and live-visible proof are separate; never bind dirty or parseRecovered candidates to live Lark",
+      "- dev proof, selected-clean adapter proof, external-channel binding, and user-visible-observed proof are separate; never bind dirty or parseRecovered candidates to the Lark external channel",
     );
   }
   lines.push(
@@ -774,6 +776,7 @@ function buildInstantPreflight(params: {
       boundary: "dev_skillopt_preflight_only",
       canUseImmediately: false,
       modelWeightAbsorbed: false,
+      externalChannelApplied: false,
       liveLarkApplied: false,
     };
   }
@@ -789,9 +792,10 @@ function buildInstantPreflight(params: {
     promptInjection: [
       "Before answering, apply these SkillOpt-lite SOP rules as dev context only:",
       ...effectiveSpecs.map((spec) => `- ${spec.title} (${spec.id}): ${spec.capabilityRule}`),
-      "- This preflight is immediate guidance, not model-weight absorption and not live-visible proof.",
+      "- This preflight is immediate guidance, not model-weight absorption and not user-visible-observed proof.",
     ].join("\n"),
     modelWeightAbsorbed: false,
+    externalChannelApplied: false,
     liveLarkApplied: false,
   };
 }
@@ -808,6 +812,7 @@ function buildProofChain(params: {
       status: "ready_via_preflight_context_injection",
       proof: "matched best_skill.md can be injected before answer planning",
       modelWeightAbsorbed: false,
+      externalChannelApplied: false,
       liveLarkApplied: false,
     },
     targetedEval: {
@@ -835,20 +840,21 @@ function buildProofChain(params: {
         "parseRecoveredCaseIds_empty",
       ],
     },
-    liveLarkBinding: {
+    externalChannelBinding: {
       status:
         params.truth.activeProcessCount > 0
           ? "blocked_by_active_training_or_eval"
-          : "requires_live_binding_owner_proof",
+          : "requires_external_channel_owner_proof",
       statusCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
       applyCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json",
       requiredProof: [
         "selected_clean_adapter_only",
-        "live_sidecar_source_drift_zero_after_selected_adapter",
-        "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
-        "live_lark_loop_diagnose_ok_after_restart",
-        "fresh_real_lark_inbound_and_outbound_seen",
+        "external_channel_source_drift_zero_after_selected_adapter",
+        "lark_external_channel_gateway_restarted_after_selected_adapter",
+        "lark_external_channel_diagnose_ok_after_restart",
+        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
       ],
+      legacyAlias: "liveLarkBinding",
     },
     liveTouched: false,
     providerConfigTouched: false,
@@ -1010,7 +1016,8 @@ async function main() {
     instantPreflight,
     proofChain,
     absorptionPlan: proofChain.modelWeightAbsorption,
-    liveLarkProofPlan: proofChain.liveLarkBinding,
+    externalChannelProofPlan: proofChain.externalChannelBinding,
+    liveLarkProofPlan: proofChain.externalChannelBinding,
     nextIdleAction: "run_targeted_eval_then_accept_or_reject_skill_edit",
     nextIdleCommand: proofChain.targetedEval.command,
     liveTouched: false,

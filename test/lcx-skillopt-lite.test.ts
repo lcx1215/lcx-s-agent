@@ -228,7 +228,7 @@ describe("lcx-skillopt-lite CLI", () => {
     await expect(fs.stat(path.join(workspaceDir, candidatePath))).resolves.toBeTruthy();
   });
 
-  it("builds an immediate deterministic preflight packet without claiming absorption or live proof", async () => {
+  it("builds an immediate deterministic preflight packet without claiming absorption or user-visible proof", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-lite-"));
     await seedAutopilot(workspaceDir);
 
@@ -246,6 +246,7 @@ describe("lcx-skillopt-lite CLI", () => {
         boundary: "dev_skillopt_preflight_only",
         canUseImmediately: true,
         modelWeightAbsorbed: false,
+        externalChannelApplied: false,
         liveLarkApplied: false,
       }),
     );
@@ -253,10 +254,11 @@ describe("lcx-skillopt-lite CLI", () => {
       expect.arrayContaining(["finance_data_provenance_preflight"]),
     );
     expect(String(instantPreflight.promptInjection)).toContain("Finance Data Provenance Preflight");
-    expect(parsed.liveLarkProofPlan).toEqual(
+    expect(parsed.externalChannelProofPlan).toEqual(
       expect.objectContaining({
         status: "blocked_by_active_training_or_eval",
       }),
     );
+    expect(parsed.liveLarkProofPlan).toEqual(parsed.externalChannelProofPlan);
   });
 });

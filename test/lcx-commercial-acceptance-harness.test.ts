@@ -55,6 +55,10 @@ function baseInputs() {
         liveRuntimeUpdated: true,
         liveUserSeen: true,
       },
+      externalChannelStatus: {
+        externalChannelBound: true,
+        userVisibleObserved: true,
+      },
       visibleProof: {
         status: "post_migration_reply_seen",
         freshInboundCount: 1,
@@ -128,6 +132,19 @@ describe("lcx-commercial-acceptance-harness", () => {
       "natural_learning_prompt",
       "finance_research_prompt",
     ]);
+    expect(result.gates.map((gate) => gate.id)).toContain("user_visible_observed");
+    expect(result.canaryPlan).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "fixed_acceptance_phrase",
+          requiredFor: "external_channel_bound",
+        }),
+        expect.objectContaining({
+          id: "natural_learning_prompt",
+          requiredFor: "user_visible_observed",
+        }),
+      ]),
+    );
   });
 
   it("blocks release when live runtime is updated but no post-migration Lark canary is visible", () => {
@@ -136,6 +153,10 @@ describe("lcx-commercial-acceptance-harness", () => {
       operatorStatus: {
         liveRuntimeUpdated: true,
         liveUserSeen: false,
+      },
+      externalChannelStatus: {
+        externalChannelBound: true,
+        userVisibleObserved: false,
       },
       visibleProof: {
         status: "waiting_for_real_lark",
@@ -155,6 +176,43 @@ describe("lcx-commercial-acceptance-harness", () => {
           id: "post_migration_lark_canary_missing",
           status: "blocked",
           severity: "P2",
+        }),
+      ]),
+    );
+  });
+
+  it("blocks release when the Lark external channel is not bound", () => {
+    const inputs = baseInputs();
+    inputs.liveStatus = owner("lcx-promote-live", {
+      operatorStatus: {
+        liveRuntimeUpdated: false,
+        liveUserSeen: false,
+      },
+      externalChannelStatus: {
+        externalChannelBound: false,
+        userVisibleObserved: false,
+      },
+      visibleProof: {
+        status: "waiting_for_real_lark",
+        freshInboundCount: 0,
+        freshOutboundResultCount: 0,
+        acceptanceMatched: false,
+      },
+      devLiveDrift: {
+        liveMatchesCurrentDev: false,
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.blockedGates).toContain("external_channel_not_bound");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "external_channel_not_bound",
+          status: "blocked",
+          severity: "P1",
         }),
       ]),
     );

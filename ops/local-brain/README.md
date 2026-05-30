@@ -220,9 +220,15 @@ Use this as the current 1-6 execution plan. It is owned by the existing exam,
 flow graph, runbook, and live-probe surfaces; do not create a parallel
 blueprint lane.
 
-1. Dev/live closure: keep `dev-ready`, `live-runtime-updated`, and
-   `live-user-seen` separate. Migration needs build, restart, probe, real Lark
-   inbound, outbound result, and visible reply evidence before any live claim.
+1. External-channel closure: keep `dev-ready`, `external-channel-bound`, and
+   `user-visible-observed` separate. Lark/Feishu is the owner-agent external
+   communication channel, not a second live brain or second runtime truth
+   source. Old `live-runtime-updated`, `live-user-seen`, and
+   `live-visible-fixed` terms remain compatibility labels only:
+   `legacy-live-runtime-updated`, `legacy-live-user-seen`, and
+   `legacy-live-visible-fixed`. A channel claim still needs build/restart/probe
+   when applicable, real Lark inbound, outbound result, and visible reply
+   evidence before any user-visible claim.
 2. Module-learning absorption: plan receipts, review rows, `application_ready`,
    `eval_absorbed`, and keep/downrank/discard are separate states. A stored
    source, reviewable receipt, or clean global eval is not per-module
@@ -547,7 +553,7 @@ The radar also tracks six prioritized blacktech mechanisms:
 
 These mechanisms are owner slots, not granted authority. SkillOpt v2 still
 needs targeted eval, regression eval, train-slice, clean promotion, and
-LiveLark proof before model-weight or live claims. Runtime batteries are dev
+user-visible proof before model-weight or channel claims. Runtime batteries are dev
 canaries until real Lark proof. Trajectory and trace receipts are local
 observability, not a runtime RL server or eBPF/TLS interception. Secure tool
 permissioning blocks untrusted tools until allowlist, least privilege,
@@ -1240,9 +1246,14 @@ Use these words precisely:
 - `dev-ready`: local scripts, dataset, smoke, eval, and receipts pass.
 - `training-active`: guard or teacher/eval process is currently running.
 - `promotion-ready`: hardened eval passed and the adapter is selected by latest-passing.
-- `live-visible-fixed`: only after build, restart, probe, and a fresh real Lark inbound plus visible reply.
+- `external-channel-bound`: the Lark channel sidecar has been synced to the
+  verified dev snapshot and restarted/probed.
+- `user-visible-observed`: only after external-channel binding plus a fresh real
+  Lark inbound and visible reply.
 
-Do not call local training or synthetic replay `live-visible-fixed`.
+Do not call local training, synthetic replay, or a channel probe
+`user-visible-observed`. Old `live-visible-fixed` wording is legacy
+compatibility only.
 
 ## Do Not Do
 

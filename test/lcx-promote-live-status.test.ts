@@ -261,6 +261,12 @@ describe("lcx-promote-live status", () => {
 
     expect(stdout).toContain(`sourceCommit=${promotedCommit}`);
     expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain(
+      "externalChannelStatusModel=dev-ready -> external-channel-bound -> user-visible-observed",
+    );
+    expect(stdout).toContain("externalChannel=lark");
+    expect(stdout).toContain("externalChannelBound=false");
+    expect(stdout).toContain("userVisibleObserved=false");
     expect(stdout).toContain("statusModel=dev-ready -> live-runtime-updated -> live-user-seen");
     expect(stdout).toContain("devReady=not_checked_by_live_status");
     expect(stdout).toContain("liveRuntimeCommitMatched=false");
@@ -294,6 +300,12 @@ describe("lcx-promote-live status", () => {
 
     expect(stdout).toContain(`sourceCommit=${currentCommit}`);
     expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain(
+      "externalChannelStatusModel=dev-ready -> external-channel-bound -> user-visible-observed",
+    );
+    expect(stdout).toContain("externalChannel=lark");
+    expect(stdout).toContain("externalChannelBound=true");
+    expect(stdout).toContain("userVisibleObserved=false");
     expect(stdout).toContain("statusModel=dev-ready -> live-runtime-updated -> live-user-seen");
     expect(stdout).toContain("devReady=not_checked_by_live_status");
     expect(stdout).toContain("liveRuntimeCommitMatched=true");
@@ -374,6 +386,7 @@ describe("lcx-promote-live status", () => {
         };
       };
       operatorStatus: { liveRuntimeUpdated: boolean };
+      externalChannelStatus: { externalChannelBound: boolean; userVisibleObserved: boolean };
       visibleProof: { status: string };
     };
 
@@ -393,6 +406,10 @@ describe("lcx-promote-live status", () => {
     expect(payload.state.commandSummary.targetBuild.stdout).toBeUndefined();
     expect(payload.state.commandSummary.targetBuild.stderr).toBeUndefined();
     expect(payload.operatorStatus.liveRuntimeUpdated).toBe(true);
+    expect(payload.externalChannelStatus).toMatchObject({
+      externalChannelBound: true,
+      userVisibleObserved: false,
+    });
     expect(payload.visibleProof.status).toBe("reply_flow_missing");
   });
 
@@ -439,6 +456,8 @@ describe("lcx-promote-live status", () => {
 
     expect(stdout).toContain("liveRuntimeUpdated=true");
     expect(stdout).toContain("liveUserSeen=true");
+    expect(stdout).toContain("externalChannelBound=true");
+    expect(stdout).toContain("userVisibleObserved=true");
     expect(stdout).toContain("nextHumanStep=no_action_current_dev_seen_in_live");
     expect(stdout).toContain("liveVisibleStatus=post_migration_reply_seen");
     expect(stdout).toContain("freshInboundCount=1");

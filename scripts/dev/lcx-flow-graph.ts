@@ -44,8 +44,11 @@ type FlowNodeId =
   | "dev_tests"
   | "live_migration"
   | "build_restart_probe"
+  | "external_channel_binding"
+  | "channel_restart_probe"
   | "real_lark_inbound"
   | "live_user_seen"
+  | "user_visible_observed"
   | "new_codex_window"
   | "fixed_evidence_recovery"
   | "operator_latest_state"
@@ -126,6 +129,8 @@ type FlowFilterId =
   | "step_timeout_visible"
   | "dev_ready_not_live_user_seen"
   | "live_runtime_probe_required"
+  | "dev_ready_not_user_visible_observed"
+  | "external_channel_probe_required"
   | "real_lark_inbound_required"
   | "fresh_operator_state_required"
   | "single_digest_only"
@@ -288,8 +293,11 @@ const NODE_IDS: FlowNodeId[] = [
   "dev_tests",
   "live_migration",
   "build_restart_probe",
+  "external_channel_binding",
+  "channel_restart_probe",
   "real_lark_inbound",
   "live_user_seen",
+  "user_visible_observed",
   "new_codex_window",
   "fixed_evidence_recovery",
   "operator_latest_state",
@@ -371,6 +379,8 @@ const FILTER_IDS: FlowFilterId[] = [
   "step_timeout_visible",
   "dev_ready_not_live_user_seen",
   "live_runtime_probe_required",
+  "dev_ready_not_user_visible_observed",
+  "external_channel_probe_required",
   "real_lark_inbound_required",
   "fresh_operator_state_required",
   "single_digest_only",
@@ -567,40 +577,40 @@ const FLOW_SCENARIOS: FlowScenario[] = [
   },
   {
     id: "dev_to_live_lark_waterflow",
-    family: "dev_ready_to_live_user_seen_boundary",
+    family: "dev_ready_to_lark_user_visible_boundary",
     objective:
-      "Dev changes can move to live runtime only through tests, migration, build/restart/probe, and then real Lark inbound proof.",
+      "Dev changes can reach the owner through Lark only after tests, external-channel binding, probe, and real Lark inbound proof; live runtime wording is legacy compatibility.",
     start: "dev_change",
-    end: "live_user_seen",
+    end: "user_visible_observed",
     requiredNodes: [
       "dev_change",
       "dev_tests",
-      "live_migration",
-      "build_restart_probe",
+      "external_channel_binding",
+      "channel_restart_probe",
       "real_lark_inbound",
-      "live_user_seen",
+      "user_visible_observed",
     ],
     requiredFilters: [
-      "dev_ready_not_live_user_seen",
-      "live_runtime_probe_required",
+      "dev_ready_not_user_visible_observed",
+      "external_channel_probe_required",
       "real_lark_inbound_required",
     ],
     edges: [
       ["dev_change", "dev_tests"],
-      ["dev_tests", "live_migration"],
-      ["live_migration", "build_restart_probe"],
-      ["build_restart_probe", "real_lark_inbound"],
-      ["real_lark_inbound", "live_user_seen"],
+      ["dev_tests", "external_channel_binding"],
+      ["external_channel_binding", "channel_restart_probe"],
+      ["channel_restart_probe", "real_lark_inbound"],
+      ["real_lark_inbound", "user_visible_observed"],
     ],
     receipts: ["live-promotion", "feishu-reply-flow"],
   },
   {
     id: "skillopt_runtime_self_use_waterflow",
-    family: "skillopt_eval_to_live_reply_preflight",
+    family: "skillopt_eval_to_lark_external_channel_preflight",
     objective:
-      "Accepted SkillOpt SOPs from eval failures should enter the live/local reply planner as deterministic preflight context while model-weight absorption, adapter promotion, and live-user-seen proof stay gated.",
+      "Accepted SkillOpt SOPs from eval failures should enter the Lark/local reply planner as deterministic preflight context while model-weight absorption, adapter promotion, and user-visible-observed proof stay gated.",
     start: "hardened_eval",
-    end: "live_user_seen",
+    end: "user_visible_observed",
     requiredNodes: [
       "hardened_eval",
       "failure_curriculum",
@@ -608,10 +618,10 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "skillopt_best_skill",
       "skillopt_runtime_preflight",
       "dev_tests",
-      "live_migration",
-      "build_restart_probe",
+      "external_channel_binding",
+      "channel_restart_probe",
       "real_lark_inbound",
-      "live_user_seen",
+      "user_visible_observed",
     ],
     requiredFilters: [
       "training_overlap_guard",
@@ -619,8 +629,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "skillopt_best_skill_required",
       "skillopt_context_not_weight_absorption",
       "skillopt_live_proof_required",
-      "dev_ready_not_live_user_seen",
-      "live_runtime_probe_required",
+      "dev_ready_not_user_visible_observed",
+      "external_channel_probe_required",
       "real_lark_inbound_required",
       "no_internal_runtime_details_visible",
     ],
@@ -630,10 +640,10 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["skillopt_candidate_edit", "skillopt_best_skill"],
       ["skillopt_best_skill", "skillopt_runtime_preflight"],
       ["skillopt_runtime_preflight", "dev_tests"],
-      ["dev_tests", "live_migration"],
-      ["live_migration", "build_restart_probe"],
-      ["build_restart_probe", "real_lark_inbound"],
-      ["real_lark_inbound", "live_user_seen"],
+      ["dev_tests", "external_channel_binding"],
+      ["external_channel_binding", "channel_restart_probe"],
+      ["channel_restart_probe", "real_lark_inbound"],
+      ["real_lark_inbound", "user_visible_observed"],
     ],
     feedbackEdges: [
       ["real_lark_inbound", "skillopt_runtime_preflight"],
@@ -789,7 +799,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "no_internal_runtime_details_visible",
       "bounded_answer_review",
       "reply_flow_audit_required",
-      "dev_ready_not_live_user_seen",
+      "dev_ready_not_user_visible_observed",
     ],
     edges: [
       ["ingress_lark_feishu", "intent_classifier"],
@@ -920,7 +930,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     id: "commercial_acceptance_harness_waterflow",
     family: "commercial_product_acceptance_gate",
     objective:
-      "Commercial acceptance must grade real product readiness by consuming existing owner outputs, error budgets, and live canaries instead of fixing isolated red dots or becoming a new truth owner.",
+      "Commercial acceptance must grade real product readiness by consuming existing owner outputs, error budgets, and Lark external-channel canaries instead of fixing isolated red dots or becoming a new truth owner.",
     start: "local_operator_loop",
     end: "acceptance_eval",
     requiredNodes: [
@@ -931,10 +941,10 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "flow_graph",
       "commercial_acceptance_harness",
       "answer_audit_budget",
-      "live_migration",
-      "build_restart_probe",
+      "external_channel_binding",
+      "channel_restart_probe",
       "real_lark_inbound",
-      "live_user_seen",
+      "user_visible_observed",
       "acceptance_eval",
     ],
     requiredFilters: [
@@ -944,8 +954,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "bounded_answer_review",
       "training_overlap_guard",
       "provider_evidence_required",
-      "dev_ready_not_live_user_seen",
-      "live_runtime_probe_required",
+      "dev_ready_not_user_visible_observed",
+      "external_channel_probe_required",
       "real_lark_inbound_required",
     ],
     edges: [
@@ -955,11 +965,11 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["mind_model", "flow_graph"],
       ["flow_graph", "commercial_acceptance_harness"],
       ["commercial_acceptance_harness", "answer_audit_budget"],
-      ["commercial_acceptance_harness", "live_migration"],
-      ["live_migration", "build_restart_probe"],
-      ["build_restart_probe", "real_lark_inbound"],
-      ["real_lark_inbound", "live_user_seen"],
-      ["live_user_seen", "acceptance_eval"],
+      ["commercial_acceptance_harness", "external_channel_binding"],
+      ["external_channel_binding", "channel_restart_probe"],
+      ["channel_restart_probe", "real_lark_inbound"],
+      ["real_lark_inbound", "user_visible_observed"],
+      ["user_visible_observed", "acceptance_eval"],
       ["answer_audit_budget", "acceptance_eval"],
     ],
     feedbackEdges: [
@@ -1378,7 +1388,11 @@ const FLOW_SCENARIOS: FlowScenario[] = [
 ];
 
 const ILLEGAL_EDGES: Array<[string, string, string]> = [
-  ["dev_change", "live_user_seen", "dev changes must not skip migration and real Lark proof"],
+  [
+    "dev_change",
+    "user_visible_observed",
+    "dev changes must not skip external-channel binding and real Lark proof",
+  ],
   ["source_intake", "keep_downrank_discard", "stored or read source must not skip internalization"],
   ["hardened_eval", "adapter_resolver", "eval must pass through promotion gate"],
   [
@@ -1466,11 +1480,18 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
   },
   {
     id: "dev_live_evidence_cluster",
-    philosophy: "dev-ready, live-runtime-updated, and live-user-seen are one boundary model",
+    philosophy:
+      "dev-ready, external-channel-bound, and user-visible-observed are one boundary model; old live terms are legacy aliases",
     ownerScenario: "dev_to_live_lark_waterflow",
-    ownerNode: "live_migration",
-    sameClassTerms: ["dev-ready", "live-runtime-updated", "live-user-seen"],
-    mergeFilters: ["dev_ready_not_live_user_seen", "real_lark_inbound_required"],
+    ownerNode: "external_channel_binding",
+    sameClassTerms: [
+      "dev-ready",
+      "external-channel-bound",
+      "user-visible-observed",
+      "legacy-live-runtime-updated",
+      "legacy-live-user-seen",
+    ],
+    mergeFilters: ["dev_ready_not_user_visible_observed", "real_lark_inbound_required"],
   },
   {
     id: "commercial_answer_pipeline_cluster",
@@ -1498,7 +1519,7 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
   {
     id: "commercial_acceptance_harness_cluster",
     philosophy:
-      "commercial acceptance is one product-grade exam that consumes owner outputs, error budgets, and live canaries without replacing those owners",
+      "commercial acceptance is one product-grade exam that consumes owner outputs, error budgets, and Lark external-channel canaries without replacing those owners",
     ownerScenario: "commercial_acceptance_harness_waterflow",
     ownerNode: "commercial_acceptance_harness",
     sameClassTerms: [

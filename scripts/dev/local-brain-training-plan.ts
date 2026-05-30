@@ -152,7 +152,21 @@ type ActiveGuardAdapterTruthSnapshot = {
 
 type LiveLarkBrainBindingSnapshot = {
   boundary: "dev_live_lark_brain_binding_plan_only";
+  conceptStatus: "legacy_live_terms_external_channel_owner_current";
   objective: "live_lark_reads_one_selected_clean_local_brain";
+  externalChannel: {
+    boundary: "dev_external_channel_binding_plan_only";
+    channel: "lark";
+    role: "owner_agent_communication_medium";
+    objective: "lark_receives_current_best_verified_lcx_agent_answer";
+    bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter";
+    userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_lark_inbound_and_outbound";
+    legacyLiveTerms: {
+      liveLarkBrainBinding: "legacy_compatibility_field";
+      liveRuntimeUpdated: "legacy_external_channel_bound_equivalent";
+      liveUserSeen: "legacy_user_visible_observed_equivalent";
+    };
+  };
   selectedCleanAdapter?: string;
   selectedCleanEval?: Pick<
     EvalSnapshot,
@@ -170,6 +184,7 @@ type LiveLarkBrainBindingSnapshot = {
   latestPromotedAt?: string;
   latestPromotedAdapterStillClean: boolean | null;
   runtimePolicy: "live_lark_may_only_consume_selected_clean_adapter";
+  externalChannelPolicy: "lark_channel_may_only_consume_selected_clean_adapter";
   status:
     | "blocked_no_selected_clean_adapter"
     | "deferred_active_training_or_eval"
@@ -181,9 +196,11 @@ type LiveLarkBrainBindingSnapshot = {
     | "wait_for_current_eval_then_bind_live_to_selected_clean_adapter"
     | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
     | "run_promotion_audit_then_bind_live_to_selected_clean_adapter"
-    | "bind_live_runtime_to_selected_clean_adapter_and_collect_lark_visible_proof";
+    | "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof";
   missingProof: string[];
+  externalChannelMissingProof: string[];
   successCondition: string[];
+  externalChannelSuccessCondition: string[];
   statusCommand: string;
   notTouched: string[];
   liveTouched: false;
@@ -1028,6 +1045,25 @@ function liveLarkBrainBindingSnapshot(params: {
     "live_lark_loop_diagnose_ok_after_restart",
     "fresh_real_lark_inbound_and_outbound_seen",
   ].filter((entry): entry is string => Boolean(entry));
+  const externalChannelMissingProof = missingProof.map((entry) =>
+    entry
+      .replace(
+        "live_sidecar_source_drift_zero_after_selected_adapter",
+        "external_channel_source_drift_zero_after_selected_adapter",
+      )
+      .replace(
+        "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
+        "lark_external_channel_gateway_restarted_after_selected_adapter",
+      )
+      .replace(
+        "live_lark_loop_diagnose_ok_after_restart",
+        "lark_external_channel_diagnose_ok_after_restart",
+      )
+      .replace(
+        "fresh_real_lark_inbound_and_outbound_seen",
+        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+      ),
+  );
   let status: LiveLarkBrainBindingSnapshot["status"];
   let action: LiveLarkBrainBindingSnapshot["action"];
   if (!selectedCleanAdapter) {
@@ -1044,11 +1080,25 @@ function liveLarkBrainBindingSnapshot(params: {
     action = "run_promotion_audit_then_bind_live_to_selected_clean_adapter";
   } else {
     status = "ready_for_live_runtime_binding";
-    action = "bind_live_runtime_to_selected_clean_adapter_and_collect_lark_visible_proof";
+    action = "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof";
   }
   return {
     boundary: "dev_live_lark_brain_binding_plan_only",
+    conceptStatus: "legacy_live_terms_external_channel_owner_current",
     objective: "live_lark_reads_one_selected_clean_local_brain",
+    externalChannel: {
+      boundary: "dev_external_channel_binding_plan_only",
+      channel: "lark",
+      role: "owner_agent_communication_medium",
+      objective: "lark_receives_current_best_verified_lcx_agent_answer",
+      bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter",
+      userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_lark_inbound_and_outbound",
+      legacyLiveTerms: {
+        liveLarkBrainBinding: "legacy_compatibility_field",
+        liveRuntimeUpdated: "legacy_external_channel_bound_equivalent",
+        liveUserSeen: "legacy_user_visible_observed_equivalent",
+      },
+    },
     selectedCleanAdapter,
     selectedCleanEval: params.qwenCapabilityConsolidation.selectedCleanEval,
     activeTrainingOrEval,
@@ -1059,9 +1109,11 @@ function liveLarkBrainBindingSnapshot(params: {
     latestPromotedAt: params.latestPromotedAt,
     latestPromotedAdapterStillClean,
     runtimePolicy: "live_lark_may_only_consume_selected_clean_adapter",
+    externalChannelPolicy: "lark_channel_may_only_consume_selected_clean_adapter",
     status,
     action,
     missingProof,
+    externalChannelMissingProof,
     successCondition: [
       "selectedCleanAdapter is promotionReady with failedCaseIds=[], parseErrorCaseIds=[], parseRecoveredCaseIds=[]",
       "no active local-brain-distill-eval, mlx_lm generate, mlx_lm lora, or guard restart window",
@@ -1069,6 +1121,14 @@ function liveLarkBrainBindingSnapshot(params: {
       "live sidecar source drift is zero and gateway/proxy restarted from live sidecar",
       "live lark-loop-diagnose is ok",
       "live-user-seen remains false until fresh real Lark inbound/outbound evidence exists",
+    ],
+    externalChannelSuccessCondition: [
+      "selectedCleanAdapter is promotionReady with failedCaseIds=[], parseErrorCaseIds=[], parseRecoveredCaseIds=[]",
+      "no active local-brain-distill-eval, mlx_lm generate, mlx_lm lora, or guard restart window",
+      "active guard uses selectedCleanAdapter or is restarted from it after idle",
+      "Lark external channel gateway reads the selected clean adapter with zero source drift",
+      "Lark external channel diagnose is ok",
+      "user-visible-observed remains false until fresh real Lark inbound/outbound evidence exists",
     ],
     statusCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
     notTouched: ["live_sender", "provider_config", "protected_memory", "formal_language_corpus"],
@@ -1685,16 +1745,17 @@ function buildDecisions(params: {
     decisions.push({
       id:
         params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding"
-          ? "live_lark_brain_binding_ready"
-          : "live_lark_brain_binding_deferred",
-      lane: "live_runtime",
+          ? "lark_external_channel_binding_ready"
+          : "lark_external_channel_binding_deferred",
+      lane: "external_channel",
       severity:
         params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding" ? "info" : "P3",
       action: params.liveLarkBrainBinding.action,
       reason: [
         `status=${params.liveLarkBrainBinding.status}`,
+        `conceptStatus=${params.liveLarkBrainBinding.conceptStatus}`,
         `selectedCleanAdapter=${params.liveLarkBrainBinding.selectedCleanAdapter ?? "unknown"}`,
-        `missingProof=${params.liveLarkBrainBinding.missingProof.join(",") || "none"}`,
+        `externalChannelMissingProof=${params.liveLarkBrainBinding.externalChannelMissingProof.join(",") || "none"}`,
       ].join("; "),
       codexRepairEligible: false,
       nextCommand:
@@ -1983,8 +2044,8 @@ function buildEvolutionAccelerationQueue(params: {
   }
 
   steps.push({
-    id: "bind_live_lark_to_selected_clean_brain",
-    lane: "live_runtime",
+    id: "bind_lark_external_channel_to_selected_clean_brain",
+    lane: "external_channel",
     priority: 25,
     status:
       params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding"
@@ -1994,16 +2055,16 @@ function buildEvolutionAccelerationQueue(params: {
           : "blocked_by_missing_proof",
     executionClass: "idle_only_read_only_audit",
     reason:
-      "Make live Lark consume the single selected clean local-brain adapter only after eval/MLX is idle and live proof can be collected.",
+      "Make Lark, as the owner-agent external communication channel, consume the single selected clean local-brain adapter after eval/MLX is idle and user-visible proof can be collected.",
     guardCondition:
-      "selected clean adapter, no active eval/MLX, zero live-sidecar drift, restarted live runtime, then real Lark visible proof",
+      "selected clean adapter, no active eval/MLX, zero external-channel source drift, restarted Lark channel gateway, then real Lark user-visible proof",
     command: params.liveLarkBrainBinding.statusCommand,
     blockedByDecisionIds:
       params.liveLarkBrainBinding.status === "ready_for_live_runtime_binding"
         ? []
         : params.liveLarkBrainBinding.activeTrainingOrEval
-          ? ["training_already_active", "live_lark_brain_binding_deferred"]
-          : ["live_lark_brain_binding_deferred"],
+          ? ["training_already_active", "lark_external_channel_binding_deferred"]
+          : ["lark_external_channel_binding_deferred"],
     notTouched: commonNotTouched,
   });
 

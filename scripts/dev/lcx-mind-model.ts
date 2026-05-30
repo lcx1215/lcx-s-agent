@@ -191,7 +191,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "maxOperatorStateAgeMs",
       "problemClusters",
     ],
-    boundaryTerms: ["dev_observability_only", "live-visible-fixed"],
+    boundaryTerms: ["dev_observability_only", "user-visible-observed"],
     nextAction:
       "Start from AGENTS, runbook, doctor, training-plan, and local operator state before coding.",
   },
@@ -284,14 +284,26 @@ const MIND_MODEL_LANES: MindModelLane[] = [
   },
   {
     id: "lark_feishu_live_boundary",
-    masterLane: "dev_live_boundary",
-    objective: "Keep dev correctness, live runtime sync, and real Lark/Feishu user proof separate.",
-    headTerms: ["dev-ready", "live-runtime-updated", "live-user-seen"],
+    masterLane: "external_channel_boundary",
+    objective:
+      "Treat Lark/Feishu as owner-agent communication channels, not a second live brain; keep dev correctness, channel binding, and user-visible proof separate.",
+    headTerms: [
+      "dev-ready",
+      "external-channel-bound",
+      "user-visible-observed",
+      "legacy-live-runtime-updated",
+      "legacy-live-user-seen",
+    ],
     workflowTerms: ["lcx-promote-live", "lark-loop-diagnose", "channels status"],
-    proofTerms: ["acceptancePhrase", "liveUserSeen", "freshInboundCount"],
-    boundaryTerms: ["live-visible-fixed", "providerConfigTouched", "liveTouched"],
+    proofTerms: ["acceptancePhrase", "userVisibleObserved", "freshInboundCount"],
+    boundaryTerms: [
+      "user-visible-observed",
+      "legacy-live-visible-fixed",
+      "providerConfigTouched",
+      "liveTouched",
+    ],
     nextAction:
-      "Do not claim live-visible-fixed until migration, probe, and real inbound/reply evidence exist.",
+      "Do not claim user-visible-observed until channel binding, probe, and real inbound/reply evidence exist; live terms are legacy compatibility labels.",
   },
   {
     id: "commercial_acceptance_harness",
@@ -462,7 +474,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     id: "skillopt_runtime_self_use",
     masterLane: "lark_feishu_visible_reply",
     objective:
-      "Let eval-derived SkillOpt SOPs guide the live/local reply planner immediately while keeping model-weight absorption and LiveLark proof separate.",
+      "Let eval-derived SkillOpt SOPs guide the Lark/local reply planner immediately while keeping model-weight absorption and user-visible proof separate.",
     headTerms: ["SkillOpt-lite", "runtime hook", "not Qwen weight absorption"],
     workflowTerms: ["lcx-skillopt-lite", "skillopt-autocue", "get-reply-run", "best_skill.md"],
     proofTerms: [
@@ -473,10 +485,10 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     boundaryTerms: [
       "dev_skillopt_preflight_only",
       "not model-weight absorption",
-      "not live-user-seen proof",
+      "not user-visible-observed proof",
     ],
     nextAction:
-      "Keep SkillOpt as deterministic preflight context until targeted eval, training/promotion truth, live runtime sync, and real Lark proof pass.",
+      "Keep SkillOpt as deterministic preflight context until targeted eval, training/promotion truth, external-channel binding, and real Lark user-visible proof pass.",
   },
   {
     id: "world_class_agent_architecture",
@@ -501,7 +513,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "actionableFailures",
     ],
     boundaryTerms: [
-      "no fake live-user-seen",
+      "no fake user-visible-observed",
       "protectedMemoryTouched",
       "providerConfigTouched",
       "liveTouched",
@@ -632,9 +644,16 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
   {
     id: "dev_live_status_words_stay_separate",
     category: "boundary",
-    objective: "Dev proof, live runtime update, and real Lark user proof must stay separate.",
+    objective:
+      "Dev proof, Lark external-channel binding, and real user-visible proof must stay separate while legacy live terms fade out.",
     termsBySurface: {
-      head: ["dev-ready", "live-runtime-updated", "live-user-seen"],
+      head: [
+        "dev-ready",
+        "external-channel-bound",
+        "user-visible-observed",
+        "legacy-live-runtime-updated",
+        "legacy-live-user-seen",
+      ],
       workflow: ["liveRuntimeUpdated", "liveUserSeen", "liveNeedsPromotion"],
       proof: [
         "acceptancePhrase",
@@ -645,7 +664,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       ],
     },
     nextAction:
-      "Do not claim live-user-seen unless live status has fresh inbound plus a successful visible reply, either fixed acceptance or post-migration natural prompt proof.",
+      "Do not claim user-visible-observed unless Lark channel proof has fresh inbound plus a successful visible reply; legacy live-user-seen is only a compatibility alias.",
   },
   {
     id: "visible_reply_hides_internal_runtime_details",
@@ -728,9 +747,9 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     id: "skillopt_preflight_is_not_absorption_or_live_proof",
     category: "boundary",
     objective:
-      "SkillOpt runtime preflight can improve the next answer immediately, but must not be upgraded into model-weight absorption, adapter promotion, or live-user-seen proof.",
+      "SkillOpt runtime preflight can improve the next answer immediately, but must not be upgraded into model-weight absorption, adapter promotion, or user-visible-observed proof.",
     termsBySurface: {
-      head: ["SkillOpt-lite", "not Qwen weight absorption", "LiveLark proof"],
+      head: ["SkillOpt-lite", "not Qwen weight absorption", "user-visible-observed proof"],
       workflow: [
         "dev_skillopt_preflight_only",
         "resolveSkillOptAutoCue",
@@ -745,7 +764,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       boundary: [
         "dev_skillopt_preflight_only",
         "not model-weight absorption",
-        "not live-user-seen proof",
+        "not user-visible-observed proof",
       ],
     },
     nextAction:
@@ -858,7 +877,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
         "test/lcx-mind-model.test.ts",
       ],
       boundary: [
-        "no fake live-user-seen",
+        "no fake user-visible-observed",
         "protectedMemoryTouched",
         "providerConfigTouched",
         "liveTouched",

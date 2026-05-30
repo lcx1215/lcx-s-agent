@@ -363,6 +363,7 @@ export function buildMonotonicDataLedgerSnapshot(params: {
       dataIncreaseIsNotCapabilityIncrease: true,
       runtimeMonotonicNotEveryTrainingRound: true,
       modelWeightAbsorptionRequiresPromotionProof: true,
+      externalChannelRequiresSeparateUserVisibleProof: true,
       liveLarkRequiresSeparateLiveProof: true,
     },
     materialChangeSignalCount: countNonEmpty([

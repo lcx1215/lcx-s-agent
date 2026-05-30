@@ -160,7 +160,8 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           id: "dev_to_live_lark_waterflow",
           requiredFilters: expect.arrayContaining([
-            "dev_ready_not_live_user_seen",
+            "dev_ready_not_user_visible_observed",
+            "external_channel_probe_required",
             "real_lark_inbound_required",
           ]),
         }),
@@ -176,7 +177,8 @@ describe("LCX flow graph exam", () => {
             "skillopt_best_skill_required",
             "skillopt_context_not_weight_absorption",
             "skillopt_live_proof_required",
-            "dev_ready_not_live_user_seen",
+            "dev_ready_not_user_visible_observed",
+            "external_channel_probe_required",
             "real_lark_inbound_required",
           ]),
         }),

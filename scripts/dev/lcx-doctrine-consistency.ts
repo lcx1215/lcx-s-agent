@@ -345,15 +345,17 @@ async function main() {
 
   checks.push(
     checkTextContains({
-      id: "live_visible_fixed_canonical",
+      id: "user_visible_observed_canonical",
       text: readme,
-      fileLabel: "README live status rules",
+      fileLabel: "README external-channel status rules",
       required: [
-        "live-visible-fixed",
-        "旧文档里的 `live-fixed` 只能当口语简称",
-        "正式状态以 `live-visible-fixed` 为准",
+        "dev-ready",
+        "user-visible-observed",
+        "legacy-live-visible-fixed",
+        "compatibility labels",
       ],
-      summary: "README should use live-visible-fixed as the canonical live proof state",
+      summary:
+        "README should use user-visible-observed as the canonical owner-visible proof state and keep live-visible-fixed as a legacy compatibility label",
     }),
   );
 

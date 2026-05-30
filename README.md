@@ -37,7 +37,7 @@ unless the user explicitly asks for them.
 
 ## Core Boundaries
 
-- `dev-fixed` is not `live-visible-fixed`.
+- `dev-ready` is not `user-visible-observed`.
 - A stored source is not learned capability.
 - A receipt is not model-weight absorption.
 - A `parseRecovered` eval case is not a clean promotion pass.
@@ -100,7 +100,7 @@ node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
 
 `lcx-governance-autopilot.ts` runs that stack as a read-only coordinator. It
 does not start training, rebuild train slices, mutate live sender, edit provider
-config, touch protected memory, or claim live-user-seen.
+config, touch protected memory, or claim user-visible-observed.
 
 ## Local Brain And Promotion
 
@@ -118,18 +118,23 @@ no failed cases, no parse errors, and no parseRecovered cases can become the
 runtime starting point. Later useful capability must flow back through teacher
 data, dataset, eval, and promotion into the next unified clean adapter.
 
-## Lark / Feishu Live Proof
+## Lark / Feishu External Channel Proof
 
-Live proof is intentionally separate from dev proof.
+Lark/Feishu is the external communication channel between the owner and LCX
+Agent, not a second live brain or second runtime truth source. User-visible
+proof is intentionally separate from dev proof.
 
-正式状态以 `live-visible-fixed` 为准。旧文档里的 `live-fixed` 只能当口语简称，
-不能作为验收状态名。
+Forward status names are `dev-ready`, `external-channel-bound`, and
+`user-visible-observed`. Legacy `live-runtime-updated`, `live-user-seen`, and
+`live-visible-fixed` fields may still appear during migration; treat them as
+`legacy-live-runtime-updated`, `legacy-live-user-seen`, and
+`legacy-live-visible-fixed` compatibility labels.
 
-| State                  | Meaning                                                             |
-| ---------------------- | ------------------------------------------------------------------- |
-| `dev-ready`            | Local tests, smokes, replay, or evals passed in the dev repo.       |
-| `live-runtime-updated` | Live sidecar was synced, built, restarted, and probed.              |
-| `live-user-seen`       | A real post-migration Lark inbound and outbound reply was observed. |
+| State                    | Meaning                                                           |
+| ------------------------ | ----------------------------------------------------------------- |
+| `dev-ready`              | Local tests, smokes, replay, or evals passed in the dev repo.     |
+| `external-channel-bound` | Lark/Feishu channel is bound to the selected clean brain.         |
+| `user-visible-observed`  | A real Lark inbound and outbound reply was observed by the owner. |
 
 The approved live brain binding owner is:
 
@@ -221,7 +226,8 @@ learning, finance research discipline, local-brain promotion, and governance
 proof surfaces.
 
 Historical `lobster_*` names, scripts, hook labels, and runtime handles may
-remain as compatibility artifacts until each path is migrated with live proof.
+remain as compatibility artifacts until each path is migrated with external-channel
+proof and fresh user-visible evidence.
 
 ## License
 

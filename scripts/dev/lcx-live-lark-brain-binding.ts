@@ -41,6 +41,35 @@ type BindingDecision = {
   protectedMemoryTouched: false;
 };
 
+type ExternalChannelBindingSummary = {
+  boundary: "dev_external_channel_binding_operator_only";
+  channel: "lark";
+  role: "owner_agent_communication_medium";
+  objective: "lark_receives_current_best_verified_lcx_agent_answer";
+  selectedCleanAdapter?: string;
+  status:
+    | "blocked_missing_training_plan"
+    | "deferred_active_training_or_eval"
+    | "deferred_training_plan_not_ready"
+    | "ready_for_channel_bind_apply"
+    | "channel_runtime_probe_ok_user_visible_pending"
+    | "channel_runtime_probe_failed";
+  action:
+    | "fix_training_plan_owner_first"
+    | "wait_for_current_eval_then_bind_lark_channel_to_selected_clean_adapter"
+    | "wait_for_training_plan_external_channel_ready"
+    | "run_apply_when_operator_allows_lark_channel_restart"
+    | "keep_waiting_for_real_lark_user_visible_proof"
+    | "debug_lark_channel_probe_before_claiming_user_visible";
+  missingProof: string[];
+  userVisibleObserved: false;
+  legacyLiveCompatibility: {
+    legacyScript: "lcx-live-lark-brain-binding";
+    legacyDecisionStatus: BindingDecision["status"];
+    legacyLiveUserSeen: false;
+  };
+};
+
 type CliOptions = {
   json: boolean;
   apply: boolean;
@@ -53,7 +82,8 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts [--json] [--apply]",
       "",
-      "Dev/live operator for binding live Lark to the selected clean local-brain adapter.",
+      "External-channel operator for binding Lark to the selected clean local-brain adapter.",
+      "The historical live script name is legacy compatibility; Lark is the owner-agent communication medium.",
       "Default is read-only. --apply is allowed only when local-brain-training-plan exposes",
       "liveLarkBrainBinding.status=ready_for_live_runtime_binding and no eval/MLX process is active.",
     ].join("\n"),
@@ -223,6 +253,67 @@ export function buildLiveLarkBrainBindingDecision(params: {
   };
 }
 
+function externalProofName(name: string): string {
+  return name
+    .replace("training_plan_live_lark_brain_binding", "training_plan_lark_external_channel_binding")
+    .replace(
+      "live_sidecar_source_drift_zero_after_selected_adapter",
+      "external_channel_source_drift_zero_after_selected_adapter",
+    )
+    .replace(
+      "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
+      "lark_external_channel_gateway_restarted_after_selected_adapter",
+    )
+    .replace(
+      "live_lark_loop_diagnose_ok_after_restart",
+      "lark_external_channel_diagnose_ok_after_restart",
+    )
+    .replace(
+      "fresh_real_lark_inbound_and_outbound_seen",
+      "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+    );
+}
+
+function buildExternalChannelBindingSummary(
+  decision: BindingDecision,
+): ExternalChannelBindingSummary {
+  const statusMap: Record<BindingDecision["status"], ExternalChannelBindingSummary["status"]> = {
+    blocked_missing_training_plan: "blocked_missing_training_plan",
+    deferred_active_training_or_eval: "deferred_active_training_or_eval",
+    deferred_training_plan_not_ready: "deferred_training_plan_not_ready",
+    ready_for_apply: "ready_for_channel_bind_apply",
+    applied_runtime_probe_ok: "channel_runtime_probe_ok_user_visible_pending",
+    applied_runtime_probe_failed: "channel_runtime_probe_failed",
+  };
+  const actionMap: Record<BindingDecision["action"], ExternalChannelBindingSummary["action"]> = {
+    fix_training_plan_owner_first: "fix_training_plan_owner_first",
+    wait_for_current_eval_then_bind_live_to_selected_clean_adapter:
+      "wait_for_current_eval_then_bind_lark_channel_to_selected_clean_adapter",
+    wait_for_training_plan_live_binding_ready: "wait_for_training_plan_external_channel_ready",
+    run_apply_when_operator_allows_live_runtime_restart:
+      "run_apply_when_operator_allows_lark_channel_restart",
+    keep_waiting_for_real_lark_user_seen_proof: "keep_waiting_for_real_lark_user_visible_proof",
+    debug_live_runtime_probe_before_claiming_bound:
+      "debug_lark_channel_probe_before_claiming_user_visible",
+  };
+  return {
+    boundary: "dev_external_channel_binding_operator_only",
+    channel: "lark",
+    role: "owner_agent_communication_medium",
+    objective: "lark_receives_current_best_verified_lcx_agent_answer",
+    selectedCleanAdapter: decision.selectedCleanAdapter,
+    status: statusMap[decision.status],
+    action: actionMap[decision.action],
+    missingProof: decision.missingProof.map(externalProofName),
+    userVisibleObserved: false,
+    legacyLiveCompatibility: {
+      legacyScript: "lcx-live-lark-brain-binding",
+      legacyDecisionStatus: decision.status,
+      legacyLiveUserSeen: false,
+    },
+  };
+}
+
 async function runCommand(
   command: string,
   args: string[],
@@ -349,13 +440,16 @@ async function main(options: CliOptions): Promise<JsonRecord> {
     ok: !["blocked_missing_training_plan", "applied_runtime_probe_failed"].includes(
       decision.status,
     ),
-    boundary: "dev_live_lark_brain_binding_operator_only",
+    boundary: "dev_external_channel_binding_operator_only",
+    legacyBoundary: "dev_live_lark_brain_binding_operator_only",
+    conceptStatus: "legacy_live_terms_external_channel_owner_current",
     startedAt,
     generatedAt: new Date().toISOString(),
     cwd: REPO_ROOT,
     sidecarRoot: options.sidecarRoot,
     apply: options.apply,
     decision,
+    externalChannelBinding: buildExternalChannelBindingSummary(decision),
     trainingPlanBoundary: trainingPlan?.boundary,
     liveLarkBrainBinding: recordValue(trainingPlan?.liveLarkBrainBinding),
     latestCandidateEval: trainingPlan?.latestCandidateEval,

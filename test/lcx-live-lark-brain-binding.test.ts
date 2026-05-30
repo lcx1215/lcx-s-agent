@@ -8,7 +8,7 @@ describe("lcx-live-lark-brain-binding", () => {
     liveLarkBrainBinding: {
       boundary: "dev_live_lark_brain_binding_plan_only",
       status: "ready_for_live_runtime_binding",
-      action: "bind_live_runtime_to_selected_clean_adapter_and_collect_lark_visible_proof",
+      action: "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof",
       selectedCleanAdapter: "/tmp/adapter-clean-r4",
       missingProof: [
         "live_sidecar_source_drift_zero_after_selected_adapter",

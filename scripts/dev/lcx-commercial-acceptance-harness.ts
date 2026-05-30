@@ -287,27 +287,53 @@ function liveStatusGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
     return ownerUnavailableGate("lcx-promote-live", snapshot);
   }
   const operatorStatus = recordValue(snapshot.payload.operatorStatus);
+  const externalChannelStatus = recordValue(snapshot.payload.externalChannelStatus);
   const visibleProof = recordValue(snapshot.payload.visibleProof);
   const devLiveDrift = recordValue(snapshot.payload.devLiveDrift);
-  const liveRuntimeUpdated = booleanValue(operatorStatus?.liveRuntimeUpdated) === true;
-  const liveUserSeen = booleanValue(operatorStatus?.liveUserSeen) === true;
-  if (!liveRuntimeUpdated) {
+  const legacyLiveRuntimeUpdated = booleanValue(operatorStatus?.liveRuntimeUpdated) === true;
+  const legacyLiveUserSeen = booleanValue(operatorStatus?.liveUserSeen) === true;
+  const externalChannelBound =
+    booleanValue(externalChannelStatus?.externalChannelBound) ?? legacyLiveRuntimeUpdated;
+  const userVisibleObserved =
+    booleanValue(externalChannelStatus?.userVisibleObserved) ?? legacyLiveUserSeen;
+  const externalChannelEvidence = {
+    channel: "lark",
+    role: "owner_agent_communication_medium",
+    desiredPath: "selected_clean_brain_to_lark_external_channel_to_user_visible_observed",
+    externalChannelBound,
+    userVisibleObserved,
+    legacyGateIds: {
+      externalChannelNotBound: "live_runtime_not_updated",
+      userVisibleObserved: "live_user_seen",
+    },
+    legacyLiveRuntimeUpdated,
+    legacyLiveUserSeen,
+  };
+  if (!externalChannelBound) {
     return {
-      id: "live_runtime_not_updated",
+      id: "external_channel_not_bound",
       status: "blocked",
       severity: "P1",
       owner: "scripts/dev/lcx-promote-live.ts",
-      evidence: { operatorStatus, devLiveDrift },
-      nextAction: "Run dev verification and live migration before claiming live runtime parity.",
+      evidence: {
+        externalChannel: externalChannelEvidence,
+        externalChannelStatus,
+        operatorStatus,
+        devLiveDrift,
+      },
+      nextAction:
+        "Bind the selected clean brain to the Lark external channel before claiming user-visible parity; legacy live-runtime wording is compatibility only.",
     };
   }
-  if (!liveUserSeen) {
+  if (!userVisibleObserved) {
     return {
       id: "post_migration_lark_canary_missing",
       status: "blocked",
       severity: "P2",
       owner: "scripts/dev/lcx-promote-live.ts",
       evidence: {
+        externalChannel: externalChannelEvidence,
+        externalChannelStatus,
         operatorStatus,
         liveVisibleStatus: visibleProof?.status,
         freshInboundCount: visibleProof?.freshInboundCount,
@@ -315,15 +341,17 @@ function liveStatusGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
         acceptanceMatched: visibleProof?.acceptanceMatched,
       },
       nextAction:
-        "Send one real post-migration Lark natural learning canary, then rerun live status.",
+        "Send one real Lark natural canary through the external channel, then verify fresh inbound and outbound user-visible evidence.",
     };
   }
   return {
-    id: "live_user_seen",
+    id: "user_visible_observed",
     status: "passed",
     severity: "info",
     owner: "scripts/dev/lcx-promote-live.ts",
     evidence: {
+      externalChannel: externalChannelEvidence,
+      externalChannelStatus,
       operatorStatus,
       liveVisibleStatus: visibleProof?.status,
       freshInboundCount: visibleProof?.freshInboundCount,
@@ -331,7 +359,7 @@ function liveStatusGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
       acceptanceMatched: visibleProof?.acceptanceMatched,
     },
     nextAction:
-      "Keep dev-ready, live-runtime-updated, and live-user-seen as separate status words.",
+      "Keep dev-ready, external-channel-bound, and user-visible-observed separate; legacy live terms remain compatibility labels.",
   };
 }
 
@@ -467,15 +495,15 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     canaryPlan: [
       {
         id: "fixed_acceptance_phrase",
-        purpose: "prove exact live channel loop after migration",
+        purpose: "prove exact Lark external-channel loop after migration",
         owner: "scripts/dev/lcx-promote-live.ts",
-        requiredFor: "live_runtime_acceptance",
+        requiredFor: "external_channel_bound",
       },
       {
         id: "natural_learning_prompt",
         purpose: "prove real product learning UX without weird acceptance text",
         owner: "scripts/dev/lcx-promote-live.ts + feishu-reply-flow",
-        requiredFor: "live_user_seen",
+        requiredFor: "user_visible_observed",
       },
       {
         id: "finance_research_prompt",

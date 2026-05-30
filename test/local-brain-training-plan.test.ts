@@ -808,11 +808,19 @@ describe("local-brain-training-plan", () => {
 
     expect(plan.liveLarkBrainBinding).toMatchObject({
       boundary: "dev_live_lark_brain_binding_plan_only",
+      conceptStatus: "legacy_live_terms_external_channel_owner_current",
+      externalChannel: {
+        boundary: "dev_external_channel_binding_plan_only",
+        channel: "lark",
+        role: "owner_agent_communication_medium",
+        objective: "lark_receives_current_best_verified_lcx_agent_answer",
+      },
       selectedCleanAdapter: "/tmp/adapter-clean-r2",
       activeTrainingOrEval: false,
       guardUsesSelectedCleanAdapter: true,
       status: "ready_for_live_runtime_binding",
-      action: "bind_live_runtime_to_selected_clean_adapter_and_collect_lark_visible_proof",
+      action: "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof",
+      externalChannelPolicy: "lark_channel_may_only_consume_selected_clean_adapter",
       liveTouched: false,
       providerConfigTouched: false,
       protectedMemoryTouched: false,
@@ -823,11 +831,17 @@ describe("local-brain-training-plan", () => {
         "fresh_real_lark_inbound_and_outbound_seen",
       ]),
     );
+    expect(plan.liveLarkBrainBinding.externalChannelMissingProof).toEqual(
+      expect.arrayContaining([
+        "external_channel_source_drift_zero_after_selected_adapter",
+        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+      ]),
+    );
     expect(plan.decisions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "live_lark_brain_binding_ready",
-          lane: "live_runtime",
+          id: "lark_external_channel_binding_ready",
+          lane: "external_channel",
           nextCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
         }),
       ]),
@@ -835,8 +849,8 @@ describe("local-brain-training-plan", () => {
     expect(plan.evolutionAccelerationQueue.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "bind_live_lark_to_selected_clean_brain",
-          lane: "live_runtime",
+          id: "bind_lark_external_channel_to_selected_clean_brain",
+          lane: "external_channel",
           status: "ready_when_idle",
           command: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
         }),

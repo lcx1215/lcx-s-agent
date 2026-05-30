@@ -139,6 +139,22 @@ type OperatorStatus = {
     | "no_action_current_dev_seen_in_live";
 };
 
+type ExternalChannelStatus = {
+  statusModel: "dev-ready -> external-channel-bound -> user-visible-observed";
+  channel: "lark";
+  role: "owner_agent_communication_medium";
+  objective: "lark_receives_current_best_verified_lcx_agent_answer";
+  channelCommitMatched: boolean;
+  channelRestartCommandStatus: StepStatus | "not_run";
+  channelProbePassed: boolean;
+  externalChannelBound: boolean;
+  userVisibleObserved: boolean;
+  legacyLiveRuntimeUpdated: boolean;
+  legacyLiveUserSeen: boolean;
+  nextHumanStep: OperatorStatus["nextHumanStep"];
+  boundary: "dev_external_channel_status_only";
+};
+
 type PromotionReceipt = {
   schemaVersion: 1;
   generatedAt: string;
@@ -834,14 +850,14 @@ function buildReceipt(params: {
       )}`,
       `Then run: ${makePostMigrationProbeCommand(params.generatedAt)}`,
       `Status/probe command: ${makeReplyFlowProbeCommand()}`,
-      "Only mark live-visible-fixed after the visible reply matches the acceptance phrase or the requested semantic acceptance condition.",
+      "Only mark user-visible-observed after fresh real Lark/Feishu inbound and outbound evidence; legacy live-visible-fixed wording is compatibility only.",
     ],
     boundary: [
-      "Promotes a git-tracked source snapshot into the live sidecar runtime.",
+      "Binds a git-tracked dev snapshot into the Lark external communication channel sidecar.",
       "If the source working tree is dirty, defaults to a temporary clean HEAD snapshot instead of copying dirty WIP.",
       "Excludes protected memory, dist, apps, node_modules, and live-handoff receipts from source copying.",
       "Does not modify provider config, live sender credentials, protected memory, or trading/execution authority.",
-      "Probe-ok is not live-visible-fixed; a fresh real Lark/Feishu inbound and reply are still required.",
+      "Probe-ok is only external-channel-bound; fresh real Lark/Feishu inbound and reply are still required for user-visible-observed.",
     ],
   };
 }
@@ -883,9 +899,23 @@ function renderStatus(params: {
   state: PromotionReceipt | null;
   devLiveDrift: DevLiveDriftStatus;
   operatorStatus: OperatorStatus;
+  externalChannelStatus: ExternalChannelStatus;
   probe: CommandResult | null;
   visibleProof: LiveVisibleProof | null;
 }): string {
+  const externalChannelLines = [
+    `externalChannelStatusModel=${params.externalChannelStatus.statusModel}`,
+    `externalChannel=${params.externalChannelStatus.channel}`,
+    `externalChannelRole=${params.externalChannelStatus.role}`,
+    `externalChannelObjective=${params.externalChannelStatus.objective}`,
+    `externalChannelCommitMatched=${params.externalChannelStatus.channelCommitMatched}`,
+    `externalChannelRestartCommandStatus=${params.externalChannelStatus.channelRestartCommandStatus}`,
+    `externalChannelProbePassed=${params.externalChannelStatus.channelProbePassed}`,
+    `externalChannelBound=${params.externalChannelStatus.externalChannelBound}`,
+    `userVisibleObserved=${params.externalChannelStatus.userVisibleObserved}`,
+    `legacyLiveRuntimeUpdated=${params.externalChannelStatus.legacyLiveRuntimeUpdated}`,
+    `legacyLiveUserSeen=${params.externalChannelStatus.legacyLiveUserSeen}`,
+  ];
   const operatorLines = [
     `statusModel=${params.operatorStatus.statusModel}`,
     `devReady=${params.operatorStatus.devReady}`,
@@ -913,6 +943,7 @@ function renderStatus(params: {
       "livePromotionStatus=missing",
       `targetRoot=${params.args.targetRoot}`,
       `statePath=${path.join(params.args.targetRoot, PROMOTION_STATE_PATH)}`,
+      ...externalChannelLines,
       ...operatorLines,
       ...driftLines,
     ].join("\n")}\n`;
@@ -920,6 +951,7 @@ function renderStatus(params: {
   const lines = [
     `livePromotionStatus=${params.state.status}`,
     `liveStatus=${params.state.liveStatus}`,
+    ...externalChannelLines,
     ...operatorLines,
     `sourceCommit=${params.state.git.commit}`,
     `sourceSnapshot=${params.state.sourceSnapshot?.mode ?? "unknown"}`,
@@ -1038,6 +1070,26 @@ export function resolveOperatorStatus(params: {
   };
 }
 
+export function resolveExternalChannelStatus(
+  operatorStatus: OperatorStatus,
+): ExternalChannelStatus {
+  return {
+    statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+    channel: "lark",
+    role: "owner_agent_communication_medium",
+    objective: "lark_receives_current_best_verified_lcx_agent_answer",
+    channelCommitMatched: operatorStatus.liveRuntimeCommitMatched,
+    channelRestartCommandStatus: operatorStatus.liveRuntimeRestartCommandStatus,
+    channelProbePassed: operatorStatus.liveRuntimeProbePassed,
+    externalChannelBound: operatorStatus.liveRuntimeUpdated,
+    userVisibleObserved: operatorStatus.liveUserSeen,
+    legacyLiveRuntimeUpdated: operatorStatus.liveRuntimeUpdated,
+    legacyLiveUserSeen: operatorStatus.liveUserSeen,
+    nextHumanStep: operatorStatus.nextHumanStep,
+    boundary: "dev_external_channel_status_only",
+  };
+}
+
 export function readDevLiveDrift(params: {
   sourceRoot: string;
   state: PromotionReceipt | null;
@@ -1112,12 +1164,14 @@ export function main(argv = process.argv.slice(2)): number {
       probe,
       visibleProof,
     });
+    const externalChannelStatus = resolveExternalChannelStatus(operatorStatus);
     process.stdout.write(
       initialArgs.json
         ? `${JSON.stringify(
             {
               state: summarizePromotionStateForStatus(state),
               operatorStatus,
+              externalChannelStatus,
               devLiveDrift,
               probe: summarizeCommandStatus(probe),
               visibleProof,
@@ -1130,6 +1184,7 @@ export function main(argv = process.argv.slice(2)): number {
             state,
             devLiveDrift,
             operatorStatus,
+            externalChannelStatus,
             probe,
             visibleProof,
           }),

@@ -43,9 +43,9 @@ node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 ```
 
 It consumes existing owners for answer quality, problem clusters, architecture,
-live status, training overlap, and provider council evidence. It must not
+external-channel status, training overlap, and provider council evidence. It must not
 replace those owners, send Lark messages, start training, change provider
-config, touch protected memory, or claim `live-user-seen` without real
+config, touch protected memory, or claim `user-visible-observed` without real
 post-migration Lark evidence.
 
 ## Governance Stack Autopilot
@@ -173,7 +173,7 @@ The six prioritized blacktech mechanisms are SkillOpt v2 lifecycle,
 native-runtime long-task battery, unified trajectory schema, local-first memory
 provenance, agent trace/side-effect observability, and secure tool/skill
 permissioning. Treat them as architecture intake only until their owner proof
-chain passes. Do not upgrade them into model-weight absorption, LiveLark proof,
+chain passes. Do not upgrade them into model-weight absorption, user-visible proof,
 provider config, protected-memory write, live sender, wallet, order,
 desktop-control, or training authority by naming the mechanism.
 Each mechanism must also carry an automatic workflow contract in
@@ -204,16 +204,16 @@ downranked. Strategy results without fees, slippage, and sample-out proof become
 failure logs, not alpha. They must never become trading execution,
 wallet/private-key, order-routing, copy-trading, sizing, forecast authority, or
 latency-arbitrage authority.
-The live/local reply path should not rely only on weak-model memory for common
+The Lark/local reply path should not rely only on weak-model memory for common
 LCX skills: deterministic skill preflight may cue one matching installed skill
 before the model answers, while explicit `/skill` commands still take priority.
 SkillOpt-lite may also cue eval-derived SOP skills from
 `/Users/liuchengxu/.openclaw/workspace/memory/skillopt-lite/` before the answer
 planner runs. Treat this as immediate context injection only: it can guide the
 next agent right away, but it is not Qwen weight absorption, selected-clean
-adapter promotion, or LiveLark proof until the SkillOpt proof chain passes
+adapter promotion, or user-visible proof until the SkillOpt proof chain passes
 targeted eval, regression eval, train-slice/training evidence, clean promotion
-truth, live runtime binding, and fresh real Lark inbound/outbound evidence.
+truth, external-channel binding, and fresh real Lark inbound/outbound evidence.
 The actual runtime hook is the normal reply path in
 `src/auto-reply/reply/get-reply-run.ts`, which reads matched SkillOpt
 `best_skill.md` files through `src/auto-reply/reply/skillopt-autocue.ts`. Keep
@@ -289,6 +289,13 @@ Keep this architecture boring and auditable:
   not make the old live repo authoritative. If a temporary live service must
   stay online during migration, treat it as a deployment artifact with a short
   read-only rollback window, not as a development or truth source.
+- Lark/Feishu is the owner-agent external communication channel, not a second
+  live brain or second runtime truth source. The forward status words are
+  `dev-ready`, `external-channel-bound`, and `user-visible-observed`.
+  Historical `live-runtime-updated`, `live-user-seen`, and
+  `live-visible-fixed` wording is now legacy compatibility only; when old
+  owners still emit those fields, read them as `legacy-live-runtime-updated`,
+  `legacy-live-user-seen`, and `legacy-live-visible-fixed`.
 - The old live repo and live sidecar drift must be retired, not maintained as a
   parallel lane. A controlled one-time sync is allowed only to keep service
   alive during cutover; it must not restore the live repo's status.
@@ -502,8 +509,8 @@ owner and the other entrypoints must consume or reference that owner:
   runtime process truth.
 - System doctor owns one operator health report, not separate business logic for
   every lane.
-- Lark live proof owns live-user-seen status; dev tests and channel probes must
-  not upgrade themselves into that state.
+- Lark external-channel proof owns `user-visible-observed`; dev tests and
+  channel probes must not upgrade themselves into that state.
 
 Commercial quality means clear product surfaces, one factual owner per volatile
 state family, no duplicate hidden diagnostics, no false alarms during expected
@@ -860,15 +867,23 @@ diagnostic to run.
 - Default to coherent bounded batches rather than tiny artificial steps. When a bug implies a shared contract failure, continue through related failure families end to end instead of stopping after the first small patch.
 - Do not perform unrelated cleanup or opportunistic refactors. Cleanup, refactor, module extraction, or interface reshaping is in scope when it directly improves the active system goal, removes repeated leakage, reduces verification risk, or prevents the failure family from reappearing through sibling paths.
 - Treat verification as mandatory: run targeted tests, lint touched files, and name a fixed Feishu/live acceptance phrase for later real verification.
-- Do not confuse `dev-fixed` with `live-visible-fixed`.
-- A change is only `live-visible-fixed` after explicit migration, build, restart, probe, and real-entry verification.
+- Do not confuse `dev-ready` with `user-visible-observed`.
+- A change is only `user-visible-observed` after external-channel binding,
+  build/restart/probe, and real-entry verification.
+- SkillOpt, eval preflight, channel probe, synthetic replay, and training
+  receipts are not user-visible-observed proof. Keep this as explicit
+  user-visible-observed proof language so future agents do not upgrade a dev
+  helper into the owner-visible channel result.
+- No fake user-visible-observed: only fresh real Lark inbound plus a successful
+  visible reply may set that state.
 - For human-facing status, prefer the simpler three-layer wording:
   `dev-ready` means dev tests/smoke/synthetic or replay Lark checks passed;
-  `live-runtime-updated` means the live sidecar has been migrated to the verified
-  dev git snapshot and restarted/probed; `live-user-seen` means a real
+  `external-channel-bound` means the Lark channel sidecar has been migrated to
+  the verified dev git snapshot and restarted/probed; `user-visible-observed`
+  means a real
   Lark/Feishu user entry produced the expected visible reply. Dev correctness
-  must not depend on the real live Lark bot, because the real bot is attached to
-  the live sidecar.
+  must not depend on the real Lark bot, because the external channel is a
+  communication medium, not a second brain.
 - Keep degraded / partial / rescue states honest; never present degraded behavior as full success.
 
 ## Long-Running Task Autonomy

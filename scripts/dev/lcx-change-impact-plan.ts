@@ -58,6 +58,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-context-recovery-exam\.ts$/u,
       /^scripts\/dev\/lcx-agent-exam\.ts$/u,
       /^scripts\/dev\/lcx-commercial-acceptance-harness\.ts$/u,
+      /^scripts\/dev\/lcx-doctrine-consistency\.ts$/u,
       /^scripts\/dev\/lcx-external-agent-upgrade-radar\.ts$/u,
       /^scripts\/dev\/lcx-flow-graph\.ts$/u,
       /^scripts\/dev\/lcx-github-cli-capability-inventory\.ts$/u,
