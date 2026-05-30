@@ -256,6 +256,63 @@ mind model and flow graph for architecture coverage, training plan for volatile
 Qwen/MiniMax/MLX truth, live binding or live probe for LiveLark truth, and module
 learning owners for stored/learned capability boundaries.
 
+## Cross-Border Cloud Control Doctrine
+
+The v1 cross-border operating model is a cloud control station, not an API
+relay, model-access bypass, or second live truth source. The user may send
+commands from China by phone, Lark, SSH, or a small control panel, but the
+actual Codex/agent execution, canonical repo, local state, secrets, provider
+access, receipts, and audit logs must live on the supported-region control
+machine.
+
+The preferred v1 topology is:
+
+```text
+China phone / Lark / SSH command
+  -> Tailscale or Cloudflare Access identity gate
+  -> US VPS: lcx-cloud-control
+  -> /srv/lcx/lcx-s-openclaw as the only canonical dev repo
+  -> ~/.openclaw as the only canonical runtime state
+  -> Codex / agent runner executes on the US machine
+  -> receipts / outbox / owner summaries return to Lark
+```
+
+Keep this architecture boring and auditable:
+
+- `/srv/lcx/lcx-s-openclaw` is the future canonical repo path after migration.
+  The current local checkout may prepare and verify the move, but future cloud
+  runtime truth should converge on one dev repo, not separate dev/live repos.
+- `~/.openclaw` is the canonical runtime state root. Preserve receipts, logs,
+  queues, selected-clean adapter proof, operator snapshots, and migration
+  manifests there. Do not scatter new state roots across cloud machines.
+- Lark connects to the dev runtime produced from the canonical repo. Lark does
+  not make the old live repo authoritative. If a temporary live service must
+  stay online during migration, treat it as a deployment artifact with a short
+  read-only rollback window, not as a development or truth source.
+- The old live repo and live sidecar drift must be retired, not maintained as a
+  parallel lane. A controlled one-time sync is allowed only to keep service
+  alive during cutover; it must not restore the live repo's status.
+- China cloud may be used only for mirror backup, static status/dashboard
+  hosting, or domestic model/data assistance. It must not become the main
+  OpenAI/Codex execution point, the canonical repo, the canonical `~/.openclaw`
+  state, the live sender authority, or a second source of truth.
+- Use Tailscale SSH or Cloudflare Access/Tunnel as an identity gate. Do not
+  expose SSH, dashboards, agent ports, or command runners directly to the
+  public internet.
+- Use a command queue, not manual remote-desktop clicking, as the durable phone
+  control surface: `inbox` for requested work, `running` for claimed tasks,
+  `outbox` for user-visible replies, and `receipts` for audit evidence.
+- Secrets, Lark URLs, provider keys, SSH keys, and tokens must not be copied
+  into git, migration manifests, Lark messages, screenshots, or public logs.
+  Preflight may report that a secret exists, but output must redact values.
+- Do not design or describe this as a proxy for unsupported-region model access.
+  The compliant pattern is that the supported-region cloud workstation performs
+  the work and returns receipts/results to the user.
+- `lcx-cloud-control` should own migration manifest, preflight, and verify
+  checks for Docker, domain/DNS, Lark URL presence with redaction, Tailscale,
+  tmux/git/node/pnpm/tsx, disk space, SSH, repo migration, `.openclaw`
+  migration, `.codex` skills/automations, live retirement, and receipt replay.
+
 ## Context-Limited Continuity Doctrine
 
 Codex context is finite. Do not rely on a long chat transcript to preserve the
