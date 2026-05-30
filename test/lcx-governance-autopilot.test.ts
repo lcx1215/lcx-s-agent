@@ -462,6 +462,7 @@ describe("LCX governance autopilot", () => {
     expect(recovery).toContain("scripts/dev/lcx-governance-autopilot.ts --json");
     expect(recovery).toContain("scripts/dev/lcx-universe-index.ts --json");
     expect(recovery).toContain("scripts/dev/lcx-external-agent-upgrade-radar.ts --json");
+    expect(recovery).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
     expect(flowGraph).toContain("governance_autopilot");
     expect(flowGraph).toContain("universe_index");
     expect(flowGraph).toContain("lcx-governance-autopilot-latest");
@@ -469,6 +470,7 @@ describe("LCX governance autopilot", () => {
     expect(mindModel).toContain("universe_index_total_coverage");
     expect(mindModel).toContain("autoTriggeredOwnerCommands");
     expect(doctor).toContain("scripts/dev/lcx-governance-autopilot.ts");
+    expect(doctor).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
     expect(localOperator).toContain("governance_file");
     expect(localOperator).toContain("governanceAutopilot");
     expect(localOperator).toContain("NODE_GOVERNANCE_FILE");

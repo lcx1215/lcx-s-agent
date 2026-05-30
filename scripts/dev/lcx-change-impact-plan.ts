@@ -64,6 +64,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-github-cli-capability-inventory\.ts$/u,
       /^scripts\/dev\/lcx-governance-autopilot\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
+      /^scripts\/dev\/lcx-live-fadeout-audit\.ts$/u,
       /^scripts\/dev\/lcx-live-lark-brain-binding\.ts$/u,
       /^scripts\/dev\/lcx-mind-model\.ts$/u,
       /^scripts\/dev\/lcx-problem-cluster-radar\.ts$/u,
@@ -77,6 +78,7 @@ const PATH_RULES: PathRule[] = [
       /^test\/lcx-external-agent-upgrade-radar\.test\.ts$/u,
       /^test\/lcx-github-cli-capability-inventory\.test\.ts$/u,
       /^test\/lcx-governance-autopilot\.test\.ts$/u,
+      /^test\/lcx-live-fadeout-audit\.test\.ts$/u,
       /^test\/lcx-live-lark-brain-binding\.test\.ts$/u,
       /^test\/lcx-problem-cluster-radar\.test\.ts$/u,
       /^test\/lcx-provider-council-acceleration\.test\.ts$/u,
@@ -88,7 +90,7 @@ const PATH_RULES: PathRule[] = [
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-      "pnpm vitest run test/lcx-change-impact-plan.test.ts test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/lcx-agent-exam.test.ts test/lcx-problem-cluster-radar.test.ts test/lcx-commercial-acceptance-harness.test.ts test/lcx-governance-autopilot.test.ts test/lcx-external-agent-upgrade-radar.test.ts test/lcx-skillopt-lite.test.ts test/lcx-provider-council-acceleration.test.ts test/lcx-ts-python-boundary.test.ts test/lcx-universe-index.test.ts",
+      "pnpm vitest run test/lcx-change-impact-plan.test.ts test/lcx-flow-graph.test.ts test/lcx-mind-model.test.ts test/lcx-context-recovery-exam.test.ts test/lcx-agent-exam.test.ts test/lcx-problem-cluster-radar.test.ts test/lcx-commercial-acceptance-harness.test.ts test/lcx-governance-autopilot.test.ts test/lcx-external-agent-upgrade-radar.test.ts test/lcx-live-fadeout-audit.test.ts test/lcx-skillopt-lite.test.ts test/lcx-provider-council-acceleration.test.ts test/lcx-ts-python-boundary.test.ts test/lcx-universe-index.test.ts",
     ],
     deferredCommands: ["pnpm vitest run test/local-brain-distill-eval.test.ts"],
     safetyNotes: [

@@ -92,6 +92,7 @@ describe("LCX compressed context recovery exam", () => {
         "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
         "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
         "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
+        "node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json",
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
         "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
       ]),

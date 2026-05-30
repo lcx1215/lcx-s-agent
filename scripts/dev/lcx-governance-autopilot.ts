@@ -41,6 +41,7 @@ type OwnerId =
   | "changeImpact"
   | "universeIndex"
   | "externalAgentUpgrade"
+  | "liveFadeoutAudit"
   | "trainingPlan"
   | "skillOptLite"
   | "selfRepairHands"
@@ -154,6 +155,12 @@ const OWNER_COMMANDS: OwnerCommand[] = [
   {
     id: "externalAgentUpgrade",
     script: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+    args: ["--json"],
+    required: true,
+  },
+  {
+    id: "liveFadeoutAudit",
+    script: "scripts/dev/lcx-live-fadeout-audit.ts",
     args: ["--json"],
     required: true,
   },
@@ -566,6 +573,28 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       blockedCaseIds: payload.blockedCaseIds,
       outputsFeed: payload.outputsFeed,
       nextSafeCommand: payload.nextSafeCommand,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+
+  if (id === "liveFadeoutAudit") {
+    const summary = recordValue(payload.summary);
+    const inventory = recordValue(payload.liveReferenceInventory);
+    const inventoryCounts = recordValue(inventory?.counts);
+    return {
+      statusModel: payload.statusModel,
+      summary,
+      liveReferenceMatches: summary?.liveReferenceMatches,
+      liveReferenceNeedsReview: summary?.liveReferenceNeedsReview,
+      needsReviewSamples: inventory?.needsReviewSamples,
+      canonicalOwnerReferences: inventoryCounts?.canonical_external_channel_owner,
+      legacyCompatibilityReferences: inventoryCounts?.legacy_live_compatibility,
+      openClawLiveTestReferences: inventoryCounts?.openclaw_live_test_or_platform_feature,
+      historicalOpsReferences: inventoryCounts?.historical_ops_receipt,
+      actionableFailures: payload.actionableFailures,
+      advisoryWarnings: payload.advisoryWarnings,
       liveTouched: payload.liveTouched,
       providerConfigTouched: payload.providerConfigTouched,
       protectedMemoryTouched: payload.protectedMemoryTouched,
@@ -1195,6 +1224,8 @@ const receipt = {
       byOwner.externalAgentUpgrade?.compact.blacktechAutopilotRoutedCount,
     externalUpgradePerfectIntegrationClaim:
       byOwner.externalAgentUpgrade?.compact.perfectIntegrationClaim,
+    liveFadeoutStatusModel: byOwner.liveFadeoutAudit?.compact.statusModel,
+    liveFadeoutNeedsReview: byOwner.liveFadeoutAudit?.compact.liveReferenceNeedsReview,
     externalChannelBindingStatus:
       byOwner.liveLarkBrainBinding?.compact.externalChannelStatus ??
       byOwner.liveLarkBrainBinding?.compact.status,

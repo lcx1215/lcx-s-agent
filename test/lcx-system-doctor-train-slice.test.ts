@@ -118,7 +118,9 @@ describe("LCX system doctor train slice observability", () => {
     expect(source).toContain("async function moduleLearningPipelineReviewCheck");
     expect(source).toContain('name: "module-learning-pipeline-review"');
     expect(source).toContain('name: "problem-cluster-radar"');
+    expect(source).toContain('name: "live-fadeout-audit"');
     expect(source).toContain("scripts/dev/lcx-problem-cluster-radar.ts");
+    expect(source).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
     expect(source).toContain("scripts/dev/local-brain-promotion-audit.ts");
     expect(source).toContain("scripts/dev/lcx-agent-exam.ts");
     expect(source).toContain("scripts/dev/module-learning-pipeline-review.ts");

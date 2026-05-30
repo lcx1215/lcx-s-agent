@@ -1,0 +1,75 @@
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+import { describe, expect, it } from "vitest";
+
+const execFileAsync = promisify(execFile);
+const repoRoot = path.resolve(import.meta.dirname, "..");
+
+describe("LCX live fadeout audit", () => {
+  it("passes and exposes the canonical external-channel status model", async () => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/lcx-live-fadeout-audit.ts", "--json"],
+      {
+        cwd: repoRoot,
+        maxBuffer: 32 * 1024 * 1024,
+      },
+    );
+    const payload = JSON.parse(stdout) as {
+      ok: boolean;
+      boundary: string;
+      statusModel: string;
+      summary: { failed: number; total: number; liveReferenceNeedsReview: number };
+      checks: Array<{ id: string; ok: boolean }>;
+      liveReferenceInventory: { totalMatches: number };
+    };
+
+    expect(payload.ok).toBe(true);
+    expect(payload.boundary).toBe("dev_live_fadeout_audit_only");
+    expect(payload.statusModel).toBe(
+      "dev-ready -> external-channel-bound -> user-visible-observed",
+    );
+    expect(payload.summary.failed).toBe(0);
+    expect(payload.summary.total).toBeGreaterThanOrEqual(10);
+    expect(payload.liveReferenceInventory.totalMatches).toBeGreaterThan(0);
+    expect(payload.checks.map((check) => check.id)).toEqual(
+      expect.arrayContaining([
+        "binding_owner_is_canonical",
+        "commercial_acceptance_prefers_binding_owner",
+        "package_scripts_prefer_external_channel_alias",
+        "doctor_runs_live_fadeout_audit",
+        "governance_autopilot_runs_live_fadeout_audit",
+        "context_recovery_exposes_live_fadeout_audit",
+      ]),
+    );
+  });
+
+  it("is wired into doctor, governance autopilot, context recovery, package aliases, and docs", async () => {
+    const [doctor, governance, recovery, packageJsonText, readme, agents, runbook] =
+      await Promise.all([
+        fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "scripts/dev/lcx-governance-autopilot.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "scripts/dev/lcx-context-recovery-exam.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "package.json"), "utf8"),
+        fs.readFile(path.join(repoRoot, "README.md"), "utf8"),
+        fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
+        fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
+      ]);
+    const packageJson = JSON.parse(packageJsonText) as { scripts: Record<string, string> };
+
+    expect(doctor).toContain('name: "live-fadeout-audit"');
+    expect(doctor).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
+    expect(governance).toContain('"liveFadeoutAudit"');
+    expect(governance).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
+    expect(recovery).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
+    expect(packageJson.scripts["lcx:external-channel"]).toBe(
+      "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json",
+    );
+    expect(packageJson.scripts["lcx:live"]).toBe("pnpm lcx:external-channel");
+    expect(readme).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
+    expect(agents).toContain("System-wide live fadeout truth belongs");
+    expect(runbook).toContain("whole-system fadeout audit");
+  });
+});

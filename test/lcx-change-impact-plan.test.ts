@@ -211,6 +211,33 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
+  it("classifies the live fadeout audit as architecture supervision", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "scripts/dev/lcx-live-fadeout-audit.ts",
+      "test/lcx-live-fadeout-audit.test.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook", "test_surface"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_stack",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: [
+            "scripts/dev/lcx-live-fadeout-audit.ts",
+            "test/lcx-live-fadeout-audit.test.ts",
+          ],
+          commands: expect.arrayContaining([
+            expect.stringContaining("test/lcx-live-fadeout-audit.test.ts"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("treats --files as a batch file flag and routes live promotion work to the dev/live boundary", async () => {
     const payload = await runPlanArgs([
       "--files",

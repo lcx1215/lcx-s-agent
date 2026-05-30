@@ -41,6 +41,7 @@ node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
 node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
+node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
 node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
@@ -127,8 +128,9 @@ node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
 ```
 
 It runs problem radar, commercial acceptance, change impact, universe index,
-external agent/blacktech upgrade radar, training plan, Lark external-channel
-binding, mind model, flow graph, head-tail, and context recovery; writes
+external agent/blacktech upgrade radar, live fadeout audit, training plan, Lark
+external-channel binding, mind model, flow graph, head-tail, and context
+recovery; writes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json`
 and refreshes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json`
@@ -300,6 +302,17 @@ blueprint lane.
    This binding owner is canonical for `external-channel-bound`.
    `lcx-promote-live.ts` remains a legacy promotion/drift compatibility surface;
    it must not override a clean `lcx-live-lark-brain-binding.ts` apply result.
+
+   The whole-system fadeout audit is:
+
+   ```bash
+   node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
+   ```
+
+   It is read-only. It checks whether every main LCX owner and package alias
+   points to external-channel/user-visible proof first, while classifying
+   upstream live tests, historical `ops/live-handoff` receipts, and temporary
+   sidecar compatibility as allowed legacy/platform uses.
 
 6. Product control room: default UX is one main control room with specialist
    detail on demand. Keep useful operator and specialist entrypoints, but every

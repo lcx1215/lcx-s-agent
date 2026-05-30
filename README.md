@@ -93,6 +93,7 @@ node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
+node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
 node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
 node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json
@@ -158,6 +159,17 @@ during migration; it must not override a clean
 the channel as bound while still blocking release on
 `post_migration_lark_canary_missing` until fresh real inbound/outbound Lark
 evidence proves `user-visible-observed`.
+
+The system-wide fadeout audit is:
+
+```bash
+node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
+```
+
+It verifies that major LCX owners, package aliases, docs, governance, doctor,
+and recovery surfaces prefer external-channel/user-visible proof while keeping
+upstream OpenClaw live tests and historical receipts as allowed compatibility
+uses.
 
 ## Finance Research Discipline
 

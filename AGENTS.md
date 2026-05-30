@@ -13,6 +13,7 @@ node --import tsx scripts/dev/lcx-universe-index.ts --json
 node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-system-doctor.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
+node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
 node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
 test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && \
   sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json
@@ -63,6 +64,7 @@ node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
 node --import tsx scripts/dev/lcx-universe-index.ts --json
 node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json
+node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
 node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
 node --import tsx scripts/dev/lcx-mind-model.ts --json
@@ -310,6 +312,12 @@ Keep this architecture boring and auditable:
   owner. Commercial acceptance may clear external-channel binding while still
   blocking release on `post_migration_lark_canary_missing` until fresh real
   inbound/outbound Lark evidence proves `user-visible-observed`.
+- System-wide live fadeout truth belongs to
+  `scripts/dev/lcx-live-fadeout-audit.ts`. It checks package aliases, docs,
+  governance, doctor, context recovery, training plan, SkillOpt, commercial
+  acceptance, flow graph, and mind model. It must classify upstream OpenClaw
+  live tests, historical receipts, and temporary sidecar compatibility as
+  allowed legacy/platform uses, not as new runtime authority.
 - China cloud may be used only for mirror backup, static status/dashboard
   hosting, or domestic model/data assistance. It must not become the main
   OpenAI/Codex execution point, the canonical repo, the canonical `~/.openclaw`

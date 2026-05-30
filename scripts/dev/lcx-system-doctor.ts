@@ -380,6 +380,24 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       actionableFailures: payload.actionableFailures,
     };
   }
+  if (name === "live-fadeout-audit") {
+    const summary =
+      payload.summary && typeof payload.summary === "object" && !Array.isArray(payload.summary)
+        ? (payload.summary as Record<string, unknown>)
+        : {};
+    return {
+      ok: payload.ok,
+      boundary: payload.boundary,
+      statusModel: payload.statusModel,
+      summary,
+      liveReferenceNeedsReview: summary.liveReferenceNeedsReview,
+      actionableFailures: payload.actionableFailures,
+      advisoryWarnings: payload.advisoryWarnings,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
   if (name === "learning-sedimentation-audit") {
     return {
       ok: payload.ok,
@@ -973,6 +991,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/lcx-flow-graph.ts",
     "scripts/dev/lcx-governance-autopilot.ts",
     "scripts/dev/lcx-head-tail-consistency.ts",
+    "scripts/dev/lcx-live-fadeout-audit.ts",
     "scripts/dev/lcx-learning-sedimentation-bridge.ts",
     "scripts/dev/lcx-learning-sedimentation-audit.ts",
     "scripts/dev/lcx-learning-sedimentation-map.ts",
@@ -1027,6 +1046,14 @@ checks.push(
     name: "doctrine-consistency",
     command: process.execPath,
     args: ["--import", "tsx", "scripts/dev/lcx-doctrine-consistency.ts", "--json"],
+    parseJson: true,
+  }),
+);
+checks.push(
+  await runCommand({
+    name: "live-fadeout-audit",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/dev/lcx-live-fadeout-audit.ts", "--json"],
     parseJson: true,
   }),
 );
