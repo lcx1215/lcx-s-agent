@@ -696,6 +696,37 @@ function buildCandidateEditLines(trainCases: string[]): string[] {
   return lines;
 }
 
+function renderStaticContractTerms(spec: SkillSpec): string {
+  return [
+    "",
+    "## Current Static Contract Terms",
+    "",
+    "### Required Modules",
+    ...spec.requiredModules.map((entry) => `- ${entry}`),
+    "",
+    "### Required Risk Boundaries",
+    ...spec.requiredRiskBoundaries.map((entry) => `- ${entry}`),
+    "",
+    "### Rejected Contexts",
+    ...spec.rejectedContexts.map((entry) => `- ${entry}`),
+    "",
+    "### Required Missing Data",
+    ...spec.requiredMissingData.map((entry) => `- ${entry}`),
+  ].join("\n");
+}
+
+function refreshStaticContractTerms(baseMarkdown: string, spec: SkillSpec): string {
+  const gate = staticGate(spec, baseMarkdown);
+  if (gate.ok) {
+    return baseMarkdown;
+  }
+  const sectionMarker = "## Current Static Contract Terms";
+  const baseWithoutOldSection = baseMarkdown.includes(sectionMarker)
+    ? baseMarkdown.slice(0, baseMarkdown.indexOf(sectionMarker)).trimEnd()
+    : baseMarkdown.trimEnd();
+  return `${baseWithoutOldSection}\n${renderStaticContractTerms(spec)}\n`;
+}
+
 async function readTextIfExists(filePath: string): Promise<string | undefined> {
   try {
     return await fs.readFile(filePath, "utf8");
@@ -707,11 +738,12 @@ async function readTextIfExists(filePath: string): Promise<string | undefined> {
   }
 }
 
-function appendCandidateEdit(baseMarkdown: string, trainCases: string[]): string {
+function appendCandidateEdit(baseMarkdown: string, spec: SkillSpec, trainCases: string[]): string {
   const marker = "## Candidate Edit: Adjacent Failure Transfer";
-  const baseWithoutOldCandidate = baseMarkdown.includes(marker)
-    ? baseMarkdown.slice(0, baseMarkdown.indexOf(marker)).trimEnd()
-    : baseMarkdown.trimEnd();
+  const baseWithFreshContract = refreshStaticContractTerms(baseMarkdown, spec);
+  const baseWithoutOldCandidate = baseWithFreshContract.includes(marker)
+    ? baseWithFreshContract.slice(0, baseWithFreshContract.indexOf(marker)).trimEnd()
+    : baseWithFreshContract.trimEnd();
   return `${baseWithoutOldCandidate}\n${buildCandidateEditLines(trainCases).join("\n")}\n`;
 }
 
@@ -886,7 +918,7 @@ async function main() {
       const existingBestSkill = await readTextIfExists(bestSkillPath);
       const outputMarkdown =
         options.phase === "candidate-edit"
-          ? appendCandidateEdit(existingBestSkill ?? markdown, split.trainCases)
+          ? appendCandidateEdit(existingBestSkill ?? markdown, spec, split.trainCases)
           : markdown;
       const gate = staticGate(spec, outputMarkdown);
       const accepted =

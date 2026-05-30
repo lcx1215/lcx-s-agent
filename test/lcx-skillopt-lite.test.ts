@@ -228,6 +228,60 @@ describe("lcx-skillopt-lite CLI", () => {
     await expect(fs.stat(path.join(workspaceDir, candidatePath))).resolves.toBeTruthy();
   });
 
+  it("refreshes stale live-boundary skill contracts before scoring candidate edits", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-lite-"));
+    await seedAutopilot(workspaceDir);
+    const skillRoot = path.join(workspaceDir, "memory/skillopt-lite/live_lark_boundary_preflight");
+    await fs.mkdir(skillRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(skillRoot, "best_skill.md"),
+      [
+        "# Lark External Channel Boundary Preflight",
+        "",
+        "boundary: dev_skillopt_lite_only",
+        "",
+        "## Purpose",
+        "Old Live Lark proof text requires selected clean adapter and fresh real inbound/outbound evidence.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const result = runCli(
+      [
+        "--skill",
+        "live_lark_boundary_preflight",
+        "--phase",
+        "candidate-edit",
+        "--json",
+        "--max-train-cases",
+        "2",
+      ],
+      workspaceDir,
+    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        ok: true,
+        staticGateOk: true,
+        staticGateMissingTokens: [],
+        status: "candidate_edit_static_accepted_pending_eval",
+      }),
+    );
+
+    const bestSkill = await fs.readFile(path.join(skillRoot, "best_skill.md"), "utf8");
+    expect(bestSkill).toContain("## Current Static Contract Terms");
+    expect(bestSkill).toContain("lark_external_channel_binding");
+    expect(bestSkill).toContain("dev_ready_not_user_visible_observed");
+    expect(bestSkill).toContain("channel_probe_as_user_visible_observed");
+    expect(bestSkill).toContain("dirty_candidate_external_channel_binding");
+    expect(bestSkill).toContain("external_channel_source_drift_zero_after_selected_adapter");
+    expect(bestSkill).toContain("lark_external_channel_gateway_restarted_after_selected_adapter");
+    expect(bestSkill).toContain("lark_external_channel_diagnose_ok_after_restart");
+    expect(bestSkill).toContain("fresh_real_lark_inbound_and_outbound_user_visible_observed");
+  });
+
   it("builds an immediate deterministic preflight packet without claiming absorption or user-visible proof", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-lite-"));
     await seedAutopilot(workspaceDir);
