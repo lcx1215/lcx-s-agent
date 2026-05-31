@@ -66,6 +66,7 @@ type LiveVisibleProof = {
   since: string;
   acceptancePhrase: string;
   acceptanceMessage: string;
+  naturalProbeMessage: string;
   postMigrationProbeCommand: string;
   replyFlowProbeCommand: string;
   freshInboundCount: number;
@@ -135,7 +136,7 @@ type OperatorStatus = {
     | "commit_or_clean_dev_then_run_dev_tests"
     | "run_dev_tests_then_promote_dev_to_live"
     | "retry_live_restart_then_probe"
-    | "send_real_lark_acceptance"
+    | "send_real_lark_natural_probe"
     | "no_action_current_dev_seen_in_live";
 };
 
@@ -661,7 +662,11 @@ function makeAcceptancePhrase(commit: string): string {
 }
 
 function makeAcceptanceMessage(acceptancePhrase: string): string {
-  return `live验收：请只回复 ${acceptancePhrase}，并说明这是重启后的真实链路。`;
+  return `可选收据锚点：请回复 ${acceptancePhrase}，用于精确匹配这次通道验收。`;
+}
+
+function makeNaturalProbeMessage(): string {
+  return "现在状态怎么样？";
 }
 
 function makePostMigrationProbeCommand(since: string): string {
@@ -691,6 +696,7 @@ function readLiveVisibleProof(params: {
   const logPath = params.logPath ?? DEFAULT_REPLY_FLOW_LOG;
   const sinceMs = Date.parse(params.since);
   const acceptanceMessage = makeAcceptanceMessage(params.acceptancePhrase);
+  const naturalProbeMessage = makeNaturalProbeMessage();
   const postMigrationProbeCommand = makePostMigrationProbeCommand(params.since);
   const replyFlowProbeCommand = makeReplyFlowProbeCommand();
   if (!fs.existsSync(logPath)) {
@@ -700,6 +706,7 @@ function readLiveVisibleProof(params: {
       since: params.since,
       acceptancePhrase: params.acceptancePhrase,
       acceptanceMessage,
+      naturalProbeMessage,
       postMigrationProbeCommand,
       replyFlowProbeCommand,
       freshInboundCount: 0,
@@ -774,6 +781,7 @@ function readLiveVisibleProof(params: {
     since: params.since,
     acceptancePhrase: params.acceptancePhrase,
     acceptanceMessage,
+    naturalProbeMessage,
     postMigrationProbeCommand,
     replyFlowProbeCommand,
     freshInboundCount: inbound.length,
@@ -849,6 +857,7 @@ function buildReceipt(params: {
           since: params.generatedAt,
           acceptancePhrase,
           acceptanceMessage: makeAcceptanceMessage(acceptancePhrase),
+          naturalProbeMessage: makeNaturalProbeMessage(),
           postMigrationProbeCommand: makePostMigrationProbeCommand(params.generatedAt),
           replyFlowProbeCommand: makeReplyFlowProbeCommand(),
           freshInboundCount: 0,
@@ -865,12 +874,14 @@ function buildReceipt(params: {
     commands: params.commands,
     acceptancePhrase,
     nextLiveProof: [
-      `Send this exact real Lark/Feishu message after this promotion: ${makeAcceptanceMessage(
+      `First send a plain real Lark/Feishu user probe: ${makeNaturalProbeMessage()}`,
+      "Then inspect feishu-reply-flow inbound, answer_audit, and outbound_result by messageId/correlationId to find the internal route.",
+      `Optional exact receipt anchor only if a deterministic match is needed: ${makeAcceptanceMessage(
         acceptancePhrase,
       )}`,
       `Then run: ${makePostMigrationProbeCommand(params.generatedAt)}`,
       `Status/probe command: ${makeReplyFlowProbeCommand()}`,
-      "Only mark user-visible-observed after fresh real Lark/Feishu inbound and outbound evidence; legacy live-visible-fixed wording is compatibility only.",
+      "Only mark user-visible-observed after fresh real Lark/Feishu inbound and outbound evidence; the exact anchor is optional and legacy live-visible-fixed wording is compatibility only.",
     ],
     boundary: [
       "Copies a git-tracked dev snapshot into the Lark transport connector sidecar so it can route to LCX Agent.",
@@ -985,6 +996,7 @@ function renderStatus(params: {
   }
   if (params.visibleProof) {
     lines.push(`liveVisibleStatus=${params.visibleProof.status}`);
+    lines.push(`naturalProbeMessage=${params.visibleProof.naturalProbeMessage}`);
     lines.push(`acceptanceMessage=${params.visibleProof.acceptanceMessage}`);
     lines.push(`postMigrationProbeCommand=${params.visibleProof.postMigrationProbeCommand}`);
     lines.push(`replyFlowProbeCommand=${params.visibleProof.replyFlowProbeCommand}`);
@@ -1076,7 +1088,7 @@ export function resolveOperatorStatus(params: {
       : !liveRuntimeResponsive
         ? "retry_live_restart_then_probe"
         : !liveUserSeen
-          ? "send_real_lark_acceptance"
+          ? "send_real_lark_natural_probe"
           : "no_action_current_dev_seen_in_live";
   return {
     statusModel: "dev-ready -> live-runtime-updated -> live-user-seen",

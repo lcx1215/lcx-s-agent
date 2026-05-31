@@ -805,7 +805,7 @@ function buildLiveBoundaryLane(live: boolean, channelCommand: CommandResult | un
     ],
     issue: "channel probe 不是真实用户可见回复证据。",
     nextAction:
-      "继续用 acceptance phrase 查真实入站和 outbound_result，缺一个都不能叫 live-visible-fixed。",
+      "优先用自然短句查真实入站、answer_audit 和 outbound_result；acceptance phrase 只是可选收据锚点，缺真实入站/出站不能叫 live-visible-fixed。",
   };
 }
 

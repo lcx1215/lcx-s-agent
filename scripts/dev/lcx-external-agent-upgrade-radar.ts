@@ -422,7 +422,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "When a future task asks for ClawBench, WildClawBench, or real-task agent benchmarks, convert it into commercial canaries instead of leaderboard code.",
     autocueTerms: ["ClawBench", "WildClawBench", "real task benchmark", "agent benchmark"],
     distilledPattern:
-      "convert real task categories into LCX canaries with acceptance phrases, visible reply checks, and bounded failure reports",
+      "convert real task categories into LCX canaries with natural owner prompts, internal route traces, optional acceptance anchors, visible reply checks, and bounded failure reports",
     firstDevProbe:
       "add one read-only real-work canary that checks whether an answer, owner command, and visible-boundary proof line up",
     requiredReceipts: [

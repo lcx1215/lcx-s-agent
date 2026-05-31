@@ -135,20 +135,20 @@ describe("lcx-commercial-acceptance-harness", () => {
       expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 6 }),
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
-      "fixed_acceptance_phrase",
-      "natural_learning_prompt",
+      "natural_plain_probe",
+      "optional_fixed_receipt_anchor",
       "finance_research_prompt",
     ]);
     expect(result.gates.map((gate) => gate.id)).toContain("user_visible_observed");
     expect(result.canaryPlan).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "fixed_acceptance_phrase",
-          requiredFor: "external_channel_bound",
+          id: "natural_plain_probe",
+          requiredFor: "user_visible_observed",
         }),
         expect.objectContaining({
-          id: "natural_learning_prompt",
-          requiredFor: "user_visible_observed",
+          id: "optional_fixed_receipt_anchor",
+          requiredFor: "optional_receipt_anchor",
         }),
       ]),
     );

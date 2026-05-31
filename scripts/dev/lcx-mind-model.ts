@@ -295,7 +295,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "legacy-live-user-seen",
     ],
     workflowTerms: ["lcx-promote-live", "lark-loop-diagnose", "channels status"],
-    proofTerms: ["acceptancePhrase", "userVisibleObserved", "freshInboundCount"],
+    proofTerms: ["naturalProbeMessage", "userVisibleObserved", "freshInboundCount"],
     boundaryTerms: [
       "user-visible-observed",
       "legacy-live-visible-fixed",
@@ -656,7 +656,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       ],
       workflow: ["liveRuntimeUpdated", "liveUserSeen", "liveNeedsPromotion"],
       proof: [
-        "acceptancePhrase",
+        "naturalProbeMessage",
         "freshInboundCount",
         "liveVisibleStatus",
         "acceptanceMatched",

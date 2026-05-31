@@ -911,7 +911,10 @@ remembering which diagnostic to run.
 - Use plan-first for non-trivial tasks, especially when a task touches multiple subsystems or changes status/output semantics.
 - Default to coherent bounded batches rather than tiny artificial steps. When a bug implies a shared contract failure, continue through related failure families end to end instead of stopping after the first small patch.
 - Do not perform unrelated cleanup or opportunistic refactors. Cleanup, refactor, module extraction, or interface reshaping is in scope when it directly improves the active system goal, removes repeated leakage, reduces verification risk, or prevents the failure family from reappearing through sibling paths.
-- Treat verification as mandatory: run targeted tests, lint touched files, and name a fixed Feishu/live acceptance phrase for later real verification.
+- Treat verification as mandatory: run targeted tests, lint touched files, then
+  use a plain natural Lark probe plus reply-flow/answer-audit/outbound-result
+  trace for real verification. A fixed acceptance phrase is only an optional
+  receipt anchor, not the default diagnostic path.
 - Do not confuse `dev-ready` with `user-visible-observed`.
 - A change is only `user-visible-observed` after external-channel binding,
   build/restart/probe, and real-entry verification.

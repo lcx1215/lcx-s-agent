@@ -313,12 +313,13 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveRuntimeProbePassed=true");
     expect(stdout).toContain("liveRuntimeUpdated=true");
     expect(stdout).toContain("liveUserSeen=false");
-    expect(stdout).toContain("nextHumanStep=send_real_lark_acceptance");
+    expect(stdout).toContain("nextHumanStep=send_real_lark_natural_probe");
+    expect(stdout).toContain("naturalProbeMessage=现在状态怎么样？");
     expect(stdout).toContain(
-      `acceptanceMessage=live验收：请只回复 lark-live-visible-fixed-${currentCommit.slice(
+      `acceptanceMessage=可选收据锚点：请回复 lark-live-visible-fixed-${currentCommit.slice(
         0,
         10,
-      )}，并说明这是重启后的真实链路。`,
+      )}，用于精确匹配这次通道验收。`,
     );
     expect(stdout).toContain(
       "postMigrationProbeCommand=/Users/liuchengxu/.codex/skills/lark-post-migration-probe/scripts/lark-post-migration-probe.sh --since 2099-01-01T00:00:00.000Z",
@@ -541,7 +542,7 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveRuntimeRestartCommandStatus=failed");
     expect(stdout).toContain("liveRuntimeProbePassed=true");
     expect(stdout).toContain("liveRuntimeUpdated=true");
-    expect(stdout).toContain("nextHumanStep=send_real_lark_acceptance");
+    expect(stdout).toContain("nextHumanStep=send_real_lark_natural_probe");
   });
 
   it("runs target ui build before live restart and probe", () => {

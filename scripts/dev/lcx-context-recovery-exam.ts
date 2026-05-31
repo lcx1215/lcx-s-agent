@@ -644,6 +644,7 @@ function compactExternalChannelStatus(value: unknown) {
     freshOutboundResultCount: visibleProof.freshOutboundResultCount,
     acceptanceMatched: visibleProof.acceptanceMatched,
     acceptancePhrase: visibleProof.acceptancePhrase,
+    naturalProbeMessage: visibleProof.naturalProbeMessage,
   };
 }
 
@@ -889,6 +890,7 @@ function buildNewWindowHandoffText(params: {
     `freshInboundCount=${scalarText(params.externalChannelStatus?.freshInboundCount)}`,
     `freshOutboundResultCount=${scalarText(params.externalChannelStatus?.freshOutboundResultCount)}`,
     `acceptanceMatched=${scalarText(params.externalChannelStatus?.acceptanceMatched)}`,
+    `naturalProbeMessage=${scalarText(params.externalChannelStatus?.naturalProbeMessage, "none")}`,
     `acceptancePhrase=${scalarText(params.externalChannelStatus?.acceptancePhrase, "none")}`,
     "",
     "## Training Truth",

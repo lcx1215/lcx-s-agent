@@ -346,7 +346,7 @@ function externalChannelStatusGate(
         devLiveDrift,
       },
       nextAction:
-        "Bind the selected clean brain to the Lark external channel before claiming user-visible parity; legacy live-runtime wording is compatibility only.",
+        "Route the selected clean LCX answer path through the Lark transport before claiming user-visible parity; legacy live-runtime wording is compatibility only.",
     };
   }
   if (!userVisibleObserved) {
@@ -525,16 +525,17 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     watchGates: watch.map((gate) => gate.id),
     canaryPlan: [
       {
-        id: "fixed_acceptance_phrase",
-        purpose: "prove exact Lark external-channel loop after migration",
-        owner: "scripts/dev/lcx-external-channel-status.ts",
-        requiredFor: "external_channel_bound",
-      },
-      {
-        id: "natural_learning_prompt",
-        purpose: "prove real product learning UX without weird acceptance text",
+        id: "natural_plain_probe",
+        purpose:
+          "prove ordinary owner-to-agent UX and inspect feishu-reply-flow/answer_audit/outbound_result for the internal route",
         owner: "scripts/dev/lcx-external-channel-status.ts + feishu-reply-flow",
         requiredFor: "user_visible_observed",
+      },
+      {
+        id: "optional_fixed_receipt_anchor",
+        purpose: "optional exact-match receipt anchor only when deterministic matching is needed",
+        owner: "scripts/dev/lcx-external-channel-status.ts",
+        requiredFor: "optional_receipt_anchor",
       },
       {
         id: "finance_research_prompt",
