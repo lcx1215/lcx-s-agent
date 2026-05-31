@@ -270,6 +270,16 @@ actual Codex/agent execution, canonical repo, local state, secrets, provider
 access, receipts, and audit logs must live on the supported-region control
 machine.
 
+Cloud migration must not resurrect the old `dev -> live` model. The forward
+cloud migration path is `local dev core -> cloud-runtime-ready ->
+external-channel-bound -> user-visible-observed`: one LCX Agent core moves to a
+supported-region runtime, then communication adapters such as Lark, WeChat, SMS,
+or Slack bind to that same selected clean answer path. Cloud runtime readiness
+means the same dev core, repo, `.openclaw` state, skills, receipts, selected
+clean adapter policy, and governance owners are available on the cloud control
+machine. It is not a second brain, not a second repo truth, and not a
+`live-visible-fixed` claim.
+
 The preferred v1 topology is:
 
 ```text
@@ -290,6 +300,10 @@ Keep this architecture boring and auditable:
 - `~/.openclaw` is the canonical runtime state root. Preserve receipts, logs,
   queues, selected-clean adapter proof, operator snapshots, and migration
   manifests there. Do not scatter new state roots across cloud machines.
+- `.codex/skills` and repo-local skills remain part of the same operator stack
+  after migration. Copying or syncing skills is allowed only as cloud runtime
+  readiness work; it must not create cloud-only skill authority or a separate
+  live skill lane.
 - Lark is only the communication medium and transport connector between the
   owner and LCX Agent. It may use Lark/Feishu official APIs, SDKs, or
   open-source connector code, but that connector layer never becomes model

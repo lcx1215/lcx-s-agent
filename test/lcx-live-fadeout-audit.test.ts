@@ -21,6 +21,7 @@ describe("LCX live fadeout audit", () => {
       ok: boolean;
       boundary: string;
       statusModel: string;
+      cloudMigrationModel: string;
       summary: { failed: number; total: number; liveReferenceNeedsReview: number };
       checks: Array<{ id: string; ok: boolean }>;
       liveReferenceInventory: { totalMatches: number };
@@ -31,11 +32,15 @@ describe("LCX live fadeout audit", () => {
     expect(payload.statusModel).toBe(
       "dev-ready -> external-channel-bound -> user-visible-observed",
     );
+    expect(payload.cloudMigrationModel).toBe(
+      "local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
+    );
     expect(payload.summary.failed).toBe(0);
     expect(payload.summary.total).toBeGreaterThanOrEqual(10);
     expect(payload.liveReferenceInventory.totalMatches).toBeGreaterThan(0);
     expect(payload.checks.map((check) => check.id)).toEqual(
       expect.arrayContaining([
+        "cloud_migration_keeps_single_dev_core",
         "binding_owner_is_canonical",
         "external_channel_status_wrapper_is_canonical_readonly",
         "commercial_acceptance_prefers_binding_owner",
@@ -70,7 +75,12 @@ describe("LCX live fadeout audit", () => {
     );
     expect(packageJson.scripts["lcx:live"]).toBe("pnpm lcx:external-channel");
     expect(readme).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
+    expect(readme).toContain("local dev core");
+    expect(readme).toContain("cloud-runtime-ready");
+    expect(readme).toContain("one canonical dev repo");
     expect(agents).toContain("System-wide live fadeout truth belongs");
+    expect(agents).toContain("Cloud migration must not resurrect the old `dev -> live` model");
     expect(runbook).toContain("whole-system fadeout audit");
+    expect(runbook).toContain("cloud-runtime-ready");
   });
 });

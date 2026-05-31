@@ -40,6 +40,7 @@ type LiveReferenceInventory = {
 
 const CANONICAL_TERMS = [
   "dev-ready",
+  "cloud-runtime-ready",
   "external-channel-bound",
   "user-visible-observed",
   "legacy-live-runtime-updated",
@@ -290,7 +291,24 @@ export async function buildLcxLiveFadeoutAudit() {
       requiredTerms: CANONICAL_TERMS,
       summary: "doctrine documents must teach future agents the new status model",
       text: `${agents}\n${readme}\n${runbook}`,
-      nextAction: "restore dev-ready/external-channel-bound/user-visible-observed wording",
+      nextAction:
+        "restore dev-ready/cloud-runtime-ready/external-channel-bound/user-visible-observed wording",
+    }),
+    checkTerms({
+      id: "cloud_migration_keeps_single_dev_core",
+      owner: "AGENTS.md + README.md + ops/local-brain/README.md",
+      file: "cloud_migration_docs",
+      requiredTerms: [
+        "local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
+        "/srv/lcx/lcx-s-openclaw",
+        "canonical `~/.openclaw` state",
+        "one canonical dev repo",
+        "not a second live brain",
+        "Lark, WeChat, SMS",
+      ],
+      summary: "cloud migration must move the single LCX dev core, not recreate a dev/live split",
+      text: `${agents}\n${readme}\n${runbook}`,
+      nextAction: "restore cloud-runtime-ready wording and single canonical dev core boundary",
     }),
     checkTerms({
       id: "binding_owner_is_canonical",
@@ -463,6 +481,8 @@ export async function buildLcxLiveFadeoutAudit() {
     boundary: "dev_live_fadeout_audit_only",
     checkedAt: new Date().toISOString(),
     statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+    cloudMigrationModel:
+      "local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
     objective:
       "fade old live wording out of LCX authority while preserving upstream live tests, historical receipts, and temporary sidecar compatibility",
     summary: {
@@ -500,6 +520,7 @@ function printHuman(result: Awaited<ReturnType<typeof buildLcxLiveFadeoutAudit>>
   console.log(`ok=${result.ok}`);
   console.log(`boundary=${result.boundary}`);
   console.log(`statusModel=${result.statusModel}`);
+  console.log(`cloudMigrationModel=${result.cloudMigrationModel}`);
   console.log(
     `checks=${result.summary.passed}/${result.summary.total} liveReferenceNeedsReview=${result.summary.liveReferenceNeedsReview}`,
   );

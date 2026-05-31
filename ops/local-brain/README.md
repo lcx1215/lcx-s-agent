@@ -319,6 +319,16 @@ blueprint lane.
    upstream live tests, historical `ops/live-handoff` receipts, and temporary
    sidecar compatibility as allowed legacy/platform uses.
 
+   Cloud migration uses the same owner boundary. Do not migrate the old
+   `dev -> live` split to the cloud. The migration target is one LCX Agent core:
+   `local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed`.
+   `cloud-runtime-ready` means a supported-region control machine has the
+   canonical dev repo, canonical `~/.openclaw` state, operator skills, receipts,
+   selected-clean adapter proof, and governance owners. It is not a second live
+   brain, not a second runtime truth source, and not `user-visible-observed`.
+   Future Lark, WeChat, SMS, Slack, or other connectors bind as external
+   communication adapters only.
+
 6. Product control room: default UX is one main control room with specialist
    detail on demand. Keep useful operator and specialist entrypoints, but every
    volatile status family needs one single factual owner and flow-graph

@@ -177,6 +177,39 @@ and recovery surfaces prefer external-channel/user-visible proof while keeping
 upstream OpenClaw live tests and historical receipts as allowed compatibility
 uses.
 
+## Cloud Migration Model
+
+Cloud migration keeps the architecture simple: it moves the same LCX Agent core
+to a supported-region cloud control station; it does not create a second live
+brain. The migration target is:
+
+```text
+local dev core
+  -> cloud-runtime-ready
+  -> external-channel-bound
+  -> user-visible-observed
+```
+
+`cloud-runtime-ready` means the cloud control machine has one canonical dev
+repo, one canonical `~/.openclaw` state root, copied/synced operator skills,
+receipts, logs, selected-clean adapter proof, and governance owners. It does not
+mean live-visible-fixed, user-visible-observed, or model-weight absorption.
+Single repo rule: one canonical dev repo, one canonical state root, no second
+live brain.
+
+The preferred repo path after migration is `/srv/lcx/lcx-s-openclaw`; the
+preferred state root is `~/.openclaw`. Lark, WeChat, SMS, Slack, or any future
+channel are communication adapters on top of the same answer path. China cloud
+may mirror backup, static status, dashboard, or domestic helper surfaces, but it
+must not become the canonical repo, the canonical state root, provider authority,
+external-channel sender authority, or a second source of truth.
+
+The live fadeout audit enforces this cloud boundary too:
+
+```bash
+node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
+```
+
 ## Finance Research Discipline
 
 LCX Agent is optimized for low-frequency research and risk control:
