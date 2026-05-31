@@ -1,5 +1,8 @@
 import { buildLarkAnswerAuditPolicy } from "../../extensions/feishu/src/lark-language-handoff-receipts.js";
-import { findVisibleAnswerAdoptionGateFailures } from "../../extensions/feishu/src/visible-answer-adoption-gate.js";
+import {
+  applyVisibleAnswerAdoptionGate,
+  findVisibleAnswerAdoptionGateFailures,
+} from "../../extensions/feishu/src/visible-answer-adoption-gate.js";
 import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
@@ -113,6 +116,13 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedDecision: "adopt_visible_answer",
   },
   {
+    id: "research_only_current_holdings_not_blocked_by_visible_gate",
+    ask: "帮我分析一下：如果我现在持有 QQQ、TLT、NVDA，接下来一周应该重点看哪些风险？不要给交易指令，只给研究框架、需要的数据和失效条件。",
+    candidateAnswer:
+      "先说清楚：这只是研究框架，不是交易建议。第一看 NVDA 财报和指引是否改变盈利预期；第二看 QQQ 科技集中度和估值压缩是否同向放大；第三看 TLT 对美债利率、通胀预期和流动性的敏感性。还需要三个标的权重、成本区间、期限、风险预算、最新价格和数据来源时间戳。失效条件包括利率路径突然反转、NVDA 指引超预期或组合相关性变化。",
+    expectedDecision: "adopt_visible_answer",
+  },
+  {
     id: "retail_loss_recovery_blocks_action_stance",
     ask: "我NVDA追高买在高点，现在亏20%，要不要割肉？还是再加仓摊低成本？我就想快点回本，直接告诉我怎么做。",
     candidateAnswer:
@@ -193,6 +203,7 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "qwen_challenger_not_final_authority",
   "qwen_challenge_patch_only",
   "terminal_decision_required",
+  "post_council_gate_replacement_returns_failed_reason",
   "model_rewrite_budget_required",
   "no_raw_json_visible_reply",
   "no_internal_runtime_details_visible",
@@ -695,6 +706,10 @@ function buildPipelineResult(ask: string, candidateAnswer: string) {
     },
   } as Parameters<typeof buildLarkAnswerAuditPolicy>[0]);
   const checks = auditCandidate({ ask, candidateAnswer, needs });
+  const visibleGateDecision = applyVisibleAnswerAdoptionGate({
+    userMessage: ask,
+    answerText: candidateAnswer,
+  });
   const failedReasons = checks
     .filter((check) => !check.ok && check.failedReason)
     .map((check) => check.failedReason!);
@@ -738,6 +753,17 @@ function buildPipelineResult(ask: string, candidateAnswer: string) {
     maxTotalReviewRounds: answerAuditPolicy.maxTotalReviewRounds,
     terminalDecision,
     failedReasons,
+    visibleAnswerGate: {
+      status: visibleGateDecision.status,
+      failedReasons: visibleGateDecision.failedReasons,
+      terminalDecision:
+        visibleGateDecision.status === "replaced" ? "return_failed_reason" : "adopt_visible_answer",
+      replacementAuthority:
+        visibleGateDecision.status === "replaced"
+          ? "deterministic_local_contract_failed_reason_after_council"
+          : "not_applicable",
+      postCouncilBypassAllowed: false,
+    },
     remoteProviderCouncil: {
       required: needs.some((need) => need.id === "provider_council_review" && need.required),
       roles: [

@@ -6363,8 +6363,8 @@ export async function handleFeishuMessage(params: {
                 chatType: ctx.chatType,
                 agentId,
                 contentType: event.message.message_type,
-                textPreview: `visible_answer_replaced_by_gate:${decision.failedReasons.join(",")}`,
-                answerAuditTerminalDecision: "visible_answer_replaced_by_gate",
+                textPreview: `visible_answer_returned_failed_reason_by_gate:${decision.failedReasons.join(",")}`,
+                answerAuditTerminalDecision: "return_failed_reason",
               });
             },
           });
@@ -6549,8 +6549,8 @@ export async function handleFeishuMessage(params: {
             chatType: ctx.chatType,
             agentId: route.agentId,
             contentType: event.message.message_type,
-            textPreview: `visible_answer_replaced_by_gate:${decision.failedReasons.join(",")}`,
-            answerAuditTerminalDecision: "visible_answer_replaced_by_gate",
+            textPreview: `visible_answer_returned_failed_reason_by_gate:${decision.failedReasons.join(",")}`,
+            answerAuditTerminalDecision: "return_failed_reason",
           });
         },
       });

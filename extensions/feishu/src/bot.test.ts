@@ -2386,8 +2386,8 @@ describe("classified publish routing", () => {
       expect.objectContaining({
         correlationId: "msg-retail-position-gate",
         stage: "answer_audit",
-        answerAuditTerminalDecision: "visible_answer_replaced_by_gate",
-        textPreview: expect.stringContaining("chinese_action_framework_language"),
+        answerAuditTerminalDecision: "return_failed_reason",
+        textPreview: expect.stringContaining("visible_answer_returned_failed_reason_by_gate:"),
       }),
     );
 

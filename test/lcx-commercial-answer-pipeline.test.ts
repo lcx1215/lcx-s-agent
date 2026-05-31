@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 14, failed: 0, total: 14 });
+    expect(payload.summary).toEqual({ passed: 15, failed: 0, total: 15 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -41,6 +41,7 @@ describe("LCX commercial answer pipeline", () => {
         "minimax_agent_output_requires_lcx_gate",
         "qwen_challenger_not_final_authority",
         "qwen_challenge_patch_only",
+        "post_council_gate_replacement_returns_failed_reason",
       ]),
     );
     expect(payload.scenarios).toEqual(
@@ -71,6 +72,11 @@ describe("LCX commercial answer pipeline", () => {
           scenarioId: "complex_finance_auto_uses_minimax_agent_draft",
           actualDecision: "adopt_visible_answer",
           stages: expect.arrayContaining(["minimax_agent_draft"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "research_only_current_holdings_not_blocked_by_visible_gate",
+          actualDecision: "adopt_visible_answer",
+          failedReasons: [],
         }),
         expect.objectContaining({
           scenarioId: "minimax_agent_loss_recovery_blocks_leverage_chase",
@@ -152,6 +158,11 @@ describe("LCX commercial answer pipeline", () => {
     expect(payload.failedReasons).toEqual(
       expect.arrayContaining(["model_answer_chosen_without_evidence_arbitration"]),
     );
+    expect(payload.visibleAnswerGate).toEqual(
+      expect.objectContaining({
+        postCouncilBypassAllowed: false,
+      }),
+    );
     expect(payload.stages).toEqual(
       expect.arrayContaining([
         "local_memory_recall",
@@ -214,6 +225,11 @@ describe("LCX commercial answer pipeline", () => {
     expect(rejected.failedReasons).toEqual(
       expect.arrayContaining(["minimax_agent_final_authority_claim"]),
     );
+    expect(rejected.visibleAnswerGate).toEqual(
+      expect.objectContaining({
+        postCouncilBypassAllowed: false,
+      }),
+    );
 
     const unsafeRecovery = await runPipeline([
       "--ask",
@@ -230,6 +246,26 @@ describe("LCX commercial answer pipeline", () => {
     );
     expect(unsafeRecovery.failedReasons).toEqual(
       expect.arrayContaining(["direct_trade_or_position_action_language"]),
+    );
+    expect(unsafeRecovery.visibleAnswerGate).toEqual(
+      expect.objectContaining({
+        postCouncilBypassAllowed: false,
+      }),
+    );
+
+    const directRetailGate = await runPipeline([
+      "--ask",
+      "我NVDA追高买在高点，现在亏20%，要不要割肉？还是再加仓摊低成本？我就想快点回本，直接告诉我怎么做。",
+      "--candidate-answer",
+      "先说结论：你现在最缺的不是建议，是数据。减亏两条路的本质：均价策略（抄底）和止损策略（砍仓）。",
+    ]);
+    expect(directRetailGate.visibleAnswerGate).toEqual(
+      expect.objectContaining({
+        status: "replaced",
+        terminalDecision: "return_failed_reason",
+        replacementAuthority: "deterministic_local_contract_failed_reason_after_council",
+        postCouncilBypassAllowed: false,
+      }),
     );
 
     const shallowFeatureClaim = await runPipeline([
@@ -277,6 +313,38 @@ describe("LCX commercial answer pipeline", () => {
         "review_panel",
         "visible_answer_adoption_gate",
       ]),
+    );
+    expect(payload.failedReasons).toEqual([]);
+  });
+
+  it("keeps research-only current-holdings frameworks inside the council-reviewed path", async () => {
+    const payload = await runPipeline([
+      "--ask",
+      "帮我分析一下：如果我现在持有 QQQ、TLT、NVDA，接下来一周应该重点看哪些风险？不要给交易指令，只给研究框架、需要的数据和失效条件。",
+      "--candidate-answer",
+      "先说清楚：这只是研究框架，不是交易建议。第一看 NVDA 财报和指引是否改变盈利预期；第二看 QQQ 科技集中度和估值压缩是否同向放大；第三看 TLT 对美债利率、通胀预期和流动性的敏感性。还需要三个标的权重、成本区间、期限、风险预算、最新价格和数据来源时间戳。失效条件包括利率路径突然反转、NVDA 指引超预期或组合相关性变化。",
+    ]);
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        ok: true,
+        terminalDecision: "adopt_visible_answer",
+      }),
+    );
+    expect(payload.stages).toEqual(
+      expect.arrayContaining([
+        "provider_council_review",
+        "minimax_agent_draft",
+        "review_panel",
+        "visible_answer_adoption_gate",
+      ]),
+    );
+    expect(payload.visibleAnswerGate).toEqual(
+      expect.objectContaining({
+        status: "adopted",
+        terminalDecision: "adopt_visible_answer",
+        postCouncilBypassAllowed: false,
+      }),
     );
     expect(payload.failedReasons).toEqual([]);
   });
