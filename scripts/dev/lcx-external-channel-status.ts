@@ -104,6 +104,22 @@ export function parseExternalChannelStatusArgs(args: string[]): CliOptions {
   return options;
 }
 
+function settledCommandText(result: PromiseSettledResult<{ stdout: string; stderr: string }>): {
+  stdout: string;
+  stderr?: string;
+  error?: string;
+} {
+  if (result.status === "fulfilled") {
+    return { stdout: result.value.stdout, stderr: result.value.stderr };
+  }
+  const reason = result.reason as { stdout?: string; stderr?: string; message?: string };
+  return {
+    stdout: reason.stdout ?? "",
+    stderr: reason.stderr,
+    error: [reason.message, reason.stderr?.slice(-1000)].filter(Boolean).join("\n"),
+  };
+}
+
 export async function runExternalChannelStatus(options: CliOptions) {
   const args = ["--import", "tsx", "scripts/dev/lcx-promote-live.ts", "--status", "--json"];
   if (options.withProbe) {
@@ -113,7 +129,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
   const bindingArgs = ["--import", "tsx", "scripts/dev/lcx-external-channel-binding.ts", "--json"];
   const bindingCommand = `${process.execPath} ${bindingArgs.join(" ")}`;
   try {
-    const [result, bindingResult] = await Promise.all([
+    const [legacyResult, bindingResult] = await Promise.allSettled([
       execFileAsync(process.execPath, args, {
         cwd: REPO_ROOT,
         env: process.env,
@@ -125,8 +141,10 @@ export async function runExternalChannelStatus(options: CliOptions) {
         maxBuffer: EXEC_MAX_BUFFER,
       }),
     ]);
-    const legacy = parseJsonObjectFromOutput(result.stdout);
-    const bindingPayload = parseJsonObjectFromOutput(bindingResult.stdout);
+    const legacyOutput = settledCommandText(legacyResult);
+    const bindingOutput = settledCommandText(bindingResult);
+    const legacy = legacyOutput.stdout ? parseJsonObjectFromOutput(legacyOutput.stdout) : {};
+    const bindingPayload = parseJsonObjectFromOutput(bindingOutput.stdout);
     const binding = recordValue(bindingPayload.externalChannelBinding);
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
     const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
@@ -155,7 +173,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
     };
     return {
       ...legacy,
-      ok: legacy.ok !== false,
+      ok: bindingPayload.ok !== false,
       boundary: "dev_external_channel_status_only",
       owner: "lcx-external-channel-status",
       command,
@@ -176,6 +194,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
         operatorStatus: legacy.operatorStatus,
         devLiveDrift: legacyDevLiveDrift,
         visibleProof: legacy.visibleProof,
+        error: legacyOutput.error,
       },
       liveTouched: false,
       providerConfigTouched: false,
