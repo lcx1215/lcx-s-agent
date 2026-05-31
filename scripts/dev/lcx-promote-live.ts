@@ -1221,7 +1221,7 @@ export function main(argv = process.argv.slice(2)): number {
             visibleProof,
           }),
     );
-    return probe?.status === "failed" ? 1 : 0;
+    return 0;
   }
 
   const promotionLock = initialArgs.apply ? acquirePromotionLock(initialArgs.targetRoot) : null;

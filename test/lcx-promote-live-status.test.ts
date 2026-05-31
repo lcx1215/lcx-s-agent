@@ -520,6 +520,52 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("nextHumanStep=retry_live_restart_then_probe");
   });
 
+  it("keeps status readable when the optional channel probe fails", () => {
+    const sourceRoot = tempDir("promote-live-source");
+    const targetRoot = tempDir("promote-live-target");
+    const fakeBinDir = tempDir("promote-live-bin");
+    const commandLog = path.join(fakeBinDir, "pnpm.log");
+    writeFakePnpm(fakeBinDir, commandLog, { probeReachable: false });
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+    const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
+    writePromotionState(targetRoot, currentCommit, {
+      restartStatus: "passed",
+      probeStatus: "passed",
+    });
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        scriptPath,
+        "--status",
+        "--with-probe",
+        "--source-root",
+        sourceRoot,
+        "--target-root",
+        targetRoot,
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}` },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.stdout).toContain("pnpm --silent openclaw channels status --probe.status=failed");
+    expect(result.stdout).toContain("externalChannelBound=true");
+    expect(result.stdout).toContain("nextHumanStep=send_real_lark_natural_probe");
+  });
+
   it("treats a matching commit as live-runtime-updated when fresh probe passes after restart timeout", () => {
     const sourceRoot = tempDir("promote-live-source");
     const targetRoot = tempDir("promote-live-target");
