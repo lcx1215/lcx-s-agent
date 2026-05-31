@@ -177,6 +177,26 @@ function sidecarDriftIsZero(summary: string | undefined): boolean {
   return summary?.includes("missing=0") === true && summary.includes("different=0");
 }
 
+const RUNTIME_PROOF_NAMES = [
+  "external_channel_source_drift_zero_after_selected_adapter",
+  "lark_external_channel_gateway_restarted_after_selected_adapter",
+  "lark_external_channel_diagnose_ok_after_restart",
+  "live_sidecar_source_drift_zero_after_selected_adapter",
+  "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
+  "live_lark_loop_diagnose_ok_after_restart",
+];
+
+function requireRuntimeApply(decision: BindingDecision): BindingDecision {
+  return {
+    ...decision,
+    status: "ready_for_apply",
+    action: "run_apply_when_operator_allows_live_runtime_restart",
+    missingProof: Array.from(
+      new Set([...RUNTIME_PROOF_NAMES.slice(0, 3), ...decision.missingProof]),
+    ),
+  };
+}
+
 export function buildExternalChannelBindingDecision(params: {
   trainingPlan?: JsonRecord;
   apply: boolean;
@@ -275,15 +295,7 @@ export function buildExternalChannelBindingDecision(params: {
       : "debug_live_runtime_probe_before_claiming_bound",
     selectedCleanAdapter,
     missingProof: missingProof.filter((entry) => {
-      const completedRuntimeProof = [
-        "external_channel_source_drift_zero_after_selected_adapter",
-        "lark_external_channel_gateway_restarted_after_selected_adapter",
-        "lark_external_channel_diagnose_ok_after_restart",
-        "live_sidecar_source_drift_zero_after_selected_adapter",
-        "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
-        "live_lark_loop_diagnose_ok_after_restart",
-      ];
-      return !params.larkLoopDiagnoseOk || !completedRuntimeProof.includes(entry);
+      return !params.larkLoopDiagnoseOk || !RUNTIME_PROOF_NAMES.includes(entry);
     }),
     heavyActive,
     activeProcessSummary: active,
@@ -420,6 +432,12 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
   liveSidecarDriftBefore = driftBefore.stdout
     .split("\n")
     .find((line) => line.startsWith("summary "));
+  if (
+    decision.status === "applied_runtime_probe_ok" &&
+    !sidecarDriftIsZero(liveSidecarDriftBefore)
+  ) {
+    decision = requireRuntimeApply(decision);
+  }
 
   const previousSnapshot = options.apply ? undefined : await readJson(options.snapshotPath);
   const previousExternalChannel = recordValue(previousSnapshot?.externalChannelBinding);
