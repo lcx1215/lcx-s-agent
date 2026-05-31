@@ -223,6 +223,21 @@ export function buildExternalChannelBindingDecision(params: {
     };
   }
 
+  if (bindingStatus === "channel_runtime_probe_ok_user_visible_pending") {
+    return {
+      status: "applied_runtime_probe_ok",
+      action: "keep_waiting_for_real_lark_user_seen_proof",
+      selectedCleanAdapter,
+      missingProof,
+      heavyActive,
+      activeProcessSummary: active,
+      liveUserSeen: false,
+      liveTouched: params.liveTouched,
+      providerConfigTouched: false,
+      protectedMemoryTouched: false,
+    };
+  }
+
   if (bindingStatus !== "ready_for_apply" && bindingStatus !== "ready_for_live_runtime_binding") {
     return {
       status: "deferred_training_plan_not_ready",

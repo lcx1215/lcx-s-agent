@@ -221,19 +221,24 @@ type ExternalChannelBindingPlanSnapshot = {
     | "deferred_active_training_or_eval"
     | "deferred_guard_adapter_mismatch"
     | "deferred_latest_promotion_stale"
-    | "ready_for_apply";
+    | "ready_for_apply"
+    | "channel_runtime_probe_ok_user_visible_pending";
   action:
     | "produce_clean_selected_adapter_before_external_channel_binding"
     | "wait_for_current_eval_then_bind_lark_channel_to_selected_clean_adapter"
     | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
     | "run_promotion_audit_then_bind_lark_channel_to_selected_clean_adapter"
-    | "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof";
+    | "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof"
+    | "keep_waiting_for_real_lark_user_visible_proof";
   missingProof: string[];
   successCondition: string[];
   statusCommand: string;
   bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter";
   userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_lark_inbound_and_outbound";
-  userVisibleObserved: false;
+  userVisibleObserved: boolean;
+  ownerSnapshotPath?: string;
+  ownerSnapshotGeneratedAt?: string;
+  ownerSnapshotStatus?: string;
   legacyLiveCompatibility: {
     liveLarkBrainBinding: "legacy_compatibility_field";
     liveRuntimeUpdated: "legacy_external_channel_bound_equivalent";
@@ -451,6 +456,8 @@ const extractAdapterFromCommand = (command: string): string | undefined => {
 };
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_EXTERNAL_CHANNEL_BINDING_SNAPSHOT_PATH =
+  "/Users/liuchengxu/.openclaw/workspace/state/lcx-external-channel-binding-latest.json";
 const QWEN_MIGRATION_CURRENT_MODEL = "Qwen/Qwen3-0.6B" as const;
 const QWEN_MIGRATION_CANDIDATE_MODEL = "Qwen/Qwen3-1.7B" as const;
 const MIN_QWEN_1_7B_SMOKE_MEMORY_BYTES = 8 * 1024 * 1024 * 1024;
@@ -1288,6 +1295,34 @@ function externalChannelBindingSnapshot(params: {
   };
 }
 
+function applyExternalChannelOwnerSnapshot(params: {
+  plan: ExternalChannelBindingPlanSnapshot;
+  ownerSnapshot: JsonRecord | undefined;
+}): ExternalChannelBindingPlanSnapshot {
+  const ownerBinding = recordValue(params.ownerSnapshot?.externalChannelBinding);
+  const ownerStatus = stringField(ownerBinding, "status");
+  const ownerSelectedCleanAdapter = stringField(ownerBinding, "selectedCleanAdapter");
+  if (
+    ownerStatus !== "channel_runtime_probe_ok_user_visible_pending" ||
+    !params.plan.selectedCleanAdapter ||
+    ownerSelectedCleanAdapter !== params.plan.selectedCleanAdapter ||
+    params.plan.activeTrainingOrEval
+  ) {
+    return params.plan;
+  }
+  const missingProof = stringArray(ownerBinding?.missingProof);
+  return {
+    ...params.plan,
+    status: "channel_runtime_probe_ok_user_visible_pending",
+    action: "keep_waiting_for_real_lark_user_visible_proof",
+    missingProof,
+    userVisibleObserved: ownerBinding?.userVisibleObserved === true,
+    ownerSnapshotPath: DEFAULT_EXTERNAL_CHANNEL_BINDING_SNAPSHOT_PATH,
+    ownerSnapshotGeneratedAt: stringField(params.ownerSnapshot, "generatedAt"),
+    ownerSnapshotStatus: ownerStatus,
+  };
+}
+
 function datasetSummary(event: JsonRecord | undefined): JsonRecord | undefined {
   const result = event?.result;
   if (!result || typeof result !== "object") {
@@ -1322,8 +1357,23 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+async function readJsonRecord(filePath: string): Promise<JsonRecord | undefined> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as unknown;
+    return recordValue(parsed);
+  } catch {
+    return undefined;
+  }
 }
 
 async function readManifestSnapshot(dirPath: string): Promise<LocalBrainManifestSnapshot> {
@@ -1894,13 +1944,18 @@ function buildDecisions(params: {
 
   if (params.liveLarkBrainBinding) {
     const externalChannelBinding = params.externalChannelBinding;
+    const externalChannelStatus = externalChannelBinding?.status;
+    const externalChannelReadyForApply = externalChannelStatus === "ready_for_apply";
+    const externalChannelBound =
+      externalChannelStatus === "channel_runtime_probe_ok_user_visible_pending";
     decisions.push({
-      id:
-        externalChannelBinding?.status === "ready_for_apply"
-          ? "lark_external_channel_binding_ready"
+      id: externalChannelReadyForApply
+        ? "lark_external_channel_binding_ready"
+        : externalChannelBound
+          ? "lark_external_channel_user_visible_pending"
           : "lark_external_channel_binding_deferred",
       lane: "external_channel",
-      severity: externalChannelBinding?.status === "ready_for_apply" ? "info" : "P3",
+      severity: externalChannelReadyForApply || externalChannelBound ? "info" : "P3",
       action: externalChannelBinding?.action ?? params.liveLarkBrainBinding.action,
       reason: [
         `status=${externalChannelBinding?.status ?? params.liveLarkBrainBinding.status}`,
@@ -1918,10 +1973,9 @@ function buildDecisions(params: {
         }`,
       ].join("; "),
       codexRepairEligible: false,
-      nextCommand:
-        externalChannelBinding?.status === "ready_for_apply"
-          ? params.liveLarkBrainBinding.statusCommand
-          : undefined,
+      nextCommand: externalChannelReadyForApply
+        ? params.liveLarkBrainBinding.statusCommand
+        : undefined,
     });
   }
 
@@ -2211,21 +2265,28 @@ function buildEvolutionAccelerationQueue(params: {
     status:
       params.externalChannelBinding.status === "ready_for_apply"
         ? "ready_when_idle"
-        : params.externalChannelBinding.activeTrainingOrEval
-          ? "blocked_by_active_training"
-          : "blocked_by_missing_proof",
+        : params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
+          ? "blocked_by_missing_proof"
+          : params.externalChannelBinding.activeTrainingOrEval
+            ? "blocked_by_active_training"
+            : "blocked_by_missing_proof",
     executionClass: "idle_only_read_only_audit",
     reason:
       "Make Lark, as the owner-agent external communication channel, consume the single selected clean local-brain adapter after eval/MLX is idle and user-visible proof can be collected.",
     guardCondition:
       "selected clean adapter, no active eval/MLX, zero external-channel source drift, restarted Lark channel gateway, then real Lark user-visible proof",
-    command: params.liveLarkBrainBinding.statusCommand,
+    command:
+      params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
+        ? "node --import tsx scripts/dev/lcx-external-channel-status.ts --json --with-probe"
+        : params.liveLarkBrainBinding.statusCommand,
     blockedByDecisionIds:
       params.externalChannelBinding.status === "ready_for_apply"
         ? []
-        : params.externalChannelBinding.activeTrainingOrEval
-          ? ["training_already_active", "lark_external_channel_binding_deferred"]
-          : ["lark_external_channel_binding_deferred"],
+        : params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
+          ? ["post_migration_lark_canary_missing"]
+          : params.externalChannelBinding.activeTrainingOrEval
+            ? ["training_already_active", "lark_external_channel_binding_deferred"]
+            : ["lark_external_channel_binding_deferred"],
     notTouched: commonNotTouched,
   });
 
@@ -2536,13 +2597,19 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   });
   const activeHeavyEval = activeHeavyEvalSummary(activeProcesses);
   const activeGuardEvolutionCooldown = activeGuardEvolutionCooldownSnapshot(activeProcesses);
-  const externalChannelBinding = externalChannelBindingSnapshot({
-    activeProcesses,
-    activeHeavyEvalCounts: activeHeavyEval.counts,
-    qwenCapabilityConsolidation,
-    activeGuardAdapterTruth,
-    latestPromotedAdapter,
-    latestPromotedAt,
+  const externalChannelBindingOwnerSnapshot = await readJsonRecord(
+    DEFAULT_EXTERNAL_CHANNEL_BINDING_SNAPSHOT_PATH,
+  );
+  const externalChannelBinding = applyExternalChannelOwnerSnapshot({
+    ownerSnapshot: externalChannelBindingOwnerSnapshot,
+    plan: externalChannelBindingSnapshot({
+      activeProcesses,
+      activeHeavyEvalCounts: activeHeavyEval.counts,
+      qwenCapabilityConsolidation,
+      activeGuardAdapterTruth,
+      latestPromotedAdapter,
+      latestPromotedAt,
+    }),
   });
   const liveLarkBrainBinding = legacyLiveLarkBrainBindingSnapshot({
     activeProcesses,
