@@ -6,7 +6,10 @@ import {
   parseFinanceLearningCapabilityCandidateArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
-import { createFinanceLearningPipelineOrchestratorTool } from "./finance-learning-pipeline-orchestrator-tool.js";
+import {
+  buildLearningRetrievalReceiptFileName,
+  createFinanceLearningPipelineOrchestratorTool,
+} from "./finance-learning-pipeline-orchestrator-tool.js";
 
 async function seedFile(workspaceDir: string, relativePath: string, content: string) {
   const absolutePath = path.join(workspaceDir, relativePath);
@@ -170,6 +173,31 @@ describe("finance learning pipeline orchestrator tool", () => {
       await fs.rm(workspaceDir, { recursive: true, force: true });
       workspaceDir = undefined;
     }
+  });
+
+  it("includes source identity in retrieval receipt file hashes", () => {
+    const firstReceiptFileName = buildLearningRetrievalReceiptFileName({
+      actualReadingScope: "Read method and risk sections.",
+      learningIntent: "ETF catalyst mapping",
+      normalizedArticleArtifactPaths: ["memory/articles/etf-catalyst-a.md"],
+      normalizedReferenceArtifactPaths: [],
+      sourceName: "Finance Method Notebook",
+      targetModule: "event_driven",
+      toolCallId: "same-call",
+    });
+    const secondReceiptFileName = buildLearningRetrievalReceiptFileName({
+      actualReadingScope: "Read method and risk sections.",
+      learningIntent: "ETF catalyst mapping",
+      normalizedArticleArtifactPaths: ["memory/articles/etf-catalyst-b.md"],
+      normalizedReferenceArtifactPaths: [],
+      sourceName: "Finance Method Notebook",
+      targetModule: "event_driven",
+      toolCallId: "same-call",
+    });
+
+    expect(firstReceiptFileName.split("__").at(-1)).not.toBe(
+      secondReceiptFileName.split("__").at(-1),
+    );
   });
 
   it("completes the full pipeline for a valid external markdown export and preserves adapter provenance", async () => {

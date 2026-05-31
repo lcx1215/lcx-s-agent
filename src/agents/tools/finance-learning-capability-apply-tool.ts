@@ -263,12 +263,57 @@ function buildResearchAnswerScaffold(params: {
   };
 }
 
-function buildUsageReceiptFileName(params: { toolCallId: string; queryText: string }): string {
+export function buildUsageReceiptFileName(params: {
+  appliedCapabilitySourcePaths?: string[];
+  candidateCount?: number;
+  queryText: string;
+  synthesisMode?: string | null;
+  toolCallId: string;
+}): string {
   const hash = createHash("sha256")
-    .update(`${params.toolCallId}\n${params.queryText}`)
+    .update(
+      [
+        params.toolCallId,
+        params.queryText,
+        params.synthesisMode ?? "",
+        String(params.candidateCount ?? ""),
+        ...(params.appliedCapabilitySourcePaths ?? []),
+      ].join("\n"),
+    )
     .digest("hex")
     .slice(0, 12);
   return `${new Date().toISOString().replace(/[:.]/gu, "-")}__${hash}.json`;
+}
+
+async function writeReceiptFileWithoutOverwrite(params: {
+  buildContent: () => string;
+  receiptRelPath: string;
+  workspaceDir: string;
+}): Promise<string> {
+  const receiptRelDir = path.dirname(params.receiptRelPath);
+  const receiptFileName = path.basename(params.receiptRelPath, ".json");
+  await fs.mkdir(path.join(params.workspaceDir, receiptRelDir), { recursive: true });
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const candidateRelPath =
+      attempt === 0
+        ? params.receiptRelPath
+        : path.join(receiptRelDir, `${receiptFileName}__${attempt}.json`);
+    let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+    try {
+      handle = await fs.open(path.join(params.workspaceDir, candidateRelPath), "wx");
+      await handle.writeFile(params.buildContent(), "utf8");
+      return candidateRelPath.split(path.sep).join("/");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    } finally {
+      await handle?.close();
+    }
+  }
+  throw new Error(
+    `could not allocate unique finance learning apply receipt path: ${params.receiptRelPath}`,
+  );
 }
 
 async function writeApplyUsageReceipt(params: {
@@ -287,43 +332,50 @@ async function writeApplyUsageReceipt(params: {
   const receiptRelDir = path.join(FINANCE_LEARNING_APPLY_USAGE_RECEIPT_DIR, dateKey);
   const receiptRelPath = path.join(
     receiptRelDir,
-    buildUsageReceiptFileName({ toolCallId: params.toolCallId, queryText: params.queryText }),
+    buildUsageReceiptFileName({
+      appliedCapabilitySourcePaths: (params.appliedCapabilities ?? [])
+        .map((capability) => capability.sourceArticlePath)
+        .filter((sourceArticlePath): sourceArticlePath is string => Boolean(sourceArticlePath)),
+      candidateCount: params.candidateCount,
+      queryText: params.queryText,
+      synthesisMode: params.synthesisMode,
+      toolCallId: params.toolCallId,
+    }),
   );
-  await fs.mkdir(path.join(params.workspaceDir, receiptRelDir), { recursive: true });
-  await fs.writeFile(
-    path.join(params.workspaceDir, receiptRelPath),
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        boundary: "finance_learning_capability_apply_usage_receipt",
-        generatedAt: new Date().toISOString(),
-        queryText: params.queryText,
-        ok: params.ok,
-        reason: params.reason ?? null,
-        synthesisMode: params.synthesisMode ?? null,
-        candidateCount: params.candidateCount,
-        answerScaffoldStatus: params.answerScaffoldStatus ?? null,
-        capabilitySynthesis: params.capabilitySynthesis ?? null,
-        appliedCapabilities: (params.appliedCapabilities ?? []).map((candidate) => ({
-          capabilityName: candidate.capabilityName,
-          sourceArticlePath: candidate.sourceArticlePath,
-          retrievalScore: candidate.retrievalScore,
-          matchedSignals: candidate.matchedSignals,
-          applicationBoundary: candidate.applicationBoundary,
-          attachmentPoint: candidate.attachmentPoint,
-        })),
-        noExecutionAuthority: true,
-        noDoctrineMutation: true,
-        noProtectedMemoryWrite: true,
-        action:
-          "Use this receipt to audit which retained finance capabilities were applied, synthesized, or refused for a bounded research question.",
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return receiptRelPath.split(path.sep).join("/");
+  return writeReceiptFileWithoutOverwrite({
+    workspaceDir: params.workspaceDir,
+    receiptRelPath,
+    buildContent: () =>
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          boundary: "finance_learning_capability_apply_usage_receipt",
+          generatedAt: new Date().toISOString(),
+          queryText: params.queryText,
+          ok: params.ok,
+          reason: params.reason ?? null,
+          synthesisMode: params.synthesisMode ?? null,
+          candidateCount: params.candidateCount,
+          answerScaffoldStatus: params.answerScaffoldStatus ?? null,
+          capabilitySynthesis: params.capabilitySynthesis ?? null,
+          appliedCapabilities: (params.appliedCapabilities ?? []).map((candidate) => ({
+            capabilityName: candidate.capabilityName,
+            sourceArticlePath: candidate.sourceArticlePath,
+            retrievalScore: candidate.retrievalScore,
+            matchedSignals: candidate.matchedSignals,
+            applicationBoundary: candidate.applicationBoundary,
+            attachmentPoint: candidate.attachmentPoint,
+          })),
+          noExecutionAuthority: true,
+          noDoctrineMutation: true,
+          noProtectedMemoryWrite: true,
+          action:
+            "Use this receipt to audit which retained finance capabilities were applied, synthesized, or refused for a bounded research question.",
+        },
+        null,
+        2,
+      )}\n`,
+  });
 }
 
 function normalizeRelativePath(value: string): string {

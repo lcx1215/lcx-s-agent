@@ -6,7 +6,10 @@ import {
   parseFinanceLearningCapabilityCandidateArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
-import { createFinanceLearningCapabilityApplyTool } from "./finance-learning-capability-apply-tool.js";
+import {
+  buildUsageReceiptFileName,
+  createFinanceLearningCapabilityApplyTool,
+} from "./finance-learning-capability-apply-tool.js";
 import { createFinanceLearningCapabilityAttachTool } from "./finance-learning-capability-attach-tool.js";
 import { createFinanceLearningCapabilityInspectTool } from "./finance-learning-capability-inspect-tool.js";
 
@@ -104,6 +107,27 @@ describe("finance learning capability tools", () => {
       await fs.rm(workspaceDir, { recursive: true, force: true });
       workspaceDir = undefined;
     }
+  });
+
+  it("includes applied capability identity in usage receipt file hashes", () => {
+    const firstReceiptFileName = buildUsageReceiptFileName({
+      appliedCapabilitySourcePaths: ["memory/articles/liquidity-regime.md"],
+      candidateCount: 1,
+      queryText: "Apply retained ETF risk method",
+      synthesisMode: "single_capability_application",
+      toolCallId: "same-call",
+    });
+    const secondReceiptFileName = buildUsageReceiptFileName({
+      appliedCapabilitySourcePaths: ["memory/articles/headline-triage.md"],
+      candidateCount: 1,
+      queryText: "Apply retained ETF risk method",
+      synthesisMode: "single_capability_application",
+      toolCallId: "same-call",
+    });
+
+    expect(firstReceiptFileName.split("__").at(-1)).not.toBe(
+      secondReceiptFileName.split("__").at(-1),
+    );
   });
 
   it("records retained capability candidates and supports inspect filters", async () => {

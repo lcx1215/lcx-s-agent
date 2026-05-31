@@ -189,16 +189,62 @@ function countRetrievedCandidates(details: unknown): number {
     : 0;
 }
 
-function buildLearningRetrievalReceiptFileName(params: {
+export function buildLearningRetrievalReceiptFileName(params: {
+  actualReadingScope?: string;
   learningIntent: string;
+  normalizedArticleArtifactPaths?: string[];
+  normalizedReferenceArtifactPaths?: string[];
   sourceName: string;
+  targetModule?: string;
   toolCallId: string;
 }): string {
   const hash = createHash("sha256")
-    .update(`${params.toolCallId}\n${params.sourceName}\n${params.learningIntent}`)
+    .update(
+      [
+        params.toolCallId,
+        params.sourceName,
+        params.learningIntent,
+        params.targetModule ?? "",
+        params.actualReadingScope ?? "",
+        ...(params.normalizedArticleArtifactPaths ?? []),
+        ...(params.normalizedReferenceArtifactPaths ?? []),
+      ].join("\n"),
+    )
     .digest("hex")
     .slice(0, 12);
   return `${new Date().toISOString().replace(/[:.]/gu, "-")}__${hash}.json`;
+}
+
+async function writeReceiptFileWithoutOverwrite(params: {
+  workspaceDir: string;
+  receiptRelPath: string;
+  buildContent: (normalizedReceiptRelPath: string) => string;
+}): Promise<string> {
+  const receiptRelDir = path.dirname(params.receiptRelPath);
+  const receiptFileName = path.basename(params.receiptRelPath, ".json");
+  await fs.mkdir(path.join(params.workspaceDir, receiptRelDir), { recursive: true });
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const candidateRelPath =
+      attempt === 0
+        ? params.receiptRelPath
+        : path.join(receiptRelDir, `${receiptFileName}__${attempt}.json`);
+    const normalizedCandidateRelPath = candidateRelPath.split(path.sep).join("/");
+    let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+    try {
+      handle = await fs.open(path.join(params.workspaceDir, candidateRelPath), "wx");
+      await handle.writeFile(params.buildContent(normalizedCandidateRelPath), "utf8");
+      return normalizedCandidateRelPath;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    } finally {
+      await handle?.close();
+    }
+  }
+  throw new Error(
+    `could not allocate unique finance learning receipt path: ${params.receiptRelPath}`,
+  );
 }
 
 async function writeLearningRetrievalReceipt(params: {
@@ -234,12 +280,15 @@ async function writeLearningRetrievalReceipt(params: {
   const receiptRelPath = path.join(
     receiptRelDir,
     buildLearningRetrievalReceiptFileName({
+      actualReadingScope: params.actualReadingScope,
       learningIntent: params.learningIntent,
+      normalizedArticleArtifactPaths: params.normalizedArticleArtifactPaths,
+      normalizedReferenceArtifactPaths: params.normalizedReferenceArtifactPaths,
       sourceName: params.sourceName,
+      targetModule: params.targetModule,
       toolCallId: params.toolCallId,
     }),
   );
-  const normalizedReceiptRelPath = receiptRelPath.split(path.sep).join("/");
   const missingEvidenceAfterReceipt = Array.isArray(
     params.sourceIntakeEvidenceChain.missingEvidence,
   )
@@ -248,67 +297,68 @@ async function writeLearningRetrievalReceipt(params: {
       )
     : [];
   const applicationValidationReceiptPath = params.applicationValidation?.usageReceiptPath ?? null;
-  const sourceIntakeEvidenceChain = {
-    ...params.sourceIntakeEvidenceChain,
-    retrievalReceiptPath: normalizedReceiptRelPath,
-    status:
-      applicationValidationReceiptPath &&
-      params.trainingOrEvalAbsorptionEvidencePath &&
-      params.freshAdjacentApplicationTask &&
-      hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision)
-        ? "eval_absorbed"
-        : applicationValidationReceiptPath
-          ? "application_ready"
-          : "retrieval_ready",
-    readyForModulePlanReceipt: !missingEvidenceAfterReceipt.some(
-      (item) => item !== "training_or_eval_absorption_evidence",
-    ),
-    missingEvidence: missingEvidenceAfterReceipt,
-  };
-  await fs.mkdir(path.join(params.workspaceDir, receiptRelDir), { recursive: true });
-  await fs.writeFile(
-    path.join(params.workspaceDir, receiptRelPath),
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        boundary: "finance_learning_retrieval_receipt",
-        generatedAt: new Date().toISOString(),
-        sourceName: params.sourceName,
-        learningIntent: params.learningIntent,
-        maxRetrievedCapabilities: params.maxRetrievedCapabilities,
-        normalizedArticleArtifactPaths: params.normalizedArticleArtifactPaths,
-        normalizedReferenceArtifactPaths: params.normalizedReferenceArtifactPaths,
-        retainedCandidateCount: params.retainedCandidateCount,
-        preflightCandidateCount,
-        postAttachCandidateCount,
-        newlyRetrievableCandidateDelta: Math.max(
-          0,
-          postAttachCandidateCount - preflightCandidateCount,
+  return writeReceiptFileWithoutOverwrite({
+    workspaceDir: params.workspaceDir,
+    receiptRelPath,
+    buildContent: (normalizedReceiptRelPath) => {
+      const sourceIntakeEvidenceChain = {
+        ...params.sourceIntakeEvidenceChain,
+        retrievalReceiptPath: normalizedReceiptRelPath,
+        status:
+          applicationValidationReceiptPath &&
+          params.trainingOrEvalAbsorptionEvidencePath &&
+          params.freshAdjacentApplicationTask &&
+          hasKeepDownrankDiscardDecision(params.keepDownrankDiscardDecision)
+            ? "eval_absorbed"
+            : applicationValidationReceiptPath
+              ? "application_ready"
+              : "retrieval_ready",
+        readyForModulePlanReceipt: !missingEvidenceAfterReceipt.some(
+          (item) => item !== "training_or_eval_absorption_evidence",
         ),
-        reusedExistingBeforeLearning: preflightCandidateCount > 0,
-        retrievalFirstLearningApplied: true,
-        noExecutionAuthority: true,
-        noDoctrineMutation: true,
-        preflightCapabilityRetrieval: params.preflightCapabilityRetrieval,
-        postAttachCapabilityRetrieval: params.postAttachCapabilityRetrieval,
-        applicationValidation: params.applicationValidation,
-        moduleLearningEvidence: {
-          targetModule: params.targetModule ?? null,
-          actualReadingScope: params.actualReadingScope ?? null,
-          freshAdjacentApplicationTask: params.freshAdjacentApplicationTask ?? null,
-          keepDownrankDiscardDecision: params.keepDownrankDiscardDecision ?? "not_decided",
-          trainingOrEvalAbsorptionEvidencePath: params.trainingOrEvalAbsorptionEvidencePath ?? null,
-          sourceIntakeEvidenceChain,
+        missingEvidence: missingEvidenceAfterReceipt,
+      };
+      return `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          boundary: "finance_learning_retrieval_receipt",
+          generatedAt: new Date().toISOString(),
+          sourceName: params.sourceName,
+          learningIntent: params.learningIntent,
+          maxRetrievedCapabilities: params.maxRetrievedCapabilities,
+          normalizedArticleArtifactPaths: params.normalizedArticleArtifactPaths,
+          normalizedReferenceArtifactPaths: params.normalizedReferenceArtifactPaths,
+          retainedCandidateCount: params.retainedCandidateCount,
+          preflightCandidateCount,
+          postAttachCandidateCount,
+          newlyRetrievableCandidateDelta: Math.max(
+            0,
+            postAttachCandidateCount - preflightCandidateCount,
+          ),
+          reusedExistingBeforeLearning: preflightCandidateCount > 0,
+          retrievalFirstLearningApplied: true,
+          noExecutionAuthority: true,
+          noDoctrineMutation: true,
+          preflightCapabilityRetrieval: params.preflightCapabilityRetrieval,
+          postAttachCapabilityRetrieval: params.postAttachCapabilityRetrieval,
+          applicationValidation: params.applicationValidation,
+          moduleLearningEvidence: {
+            targetModule: params.targetModule ?? null,
+            actualReadingScope: params.actualReadingScope ?? null,
+            freshAdjacentApplicationTask: params.freshAdjacentApplicationTask ?? null,
+            keepDownrankDiscardDecision: params.keepDownrankDiscardDecision ?? "not_decided",
+            trainingOrEvalAbsorptionEvidencePath:
+              params.trainingOrEvalAbsorptionEvidencePath ?? null,
+            sourceIntakeEvidenceChain,
+          },
+          action:
+            "Use this receipt to verify whether a learning run became retrievable and, when requested, application-validated through stable finance domains, capability tags, query-ranked capability cards, and read-only apply guidance.",
         },
-        action:
-          "Use this receipt to verify whether a learning run became retrievable and, when requested, application-validated through stable finance domains, capability tags, query-ranked capability cards, and read-only apply guidance.",
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return normalizedReceiptRelPath;
+        null,
+        2,
+      )}\n`;
+    },
+  });
 }
 
 function extractRetrievalReceiptDateKey(receiptPath: string): string | null {
