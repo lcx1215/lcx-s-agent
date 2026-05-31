@@ -129,6 +129,15 @@ function evalPassLabel(evalRecord: Record<string, unknown> | undefined): string 
   return "green pass count";
 }
 
+function externalChannelBindingPlan(
+  trainingPlan: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  return (
+    recordValue(trainingPlan?.externalChannelBinding) ??
+    recordValue(trainingPlan?.liveLarkBrainBinding)
+  );
+}
+
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
@@ -275,6 +284,13 @@ function ownerDecisionRepairBlocked(
       (decision) =>
         decision?.id === decisionId && booleanValue(decision.codexRepairEligible) === false,
     );
+}
+
+function ownerDecisionRepairBlockedAny(
+  trainingPlan: Record<string, unknown> | undefined,
+  decisionIds: readonly string[],
+): boolean {
+  return decisionIds.some((decisionId) => ownerDecisionRepairBlocked(trainingPlan, decisionId));
 }
 
 function hasDecision(
@@ -513,7 +529,7 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
   const latestPassingEval = recordValue(payload?.latestPassingEval);
   const qwen = recordValue(payload?.qwenCapabilityConsolidation);
   const activeGuardAdapterTruth = recordValue(payload?.activeGuardAdapterTruth);
-  const liveLarkBrainBinding = recordValue(payload?.liveLarkBrainBinding);
+  const externalChannelBinding = externalChannelBindingPlan(payload);
   const signals: ProblemSignal[] = [];
   signals.push(
     ...decisionSignals(payload, {
@@ -525,9 +541,13 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
         severity: "P3",
         summary: "latest promoted adapter is no longer the selected clean runtime adapter",
       },
+      lark_external_channel_binding_ready: {
+        severity: "P3",
+        summary: "external Lark channel binding is ready but still needs explicit apply/proof",
+      },
       live_lark_brain_binding_deferred: {
         severity: "P3",
-        summary: "live Lark brain binding is not yet proven against the selected clean adapter",
+        summary: "legacy live Lark binding alias is deferred; use external-channel binding truth",
       },
     }),
   );
@@ -599,18 +619,22 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
       },
     });
   }
-  const liveBindingStatus =
-    typeof liveLarkBrainBinding?.status === "string" ? liveLarkBrainBinding.status : undefined;
-  if (liveBindingStatus && !["ready_for_live_runtime_binding"].includes(liveBindingStatus)) {
+  const channelBindingStatus =
+    typeof externalChannelBinding?.status === "string" ? externalChannelBinding.status : undefined;
+  if (
+    channelBindingStatus &&
+    !["ready_for_apply", "ready_for_live_runtime_binding"].includes(channelBindingStatus)
+  ) {
     signals.push({
-      id: "live_lark_brain_binding_not_ready",
+      id: "external_channel_binding_not_ready",
       severity: "P3",
-      summary: "live Lark must wait before consuming the selected clean local-brain adapter",
+      summary: "external Lark channel must wait before consuming the selected clean adapter",
       evidence: {
-        status: liveLarkBrainBinding?.status,
-        action: liveLarkBrainBinding?.action,
-        selectedCleanAdapter: liveLarkBrainBinding?.selectedCleanAdapter,
-        missingProof: liveLarkBrainBinding?.missingProof,
+        legacySignalId: "live_lark_brain_binding_not_ready",
+        status: externalChannelBinding?.status,
+        action: externalChannelBinding?.action,
+        selectedCleanAdapter: externalChannelBinding?.selectedCleanAdapter,
+        missingProof: externalChannelBinding?.missingProof,
       },
     });
   }
@@ -621,12 +645,15 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
     sourceOwners: ["local-brain-training-plan"],
     signals,
     nextAction:
-      "Keep runtime on one clean latest-passing adapter; bind live Lark to that selected clean adapter only after eval/MLX is idle, sidecar drift is zero, runtime is restarted, and live Lark proof is collected.",
+      "Keep runtime on one clean latest-passing adapter; bind the external Lark channel to that selected clean adapter only after eval/MLX is idle, sidecar drift is zero, runtime is restarted, and real user-visible Lark proof is collected.",
     actionability:
       hasActiveHeavyLocalBrainProcess(payload) ||
       ownerDecisionRepairBlocked(payload, "guard_adapter_mismatch") ||
       ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready") ||
-      ownerDecisionRepairBlocked(payload, "live_lark_brain_binding_deferred")
+      ownerDecisionRepairBlockedAny(payload, [
+        "lark_external_channel_binding_ready",
+        "live_lark_brain_binding_deferred",
+      ])
         ? "blocked_by_owner_gate"
         : undefined,
     blockingReasons: [
@@ -637,8 +664,11 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
       ...(ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready")
         ? ["training_plan_codex_repair_not_eligible"]
         : []),
-      ...(ownerDecisionRepairBlocked(payload, "live_lark_brain_binding_deferred")
-        ? ["live_lark_brain_binding_waiting_for_owner_proof"]
+      ...(ownerDecisionRepairBlockedAny(payload, [
+        "lark_external_channel_binding_ready",
+        "live_lark_brain_binding_deferred",
+      ])
+        ? ["external_channel_binding_waiting_for_owner_proof"]
         : []),
     ],
   });

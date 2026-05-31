@@ -64,7 +64,11 @@ async function runAutopilot() {
       parsedOwners: number;
       ownerCount: number;
       activeTrainingOrEval: boolean;
-      liveLarkBrainBindingStatus?: string;
+      externalChannelBindingStatus?: string;
+      externalChannelStatusModel?: string;
+      externalChannelBound?: boolean;
+      userVisibleObserved?: boolean;
+      legacyLiveLarkBrainBindingStatus?: string;
       evolutionCooldownActive?: boolean;
       latestEvolutionCooldown?: unknown;
       latestGuardEvent?: unknown;
@@ -108,6 +112,11 @@ async function runAutopilot() {
         acceptedSkillOptPackets?: number;
       };
       providerCouncilAcceleration?: { status?: string; action?: string };
+      externalChannelStatus?: {
+        statusModel?: string;
+        externalChannelBound?: boolean;
+        userVisibleObserved?: boolean;
+      };
       liveLarkBrainBinding?: { status?: string };
       problemRadar?: { actionableClusters?: string[] };
       changeImpact?: { affectedLanes?: string[] };
@@ -176,7 +185,7 @@ describe("LCX governance autopilot", () => {
           ]),
           deniedAuthorities: expect.arrayContaining([
             "repo_source",
-            "live_sender",
+            "external_channel_sender",
             "provider_config",
             "protected_memory",
             "formal_language_corpus",
@@ -212,12 +221,14 @@ describe("LCX governance autopilot", () => {
         "changeImpact",
         "universeIndex",
         "externalAgentUpgrade",
+        "liveFadeoutAudit",
+        "externalChannelStatus",
         "trainingPlan",
         "skillOptLite",
         "selfRepairHands",
         "monotonicDataLedger",
         "providerCouncilAcceleration",
-        "liveLarkBrainBinding",
+        "externalChannelBinding",
         "mindModel",
         "flowGraph",
         "headTail",
@@ -266,6 +277,16 @@ describe("LCX governance autopilot", () => {
     expect(payload.owners.skillOptLite?.nextIdleAction).toEqual(expect.any(String));
     expect(payload.owners.providerCouncilAcceleration?.status).toEqual(expect.any(String));
     expect(payload.owners.providerCouncilAcceleration?.action).toEqual(expect.any(String));
+    expect(payload.owners.externalChannelStatus).toEqual(
+      expect.objectContaining({
+        statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+        externalChannelBound: expect.any(Boolean),
+        userVisibleObserved: expect.any(Boolean),
+      }),
+    );
+    expect(payload.summary.externalChannelStatusModel).toBe(
+      payload.owners.externalChannelStatus?.statusModel,
+    );
     expect(payload.owners.contextRecovery?.compressedContextRecovered).toEqual(expect.any(Boolean));
     expect(payload.latestStatePath).toBe(
       "/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json",
@@ -319,7 +340,11 @@ describe("LCX governance autopilot", () => {
       activePidSummary?: { guard?: string[]; eval?: string[]; mlx?: string[] };
       material?: {
         activePidCounts?: Record<string, number>;
-        liveLarkBrainBindingStatus?: string;
+        externalChannelBindingStatus?: string;
+        externalChannelStatusModel?: string;
+        externalChannelBound?: boolean;
+        userVisibleObserved?: boolean;
+        legacyLiveLarkBrainBindingStatus?: string;
         evolutionCooldownActive?: boolean;
         latestEvolutionCooldown?: unknown;
         latestGuardEvent?: unknown;
@@ -358,8 +383,16 @@ describe("LCX governance autopilot", () => {
         mlx: expect.any(Number),
       }),
     );
-    expect(digest.material?.liveLarkBrainBindingStatus).toBe(
-      payload.summary.liveLarkBrainBindingStatus,
+    expect(digest.material?.externalChannelBindingStatus).toBe(
+      payload.summary.externalChannelBindingStatus,
+    );
+    expect(digest.material?.externalChannelStatusModel).toBe(
+      payload.summary.externalChannelStatusModel,
+    );
+    expect(digest.material?.externalChannelBound).toBe(payload.summary.externalChannelBound);
+    expect(digest.material?.userVisibleObserved).toBe(payload.summary.userVisibleObserved);
+    expect(digest.material?.legacyLiveLarkBrainBindingStatus).toBe(
+      payload.summary.legacyLiveLarkBrainBindingStatus,
     );
     expect(digest.material?.evolutionCooldownActive).toBe(payload.summary.evolutionCooldownActive);
     expect(digest.material?.latestEvolutionCooldown).toEqual(
@@ -381,7 +414,7 @@ describe("LCX governance autopilot", () => {
       ]),
     );
     expect(digest.material?.selfRepairHandsOwnerWritePolicy?.deniedAuthorities).toEqual(
-      expect.arrayContaining(["repo_source", "live_sender", "provider_config"]),
+      expect.arrayContaining(["repo_source", "external_channel_sender", "provider_config"]),
     );
     expect(digest.material?.monotonicDataLedgerDatasetExamples).toBe(
       payload.owners.monotonicDataLedger?.datasetExamples,
@@ -429,6 +462,8 @@ describe("LCX governance autopilot", () => {
     expect(handoff).toContain("dev_external_agent_upgrade_radar_only");
     expect(handoff).toContain("## Provider Council Acceleration");
     expect(handoff).toContain("dev_provider_council_acceleration_only");
+    expect(handoff).toContain("## External Channel Status");
+    expect(handoff).toContain("dev_external_channel_status_only");
     expect(handoff).toContain("liveTouched: false");
     expect(handoff).toContain("providerConfigTouched: false");
     expect(handoff).toContain("protectedMemoryTouched: false");

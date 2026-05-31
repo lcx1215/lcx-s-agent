@@ -50,7 +50,7 @@ describe("LCX self-repair hands", () => {
         "repo_source",
         "git_index",
         "git_commit",
-        "live_sender",
+        "external_channel_sender",
         "provider_config",
         "protected_memory",
         "training_processes",

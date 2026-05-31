@@ -2937,6 +2937,7 @@ confidence: high
     const brainCandidate = JSON.parse(brainCandidateText) as {
       boundary: string;
       noLanguageRoutingPromotion: boolean;
+      noExternalChannelSenderTouched: boolean;
       noLiveSenderTouched: boolean;
       candidates: Array<{
         boundary: string;
@@ -2947,6 +2948,7 @@ confidence: high
     expect(brainCandidate).toMatchObject({
       boundary: "brain_distillation_candidate",
       noLanguageRoutingPromotion: true,
+      noExternalChannelSenderTouched: true,
       noLiveSenderTouched: true,
     });
     expect(brainCandidate.candidates[0]).toMatchObject({

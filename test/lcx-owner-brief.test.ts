@@ -12,7 +12,7 @@ describe("LCX owner brief", () => {
           structuralOwnerFailures: ["commercialAcceptance", "contextRecovery"],
           blockedClusters: ["training_eval_runtime_cluster"],
           actionableClusters: ["dirty_worktree_cluster"],
-          liveLarkBrainBindingStatus: "deferred_active_training_or_eval",
+          externalChannelBindingStatus: "deferred_active_training_or_eval",
           fastestSafeNextAction: "wait_for_current_training_eval_then_run_idle_queue",
         },
         owners: {

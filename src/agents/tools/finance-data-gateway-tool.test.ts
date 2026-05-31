@@ -91,7 +91,11 @@ describe("finance_data_gateway_snapshot tool", () => {
         qualityStatus: "ready",
         receiptPath: expect.stringContaining("memory/finance-data-gateway/"),
         nextTool: "finance_framework_core_inspect",
-        notTouched: expect.arrayContaining(["provider_config", "live_sender", "protected_memory"]),
+        notTouched: expect.arrayContaining([
+          "provider_config",
+          "external_channel_sender",
+          "protected_memory",
+        ]),
       }),
     );
     expect(result.details).toEqual(

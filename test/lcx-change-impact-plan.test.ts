@@ -363,7 +363,9 @@ describe("lcx-change-impact-plan", () => {
           lane: "local_automation",
           requiredChecks: ["macos-control-room-build-or-test"],
           safetyNotes: expect.arrayContaining([
-            expect.stringContaining("do not treat them as live Lark proof"),
+            expect.stringContaining(
+              "do not treat them as external-channel or legacy live Lark proof",
+            ),
           ]),
         }),
       ]),

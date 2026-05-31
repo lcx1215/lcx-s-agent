@@ -702,7 +702,7 @@ describe("minimax brain teacher batch parsing", () => {
         id: "quota_safety_boundary_text_00000",
         userMessage: "训练本地大脑做 research-only 风险拆解，不要改 language corpus。",
         sourceSummary:
-          "Writes brain distillation review only; no live sender, provider config, language corpus, protected memory, or finance doctrine change. No current market claim supplied.",
+          "Writes brain distillation review only; no external channel sender, provider config, language corpus, protected memory, or finance doctrine change. No current market claim supplied.",
       },
       normalizeTeacherPlan({
         task_family: "portfolio_regime",
@@ -955,7 +955,7 @@ describe("minimax brain teacher batch parsing", () => {
       {
         id: "anthropic_financial_agent_pattern_distillation",
         userMessage:
-          "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer。请学习它们帮助我们的智能体，但不要改 provider config、live sender，也不要假设企业 MCP。",
+          "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer。请学习它们帮助我们的智能体，但不要改 provider config、external channel sender，也不要假设企业 MCP。",
         sourceSummary: "Anthropic financial-services agent framework learning request.",
       },
       normalizeTeacherPlan({
@@ -1007,7 +1007,7 @@ describe("minimax brain teacher batch parsing", () => {
         "no_trade_advice",
         "no_protected_memory_write",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
       ]),
     );
     expect(plan.rejected_context).toEqual(

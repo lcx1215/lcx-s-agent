@@ -435,7 +435,7 @@ export async function buildLearningSedimentationBridge(
           : "write_missing_plan_receipts_then_run_module_learning_review",
     notPromoted: true,
     notTouched: [
-      "live_sender",
+      "external_channel_sender",
       "provider_config",
       "protected_repo_memory",
       "formal_lark_routing_corpus",

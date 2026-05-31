@@ -91,7 +91,7 @@ describe("LCX compressed context recovery exam", () => {
         "node --import tsx scripts/dev/lcx-self-repair-hands.ts --json",
         "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
         "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-        "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
+        "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
         "node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json",
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
         "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
@@ -119,7 +119,9 @@ describe("LCX compressed context recovery exam", () => {
           deferredCommands: string[];
           safetyNotes: string[];
         };
-        liveStatus: {
+        externalChannelStatus: {
+          externalChannelBound?: boolean;
+          userVisibleObserved?: boolean;
           liveRuntimeUpdated?: boolean;
           liveUserSeen?: boolean;
           liveMatchesCurrentDev?: boolean;
@@ -174,8 +176,10 @@ describe("LCX compressed context recovery exam", () => {
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.unmatchedFiles)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.deferredCommands)).toBe(true);
     expect(Array.isArray(payload.handoffForNewWindow.changeImpact.safetyNotes)).toBe(true);
-    expect(payload.handoffForNewWindow.liveStatus).toEqual(
+    expect(payload.handoffForNewWindow.externalChannelStatus).toEqual(
       expect.objectContaining({
+        externalChannelBound: expect.any(Boolean),
+        userVisibleObserved: expect.any(Boolean),
         liveRuntimeUpdated: expect.any(Boolean),
         liveUserSeen: expect.any(Boolean),
       }),
@@ -206,10 +210,14 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.handoffForNewWindow.text).toContain("do not start overlapping");
     expect(payload.handoffForNewWindow.text).toContain("context handoff is dev/local evidence");
     expect(payload.handoffForNewWindow.text).not.toContain("not live-runtime-updated");
-    expect(payload.handoffForNewWindow.text).toContain("Live Boundary Truth");
-    expect(payload.handoffForNewWindow.text).toContain("volatileOwner=lcx-promote-live");
-    expect(payload.handoffForNewWindow.text).toContain("liveRuntimeUpdated=");
-    expect(payload.handoffForNewWindow.text).toContain("liveUserSeen=");
+    expect(payload.handoffForNewWindow.text).toContain("External Channel Boundary Truth");
+    expect(payload.handoffForNewWindow.text).toContain("volatileOwner=lcx-external-channel-status");
+    expect(payload.handoffForNewWindow.text).toContain("externalChannelBound=");
+    expect(payload.handoffForNewWindow.text).toContain("userVisibleObserved=");
+    expect(payload.handoffForNewWindow.text).toContain("legacyLiveRuntimeUpdated=");
+    expect(payload.handoffForNewWindow.text).toContain("legacyLiveUserSeen=");
+    expect(payload.handoffForNewWindow.text).toContain("externalChannelBinding=");
+    expect(payload.handoffForNewWindow.text).toContain("externalChannelBindingMissingProof=");
     expect(payload.handoffForNewWindow.text).toContain("liveLarkBrainBinding=");
     expect(payload.handoffForNewWindow.text).toContain("liveLarkBrainBindingMissingProof=");
     expect(payload.handoffForNewWindow.text).toContain("deferredCommands=");
@@ -275,9 +283,9 @@ describe("LCX compressed context recovery exam", () => {
     expect(recoverySource).toContain("universe_index_recovers_total_inventory");
     expect(recoverySource).toContain("lcx-universe-index");
     expect(recoverySource).toContain("lcx-problem-cluster-radar");
-    expect(recoverySource).toContain("currentLiveStatusSnapshot");
-    expect(recoverySource).toContain("Live Boundary Truth");
-    expect(recoverySource).toContain("volatileOwner=lcx-promote-live");
+    expect(recoverySource).toContain("currentExternalChannelStatusSnapshot");
+    expect(recoverySource).toContain("External Channel Boundary Truth");
+    expect(recoverySource).toContain("volatileOwner=lcx-external-channel-status");
     expect(localOperator).toContain("NODE_CONTEXT_RECOVERY_FILE");
     expect(localOperator).toContain("NODE_FLOW_FILE");
     expect(localOperator).toContain("NODE_GOVERNANCE_FILE");

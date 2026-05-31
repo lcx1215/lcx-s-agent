@@ -438,8 +438,8 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     id: "protected_boundary",
     masterLane: "dev_live_boundary",
     objective:
-      "Stop repairs from silently mutating protected memory, provider config, or live sender paths.",
-    headTerms: ["protected memory", "provider config", "live sender"],
+      "Stop repairs from silently mutating protected memory, provider config, or external-channel sender paths.",
+    headTerms: ["protected memory", "provider config", "external-channel sender"],
     workflowTerms: ["protectedMemoryTouched", "providerConfigTouched", "liveTouched"],
     proofTerms: ["notTouched", "separationContract", "protectedMemoryUntouched"],
     boundaryTerms: ["memory/current-research-line.md", "memory/unified-risk-view.md"],
@@ -848,7 +848,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
         "no wallet connection",
         "no order placement",
         "no provider config",
-        "no live sender",
+        "no external-channel sender",
       ],
     },
     nextAction:

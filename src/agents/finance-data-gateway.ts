@@ -312,6 +312,11 @@ export function buildFinanceDataGatewaySnapshot(
       "cite_every_number_or_mark_unsourced",
       "do_not_use_conflicted_fields_without_review",
     ],
-    notTouched: ["provider_config", "live_sender", "protected_memory", "trading_execution"],
+    notTouched: [
+      "provider_config",
+      "external_channel_sender",
+      "protected_memory",
+      "trading_execution",
+    ],
   };
 }

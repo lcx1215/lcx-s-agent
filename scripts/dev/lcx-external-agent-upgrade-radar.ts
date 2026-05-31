@@ -114,7 +114,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     existingOwner: "SkillOpt-lite, failure curriculum, and local-brain promotion truth",
     ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
     ownerUseTrigger:
-      "When a future task asks for SkillOpt v2, AutoSkill, Skills-Coach, self-evolving skills, or SOP expansion, route through lcx-skillopt-lite and keep preflight, eval, train-slice, promotion, and LiveLark proof separate.",
+      "When a future task asks for SkillOpt v2, AutoSkill, Skills-Coach, self-evolving skills, or SOP expansion, route through lcx-skillopt-lite and keep preflight, eval, train-slice, promotion, and external-channel proof separate.",
     autocueTerms: [
       "SkillOpt v2",
       "AutoSkill",
@@ -144,12 +144,12 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "dev_skillopt_lite_only",
       "skillopt_preflight_not_weight_absorption",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "protected_memory_guard",
       "no_direct_training_start",
     ],
     liveBoundary:
-      "SkillOpt SOPs may cue the live/local reply planner only after source sync; model-weight absorption and live-user-seen still require separate owner proof",
+      "SkillOpt SOPs may cue the live/local reply planner only after source sync; model-weight absorption and user-visible-observed still require separate owner proof",
   },
   {
     id: "agent_lightning_trace_credit",
@@ -184,11 +184,11 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     riskBoundaries: [
       "no_runtime_rl_server",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "no_direct_training_start",
     ],
     liveBoundary:
-      "live can surface the dev radar result after migration, but no live model behavior is changed by this radar alone",
+      "external channel can surface the dev radar result after migration, but no external-channel model behavior is changed by this radar alone",
   },
   {
     id: "longmemeval_agentrunbook_memory_regression",
@@ -204,7 +204,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "When a future task asks for LongMemEval, AgentRunbook, stale snapshot, or long-memory regression, route through context recovery before changing memory.",
     autocueTerms: ["LongMemEval", "AgentRunbook", "long memory eval", "stale snapshot"],
     distilledPattern:
-      "turn LCX handoff, operator latest, module-learning, and live-boundary facts into regression questions for future compressed windows",
+      "turn LCX handoff, operator latest, module-learning, and external-channel-boundary facts into regression questions for future compressed windows",
     firstDevProbe:
       "generate a small local memory-regression fixture asking what changed, what is stale, and which owner command proves it",
     requiredReceipts: [
@@ -222,10 +222,10 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "protected_memory_guard",
       "system_memory_not_module_learning",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     liveBoundary:
-      "live can use the same prompt doctrine after migration, but memory regression proof remains dev-only until a real Lark prompt uses it",
+      "external channel can use the same prompt doctrine after migration, but memory regression proof remains dev-only until a real Lark prompt uses it",
   },
   {
     id: "local_first_memory_provenance",
@@ -268,7 +268,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_protected_memory_write",
       "no_storage_only_learning_claim",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     liveBoundary:
       "Live may use provenance wording only after sync; this radar does not mutate protected memory or claim learned memory",
@@ -305,10 +305,10 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_protected_memory_write",
       "no_storage_only_learning_claim",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     liveBoundary:
-      "live prompt can mention the boundary after sync; no external memory daemon is enabled or trusted by this change",
+      "external-channel prompt can mention the boundary after sync; no external memory daemon is enabled or trusted by this change",
   },
   {
     id: "agent_trace_observability",
@@ -351,11 +351,11 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     riskBoundaries: [
       "no_ebpf_or_tls_interception_without_explicit_approval",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "protected_memory_guard",
     ],
     liveBoundary:
-      "Live trace summaries require explicit migration and redaction; dev trace receipts alone are not live-visible proof",
+      "Live trace summaries require explicit migration and redaction; dev trace receipts alone are not user-visible proof",
   },
   {
     id: "secure_tool_skill_permission_layer",
@@ -402,11 +402,11 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_untrusted_tool_authority",
       "no_global_install",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "protected_memory_guard",
     ],
     liveBoundary:
-      "Live can only use a new tool after security receipts, source sync, and explicit live migration; this radar grants no authority",
+      "Live can only use a new tool after security receipts, source sync, and explicit external-channel migration; this radar grants no authority",
   },
   {
     id: "clawbench_real_task_regression",
@@ -441,10 +441,10 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "dev_ready_not_live_user_seen",
       "protected_memory_guard",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     liveBoundary:
-      "commercial canary is live-visible only after migration plus fresh Lark inbound and matching reply evidence",
+      "commercial canary is user-visible only after migration plus fresh Lark inbound and matching reply evidence",
   },
   {
     id: "computer_use_cli_bridge",
@@ -473,10 +473,10 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_gui_write_without_probe",
       "no_global_install",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     liveBoundary:
-      "live agent may autocue the harvester skill after sync; no desktop-control authority is granted without a concrete tested wrapper",
+      "external-channel agent may autocue the harvester skill after sync; no desktop-control authority is granted without a concrete tested wrapper",
   },
   {
     id: "github_cli_agentic_workflow_control",
@@ -532,7 +532,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_copilot_agent_assignment_without_owner_command",
       "no_mcp_server_install_without_security_receipt",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "protected_memory_guard",
     ],
     liveBoundary:
@@ -578,17 +578,17 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "terminal_decision_required",
       "bounded_answer_review",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     riskBoundaries: [
       "no_parallel_agent_framework",
       "no_hidden_tool_authority",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "protected_memory_guard",
     ],
     liveBoundary:
-      "live can benefit from clearer role routing only after dev owner checks and migration; this radar grants no live agent framework authority",
+      "external channel can benefit from clearer role routing only after dev owner checks and migration; this radar grants no external-channel agent framework authority",
   },
   {
     id: "prediction_market_research_intake",
@@ -646,10 +646,10 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_latency_arbitrage",
       "market_probability_not_forecast",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     liveBoundary:
-      "live may summarize research packets after migration, but no wallet, order, private-key, or trading action is enabled",
+      "external channel may summarize research packets after migration, but no wallet, order, private-key, or trading action is enabled",
   },
   {
     id: "prediction_market_strategy_audit",
@@ -701,7 +701,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_latency_arbitrage",
       "market_probability_not_forecast",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     liveBoundary:
       "strategy audit can only become a visible research summary after review; it must never execute, size, copy, or route orders",
@@ -718,7 +718,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     automaticTrigger:
       "When user feedback, failed cases, repeated wrong answers, or SkillOpt/AutoSkill/Skills-Coach wording appears, governance autopilot reads SkillOpt-lite before any eval or training action.",
     ownerGate:
-      "active eval/MLX must be idle before targeted eval, train-slice rebuild, adapter promotion, or LiveLark binding; preflight cue stays dev-only while busy",
+      "active eval/MLX must be idle before targeted eval, train-slice rebuild, adapter promotion, or external-channel binding; preflight cue stays dev-only while busy",
     autopilotSurface:
       "lcx-governance-autopilot owners.skillOptLite plus owners.externalAgentUpgrade.nextBlacktechProbes",
     doctrineTerms: [
@@ -727,7 +727,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "compare original versus optimized SOP",
       "targeted eval",
       "train-slice",
-      "LiveLark preflight cue",
+      "external-channel preflight cue",
     ],
     currentStatus: "partially_wired_dev_only",
     nextSafeDevProbe:
@@ -735,7 +735,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     nextAutomationAction:
       "autopilot should surface the exact SkillOpt nextIdleCommand, then run at most that one command only after active eval/MLX is idle and owner gates are clean",
     blockedUntilIdle:
-      "targeted eval, train-slice, adapter promotion, and live binding must wait until eval/MLX is idle",
+      "targeted eval, train-slice, adapter promotion, and external-channel binding must wait until eval/MLX is idle",
     requiredProofChain: [
       "accepted_skillopt_candidate",
       "generated_variant_tasks",
@@ -756,7 +756,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "direct_trading_authority",
     ],
     liveBoundary:
-      "Immediate SkillOpt preflight can improve planning, but learned capability and LiveLark usage require separate promotion and live-proof owners.",
+      "Immediate SkillOpt preflight can improve planning, but learned capability and external-channel usage require separate promotion and live-proof owners.",
   },
   {
     id: "real_runtime_battery",
@@ -765,9 +765,9 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     sourceCandidates: ["clawbench_real_task_regression"],
     ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
     automaticTrigger:
-      "When a task claims product-grade, live-visible, long-horizon, runtime, or commercial acceptance readiness, autopilot includes the commercial acceptance harness.",
+      "When a task claims product-grade, user-visible, long-horizon, runtime, or commercial acceptance readiness, autopilot includes the commercial acceptance harness.",
     ownerGate:
-      "canary tasks may inspect dev/runtime state, but cannot create live-user-seen, install untrusted tasks, or mutate provider/live/protected surfaces",
+      "canary tasks may inspect dev/runtime state, but cannot create user-visible-observed, install untrusted tasks, or mutate provider/external-channel/protected surfaces",
     autopilotSurface:
       "lcx-governance-autopilot owners.commercialAcceptance and context handoff commercial gates",
     doctrineTerms: [
@@ -797,7 +797,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "protected_memory_write",
     ],
     liveBoundary:
-      "Real-runtime canaries are dev proof until a migrated LiveLark path sees fresh real inbound and outbound evidence.",
+      "Real-runtime canaries are dev proof until a migrated external-channel path sees fresh real inbound and outbound evidence.",
   },
   {
     id: "unified_trajectory_schema",
@@ -808,7 +808,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     automaticTrigger:
       "Every governance autopilot run already has owner id, command, exit status, parsed compact output, digest material, and artifact paths; future trace export must reuse this surface.",
     ownerGate:
-      "trajectory export is offline evidence only and must not start RL, SFT, eval, training, provider calls, or live sender changes",
+      "trajectory export is offline evidence only and must not start RL, SFT, eval, training, provider calls, or external channel sender changes",
     autopilotSurface:
       "lcx-governance-autopilot receipt, evolution promotion digest, and context recovery handoff",
     doctrineTerms: [
@@ -834,11 +834,11 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "runtime_rl_server",
       "direct_training_start",
       "provider_config_change",
-      "live_sender_change",
+      "external_channel_sender_change",
       "protected_memory_write",
     ],
     liveBoundary:
-      "Trajectory export is offline dev evidence; live behavior changes only after normal eval, promotion, and LiveLark gates.",
+      "Trajectory export is offline dev evidence; external-channel behavior changes only after normal eval, promotion, and external-channel gates.",
   },
   {
     id: "local_first_memory_provenance",
@@ -882,7 +882,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "protected_memory_write",
       "stored_only_learning_claim",
       "provider_config_change",
-      "live_sender_change",
+      "external_channel_sender_change",
     ],
     liveBoundary:
       "Live may read migrated provenance cues, but protected memory and model absorption stay behind existing proof gates.",
@@ -896,7 +896,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     automaticTrigger:
       "When a workflow writes state, claims ownership, runs owner commands, or reports blocked/unblocked status, autopilot should preserve command, PID, artifact, and boundary evidence.",
     ownerGate:
-      "only redacted local trace receipts are allowed by default; no eBPF, TLS interception, network export, provider config, protected memory, or live sender authority",
+      "only redacted local trace receipts are allowed by default; no eBPF, TLS interception, network export, provider config, protected memory, or external channel sender authority",
     autopilotSurface:
       "lcx-governance-autopilot material digest and future redacted local trace receipt",
     doctrineTerms: [
@@ -925,7 +925,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "network_trace_export_by_default",
       "provider_config_change",
       "protected_memory_write",
-      "live_sender_change",
+      "external_channel_sender_change",
     ],
     liveBoundary:
       "Dev traces may explain operator behavior; live trace summaries require explicit redaction and migration proof.",
@@ -969,7 +969,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "global_install",
       "provider_config_change",
       "protected_memory_write",
-      "live_sender_change",
+      "external_channel_sender_change",
       "wallet_or_order_execution",
     ],
     liveBoundary:
@@ -1016,10 +1016,10 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "token_scope_expansion",
       "provider_config_change",
       "protected_memory_write",
-      "live_sender_change",
+      "external_channel_sender_change",
     ],
     liveBoundary:
-      "GitHub CLI control-plane proof is dev/operator-only; it cannot prove live-user-seen or grant remote repository write authority by itself.",
+      "GitHub CLI control-plane proof is dev/operator-only; it cannot prove user-visible-observed or grant remote repository write authority by itself.",
   },
 ];
 
@@ -1317,7 +1317,7 @@ export function buildExternalAgentUpgradeRadar() {
     },
     architectureFit: "fully_integrated_into_existing_lcx_owner_stack",
     perfectIntegrationReason:
-      "No external project should be called perfectly integrated until a concrete dev probe, eval/receipt, live migration, and fresh Lark visible proof all pass. This radar proves architecture wiring, not live-user-seen behavior.",
+      "No external project should be called perfectly integrated until a concrete dev probe, eval/receipt, external-channel migration, and fresh Lark visible proof all pass. This radar proves architecture wiring, not user-visible-observed behavior.",
     checks,
     candidates,
     blacktechMechanisms,

@@ -92,7 +92,7 @@ node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
 node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
 node --import tsx scripts/dev/local-brain-training-plan.ts --json
-node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
+node --import tsx scripts/dev/lcx-external-channel-binding.ts --json
 node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
 node --import tsx scripts/dev/lcx-mind-model.ts --json
 node --import tsx scripts/dev/lcx-flow-graph.ts --json
@@ -142,21 +142,25 @@ Forward status names are `dev-ready`, `external-channel-bound`, and
 The approved Lark external-channel binding owner is:
 
 ```bash
-node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
+node --import tsx scripts/dev/lcx-external-channel-binding.ts --json
 ```
 
 Only when it reports an idle `ready_for_apply` state should the bounded apply
 path be used:
 
 ```bash
-node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json
+node --import tsx scripts/dev/lcx-external-channel-binding.ts --apply --json
 ```
 
 That binding owner is the canonical source for `external-channel-bound`.
-`lcx-promote-live.ts` remains a legacy promotion/drift compatibility surface
-during migration; it must not override a clean
-`lcx-live-lark-brain-binding.ts` apply result. Commercial acceptance may treat
-the channel as bound while still blocking release on
+`local-brain-training-plan` now exposes `externalChannelBinding` as the primary
+planner field; `liveLarkBrainBinding` remains only a legacy compatibility alias
+while older owners migrate.
+`lcx-external-channel-status.ts` is now the canonical read-only external-channel
+status wrapper; `lcx-promote-live.ts` remains the legacy promotion/drift
+compatibility surface underneath it. The status wrapper must not override a
+clean `lcx-external-channel-binding.ts` apply result. Commercial acceptance may
+treat the channel as bound while still blocking release on
 `post_migration_lark_canary_missing` until fresh real inbound/outbound Lark
 evidence proves `user-visible-observed`.
 
@@ -217,7 +221,7 @@ Common focused checks:
 ```bash
 corepack pnpm exec oxfmt --check README.md AGENTS.md ops/local-brain/README.md
 corepack pnpm exec vitest run test/lcx-governance-autopilot.test.ts
-corepack pnpm exec vitest run test/lcx-live-lark-brain-binding.test.ts
+corepack pnpm exec vitest run test/lcx-external-channel-binding.test.ts
 corepack pnpm exec vitest run test/local-brain-training-plan.test.ts
 ```
 

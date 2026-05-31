@@ -45,7 +45,7 @@ describe("minimax brain failure curriculum", () => {
     expect(prompts[0].id).toContain("short_lark_commodity_learning_intake");
     expect(prompts[0].userMessage).toContain("学习大宗商品");
     expect(prompts[0].sourceSummary).toContain("passed 53/59");
-    expect(prompts[0].sourceSummary).toContain("no live sender");
+    expect(prompts[0].sourceSummary).toContain("no external channel sender");
     expect(prompts[1].id).toContain("human_brain_finance_decomposition");
     expect(prompts.every((prompt) => prompt.userMessage.includes("验收码"))).toBe(true);
   });

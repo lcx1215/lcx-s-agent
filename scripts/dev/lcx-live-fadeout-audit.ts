@@ -48,7 +48,8 @@ const CANONICAL_TERMS = [
 ] as const;
 
 const CRITICAL_OWNER_FILES = [
-  "scripts/dev/lcx-live-lark-brain-binding.ts",
+  "scripts/dev/lcx-external-channel-binding.ts",
+  "scripts/dev/lcx-external-channel-status.ts",
   "scripts/dev/lcx-promote-live.ts",
   "scripts/dev/lcx-commercial-acceptance-harness.ts",
   "scripts/dev/local-brain-training-plan.ts",
@@ -250,6 +251,7 @@ export async function buildLcxLiveFadeoutAudit() {
     runbook,
     packageJsonText,
     bindingOwner,
+    statusOwner,
     promoteLive,
     commercialAcceptance,
     trainingPlan,
@@ -264,7 +266,8 @@ export async function buildLcxLiveFadeoutAudit() {
     readText("README.md"),
     readText("ops/local-brain/README.md"),
     readText("package.json"),
-    readText("scripts/dev/lcx-live-lark-brain-binding.ts"),
+    readText("scripts/dev/lcx-external-channel-binding.ts"),
+    readText("scripts/dev/lcx-external-channel-status.ts"),
     readText("scripts/dev/lcx-promote-live.ts"),
     readText("scripts/dev/lcx-commercial-acceptance-harness.ts"),
     readText("scripts/dev/local-brain-training-plan.ts"),
@@ -291,8 +294,8 @@ export async function buildLcxLiveFadeoutAudit() {
     }),
     checkTerms({
       id: "binding_owner_is_canonical",
-      owner: "scripts/dev/lcx-live-lark-brain-binding.ts",
-      file: "scripts/dev/lcx-live-lark-brain-binding.ts",
+      owner: "scripts/dev/lcx-external-channel-binding.ts",
+      file: "scripts/dev/lcx-external-channel-binding.ts",
       requiredTerms: [
         "dev_external_channel_binding_operator_only",
         "channel_runtime_probe_ok_user_visible_pending",
@@ -316,6 +319,20 @@ export async function buildLcxLiveFadeoutAudit() {
       text: promoteLive,
     }),
     checkTerms({
+      id: "external_channel_status_wrapper_is_canonical_readonly",
+      owner: "scripts/dev/lcx-external-channel-status.ts",
+      file: "scripts/dev/lcx-external-channel-status.ts",
+      requiredTerms: [
+        "dev_external_channel_status_only",
+        "legacy_promote_live_status_wrapped_by_external_channel_status",
+        "legacyPromoteLiveStatus",
+        "liveTouched: false",
+      ],
+      summary:
+        "external-channel status must be the canonical read-only wrapper over legacy promote-live evidence",
+      text: statusOwner,
+    }),
+    checkTerms({
       id: "commercial_acceptance_prefers_binding_owner",
       owner: "scripts/dev/lcx-commercial-acceptance-harness.ts",
       file: "scripts/dev/lcx-commercial-acceptance-harness.ts",
@@ -333,12 +350,15 @@ export async function buildLcxLiveFadeoutAudit() {
       owner: "scripts/dev/local-brain-training-plan.ts",
       file: "scripts/dev/local-brain-training-plan.ts",
       requiredTerms: [
+        "ExternalChannelBindingPlanSnapshot",
+        "externalChannelBinding",
         "dev_external_channel_binding_plan_only",
         "externalChannelMissingProof",
         "lark_external_channel_binding_ready",
         "bind_lark_external_channel_to_selected_clean_brain",
       ],
-      summary: "training plan must expose external-channel readiness without starting work",
+      summary:
+        "training plan must expose external-channel readiness as the primary field without starting work",
       text: trainingPlan,
     }),
     checkTerms({
@@ -370,7 +390,11 @@ export async function buildLcxLiveFadeoutAudit() {
       id: "doctor_runs_live_fadeout_audit",
       owner: "scripts/dev/lcx-system-doctor.ts",
       file: "scripts/dev/lcx-system-doctor.ts",
-      requiredTerms: ["live-fadeout-audit", "scripts/dev/lcx-live-fadeout-audit.ts"],
+      requiredTerms: [
+        "live-fadeout-audit",
+        "scripts/dev/lcx-live-fadeout-audit.ts",
+        "externalChannelBinding",
+      ],
       summary: "system doctor must include the fadeout audit in normal dev checks",
       text: systemDoctor,
     }),
@@ -378,7 +402,13 @@ export async function buildLcxLiveFadeoutAudit() {
       id: "governance_autopilot_runs_live_fadeout_audit",
       owner: "scripts/dev/lcx-governance-autopilot.ts",
       file: "scripts/dev/lcx-governance-autopilot.ts",
-      requiredTerms: ["liveFadeoutAudit", "scripts/dev/lcx-live-fadeout-audit.ts"],
+      requiredTerms: [
+        "liveFadeoutAudit",
+        "scripts/dev/lcx-live-fadeout-audit.ts",
+        "externalChannelStatus",
+        "scripts/dev/lcx-external-channel-status.ts",
+        "externalChannelBinding",
+      ],
       summary: "governance autopilot must keep fadeout status visible to heartbeats",
       text: governanceAutopilot,
     }),
@@ -394,18 +424,25 @@ export async function buildLcxLiveFadeoutAudit() {
       id: "package_scripts_prefer_external_channel_alias",
       ok:
         scripts["lcx:external-channel"] ===
-          "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json" &&
+          "node --import tsx scripts/dev/lcx-external-channel-binding.ts --apply --json" &&
         scripts["lcx:external-channel:status"] ===
-          "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json" &&
+          "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json" &&
+        scripts["lcx:external-channel:status-probe"] ===
+          "node --import tsx scripts/dev/lcx-external-channel-status.ts --json --with-probe" &&
         scripts["lcx:live"] === "pnpm lcx:external-channel" &&
-        scripts["lcx:live:status"] === "pnpm lcx:external-channel:status",
+        scripts["lcx:live:status"] === "pnpm lcx:external-channel:status" &&
+        scripts["lcx:live:status:probe"] === "pnpm lcx:external-channel:status-probe" &&
+        scripts["lcx:promote-live"] === "node --import tsx scripts/dev/lcx-promote-live.ts",
       summary: "package-level LCX operator aliases should route through external-channel first",
       owner: "package.json",
       evidence: {
         "lcx:external-channel": scripts["lcx:external-channel"],
         "lcx:external-channel:status": scripts["lcx:external-channel:status"],
+        "lcx:external-channel:status-probe": scripts["lcx:external-channel:status-probe"],
         "lcx:live": scripts["lcx:live"],
         "lcx:live:status": scripts["lcx:live:status"],
+        "lcx:live:status:probe": scripts["lcx:live:status:probe"],
+        "lcx:promote-live": scripts["lcx:promote-live"],
       },
       nextAction: "add external-channel scripts and make old lcx:live aliases forward to them",
     },

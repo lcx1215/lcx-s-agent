@@ -37,6 +37,7 @@ describe("LCX live fadeout audit", () => {
     expect(payload.checks.map((check) => check.id)).toEqual(
       expect.arrayContaining([
         "binding_owner_is_canonical",
+        "external_channel_status_wrapper_is_canonical_readonly",
         "commercial_acceptance_prefers_binding_owner",
         "package_scripts_prefer_external_channel_alias",
         "doctor_runs_live_fadeout_audit",
@@ -65,7 +66,7 @@ describe("LCX live fadeout audit", () => {
     expect(governance).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
     expect(recovery).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
     expect(packageJson.scripts["lcx:external-channel"]).toBe(
-      "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json",
+      "node --import tsx scripts/dev/lcx-external-channel-binding.ts --apply --json",
     );
     expect(packageJson.scripts["lcx:live"]).toBe("pnpm lcx:external-channel");
     expect(readme).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");

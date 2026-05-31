@@ -128,7 +128,11 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
   const monotonicDataLedger = recordValue(owners.monotonicDataLedger) ?? {};
   const selfRepairHands = recordValue(owners.selfRepairHands) ?? {};
   const providerCouncil = recordValue(owners.providerCouncilAcceleration) ?? {};
-  const liveBinding = recordValue(owners.liveLarkBrainBinding) ?? {};
+  const externalChannelBinding =
+    recordValue(trainingPlan.externalChannelBinding) ??
+    recordValue(recordValue(owners.liveLarkBrainBinding)?.externalChannelBinding) ??
+    recordValue(owners.liveLarkBrainBinding) ??
+    {};
   const universeIndex = recordValue(owners.universeIndex) ?? {};
   const processSummary = recordValue(input.localFailureTrace.processSummary) ?? {};
   const counts = recordValue(processSummary.counts) ?? {};
@@ -146,7 +150,13 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
   const parseIssueCount =
     stringArray(latestCandidateEval.parseRecoveredCaseIds).length +
     stringArray(latestCandidateEval.parseErrorCaseIds).length;
-  const liveMissingProof = stringArray(liveBinding.missingProof);
+  const externalChannelMissingProof = stringArray(externalChannelBinding.missingProof);
+  const externalChannelStatus =
+    typeof summary.externalChannelBindingStatus === "string"
+      ? summary.externalChannelBindingStatus
+      : typeof externalChannelBinding.status === "string"
+        ? externalChannelBinding.status
+        : summary.liveLarkBrainBindingStatus;
   const providerBlocks = stringArray(providerCouncil.hardBlocks);
   const items: ControlItem[] = [];
 
@@ -180,27 +190,27 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     reason: `现在有 ${dirtyFiles} 个脏文件，其中 ${unmatchedChangedFiles} 个还没完全归到清楚的板块。`,
     nextControl: "用变更影响检查把每个文件归类成保留、继续、暂缓或清理。",
     proceedWhen: "每个文件都能说清楚属于哪个板块，以及为什么要留下。",
-    stopWhen: "发现无关改动混在一起、文件归属说不清、或准备改线上/供应商/受保护记忆。",
+    stopWhen: "发现无关改动混在一起、文件归属说不清、或准备改外部通道发送/供应商/受保护记忆。",
     ownerAuthorization: "普通归类不需要；删除、回滚、提交、推送需要你明确说。",
   });
 
   addIf(
     items,
-    liveMissingProof.length > 0 || summary.liveLarkBrainBindingStatus !== "ready_for_apply",
+    externalChannelMissingProof.length > 0 || externalChannelStatus !== "ready_for_apply",
     {
-      id: "live_lark_real_user_proof",
+      id: "external_lark_channel_real_user_proof",
       title: "真实 Lark 可见效果",
       status: "blocked_now",
       ownerCanSee: true,
       ownerCanDirectNow: false,
       codexCanActWhenSafe: true,
-      supervisor: "live 绑定检查负责证明；Codex 只做读证据和准备；老板看是否真的用户可见。",
-      evidenceNow: "真实 Lark 入站/出站证据、live 绑定状态、缺失证明列表。",
+      supervisor: "外部通道绑定检查负责证明；Codex 只做读证据和准备；老板看是否真的用户可见。",
+      evidenceNow: "真实 Lark 入站/出站证据、外部通道绑定状态、缺失证明列表。",
       reason: "现在只能看到开发侧准备情况，还缺真实 Lark 进出消息证明。",
-      nextControl: "等评测空下来，再按 live binding 检查走真实证明。",
+      nextControl: "等评测空下来，再按外部通道绑定检查走真实证明。",
       proceedWhen: "有新鲜真实 Lark 收到消息和发出回复的证据，而且只绑定一个干净模型。",
-      stopWhen: "只有开发探针、模拟消息、旧日志，或准备把脏候选模型接到 live。",
-      ownerAuthorization: "真实 live 写入或发送必须你明确授权；只读检查不需要。",
+      stopWhen: "只有开发探针、模拟消息、旧日志，或准备把脏候选模型接到外部 Lark 通道。",
+      ownerAuthorization: "真实外部通道写入或发送必须你明确授权；只读检查不需要。",
     },
   );
 
@@ -217,7 +227,7 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     nextControl: "空闲后跑定向小考、训练切片和新模型验收。",
     proceedWhen: "规则进入训练材料，并且新模型在相关小考里稳定通过。",
     stopWhen: "只有规则文本，没有小考、训练切片或新模型通过证据。",
-    ownerAuthorization: "整理成训练材料不需要；晋级成 live 能力需要通过验收。",
+    ownerAuthorization: "整理成训练材料不需要；晋级成外部通道可见能力需要通过验收。",
   });
 
   addIf(items, selfRepairStatus.length > 0, {
@@ -240,9 +250,9 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     proceedWhen:
       "只写 workspace memory/self-repair、state、logs；候选通过轻量检查；训练计划确认没有重活后才能进入下一段链路。",
     stopWhen:
-      "没有 owner 信号、同一个信号已经写过、试图改 repo 源码、git index/commit、受保护记忆、provider 配置、live sender、formal language corpus，或直接启动训练。",
+      "没有 owner 信号、同一个信号已经写过、试图改 repo 源码、git index/commit、受保护记忆、provider 配置、外部通道发送器、formal language corpus，或直接启动训练。",
     ownerAuthorization:
-      "写普通自修候选不需要；吸收到正式训练、把补丁候选应用到 repo、启动训练或 live 变更需要 owner 门禁。",
+      "写普通自修候选不需要；吸收到正式训练、把补丁候选应用到 repo、启动训练或外部通道变更需要 owner 门禁。",
   });
 
   addIf(items, parseIssueCount > 0, {
@@ -289,23 +299,24 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     reason: "现在计划能看见，但被正在跑的评测或脏工作区挡住，不能直接写入。",
     nextControl: "等机器空闲且工作区干净，再跑一次写入版评审。",
     proceedWhen: "没有评测/训练在跑，工作区干净，且两小时内没有新鲜完整评审。",
-    stopWhen: "机器忙、工作区脏、评审已经新鲜，或输出要改 provider/live/protected 位置。",
+    stopWhen: "机器忙、工作区脏、评审已经新鲜，或输出要改 provider/外部通道/protected 位置。",
     ownerAuthorization: "只写普通评审材料可按门禁走；改 provider 配置必须你明确授权。",
   });
 
   items.push({
     id: "protected_authority_boundaries",
-    title: "受保护记忆、供应商配置、线上发送、交易执行",
+    title: "受保护记忆、供应商配置、外部通道发送、交易执行",
     status: "never_auto",
     ownerCanSee: true,
     ownerCanDirectNow: false,
     codexCanActWhenSafe: false,
     supervisor: "老板最终负责；Codex 和自动化只负责报警，不负责放权。",
-    evidenceNow: "liveTouched、providerConfigTouched、protectedMemoryTouched、交易执行权限边界。",
+    evidenceNow:
+      "legacy liveTouched、providerConfigTouched、protectedMemoryTouched、外部通道和交易执行权限边界。",
     reason: "这些是高权限边界，不能因为自动化觉得可以就自己放权。",
     nextControl: "只能在你明确授权、并且对应证明通过时才处理；交易执行默认没有权限。",
     proceedWhen: "你明确授权、范围写清楚、相关证明通过，并且不是交易执行默认禁区。",
-    stopWhen: "任何自动化想自己改受保护记忆、供应商配置、线上发送或交易执行。",
+    stopWhen: "任何自动化想自己改受保护记忆、供应商配置、外部通道发送或交易执行。",
     ownerAuthorization: "必须你明确授权；没有授权就永远不做。",
   });
 
@@ -330,7 +341,7 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     "## 这张图读了哪些文件",
     ...input.paths.sourcePaths.map((sourcePath) => `- ${sourcePath}`),
     "",
-    "边界：这是老板管控索引，不是新事实来源；事实仍以总控、训练计划、失败小票、真实日志和 live 证明为准。",
+    "边界：这是老板管控索引，不是新事实来源；事实仍以总控、训练计划、失败小票、真实日志和外部通道证明为准。",
     "",
   ].join("\n");
 

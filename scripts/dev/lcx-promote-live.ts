@@ -856,7 +856,7 @@ function buildReceipt(params: {
       "Binds a git-tracked dev snapshot into the Lark external communication channel sidecar.",
       "If the source working tree is dirty, defaults to a temporary clean HEAD snapshot instead of copying dirty WIP.",
       "Excludes protected memory, dist, apps, node_modules, and live-handoff receipts from source copying.",
-      "Does not modify provider config, live sender credentials, protected memory, or trading/execution authority.",
+      "Does not modify provider config, external-channel sender credentials, protected memory, or trading/execution authority.",
       "Probe-ok is only external-channel-bound; fresh real Lark/Feishu inbound and reply are still required for user-visible-observed.",
     ],
   };

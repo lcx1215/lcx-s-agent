@@ -31,7 +31,7 @@ async function seedAutopilot(workspaceDir: string) {
                 "adversarial_data_conflict_06",
               ],
             },
-            liveLarkBrainBinding: {
+            externalChannelBinding: {
               status: "deferred_active_training_or_eval",
             },
           },
@@ -228,10 +228,13 @@ describe("lcx-skillopt-lite CLI", () => {
     await expect(fs.stat(path.join(workspaceDir, candidatePath))).resolves.toBeTruthy();
   });
 
-  it("refreshes stale live-boundary skill contracts before scoring candidate edits", async () => {
+  it("refreshes stale external-channel boundary skill contracts before scoring candidate edits", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skillopt-lite-"));
     await seedAutopilot(workspaceDir);
-    const skillRoot = path.join(workspaceDir, "memory/skillopt-lite/live_lark_boundary_preflight");
+    const skillRoot = path.join(
+      workspaceDir,
+      "memory/skillopt-lite/external_channel_boundary_preflight",
+    );
     await fs.mkdir(skillRoot, { recursive: true });
     await fs.writeFile(
       path.join(skillRoot, "best_skill.md"),
@@ -241,7 +244,7 @@ describe("lcx-skillopt-lite CLI", () => {
         "boundary: dev_skillopt_lite_only",
         "",
         "## Purpose",
-        "Old Live Lark proof text requires selected clean adapter and fresh real inbound/outbound evidence.",
+        "Old external-channel proof text requires selected clean adapter and fresh real inbound/outbound evidence.",
       ].join("\n"),
       "utf8",
     );
@@ -249,7 +252,7 @@ describe("lcx-skillopt-lite CLI", () => {
     const result = runCli(
       [
         "--skill",
-        "live_lark_boundary_preflight",
+        "external_channel_boundary_preflight",
         "--phase",
         "candidate-edit",
         "--json",

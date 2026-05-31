@@ -65,6 +65,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-governance-autopilot\.ts$/u,
       /^scripts\/dev\/lcx-head-tail-consistency\.ts$/u,
       /^scripts\/dev\/lcx-live-fadeout-audit\.ts$/u,
+      /^scripts\/dev\/lcx-external-channel-binding\.ts$/u,
       /^scripts\/dev\/lcx-live-lark-brain-binding\.ts$/u,
       /^scripts\/dev\/lcx-mind-model\.ts$/u,
       /^scripts\/dev\/lcx-problem-cluster-radar\.ts$/u,
@@ -79,7 +80,7 @@ const PATH_RULES: PathRule[] = [
       /^test\/lcx-github-cli-capability-inventory\.test\.ts$/u,
       /^test\/lcx-governance-autopilot\.test\.ts$/u,
       /^test\/lcx-live-fadeout-audit\.test\.ts$/u,
-      /^test\/lcx-live-lark-brain-binding\.test\.ts$/u,
+      /^test\/lcx-external-channel-binding\.test\.ts$/u,
       /^test\/lcx-problem-cluster-radar\.test\.ts$/u,
       /^test\/lcx-provider-council-acceleration\.test\.ts$/u,
       /^test\/lcx-skillopt-lite\.test\.ts$/u,
@@ -113,9 +114,12 @@ const PATH_RULES: PathRule[] = [
     lane: "qwen_training_or_local_brain",
     patterns: [
       /^scripts\/dev\/local-brain-/u,
+      /^scripts\/dev\/lark-brain-distillation-/u,
       /^scripts\/dev\/minimax-brain-/u,
+      /^scripts\/dev\/minimax-provider-quota-saturator\.ts$/u,
       /^scripts\/dev\/minimax-quota-brain-saturator\.ts$/u,
       /^scripts\/dev\/finance-data-gateway-smoke\.ts$/u,
+      /^test\/fixtures\/local-brain-open-eval-provider\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "targeted-local-brain-tests"],
     commands: [
@@ -165,6 +169,7 @@ const PATH_RULES: PathRule[] = [
       /^src\/agents\/finance-brain-orchestration\.ts$/u,
       /^src\/agents\/finance-data-gateway\.ts$/u,
       /^src\/agents\/tools\//u,
+      /^src\/cli\/capabilities-cli\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "system-prompt-tests"],
     commands: [
@@ -247,7 +252,7 @@ const PATH_RULES: PathRule[] = [
     requiredChecks: ["macos-control-room-build-or-test"],
     commands: ["xcodebuild -list"],
     safetyNotes: [
-      "macOS control-room files are local UI only; do not treat them as live Lark proof.",
+      "macOS control-room files are local UI only; do not treat them as external-channel or legacy live Lark proof.",
     ],
     risk: "elevated",
   },
@@ -262,6 +267,8 @@ const PATH_RULES: PathRule[] = [
     id: "live_or_provider_boundary",
     lane: "dev_live_boundary",
     patterns: [
+      /^scripts\/dev\/lcx-external-channel-status\.ts$/u,
+      /^test\/lcx-external-channel-status\.test\.ts$/u,
       /^scripts\/dev\/lcx-promote-live\.ts$/u,
       /^test\/lcx-promote-live-status\.test\.ts$/u,
       /^src\/agents\/model-auth/u,
@@ -271,6 +278,7 @@ const PATH_RULES: PathRule[] = [
     ],
     requiredChecks: ["explicit-live-boundary-review", "doctor"],
     commands: [
+      "node --import tsx scripts/dev/lcx-external-channel-status.ts --json",
       "pnpm vitest run test/lcx-promote-live-status.test.ts",
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
     ],

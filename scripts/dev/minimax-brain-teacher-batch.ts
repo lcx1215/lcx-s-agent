@@ -274,19 +274,19 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
   {
     id: "daily_learning_automation",
     userMessage: "这些学习和复盘应该每次对话都自动发生，不要等我每天手动下命令。",
-    sourceSummary: "automation loop planning without live sender changes.",
+    sourceSummary: "automation loop planning without external channel sender changes.",
   },
   {
     id: "agent_skill_distillation_open_source",
     userMessage:
-      "帮这个本地 agent 结构学习网上开源的 SKILL.md 工作流和本地已有 skills：先找候选、隔离审计、沉淀成可复用技能和本地大脑训练样本，不要改 provider config、live sender 或 protected memory。",
+      "帮这个本地 agent 结构学习网上开源的 SKILL.md 工作流和本地已有 skills：先找候选、隔离审计、沉淀成可复用技能和本地大脑训练样本，不要改 provider config、external channel sender 或 protected memory。",
     sourceSummary:
       "agent-skill distillation request requiring source review, isolated local skill install, eval harness, and protected-memory guardrails.",
   },
   {
     id: "anthropic_financial_agent_pattern_distillation",
     userMessage:
-      "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer、wealth management workflow。请训练本地大脑学习它们的架构哲学：workflow owner 负责端到端目标，orchestrator 拆任务，leaf worker 只做窄任务，handoff contract 约束交接，tool permission boundary 限制工具权限，untrusted-source 隔离外部资料，cite every number，artifact QC gate sequence，human signoff checkpoint，最后输出人话 control-room summary。不要改 provider config、live sender，不要假设我们有企业 MCP，不要变成交易执行。",
+      "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer、wealth management workflow。请训练本地大脑学习它们的架构哲学：workflow owner 负责端到端目标，orchestrator 拆任务，leaf worker 只做窄任务，handoff contract 约束交接，tool permission boundary 限制工具权限，untrusted-source 隔离外部资料，cite every number，artifact QC gate sequence，human signoff checkpoint，最后输出人话 control-room summary。不要改 provider config、external channel sender，不要假设我们有企业 MCP，不要变成交易执行。",
     sourceSummary:
       "Anthropic financial-services agent architecture learning request requiring pinned source review, reusable workflow-owner/orchestrator/leaf-worker distillation, handoff contract, tool-boundary map, QC sequence, visible summary, and research-only/no-live-change boundaries.",
   },
@@ -502,7 +502,7 @@ export function buildTeacherSystemPrompt(): string {
     "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
     "- senior-trader promotion failure focus must connect current data freshness, filing evidence, NVDA capex second-order risk, breadth as timing context only, unverified macro claims, model disagreement, stale memory downrank, valuation compression, analyst report learning, post-mortems, sentiment vendor conflict, finance_data_gateway, data_provenance_quality, eval_harness_design, and review_panel",
     "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
-    "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_live_sender_change",
+    "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_external_channel_sender_change",
     "- external financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision",
     "- before creating any new mechanism, check prior_art_search_terms_or_existing_artifact_paths and existing_contract_eval_skill_or_receipt_candidates, then choose reuse_extend_or_new_decision; prefer reuse or extension over a parallel V2 path",
     "- papers and open-source project internalization must check prior related contracts/evals/skills/receipts first, classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, run module_learning_pipeline_review, then keep, downrank, or discard",
@@ -870,7 +870,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "evaluate_before_installing",
         "no_enterprise_mcp_assumption",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
         "no_protected_memory_write",
         "no_distribution_or_publication",
         "cite_every_number_or_mark_unsourced",
@@ -936,7 +936,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "evaluate_before_installing",
         "no_protected_memory_write",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
         "no_trading_execution_skill",
       ],
       next_step:
@@ -1004,7 +1004,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "no_model_internal_learning_claim_without_eval",
         "no_protected_memory_write",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
         "no_doctrine_mutation",
         "sample_out_validation_required",
         "no_trade_advice",
@@ -1919,7 +1919,7 @@ const TEACHER_RISK_PRIORITY = [
   "proof_required_before_claiming_transfer",
   "no_protected_memory_write",
   "no_provider_config_change",
-  "no_live_sender_change",
+  "no_external_channel_sender_change",
 ] as const;
 
 const TEACHER_MISSING_DATA_PRIORITY = [
@@ -2560,7 +2560,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "evaluate_before_installing",
       "no_enterprise_mcp_assumption",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "no_protected_memory_write",
       "no_distribution_or_publication",
       "human_review_required_before_external_use",
@@ -2618,7 +2618,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "no_model_internal_learning_claim_without_eval",
       "no_protected_memory_write",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "no_doctrine_mutation",
       "sample_out_validation_required",
       "no_trade_advice",
@@ -2700,7 +2700,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
       "proof_required_before_claiming_transfer",
       "no_protected_memory_write",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ]);
     ensureRejected([
       "single_phrase_patch_without_transfer",
@@ -2893,6 +2893,7 @@ async function main(): Promise<void> {
     boundary: "brain_distillation_review",
     reviewedAt,
     noLanguageRoutingPromotion: true,
+    noExternalChannelSenderTouched: true,
     noLiveSenderTouched: true,
     sourceArtifacts: [`minimax_teacher_batch:${options.model}`],
     acceptedCandidates,

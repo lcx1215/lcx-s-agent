@@ -52,7 +52,7 @@ describe("resolveSkillOptAutoCue", () => {
   it("can match LiveLark sync requests and keep the preflight as boundary-only", async () => {
     await writeBestSkill(
       workspaceDir,
-      "live_lark_boundary_preflight",
+      "external_channel_boundary_preflight",
       [
         "# Live Lark boundary preflight",
         "",
@@ -67,7 +67,7 @@ describe("resolveSkillOptAutoCue", () => {
       includeDefaultWorkspace: false,
     });
 
-    expect(cue?.matchedSkillIds).toEqual(["live_lark_boundary_preflight"]);
+    expect(cue?.matchedSkillIds).toEqual(["external_channel_boundary_preflight"]);
     expect(cue?.promptInjection).toContain("live-user-seen");
     expect(cue?.boundary).toBe("dev_skillopt_preflight_only");
   });

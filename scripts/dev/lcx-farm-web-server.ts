@@ -125,7 +125,10 @@ function loadSnapshot(): JsonObject {
     Object.keys(providerDailyUseFromDigest).length > 0
       ? providerDailyUseFromDigest
       : objectAt(providerCouncilOwner, "dailyUse");
-  const liveMissing = stringArrayAt(material, "liveBindingMissingProof");
+  const externalChannelMissingProof =
+    stringArrayAt(material, "externalChannelMissingProof").length > 0
+      ? stringArrayAt(material, "externalChannelMissingProof")
+      : stringArrayAt(material, "liveBindingMissingProof");
   const parseRecovered = stringArrayAt(candidate, "parseRecoveredCaseIds");
   const controlItems = Array.isArray(ownerControlMap.items) ? ownerControlMap.items : [];
 
@@ -140,8 +143,16 @@ function loadSnapshot(): JsonObject {
     promotionReady: Boolean(candidate.promotionReady),
     failedCaseIds: stringArrayAt(candidate, "failedCaseIds"),
     parseRecoveredCaseIds: parseRecovered,
-    liveStatus: stringAt(material, "liveLarkBrainBindingStatus") ?? "unknown",
-    liveMissingProof: liveMissing,
+    externalChannelStatus:
+      stringAt(material, "externalChannelBindingStatus") ??
+      stringAt(material, "liveLarkBrainBindingStatus") ??
+      "unknown",
+    liveStatus:
+      stringAt(material, "externalChannelBindingStatus") ??
+      stringAt(material, "liveLarkBrainBindingStatus") ??
+      "unknown",
+    externalChannelMissingProof,
+    liveMissingProof: externalChannelMissingProof,
     skillOptStatus:
       stringAt(material, "skillOptLiteStatus") ??
       stringAt(summary, "skillOptLiteStatus") ??
@@ -209,9 +220,9 @@ function loadSnapshot(): JsonObject {
     remoteDevboxStatus: sshConfigStatus(),
     lockedComputerUseStatus: "manual_codex_settings_required",
     webFrontendRole:
-      "browser-testable farm dashboard for Codex in-app browser, mobile remote review, screenshots, and non-live control-room visibility",
+      "browser-testable farm dashboard for Codex in-app browser, mobile remote review, screenshots, and read-only control-room visibility",
     notAuthority:
-      "Web dashboard is read-only visualization. Owner JSON remains the truth; no live/provider/protected memory authority.",
+      "Web dashboard is read-only visualization. Owner JSON remains the truth; no external-channel/provider/protected memory authority.",
   };
 }
 

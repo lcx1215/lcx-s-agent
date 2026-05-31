@@ -188,7 +188,7 @@ describe("local brain distill dataset", () => {
             review: { accepted: true },
             userMessage: "未来一个月看 QQQ、TLT 和 ETH 风险，先拆模块不要交易建议。",
             candidateText:
-              "research-only macro liquidity plan; writes brain distillation only; no live sender, provider config, language corpus, protected memory, or finance doctrine change; no current market claim supplied.",
+              "research-only macro liquidity plan; writes brain distillation only; no external channel sender, provider config, language corpus, protected memory, or finance doctrine change; no current market claim supplied.",
             proposedTaskFamily: "portfolio_regime",
             proposedPrimaryModules: ["macro_rates_inflation", "portfolio_risk_gates"],
             proposedSupportingModules: ["review_panel"],
@@ -420,7 +420,7 @@ describe("local brain distill dataset", () => {
             status: "accepted_brain_plan",
             review: { accepted: true },
             userMessage:
-              "Anthropic 上传了金融 agent，学习 market researcher 和 earnings reviewer 的 workflow pattern，不要改 live sender。",
+              "Anthropic 上传了金融 agent，学习 market researcher 和 earnings reviewer 的 workflow pattern，不要改外部通道发送器。",
             candidateText: "external_financial_agent_pattern_distillation",
             proposedTaskFamily: "external_financial_agent_pattern_distillation",
             proposedPrimaryModules: [
@@ -441,7 +441,7 @@ describe("local brain distill dataset", () => {
               "research_only",
               "no_execution_authority",
               "no_provider_config_change",
-              "no_live_sender_change",
+              "no_external_channel_sender_change",
             ],
             proposedNextStep:
               "Distill pinned external financial-agent workflow boundaries before review.",

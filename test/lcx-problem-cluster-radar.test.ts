@@ -328,7 +328,7 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
-  it("folds live Lark brain binding proof gaps into adapter promotion truth", () => {
+  it("folds external Lark channel proof gaps into adapter promotion truth", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
         boundary: "dev_local_brain_training_plan_only",
@@ -338,11 +338,11 @@ describe("lcx-problem-cluster-radar", () => {
           consolidationState: "selected_clean_adapter",
           selectedCleanAdapter: "/tmp/adapter-clean-r2",
         },
-        liveLarkBrainBinding: {
-          boundary: "dev_live_lark_brain_binding_plan_only",
+        externalChannelBinding: {
+          boundary: "dev_external_channel_binding_plan_only",
           selectedCleanAdapter: "/tmp/adapter-clean-r2",
           status: "deferred_active_training_or_eval",
-          action: "wait_for_current_eval_then_bind_live_to_selected_clean_adapter",
+          action: "wait_for_current_eval_then_bind_external_channel_to_selected_clean_adapter",
           missingProof: [
             "current_training_eval_or_mlx_finished",
             "fresh_real_lark_inbound_and_outbound_seen",
@@ -350,8 +350,8 @@ describe("lcx-problem-cluster-radar", () => {
         },
         decisions: [
           {
-            id: "live_lark_brain_binding_deferred",
-            action: "wait_for_current_eval_then_bind_live_to_selected_clean_adapter",
+            id: "lark_external_channel_binding_ready",
+            action: "wait_for_current_eval_then_bind_external_channel_to_selected_clean_adapter",
             reason: "active eval still running",
             codexRepairEligible: false,
           },
@@ -388,14 +388,14 @@ describe("lcx-problem-cluster-radar", () => {
         actionability: "blocked_by_owner_gate",
         blockingReasons: expect.arrayContaining([
           "active_local_brain_guard_or_eval",
-          "live_lark_brain_binding_waiting_for_owner_proof",
+          "external_channel_binding_waiting_for_owner_proof",
         ]),
       }),
     );
     expect(cluster?.signals.map((signal) => signal.id)).toEqual(
       expect.arrayContaining([
-        "live_lark_brain_binding_deferred",
-        "live_lark_brain_binding_not_ready",
+        "lark_external_channel_binding_ready",
+        "external_channel_binding_not_ready",
       ]),
     );
   });

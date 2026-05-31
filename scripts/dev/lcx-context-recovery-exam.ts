@@ -196,6 +196,12 @@ function compactTrainingPlan(value: unknown) {
     !Array.isArray(record.liveLarkBrainBinding)
       ? (record.liveLarkBrainBinding as Record<string, unknown>)
       : undefined;
+  const externalChannelBinding =
+    record.externalChannelBinding &&
+    typeof record.externalChannelBinding === "object" &&
+    !Array.isArray(record.externalChannelBinding)
+      ? (record.externalChannelBinding as Record<string, unknown>)
+      : undefined;
   const accelerationQueue =
     record.evolutionAccelerationQueue &&
     typeof record.evolutionAccelerationQueue === "object" &&
@@ -219,6 +225,18 @@ function compactTrainingPlan(value: unknown) {
         }
       : undefined,
     moduleLearningCounts: moduleLearningReview?.counts,
+    externalChannelBinding: externalChannelBinding
+      ? {
+          boundary: externalChannelBinding.boundary,
+          status: externalChannelBinding.status,
+          action: externalChannelBinding.action,
+          selectedCleanAdapter: externalChannelBinding.selectedCleanAdapter,
+          missingProof: Array.isArray(externalChannelBinding.missingProof)
+            ? externalChannelBinding.missingProof
+            : [],
+          userVisibleObserved: externalChannelBinding.userVisibleObserved,
+        }
+      : undefined,
     liveLarkBrainBinding: liveLarkBrainBinding
       ? {
           boundary: liveLarkBrainBinding.boundary,
@@ -447,7 +465,7 @@ async function currentLearningSedimentationAuditSnapshot(): Promise<{
   }
 }
 
-async function currentLiveStatusSnapshot(): Promise<{
+async function currentExternalChannelStatusSnapshot(): Promise<{
   ok: boolean;
   payload?: Record<string, unknown>;
   error?: string;
@@ -455,7 +473,7 @@ async function currentLiveStatusSnapshot(): Promise<{
   try {
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/lcx-promote-live.ts", "--status", "--json"],
+      ["--import", "tsx", "scripts/dev/lcx-external-channel-status.ts", "--json"],
       { cwd: repoRoot, env: process.env, maxBuffer: 20 * 1024 * 1024 },
     );
     return { ok: true, payload: JSON.parse(stdout) as Record<string, unknown> };
@@ -592,7 +610,7 @@ function compactExternalAgentUpgradeRadar(value: unknown) {
   };
 }
 
-function compactLiveStatus(value: unknown) {
+function compactExternalChannelStatus(value: unknown) {
   if (!value || typeof value !== "object") {
     return undefined;
   }
@@ -609,7 +627,14 @@ function compactLiveStatus(value: unknown) {
     record.visibleProof && typeof record.visibleProof === "object"
       ? (record.visibleProof as Record<string, unknown>)
       : {};
+  const externalChannelStatus =
+    record.externalChannelStatus && typeof record.externalChannelStatus === "object"
+      ? (record.externalChannelStatus as Record<string, unknown>)
+      : {};
   return {
+    externalChannelBound: externalChannelStatus.externalChannelBound,
+    userVisibleObserved: externalChannelStatus.userVisibleObserved,
+    externalChannelStatusModel: externalChannelStatus.statusModel,
     liveRuntimeUpdated: operatorStatus.liveRuntimeUpdated,
     liveUserSeen: operatorStatus.liveUserSeen,
     liveMatchesCurrentDev: devLiveDrift.liveMatchesCurrentDev,
@@ -761,7 +786,7 @@ function buildNewWindowHandoffText(params: {
   };
   changeImpact?: ReturnType<typeof compactChangeImpact>;
   trainingPlan?: ReturnType<typeof compactTrainingPlan>;
-  liveStatus?: ReturnType<typeof compactLiveStatus>;
+  externalChannelStatus?: ReturnType<typeof compactExternalChannelStatus>;
   moduleAbsorption?: ReturnType<typeof compactModuleAbsorptionGate>;
   learningSedimentation?: ReturnType<typeof compactLearningSedimentationAudit>;
   selfRepairHands?: ReturnType<typeof compactSelfRepairHands>;
@@ -791,6 +816,13 @@ function buildNewWindowHandoffText(params: {
     !Array.isArray(params.trainingPlan.liveLarkBrainBinding)
       ? (params.trainingPlan.liveLarkBrainBinding as Record<string, unknown>)
       : {};
+  const externalChannelBinding =
+    params.trainingPlan?.externalChannelBinding &&
+    typeof params.trainingPlan.externalChannelBinding === "object" &&
+    !Array.isArray(params.trainingPlan.externalChannelBinding)
+      ? (params.trainingPlan.externalChannelBinding as Record<string, unknown>)
+      : {};
+  const externalChannelMissingProof = stringArray(externalChannelBinding.missingProof);
   const liveLarkMissingProof = stringArray(liveLarkBrainBinding.missingProof);
   const moduleLatestEval = params.moduleAbsorption?.latestEval;
   const moduleGateCounts =
@@ -829,8 +861,9 @@ function buildNewWindowHandoffText(params: {
     `recoveryChecks=${params.result.summary.passed}/${params.result.summary.total}`,
     "",
     "## Boundaries",
-    "- context handoff is dev/local evidence; live status below is read-only from lcx-promote-live",
-    "- do not claim live-user-seen unless lcx-promote-live shows fresh real Lark inbound and reply proof",
+    "- context handoff is dev/local evidence; external-channel status below is read-only",
+    "- do not claim user-visible-observed unless fresh real Lark inbound and reply proof exists",
+    "- legacy liveRuntimeUpdated/liveUserSeen terms are compatibility labels only",
     "- liveTouched=false; providerConfigTouched=false; protectedMemoryTouched=false",
     "- do not start overlapping Qwen/MiniMax/MLX training; trust fresh local-brain-training-plan",
     "- do not touch memory/current-research-line.md or memory/unified-risk-view.md",
@@ -843,17 +876,20 @@ function buildNewWindowHandoffText(params: {
     `deferredCommands=${deferredCommands.join(" | ") || "none"}`,
     `safetyNotes=${safetyNotes.join(" | ") || "none"}`,
     "",
-    "## Live Boundary Truth",
-    "volatileOwner=lcx-promote-live",
-    `liveRuntimeUpdated=${scalarText(params.liveStatus?.liveRuntimeUpdated)}`,
-    `liveUserSeen=${scalarText(params.liveStatus?.liveUserSeen)}`,
-    `liveMatchesCurrentDev=${scalarText(params.liveStatus?.liveMatchesCurrentDev)}`,
-    `liveNeedsPromotion=${scalarText(params.liveStatus?.liveNeedsPromotion)}`,
-    `liveVisibleStatus=${scalarText(params.liveStatus?.visibleStatus)}`,
-    `freshInboundCount=${scalarText(params.liveStatus?.freshInboundCount)}`,
-    `freshOutboundResultCount=${scalarText(params.liveStatus?.freshOutboundResultCount)}`,
-    `acceptanceMatched=${scalarText(params.liveStatus?.acceptanceMatched)}`,
-    `acceptancePhrase=${scalarText(params.liveStatus?.acceptancePhrase, "none")}`,
+    "## External Channel Boundary Truth",
+    "volatileOwner=lcx-external-channel-status",
+    `externalChannelStatusModel=${scalarText(params.externalChannelStatus?.externalChannelStatusModel, "none")}`,
+    `externalChannelBound=${scalarText(params.externalChannelStatus?.externalChannelBound)}`,
+    `userVisibleObserved=${scalarText(params.externalChannelStatus?.userVisibleObserved)}`,
+    `legacyLiveRuntimeUpdated=${scalarText(params.externalChannelStatus?.liveRuntimeUpdated)}`,
+    `legacyLiveUserSeen=${scalarText(params.externalChannelStatus?.liveUserSeen)}`,
+    `legacyLiveMatchesCurrentDev=${scalarText(params.externalChannelStatus?.liveMatchesCurrentDev)}`,
+    `legacyLiveNeedsPromotion=${scalarText(params.externalChannelStatus?.liveNeedsPromotion)}`,
+    `externalChannelVisibleStatus=${scalarText(params.externalChannelStatus?.visibleStatus)}`,
+    `freshInboundCount=${scalarText(params.externalChannelStatus?.freshInboundCount)}`,
+    `freshOutboundResultCount=${scalarText(params.externalChannelStatus?.freshOutboundResultCount)}`,
+    `acceptanceMatched=${scalarText(params.externalChannelStatus?.acceptanceMatched)}`,
+    `acceptancePhrase=${scalarText(params.externalChannelStatus?.acceptancePhrase, "none")}`,
     "",
     "## Training Truth",
     "volatileOwner=local-brain-training-plan",
@@ -862,6 +898,8 @@ function buildNewWindowHandoffText(params: {
     `latestEval=${scalarText(latestEval?.passed)}/${scalarText(latestEval?.total)} promotionReady=${scalarText(latestEval?.promotionReady)}`,
     `latestEvalParseRecovered=${stringArray(latestEval?.parseRecoveredCaseIds).join(",") || "none"}`,
     `decisionIds=${trainingDecisionIds.join(",") || "none"}`,
+    `externalChannelBinding=${scalarText(externalChannelBinding.status, "none")} action=${scalarText(externalChannelBinding.action, "none")} selectedCleanAdapter=${scalarText(externalChannelBinding.selectedCleanAdapter, "none")}`,
+    `externalChannelBindingMissingProof=${externalChannelMissingProof.join(",") || "none"}`,
     `liveLarkBrainBinding=${scalarText(liveLarkBrainBinding.status, "none")} action=${scalarText(liveLarkBrainBinding.action, "none")} selectedCleanAdapter=${scalarText(liveLarkBrainBinding.selectedCleanAdapter, "none")}`,
     `liveLarkBrainBindingMissingProof=${liveLarkMissingProof.join(",") || "none"}`,
     `evolutionAcceleration=${scalarText(evolutionAcceleration.fastestSafeNextAction, "none")} readyNow=${scalarText(evolutionAcceleration.readyNowCount)} idleOnly=${scalarText(evolutionAcceleration.idleOnlyCount)} blocked=${scalarText(evolutionAcceleration.blockedCount)} heavyAllowed=${scalarText(evolutionAcceleration.canStartHeavyWorkNow)}`,
@@ -1337,7 +1375,7 @@ async function main() {
       "node --import tsx scripts/dev/lcx-self-repair-hands.ts --json",
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-      "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
+      "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
       "node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json",
       "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
@@ -1364,7 +1402,7 @@ async function main() {
         currentChangeImpactSnapshot(),
         currentModuleAbsorptionGateSnapshot(),
         currentLearningSedimentationAuditSnapshot(),
-        currentLiveStatusSnapshot(),
+        currentExternalChannelStatusSnapshot(),
       ])
     : undefined;
   const handoffChangeImpact = handoffSources
@@ -1376,7 +1414,9 @@ async function main() {
   const learningSedimentation = handoffSources
     ? compactLearningSedimentationAudit(handoffSources[2].payload)
     : undefined;
-  const liveStatus = handoffSources ? compactLiveStatus(handoffSources[3].payload) : undefined;
+  const externalChannelStatus = handoffSources
+    ? compactExternalChannelStatus(handoffSources[3].payload)
+    : undefined;
   const handoffForNewWindow = options.handoff
     ? {
         boundary: "dev_context_recovery_handoff_only",
@@ -1385,7 +1425,8 @@ async function main() {
           "compact current-state snapshot for future Codex windows; reuses context recovery instead of creating a parallel memory lane",
         changeImpact: handoffChangeImpact,
         trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
-        liveStatus,
+        externalChannelStatus,
+        liveStatus: externalChannelStatus,
         moduleAbsorption,
         learningSedimentation,
         selfRepairHands,
@@ -1393,7 +1434,7 @@ async function main() {
           result,
           changeImpact: handoffChangeImpact,
           trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
-          liveStatus,
+          externalChannelStatus,
           moduleAbsorption,
           learningSedimentation,
           selfRepairHands,
@@ -1403,6 +1444,7 @@ async function main() {
           changeImpact: handoffSources?.[0].error,
           moduleAbsorption: handoffSources?.[1].error,
           learningSedimentation: handoffSources?.[2].error,
+          externalChannelStatus: handoffSources?.[3].error,
           liveStatus: handoffSources?.[3].error,
         },
       }

@@ -150,7 +150,7 @@ type FlowFilterId =
   | "minimax_agent_output_requires_lcx_gate"
   | "minimax_agent_runtime_claim_requires_receipt"
   | "no_provider_config_change"
-  | "no_live_sender_change"
+  | "no_external_channel_sender_change"
   | "source_conflict_visible"
   | "fresh_timestamp_required"
   | "field_definition_required"
@@ -186,7 +186,7 @@ type FlowFilterId =
   | "repair_lock_required"
   | "skillopt_best_skill_required"
   | "skillopt_context_not_weight_absorption"
-  | "skillopt_live_proof_required"
+  | "skillopt_external_channel_proof_required"
   | "inventory_only_no_delete"
   | "owner_coverage_required"
   | "artifact_staleness_visible";
@@ -400,7 +400,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "minimax_agent_output_requires_lcx_gate",
   "minimax_agent_runtime_claim_requires_receipt",
   "no_provider_config_change",
-  "no_live_sender_change",
+  "no_external_channel_sender_change",
   "source_conflict_visible",
   "fresh_timestamp_required",
   "field_definition_required",
@@ -436,7 +436,7 @@ const FILTER_IDS: FlowFilterId[] = [
   "repair_lock_required",
   "skillopt_best_skill_required",
   "skillopt_context_not_weight_absorption",
-  "skillopt_live_proof_required",
+  "skillopt_external_channel_proof_required",
   "inventory_only_no_delete",
   "owner_coverage_required",
   "artifact_staleness_visible",
@@ -576,7 +576,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
-    id: "dev_to_live_lark_waterflow",
+    id: "dev_to_external_channel_lark_waterflow",
     family: "dev_ready_to_lark_user_visible_boundary",
     objective:
       "Dev changes can reach the owner through Lark only after tests, external-channel binding, probe, and real Lark inbound proof; live runtime wording is legacy compatibility.",
@@ -628,7 +628,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "parse_recovered_no_promotion",
       "skillopt_best_skill_required",
       "skillopt_context_not_weight_absorption",
-      "skillopt_live_proof_required",
+      "skillopt_external_channel_proof_required",
       "dev_ready_not_user_visible_observed",
       "external_channel_probe_required",
       "real_lark_inbound_required",
@@ -653,7 +653,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "lcx-skillopt-lite",
       "skillopt-autocue",
       "lcx-governance-autopilot-latest",
-      "lcx-live-lark-brain-binding",
+      "lcx-external-channel-binding",
       "feishu-reply-flow",
     ],
   },
@@ -711,7 +711,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "single_owner_required",
       "protected_memory_guard",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     edges: [
       ["fixed_evidence_recovery", "universe_index"],
@@ -1053,7 +1053,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "training_candidate_not_absorbed",
       "protected_memory_guard",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "training_overlap_guard",
       "model_weight_absorption_not_claimed",
     ],
@@ -1321,7 +1321,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "fees_slippage_and_sample_out_required",
       "no_wallet_or_order_execution",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     edges: [
       ["prediction_market_source", "source_registry"],
@@ -1482,7 +1482,7 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     id: "dev_live_evidence_cluster",
     philosophy:
       "dev-ready, external-channel-bound, and user-visible-observed are one boundary model; old live terms are legacy aliases",
-    ownerScenario: "dev_to_live_lark_waterflow",
+    ownerScenario: "dev_to_external_channel_lark_waterflow",
     ownerNode: "external_channel_binding",
     sameClassTerms: [
       "dev-ready",
@@ -1638,7 +1638,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "lcx-problem-cluster-radar",
       "lcx-change-impact-plan",
       "lcx-governance-autopilot",
-      "lcx-live-lark-brain-binding",
+      "lcx-external-channel-binding",
       "lcx-universe-index",
       "lcx-system-doctor",
       "lcx-agent-exam",
@@ -1650,7 +1650,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "scripts/dev/lcx-flow-graph.ts",
       "scripts/dev/lcx-governance-autopilot.ts",
       "scripts/dev/lcx-head-tail-consistency.ts",
-      "scripts/dev/lcx-live-lark-brain-binding.ts",
+      "scripts/dev/lcx-external-channel-binding.ts",
       "scripts/dev/lcx-mind-model.ts",
       "scripts/dev/lcx-problem-cluster-radar.ts",
       "scripts/dev/lcx-system-doctor.ts",
@@ -1661,7 +1661,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "test/lcx-flow-graph.test.ts",
       "test/lcx-governance-autopilot.test.ts",
       "test/lcx-head-tail-consistency.test.ts",
-      "test/lcx-live-lark-brain-binding.test.ts",
+      "test/lcx-external-channel-binding.test.ts",
       "test/lcx-mind-model.test.ts",
       "test/lcx-problem-cluster-radar.test.ts",
       "test/lcx-system-doctor-train-slice.test.ts",
@@ -1778,9 +1778,11 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
   {
     id: "dev_live_evidence_entrypoints",
     ownerCluster: "dev_live_evidence_cluster",
-    ownerPath: "scripts/dev/lcx-promote-live.ts",
+    ownerPath: "scripts/dev/lcx-external-channel-binding.ts",
     watchedPathTerms: ["lcx-promote-live", "live-promotion", "lark-loop-diagnose"],
     allowedPaths: [
+      "scripts/dev/lcx-external-channel-binding.ts",
+      "scripts/dev/lcx-live-lark-brain-binding.ts",
       "scripts/dev/lcx-promote-live.ts",
       "src/commands/capabilities.lark-loop-diagnose.test.ts",
       "src/commands/capabilities/lark-loop-diagnose.ts",
@@ -1860,6 +1862,12 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
 
 const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
   {
+    path: "scripts/dev/lcx-external-channel-binding.ts",
+    familyIds: ["architecture_supervision_entrypoints", "dev_live_evidence_entrypoints"],
+    reason:
+      "external-channel binding is both part of architecture supervision and the current owner for Lark channel proof.",
+  },
+  {
     path: "src/commands/capabilities/lark-loop-diagnose.ts",
     familyIds: ["dev_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
     reason:
@@ -1894,7 +1902,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   lark_finance_research_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
   module_learning_internalization_waterflow: "scripts/dev/module-learning-pipeline-review.ts",
   training_failure_feedback_waterflow: "scripts/dev/local-brain-training-plan.ts",
-  dev_to_live_lark_waterflow: "scripts/dev/lcx-promote-live.ts",
+  dev_to_external_channel_lark_waterflow: "scripts/dev/lcx-external-channel-binding.ts",
   skillopt_runtime_self_use_waterflow: "scripts/dev/lcx-skillopt-lite.ts",
   compressed_context_recovery_waterflow: "scripts/dev/lcx-context-recovery-exam.ts",
   universe_index_total_coverage_waterflow: "scripts/dev/lcx-universe-index.ts",
@@ -1919,7 +1927,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/dev/module-learning-pipeline-review.ts --json",
   training_failure_feedback_waterflow:
     "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-  dev_to_live_lark_waterflow: "node --import tsx scripts/dev/lcx-promote-live.ts --status --json",
+  dev_to_external_channel_lark_waterflow:
+    "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
   skillopt_runtime_self_use_waterflow:
     "node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json",
   compressed_context_recovery_waterflow:
@@ -1959,7 +1968,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-governance-autopilot.ts",
     "scripts/dev/lcx-skillopt-lite.ts",
     "scripts/dev/lcx-mind-model.ts",
-    "scripts/dev/lcx-live-lark-brain-binding.ts",
+    "scripts/dev/lcx-external-channel-binding.ts",
     "scripts/dev/lcx-head-tail-consistency.ts",
     "scripts/dev/lcx-context-recovery-exam.ts",
     "scripts/dev/lcx-system-doctor.ts",
@@ -1979,8 +1988,8 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/minimax-brain-teacher-batch.ts",
     "scripts/dev/module-learning-pipeline-plan.ts",
     "scripts/dev/module-learning-pipeline-review.ts",
-    "scripts/dev/lcx-promote-live.ts",
-    "scripts/dev/lcx-live-lark-brain-binding.ts",
+    "scripts/dev/lcx-external-channel-binding.ts",
+    "scripts/dev/lcx-external-channel-binding.ts",
     "src/commands/capabilities/lark-loop-diagnose.ts",
     "src/auto-reply/reply/get-reply-run.ts",
     "src/auto-reply/reply/skillopt-autocue.ts",
@@ -2008,7 +2017,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "test/local-brain-distill-eval.test.ts",
     "test/local-brain-contracts.test.ts",
     "test/lcx-promote-live-status.test.ts",
-    "test/lcx-live-lark-brain-binding.test.ts",
+    "test/lcx-external-channel-binding.test.ts",
   ],
   boundary: [
     "AGENTS.md",
@@ -2018,7 +2027,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-universe-index.ts",
     "scripts/dev/lcx-skillopt-lite.ts",
     "scripts/dev/lcx-self-repair-hands.ts",
-    "scripts/dev/lcx-promote-live.ts",
+    "scripts/dev/lcx-external-channel-binding.ts",
     "scripts/dev/local-brain-training-plan.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
     "src/auto-reply/reply/skillopt-autocue.ts",

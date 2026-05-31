@@ -111,7 +111,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
         perfectIntegrationClaim: false,
       }),
     );
-    expect(payload.perfectIntegrationReason).toContain("live migration");
+    expect(payload.perfectIntegrationReason).toContain("external-channel migration");
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "expected_external_candidates_registered", ok: true }),
@@ -370,7 +370,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
           "no_order_placement",
           "no_copy_trading",
           "no_latency_arbitrage",
-          "no_live_sender_change",
+          "no_external_channel_sender_change",
           "no_provider_config_change",
         ]),
       );

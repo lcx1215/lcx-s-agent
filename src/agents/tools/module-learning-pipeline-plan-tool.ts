@@ -559,7 +559,7 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
       "Apply the workflow rule to a fresh Lark-style message and prove no raw JSON/internal labels leak into the visible reply.",
     safetyBoundaries: [
       "no_live_visible_fixed_claim_without_real_inbound_reply",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
       "no_provider_config_change",
       "no_raw_json_visible_reply",
     ],
@@ -616,7 +616,7 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
       "dev_fixed_not_live_fixed",
       "no_overlapping_training_start",
       "no_provider_config_change",
-      "no_live_sender_change",
+      "no_external_channel_sender_change",
     ],
     existingToolBridge: {
       primaryTool: "lcx_system_doctor",

@@ -158,7 +158,7 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
-          id: "dev_to_live_lark_waterflow",
+          id: "dev_to_external_channel_lark_waterflow",
           requiredFilters: expect.arrayContaining([
             "dev_ready_not_user_visible_observed",
             "external_channel_probe_required",
@@ -171,12 +171,12 @@ describe("LCX flow graph exam", () => {
           receipts: expect.arrayContaining([
             "lcx-skillopt-lite",
             "skillopt-autocue",
-            "lcx-live-lark-brain-binding",
+            "lcx-external-channel-binding",
           ]),
           requiredFilters: expect.arrayContaining([
             "skillopt_best_skill_required",
             "skillopt_context_not_weight_absorption",
-            "skillopt_live_proof_required",
+            "skillopt_external_channel_proof_required",
             "dev_ready_not_user_visible_observed",
             "external_channel_probe_required",
             "real_lark_inbound_required",
@@ -196,7 +196,7 @@ describe("LCX flow graph exam", () => {
             "single_owner_required",
             "protected_memory_guard",
             "no_provider_config_change",
-            "no_live_sender_change",
+            "no_external_channel_sender_change",
           ]),
         }),
         expect.objectContaining({
@@ -526,11 +526,11 @@ describe("LCX flow graph exam", () => {
           evidenceReceipts: expect.arrayContaining([
             "lcx-skillopt-lite",
             "skillopt-autocue",
-            "lcx-live-lark-brain-binding",
+            "lcx-external-channel-binding",
           ]),
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:skillopt_context_not_weight_absorption",
-            "missing_or_skipped_filter:skillopt_live_proof_required",
+            "missing_or_skipped_filter:skillopt_external_channel_proof_required",
           ]),
         }),
         expect.objectContaining({

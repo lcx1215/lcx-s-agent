@@ -50,6 +50,8 @@ export type LarkBrainDistillationCandidateArtifact = {
   boundary: "brain_distillation_candidate";
   generatedAt: string;
   noLanguageRoutingPromotion: true;
+  noExternalChannelSenderTouched: true;
+  /** Legacy compatibility alias while old receipts fade out. */
   noLiveSenderTouched: true;
   candidates: LarkBrainDistillationCandidate[];
 };
@@ -59,6 +61,8 @@ export type LarkBrainDistillationReviewArtifact = {
   boundary: "brain_distillation_review";
   reviewedAt: string;
   noLanguageRoutingPromotion: true;
+  noExternalChannelSenderTouched: true;
+  /** Legacy compatibility alias while old receipts fade out. */
   noLiveSenderTouched: true;
   sourceArtifacts: string[];
   acceptedCandidates: LarkBrainDistillationCandidate[];
@@ -286,6 +290,7 @@ export function buildLarkBrainDistillationCandidateArtifact(params: {
     boundary: "brain_distillation_candidate",
     generatedAt: params.generatedAt ?? new Date().toISOString(),
     noLanguageRoutingPromotion: true,
+    noExternalChannelSenderTouched: true,
     noLiveSenderTouched: true,
     candidates: params.candidates,
   };

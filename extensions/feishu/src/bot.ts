@@ -4417,6 +4417,7 @@ function buildVisibleAnswerGateDistillationPayload(params: {
       "For direct retail position-risk asks, answer with missing inputs, risk drivers, invalidation, evidence checklist, and behavior-risk notes; do not emit buy/sell/add/reduce/hold/wait, average-down, cut-loss, or action-trigger language.",
     no_language_routing_promotion: true,
     no_finance_learning_artifact_until_reviewed: true,
+    no_external_channel_sender_touched: true,
     no_live_sender_touched: true,
     no_provider_config_touched: true,
     protected_memory_touched: false,

@@ -64,7 +64,7 @@ const plan = prompt.includes("Lark 上下文污染")
         "untrusted_external_skill",
         "no_protected_memory_write",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
       ],
       next_step: "review_plan",
       rejected_context: ["old_lark_conversation_history"],

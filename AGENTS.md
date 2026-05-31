@@ -129,7 +129,7 @@ means Python is still doing engine work. `包装` means the Python file can
 survive only behind a named TS owner. `迁走` means the file is workflow control
 and should move to TS. New Python files are not acceptable until this check
 names one of those three choices. This is `dev_ts_python_boundary_only`: no
-live sender, provider config, protected memory, or training authority.
+external channel sender, provider config, protected memory, or training authority.
 
 If the task asks about external or newly added skills, use the runbook's skill inventory command:
 
@@ -166,7 +166,7 @@ CLI-Anything, multi-agent orchestration frameworks such as LangGraph / OpenAI
 Agents / CrewAI / Microsoft Agent Framework, and prediction-market research
 sources such as Polymarket, PolyClaw, Polybot, Polyseer, PolyBench, and
 PolySwarm. They are not direct runtime authority: no direct install, no provider
-config, no live sender, no protected memory changes, no wallet connection, no
+config, no external channel sender, no protected memory changes, no wallet connection, no
 order placement, no copy trading, and no latency arbitrage. Distill only
 reusable workflow patterns into existing LCX owners such as SkillOpt-lite,
 governance autopilot, problem radar, context recovery, learning sedimentation,
@@ -178,7 +178,7 @@ native-runtime long-task battery, unified trajectory schema, local-first memory
 provenance, agent trace/side-effect observability, and secure tool/skill
 permissioning. Treat them as architecture intake only until their owner proof
 chain passes. Do not upgrade them into model-weight absorption, user-visible proof,
-provider config, protected-memory write, live sender, wallet, order,
+provider config, protected-memory write, external channel sender, wallet, order,
 desktop-control, or training authority by naming the mechanism.
 Each mechanism must also carry an automatic workflow contract in
 `lcx-external-agent-upgrade-radar`: automatic trigger, owner gate, autopilot
@@ -305,13 +305,18 @@ Keep this architecture boring and auditable:
   parallel lane. A controlled one-time sync is allowed only to keep service
   alive during cutover; it must not restore the live repo's status.
 - Canonical Lark channel truth belongs to
-  `scripts/dev/lcx-live-lark-brain-binding.ts`. It may prove
+  `scripts/dev/lcx-external-channel-binding.ts`. It may prove
   `external-channel-bound` after a clean idle apply, build/restart, and probe.
-  `scripts/dev/lcx-promote-live.ts` remains a legacy promotion/drift
-  compatibility surface during migration and must not override the binding
-  owner. Commercial acceptance may clear external-channel binding while still
-  blocking release on `post_migration_lark_canary_missing` until fresh real
-  inbound/outbound Lark evidence proves `user-visible-observed`.
+  `local-brain-training-plan` must expose `externalChannelBinding` as the
+  primary planner field; `liveLarkBrainBinding` is only a legacy compatibility
+  alias while older owners migrate.
+  `scripts/dev/lcx-external-channel-status.ts` is the canonical read-only
+  external-channel status wrapper; `scripts/dev/lcx-promote-live.ts` remains the
+  legacy promotion/drift compatibility surface underneath it. The status wrapper
+  must not override the binding owner. Commercial acceptance may clear
+  external-channel binding while still blocking release on
+  `post_migration_lark_canary_missing` until fresh real inbound/outbound Lark
+  evidence proves `user-visible-observed`.
 - System-wide live fadeout truth belongs to
   `scripts/dev/lcx-live-fadeout-audit.ts`. It checks package aliases, docs,
   governance, doctor, context recovery, training plan, SkillOpt, commercial
@@ -321,7 +326,7 @@ Keep this architecture boring and auditable:
 - China cloud may be used only for mirror backup, static status/dashboard
   hosting, or domestic model/data assistance. It must not become the main
   OpenAI/Codex execution point, the canonical repo, the canonical `~/.openclaw`
-  state, the live sender authority, or a second source of truth.
+  state, the external channel sender authority, or a second source of truth.
 - Use Tailscale SSH or Cloudflare Access/Tunnel as an identity gate. Do not
   expose SSH, dashboards, agent ports, or command runners directly to the
   public internet.
@@ -374,6 +379,10 @@ before making claims or changes.
   `user-visible-observed`, legacy `live-visible-fixed` is only a compatibility
   label, a receipt is not model-weight absorption, a stored source is not
   learned knowledge, and `parseRecovered` is not a fully clean promotion pass.
+- As live wording fades out, treat `external-channel sender` as the current
+  high-authority Lark/Feishu send path. Normal repairs must have no
+  external-channel sender authority; legacy `external channel sender` wording is only a
+  compatibility label until the matching owner removes it.
 - Before adding a new module, prompt, eval, receipt, automation, or memory lane,
   search existing repo and local skill machinery first. Prefer extending the
   existing source-registry, capability-card, retrieval/apply, eval, runbook,
@@ -637,7 +646,7 @@ remembering which diagnostic to run.
   training/eval candidate packets, plus repo patch candidate plans, under
   allowed workspace state, log, and memory/self-repair paths. These packets are
   candidate-only, not train-slice, model absorption, protected-memory truth,
-  live sender changes, provider config changes, repo source edits, git
+  external channel sender changes, provider config changes, repo source edits, git
   index/commit authority, or training authority.
 - Owner strategy for automatic self-repair writes: only
   `lcx-governance-autopilot` may auto-add `--write` to
@@ -646,7 +655,7 @@ remembering which diagnostic to run.
   incomplete, or SkillOpt reports a static/format gate gap. The de-duplication
   key is `signalKey`; one signal writes at most once. If there is no owner
   signal, the same signal was already written, or the action would touch repo
-  source, live sender, provider config, protected memory, formal language
+  source, external channel sender, provider config, protected memory, formal language
   corpus, training processes, train-slice direct writes, git index/commit, or
   model-weight absorption claims, automatic `--write` must not run.
 - A repaired owner signal is not the same as a verified owner signal. If a

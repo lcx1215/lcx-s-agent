@@ -42,12 +42,13 @@ type OwnerId =
   | "universeIndex"
   | "externalAgentUpgrade"
   | "liveFadeoutAudit"
+  | "externalChannelStatus"
   | "trainingPlan"
   | "skillOptLite"
   | "selfRepairHands"
   | "monotonicDataLedger"
   | "providerCouncilAcceleration"
-  | "liveLarkBrainBinding"
+  | "externalChannelBinding"
   | "mindModel"
   | "flowGraph"
   | "headTail"
@@ -115,7 +116,7 @@ const SELF_REPAIR_HANDS_OWNER_WRITE_POLICY = {
   ],
   deniedAuthorities: [
     "repo_source",
-    "live_sender",
+    "external_channel_sender",
     "provider_config",
     "protected_memory",
     "formal_language_corpus",
@@ -165,6 +166,12 @@ const OWNER_COMMANDS: OwnerCommand[] = [
     required: true,
   },
   {
+    id: "externalChannelStatus",
+    script: "scripts/dev/lcx-external-channel-status.ts",
+    args: ["--json"],
+    required: true,
+  },
+  {
     id: "trainingPlan",
     script: "scripts/dev/local-brain-training-plan.ts",
     args: ["--json"],
@@ -195,8 +202,8 @@ const OWNER_COMMANDS: OwnerCommand[] = [
     required: true,
   },
   {
-    id: "liveLarkBrainBinding",
-    script: "scripts/dev/lcx-live-lark-brain-binding.ts",
+    id: "externalChannelBinding",
+    script: "scripts/dev/lcx-external-channel-binding.ts",
     args: ["--json"],
     required: true,
   },
@@ -244,6 +251,11 @@ type HandoffReceipt = {
     structuralOwnerFailures: string[];
     blockedClusters: unknown;
     blockedGates: unknown;
+    externalChannelBindingStatus?: unknown;
+    externalChannelStatusModel?: unknown;
+    externalChannelBound?: unknown;
+    userVisibleObserved?: unknown;
+    legacyLiveLarkBrainBindingStatus?: unknown;
   };
   liveTouched: boolean;
   providerConfigTouched: boolean;
@@ -256,8 +268,8 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/lcx-governance-autopilot.ts [--json]",
       "",
       "Runs the read-only LCX governance owner stack, writes the latest compact",
-      "autopilot snapshot, and never starts training, live apply, provider config",
-      "changes, protected-memory writes, or live sender changes.",
+      "autopilot snapshot, and never starts training, external-channel apply, provider config",
+      "changes, protected-memory writes, or external-channel sender changes.",
     ].join("\n"),
   );
 }
@@ -390,8 +402,34 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
     };
   }
 
+  if (id === "externalChannelStatus") {
+    const externalChannelStatus = recordValue(payload.externalChannelStatus);
+    const legacyPromoteLiveStatus = recordValue(payload.legacyPromoteLiveStatus);
+    return {
+      boundary: payload.boundary,
+      owner: payload.owner,
+      conceptStatus: payload.conceptStatus,
+      statusModel: externalChannelStatus?.statusModel,
+      externalChannelBound: externalChannelStatus?.externalChannelBound,
+      userVisibleObserved: externalChannelStatus?.userVisibleObserved,
+      channelProbePassed: externalChannelStatus?.channelProbePassed,
+      channelRestartCommandStatus: externalChannelStatus?.channelRestartCommandStatus,
+      legacyPromoteLiveStatus: legacyPromoteLiveStatus
+        ? {
+            owner: legacyPromoteLiveStatus.owner,
+            boundary: legacyPromoteLiveStatus.boundary,
+            status: legacyPromoteLiveStatus.status,
+          }
+        : undefined,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
+    };
+  }
+
   if (id === "trainingPlan") {
     const liveLarkBrainBinding = recordValue(payload.liveLarkBrainBinding);
+    const externalChannelBinding = recordValue(payload.externalChannelBinding);
     const accelerationQueue = recordValue(payload.evolutionAccelerationQueue);
     const latestCandidateEval = recordValue(payload.latestCandidateEval);
     const activeGuardAdapterTruth = recordValue(payload.activeGuardAdapterTruth);
@@ -403,7 +441,9 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       evolutionCooldownActive: payload.evolutionCooldownActive,
       activeGuardEvolutionCooldown: payload.activeGuardEvolutionCooldown,
       selectedCleanAdapter:
-        payload.selectedCleanAdapter ?? liveLarkBrainBinding?.selectedCleanAdapter,
+        payload.selectedCleanAdapter ??
+        externalChannelBinding?.selectedCleanAdapter ??
+        liveLarkBrainBinding?.selectedCleanAdapter,
       decisionIds: decisionIds(payload),
       latestCandidateEval: latestCandidateEval
         ? {
@@ -415,6 +455,14 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
           }
         : undefined,
       guardUsesSelectedCleanAdapter: activeGuardAdapterTruth?.guardUsesSelectedCleanAdapter,
+      externalChannelBinding: externalChannelBinding
+        ? {
+            status: externalChannelBinding.status,
+            action: externalChannelBinding.action,
+            missingProof: externalChannelBinding.missingProof,
+            userVisibleObserved: externalChannelBinding.userVisibleObserved,
+          }
+        : undefined,
       liveLarkBrainBinding: liveLarkBrainBinding
         ? {
             status: liveLarkBrainBinding.status,
@@ -601,7 +649,7 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
     };
   }
 
-  if (id === "liveLarkBrainBinding") {
+  if (id === "externalChannelBinding") {
     const decision = recordValue(payload.decision);
     const externalChannelBinding = recordValue(payload.externalChannelBinding);
     return {
@@ -786,7 +834,7 @@ function buildSelfRepairAutoSignal(
       observedFailure:
         "SkillOpt-lite reports a static gate or parse-recovery gap, so the candidate rule must stay as supervised material instead of runtime or model-weight authority.",
       replacementRule:
-        "Write candidate-only self-repair material for the SkillOpt gap, then wait for targeted eval and owner acceptance before training or live use.",
+        "Write candidate-only self-repair material for the SkillOpt gap, then wait for targeted eval and owner acceptance before training or external-channel use.",
     };
   }
 
@@ -906,7 +954,7 @@ function buildContextRecoveryHandoff({
   skillOptCompact,
   monotonicDataLedgerCompact,
   providerCouncilAccelerationCompact,
-  liveBindingCompact,
+  externalChannelBindingCompact,
   externalAgentUpgradeCompact,
   localFailureTrace,
 }: {
@@ -919,7 +967,7 @@ function buildContextRecoveryHandoff({
   skillOptCompact: Record<string, unknown> | undefined;
   monotonicDataLedgerCompact: Record<string, unknown> | undefined;
   providerCouncilAccelerationCompact: Record<string, unknown> | undefined;
-  liveBindingCompact: Record<string, unknown> | undefined;
+  externalChannelBindingCompact: Record<string, unknown> | undefined;
   externalAgentUpgradeCompact: Record<string, unknown> | undefined;
   localFailureTrace: LocalFailureTraceReceipt;
 }) {
@@ -1066,17 +1114,25 @@ function buildContextRecoveryHandoff({
     `- nextSafeCommand: ${inlineValue(providerCouncilAccelerationCompact?.nextSafeCommand)}`,
     "- boundary: dev_provider_council_acceleration_only; --write may call Kimi/MiniMax/DeepSeek once when gates are clean",
     "",
+    "## External Channel Status",
+    `- statusModel: ${inlineValue(externalChannelStatusCompact?.statusModel)}`,
+    `- externalChannelBound: ${inlineValue(externalChannelStatusCompact?.externalChannelBound)}`,
+    `- userVisibleObserved: ${inlineValue(externalChannelStatusCompact?.userVisibleObserved)}`,
+    `- channelProbePassed: ${inlineValue(externalChannelStatusCompact?.channelProbePassed)}`,
+    `- legacyPromoteLiveStatus: ${inlineValue(externalChannelStatusCompact?.legacyPromoteLiveStatus)}`,
+    "- boundary: dev_external_channel_status_only; read-only wrapper, no external-channel apply or sender authority",
+    "",
     "## External Channel Binding",
-    `- status: ${inlineValue(liveBindingCompact?.status)}`,
-    `- action: ${inlineValue(liveBindingCompact?.action)}`,
-    `- selectedCleanAdapter: ${inlineValue(liveBindingCompact?.selectedCleanAdapter)}`,
-    `- externalChannelStatus: ${inlineValue(liveBindingCompact?.externalChannelStatus)}`,
-    `- externalChannelAction: ${inlineValue(liveBindingCompact?.externalChannelAction)}`,
-    `- externalChannelMissingProof: ${inlineValue(liveBindingCompact?.externalChannelMissingProof)}`,
-    `- userVisibleObserved: ${inlineValue(liveBindingCompact?.userVisibleObserved)}`,
-    `- legacyMissingProof: ${inlineValue(liveBindingCompact?.missingProof)}`,
-    `- legacyLiveUserSeen: ${inlineValue(liveBindingCompact?.liveUserSeen)}`,
-    `- liveSidecarDriftBefore: ${inlineValue(liveBindingCompact?.liveSidecarDriftBefore)}`,
+    `- status: ${inlineValue(externalChannelBindingCompact?.status)}`,
+    `- action: ${inlineValue(externalChannelBindingCompact?.action)}`,
+    `- selectedCleanAdapter: ${inlineValue(externalChannelBindingCompact?.selectedCleanAdapter)}`,
+    `- externalChannelStatus: ${inlineValue(externalChannelBindingCompact?.externalChannelStatus)}`,
+    `- externalChannelAction: ${inlineValue(externalChannelBindingCompact?.externalChannelAction)}`,
+    `- externalChannelMissingProof: ${inlineValue(externalChannelBindingCompact?.externalChannelMissingProof)}`,
+    `- userVisibleObserved: ${inlineValue(externalChannelBindingCompact?.userVisibleObserved)}`,
+    `- legacyMissingProof: ${inlineValue(externalChannelBindingCompact?.missingProof)}`,
+    `- legacyLiveUserSeen: ${inlineValue(externalChannelBindingCompact?.liveUserSeen)}`,
+    `- liveSidecarDriftBefore: ${inlineValue(externalChannelBindingCompact?.liveSidecarDriftBefore)}`,
     "",
     "## Governance",
     `- autopilotOk: ${inlineValue(receipt.ok)}`,
@@ -1094,7 +1150,7 @@ function buildContextRecoveryHandoff({
       : `- ${inlineValue(receipt.summary.fastestSafeNextAction)}`,
     "",
     "## Missing Proof",
-    markdownList(liveBindingCompact?.missingProof),
+    markdownList(externalChannelBindingCompact?.missingProof),
     "",
     "## Boundaries",
     `- liveTouched: ${inlineValue(receipt.liveTouched)}`,
@@ -1124,7 +1180,7 @@ if (selfRepairAutoWriteNeeded && selfRepairAutoSignal) {
 const requiredParseFailures = owners.filter(
   (owner) => OWNER_COMMANDS.find((command) => command.id === owner.id)?.required && !owner.parsed,
 );
-const activeTrainingOrEval = trainingActive(byOwner.trainingPlan, byOwner.liveLarkBrainBinding);
+const activeTrainingOrEval = trainingActive(byOwner.trainingPlan, byOwner.externalChannelBinding);
 const structuralOwnerFailures = owners.filter((owner) => owner.parsed && owner.ok === false);
 const releaseBlocked =
   byOwner.commercialAcceptance?.compact.readyForCommercialRelease === false ||
@@ -1226,10 +1282,14 @@ const receipt = {
       byOwner.externalAgentUpgrade?.compact.perfectIntegrationClaim,
     liveFadeoutStatusModel: byOwner.liveFadeoutAudit?.compact.statusModel,
     liveFadeoutNeedsReview: byOwner.liveFadeoutAudit?.compact.liveReferenceNeedsReview,
+    externalChannelStatusModel: byOwner.externalChannelStatus?.compact.statusModel,
+    externalChannelBound: byOwner.externalChannelStatus?.compact.externalChannelBound,
+    userVisibleObserved: byOwner.externalChannelStatus?.compact.userVisibleObserved,
     externalChannelBindingStatus:
-      byOwner.liveLarkBrainBinding?.compact.externalChannelStatus ??
-      byOwner.liveLarkBrainBinding?.compact.status,
-    liveLarkBrainBindingStatus: byOwner.liveLarkBrainBinding?.compact.status,
+      byOwner.externalChannelBinding?.compact.externalChannelStatus ??
+      byOwner.trainingPlan?.compact.externalChannelBinding?.status ??
+      byOwner.externalChannelBinding?.compact.status,
+    legacyLiveLarkBrainBindingStatus: byOwner.externalChannelBinding?.compact.status,
     skillOptLiteStatus: byOwner.skillOptLite?.compact.status,
     skillOptLiteNextIdleAction: byOwner.skillOptLite?.compact.nextIdleAction,
     selfRepairHandsAutoWriteTriggered: selfRepairAutoWriteRun !== undefined,
@@ -1262,7 +1322,7 @@ const receipt = {
   },
   owners: Object.fromEntries(owners.map((owner) => [owner.id, owner.compact])),
   notTouched: [
-    "live_sender",
+    "external_channel_sender",
     "provider_config",
     "protected_memory",
     "formal_language_corpus",
@@ -1284,8 +1344,9 @@ const selfRepairLatestWritten = recordValue(selfRepairHandsCompact?.latestWritte
 const monotonicDataLedgerCompact = recordValue(receipt.owners.monotonicDataLedger);
 const universeIndexCompact = recordValue(receipt.owners.universeIndex);
 const externalAgentUpgradeCompact = recordValue(receipt.owners.externalAgentUpgrade);
+const externalChannelStatusCompact = recordValue(receipt.owners.externalChannelStatus);
 const providerCouncilAccelerationCompact = recordValue(receipt.owners.providerCouncilAcceleration);
-const liveBindingCompact = recordValue(receipt.owners.liveLarkBrainBinding);
+const externalChannelBindingCompact = recordValue(receipt.owners.externalChannelBinding);
 const mindModelCompact = recordValue(receipt.owners.mindModel);
 const flowGraphCompact = recordValue(receipt.owners.flowGraph);
 const headTailCompact = recordValue(receipt.owners.headTail);
@@ -1300,8 +1361,11 @@ const digestMaterial = {
   structuralOwnerFailures: receipt.summary.structuralOwnerFailures,
   blockedClusters: receipt.summary.blockedClusters,
   blockedGates: receipt.summary.blockedGates,
-  liveLarkBrainBindingStatus: receipt.summary.liveLarkBrainBindingStatus,
   externalChannelBindingStatus: receipt.summary.externalChannelBindingStatus,
+  externalChannelStatusModel: receipt.summary.externalChannelStatusModel,
+  externalChannelBound: receipt.summary.externalChannelBound,
+  userVisibleObserved: receipt.summary.userVisibleObserved,
+  legacyLiveLarkBrainBindingStatus: receipt.summary.legacyLiveLarkBrainBindingStatus,
   fastestSafeNextAction: receipt.summary.fastestSafeNextAction,
   evolutionCooldownActive: trainingCompact?.evolutionCooldownActive,
   latestEvolutionCooldown: trainingCompact?.latestEvolutionCooldown,
@@ -1359,7 +1423,8 @@ const digestMaterial = {
     providerCouncilAccelerationCompact?.freshCompleteCouncil,
   providerCouncilAccelerationDailyUse: providerCouncilAccelerationCompact?.dailyUse,
   providerCouncilAccelerationNextSafeCommand: providerCouncilAccelerationCompact?.nextSafeCommand,
-  liveBindingMissingProof: liveBindingCompact?.missingProof ?? [],
+  externalChannelMissingProof: externalChannelBindingCompact?.missingProof ?? [],
+  liveBindingMissingProof: externalChannelBindingCompact?.missingProof ?? [],
   mindModelFailed: recordValue(mindModelCompact?.summary)?.failed,
   flowGraphFailed: recordValue(flowGraphCompact?.summary)?.failed,
   headTailFailed: recordValue(headTailCompact?.summary)?.failed,
@@ -1384,7 +1449,8 @@ const evolutionPromotionDigest = {
     summary: receipt.summary,
     triggerPolicy: receipt.triggerPolicy,
   },
-  liveLarkBrainBinding: liveBindingCompact,
+  externalChannelBinding: externalChannelBindingCompact,
+  legacyLiveLarkBrainBinding: externalChannelBindingCompact,
   material: digestMaterial,
   quietReason:
     activePids.eval.length > 0 || activePids.mlx.length > 0
@@ -1486,7 +1552,7 @@ await fs.writeFile(
     skillOptCompact,
     monotonicDataLedgerCompact,
     providerCouncilAccelerationCompact,
-    liveBindingCompact,
+    externalChannelBindingCompact,
     externalAgentUpgradeCompact,
     localFailureTrace,
   })}\n`,

@@ -451,7 +451,7 @@ async function buildAudit(workspaceDir: string) {
         : undefined,
     },
     notTouched: [
-      "live_sender",
+      "external_channel_sender",
       "provider_config",
       "protected_repo_memory",
       "formal_lark_routing_corpus",

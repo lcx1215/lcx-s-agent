@@ -72,7 +72,8 @@ await fs.writeFile(
 
 assert(artifact.boundary === "brain_distillation_candidate", "brain distillation boundary");
 assert(artifact.noLanguageRoutingPromotion, "must not promote into language corpus");
-assert(artifact.noLiveSenderTouched, "must not touch live sender");
+assert(artifact.noExternalChannelSenderTouched, "must not touch external channel sender");
+assert(artifact.noLiveSenderTouched, "legacy live sender alias must remain false-touch");
 assert(accepted.status === "accepted_brain_plan", "accepted candidate status");
 assert(secret.status === "discarded", "secret candidate discarded");
 assert(binary.status === "discarded", "binary candidate discarded");

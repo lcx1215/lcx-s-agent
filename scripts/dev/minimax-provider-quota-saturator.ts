@@ -400,7 +400,7 @@ const plan = {
   keyEnvOrder: ["MINIMAX_CODE_PLAN_KEY", "MINIMAX_CODING_API_KEY", "MINIMAX_API_KEY"],
   authProfileProviderFallbacks: ["minimax", "minimax-portal"],
   notTouched: [
-    "live_sender",
+    "external_channel_sender",
     "provider_config",
     "protected_repo_memory",
     "formal_lark_routing_corpus",

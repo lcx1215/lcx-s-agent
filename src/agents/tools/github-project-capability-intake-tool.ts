@@ -305,7 +305,7 @@ function buildNextPatch(params: {
     case "skill_candidate":
       return "Draft one isolated skill note with uninstall/disable instructions before any runtime integration.";
     case "tool_candidate":
-      return "Add one narrow tool contract with a deterministic fixture test; avoid provider or live sender changes.";
+      return "Add one narrow tool contract with a deterministic fixture test; avoid provider or external channel sender changes.";
     case "memory_rule_candidate":
       return "Record one bounded local-memory rule or correction card; do not mutate protected summaries.";
     case "research_source_candidate":
@@ -317,7 +317,7 @@ function buildNextPatch(params: {
     case "finance_learning_source_candidate":
       return "Route only safe local/manual finance content through finance_learning_pipeline_orchestrator.";
     case "control_room_design_candidate":
-      return "Prototype as a bounded local surface or artifact; do not change Feishu live sender until verified.";
+      return "Prototype as a bounded local surface or artifact; do not change Feishu external channel sender until verified.";
     default:
       return params.family === "unknown"
         ? "Capture a clearer feature summary before implementation."

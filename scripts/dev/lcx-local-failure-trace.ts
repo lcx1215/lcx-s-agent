@@ -253,7 +253,7 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
     },
     indexOnly: true,
     notTouched: [
-      "live_sender",
+      "external_channel_sender",
       "provider_config",
       "protected_memory",
       "formal_language_corpus",

@@ -209,7 +209,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts [--ask TEXT --candidate-answer TEXT] [--json]",
       "",
       "Without --ask, runs the built-in commercial answer pipeline diagnostic scenarios.",
-      "This is dev-only: it audits candidate answer adoption rules and never calls providers, live sender, or MLX.",
+      "This is dev-only: it audits candidate answer adoption rules and never calls providers, external channel sender, or MLX.",
     ].join("\n"),
   );
 }

@@ -296,6 +296,7 @@ function buildReviewArtifact(params: {
     boundary: "brain_distillation_review",
     reviewedAt: params.reviewedAt,
     noLanguageRoutingPromotion: true,
+    noExternalChannelSenderTouched: true,
     noLiveSenderTouched: true,
     sourceArtifacts: params.sourceArtifacts,
     acceptedCandidates,

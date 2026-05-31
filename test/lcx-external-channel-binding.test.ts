@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { buildLiveLarkBrainBindingDecision } from "../scripts/dev/lcx-live-lark-brain-binding.js";
+import { buildExternalChannelBindingDecision } from "../scripts/dev/lcx-external-channel-binding.js";
 
-describe("lcx-live-lark-brain-binding", () => {
+describe("lcx-external-channel-binding", () => {
   const readyTrainingPlan = {
     boundary: "dev_local_brain_training_plan_only",
     activeProcesses: [],
+    externalChannelBinding: {
+      boundary: "dev_external_channel_binding_plan_only",
+      status: "ready_for_apply",
+      action: "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof",
+      selectedCleanAdapter: "/tmp/adapter-clean-r4",
+      missingProof: [
+        "external_channel_source_drift_zero_after_selected_adapter",
+        "lark_external_channel_gateway_restarted_after_selected_adapter",
+        "lark_external_channel_diagnose_ok_after_restart",
+        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+      ],
+    },
     liveLarkBrainBinding: {
       boundary: "dev_live_lark_brain_binding_plan_only",
       status: "ready_for_live_runtime_binding",
@@ -19,8 +31,8 @@ describe("lcx-live-lark-brain-binding", () => {
     },
   };
 
-  it("defers live binding while eval or MLX is active", () => {
-    const decision = buildLiveLarkBrainBindingDecision({
+  it("defers external-channel binding while eval or MLX is active", () => {
+    const decision = buildExternalChannelBindingDecision({
       apply: true,
       liveTouched: false,
       trainingPlan: {
@@ -44,8 +56,8 @@ describe("lcx-live-lark-brain-binding", () => {
     });
   });
 
-  it("exposes an apply-ready state without touching live runtime", () => {
-    const decision = buildLiveLarkBrainBindingDecision({
+  it("exposes an apply-ready state without touching the channel runtime", () => {
+    const decision = buildExternalChannelBindingDecision({
       apply: false,
       liveTouched: false,
       trainingPlan: readyTrainingPlan,
@@ -61,8 +73,8 @@ describe("lcx-live-lark-brain-binding", () => {
     });
   });
 
-  it("keeps live-user-seen separate after a successful runtime probe", () => {
-    const decision = buildLiveLarkBrainBindingDecision({
+  it("keeps user-visible proof separate after a successful runtime probe", () => {
+    const decision = buildExternalChannelBindingDecision({
       apply: true,
       liveTouched: true,
       larkLoopDiagnoseOk: true,
@@ -78,11 +90,38 @@ describe("lcx-live-lark-brain-binding", () => {
     });
     expect(decision.missingProof).not.toContain("live_lark_loop_diagnose_ok_after_restart");
     expect(decision.missingProof).not.toContain(
+      "external_channel_source_drift_zero_after_selected_adapter",
+    );
+    expect(decision.missingProof).not.toContain(
+      "lark_external_channel_gateway_restarted_after_selected_adapter",
+    );
+    expect(decision.missingProof).not.toContain("lark_external_channel_diagnose_ok_after_restart");
+    expect(decision.missingProof).not.toContain(
       "live_sidecar_source_drift_zero_after_selected_adapter",
     );
     expect(decision.missingProof).not.toContain(
       "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
     );
-    expect(decision.missingProof).toContain("fresh_real_lark_inbound_and_outbound_seen");
+    expect(decision.missingProof).toContain(
+      "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+    );
+  });
+
+  it("falls back to the legacy live field while older owners migrate", () => {
+    const legacyOnlyPlan = { ...readyTrainingPlan };
+    delete (legacyOnlyPlan as Partial<typeof readyTrainingPlan>).externalChannelBinding;
+    const decision = buildExternalChannelBindingDecision({
+      apply: false,
+      liveTouched: false,
+      trainingPlan: legacyOnlyPlan,
+    });
+
+    expect(decision).toMatchObject({
+      status: "ready_for_apply",
+      selectedCleanAdapter: "/tmp/adapter-clean-r4",
+      missingProof: expect.arrayContaining([
+        "live_sidecar_source_drift_zero_after_selected_adapter",
+      ]),
+    });
   });
 });

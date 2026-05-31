@@ -1144,7 +1144,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "no_model_internal_learning_claim_without_eval",
         "no_protected_memory_write",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
       ]),
     );
     expect(plan.rejected_context).toEqual(
@@ -1459,7 +1459,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
       {
-        ask: "Anthropic 上传了好几个金融 agent，包含 market researcher、earnings reviewer 和 model builder。请学习它们怎么帮助我们的智能体，但不要改 provider config 或 live sender，也不要假设我们有企业 MCP。",
+        ask: "Anthropic 上传了好几个金融 agent，包含 market researcher、earnings reviewer 和 model builder。请学习它们怎么帮助我们的智能体，但不要改 provider config 或 external channel sender，也不要假设我们有企业 MCP。",
       },
     );
 
@@ -1508,7 +1508,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
         "untrusted_external_source",
         "no_enterprise_mcp_assumption",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
         "cite_every_number_or_mark_unsourced",
         "human_review_required_before_external_use",
         "no_hidden_tool_authority",

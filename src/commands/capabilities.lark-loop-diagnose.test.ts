@@ -397,7 +397,7 @@ describe("larkLoopDiagnoseCommand", () => {
         guardrails: [
           "language_routing_only",
           "no_finance_learning_artifact_promotion",
-          "no_live_sender_change",
+          "no_external_channel_sender_change",
           "accepted_cases_still_require_review_before_formal_corpus",
         ],
       },

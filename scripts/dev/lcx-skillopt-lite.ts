@@ -36,6 +36,8 @@ type LatestAutopilotTruth = {
   parseErrorCaseIds: string[];
   parseRecoveredCaseIds: string[];
   activeProcessCount: number;
+  externalChannelBindingStatus?: string;
+  /** Legacy compatibility alias while old governance snapshots are still readable. */
   liveBindingStatus?: string;
 };
 
@@ -303,8 +305,8 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
     capabilityRule:
       "module learning is only claimable after source registry, reading scope, capability rule, retrieval, apply validation, eval/training evidence, review, and keep/downrank/discard.",
   },
-  live_lark_boundary_preflight: {
-    id: "live_lark_boundary_preflight",
+  external_channel_boundary_preflight: {
+    id: "external_channel_boundary_preflight",
     title: "Lark External Channel Boundary Preflight",
     purpose:
       "Keep dev, eval, selected clean adapter, external-channel drift, channel restart, and real Lark user-visible evidence separated.",
@@ -319,13 +321,13 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       "single_clean_adapter_only",
       "no_parse_recovered_runtime",
       "fresh_real_lark_inbound_and_outbound_required",
-      "no_live_sender_write_without_owner_gate",
+      "no_external_channel_sender_write_without_owner_gate",
     ],
     rejectedContexts: [
       "channel_probe_as_user_visible_observed",
       "multiple_lora_runtime",
       "dirty_candidate_external_channel_binding",
-      "provider_config_or_live_sender_drift",
+      "provider_config_or_external_channel_sender_drift",
     ],
     requiredMissingData: [
       "selected_clean_adapter",
@@ -472,7 +474,9 @@ function extractLatestAutopilotTruth(
   const trainingPlan = recordValue(owners.trainingPlan);
   const latestCandidateEval = recordValue(trainingPlan.latestCandidateEval);
   const activeHeavyEvalCounts = recordValue(trainingPlan.activeHeavyEvalCounts);
-  const liveBinding = recordValue(trainingPlan.liveLarkBrainBinding);
+  const externalChannelBinding =
+    recordValue(trainingPlan.externalChannelBinding) ??
+    recordValue(trainingPlan.liveLarkBrainBinding);
   const activeProcessCount =
     typeof trainingPlan.activeProcessCount === "number"
       ? trainingPlan.activeProcessCount
@@ -496,7 +500,10 @@ function extractLatestAutopilotTruth(
     parseErrorCaseIds: stringArray(latestCandidateEval.parseErrorCaseIds),
     parseRecoveredCaseIds: stringArray(latestCandidateEval.parseRecoveredCaseIds),
     activeProcessCount,
-    liveBindingStatus: typeof liveBinding.status === "string" ? liveBinding.status : undefined,
+    externalChannelBindingStatus:
+      typeof externalChannelBinding.status === "string" ? externalChannelBinding.status : undefined,
+    liveBindingStatus:
+      typeof externalChannelBinding.status === "string" ? externalChannelBinding.status : undefined,
   };
 }
 
@@ -877,8 +884,8 @@ function buildProofChain(params: {
         params.truth.activeProcessCount > 0
           ? "blocked_by_active_training_or_eval"
           : "requires_external_channel_owner_proof",
-      statusCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
-      applyCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json",
+      statusCommand: "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
+      applyCommand: "node --import tsx scripts/dev/lcx-external-channel-binding.ts --apply --json",
       requiredProof: [
         "selected_clean_adapter_only",
         "external_channel_source_drift_zero_after_selected_adapter",

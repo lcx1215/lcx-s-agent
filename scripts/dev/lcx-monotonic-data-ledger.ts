@@ -378,7 +378,7 @@ export function buildMonotonicDataLedgerSnapshot(params: {
       latestCandidateFailureCount > 0 ? latestCandidateFailureCount : undefined,
     ]),
     notTouched: [
-      "live_sender",
+      "external_channel_sender",
       "provider_config",
       "protected_memory",
       "formal_language_corpus",

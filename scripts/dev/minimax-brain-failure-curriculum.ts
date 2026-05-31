@@ -415,7 +415,7 @@ export async function buildFailureCurriculumPrompts(
       snapshot.parseRecoveredCaseIds.includes(recipe.caseId)
         ? "This case passed acceptance only through parseRecovered; compact valid JSON is required before promotion."
         : undefined,
-      "Writes brain distillation review only; no live sender, provider config, language corpus, protected memory, or finance doctrine change.",
+      "Writes brain distillation review only; no external channel sender, provider config, language corpus, protected memory, or finance doctrine change.",
     ]
       .filter((entry): entry is string => typeof entry === "string")
       .join(" "),

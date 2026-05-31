@@ -100,7 +100,7 @@ export function registerCapabilitiesCli(program: Command) {
         `\nExamples:\n${formatHelpExamples([
           [
             "openclaw capabilities l5-baseline-doctor --json",
-            "Run the L5 baseline gate without changing live sender, providers, or protected memory.",
+            "Run the L5 baseline gate without changing external channel sender, providers, or protected memory.",
           ],
           [
             "openclaw capabilities l5-baseline-doctor --workspace ~/.openclaw/workspace",
@@ -138,7 +138,7 @@ export function registerCapabilitiesCli(program: Command) {
         `\nExamples:\n${formatHelpExamples([
           [
             "openclaw capabilities l5-system-eval --json",
-            "Score the fixed L5 task set without changing live sender, providers, or protected memory.",
+            "Score the fixed L5 task set without changing external channel sender, providers, or protected memory.",
           ],
           [
             "openclaw capabilities l5-system-eval --workspace ~/.openclaw/workspace",
@@ -146,7 +146,7 @@ export function registerCapabilitiesCli(program: Command) {
           ],
           [
             "openclaw capabilities l5-system-eval --workspace ~/.openclaw/workspace --write-receipt",
-            "Persist the eval result as an audit receipt without changing live sender or protected memory.",
+            "Persist the eval result as an audit receipt without changing external channel sender or protected memory.",
           ],
         ])}`,
     )

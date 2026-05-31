@@ -50,7 +50,7 @@ function baseInputs() {
       summary: { failed: 0 },
       actionableFailures: [],
     }),
-    liveStatus: owner("lcx-promote-live", {
+    externalChannelStatus: owner("lcx-external-channel-status", {
       operatorStatus: {
         liveRuntimeUpdated: true,
         liveUserSeen: true,
@@ -69,7 +69,7 @@ function baseInputs() {
         liveMatchesCurrentDev: true,
       },
     }),
-    liveBindingStatus: owner("lcx-live-lark-brain-binding", {
+    externalChannelBindingStatus: owner("lcx-external-channel-binding", {
       externalChannelBinding: {
         status: "channel_runtime_probe_ok_user_visible_pending",
         userVisibleObserved: true,
@@ -156,7 +156,7 @@ describe("lcx-commercial-acceptance-harness", () => {
 
   it("blocks release when live runtime is updated but no post-migration Lark canary is visible", () => {
     const inputs = baseInputs();
-    inputs.liveStatus = owner("lcx-promote-live", {
+    inputs.externalChannelStatus = owner("lcx-external-channel-status", {
       operatorStatus: {
         liveRuntimeUpdated: true,
         liveUserSeen: false,
@@ -172,7 +172,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         acceptanceMatched: false,
       },
     });
-    inputs.liveBindingStatus = owner("lcx-live-lark-brain-binding", {
+    inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
       externalChannelBinding: {
         status: "channel_runtime_probe_ok_user_visible_pending",
         userVisibleObserved: false,
@@ -197,7 +197,7 @@ describe("lcx-commercial-acceptance-harness", () => {
 
   it("uses the external-channel binding owner before the legacy promote-live commit gate", () => {
     const inputs = baseInputs();
-    inputs.liveStatus = owner("lcx-promote-live", {
+    inputs.externalChannelStatus = owner("lcx-external-channel-status", {
       operatorStatus: {
         liveRuntimeUpdated: false,
         liveUserSeen: false,
@@ -216,7 +216,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         liveMatchesCurrentDev: false,
       },
     });
-    inputs.liveBindingStatus = owner("lcx-live-lark-brain-binding", {
+    inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
       externalChannelBinding: {
         status: "channel_runtime_probe_ok_user_visible_pending",
         userVisibleObserved: false,
@@ -233,7 +233,7 @@ describe("lcx-commercial-acceptance-harness", () => {
 
   it("blocks release when the Lark external channel is not bound", () => {
     const inputs = baseInputs();
-    inputs.liveStatus = owner("lcx-promote-live", {
+    inputs.externalChannelStatus = owner("lcx-external-channel-status", {
       operatorStatus: {
         liveRuntimeUpdated: false,
         liveUserSeen: false,
@@ -252,7 +252,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         liveMatchesCurrentDev: false,
       },
     });
-    inputs.liveBindingStatus = owner("lcx-live-lark-brain-binding", {
+    inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
       externalChannelBinding: {
         status: "ready_for_channel_bind_apply",
         userVisibleObserved: false,
@@ -348,7 +348,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
-  it("runs against the current repo without sending Lark messages or touching live sender", async () => {
+  it("runs against the current repo without sending Lark messages or touching external channel sender", async () => {
     const { stdout } = await runJsonScript("scripts/dev/lcx-commercial-acceptance-harness.ts");
     const payload = JSON.parse(stdout) as {
       boundary: string;

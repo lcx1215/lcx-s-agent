@@ -80,10 +80,10 @@ const SKILLOPT_AUTO_CUE_RULES: SkillOptAutoCueRule[] = [
     ],
   },
   {
-    skillId: "live_lark_boundary_preflight",
-    title: "live Lark boundary preflight",
+    skillId: "external_channel_boundary_preflight",
+    title: "external-channel boundary preflight",
     reason:
-      "the request touches LiveLark, Feishu, live sidecar, live repo sync, or dev/live proof boundaries",
+      "the request touches Lark/Feishu external-channel binding, legacy live sidecar sync, or user-visible proof boundaries",
     patterns: [
       /(live|lark|feishu|飞书|live仓|live repo|sidecar|livelock|lock).{0,24}(连接|同步|直接用|证明|可见|回复|迁移|手动搬|格式)/i,
       /(dev|开发仓).{0,12}(live|live仓|sidecar|飞书|Lark).{0,18}(同步|迁移|漂移|直接用)/i,
@@ -181,7 +181,7 @@ function renderPromptInjection(params: {
   );
   return [
     "[SkillOpt-lite runtime preflight - deterministic]",
-    "Boundary: dev_skillopt_preflight_only. This is an internal planning cue, not model-weight absorption, not live-user-seen proof, and not permission to touch provider config, protected memory, live sender, or trading authority.",
+    "Boundary: dev_skillopt_preflight_only. This is an internal planning cue, not model-weight absorption, not live-user-seen proof, and not permission to touch provider config, protected memory, external channel sender, or trading authority.",
     "",
     ...blocks,
   ].join("\n\n");

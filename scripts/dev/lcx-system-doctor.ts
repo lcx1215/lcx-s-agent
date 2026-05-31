@@ -343,7 +343,7 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       providerConfigTouched: payload.providerConfigTouched,
     };
   }
-  if (name === "live-lark-brain-binding") {
+  if (name === "external-channel-binding") {
     const decision =
       payload.decision && typeof payload.decision === "object" && !Array.isArray(payload.decision)
         ? (payload.decision as Record<string, unknown>)
@@ -354,18 +354,33 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       !Array.isArray(payload.liveLarkBrainBinding)
         ? (payload.liveLarkBrainBinding as Record<string, unknown>)
         : {};
+    const externalChannelBinding =
+      payload.externalChannelBinding &&
+      typeof payload.externalChannelBinding === "object" &&
+      !Array.isArray(payload.externalChannelBinding)
+        ? (payload.externalChannelBinding as Record<string, unknown>)
+        : {};
     return {
       ok: payload.ok,
       boundary: payload.boundary,
+      externalChannelBinding: {
+        status: externalChannelBinding.status,
+        action: externalChannelBinding.action,
+        selectedCleanAdapter: externalChannelBinding.selectedCleanAdapter,
+        missingProof: externalChannelBinding.missingProof,
+        userVisibleObserved: externalChannelBinding.userVisibleObserved,
+      },
       decision: {
         status: decision.status,
         action: decision.action,
         selectedCleanAdapter: decision.selectedCleanAdapter,
         heavyActive: decision.heavyActive,
         missingProof: decision.missingProof,
-        liveUserSeen: decision.liveUserSeen,
+        userVisibleObserved: decision.userVisibleObserved ?? decision.liveUserSeen,
+        legacyLiveUserSeen: decision.liveUserSeen,
       },
-      trainingPlanStatus: liveBinding.status,
+      trainingPlanStatus: externalChannelBinding.status ?? liveBinding.status,
+      legacyTrainingPlanStatus: liveBinding.status,
       liveSidecarDriftBefore: payload.liveSidecarDriftBefore,
       nextCommand: payload.nextCommand,
       liveTouched: payload.liveTouched,
@@ -654,6 +669,8 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
         latestTrainingSeedEval: plan.latestTrainingSeedEval,
         latestCandidateEval: plan.latestCandidateEval,
         qwenCapabilityConsolidation: plan.qwenCapabilityConsolidation,
+        externalChannelBinding: plan.externalChannelBinding,
+        legacyLiveLarkBrainBinding: plan.liveLarkBrainBinding,
         liveLarkBrainBinding: plan.liveLarkBrainBinding,
         evolutionAccelerationQueue: plan.evolutionAccelerationQueue,
         latestPromotionAt: plan.latestPromotionAt,
@@ -727,6 +744,8 @@ function localBrainCurrentAdapterFromTrainingPlan(trainingPlanCheck: CheckResult
       consolidationState: qwenCapability.consolidationState,
       latestPassingEval,
       latestPromotedAdapter: trainingPlanCheck.summary.latestPromotedAdapter,
+      externalChannelBinding: trainingPlanCheck.summary.externalChannelBinding,
+      legacyLiveLarkBrainBinding: trainingPlanCheck.summary.legacyLiveLarkBrainBinding,
       liveLarkBrainBinding: trainingPlanCheck.summary.liveLarkBrainBinding,
       selectionMode: "training-plan-latest-passing",
       liveTouched: false,
@@ -983,7 +1002,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/dev/local-brain-distill-eval.ts",
     "scripts/dev/local-brain-plan.ts",
     "scripts/dev/local-brain-promotion-audit.ts",
-    "scripts/dev/lcx-live-lark-brain-binding.ts",
+    "scripts/dev/lcx-external-channel-binding.ts",
     "scripts/dev/lcx-agent-exam.ts",
     "scripts/dev/lcx-change-impact-plan.ts",
     "scripts/dev/lcx-local-paths.ts",
@@ -1177,9 +1196,9 @@ const currentAdapterCheck = localBrainCurrentAdapterFromTrainingPlan(trainingGua
 checks.push(currentAdapterCheck);
 checks.push(
   await runCommand({
-    name: "live-lark-brain-binding",
+    name: "external-channel-binding",
     command: process.execPath,
-    args: ["--import", "tsx", "scripts/dev/lcx-live-lark-brain-binding.ts", "--json"],
+    args: ["--import", "tsx", "scripts/dev/lcx-external-channel-binding.ts", "--json"],
     parseJson: true,
   }),
 );

@@ -13,7 +13,7 @@ describe("LCX owner control map", () => {
             "adapter_promotion_truth_cluster",
             "module_learning_absorption_cluster",
           ],
-          liveLarkBrainBindingStatus: "deferred_active_training_or_eval",
+          externalChannelBindingStatus: "deferred_active_training_or_eval",
           providerCouncilAccelerationStatus: "ready_plan",
           providerCouncilAccelerationAction: "dry_run_plan_only",
         },
@@ -37,6 +37,9 @@ describe("LCX owner control map", () => {
               failedCaseIds: [],
               parseErrorCaseIds: [],
             },
+            externalChannelBinding: {
+              missingProof: ["fresh_real_lark_inbound_and_outbound_seen"],
+            },
           },
           monotonicDataLedger: {
             acceptedSkillOptPackets: 3,
@@ -44,9 +47,6 @@ describe("LCX owner control map", () => {
           },
           selfRepairHands: {
             status: "write_completed",
-          },
-          liveLarkBrainBinding: {
-            missingProof: ["fresh_real_lark_inbound_and_outbound_seen"],
           },
           providerCouncilAcceleration: {
             hardBlocks: ["active_eval_or_mlx", "dirty_git_worktree"],
@@ -89,7 +89,7 @@ describe("LCX owner control map", () => {
       expect.arrayContaining([
         "active_eval_and_mlx",
         "dirty_and_unmatched_worktree",
-        "live_lark_real_user_proof",
+        "external_lark_channel_real_user_proof",
         "skillopt_not_model_weight",
         "self_repair_memory_and_training_candidate_hands",
         "module_learning_not_absorbed",
@@ -118,7 +118,7 @@ describe("LCX owner control map", () => {
     expect(map.markdown).toContain("Codex 可以帮你管什么");
     expect(map.markdown).toContain("现在先别碰什么");
     expect(map.markdown).toContain("永远不能自动放权什么");
-    expect(map.markdown).toContain("受保护记忆、供应商配置、线上发送、交易执行");
+    expect(map.markdown).toContain("受保护记忆、供应商配置、外部通道发送、交易执行");
     expect(map.items[0]).toEqual(
       expect.objectContaining({
         supervisor: expect.any(String),

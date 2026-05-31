@@ -534,7 +534,7 @@ function normalizeRiskBoundaries(values: string[]): string[] {
     "no_unverified_current_market_data",
     "no_language_corpus_modification",
     "no_provider_config_change",
-    "no_live_sender_change",
+    "no_external_channel_sender_change",
     "no_protected_memory_write",
     "no_high_leverage_crypto",
   ];
@@ -579,6 +579,15 @@ function canonicalRiskBoundary(entry: string): string {
     normalized === "no_unverified_current_market_data_claims"
   ) {
     return "no_unverified_current_market_data";
+  }
+  if (
+    normalized === "no_external_channel_sender_change" ||
+    normalized === "no_external_channel_sender_changes" ||
+    normalized === "no_lark_external_channel_sender_change" ||
+    normalized === "no_live_sender_change" ||
+    normalized === "no_live_sender_changes"
+  ) {
+    return "no_external_channel_sender_change";
   }
   if (
     normalized === "no_language_corpus_change" ||
@@ -871,7 +880,7 @@ function exampleFromModuleLearningPlanReceipt(
         ...safetyBoundaries,
         "no_protected_memory_write",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
         "no_language_corpus_modification",
       ]),
       nextStep:
@@ -961,7 +970,7 @@ function exampleFromModuleLearningReview(
             ...safetyBoundaries,
             "no_protected_memory_write",
             "no_provider_config_change",
-            "no_live_sender_change",
+            "no_external_channel_sender_change",
             "no_language_corpus_modification",
           ]),
           nextStep:
@@ -2340,7 +2349,7 @@ function buildSeedExamples(): DistillExample[] {
     },
     {
       userAsk:
-        "帮这个本地 agent 结构学习网上开源的 SKILL.md 工作流和本地已有 skills：先找候选、隔离审计、沉淀成可复用技能和本地大脑训练样本，不要改 provider config、live sender 或 protected memory。",
+        "帮这个本地 agent 结构学习网上开源的 SKILL.md 工作流和本地已有 skills：先找候选、隔离审计、沉淀成可复用技能和本地大脑训练样本，不要改 provider config、外部通道发送器或 protected memory。",
       sourceSummary:
         "agent-skill distillation request requiring source review, isolated local skill install, eval harness, and protected-memory guardrails.",
       taskFamily: "agent_skill_pattern_distillation",
@@ -2369,7 +2378,7 @@ function buildSeedExamples(): DistillExample[] {
         "evaluate_before_installing",
         "no_protected_memory_write",
         "no_provider_config_change",
-        "no_live_sender_change",
+        "no_external_channel_sender_change",
         "no_trading_execution_skill",
       ],
       nextStep:
@@ -2531,7 +2540,7 @@ const manifest = {
     ],
   },
   notTouched: [
-    "live_sender",
+    "external_channel_sender",
     "provider_config",
     "protected_repo_memory",
     "formal_lark_routing_corpus",

@@ -331,6 +331,7 @@ const review: LarkBrainDistillationReviewArtifact = {
   boundary: "brain_distillation_review",
   reviewedAt,
   noLanguageRoutingPromotion: true,
+  noExternalChannelSenderTouched: true,
   noLiveSenderTouched: true,
   sourceArtifacts: ["synthetic_teacher_batch:user_style_adversarial_finance_prompts"],
   acceptedCandidates,

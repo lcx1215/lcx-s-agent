@@ -34,22 +34,26 @@ type HarnessInputs = {
   problemRadar?: OwnerSnapshot;
   flowGraph?: OwnerSnapshot;
   mindModel?: OwnerSnapshot;
+  externalChannelStatus?: OwnerSnapshot;
+  /** Legacy compatibility alias; use externalChannelStatus for current owner input. */
   liveStatus?: OwnerSnapshot;
+  /** Legacy compatibility alias; use externalChannelBindingStatus for current owner input. */
   liveBindingStatus?: OwnerSnapshot;
+  externalChannelBindingStatus?: OwnerSnapshot;
   trainingPlan?: OwnerSnapshot;
   systemDoctor?: OwnerSnapshot;
 };
 
 type CliOptions = {
   json: boolean;
-  withLiveProbe: boolean;
+  withChannelProbe: boolean;
   skipDoctor: boolean;
 };
 
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts [--json] [--with-live-probe] [--skip-doctor]",
+      "Usage: node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts [--json] [--with-channel-probe] [--skip-doctor]",
       "",
       "Runs the dev-only commercial acceptance harness.",
       "It consumes existing owner outputs and never sends Lark messages, starts training, edits provider config, or touches protected memory.",
@@ -58,12 +62,12 @@ function usage(): never {
 }
 
 function parseArgs(args: string[]): CliOptions {
-  const options: CliOptions = { json: false, withLiveProbe: false, skipDoctor: false };
+  const options: CliOptions = { json: false, withChannelProbe: false, skipDoctor: false };
   for (const arg of args) {
     if (arg === "--json") {
       options.json = true;
-    } else if (arg === "--with-live-probe") {
-      options.withLiveProbe = true;
+    } else if (arg === "--with-channel-probe" || arg === "--with-live-probe") {
+      options.withChannelProbe = true;
     } else if (arg === "--skip-doctor") {
       options.skipDoctor = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -287,12 +291,12 @@ function radarGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
   };
 }
 
-function liveStatusGate(
+function externalChannelStatusGate(
   snapshot: OwnerSnapshot | undefined,
   bindingSnapshot: OwnerSnapshot | undefined,
 ): AcceptanceGate {
   if (!snapshot?.payload) {
-    return ownerUnavailableGate("lcx-promote-live", snapshot);
+    return ownerUnavailableGate("lcx-external-channel-status", snapshot);
   }
   const operatorStatus = recordValue(snapshot.payload.operatorStatus);
   const externalChannelStatus = recordValue(snapshot.payload.externalChannelStatus);
@@ -332,7 +336,8 @@ function liveStatusGate(
       id: "external_channel_not_bound",
       status: "blocked",
       severity: "P1",
-      owner: "scripts/dev/lcx-live-lark-brain-binding.ts + scripts/dev/lcx-promote-live.ts",
+      owner:
+        "scripts/dev/lcx-external-channel-binding.ts + scripts/dev/lcx-external-channel-status.ts",
       evidence: {
         externalChannel: externalChannelEvidence,
         externalChannelBinding: binding,
@@ -349,7 +354,8 @@ function liveStatusGate(
       id: "post_migration_lark_canary_missing",
       status: "blocked",
       severity: "P2",
-      owner: "scripts/dev/lcx-live-lark-brain-binding.ts + scripts/dev/lcx-promote-live.ts",
+      owner:
+        "scripts/dev/lcx-external-channel-binding.ts + scripts/dev/lcx-external-channel-status.ts",
       evidence: {
         externalChannel: externalChannelEvidence,
         externalChannelBinding: binding,
@@ -368,7 +374,8 @@ function liveStatusGate(
     id: "user_visible_observed",
     status: "passed",
     severity: "info",
-    owner: "scripts/dev/lcx-live-lark-brain-binding.ts + scripts/dev/lcx-promote-live.ts",
+    owner:
+      "scripts/dev/lcx-external-channel-binding.ts + scripts/dev/lcx-external-channel-status.ts",
     evidence: {
       externalChannel: externalChannelEvidence,
       externalChannelBinding: binding,
@@ -488,7 +495,10 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     commercialAnswerGate(inputs.commercialAnswerPipeline),
     architectureGate(inputs.flowGraph, inputs.mindModel),
     radarGate(inputs.problemRadar),
-    liveStatusGate(inputs.liveStatus, inputs.liveBindingStatus),
+    externalChannelStatusGate(
+      inputs.externalChannelStatus ?? inputs.liveStatus,
+      inputs.externalChannelBindingStatus ?? inputs.liveBindingStatus,
+    ),
     trainingGuardGate(inputs.trainingPlan),
     providerCouncilGate(inputs.systemDoctor),
   ];
@@ -517,13 +527,13 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
       {
         id: "fixed_acceptance_phrase",
         purpose: "prove exact Lark external-channel loop after migration",
-        owner: "scripts/dev/lcx-promote-live.ts",
+        owner: "scripts/dev/lcx-external-channel-status.ts",
         requiredFor: "external_channel_bound",
       },
       {
         id: "natural_learning_prompt",
         purpose: "prove real product learning UX without weird acceptance text",
-        owner: "scripts/dev/lcx-promote-live.ts + feishu-reply-flow",
+        owner: "scripts/dev/lcx-external-channel-status.ts + feishu-reply-flow",
         requiredFor: "user_visible_observed",
       },
       {
@@ -539,7 +549,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
       "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
       "node --import tsx scripts/dev/lcx-mind-model.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-      "node --import tsx scripts/dev/lcx-promote-live.ts --status --json",
+      "node --import tsx scripts/dev/lcx-external-channel-status.ts --json",
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
     ],
     nextActions: gates
@@ -593,8 +603,8 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     problemRadar,
     flowGraph,
     mindModel,
-    liveStatus,
-    liveBindingStatus,
+    externalChannelStatus,
+    externalChannelBindingStatus,
     trainingPlan,
     systemDoctor,
   ] = await Promise.all([
@@ -609,11 +619,11 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     runJsonOwner("lcx-flow-graph", "scripts/dev/lcx-flow-graph.ts", ["--json"]),
     runJsonOwner("lcx-mind-model", "scripts/dev/lcx-mind-model.ts", ["--json"]),
     runJsonOwner(
-      "lcx-promote-live",
-      "scripts/dev/lcx-promote-live.ts",
-      options.withLiveProbe ? ["--status", "--json", "--with-probe"] : ["--status", "--json"],
+      "lcx-external-channel-status",
+      "scripts/dev/lcx-external-channel-status.ts",
+      options.withChannelProbe ? ["--json", "--with-probe"] : ["--json"],
     ),
-    runJsonOwner("lcx-live-lark-brain-binding", "scripts/dev/lcx-live-lark-brain-binding.ts", [
+    runJsonOwner("lcx-external-channel-binding", "scripts/dev/lcx-external-channel-binding.ts", [
       "--json",
     ]),
     runJsonOwner("local-brain-training-plan", "scripts/dev/local-brain-training-plan.ts", [
@@ -633,8 +643,9 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     problemRadar,
     flowGraph,
     mindModel,
-    liveStatus,
-    liveBindingStatus,
+    externalChannelStatus,
+    liveStatus: externalChannelStatus,
+    externalChannelBindingStatus,
     trainingPlan,
     systemDoctor,
   };

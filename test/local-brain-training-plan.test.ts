@@ -763,7 +763,7 @@ describe("local-brain-training-plan", () => {
     );
   });
 
-  it("surfaces the live Lark brain binding gate for the selected clean adapter", async () => {
+  it("surfaces the Lark external-channel binding gate for the selected clean adapter", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       {
         at: "2026-05-09T09:40:00.000Z",
@@ -806,6 +806,31 @@ describe("local-brain-training-plan", () => {
       processCheck: false,
     });
 
+    expect(plan.externalChannelBinding).toMatchObject({
+      boundary: "dev_external_channel_binding_plan_only",
+      channel: "lark",
+      role: "owner_agent_communication_medium",
+      objective: "lark_receives_current_best_verified_lcx_agent_answer",
+      selectedCleanAdapter: "/tmp/adapter-clean-r2",
+      activeTrainingOrEval: false,
+      status: "ready_for_apply",
+      action: "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof",
+      bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter",
+      userVisibleObserved: false,
+      liveTouched: false,
+      providerConfigTouched: false,
+      protectedMemoryTouched: false,
+    });
+    expect(plan.externalChannelBinding.missingProof).toEqual(
+      expect.arrayContaining([
+        "external_channel_source_drift_zero_after_selected_adapter",
+        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+      ]),
+    );
+    expect(plan.externalChannelBinding.legacyLiveCompatibility).toMatchObject({
+      liveLarkBrainBinding: "legacy_compatibility_field",
+      legacyStatus: "ready_for_live_runtime_binding",
+    });
     expect(plan.liveLarkBrainBinding).toMatchObject({
       boundary: "dev_live_lark_brain_binding_plan_only",
       conceptStatus: "legacy_live_terms_external_channel_owner_current",
@@ -842,7 +867,7 @@ describe("local-brain-training-plan", () => {
         expect.objectContaining({
           id: "lark_external_channel_binding_ready",
           lane: "external_channel",
-          nextCommand: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
+          nextCommand: "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
         }),
       ]),
     );
@@ -852,7 +877,7 @@ describe("local-brain-training-plan", () => {
           id: "bind_lark_external_channel_to_selected_clean_brain",
           lane: "external_channel",
           status: "ready_when_idle",
-          command: "node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json",
+          command: "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
         }),
       ]),
     );

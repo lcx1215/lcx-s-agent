@@ -431,7 +431,7 @@ function buildFocusPrompt(params: {
       "LCX Agent provider-council acceleration review.",
       "目标：多花 Kimi/DeepSeek/MiniMax token 来加速本体进化，但只能产出可验证的 SOP 小改动、eval case、teacher curriculum 和 rejected edit buffer。",
       "重点失败族：single_stock_curve_technical_timing_preflight、external knowledge/module absorption、finance data provenance、review panel、direct buy/sell refusal。",
-      "不要给交易建议，不要改 provider config，不要碰 live sender，不要碰 protected memory。",
+      "不要给交易建议，不要改 provider config，不要碰 external channel sender，不要碰 protected memory。",
     ].join(" ");
 
   return [

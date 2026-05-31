@@ -86,7 +86,7 @@ describe("module learning pipeline plan tool", () => {
         }),
         safetyBoundaries: expect.arrayContaining([
           "no_live_visible_fixed_claim_without_real_inbound_reply",
-          "no_live_sender_change",
+          "no_external_channel_sender_change",
           "no_provider_config_change",
         ]),
       }),

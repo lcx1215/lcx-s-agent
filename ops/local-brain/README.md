@@ -283,15 +283,16 @@ blueprint lane.
    Lark external-channel binding has its own owner command:
 
    ```bash
-   node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --json
+   node --import tsx scripts/dev/lcx-external-channel-binding.ts --json
    ```
 
-   It reads `local-brain-training-plan.liveLarkBrainBinding` for backward
-   compatibility and is read-only by default. When it reports `ready_for_apply`,
-   the bounded idle-only apply path is:
+   It reads `local-brain-training-plan.externalChannelBinding` first and only
+   falls back to `local-brain-training-plan.liveLarkBrainBinding` for backward
+   compatibility. It is read-only by default. When it reports
+   `ready_for_apply`, the bounded idle-only apply path is:
 
    ```bash
-   node --import tsx scripts/dev/lcx-live-lark-brain-binding.ts --apply --json
+   node --import tsx scripts/dev/lcx-external-channel-binding.ts --apply --json
    ```
 
    The apply path is allowed to sync/build/restart the external-channel sidecar
@@ -300,8 +301,10 @@ blueprint lane.
    until fresh real Lark inbound/outbound evidence exists.
 
    This binding owner is canonical for `external-channel-bound`.
-   `lcx-promote-live.ts` remains a legacy promotion/drift compatibility surface;
-   it must not override a clean `lcx-live-lark-brain-binding.ts` apply result.
+   `lcx-external-channel-status.ts` is the canonical read-only external-channel
+   status wrapper; `lcx-promote-live.ts` remains the legacy promotion/drift
+   compatibility surface underneath it. The status wrapper must not override a
+   clean `lcx-external-channel-binding.ts` apply result.
 
    The whole-system fadeout audit is:
 
@@ -568,7 +571,7 @@ land in existing owners such as SkillOpt-lite, governance autopilot, problem
 radar, context recovery, learning sedimentation, commercial acceptance, flow
 graph, finance data gateway, security review, skill-harvester, and
 cli-anything-harvester. This is not direct runtime authority: no direct install,
-no provider config, no live sender, no protected memory mutation, no wallet
+no provider config, no external channel sender, no protected memory mutation, no wallet
 connection, no order placement, no copy trading, and no latency arbitrage.
 Treat the radar as dev-only architecture wiring until a concrete probe,
 eval/receipt, live migration, and fresh Lark visible proof all exist.
@@ -1100,7 +1103,7 @@ Use this when you only want MiniMax to create more reviewed teacher samples:
 node --import tsx scripts/dev/minimax-quota-brain-saturator.ts --write
 ```
 
-This writes brain distillation review artifacts only. It must not write language corpus, live sender config, provider config, protected repo memory, or finance doctrine.
+This writes brain distillation review artifacts only. It must not write language corpus, external channel sender config, provider config, protected repo memory, or finance doctrine.
 
 ## Dataset And Smoke
 
@@ -1120,7 +1123,7 @@ local_auxiliary_thought_flow_only
 Expected `notTouched` includes:
 
 ```text
-live_sender
+external_channel_sender
 provider_config
 protected_repo_memory
 formal_lark_routing_corpus
