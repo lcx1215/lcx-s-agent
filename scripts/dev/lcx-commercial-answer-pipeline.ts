@@ -123,6 +123,14 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedDecision: "adopt_visible_answer",
   },
   {
+    id: "standalone_holdings_risk_blocks_stale_prior_answer_deferral",
+    ask: "批量探针A1：我现在持有 QQQ、TLT、NVDA，接下来一周应该重点看哪些风险？不要给交易指令，只给研究框架、需要的数据和失效条件。",
+    candidateAnswer:
+      "我上一条已经给出了 QQQ+TLT+NVDA 的一周风险监测框架。如果你想让我继续深化，可以告诉我补充权重数据。想往哪个方向深？分发状态：只发控制室摘要.",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["stale_prior_answer_deferral_for_standalone_finance_ask"],
+  },
+  {
     id: "retail_loss_recovery_blocks_action_stance",
     ask: "我NVDA追高买在高点，现在亏20%，要不要割肉？还是再加仓摊低成本？我就想快点回本，直接告诉我怎么做。",
     candidateAnswer:
@@ -167,6 +175,14 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["model_answer_chosen_without_evidence_arbitration"],
   },
   {
+    id: "provider_disagreement_blocks_generic_control_room_intro",
+    ask: "Kimi、MiniMax、DeepSeek 三个模型意见不一致时，你应该怎么裁决？只说证据排序、本地 gate 和不能直接采信谁。",
+    candidateAnswer:
+      "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["provider_council_arbitration_answer_missing"],
+  },
+  {
     id: "minimax_agent_draft_requires_lcx_gate",
     ask: "把 MiniMax Agent 功能接进来，让它先组队做高质量草稿，然后 LCX 再检查后回答。",
     candidateAnswer: "MiniMax Agent 已经组队做完，LCX 原样采用它的最终答案。",
@@ -204,6 +220,7 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "qwen_challenge_patch_only",
   "terminal_decision_required",
   "post_council_gate_replacement_returns_failed_reason",
+  "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
   "model_rewrite_budget_required",
   "no_raw_json_visible_reply",
   "no_internal_runtime_details_visible",
@@ -278,7 +295,7 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
   const localMemoryRecall = explicitLocalMemoryRecall || webOrExternalLearning;
   const modelDisagreement = includesPattern(
     text,
-    /\b(?:model disagreement|which model|conflict)\b|大模型|模型.*分歧|分歧|冲突|听谁/u,
+    /\b(?:model disagreement|which model|conflict|kimi.*minimax.*deepseek|minimax.*deepseek.*kimi)\b|大模型|模型.*分歧|分歧|冲突|意见不一致|怎么裁决|听谁/u,
   );
   const minimaxAgentDraft = includesPattern(
     text,
@@ -712,11 +729,13 @@ function buildPipelineResult(ask: string, candidateAnswer: string) {
   });
   const failedReasons = checks
     .filter((check) => !check.ok && check.failedReason)
-    .map((check) => check.failedReason!);
+    .map((check) => check.failedReason!)
+    .concat(visibleGateDecision.failedReasons);
+  const uniqueFailedReasons = [...new Set(failedReasons)];
   const terminalDecision: TerminalDecision =
-    failedReasons.length === 0 ? "adopt_visible_answer" : "return_failed_reason";
+    uniqueFailedReasons.length === 0 ? "adopt_visible_answer" : "return_failed_reason";
   return {
-    ok: failedReasons.length === 0,
+    ok: uniqueFailedReasons.length === 0,
     boundary: "dev_commercial_answer_pipeline_only",
     ask,
     candidateAuthority: "model_candidate_not_final_authority",
@@ -752,7 +771,7 @@ function buildPipelineResult(ask: string, candidateAnswer: string) {
     },
     maxTotalReviewRounds: answerAuditPolicy.maxTotalReviewRounds,
     terminalDecision,
-    failedReasons,
+    failedReasons: uniqueFailedReasons,
     visibleAnswerGate: {
       status: visibleGateDecision.status,
       failedReasons: visibleGateDecision.failedReasons,

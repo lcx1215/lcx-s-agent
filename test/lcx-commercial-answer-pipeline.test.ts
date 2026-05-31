@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 15, failed: 0, total: 15 });
+    expect(payload.summary).toEqual({ passed: 17, failed: 0, total: 17 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -42,6 +42,7 @@ describe("LCX commercial answer pipeline", () => {
         "qwen_challenger_not_final_authority",
         "qwen_challenge_patch_only",
         "post_council_gate_replacement_returns_failed_reason",
+        "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
       ]),
     );
     expect(payload.scenarios).toEqual(
@@ -64,6 +65,11 @@ describe("LCX commercial answer pipeline", () => {
           ]),
         }),
         expect.objectContaining({
+          scenarioId: "provider_disagreement_blocks_generic_control_room_intro",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["provider_council_arbitration_answer_missing"]),
+        }),
+        expect.objectContaining({
           scenarioId: "minimax_agent_draft_requires_lcx_gate",
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining(["minimax_agent_final_authority_claim"]),
@@ -77,6 +83,13 @@ describe("LCX commercial answer pipeline", () => {
           scenarioId: "research_only_current_holdings_not_blocked_by_visible_gate",
           actualDecision: "adopt_visible_answer",
           failedReasons: [],
+        }),
+        expect.objectContaining({
+          scenarioId: "standalone_holdings_risk_blocks_stale_prior_answer_deferral",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "stale_prior_answer_deferral_for_standalone_finance_ask",
+          ]),
         }),
         expect.objectContaining({
           scenarioId: "minimax_agent_loss_recovery_blocks_leverage_chase",

@@ -19,12 +19,35 @@ describe("visible answer adoption gate", () => {
         failedReasons: expect.arrayContaining(["chinese_action_framework_language"]),
       }),
     );
-    expect(decision.text).toContain("这类问题不能直接给交易动作结论");
-    expect(decision.text).toContain("研究检查");
+    expect(decision.text).toContain("这是研究框架，不是交易指令");
+    expect(decision.text).toContain("仓位占总资产");
     expect(decision.text).not.toContain("均价策略");
     expect(decision.text).not.toContain("止损策略");
     expect(decision.text).not.toContain("抄底");
     expect(decision.text).not.toContain("砍仓");
+  });
+
+  it("uses a single-stock rescue frame for NVDA loss asks instead of portfolio tickers", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "批量探针A3：我买了 NVDA 在高位，现在亏 20%，到底该砍掉、继续拿着，还是补一点摊低成本？请直接一点，但不要给交易指令，只给风险检查框架。",
+      answerText: "我上一条已经给出了完整框架。先说结论：不要割，也不要再加，等待更合适。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "stale_prior_answer_deferral_for_standalone_finance_ask",
+        "chinese_direct_position_action_language",
+      ]),
+    );
+    expect(decision.text).toContain("NVDA：");
+    expect(decision.text).toContain("仓位占总资产");
+    expect(decision.text).toContain("失效条件");
+    expect(decision.text).not.toContain("QQQ：");
+    expect(decision.text).not.toContain("TLT：");
+    expect(decision.text).not.toContain("继续拿着");
+    expect(decision.text).not.toContain("补一点");
   });
 
   it("replaces English action stances for direct retail position asks", () => {
@@ -41,8 +64,8 @@ describe("visible answer adoption gate", () => {
         "english_direct_position_action_language",
       ]),
     );
-    expect(decision.text).toContain("I can't give a direct trading action");
-    expect(decision.text).toContain("research findings, risk gates, and invalidation points");
+    expect(decision.text).toContain("Research-only frame, not a trading instruction");
+    expect(decision.text).toContain("position size versus total portfolio");
     expect(decision.text).not.toContain("Current Stance");
     expect(decision.text).not.toContain("Action Triggers");
   });
@@ -100,6 +123,58 @@ describe("visible answer adoption gate", () => {
     expect(decision.failedReasons).toEqual([]);
     expect(decision.text).toContain("QQQ 科技集中度");
     expect(decision.text).toContain("TLT 对利率预期");
+  });
+
+  it("replaces stale prior-answer deferrals for standalone portfolio risk asks", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "批量探针A1：我现在持有 QQQ、TLT、NVDA，接下来一周应该重点看哪些风险？不要给交易指令，只给研究框架、需要的数据和失效条件。",
+      answerText:
+        "我上一条已经给出了 QQQ+TLT+NVDA 的一周风险监测框架。如果你想让我继续深化，可以告诉我补充权重数据。想往哪个方向深？分发状态：只发控制室摘要.",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["stale_prior_answer_deferral_for_standalone_finance_ask"]),
+    );
+    expect(decision.text).toContain("这是研究框架，不是交易指令");
+    expect(decision.text).toContain("QQQ：");
+    expect(decision.text).toContain("TLT：");
+    expect(decision.text).toContain("NVDA：");
+    expect(decision.text).not.toContain("上一条");
+    expect(decision.text).not.toContain("分发状态");
+  });
+
+  it("replaces generic control-room capability replies for provider disagreement asks", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "批量探针A5：Kimi、MiniMax、DeepSeek 三个模型意见不一致时，你应该怎么裁决？只说证据排序、本地 gate 和不能直接采信谁，不要暴露内部 JSON、message id、receipt path。",
+      answerText:
+        "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["provider_council_arbitration_answer_missing"]),
+    );
+    expect(decision.text).toContain("证据排序");
+    expect(decision.text).toContain("本地 gate");
+    expect(decision.text).toContain("不直接采信任何一个模型");
+    expect(decision.text).not.toContain("control_room");
+    expect(decision.text).not.toContain("message id");
+    expect(decision.text).not.toContain("receipt path");
+  });
+
+  it("strips internal distribution tails from otherwise valid visible answers", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "最近市场风险怎么样？没有实时数据就只说边界。",
+      answerText:
+        "本次回答无实时数据，只能做低可信度框架参考，不构成任何交易建议。\n\n分发状态：只发控制室摘要.",
+    });
+
+    expect(decision.status).toBe("adopted");
+    expect(decision.text).toBe("本次回答无实时数据，只能做低可信度框架参考，不构成任何交易建议。");
+    expect(decision.text).not.toContain("分发状态");
   });
 
   it("does not apply retail position filters to generic finance education", () => {
