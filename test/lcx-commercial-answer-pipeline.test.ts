@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 23, failed: 0, total: 23 });
+    expect(payload.summary).toEqual({ passed: 27, failed: 0, total: 27 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -46,6 +46,8 @@ describe("LCX commercial answer pipeline", () => {
         "vague_conservative_nonanswer_rejected",
         "single_entry_single_exit_visible_answer_required",
         "single_entry_single_exit_internal_labels_hidden",
+        "short_lark_intent_expansion_required",
+        "system_status_requires_owner_evidence",
         "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
       ]),
     );
@@ -60,6 +62,26 @@ describe("LCX commercial answer pipeline", () => {
           scenarioId: "short_learning_routes_to_web_source_intake",
           actualDecision: "adopt_visible_answer",
           qwenRole: "challenger_only_not_final_authority",
+        }),
+        expect.objectContaining({
+          scenarioId: "short_buy_ask_expands_to_risk_gate",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "short_add_position_ask_expands_to_evidence_gate",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "short_link_learning_cannot_claim_absorption_without_proof",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["web_learning_source_intake_missing"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "short_system_status_requires_current_owner_evidence",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["system_status_answer_missing_owner_evidence"]),
         }),
         expect.objectContaining({
           scenarioId: "model_disagreement_requires_evidence_arbitration",

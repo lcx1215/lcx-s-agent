@@ -166,6 +166,64 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("foundation");
   });
 
+  it("expands tiny buy and add-position asks into evidence-first risk replies", () => {
+    const buyDecision = applyVisibleAnswerAdoptionGate({
+      userMessage: "能买吗？",
+      answerText: "可以买一点，仓位别太大。",
+    });
+    const addDecision = applyVisibleAnswerAdoptionGate({
+      userMessage: "加不加仓？",
+      answerText: "先别加仓，等回调。",
+    });
+
+    expect(buyDecision.status).toBe("replaced");
+    expect(buyDecision.failedReasons).toEqual(
+      expect.arrayContaining(["chinese_direct_position_action_language"]),
+    );
+    expect(buyDecision.text).toContain("不能直接给交易动作结论");
+    expect(buyDecision.text).toContain("现在缺：标的");
+    expect(buyDecision.text).not.toContain("可以买");
+
+    expect(addDecision.status).toBe("replaced");
+    expect(addDecision.text).toContain("不能直接给交易动作结论");
+    expect(addDecision.text).toContain("风险预算");
+    expect(addDecision.text).not.toContain("先别加仓");
+  });
+
+  it("turns no-final short learning asks into source and absorption boundaries", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "学一下这个链接：https://example.com/finance-note",
+      answerText: "无法判断。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["vague_conservative_nonanswer_without_useful_next_step"]),
+    );
+    expect(decision.text).toContain("可以学，但不能只凭一句话就说已经学会");
+    expect(decision.text).toContain("明确来源");
+    expect(decision.text).toContain("实际阅读来源");
+    expect(decision.text).toContain("没有验证证据时不能声称已经吸收");
+    expect(decision.text).not.toContain("无法判断");
+  });
+
+  it("turns no-final short system status asks into evidence-required status replies", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "现在系统到哪了？",
+      answerText: "无法判断。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["vague_conservative_nonanswer_without_useful_next_step"]),
+    );
+    expect(decision.text).toContain("不能靠聊天记忆");
+    expect(decision.text).toContain("当前 git 状态");
+    expect(decision.text).toContain("训练/eval 进程");
+    expect(decision.text).toContain("状态未核验");
+    expect(decision.text).not.toContain("无法判断");
+  });
+
   it("replaces generic control-room capability replies for provider disagreement asks", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage:

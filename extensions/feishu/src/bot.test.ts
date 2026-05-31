@@ -6461,6 +6461,55 @@ describe("learning council routing", () => {
     expect(replyText).not.toContain("分发状态");
     expect(replyText).not.toContain("publish");
     expect(replyText).not.toContain("foundation");
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-normal-no-final-learning-fallback",
+          chat_id: "oc-control-room",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "学一下这个链接：https://example.com/finance-note",
+          }),
+        },
+      },
+    });
+    const learningReplyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[1]?.[0]).text;
+    expect(learningReplyText).toContain("可以学，但不能只凭一句话就说已经学会");
+    expect(learningReplyText).toContain("明确来源");
+    expect(learningReplyText).toContain("实际阅读来源");
+    expect(learningReplyText).toContain("没有验证证据时不能声称已经吸收");
+    expect(learningReplyText).not.toContain("无法判断");
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-normal-no-final-status-fallback",
+          chat_id: "oc-control-room",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "现在系统到哪了？",
+          }),
+        },
+      },
+    });
+    const statusReplyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[2]?.[0]).text;
+    expect(statusReplyText).toContain("不能靠聊天记忆");
+    expect(statusReplyText).toContain("当前 git 状态");
+    expect(statusReplyText).toContain("训练/eval 进程");
+    expect(statusReplyText).toContain("状态未核验");
+    expect(statusReplyText).not.toContain("无法判断");
+
     expect(mockRecordFeishuReplyFlowEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         stage: "answer_audit",

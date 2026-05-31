@@ -6,7 +6,7 @@ export type VisibleAnswerAdoptionGateDecision = {
 };
 
 const DIRECT_POSITION_ASK_PATTERN =
-  /\b(?:should\s+(?:i|we)|do\s+(?:i|we)|can\s+(?:i|we)|recommend|buy|sell|add|reduce|average down|cut loss|stop loss|recover quickly|make.*back|call|put|margin|leverage|liquidation)\b|买|卖|加仓|减仓|补仓|摊低|摊平|割肉|止损|止盈|回本|快点回本|赌|梭哈|满仓|杠杆|保证金|爆仓|要不要|该不该|应不应该|能不能|可不可以|到底应该|直接告诉我/u;
+  /\b(?:should\s+(?:i|we)|do\s+(?:i|we)|can\s+(?:i|we)|recommend|buy|sell|add|reduce|average down|cut loss|stop loss|recover quickly|make.*back|call|put|margin|leverage|liquidation)\b|买|卖|加仓|减仓|补仓|摊低|摊平|割肉|止损|止盈|回本|快点回本|赌|梭哈|满仓|杠杆|保证金|爆仓|要不要|该不该|应不应该|能不能|能不能买|能买吗|能买么|可不可以|到底应该|直接告诉我/u;
 
 const HOLD_OR_WAIT_ACTION_ASK_PATTERN =
   /(?:要不要|该不该|应不应该|到底应该|建议|可以|直接告诉我).{0,16}(持有|继续拿着|继续拿|等待)/u;
@@ -58,6 +58,12 @@ const MARKET_DATA_BOUNDARY_ASK_PATTERN =
 
 const ANSWER_PIPELINE_ASK_PATTERN =
   /(?:入口|出口|发.{0,8}消息|收到.{0,8}消息|智能体最后|最后.{0,8}答案|给我.{0,8}答案|答案.{0,8}(?:保守|模棱两可|废话|泛泛)|保守|模棱两可|废话|屁话|弄好|做好)/u;
+
+const LEARNING_SOURCE_ASK_PATTERN =
+  /\b(?:learn|study|read|source|url|link|github|repo|paper|blog|article)\b|学一下|学习一下|学习这个|读一下|看看这个|链接|来源|网页|论文|博客|文章|开源|项目/u;
+
+const SYSTEM_STATUS_ASK_PATTERN =
+  /\b(?:status|progress|where are we|what changed|done yet|finished yet|system state)\b|现在.{0,12}(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|如何|状态)|(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|状态)|做完了吗|还有什么|进展/u;
 
 const VAGUE_CONSERVATIVE_NONANSWER_PATTERN =
   /(?:这个问题)?(?:比较|很)?复杂|不能一概而论|取决于|需要更多(?:信息|背景|上下文)|信息不足|数据不足|无法(?:判断|确定|给出)|不能(?:判断|确定|给出)|建议(?:谨慎|进一步观察)|需要综合考虑/u;
@@ -144,6 +150,14 @@ function looksLikeAnswerPipelineAsk(userMessage: string): boolean {
   return ANSWER_PIPELINE_ASK_PATTERN.test(userMessage);
 }
 
+function looksLikeLearningSourceAsk(userMessage: string): boolean {
+  return LEARNING_SOURCE_ASK_PATTERN.test(userMessage);
+}
+
+function looksLikeSystemStatusAsk(userMessage: string): boolean {
+  return SYSTEM_STATUS_ASK_PATTERN.test(userMessage);
+}
+
 function looksLikeVagueConservativeNonAnswer(answerText: string): boolean {
   const compact = answerText.trim();
   return (
@@ -198,6 +212,8 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
   if (
     (looksLikeMarketDataBoundaryAsk(params.userMessage) ||
       looksLikeAnswerPipelineAsk(params.userMessage) ||
+      looksLikeLearningSourceAsk(params.userMessage) ||
+      looksLikeSystemStatusAsk(params.userMessage) ||
       explicitVisibleContract) &&
     looksLikeVagueConservativeNonAnswer(params.answerText)
   ) {
@@ -346,9 +362,55 @@ function renderAnswerPipelineContractReply(userMessage: string): string {
   ].join("\n\n");
 }
 
+function renderLearningSourceIntakeReply(userMessage: string): string {
+  if (!prefersChinese(userMessage)) {
+    return [
+      "I can learn it, but I cannot claim it is learned from the sentence alone.",
+      "First requirement: provide a concrete URL, local file path, paper/repo id, or paste the full source text.",
+      "Then the system must read the source, record what was actually read, extract reusable rules, test them on an adjacent task, review keep/downrank/discard, and only then reuse the lesson later.",
+      "If the source is missing, unsafe, or only a vague topic, the correct answer is a blocked reason plus the exact source needed next.",
+      "Boundary: stored text is not learned capability; a visible reply must not claim absorption without proof.",
+    ].join("\n\n");
+  }
+
+  return [
+    "可以学，但不能只凭一句话就说已经学会。",
+    "第一步必须有明确来源：URL、本地文件路径、论文/仓库编号，或者你直接粘贴完整原文。",
+    "然后要做完整链路：实际阅读来源、记录读了什么、提炼可复用规则、用相邻任务验证、做保留/降权/丢弃决定，之后才允许复用。",
+    "如果来源缺失、不安全，或者只是一个模糊主题，正确回复只能说阻塞原因和下一步需要的来源。",
+    "边界：存了一段文字不等于大脑学会；没有验证证据时不能声称已经吸收。",
+  ].join("\n\n");
+}
+
+function renderSystemStatusEvidenceReply(userMessage: string): string {
+  if (!prefersChinese(userMessage)) {
+    return [
+      "I cannot answer system progress from memory or confidence alone.",
+      "A real status answer must read the current repo state, active training/eval processes, local operator state, doctor output, training plan, and Lark channel proof.",
+      "The visible answer should say what changed, what is still blocked, what evidence was checked, and what should run next.",
+      "If those checks were not run, the honest answer is: status not verified yet.",
+    ].join("\n\n");
+  }
+
+  return [
+    "不能靠聊天记忆或自信回答当前进化状态。",
+    "真实状态必须先读：当前 git 状态、训练/eval 进程、本地 operator 状态、系统 doctor、training plan、Lark 通道证明。",
+    "可见答案要分开说：进化了什么、还卡在哪、查了哪些证据、下一步该跑什么。",
+    "如果这些检查没跑完，只能说“状态未核验”，不能说已经完成或已经变好。",
+  ].join("\n\n");
+}
+
 function renderVisibleContractFailureReply(userMessage: string): string {
   if (looksLikeMarketDataBoundaryAsk(userMessage)) {
     return renderMarketDataBoundaryReply(userMessage);
+  }
+
+  if (looksLikeLearningSourceAsk(userMessage)) {
+    return renderLearningSourceIntakeReply(userMessage);
+  }
+
+  if (looksLikeSystemStatusAsk(userMessage)) {
+    return renderSystemStatusEvidenceReply(userMessage);
   }
 
   if (looksLikeAnswerPipelineAsk(userMessage)) {
@@ -431,6 +493,24 @@ export function applyVisibleAnswerAdoptionGate(params: {
     return {
       status: "replaced",
       text: renderAnswerPipelineContractReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
+  if (looksLikeLearningSourceAsk(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderLearningSourceIntakeReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
+  if (looksLikeSystemStatusAsk(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderSystemStatusEvidenceReply(params.userMessage),
       originalText: text,
       failedReasons,
     };
