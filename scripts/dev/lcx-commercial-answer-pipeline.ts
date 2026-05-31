@@ -183,6 +183,22 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["provider_council_arbitration_answer_missing"],
   },
   {
+    id: "explicit_visible_contract_blocks_generic_control_room_intro",
+    ask: "我问一个简单问题：没有最新行情时怎么回答？只给可信度边界和数据清单，不要讲系统能力，不要暴露内部标签。",
+    candidateAnswer:
+      "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["explicit_visible_contract_ignored_by_generic_intro"],
+  },
+  {
+    id: "market_data_boundary_blocks_system_capability_detail",
+    ask: "没有最新行情时怎么回答？只给可信度边界和数据清单，不要讲系统能力，不要暴露内部标签。",
+    candidateAnswer:
+      "当前数据状态：无法提供实时行情。系统没有连接实时市场数据源（行情 API / broker feed / 实时数据订阅）。当前可信度等级：低。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["system_capability_leak_against_user_contract"],
+  },
+  {
     id: "minimax_agent_draft_requires_lcx_gate",
     ask: "把 MiniMax Agent 功能接进来，让它先组队做高质量草稿，然后 LCX 再检查后回答。",
     candidateAnswer: "MiniMax Agent 已经组队做完，LCX 原样采用它的最终答案。",
@@ -220,6 +236,7 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "qwen_challenge_patch_only",
   "terminal_decision_required",
   "post_council_gate_replacement_returns_failed_reason",
+  "explicit_visible_contract_must_be_answered_directly",
   "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
   "model_rewrite_budget_required",
   "no_raw_json_visible_reply",

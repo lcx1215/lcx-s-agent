@@ -165,6 +165,63 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("receipt path");
   });
 
+  it("generalizes explicit-output-contract failures beyond provider disagreement", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "我问一个简单问题：没有最新行情时怎么回答？只给可信度边界和数据清单，不要讲系统能力，不要暴露内部标签。",
+      answerText:
+        "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "explicit_visible_contract_ignored_by_generic_intro",
+        "internal_visible_detail_leak_against_user_contract",
+      ]),
+    );
+    expect(decision.text).toContain("没有最新行情时");
+    expect(decision.text).toContain("可信度边界");
+    expect(decision.text).toContain("数据清单");
+    expect(decision.text).not.toContain("control_room");
+    expect(decision.text).not.toContain("learning_command");
+  });
+
+  it("blocks system-capability explanations when the user asks only for market-data boundaries", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "批量探针A7b：没有最新行情时怎么回答？只给可信度边界和数据清单，不要讲系统能力，不要暴露内部标签。",
+      answerText:
+        "当前数据状态：无法提供实时行情。系统没有连接实时市场数据源（行情 API / broker feed / 实时数据订阅）。当前可信度等级：低。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["system_capability_leak_against_user_contract"]),
+    );
+    expect(decision.text).toContain("没有最新行情时");
+    expect(decision.text).toContain("可信度边界");
+    expect(decision.text).toContain("数据清单");
+    expect(decision.text).not.toContain("系统没有连接");
+    expect(decision.text).not.toContain("行情 API");
+    expect(decision.text).not.toContain("broker feed");
+  });
+
+  it("rejects prior-answer deferrals for any explicit standalone visible contract", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "请直接回答这一个新问题：如果证据不够，应该怎么说？不要引用上一条，只给失败原因格式。",
+      answerText: "我上一条已经说过了。如果你想继续深化，可以换一个方向。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["explicit_visible_contract_deferred_to_prior_answer"]),
+    );
+    expect(decision.text).toContain("不能拿旧回复搪塞");
+    expect(decision.text).not.toContain("上一条已经说过");
+  });
+
   it("strips internal distribution tails from otherwise valid visible answers", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage: "最近市场风险怎么样？没有实时数据就只说边界。",

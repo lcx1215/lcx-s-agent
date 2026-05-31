@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 17, failed: 0, total: 17 });
+    expect(payload.summary).toEqual({ passed: 19, failed: 0, total: 19 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -42,6 +42,7 @@ describe("LCX commercial answer pipeline", () => {
         "qwen_challenger_not_final_authority",
         "qwen_challenge_patch_only",
         "post_council_gate_replacement_returns_failed_reason",
+        "explicit_visible_contract_must_be_answered_directly",
         "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
       ]),
     );
@@ -68,6 +69,18 @@ describe("LCX commercial answer pipeline", () => {
           scenarioId: "provider_disagreement_blocks_generic_control_room_intro",
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining(["provider_council_arbitration_answer_missing"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "explicit_visible_contract_blocks_generic_control_room_intro",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "explicit_visible_contract_ignored_by_generic_intro",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "market_data_boundary_blocks_system_capability_detail",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["system_capability_leak_against_user_contract"]),
         }),
         expect.objectContaining({
           scenarioId: "minimax_agent_draft_requires_lcx_gate",

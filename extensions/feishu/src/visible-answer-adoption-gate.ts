@@ -35,6 +35,24 @@ const MODEL_DISAGREEMENT_ARBITRATION_ASK_PATTERN =
 const GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN =
   /我是\s*(?:LCX Agent|OpenClaw).{0,40}(?:Lark\s*)?控制室入口|当前可用能力|可以把自然语言请求分到|工作面|finance learning pipeline/u;
 
+const EXPLICIT_VISIBLE_CONTRACT_ASK_PATTERN =
+  /\b(?:only|do not|don't|without|no json|no internal|answer directly|do not mention|do not cite previous)\b|只说|只给|直接|不要|别|不得|不要暴露|不要引用|不要给|不要装|不能暴露|别暴露|只要/u;
+
+const NO_INTERNAL_DETAIL_CONTRACT_ASK_PATTERN =
+  /\b(?:no json|no internal|do not expose|do not mention message id|receipt path)\b|不要暴露|不能暴露|别暴露|内部\s*JSON|后台细节|message\s*id|receipt\s*path|回执路径|内部路径|内部文件|内部标签/u;
+
+const NO_SYSTEM_CAPABILITY_CONTRACT_ASK_PATTERN =
+  /\b(?:do not mention system capability|do not talk about system capability|no system capability)\b|不要讲系统能力|不要说系统能力|别讲系统能力|不讲系统能力/u;
+
+const INTERNAL_VISIBLE_DETAIL_PATTERN =
+  /^\s*\{|\b(?:control_room|learning_command|technical_daily|fundamental_research|knowledge_maintenance|ops_audit|answer_audit|bounded_answer_review|handoff|receipt path|message id|messageId|correlationId|deliveryMessageId|retrieval\/apply|eval\/training absorption)\b|om_[a-z0-9_]{12,}|分发状态/u;
+
+const SYSTEM_CAPABILITY_VISIBLE_PATTERN =
+  /\b(?:system has|system does not have|system is connected|real[-\s]?time market data source|market data API|broker feed|data subscription)\b|系统(?:没有|未|已|可以|无法|不能).{0,24}(?:连接|提供|调用|访问|实时|行情|数据源|能力)|行情\s*API|broker\s*feed|实时数据订阅/u;
+
+const MARKET_DATA_BOUNDARY_ASK_PATTERN =
+  /\b(?:latest|current|real[-\s]?time|live quotes?|market data|VIX|DXY|HY spread|10Y)\b|最新行情|实时行情|当前行情|市场风险|可信度边界|数据清单|VIX|DXY|HY\s*spread|10Y|十年期|高收益债利差/u;
+
 const MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN =
   /\b(?:evidence order|source|timestamp|local gate|cannot directly trust|not final authority|arbitration)\b|证据排序|一手来源|时间戳|本地\s*gate|不能直接采信|不能按模型名|候选意见|最终权威|本地把关|裁决/u;
 
@@ -87,18 +105,55 @@ function looksLikeModelDisagreementArbitrationAsk(userMessage: string): boolean 
   return providerNames.size >= 2;
 }
 
+function looksLikeExplicitVisibleContractAsk(userMessage: string): boolean {
+  return EXPLICIT_VISIBLE_CONTRACT_ASK_PATTERN.test(userMessage);
+}
+
+function looksLikeMarketDataBoundaryAsk(userMessage: string): boolean {
+  return MARKET_DATA_BOUNDARY_ASK_PATTERN.test(userMessage);
+}
+
 export function findVisibleAnswerAdoptionGateFailures(params: {
   userMessage: string;
   answerText: string;
 }): string[] {
   const failures: string[] = [];
+  const explicitVisibleContract = looksLikeExplicitVisibleContractAsk(params.userMessage);
 
   if (
     (looksLikeStandalonePortfolioRiskAsk(params.userMessage) ||
-      looksLikeDirectPositionRiskAsk(params.userMessage)) &&
+      looksLikeDirectPositionRiskAsk(params.userMessage) ||
+      explicitVisibleContract) &&
     STALE_PRIOR_ANSWER_DEFERRAL_PATTERN.test(params.answerText)
   ) {
-    failures.push("stale_prior_answer_deferral_for_standalone_finance_ask");
+    failures.push("explicit_visible_contract_deferred_to_prior_answer");
+    if (
+      looksLikeStandalonePortfolioRiskAsk(params.userMessage) ||
+      looksLikeDirectPositionRiskAsk(params.userMessage)
+    ) {
+      failures.push("stale_prior_answer_deferral_for_standalone_finance_ask");
+    }
+  }
+
+  if (
+    explicitVisibleContract &&
+    GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN.test(params.answerText)
+  ) {
+    failures.push("explicit_visible_contract_ignored_by_generic_intro");
+  }
+
+  if (
+    NO_INTERNAL_DETAIL_CONTRACT_ASK_PATTERN.test(params.userMessage) &&
+    INTERNAL_VISIBLE_DETAIL_PATTERN.test(params.answerText)
+  ) {
+    failures.push("internal_visible_detail_leak_against_user_contract");
+  }
+
+  if (
+    NO_SYSTEM_CAPABILITY_CONTRACT_ASK_PATTERN.test(params.userMessage) &&
+    SYSTEM_CAPABILITY_VISIBLE_PATTERN.test(params.answerText)
+  ) {
+    failures.push("system_capability_leak_against_user_contract");
   }
 
   if (looksLikeModelDisagreementArbitrationAsk(params.userMessage)) {
@@ -196,6 +251,46 @@ function renderProviderCouncilArbitrationReply(userMessage: string): string {
   ].join("\n\n");
 }
 
+function renderMarketDataBoundaryReply(userMessage: string): string {
+  if (!prefersChinese(userMessage)) {
+    return [
+      "Without fresh market data, I cannot state the current risk level or imply real-time prices.",
+      "Confidence boundary: this is a low-confidence framework answer until each source has a timestamp, provider, field definition, unit/currency, and adjusted/unadjusted status where relevant.",
+      "Data list: current VIX, 10Y Treasury yield, DXY, high-yield spread, major index prices, relevant ETF or single-name prices, recent earnings/news timestamps, and the portfolio weights if the question is position-specific.",
+      "Allowed answer: describe what each missing data point would change and what would invalidate the framework.",
+      "Not allowed: buy/sell/add/reduce instructions, precise levels, or claims that pretend stale data is live.",
+    ].join("\n\n");
+  }
+
+  return [
+    "没有最新行情时，不能判断当前风险等级，也不能装作有实时价格。",
+    "可信度边界：只能给低可信度研究框架；每个数据都要带时间戳、来源、字段口径、单位/币种，价格类还要说明是否复权或延迟。",
+    "数据清单：VIX、10Y 美债收益率、DXY、高收益债利差、主要指数价格、相关 ETF/个股最新价、最近财报/新闻时间戳；如果是持仓问题，还要有仓位比例、成本区间、持有周期和最大可承受回撤。",
+    "可以回答：这些数据分别会影响什么判断，以及什么证据会让原框架失效。",
+    "不能回答：买卖加减仓指令、精确点位判断，或把旧数据说成当前事实。",
+  ].join("\n\n");
+}
+
+function renderVisibleContractFailureReply(userMessage: string): string {
+  if (looksLikeMarketDataBoundaryAsk(userMessage)) {
+    return renderMarketDataBoundaryReply(userMessage);
+  }
+
+  if (!prefersChinese(userMessage)) {
+    return [
+      "I can't adopt the candidate answer because it ignored the requested visible-output contract.",
+      "The answer must address the user's actual question directly, avoid generic capability intros, avoid prior-answer deferrals, and keep internal JSON, ids, paths, receipts, and routing labels out of the visible reply.",
+      "A fresh answer should be regenerated under those constraints instead of sending the rejected candidate.",
+    ].join("\n\n");
+  }
+
+  return [
+    "这条候选回答不能采用：它没有按你的可见输出要求回答。",
+    "可见回复必须直接回答原问题，不能退成控制室能力介绍，不能拿旧回复搪塞，也不能暴露内部 JSON、消息 id、回执路径、路由标签或工作面名字。",
+    "需要按你的限制重新生成答案；证据不够就说阻塞原因，不能把错误候选直接发给你。",
+  ].join("\n\n");
+}
+
 function stripVisibleInternalTail(text: string): string {
   return text
     .replace(VISIBLE_INTERNAL_TAIL_LINE_PATTERN, "")
@@ -246,6 +341,36 @@ export function applyVisibleAnswerAdoptionGate(params: {
     return {
       status: "replaced",
       text: renderProviderCouncilArbitrationReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
+  if (
+    looksLikeStandalonePortfolioRiskAsk(params.userMessage) ||
+    looksLikeDirectPositionRiskAsk(params.userMessage)
+  ) {
+    return {
+      status: "replaced",
+      text: renderPositionRiskRescueReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
+  if (
+    failedReasons.some((reason) =>
+      [
+        "explicit_visible_contract_ignored_by_generic_intro",
+        "explicit_visible_contract_deferred_to_prior_answer",
+        "internal_visible_detail_leak_against_user_contract",
+        "system_capability_leak_against_user_contract",
+      ].includes(reason),
+    )
+  ) {
+    return {
+      status: "replaced",
+      text: renderVisibleContractFailureReply(params.userMessage),
       originalText: text,
       failedReasons,
     };
