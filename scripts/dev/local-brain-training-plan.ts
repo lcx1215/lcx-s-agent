@@ -159,7 +159,7 @@ type LegacyLiveLarkBrainBindingSnapshot = {
     channel: "lark";
     role: "owner_agent_communication_medium";
     objective: "lark_receives_current_best_verified_lcx_agent_answer";
-    bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter";
+    bindingPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path";
     userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_lark_inbound_and_outbound";
     legacyLiveTerms: {
       liveLarkBrainBinding: "legacy_compatibility_field";
@@ -183,8 +183,8 @@ type LegacyLiveLarkBrainBindingSnapshot = {
   latestPromotedAdapter?: string;
   latestPromotedAt?: string;
   latestPromotedAdapterStillClean: boolean | null;
-  runtimePolicy: "live_lark_may_only_consume_selected_clean_adapter";
-  externalChannelPolicy: "lark_channel_may_only_consume_selected_clean_adapter";
+  runtimePolicy: "legacy_live_lark_may_only_route_to_selected_clean_answer_path";
+  externalChannelPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path";
   status:
     | "blocked_no_selected_clean_adapter"
     | "deferred_active_training_or_eval"
@@ -196,7 +196,7 @@ type LegacyLiveLarkBrainBindingSnapshot = {
     | "wait_for_current_eval_then_bind_live_to_selected_clean_adapter"
     | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
     | "run_promotion_audit_then_bind_live_to_selected_clean_adapter"
-    | "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof";
+    | "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
   missingProof: string[];
   externalChannelMissingProof: string[];
   successCondition: string[];
@@ -226,16 +226,16 @@ type ExternalChannelBindingPlanSnapshot = {
     | "channel_runtime_probe_ok_user_visible_observed";
   action:
     | "produce_clean_selected_adapter_before_external_channel_binding"
-    | "wait_for_current_eval_then_bind_lark_channel_to_selected_clean_adapter"
+    | "wait_for_current_eval_then_route_lark_transport_to_selected_clean_answer_path"
     | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
-    | "run_promotion_audit_then_bind_lark_channel_to_selected_clean_adapter"
-    | "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof"
+    | "run_promotion_audit_then_route_lark_transport_to_selected_clean_answer_path"
+    | "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof"
     | "keep_waiting_for_real_lark_user_visible_proof"
     | "none_external_channel_user_visible_observed";
   missingProof: string[];
   successCondition: string[];
   statusCommand: string;
-  bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter";
+  bindingPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path";
   userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_lark_inbound_and_outbound";
   userVisibleObserved: boolean;
   ownerSnapshotPath?: string;
@@ -1128,7 +1128,7 @@ function legacyLiveLarkBrainBindingSnapshot(params: {
     action = "run_promotion_audit_then_bind_live_to_selected_clean_adapter";
   } else {
     status = "ready_for_live_runtime_binding";
-    action = "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof";
+    action = "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
   }
   return {
     boundary: "dev_live_lark_brain_binding_plan_only",
@@ -1139,7 +1139,7 @@ function legacyLiveLarkBrainBindingSnapshot(params: {
       channel: "lark",
       role: "owner_agent_communication_medium",
       objective: "lark_receives_current_best_verified_lcx_agent_answer",
-      bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter",
+      bindingPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path",
       userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_lark_inbound_and_outbound",
       legacyLiveTerms: {
         liveLarkBrainBinding: "legacy_compatibility_field",
@@ -1156,8 +1156,8 @@ function legacyLiveLarkBrainBindingSnapshot(params: {
     latestPromotedAdapter: params.latestPromotedAdapter,
     latestPromotedAt: params.latestPromotedAt,
     latestPromotedAdapterStillClean,
-    runtimePolicy: "live_lark_may_only_consume_selected_clean_adapter",
-    externalChannelPolicy: "lark_channel_may_only_consume_selected_clean_adapter",
+    runtimePolicy: "legacy_live_lark_may_only_route_to_selected_clean_answer_path",
+    externalChannelPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path",
     status,
     action,
     missingProof,
@@ -1174,7 +1174,7 @@ function legacyLiveLarkBrainBindingSnapshot(params: {
       "selectedCleanAdapter is promotionReady with failedCaseIds=[], parseErrorCaseIds=[], parseRecoveredCaseIds=[]",
       "no active local-brain-distill-eval, mlx_lm generate, mlx_lm lora, or guard restart window",
       "active guard uses selectedCleanAdapter or is restarted from it after idle",
-      "Lark external channel gateway reads the selected clean adapter with zero source drift",
+      "Lark transport connector routes to the selected clean LCX answer path with zero source drift",
       "Lark external channel diagnose is ok",
       "user-visible-observed remains false until fresh real Lark inbound/outbound evidence exists",
     ],
@@ -1235,7 +1235,7 @@ function externalChannelBindingSnapshot(params: {
     legacyAction = "produce_clean_selected_adapter_before_live_binding";
   } else if (activeTrainingOrEval) {
     status = "deferred_active_training_or_eval";
-    action = "wait_for_current_eval_then_bind_lark_channel_to_selected_clean_adapter";
+    action = "wait_for_current_eval_then_route_lark_transport_to_selected_clean_answer_path";
     legacyStatus = "deferred_active_training_or_eval";
     legacyAction = "wait_for_current_eval_then_bind_live_to_selected_clean_adapter";
   } else if (guardAdapterMismatchReasons.length > 0) {
@@ -1245,15 +1245,15 @@ function externalChannelBindingSnapshot(params: {
     legacyAction = "wait_for_active_guard_then_restart_with_selected_clean_adapter";
   } else if (latestPromotedAdapterStillClean === false) {
     status = "deferred_latest_promotion_stale";
-    action = "run_promotion_audit_then_bind_lark_channel_to_selected_clean_adapter";
+    action = "run_promotion_audit_then_route_lark_transport_to_selected_clean_answer_path";
     legacyStatus = "deferred_latest_promotion_stale";
     legacyAction = "run_promotion_audit_then_bind_live_to_selected_clean_adapter";
   } else {
     status = "ready_for_apply";
-    action = "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof";
+    action = "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
     legacyStatus = "ready_for_live_runtime_binding";
     legacyAction =
-      "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof";
+      "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
   }
   return {
     boundary: "dev_external_channel_binding_plan_only",
@@ -1270,12 +1270,12 @@ function externalChannelBindingSnapshot(params: {
       "selectedCleanAdapter is promotionReady with failedCaseIds=[], parseErrorCaseIds=[], parseRecoveredCaseIds=[]",
       "no active local-brain-distill-eval, mlx_lm generate, mlx_lm lora, or guard restart window",
       "active guard uses selectedCleanAdapter or is restarted from it after idle",
-      "Lark external channel gateway reads the selected clean adapter with zero source drift",
+      "Lark transport connector routes to the selected clean LCX answer path with zero source drift",
       "Lark external channel diagnose is ok",
       "user-visible-observed remains false until fresh real Lark inbound/outbound evidence exists",
     ],
     statusCommand: "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
-    bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter",
+    bindingPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path",
     userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_lark_inbound_and_outbound",
     userVisibleObserved: false,
     legacyLiveCompatibility: {
@@ -2269,7 +2269,7 @@ function buildEvolutionAccelerationQueue(params: {
   }
 
   steps.push({
-    id: "bind_lark_external_channel_to_selected_clean_brain",
+    id: "route_lark_transport_to_selected_clean_answer_path",
     lane: "external_channel",
     priority: 25,
     status:
@@ -2284,9 +2284,9 @@ function buildEvolutionAccelerationQueue(params: {
               : "blocked_by_missing_proof",
     executionClass: "idle_only_read_only_audit",
     reason:
-      "Make Lark, as the owner-agent external communication channel, consume the single selected clean local-brain adapter after eval/MLX is idle and user-visible proof can be collected.",
+      "Make Lark, as the owner-agent communication medium, route messages to the selected clean LCX answer path after eval/MLX is idle and user-visible proof can be collected.",
     guardCondition:
-      "selected clean adapter, no active eval/MLX, zero external-channel source drift, restarted Lark channel gateway, then real Lark user-visible proof",
+      "selected clean adapter behind LCX answer path, no active eval/MLX, zero transport connector drift, restarted Lark transport gateway, then real Lark user-visible proof",
     command:
       params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
         ? "node --import tsx scripts/dev/lcx-external-channel-status.ts --json --with-probe"

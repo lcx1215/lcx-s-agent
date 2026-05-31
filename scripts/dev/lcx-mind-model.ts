@@ -286,7 +286,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     id: "lark_feishu_live_boundary",
     masterLane: "external_channel_boundary",
     objective:
-      "Treat Lark/Feishu as owner-agent communication channels, not a second live brain; keep dev correctness, channel binding, and user-visible proof separate.",
+      "Treat Lark/Feishu as owner-agent communication transport, not a second live brain; keep dev correctness, connector routing, and user-visible proof separate.",
     headTerms: [
       "dev-ready",
       "external-channel-bound",

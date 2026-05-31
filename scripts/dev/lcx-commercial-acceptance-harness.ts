@@ -319,7 +319,7 @@ function externalChannelStatusGate(
   const externalChannelEvidence = {
     channel: "lark",
     role: "owner_agent_communication_medium",
-    desiredPath: "selected_clean_brain_to_lark_external_channel_to_user_visible_observed",
+    desiredPath: "selected_clean_answer_path_to_lark_transport_to_user_visible_observed",
     externalChannelBound,
     userVisibleObserved,
     bindingStatus: binding?.status,

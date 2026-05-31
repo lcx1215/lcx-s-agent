@@ -355,7 +355,7 @@ export async function buildLcxLiveFadeoutAudit() {
         "dev_external_channel_binding_plan_only",
         "externalChannelMissingProof",
         "lark_external_channel_binding_ready",
-        "bind_lark_external_channel_to_selected_clean_brain",
+        "route_lark_transport_to_selected_clean_answer_path",
       ],
       summary:
         "training plan must expose external-channel readiness as the primary field without starting work",

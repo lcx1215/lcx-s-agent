@@ -8,7 +8,7 @@ describe("lcx-external-channel-binding", () => {
     externalChannelBinding: {
       boundary: "dev_external_channel_binding_plan_only",
       status: "ready_for_apply",
-      action: "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof",
+      action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
       selectedCleanAdapter: "/tmp/adapter-clean-r4",
       missingProof: [
         "external_channel_source_drift_zero_after_selected_adapter",
@@ -20,7 +20,7 @@ describe("lcx-external-channel-binding", () => {
     liveLarkBrainBinding: {
       boundary: "dev_live_lark_brain_binding_plan_only",
       status: "ready_for_live_runtime_binding",
-      action: "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof",
+      action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
       selectedCleanAdapter: "/tmp/adapter-clean-r4",
       missingProof: [
         "live_sidecar_source_drift_zero_after_selected_adapter",

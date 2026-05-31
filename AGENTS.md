@@ -290,10 +290,13 @@ Keep this architecture boring and auditable:
 - `~/.openclaw` is the canonical runtime state root. Preserve receipts, logs,
   queues, selected-clean adapter proof, operator snapshots, and migration
   manifests there. Do not scatter new state roots across cloud machines.
-- Lark connects to the dev runtime produced from the canonical repo. Lark does
-  not make the old live repo authoritative. If a temporary live service must
-  stay online during migration, treat it as a deployment artifact with a short
-  read-only rollback window, not as a development or truth source.
+- Lark is only the communication medium and transport connector between the
+  owner and LCX Agent. It may use Lark/Feishu official APIs, SDKs, or
+  open-source connector code, but that connector layer never becomes model
+  authority, a second runtime truth source, or a brain. Lark does not make the
+  old live repo authoritative. If a temporary live service must stay online
+  during migration, treat it as a deployment artifact with a short read-only
+  rollback window, not as a development or truth source.
 - Lark/Feishu is the owner-agent external communication channel, not a second
   live brain or second runtime truth source. The forward status words are
   `dev-ready`, `external-channel-bound`, and `user-visible-observed`.
@@ -306,7 +309,9 @@ Keep this architecture boring and auditable:
   alive during cutover; it must not restore the live repo's status.
 - Canonical Lark channel truth belongs to
   `scripts/dev/lcx-external-channel-binding.ts`. It may prove
-  `external-channel-bound` after a clean idle apply, build/restart, and probe.
+  `external-channel-bound` after a clean idle apply, connector build/restart,
+  and probe, meaning the transport routes to the selected clean LCX answer path.
+  It does not prove that Lark hosts, consumes, or becomes the brain.
   `local-brain-training-plan` must expose `externalChannelBinding` as the
   primary planner field; `liveLarkBrainBinding` is only a legacy compatibility
   alias while older owners migrate.

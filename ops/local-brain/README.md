@@ -234,12 +234,14 @@ blueprint lane.
 1. External-channel closure: keep `dev-ready`, `external-channel-bound`, and
    `user-visible-observed` separate. Lark/Feishu is the owner-agent external
    communication channel, not a second live brain or second runtime truth
-   source. Old `live-runtime-updated`, `live-user-seen`, and
+   source. Lark official APIs, SDKs, and open-source connector code are only
+   connector implementations; they never become model authority or brain state.
+   Old `live-runtime-updated`, `live-user-seen`, and
    `live-visible-fixed` terms remain compatibility labels only:
    `legacy-live-runtime-updated`, `legacy-live-user-seen`, and
-   `legacy-live-visible-fixed`. A channel claim still needs build/restart/probe
-   when applicable, real Lark inbound, outbound result, and visible reply
-   evidence before any user-visible claim.
+   `legacy-live-visible-fixed`. A transport claim still needs connector
+   build/restart/probe when applicable, real Lark inbound, outbound result, and
+   visible reply evidence before any user-visible claim.
 2. Module-learning absorption: plan receipts, review rows, `application_ready`,
    `eval_absorbed`, and keep/downrank/discard are separate states. A stored
    source, reviewable receipt, or clean global eval is not per-module

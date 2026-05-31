@@ -125,7 +125,9 @@ data, dataset, eval, and promotion into the next unified clean adapter.
 
 Lark/Feishu is the external communication channel between the owner and LCX
 Agent, not a second live brain or second runtime truth source. User-visible
-proof is intentionally separate from dev proof.
+proof is intentionally separate from dev proof. Lark official APIs, SDKs, or
+open-source connector code are connector implementations only; they do not own
+model authority, runtime truth, or brain state.
 
 Forward status names are `dev-ready`, `external-channel-bound`, and
 `user-visible-observed`. Legacy `live-runtime-updated`, `live-user-seen`, and
@@ -133,11 +135,11 @@ Forward status names are `dev-ready`, `external-channel-bound`, and
 `legacy-live-runtime-updated`, `legacy-live-user-seen`, and
 `legacy-live-visible-fixed` compatibility labels.
 
-| State                    | Meaning                                                           |
-| ------------------------ | ----------------------------------------------------------------- |
-| `dev-ready`              | Local tests, smokes, replay, or evals passed in the dev repo.     |
-| `external-channel-bound` | Lark/Feishu channel is bound to the selected clean brain.         |
-| `user-visible-observed`  | A real Lark inbound and outbound reply was observed by the owner. |
+| State                    | Meaning                                                             |
+| ------------------------ | ------------------------------------------------------------------- |
+| `dev-ready`              | Local tests, smokes, replay, or evals passed in the dev repo.       |
+| `external-channel-bound` | Lark/Feishu transport routes to the selected clean LCX answer path. |
+| `user-visible-observed`  | A real Lark inbound and outbound reply was observed by the owner.   |
 
 The approved Lark external-channel binding owner is:
 

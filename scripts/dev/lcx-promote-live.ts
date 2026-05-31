@@ -873,7 +873,7 @@ function buildReceipt(params: {
       "Only mark user-visible-observed after fresh real Lark/Feishu inbound and outbound evidence; legacy live-visible-fixed wording is compatibility only.",
     ],
     boundary: [
-      "Binds a git-tracked dev snapshot into the Lark external communication channel sidecar.",
+      "Copies a git-tracked dev snapshot into the Lark transport connector sidecar so it can route to LCX Agent.",
       "If the source working tree is dirty, defaults to a temporary clean HEAD snapshot instead of copying dirty WIP.",
       "Excludes protected memory, dist, apps, node_modules, and live-handoff receipts from source copying.",
       "Does not modify provider config, external-channel sender credentials, protected memory, or trading/execution authority.",

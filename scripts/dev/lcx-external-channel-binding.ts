@@ -59,7 +59,7 @@ type ExternalChannelBindingSummary = {
     | "channel_runtime_probe_failed";
   action:
     | "fix_training_plan_owner_first"
-    | "wait_for_current_eval_then_bind_lark_channel_to_selected_clean_adapter"
+    | "wait_for_current_eval_then_route_lark_transport_to_selected_clean_answer_path"
     | "wait_for_training_plan_external_channel_ready"
     | "run_apply_when_operator_allows_lark_channel_restart"
     | "keep_waiting_for_real_lark_user_visible_proof"
@@ -86,8 +86,8 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/dev/lcx-external-channel-binding.ts [--json] [--apply]",
       "",
-      "External-channel operator for binding Lark to the selected clean local-brain adapter.",
-      "The historical live script name is legacy compatibility; Lark is the owner-agent communication medium.",
+      "External-channel operator for making the Lark transport route to the selected clean LCX answer path.",
+      "The historical live script name is legacy compatibility; Lark is the owner-agent communication medium, not a brain.",
       "Default is read-only. --apply is allowed only when local-brain-training-plan exposes",
       "externalChannelBinding.status=ready_for_apply and no eval/MLX process is active.",
     ].join("\n"),
@@ -389,7 +389,7 @@ function buildExternalChannelBindingSummary(
   const actionMap: Record<BindingDecision["action"], ExternalChannelBindingSummary["action"]> = {
     fix_training_plan_owner_first: "fix_training_plan_owner_first",
     wait_for_current_eval_then_bind_live_to_selected_clean_adapter:
-      "wait_for_current_eval_then_bind_lark_channel_to_selected_clean_adapter",
+      "wait_for_current_eval_then_route_lark_transport_to_selected_clean_answer_path",
     wait_for_training_plan_live_binding_ready: "wait_for_training_plan_external_channel_ready",
     run_apply_when_operator_allows_live_runtime_restart:
       "run_apply_when_operator_allows_lark_channel_restart",

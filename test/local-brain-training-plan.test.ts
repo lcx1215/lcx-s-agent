@@ -814,8 +814,8 @@ describe("local-brain-training-plan", () => {
       selectedCleanAdapter: "/tmp/adapter-clean-r2",
       activeTrainingOrEval: false,
       status: "ready_for_apply",
-      action: "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof",
-      bindingPolicy: "external_channel_may_only_consume_selected_clean_adapter",
+      action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
+      bindingPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path",
       userVisibleObserved: false,
       liveTouched: false,
       providerConfigTouched: false,
@@ -844,8 +844,8 @@ describe("local-brain-training-plan", () => {
       activeTrainingOrEval: false,
       guardUsesSelectedCleanAdapter: true,
       status: "ready_for_live_runtime_binding",
-      action: "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof",
-      externalChannelPolicy: "lark_channel_may_only_consume_selected_clean_adapter",
+      action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
+      externalChannelPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path",
       liveTouched: false,
       providerConfigTouched: false,
       protectedMemoryTouched: false,
@@ -874,7 +874,7 @@ describe("local-brain-training-plan", () => {
     expect(plan.evolutionAccelerationQueue.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "bind_lark_external_channel_to_selected_clean_brain",
+          id: "route_lark_transport_to_selected_clean_answer_path",
           lane: "external_channel",
           status: "ready_when_idle",
           command: "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
