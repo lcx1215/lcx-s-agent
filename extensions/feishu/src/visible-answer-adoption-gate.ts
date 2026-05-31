@@ -30,10 +30,10 @@ const STANDALONE_PORTFOLIO_RISK_ASK_PATTERN =
   /(?:持有|组合|portfolio|holdings?).{0,40}(?:QQQ|TLT|NVDA).{0,80}(?:风险|risk|研究框架|失效条件|invalidation)|(?:QQQ|TLT|NVDA).{0,80}(?:风险|risk|研究框架|失效条件|invalidation)/iu;
 
 const MODEL_DISAGREEMENT_ARBITRATION_ASK_PATTERN =
-  /\b(?:provider council|model disagreement|which model|conflicting models)\b|大模型|三个模型|三家模型|模型意见|意见不一致|模型分歧|怎么裁决|听谁/u;
+  /\b(?:provider council|model disagreement|which model|conflicting models)\b|(?:模型意见|意见不一致|模型分歧|怎么裁决|听谁|谁说得对|采信谁)/u;
 
 const GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN =
-  /我是\s*(?:LCX Agent|OpenClaw).{0,40}(?:Lark\s*)?控制室入口|当前可用能力|可以把自然语言请求分到|工作面|finance learning pipeline/u;
+  /我是\s*(?:LCX Agent|OpenClaw).{0,40}(?:Lark\s*)?控制室入口|可以把自然语言请求分到|工作面|finance learning pipeline/u;
 
 const EXPLICIT_VISIBLE_CONTRACT_ASK_PATTERN =
   /\b(?:only|do not|don't|without|no json|no internal|answer directly|do not mention|do not cite previous)\b|只说|只给|直接|不要|别|不得|不要暴露|不要引用|不要给|不要装|不能暴露|别暴露|只要/u;
@@ -69,7 +69,7 @@ const MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN =
   /\b(?:evidence order|source|timestamp|local gate|cannot directly trust|not final authority|arbitration)\b|证据排序|一手来源|时间戳|本地\s*gate|不能直接采信|不能按模型名|候选意见|最终权威|本地把关|裁决/u;
 
 const VISIBLE_INTERNAL_TAIL_LINE_PATTERN =
-  /^\s*(?:分发状态|本次识别|识别理由|原始问题|边界|publish|confidence|foundation)\s*[:：].*$/gmu;
+  /^\s*(?:分发状态|本次识别|识别理由|原始问题|publish|confidence|foundation)\s*[:：].*$/gmu;
 
 function mentionedKnownTickers(text: string): string[] {
   const matches = new Set<string>();
@@ -83,6 +83,21 @@ function looksLikeDirectPositionRiskAsk(userMessage: string): boolean {
   return (
     DIRECT_POSITION_ASK_PATTERN.test(userMessage) ||
     HOLD_OR_WAIT_ACTION_ASK_PATTERN.test(userMessage)
+  );
+}
+
+function shouldPrioritizePositionRiskReply(userMessage: string): boolean {
+  if (looksLikeStandalonePortfolioRiskAsk(userMessage)) {
+    return true;
+  }
+  if (!looksLikeDirectPositionRiskAsk(userMessage)) {
+    return false;
+  }
+  return (
+    mentionedKnownTickers(userMessage).length > 0 ||
+    /买|卖|买入|卖出|加仓|减仓|补仓|摊低|摊平|割肉|砍仓|抄底|止损|止盈|持有|继续拿|等待|杠杆|保证金|爆仓|call|put|margin|leverage/iu.test(
+      userMessage,
+    )
   );
 }
 
@@ -403,6 +418,15 @@ export function applyVisibleAnswerAdoptionGate(params: {
     return { status: "adopted", text, failedReasons };
   }
 
+  if (shouldPrioritizePositionRiskReply(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderPositionRiskRescueReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
   if (looksLikeAnswerPipelineAsk(params.userMessage)) {
     return {
       status: "replaced",
@@ -416,18 +440,6 @@ export function applyVisibleAnswerAdoptionGate(params: {
     return {
       status: "replaced",
       text: renderProviderCouncilArbitrationReply(params.userMessage),
-      originalText: text,
-      failedReasons,
-    };
-  }
-
-  if (
-    looksLikeStandalonePortfolioRiskAsk(params.userMessage) ||
-    looksLikeDirectPositionRiskAsk(params.userMessage)
-  ) {
-    return {
-      status: "replaced",
-      text: renderPositionRiskRescueReply(params.userMessage),
       originalText: text,
       failedReasons,
     };

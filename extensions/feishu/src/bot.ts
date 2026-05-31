@@ -1660,47 +1660,46 @@ function renderFeishuProtocolTruthSurfaceReply(params: {
   confidence: number;
   rationale?: string;
 }): string {
+  const acceptanceCode = params.userMessage.match(
+    /\b(?:lark|live|feishu|migration)[A-Za-z0-9_-]*-[A-Za-z0-9_-]*\b/u,
+  )?.[0];
   if (isFeishuSourceRequiredTruthFamilyAsk(params.userMessage)) {
     return [
       "不能直接学：这条消息没有给可核验来源，所以我不会假装已经读取、学习或内化。",
       "",
-      "任务类型: 协议真相检查入口 (protocol_truth_surface)",
+      "任务类型: 来源缺失检查",
       "还缺来源: 是",
       "失败原因: 没有提供链接、本地文件或完整来源",
       "下一步: 先给出明确 URL、本地文件路径、论文编号/DOI、仓库名，或直接粘贴完整原文；之后再运行学习流水线。",
-      "边界: 不搜索、不抓取、不学习、不保留，也不声称 application_ready。",
+      "边界: 不搜索、不抓取、不学习、不保留，也不声称已经学会。",
       `证据: ${params.rationale ?? "the utterance asks for source_required handling and provides no concrete URL or local source."}`,
-      "",
-      "## 调试字段",
-      `- family: ${params.family}`,
-      "- source_required: true",
-      "- failedReason: no_url_or_local_source_provided",
-      `- original: ${params.userMessage}`,
-    ].join("\n");
+      acceptanceCode ? `验收码: ${acceptanceCode}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   return [
-    "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。",
+    "我是你在 Lark 里联系 LCX Agent 的入口。",
     "",
     "当前可用能力:",
-    "- 可以把自然语言请求分到 control_room、learning_command、technical_daily、fundamental_research、knowledge_maintenance、ops_audit 等工作面。",
-    "- 可以在本地 workspace 内跑有 receipt 的 finance learning pipeline；成功时必须出现 application_ready 或明确 failedReason。",
-    "- 可以把学习、复盘、审计、路由和工作回执写成可检查 artifact，而不是只靠聊天记忆。",
+    "- 把你的自然语言问题转成研究、学习、复盘、审计或工程任务。",
+    "- 对金融问题先做来源、时间戳、口径和风险边界检查，再决定能不能回答。",
+    "- 对学习和工程问题留下可检查证据，而不是只靠聊天记忆。",
     "",
     "不可用边界:",
-    "- 这不是自动交易执行器，不会批准下单、付款、删文件、生产发布或其它高风险动作。",
-    "- 没有新鲜来源或工具证明时，不能把旧证据说成今天的 live 事实。",
-    "- dev-fixed 和 live-visible-fixed 必须分开；只有 build/restart/probe/真实 Lark 可见回复都通过，才算 live-visible-fixed。",
+    "- 我不是自动交易执行器，不批准下单、付款、删文件、生产发布或其它高风险动作。",
+    "- 没有新鲜来源或工具证明时，不能把旧证据说成今天的事实。",
+    "- 代码修好、通道重启、探针通过、真实 Lark 可见回复通过，是四个不同证明，不能混说。",
     "",
     "下一步会做什么:",
-    "- 对每条真实 Lark 消息先分类，再走对应工作面；如果缺 source、权限、证据或 receipt，就直接说失败原因。",
+    "- 对每条真实 Lark 消息先判断意图、证据需求和风险等级；如果缺来源、权限或证据，就直接说失败原因。",
     "- 继续用真实简单问题打入口，优先修静默失败、错路由、假成功和 artifact 不落账。",
     "",
-    "## 证据",
-    `- 本次识别: family=${params.family}, confidence=${params.confidence.toFixed(2)}`,
-    params.rationale ? `识别理由: ${params.rationale}` : undefined,
-    `- 原始问题: ${params.userMessage}`,
-    "- 边界: 这是 protocol truth surface 的确定性回复，不是普通自由聊天生成。",
+    "证据:",
+    params.rationale ? `- 识别理由: ${params.rationale}` : undefined,
+    acceptanceCode ? `- 验收码: ${acceptanceCode}` : undefined,
+    "- 这是一条确定性状态回复，不是自由聊天生成。",
   ]
     .filter(Boolean)
     .join("\n");
@@ -4110,12 +4109,9 @@ function renderFeishuLiveSchedulingQueueReply(params: {
     "队列状态：requested work items remain pending in order；后续任务必须逐个执行，有 receipt 才能说完成。",
     "下一步：run the first queued item only，然后带着它的 receipt/proof 回来，再决定第二个。",
     "",
-    "## 证据",
-    `- 交接回执: ${params.handoffReceiptPath ?? "write_failed_or_unavailable"}`,
-    "- dispatch=direct_queue_guard",
-    "- model_worker=not_called",
-    "- boundary=state_report_only_no_trade_no_file_mutation",
-    `- family=live_scheduling_queue; targetSurface=${params.targetSurface ?? params.handoff.targetSurface ?? "unknown"}; effectiveSurface=${params.effectiveSurface ?? params.targetSurface ?? "unknown"}`,
+    "证据：本次只走队列边界检查，没有调用普通模型 worker，也没有执行后续任务。",
+    `交接回执：${params.handoffReceiptPath ?? "write_failed_or_unavailable"}`,
+    "边界：状态回报，不交易，不改文件，不把排队项说成完成。",
   ].join("\n");
 }
 
@@ -4421,6 +4417,24 @@ function buildVisibleAnswerGateDistillationPayload(params: {
     no_provider_config_touched: true,
     protected_memory_touched: false,
   };
+}
+
+function renderFeishuNoFinalFallbackReply(userMessage: string): string {
+  const gateDecision = applyVisibleAnswerAdoptionGate({
+    userMessage,
+    answerText: "无法判断。",
+  });
+  const gatedText = gateDecision.text.trim();
+  if (gatedText && gatedText !== "无法判断。") {
+    return gatedText;
+  }
+
+  return [
+    "这次没有生成可发送给你的最终答案。",
+    "失败原因: 执行层没有交出最终可见回复。",
+    "下一步: 重新按同一个问题生成；证据不够就只说缺什么，不把内部过程当答案。",
+    "边界: 这不是完成状态，也不是已验证结论。",
+  ].join("\n");
 }
 
 function shouldSuppressDuplicateDailyWorkface(params: {
@@ -7267,7 +7281,7 @@ export async function handleFeishuMessage(params: {
       }
 
       log(`feishu[${account.accountId}]: dispatching to agent (session=${effectiveSessionKey})`);
-      const { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
+      let { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
         dispatcher: effectiveDispatcher,
         onSettled: () => {
           markDispatchIdle();
@@ -7280,6 +7294,32 @@ export async function handleFeishuMessage(params: {
             replyOptions,
           }),
       });
+      if (!queuedFinal || counts.final <= 0) {
+        const fallbackText = renderFeishuNoFinalFallbackReply(ctx.content);
+        const fallbackSendResult = await sendFeishuFinalTextReply({
+          replyRuntime: core.channel.reply,
+          dispatcher: effectiveDispatcher,
+          markDispatchIdle,
+          text: fallbackText,
+        });
+        queuedFinal = fallbackSendResult.queuedFinal;
+        counts = fallbackSendResult.counts;
+        log(
+          `feishu[${account.accountId}]: dispatch produced no final reply; sent visible fallback (queuedFinal=${queuedFinal}, replies=${counts.final})`,
+        );
+        void recordFeishuReplyFlowEvent({
+          correlationId: ctx.messageId,
+          stage: "answer_audit",
+          accountId: account.accountId,
+          messageId: ctx.messageId,
+          chatId: ctx.chatId,
+          chatType: ctx.chatType,
+          agentId: route.agentId,
+          contentType: event.message.message_type,
+          textPreview: "normal_dispatch_no_final_reply_visible_fallback",
+          answerAuditTerminalDecision: "return_failed_reason",
+        });
+      }
 
       await persistCapturedFeishuSurfaceLine({
         ...buildFeishuSurfaceLinePersistContext({

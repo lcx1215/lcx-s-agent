@@ -145,6 +145,27 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("分发状态");
   });
 
+  it("keeps finance position asks ahead of meta entry-exit probe wording", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "批量探针A9b：同一个简单入口出口验收。用户问：我现在能不能把 QQQ/TLT/NVDA 仓位加大？只给直接结论、还缺什么数据、风险边界、下一步、证据。不要出现 family、confidence、work_order、model_worker、targetSurface、分发状态、控制摘要、publish、foundation。验收码 lark-simple-finance-a9b",
+      answerText: "无法判断。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.text).toContain("这是研究框架，不是交易指令。");
+    expect(decision.text).toContain("QQQ：");
+    expect(decision.text).toContain("TLT：");
+    expect(decision.text).toContain("NVDA：");
+    expect(decision.text).not.toContain("入口只做四件事");
+    expect(decision.text).not.toContain("family");
+    expect(decision.text).not.toContain("confidence");
+    expect(decision.text).not.toContain("work_order");
+    expect(decision.text).not.toContain("分发状态");
+    expect(decision.text).not.toContain("publish");
+    expect(decision.text).not.toContain("foundation");
+  });
+
   it("replaces generic control-room capability replies for provider disagreement asks", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage:
@@ -254,6 +275,18 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("不能一概而论");
   });
 
+  it("does not misclassify three-model learning validation as provider-disagreement arbitration", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "模型路由验收：用三个模型一起学这个主题，只看是否使用当前允许模型",
+      answerText: "学习审阅已完成。\n\n综合判断\n- one point",
+    });
+
+    expect(decision.status).toBe("adopted");
+    expect(decision.failedReasons).toEqual([]);
+    expect(decision.text).toContain("学习审阅已完成");
+    expect(decision.text).not.toContain("不能按模型名投票");
+  });
+
   it("rejects single-entry single-exit answers that expose control-room labels", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage:
@@ -313,6 +346,20 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("publish:");
     expect(decision.text).not.toContain("confidence:");
     expect(decision.text).not.toContain("foundation:");
+  });
+
+  it("preserves user-visible boundary lines while stripping internal tails", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "没有来源时只说失败原因、下一步、边界和证据。",
+      answerText:
+        "失败原因: 没有提供链接、本地文件或完整来源\n下一步: 先给 URL 或本地路径\n边界: 不搜索、不抓取、不学习\n证据: source-required test\npublish: yes\nconfidence: high",
+    });
+
+    expect(decision.status).toBe("adopted");
+    expect(decision.text).toContain("边界: 不搜索、不抓取、不学习");
+    expect(decision.text).toContain("证据: source-required test");
+    expect(decision.text).not.toContain("publish:");
+    expect(decision.text).not.toContain("confidence:");
   });
 
   it("does not apply retail position filters to generic finance education", () => {

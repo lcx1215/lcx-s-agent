@@ -2690,7 +2690,7 @@ confidence: high
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("skips control-room ledger writes when no final reply text was captured", async () => {
+  it("writes the visible fallback to control-room ledger when dispatch produces no final reply", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
       sendBlockReply: vi.fn(() => false),
@@ -2789,23 +2789,16 @@ confidence: high
       },
     });
 
-    await expect(
-      fs.readFile(
-        path.join(tempDir, "memory", "feishu-surface-lines", "control_room-oc-control-room.md"),
-        "utf-8",
-      ),
-    ).rejects.toThrow();
-    expect(mockRecordOperationalAnomaly).toHaveBeenCalledWith(
+    const ledgerText = await fs.readFile(
+      path.join(tempDir, "memory", "feishu-surface-lines", "control_room-oc-control-room.md"),
+      "utf-8",
+    );
+    expect(ledgerText).toContain("这次没有生成可发送给你的最终答案。");
+    expect(ledgerText).toContain("执行层没有交出最终可见回复");
+    expect(ledgerText).not.toContain("final_reply_captured=false");
+    expect(mockRecordOperationalAnomaly).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        category: "write_edit_failure",
-        source: "feishu.surface_memory",
         problem: "skipped feishu surface line persist because no final reply text was captured",
-        evidence: expect.arrayContaining([
-          "failure_stage=final_reply_capture",
-          "final_reply_captured=false",
-          "dispatch_queued_final=false",
-          "dispatch_final_count=0",
-        ]),
       }),
     );
 
@@ -6354,6 +6347,130 @@ describe("learning council routing", () => {
     );
   });
 
+  it("sends a visible fallback when normal agent dispatch produces no final reply", async () => {
+    const baseDispatcher = {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(() => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 1 })),
+      markComplete: vi.fn(),
+    };
+    mockCreateFeishuReplyDispatcher.mockReturnValue({
+      dispatcher: baseDispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+    });
+
+    const mockDispatchReplyFromConfig = vi.fn(async () => ({
+      queuedFinal: false,
+      counts: { final: 0 },
+    }));
+    const mockWithReplyDispatcher = vi.fn(
+      async ({
+        dispatcher,
+        run,
+        onSettled,
+      }: Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]) => {
+        try {
+          return await run();
+        } finally {
+          dispatcher.markComplete();
+          try {
+            await dispatcher.waitForIdle();
+          } finally {
+            await onSettled?.();
+          }
+        }
+      },
+    );
+    setFeishuRuntime(
+      createPluginRuntimeMock({
+        channel: {
+          routing: {
+            resolveAgentRoute:
+              mockResolveAgentRoute as unknown as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+          },
+          reply: {
+            resolveEnvelopeFormatOptions: vi.fn(
+              () => ({}),
+            ) as unknown as PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"],
+            formatAgentEnvelope: vi.fn((params: { body: string }) => params.body),
+            finalizeInboundContext,
+            dispatchReplyFromConfig: mockDispatchReplyFromConfig,
+            withReplyDispatcher:
+              mockWithReplyDispatcher as unknown as PluginRuntime["channel"]["reply"]["withReplyDispatcher"],
+          },
+          commands: {
+            shouldComputeCommandAuthorized: vi.fn(() => false),
+            resolveCommandAuthorizedFromAuthorizers: vi.fn(() => false),
+          },
+          pairing: {
+            readAllowFromStore: vi.fn().mockResolvedValue([]),
+            upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABCDEFGH", created: false }),
+            buildPairingReply: vi.fn(() => "Pairing response"),
+          },
+        },
+      }),
+    );
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-normal-no-final-"));
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { workspace: tempDir } },
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+          surfaces: {
+            control_room: { chatId: "oc-control-room" },
+            technical_daily: { chatId: "oc-tech" },
+          },
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: { sender_id: { open_id: "ou-user" } },
+        message: {
+          message_id: "msg-normal-no-final-visible-fallback",
+          chat_id: "oc-control-room",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({
+            text: "我现在能不能把 QQQ/TLT/NVDA 仓位加大？只给直接结论、还缺什么数据、风险边界、下一步、证据。不要出现 family、confidence、work_order、model_worker、targetSurface、分发状态、publish、foundation。",
+          }),
+        },
+      },
+    });
+
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalled();
+    const replyText = ((
+      baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0]).text;
+    expect(replyText).toContain("这是研究框架，不是交易指令。");
+    expect(replyText).toContain("QQQ：");
+    expect(replyText).toContain("TLT：");
+    expect(replyText).toContain("NVDA：");
+    expect(replyText).toContain("缺的数据：三只标的的组合权重");
+    expect(replyText).not.toContain("family");
+    expect(replyText).not.toContain("confidence");
+    expect(replyText).not.toContain("work_order");
+    expect(replyText).not.toContain("model_worker");
+    expect(replyText).not.toContain("targetSurface");
+    expect(replyText).not.toContain("分发状态");
+    expect(replyText).not.toContain("publish");
+    expect(replyText).not.toContain("foundation");
+    expect(mockRecordFeishuReplyFlowEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "answer_audit",
+        correlationId: "msg-normal-no-final-visible-fallback",
+        textPreview: "normal_dispatch_no_final_reply_visible_fallback",
+        answerAuditTerminalDecision: "return_failed_reason",
+      }),
+    );
+  });
+
   it("keeps partial learning carryover cues honest in control-room learning status replies", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
@@ -7980,8 +8097,9 @@ describe("learning council routing", () => {
     expect(replyText).toContain("已收到：这是排队/调度请求");
     expect(replyText).toContain("队列状态：requested work items remain pending in order");
     expect(replyText).toContain("下一步：run the first queued item only");
-    expect(replyText).toContain("交接回执:");
-    expect(replyText).toContain("model_worker=not_called");
+    expect(replyText).toContain("交接回执：");
+    expect(replyText).toContain("没有调用普通模型 worker");
+    expect(replyText).not.toContain("model_worker=not_called");
     expect(replyText).not.toMatch(
       /^(family|targetSurface|effectiveSurface|done\s*[—-]\s*family|\{)/iu,
     );
@@ -8271,7 +8389,7 @@ describe("learning council routing", () => {
 
     expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。"),
+      text: expect.stringContaining("我是你在 Lark 里联系 LCX Agent 的入口。"),
     });
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
@@ -8279,7 +8397,7 @@ describe("learning council routing", () => {
     expect(replyText).toContain("当前可用能力:");
     expect(replyText).toContain("不可用边界:");
     expect(replyText).toContain("下一步会做什么:");
-    expect(replyText).toContain("family=protocol_truth_surface");
+    expect(replyText).not.toContain("family=protocol_truth_surface");
     expect(replyText).toContain("lark-simple-identity-test");
 
     const surfaceLineText = await fs.readFile(
@@ -8287,7 +8405,7 @@ describe("learning council routing", () => {
       "utf-8",
     );
     expect(surfaceLineText).toContain("msg-protocol-truth-simple");
-    expect(surfaceLineText).toContain("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。");
+    expect(surfaceLineText).toContain("我是你在 Lark 里联系 LCX Agent 的入口。");
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -8386,7 +8504,7 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("任务类型: 协议真相检查入口 (protocol_truth_surface)");
+    expect(replyText).toContain("任务类型: 来源缺失检查");
     expect(replyText).toContain("还缺来源: 是");
     expect(replyText).toContain("失败原因: 没有提供链接、本地文件或完整来源");
     expect(replyText).toContain("下一步:");
@@ -8396,6 +8514,7 @@ describe("learning council routing", () => {
     expect(replyText).toContain("lark-source-required-test");
     expect(replyText).not.toContain("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。");
     expect(replyText).not.toMatch(/^(family|source_required|failedReason|targetSurface|\{)/iu);
+    expect(replyText).not.toContain("## 调试字段");
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -8535,6 +8654,7 @@ describe("learning council routing", () => {
       expect(replyText).toContain(sourceRequiredCase.code);
       expect(replyText).not.toContain("我是 LCX Agent / OpenClaw 的 Lark 控制室入口。");
       expect(replyText).not.toMatch(/^(family|source_required|failedReason|targetSurface|\{)/iu);
+      expect(replyText).not.toContain("## 调试字段");
     }
     await fs.rm(tempDir, { recursive: true, force: true });
   });
@@ -13527,7 +13647,7 @@ QQQ / SPY / TLT 先看谁对长端利率更敏感。
     );
     expect(controlLedger).toContain("Reply summary:");
     expect(controlLedger).toContain("今天先看风险框架，不追高。");
-    expect(controlLedger).toContain("分发状态：已发布 技术面分片.");
+    expect(controlLedger).not.toContain("分发状态");
     expect(controlLedger).not.toContain("publish: yes");
     expect(controlLedger).not.toContain("confidence: high");
 
