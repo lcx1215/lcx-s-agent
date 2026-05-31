@@ -20,6 +20,23 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function externalChannelNextHumanStep(params: {
+  externalChannelBound: boolean;
+  userVisibleObserved: boolean;
+  bindingStatus: unknown;
+}): string {
+  if (params.userVisibleObserved) {
+    return "none_external_channel_user_visible_observed";
+  }
+  if (params.externalChannelBound) {
+    return "send_real_lark_canary_for_user_visible_proof";
+  }
+  if (params.bindingStatus === "ready_for_channel_bind_apply") {
+    return "run_lcx_external_channel_binding_apply";
+  }
+  return "inspect_lcx_external_channel_binding_owner";
+}
+
 function usage(): never {
   throw new Error(
     [
@@ -78,12 +95,19 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const bindingProvedChannelBound =
       bindingStatus === "channel_runtime_probe_ok_user_visible_pending";
     const bindingUserVisibleObserved = binding?.userVisibleObserved === true;
+    const externalChannelBound =
+      bindingProvedChannelBound || legacyExternalChannelStatus?.externalChannelBound === true;
+    const userVisibleObserved =
+      bindingUserVisibleObserved || legacyExternalChannelStatus?.userVisibleObserved === true;
     const externalChannelStatus = {
       ...legacyExternalChannelStatus,
-      externalChannelBound:
-        bindingProvedChannelBound || legacyExternalChannelStatus?.externalChannelBound === true,
-      userVisibleObserved:
-        bindingUserVisibleObserved || legacyExternalChannelStatus?.userVisibleObserved === true,
+      externalChannelBound,
+      userVisibleObserved,
+      nextHumanStep: externalChannelNextHumanStep({
+        externalChannelBound,
+        userVisibleObserved,
+        bindingStatus,
+      }),
       canonicalBindingStatus: bindingStatus,
       canonicalBindingMissingProof: binding?.missingProof,
       canonicalBindingSelectedCleanAdapter: binding?.selectedCleanAdapter,

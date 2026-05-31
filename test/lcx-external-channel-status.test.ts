@@ -40,6 +40,7 @@ describe("lcx-external-channel-status", () => {
         statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
         canonicalBindingOwner: "lcx-external-channel-binding",
         canonicalBindingStatus: expect.any(String),
+        nextHumanStep: expect.not.stringContaining("promote_dev_to_live"),
         userVisibleObserved: expect.any(Boolean),
       }),
     );
