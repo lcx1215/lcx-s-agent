@@ -193,6 +193,72 @@ describe("lcx-module-learning-absorption-gate", () => {
     );
   });
 
+  it("allows terminal discarded receipts to stay out of the absorption denominator", async () => {
+    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
+    const evalSummaryPath = await seedJson(workspaceDir, "eval-summary.json", cleanEvalSummary());
+    await seedJson(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json", {
+      boundary: "module_learning_pipeline_review",
+      dateKey: "2026-05-14",
+      counts: {
+        receiptFiles: 2,
+        validReceipts: 2,
+        applicationReady: 0,
+        evalAbsorbed: 1,
+        terminalNonAbsorbed: 1,
+        weakModuleLearning: 0,
+        boundaryViolations: 0,
+      },
+      rows: [
+        {
+          receiptPath: "memory/module-learning-pipeline-plan-receipts/2026-05-14/options.json",
+          targetModule: "options_volatility",
+          status: "eval_absorbed",
+          trainingOrEvalAbsorptionEvidencePath: "memory/evals/options.json",
+          freshAdjacentApplicationTask: "Apply the options lesson to a new ETF event-risk brief.",
+          keepDownrankDiscardDecision: "keep",
+          missingEvidence: [],
+          weak: false,
+          boundaryViolation: false,
+        },
+        {
+          receiptPath: "memory/module-learning-pipeline-plan-receipts/2026-05-14/discard.json",
+          targetModule: "portfolio_risk_gates",
+          status: "stored_only",
+          keepDownrankDiscardDecision: "discard",
+          terminalNonAbsorbedDecision: true,
+          missingEvidence: [
+            "capability_card_or_retrieval_receipt",
+            "application_validation_receipt",
+            "training_or_eval_absorption_evidence",
+          ],
+          exactMissingProof: [],
+          weak: false,
+          boundaryViolation: false,
+        },
+      ],
+    });
+
+    const result = runCli(
+      ["--date", "2026-05-14", "--eval-summary", evalSummaryPath],
+      workspaceDir,
+    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        absorptionReady: true,
+        gateDecision: "ready_for_eval_absorbed_review",
+        blockers: [],
+        counts: expect.objectContaining({
+          claimableRows: 1,
+          terminalNonAbsorbedRows: 1,
+          weakReceiptCount: 0,
+        }),
+      }),
+    );
+  });
+
   it("blocks absorption when a newer hardened eval timeout follows older clean evidence", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
     const guardLogPath = await seedJsonl(workspaceDir, "guard.jsonl", [

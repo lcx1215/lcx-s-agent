@@ -154,6 +154,14 @@ function boolValue(value: unknown): boolean {
   return value === true;
 }
 
+function isTerminalNonAbsorbedDecision(row: JsonRecord): boolean {
+  return (
+    row.terminalNonAbsorbedDecision === true ||
+    row.keepDownrankDiscardDecision === "downrank" ||
+    row.keepDownrankDiscardDecision === "discard"
+  );
+}
+
 function normalizeEvalSnapshot(payload: JsonRecord | undefined): EvalSnapshot | undefined {
   if (!payload) {
     return undefined;
@@ -378,8 +386,13 @@ function buildGate(params: {
   const rows = Array.isArray(params.review?.rows)
     ? params.review.rows.filter((entry): entry is JsonRecord => Boolean(recordValue(entry)))
     : [];
-  const weakRows = rows.filter((row) => row.weak === true || row.status !== "eval_absorbed");
+  const claimableRows = rows.filter((row) => !isTerminalNonAbsorbedDecision(row));
+  const terminalNonAbsorbedRows = rows.filter((row) => isTerminalNonAbsorbedDecision(row));
+  const weakRows = claimableRows.filter(
+    (row) => row.weak === true || row.status !== "eval_absorbed",
+  );
   const missingEvidenceByReceipt = rows
+    .filter((row) => !isTerminalNonAbsorbedDecision(row))
     .map((row) => ({
       receiptPath: stringValue(row.receiptPath) ?? "unknown",
       targetModule: stringValue(row.targetModule) ?? "unknown",
@@ -395,10 +408,10 @@ function buildGate(params: {
     params.latestEval?.parseErrorCaseIds.length === 0 &&
     params.latestEval?.parseRecoveredCaseIds.length === 0;
   const perReceiptAbsorbed =
-    rows.length > 0 &&
+    claimableRows.length > 0 &&
     weakRows.length === 0 &&
     missingEvidenceByReceipt.length === 0 &&
-    numberValue(counts.evalAbsorbed) === rows.length &&
+    numberValue(counts.evalAbsorbed) >= claimableRows.length &&
     boundaryViolations === 0;
   const reviewStaleOrEmpty =
     Boolean(params.review) && rows.length === 0 && params.planReceiptFiles > 0;
@@ -460,6 +473,8 @@ function buildGate(params: {
     counts: {
       planReceiptFiles: params.planReceiptFiles,
       reviewRows: rows.length,
+      claimableRows: claimableRows.length,
+      terminalNonAbsorbedRows: terminalNonAbsorbedRows.length,
       weakReceiptCount: weakRows.length,
       evalAbsorbed: numberValue(counts.evalAbsorbed),
       applicationReady: numberValue(counts.applicationReady),
@@ -497,8 +512,19 @@ function buildGate(params: {
     missingEvidenceByReceipt: missingEvidenceByReceipt.slice(0, 20),
     proofGapSummary: recordValue(params.review?.proofGapSummary) ?? {},
     nextProofQueue: Array.isArray(params.review?.nextProofQueue)
-      ? params.review.nextProofQueue.slice(0, 20)
+      ? params.review.nextProofQueue
+          .filter((entry) => {
+            const row = recordValue(entry);
+            return !row || !isTerminalNonAbsorbedDecision(row);
+          })
+          .slice(0, 20)
       : [],
+    terminalNonAbsorbedRows: terminalNonAbsorbedRows.slice(0, 20).map((row) => ({
+      receiptPath: stringValue(row.receiptPath) ?? "unknown",
+      targetModule: stringValue(row.targetModule) ?? "unknown",
+      status: stringValue(row.status) ?? "unknown",
+      keepDownrankDiscardDecision: stringValue(row.keepDownrankDiscardDecision) ?? "unknown",
+    })),
     blockers: [...new Set(blockers)],
     nextActions: [...new Set(nextActions)],
     notPromoted: true,
@@ -508,6 +534,7 @@ function buildGate(params: {
       evalTimeoutNewerThanEval ||
       boundaryViolations > 0 ||
       rows.length === 0 ||
+      claimableRows.length === 0 ||
       missingEvidenceByReceipt.length === 0
         ? false
         : missingEvidenceByReceipt.every((entry) =>

@@ -97,6 +97,26 @@ function hasKeepDownrankDiscardDecision(value: unknown): boolean {
   return value === "keep" || value === "downrank" || value === "discard";
 }
 
+function isTerminalNonAbsorbedDecision(value: unknown): boolean {
+  return value === "downrank" || value === "discard";
+}
+
+function filterTerminalMissingProof(params: {
+  receipt: ModuleLearningPlanReceipt;
+  missingProof: string[];
+}): string[] {
+  if (!isTerminalNonAbsorbedDecision(params.receipt.keepDownrankDiscardDecision)) {
+    return params.missingProof;
+  }
+  const terminalDecisionOptionalProof = new Set([
+    "capability_card_or_retrieval_receipt",
+    "application_validation_receipt",
+    "training_or_eval_absorption_evidence",
+    "fresh_adjacent_application_task",
+  ]);
+  return params.missingProof.filter((proof) => !terminalDecisionOptionalProof.has(proof));
+}
+
 function buildProofCompleteness(params: {
   receipt: ModuleLearningPlanReceipt;
   boundaryViolation: boolean;
@@ -129,12 +149,16 @@ function exactMissingProof(params: {
   structuredDataReviewTargetViolation: boolean;
 }): string[] {
   const completeness = buildProofCompleteness(params);
-  return [
+  const missingProof = [
     ...params.missingEvidence,
     ...Object.entries(completeness)
       .filter(([, present]) => !present)
       .map(([field]) => field),
   ].filter((entry, index, array) => entry.length > 0 && array.indexOf(entry) === index);
+  return filterTerminalMissingProof({
+    receipt: params.receipt,
+    missingProof,
+  });
 }
 
 function nextProofOwner(missingProof: string[]): string {
@@ -367,8 +391,11 @@ export function buildModuleLearningPipelineReview(params: {
       boundaryViolation,
       structuredDataReviewTargetViolation,
     });
+    const terminalNonAbsorbedDecision = isTerminalNonAbsorbedDecision(
+      receipt.keepDownrankDiscardDecision,
+    );
     const weak =
-      status !== "eval_absorbed" ||
+      (!terminalNonAbsorbedDecision && status !== "eval_absorbed") ||
       structuredDataReviewTargetViolation ||
       boundaryViolation ||
       missingProof.length > 0;
@@ -387,6 +414,7 @@ export function buildModuleLearningPipelineReview(params: {
       trainingOrEvalAbsorptionEvidencePath: receipt.trainingOrEvalAbsorptionEvidencePath ?? null,
       freshAdjacentApplicationTask: receipt.freshAdjacentApplicationTask ?? null,
       keepDownrankDiscardDecision: receipt.keepDownrankDiscardDecision ?? "not_decided",
+      terminalNonAbsorbedDecision,
       moduleSpecificCapabilityRule: receipt.moduleSpecificCapabilityRule ?? null,
       supersedesReceiptPath: receipt.supersedesReceiptPath ?? null,
       superseded,
@@ -443,13 +471,15 @@ export function buildModuleLearningPipelineReview(params: {
       nextProofOwner: row.nextProofOwner,
       action: row.structuredDataReviewTargetViolation
         ? "Route data_provenance_quality receipts through official_data_source, market_data_snapshot_source, or vendor_data_source with data_provenance_quality_review_input before claiming absorption."
-        : row.status === "missing_evidence" || row.status === "stored_only"
-          ? "Add source registry, actual reading scope, and retrieval receipt before claiming this module learned the source."
-          : row.status === "retrieval_ready"
-            ? "Run module-specific application validation on a fresh adjacent task before claiming application-ready learning."
-            : row.status === "application_ready"
-              ? "Add Qwen eval or training absorption evidence plus keep/downrank/discard decision before claiming eval_absorbed."
-              : "Fix receipt status or boundary fields before using this as module-learning evidence.",
+        : row.terminalNonAbsorbedDecision
+          ? "Keep this receipt out of absorption claims; the operator downrank/discard decision is terminal for this weak learning item."
+          : row.status === "missing_evidence" || row.status === "stored_only"
+            ? "Add source registry, actual reading scope, and retrieval receipt before claiming this module learned the source."
+            : row.status === "retrieval_ready"
+              ? "Run module-specific application validation on a fresh adjacent task before claiming application-ready learning."
+              : row.status === "application_ready"
+                ? "Add Qwen eval or training absorption evidence plus keep/downrank/discard decision before claiming eval_absorbed."
+                : "Fix receipt status or boundary fields before using this as module-learning evidence.",
     }));
   const proofGapSummary = rows.reduce<Record<string, number>>((summary, row) => {
     for (const proof of row.exactMissingProof) {
@@ -466,8 +496,9 @@ export function buildModuleLearningPipelineReview(params: {
       claimStatus: row.claimStatus,
       exactMissingProof: row.exactMissingProof,
       nextProofOwner: row.nextProofOwner,
-      action:
-        row.nextProofOwner === "source_registry_and_reading_scope"
+      action: row.terminalNonAbsorbedDecision
+        ? "No absorption proof required; terminal downrank/discard decision keeps this receipt out of learned-capability claims."
+        : row.nextProofOwner === "source_registry_and_reading_scope"
           ? "Add or repair the source registry record and actual reading scope before retrieval/application claims."
           : row.nextProofOwner === "module_learning_pipeline_apply_validation"
             ? "Add module capability/retrieval/apply validation evidence and a fresh adjacent task."
@@ -479,6 +510,7 @@ export function buildModuleLearningPipelineReview(params: {
                   ? "Repair boundary or structured-review-target evidence before this receipt can count."
                   : "No proof action required.",
     }));
+  const terminalNonAbsorbedRows = rows.filter((row) => row.terminalNonAbsorbedDecision);
   return {
     boundary: "module_learning_pipeline_review",
     dateKey: params.dateKey,
@@ -487,6 +519,7 @@ export function buildModuleLearningPipelineReview(params: {
       receiptFiles: rows.length,
       rawReceiptFiles: params.receiptResults.length,
       supersededReceiptFiles: supersededRows.length,
+      terminalNonAbsorbed: terminalNonAbsorbedRows.length,
       validReceipts: validReceipts.length,
       invalidReceipts: invalidReceipts.length,
       missingEvidence: countsByStatus.missing_evidence,
@@ -505,6 +538,13 @@ export function buildModuleLearningPipelineReview(params: {
     proofGapSummary,
     nextProofQueue,
     rows,
+    terminalNonAbsorbedRows: terminalNonAbsorbedRows.map((row) => ({
+      receiptPath: row.receiptPath,
+      targetModule: row.targetModule,
+      status: row.status,
+      keepDownrankDiscardDecision: row.keepDownrankDiscardDecision,
+      sourceUrlOrPath: row.sourceUrlOrPath,
+    })),
     supersededRows,
     weakModuleLearning,
     invalidReceipts: invalidReceipts.map((result) => ({

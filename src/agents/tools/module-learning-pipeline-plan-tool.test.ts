@@ -330,4 +330,42 @@ describe("module learning pipeline plan tool", () => {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
   });
+
+  it("keeps receipt paths distinct for same-intent superseding receipts from different sources", async () => {
+    const workspaceDir = await makeTempWorkspace("openclaw-module-learning-plan-");
+    const tool = createModuleLearningPipelinePlanTool({ workspaceDir });
+
+    try {
+      const baseArgs = {
+        targetModule: "portfolio_risk_gates",
+        learningIntent:
+          "Discard weak module-learning candidate after extraction gap; keep source as reference-only.",
+        actualReadingScope: "Read the local source and extraction gap.",
+        keepDownrankDiscardDecision: "discard",
+        writeReceipt: true,
+      };
+      const first = await tool.execute("module-learning-pipeline-plan-cli", {
+        ...baseArgs,
+        sourceUrlOrPath: "memory/research-sources/first.md",
+        existingArtifactPaths: ["memory/research-sources/first.md"],
+        sourceRegistryRecordPath: "memory/research-sources/first.md",
+        supersedesReceiptPath: "memory/module-learning-pipeline-plan-receipts/day/first.json",
+      });
+      const second = await tool.execute("module-learning-pipeline-plan-cli", {
+        ...baseArgs,
+        sourceUrlOrPath: "memory/research-sources/second.md",
+        existingArtifactPaths: ["memory/research-sources/second.md"],
+        sourceRegistryRecordPath: "memory/research-sources/second.md",
+        supersedesReceiptPath: "memory/module-learning-pipeline-plan-receipts/day/second.json",
+      });
+
+      const firstPath = (first.details as { receiptPath: string }).receiptPath;
+      const secondPath = (second.details as { receiptPath: string }).receiptPath;
+      expect(firstPath).not.toEqual(secondPath);
+      await expect(fs.stat(path.join(workspaceDir, firstPath))).resolves.toBeTruthy();
+      await expect(fs.stat(path.join(workspaceDir, secondPath))).resolves.toBeTruthy();
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
 });

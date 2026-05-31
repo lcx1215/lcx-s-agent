@@ -722,11 +722,23 @@ function buildModuleLearningReceiptPath(params: {
   targetModule: string;
   learningIntent: string;
   toolCallId: string;
+  sourceUrlOrPath?: string | null;
+  supersedesReceiptPath?: string | null;
+  existingArtifactPaths?: string[];
   dateKey?: string;
 }): string {
   const dateKey = params.dateKey ?? new Date().toISOString().slice(0, 10);
   const hash = createHash("sha256")
-    .update(`${params.toolCallId}\n${params.targetModule}\n${params.learningIntent}`)
+    .update(
+      [
+        params.toolCallId,
+        params.targetModule,
+        params.learningIntent,
+        params.sourceUrlOrPath ?? "",
+        params.supersedesReceiptPath ?? "",
+        ...(params.existingArtifactPaths ?? []),
+      ].join("\n"),
+    )
     .digest("hex")
     .slice(0, 12);
   const fileName = `${new Date().toISOString().replace(/[:.]/gu, "-")}__${hash}.json`;
@@ -929,6 +941,9 @@ export function createModuleLearningPipelinePlanTool(options?: {
               targetModule: schema.targetModule,
               learningIntent,
               toolCallId,
+              sourceUrlOrPath,
+              supersedesReceiptPath,
+              existingArtifactPaths,
               dateKey: receiptDateKey ?? undefined,
             })
           : null;

@@ -177,6 +177,85 @@ describe("module learning pipeline review tool", () => {
     ).rejects.toThrow();
   });
 
+  it("treats explicit downrank or discard receipts as terminal non-absorbed evidence", async () => {
+    workspaceDir = await makeTempWorkspace("openclaw-module-learning-review-");
+    await seedJson(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-12/old.json",
+      {
+        boundary: "dev_module_learning_pipeline_plan",
+        targetModule: "portfolio_risk_gates",
+        moduleFamily: "finance_research",
+        status: "stored_only",
+        sourceUrlOrPath: "memory/research-sources/weak.md",
+        actualReadingScope: "Read weak source summary.",
+        sourceRegistryRecordPath: "memory/research-sources/weak.md",
+        missingEvidence: [
+          "capability_card_or_retrieval_receipt",
+          "application_validation_receipt",
+          "training_or_eval_absorption_evidence",
+          "fresh_adjacent_application_task",
+        ],
+        keepDownrankDiscardDecision: "not_decided",
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      },
+    );
+    await seedJson(
+      workspaceDir,
+      "memory/module-learning-pipeline-plan-receipts/2026-05-12/discard.json",
+      {
+        boundary: "dev_module_learning_pipeline_plan",
+        targetModule: "portfolio_risk_gates",
+        moduleFamily: "finance_research",
+        status: "stored_only",
+        sourceUrlOrPath: "memory/research-sources/weak.md",
+        actualReadingScope: "Read weak source summary and extraction gap.",
+        sourceRegistryRecordPath: "memory/research-sources/weak.md",
+        moduleSpecificCapabilityRule:
+          "Portfolio risk gates require weights, limits, and drawdown evidence before reuse.",
+        safetyBoundaries: ["research_only", "no_execution_authority", "no_trade_advice"],
+        missingEvidence: [
+          "capability_card_or_retrieval_receipt",
+          "application_validation_receipt",
+          "training_or_eval_absorption_evidence",
+          "fresh_adjacent_application_task",
+        ],
+        keepDownrankDiscardDecision: "discard",
+        supersedesReceiptPath: "memory/module-learning-pipeline-plan-receipts/2026-05-12/old.json",
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      },
+    );
+    const tool = createModuleLearningPipelineReviewTool({ workspaceDir });
+
+    const result = await tool.execute("review", {
+      dateKey: "2026-05-12",
+      writeReview: false,
+    });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        counts: expect.objectContaining({
+          receiptFiles: 1,
+          supersededReceiptFiles: 1,
+          terminalNonAbsorbed: 1,
+          weakModuleLearning: 0,
+          exactMissingProofReceipts: 0,
+        }),
+        terminalNonAbsorbedRows: [
+          expect.objectContaining({
+            keepDownrankDiscardDecision: "discard",
+            status: "stored_only",
+          }),
+        ],
+        nextProofQueue: [],
+      }),
+    );
+  });
+
   it("keeps advanced trader QC module receipts in the same review loop", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-module-learning-review-");
     await seedJson(
