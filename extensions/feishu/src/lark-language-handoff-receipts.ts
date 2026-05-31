@@ -178,6 +178,8 @@ export function renderLarkAnswerComposerNotice(
     `evidenceRequired=${evidence}`,
     `outputContract=${outputContract}`,
     "Visible reply rule: answer the user's real question first in plain language; do not lead with family, route, modules, receipts, JSON, or backend labels unless the user explicitly asks for protocol proof.",
+    "Single-entry/single-exit rule: the user should see one useful answer, not the internal complexity. The first sentence must be a direct conclusion, an exact blocked reason, or the concrete next action; never start with vague caution like 'it depends', 'this is complex', or 'more information is needed' unless the same sentence says what can still be concluded now.",
+    "Usefulness rule: if evidence is missing, still give the best bounded frame: what can be said now, what is missing, and what would change the answer. Do not return a conservative non-answer that only says to be careful.",
     "Internal-detail rule: even when the user asks how learning will become eval/system capability, translate internals into user language. Say source list, reading scope, practice checks, review, and future reuse; do not expose module ids, retrieval/apply labels, receipt or handoff terms, message ids, timeout milliseconds, answer_audit, or eval/training absorption wording.",
     ...renderAnswerAuditPolicyLines(workOrder),
     "Required visible shape for finance/research tasks: concise judgment, key reasons, missing inputs or failedReason, research-only next checklist, and proof path only at the end if useful.",

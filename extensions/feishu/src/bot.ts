@@ -4386,10 +4386,9 @@ function createSurfaceLineCaptureDispatcher(params: {
         if (gateDecision && gateDecision.status === "replaced") {
           params.onVisibleAnswerGateDecision?.(gateDecision);
         }
-        const gatedPayload =
-          gateDecision && gateDecision.status === "replaced"
-            ? { ...visiblePayload, text: gateDecision.text }
-            : visiblePayload;
+        const gatedPayload = gateDecision
+          ? { ...visiblePayload, text: gateDecision.text }
+          : visiblePayload;
         const text = gatedPayload.text?.trim();
         const queued = params.dispatcher.sendFinalReply(gatedPayload);
         if (queued && text) {

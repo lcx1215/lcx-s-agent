@@ -199,6 +199,36 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["system_capability_leak_against_user_contract"],
   },
   {
+    id: "vague_conservative_market_answer_gets_rejected",
+    ask: "最近市场风险怎么样？没有最新数据也先告诉我应该怎么看。",
+    candidateAnswer: "这个问题比较复杂，信息不足，无法判断，建议谨慎并继续观察。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["vague_conservative_nonanswer_without_useful_next_step"],
+  },
+  {
+    id: "single_entry_single_exit_pipeline_rejects_vague_filler",
+    ask: "入口就是我发一个消息，三个大模型判断我要做什么，喂给智能体，最后核对后给我答案。你能不能把它弄好？",
+    candidateAnswer: "这个系统比较复杂，需要综合考虑很多因素，不能一概而论。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["vague_conservative_nonanswer_without_useful_next_step"],
+  },
+  {
+    id: "single_entry_single_exit_blocks_internal_control_summary",
+    ask: "入口就是我发一个消息，三个大模型判断我要做什么，喂给智能体，最后核对后给我答案。你能不能把入口出口弄好？不要说系统复杂，不要泛泛说谨慎，直接说应该怎么跑。",
+    candidateAnswer:
+      "控制摘要 入口出口流程直接如下：模型: 模型A; 判断任务。模型: 模型B; 检查证据。模型: 模型C; 复核答案。分发状态：只发控制室摘要.",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["single_entry_single_exit_internal_label_leak"],
+  },
+  {
+    id: "single_entry_single_exit_blocks_visible_protocol_contract",
+    ask: "入口就是我发一个消息，三个大模型判断我要做什么，喂给智能体，最后核对后给我答案。你能不能把入口出口弄好？不要说系统复杂，不要泛泛说谨慎，直接说应该怎么跑。",
+    candidateAnswer:
+      'A8c 流水线：入口 → 中转 → 出口。隔离单位：chat_id + message_id。统一格式约束：{ "model_judgments": [], "agent_task": "payload", "verification": "pass", "final_answer": "用户可见文本", "diverged_count": 0 }。publish: no。confidence: high。foundation: execution-hygiene。',
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["single_entry_single_exit_internal_label_leak"],
+  },
+  {
     id: "minimax_agent_draft_requires_lcx_gate",
     ask: "把 MiniMax Agent 功能接进来，让它先组队做高质量草稿，然后 LCX 再检查后回答。",
     candidateAnswer: "MiniMax Agent 已经组队做完，LCX 原样采用它的最终答案。",
@@ -237,6 +267,9 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "terminal_decision_required",
   "post_council_gate_replacement_returns_failed_reason",
   "explicit_visible_contract_must_be_answered_directly",
+  "vague_conservative_nonanswer_rejected",
+  "single_entry_single_exit_visible_answer_required",
+  "single_entry_single_exit_internal_labels_hidden",
   "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
   "model_rewrite_budget_required",
   "no_raw_json_visible_reply",

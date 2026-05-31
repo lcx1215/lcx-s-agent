@@ -222,16 +222,97 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("上一条已经说过");
   });
 
+  it("rejects vague conservative non-answers for market boundary asks", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "最近市场风险怎么样？没有最新数据也先告诉我应该怎么看。",
+      answerText: "这个问题比较复杂，信息不足，无法判断，建议谨慎并继续观察。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["vague_conservative_nonanswer_without_useful_next_step"]),
+    );
+    expect(decision.text).toContain("可信度边界");
+    expect(decision.text).toContain("数据清单");
+    expect(decision.text).not.toContain("建议谨慎并继续观察");
+  });
+
+  it("rejects vague conservative non-answers for the single-entry single-exit pipeline", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "入口就是我发一个消息，三个大模型判断我要做什么，喂给智能体，最后核对后给我答案。你能不能把它弄好？",
+      answerText: "这个系统比较复杂，需要综合考虑很多因素，不能一概而论。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["vague_conservative_nonanswer_without_useful_next_step"]),
+    );
+    expect(decision.text).toContain("出口必须简单");
+    expect(decision.text).toContain("入口只做四件事");
+    expect(decision.text).toContain("出口必须先给直接结论");
+    expect(decision.text).not.toContain("不能一概而论");
+  });
+
+  it("rejects single-entry single-exit answers that expose control-room labels", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "批量探针A8：入口就是我发一个消息，三个大模型判断我要做什么，喂给智能体，最后核对后给我答案。你能不能把入口出口弄好？不要说系统复杂，不要泛泛说谨慎，直接说应该怎么跑。",
+      answerText:
+        "控制摘要 入口出口流程直接如下：模型: 模型A; 判断任务。模型: 模型B; 检查证据。模型: 模型C; 复核答案。分发状态：只发控制室摘要.",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["single_entry_single_exit_internal_label_leak"]),
+    );
+    expect(decision.text).toContain("出口必须简单");
+    expect(decision.text).toContain("不能把内部标签甩给你");
+    expect(decision.text).not.toContain("控制摘要");
+    expect(decision.text).not.toContain("分发状态");
+    expect(decision.text).not.toContain("模型A");
+  });
+
+  it("rejects single-entry single-exit answers that expose protocol fields", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "批量探针A8c：入口就是我发一个消息，三个大模型判断我要做什么，喂给智能体，最后核对后给我答案。你能不能把入口出口弄好？不要说系统复杂，不要泛泛说谨慎，不要出现控制摘要/分发状态/模型A模型B，直接说应该怎么跑。",
+      answerText: [
+        "A8c 流水线：入口 → 中转 → 出口",
+        "隔离单位：chat_id + message_id",
+        "统一格式约束（用户不可见）",
+        '{ "model_judgments": [{ "model": "kimi", "family": "ops_audit" }], "agent_task": "payload", "verification": "pass", "final_answer": "用户可见文本", "diverged_count": 0 }',
+        "publish: no（设计稿，非最终实现）",
+        "confidence: high",
+        "foundation: execution-hygiene",
+      ].join("\n"),
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["single_entry_single_exit_internal_label_leak"]),
+    );
+    expect(decision.text).toContain("出口必须简单");
+    expect(decision.text).toContain("不能把内部标签甩给你");
+    expect(decision.text).not.toContain("chat_id");
+    expect(decision.text).not.toContain("model_judgments");
+    expect(decision.text).not.toContain("publish:");
+    expect(decision.text).not.toContain("foundation:");
+  });
+
   it("strips internal distribution tails from otherwise valid visible answers", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage: "最近市场风险怎么样？没有实时数据就只说边界。",
       answerText:
-        "本次回答无实时数据，只能做低可信度框架参考，不构成任何交易建议。\n\n分发状态：只发控制室摘要.",
+        "本次回答无实时数据，只能做低可信度框架参考，不构成任何交易建议。\n\n分发状态：只发控制室摘要.\npublish: yes\nconfidence: high\nfoundation: execution-hygiene",
     });
 
     expect(decision.status).toBe("adopted");
     expect(decision.text).toBe("本次回答无实时数据，只能做低可信度框架参考，不构成任何交易建议。");
     expect(decision.text).not.toContain("分发状态");
+    expect(decision.text).not.toContain("publish:");
+    expect(decision.text).not.toContain("confidence:");
+    expect(decision.text).not.toContain("foundation:");
   });
 
   it("does not apply retail position filters to generic finance education", () => {

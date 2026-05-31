@@ -47,17 +47,29 @@ const NO_SYSTEM_CAPABILITY_CONTRACT_ASK_PATTERN =
 const INTERNAL_VISIBLE_DETAIL_PATTERN =
   /^\s*\{|\b(?:control_room|learning_command|technical_daily|fundamental_research|knowledge_maintenance|ops_audit|answer_audit|bounded_answer_review|handoff|receipt path|message id|messageId|correlationId|deliveryMessageId|retrieval\/apply|eval\/training absorption)\b|om_[a-z0-9_]{12,}|分发状态/u;
 
+const ANSWER_PIPELINE_INTERNAL_VISIBLE_PATTERN =
+  /\b(?:control_room|bounded_answer_review|answer_audit|work_order|output_contract|chat_id|message_id|model_judgments|agent_task|verification_status|verification|final_answer|diverged_count|intent_family|suggested_action|dominant_family|publish|confidence|foundation)\b|控制摘要|分发状态|工作面|模型\s*[:：]\s*模型[ABCＡＢＣ]|模型[ABCＡＢＣ]/u;
+
 const SYSTEM_CAPABILITY_VISIBLE_PATTERN =
   /\b(?:system has|system does not have|system is connected|real[-\s]?time market data source|market data API|broker feed|data subscription)\b|系统(?:没有|未|已|可以|无法|不能).{0,24}(?:连接|提供|调用|访问|实时|行情|数据源|能力)|行情\s*API|broker\s*feed|实时数据订阅/u;
 
 const MARKET_DATA_BOUNDARY_ASK_PATTERN =
   /\b(?:latest|current|real[-\s]?time|live quotes?|market data|VIX|DXY|HY spread|10Y)\b|最新行情|实时行情|当前行情|市场风险|可信度边界|数据清单|VIX|DXY|HY\s*spread|10Y|十年期|高收益债利差/u;
 
+const ANSWER_PIPELINE_ASK_PATTERN =
+  /(?:入口|出口|发.{0,8}消息|收到.{0,8}消息|智能体最后|最后.{0,8}答案|给我.{0,8}答案|答案.{0,8}(?:保守|模棱两可|废话|泛泛)|保守|模棱两可|废话|屁话|弄好|做好)/u;
+
+const VAGUE_CONSERVATIVE_NONANSWER_PATTERN =
+  /(?:这个问题)?(?:比较|很)?复杂|不能一概而论|取决于|需要更多(?:信息|背景|上下文)|信息不足|数据不足|无法(?:判断|确定|给出)|不能(?:判断|确定|给出)|建议(?:谨慎|进一步观察)|需要综合考虑/u;
+
+const USEFUL_VISIBLE_NEXT_STEP_PATTERN =
+  /(?:结论|直接说|先说|现在能说|我能说|可以先|下一步|需要补|缺(?:的)?(?:数据|信息)|数据清单|证据|来源|时间戳|失效条件|风险门|检查|按.{0,10}顺序|1[.、]|第一|第二)/u;
+
 const MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN =
   /\b(?:evidence order|source|timestamp|local gate|cannot directly trust|not final authority|arbitration)\b|证据排序|一手来源|时间戳|本地\s*gate|不能直接采信|不能按模型名|候选意见|最终权威|本地把关|裁决/u;
 
 const VISIBLE_INTERNAL_TAIL_LINE_PATTERN =
-  /^\s*(?:分发状态|本次识别|识别理由|原始问题|边界)\s*[:：].*$/gmu;
+  /^\s*(?:分发状态|本次识别|识别理由|原始问题|边界|publish|confidence|foundation)\s*[:：].*$/gmu;
 
 function mentionedKnownTickers(text: string): string[] {
   const matches = new Set<string>();
@@ -113,6 +125,18 @@ function looksLikeMarketDataBoundaryAsk(userMessage: string): boolean {
   return MARKET_DATA_BOUNDARY_ASK_PATTERN.test(userMessage);
 }
 
+function looksLikeAnswerPipelineAsk(userMessage: string): boolean {
+  return ANSWER_PIPELINE_ASK_PATTERN.test(userMessage);
+}
+
+function looksLikeVagueConservativeNonAnswer(answerText: string): boolean {
+  const compact = answerText.trim();
+  return (
+    VAGUE_CONSERVATIVE_NONANSWER_PATTERN.test(compact) &&
+    !USEFUL_VISIBLE_NEXT_STEP_PATTERN.test(compact)
+  );
+}
+
 export function findVisibleAnswerAdoptionGateFailures(params: {
   userMessage: string;
   answerText: string;
@@ -154,6 +178,22 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
     SYSTEM_CAPABILITY_VISIBLE_PATTERN.test(params.answerText)
   ) {
     failures.push("system_capability_leak_against_user_contract");
+  }
+
+  if (
+    (looksLikeMarketDataBoundaryAsk(params.userMessage) ||
+      looksLikeAnswerPipelineAsk(params.userMessage) ||
+      explicitVisibleContract) &&
+    looksLikeVagueConservativeNonAnswer(params.answerText)
+  ) {
+    failures.push("vague_conservative_nonanswer_without_useful_next_step");
+  }
+
+  if (
+    looksLikeAnswerPipelineAsk(params.userMessage) &&
+    ANSWER_PIPELINE_INTERNAL_VISIBLE_PATTERN.test(params.answerText)
+  ) {
+    failures.push("single_entry_single_exit_internal_label_leak");
   }
 
   if (looksLikeModelDisagreementArbitrationAsk(params.userMessage)) {
@@ -271,9 +311,33 @@ function renderMarketDataBoundaryReply(userMessage: string): string {
   ].join("\n\n");
 }
 
+function renderAnswerPipelineContractReply(userMessage: string): string {
+  if (!prefersChinese(userMessage)) {
+    return [
+      "Yes, the product path should be simple even if the internals are complex.",
+      "Single entry: the user's message is classified into intent, evidence need, risk level, and task family.",
+      "Internal work: provider models and local brain can draft, challenge, retrieve memory, and check data, but none of them is final authority by itself.",
+      "Single exit: the final visible answer must start with the direct answer or exact blocked reason, then give the few key reasons and the concrete next step.",
+      "Quality gate: reject answers that are only capability intros, vague caution, prior-answer deferrals, internal labels, or fake certainty.",
+    ].join("\n\n");
+  }
+
+  return [
+    "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。",
+    "入口只做四件事：判断你要什么、需要什么证据、风险等级多高、该走哪个任务族。",
+    "内部可以让 Kimi、MiniMax、DeepSeek、本地大脑、记忆和工具一起出草稿/反方/证据缺口，但任何一个都不能直接当最终答案。",
+    "出口必须先给直接结论或明确阻塞原因，再给关键理由和下一步；不能先讲系统能力，不能泛泛说谨慎，不能把内部标签甩给你。",
+    "质量关要拦掉五类废答案：能力介绍、模棱两可、引用上一条、内部回执/路由泄漏、没有证据却装确定。",
+  ].join("\n\n");
+}
+
 function renderVisibleContractFailureReply(userMessage: string): string {
   if (looksLikeMarketDataBoundaryAsk(userMessage)) {
     return renderMarketDataBoundaryReply(userMessage);
+  }
+
+  if (looksLikeAnswerPipelineAsk(userMessage)) {
+    return renderAnswerPipelineContractReply(userMessage);
   }
 
   if (!prefersChinese(userMessage)) {
@@ -293,7 +357,9 @@ function renderVisibleContractFailureReply(userMessage: string): string {
 
 function stripVisibleInternalTail(text: string): string {
   return text
+    .replace(/^\s*控制摘要\s*/u, "")
     .replace(VISIBLE_INTERNAL_TAIL_LINE_PATTERN, "")
+    .replace(/\s*分发状态\s*[:：][^\n。.]*(?:[。.]|$)/gu, "")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
 }
@@ -337,6 +403,15 @@ export function applyVisibleAnswerAdoptionGate(params: {
     return { status: "adopted", text, failedReasons };
   }
 
+  if (looksLikeAnswerPipelineAsk(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderAnswerPipelineContractReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
   if (looksLikeModelDisagreementArbitrationAsk(params.userMessage)) {
     return {
       status: "replaced",
@@ -365,6 +440,7 @@ export function applyVisibleAnswerAdoptionGate(params: {
         "explicit_visible_contract_deferred_to_prior_answer",
         "internal_visible_detail_leak_against_user_contract",
         "system_capability_leak_against_user_contract",
+        "vague_conservative_nonanswer_without_useful_next_step",
       ].includes(reason),
     )
   ) {

@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 19, failed: 0, total: 19 });
+    expect(payload.summary).toEqual({ passed: 23, failed: 0, total: 23 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -43,6 +43,9 @@ describe("LCX commercial answer pipeline", () => {
         "qwen_challenge_patch_only",
         "post_council_gate_replacement_returns_failed_reason",
         "explicit_visible_contract_must_be_answered_directly",
+        "vague_conservative_nonanswer_rejected",
+        "single_entry_single_exit_visible_answer_required",
+        "single_entry_single_exit_internal_labels_hidden",
         "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
       ]),
     );
@@ -81,6 +84,30 @@ describe("LCX commercial answer pipeline", () => {
           scenarioId: "market_data_boundary_blocks_system_capability_detail",
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining(["system_capability_leak_against_user_contract"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "vague_conservative_market_answer_gets_rejected",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "vague_conservative_nonanswer_without_useful_next_step",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "single_entry_single_exit_pipeline_rejects_vague_filler",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "vague_conservative_nonanswer_without_useful_next_step",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "single_entry_single_exit_blocks_internal_control_summary",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["single_entry_single_exit_internal_label_leak"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "single_entry_single_exit_blocks_visible_protocol_contract",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["single_entry_single_exit_internal_label_leak"]),
         }),
         expect.objectContaining({
           scenarioId: "minimax_agent_draft_requires_lcx_gate",

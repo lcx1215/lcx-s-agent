@@ -2372,12 +2372,12 @@ describe("classified publish routing", () => {
     });
 
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("这类问题不能直接给交易动作结论"),
+      text: expect.stringContaining("这是研究框架，不是交易指令"),
     });
     const visibleText = (
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0].text;
-    expect(visibleText).toContain("研究检查");
+    expect(visibleText).toContain("风险检查");
     expect(visibleText).not.toContain("均价策略");
     expect(visibleText).not.toContain("止损策略");
     expect(visibleText).not.toContain("抄底");
@@ -2541,7 +2541,7 @@ confidence: low
     await dispatchMessage({ cfg, event });
 
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: "今天先看风险框架，不追高。\n\n分发状态：已发布 技术面分片; 保留为草稿 基本面分片.",
+      text: "今天先看风险框架，不追高。",
     });
     expect(mockSendMessageFeishu).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2672,7 +2672,7 @@ confidence: high
     });
 
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: "主回复仍然应该落在 control room。\n\n分发状态：已发布 技术面分片.",
+      text: "主回复仍然应该落在 control room。",
     });
     expect(mockRecordOperationalAnomaly).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4141,9 +4141,9 @@ confidence: high
         text: expect.stringContaining("今天主看风险预算、财报跟进和系统健康。"),
       }),
     );
-    expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith(
+    expect(baseDispatcher.sendFinalReply).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("分发状态：已抑制 低信号技术面分片."),
+        text: expect.stringContaining("分发状态："),
       }),
     );
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith(
@@ -5337,7 +5337,7 @@ Monitor only.
     await dispatchMessage({ cfg, event });
 
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: "今天先别追，先看结构。\n\n分发状态：已抑制 低信号技术面分片.",
+      text: "今天先别追，先看结构。",
     });
     expect(mockSendMessageFeishu).not.toHaveBeenCalledWith(
       expect.objectContaining({
@@ -5471,7 +5471,7 @@ QQQ 对长端利率更敏感，先看 10Y 与风险偏好是否继续共振走�
     );
     expect(techPublishes).toHaveLength(1);
     expect(baseDispatcher.sendFinalReply).toHaveBeenLastCalledWith({
-      text: "今天先看利率和风险偏好。\n\n分发状态：已抑制 重复技术面分片.",
+      text: "今天先看利率和风险偏好。",
     });
   });
 });

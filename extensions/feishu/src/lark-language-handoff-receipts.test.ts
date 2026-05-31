@@ -276,6 +276,10 @@ describe("lark language handoff receipts", () => {
     expect(notice).toContain("Lark answer composer contract");
     expect(notice).toContain("answer the user's real question first in plain language");
     expect(notice).toContain("do not lead with family, route, modules, receipts");
+    expect(notice).toContain("Single-entry/single-exit rule");
+    expect(notice).toContain("The first sentence must be a direct conclusion");
+    expect(notice).toContain("Usefulness rule");
+    expect(notice).toContain("what can be said now, what is missing");
     expect(notice).toContain("translate internals into user language");
     expect(notice).toContain("do not expose module ids");
     expect(notice).toContain("message ids, timeout milliseconds");
