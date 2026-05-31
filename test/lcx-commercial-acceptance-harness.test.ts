@@ -231,6 +231,36 @@ describe("lcx-commercial-acceptance-harness", () => {
     expect(result.blockedGates).toContain("post_migration_lark_canary_missing");
   });
 
+  it("falls back to the canonical binding owner when external-channel status is unavailable", () => {
+    const inputs = baseInputs();
+    inputs.externalChannelStatus = {
+      ok: false,
+      owner: "lcx-external-channel-status",
+      command: "node --import tsx scripts/dev/lcx-external-channel-status.ts --json",
+      error: "legacy status probe unavailable",
+    };
+    inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
+      externalChannelBinding: {
+        status: "channel_runtime_probe_ok_user_visible_observed",
+        userVisibleObserved: true,
+        missingProof: [],
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.failedGates).not.toContain("lcx-external-channel-status_owner_unavailable");
+    expect(result.blockedGates).not.toContain("external_channel_not_bound");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "user_visible_observed",
+          status: "passed",
+        }),
+      ]),
+    );
+  });
+
   it("blocks release when the Lark external channel is not bound", () => {
     const inputs = baseInputs();
     inputs.externalChannelStatus = owner("lcx-external-channel-status", {

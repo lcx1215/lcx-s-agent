@@ -295,19 +295,21 @@ function externalChannelStatusGate(
   snapshot: OwnerSnapshot | undefined,
   bindingSnapshot: OwnerSnapshot | undefined,
 ): AcceptanceGate {
-  if (!snapshot?.payload) {
+  const binding = recordValue(bindingSnapshot?.payload?.externalChannelBinding);
+  const bindingStatus = stringValue(binding?.status);
+  const bindingChannelBound =
+    bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
+    bindingStatus === "channel_runtime_probe_ok_user_visible_observed";
+  const bindingUserVisibleObserved = booleanValue(binding?.userVisibleObserved) === true;
+  if (!snapshot?.payload && !bindingChannelBound) {
     return ownerUnavailableGate("lcx-external-channel-status", snapshot);
   }
-  const operatorStatus = recordValue(snapshot.payload.operatorStatus);
-  const externalChannelStatus = recordValue(snapshot.payload.externalChannelStatus);
-  const binding = recordValue(bindingSnapshot?.payload?.externalChannelBinding);
-  const visibleProof = recordValue(snapshot.payload.visibleProof);
-  const devLiveDrift = recordValue(snapshot.payload.devLiveDrift);
+  const operatorStatus = recordValue(snapshot?.payload?.operatorStatus);
+  const externalChannelStatus = recordValue(snapshot?.payload?.externalChannelStatus);
+  const visibleProof = recordValue(snapshot?.payload?.visibleProof);
+  const devLiveDrift = recordValue(snapshot?.payload?.devLiveDrift);
   const legacyLiveRuntimeUpdated = booleanValue(operatorStatus?.liveRuntimeUpdated) === true;
   const legacyLiveUserSeen = booleanValue(operatorStatus?.liveUserSeen) === true;
-  const bindingChannelBound =
-    stringValue(binding?.status) === "channel_runtime_probe_ok_user_visible_pending";
-  const bindingUserVisibleObserved = booleanValue(binding?.userVisibleObserved) === true;
   const externalChannelBound =
     bindingChannelBound ||
     booleanValue(externalChannelStatus?.externalChannelBound) === true ||
