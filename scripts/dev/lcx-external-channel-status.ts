@@ -37,6 +37,44 @@ function externalChannelNextHumanStep(params: {
   return "inspect_lcx_external_channel_binding_owner";
 }
 
+function externalChannelVisibleProof(legacyVisibleProof: Record<string, unknown> | undefined) {
+  if (!legacyVisibleProof) {
+    return undefined;
+  }
+  return {
+    ...legacyVisibleProof,
+    replyFlowProbeCommand:
+      "node --import tsx scripts/dev/lcx-external-channel-status.ts --json --with-probe",
+    legacyReplyFlowProbeCommand: legacyVisibleProof.replyFlowProbeCommand,
+  };
+}
+
+function externalChannelDriftStatus(params: {
+  legacyDevLiveDrift: Record<string, unknown> | undefined;
+  externalChannelBound: boolean;
+}) {
+  if (!params.legacyDevLiveDrift) {
+    return undefined;
+  }
+  if (!params.externalChannelBound) {
+    return {
+      ...params.legacyDevLiveDrift,
+      legacyLiveMatchesCurrentDev: params.legacyDevLiveDrift.liveMatchesCurrentDev,
+      legacyLiveNeedsPromotion: params.legacyDevLiveDrift.liveNeedsPromotion,
+      legacyDevLiveDrift: params.legacyDevLiveDrift.devLiveDrift,
+    };
+  }
+  return {
+    ...params.legacyDevLiveDrift,
+    liveMatchesCurrentDev: true,
+    liveNeedsPromotion: false,
+    devLiveDrift: "external_channel_bound_legacy_commit_diff_ignored",
+    legacyLiveMatchesCurrentDev: params.legacyDevLiveDrift.liveMatchesCurrentDev,
+    legacyLiveNeedsPromotion: params.legacyDevLiveDrift.liveNeedsPromotion,
+    legacyDevLiveDrift: params.legacyDevLiveDrift.devLiveDrift,
+  };
+}
+
 function usage(): never {
   throw new Error(
     [
@@ -91,6 +129,8 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const bindingPayload = parseJsonObjectFromOutput(bindingResult.stdout);
     const binding = recordValue(bindingPayload.externalChannelBinding);
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
+    const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
+    const legacyDevLiveDrift = recordValue(legacy.devLiveDrift);
     const bindingStatus = binding?.status;
     const bindingProvedChannelBound =
       bindingStatus === "channel_runtime_probe_ok_user_visible_pending";
@@ -123,12 +163,19 @@ export async function runExternalChannelStatus(options: CliOptions) {
       conceptStatus: "legacy_promote_live_status_wrapped_by_external_channel_status",
       externalChannelStatus,
       externalChannelBinding: binding,
+      devLiveDrift: externalChannelDriftStatus({
+        legacyDevLiveDrift,
+        externalChannelBound,
+      }),
+      visibleProof,
       legacyPromoteLiveStatus: {
         owner: "lcx-promote-live",
         boundary: legacy.boundary ?? "dev_external_channel_status_only",
         status: legacy.status,
         liveStatus: legacy.liveStatus,
         operatorStatus: legacy.operatorStatus,
+        devLiveDrift: legacyDevLiveDrift,
+        visibleProof: legacy.visibleProof,
       },
       liveTouched: false,
       providerConfigTouched: false,

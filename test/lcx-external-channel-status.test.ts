@@ -49,10 +49,34 @@ describe("lcx-external-channel-status", () => {
         boundary: "dev_external_channel_binding_operator_only",
       }),
     );
+    expect(payload.visibleProof).toEqual(
+      expect.objectContaining({
+        replyFlowProbeCommand:
+          "node --import tsx scripts/dev/lcx-external-channel-status.ts --json --with-probe",
+        legacyReplyFlowProbeCommand: expect.stringContaining("lcx-promote-live.ts"),
+      }),
+    );
+    const externalChannelStatus = payload.externalChannelStatus as {
+      externalChannelBound?: boolean;
+    };
+    const devLiveDrift = payload.devLiveDrift as
+      | { devLiveDrift?: unknown; legacyDevLiveDrift?: unknown; liveNeedsPromotion?: unknown }
+      | undefined;
+    if (externalChannelStatus.externalChannelBound === true) {
+      expect(devLiveDrift).toEqual(
+        expect.objectContaining({
+          devLiveDrift: "external_channel_bound_legacy_commit_diff_ignored",
+          liveNeedsPromotion: false,
+          legacyDevLiveDrift: expect.any(String),
+        }),
+      );
+    }
     expect(payload.legacyPromoteLiveStatus).toEqual(
       expect.objectContaining({
         owner: "lcx-promote-live",
         boundary: "dev_external_channel_status_only",
+        devLiveDrift: expect.any(Object),
+        visibleProof: expect.any(Object),
       }),
     );
   });
