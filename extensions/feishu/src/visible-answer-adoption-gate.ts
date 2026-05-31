@@ -6,7 +6,10 @@ export type VisibleAnswerAdoptionGateDecision = {
 };
 
 const DIRECT_POSITION_ASK_PATTERN =
-  /\b(?:buy|sell|add|reduce|hold|wait|position|sizing|average down|cut loss|stop loss|recover quickly|make.*back|call|put|margin|leverage|liquidation)\b|买|卖|加仓|减仓|持有|等待|仓位|持仓|补仓|摊低|摊平|割肉|止损|止盈|回本|快点回本|期权|财报|赌|梭哈|满仓|杠杆|保证金|爆仓/u;
+  /\b(?:should\s+(?:i|we)|do\s+(?:i|we)|can\s+(?:i|we)|recommend|buy|sell|add|reduce|average down|cut loss|stop loss|recover quickly|make.*back|call|put|margin|leverage|liquidation)\b|买|卖|加仓|减仓|补仓|摊低|摊平|割肉|止损|止盈|回本|快点回本|赌|梭哈|满仓|杠杆|保证金|爆仓|要不要|该不该|应不应该|能不能|可不可以|到底应该|直接告诉我/u;
+
+const HOLD_OR_WAIT_ACTION_ASK_PATTERN =
+  /(?:要不要|该不该|应不应该|到底应该|建议|可以|直接告诉我).{0,16}(持有|继续拿着|继续拿|等待)/u;
 
 const ACTION_STANCE_HEADING_PATTERN =
   /\b(?:current stance|action triggers)\b|##\s*(?:Current Stance|Action Triggers)\b/iu;
@@ -21,7 +24,10 @@ const CHINESE_ACTION_FRAMEWORK_PATTERN =
   /均价策略|止损策略|减亏两条路|抄底|砍仓|摊低成本|快点回本|赌财报|梭哈|满仓|加保证金|爆仓自救/u;
 
 function looksLikeDirectPositionRiskAsk(userMessage: string): boolean {
-  return DIRECT_POSITION_ASK_PATTERN.test(userMessage);
+  return (
+    DIRECT_POSITION_ASK_PATTERN.test(userMessage) ||
+    HOLD_OR_WAIT_ACTION_ASK_PATTERN.test(userMessage)
+  );
 }
 
 export function findVisibleAnswerAdoptionGateFailures(params: {

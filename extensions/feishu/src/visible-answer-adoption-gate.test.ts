@@ -84,6 +84,24 @@ describe("visible answer adoption gate", () => {
     });
   });
 
+  it("adopts research-only portfolio risk frameworks for current holdings", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "帮我分析一下：如果我现在持有 QQQ、TLT、NVDA，接下来一周应该重点看哪些风险？不要给交易指令，只给研究框架、需要的数据和失效条件。",
+      answerText: [
+        "先说清楚：研究框架不是交易建议，以下全部是观察点，不是操作指令。",
+        "需要补充三个标的各自权重、风险预算、持仓时间窗口、成本价和数据来源时间戳。",
+        "重点看 NVDA 财报、QQQ 科技集中度、TLT 对利率预期的敏感性，以及这些风险是否同向放大。",
+        "如果美联储突然转鸽或 NVDA 财报指引超预期，上述框架需要重新评估。",
+      ].join("\n\n"),
+    });
+
+    expect(decision.status).toBe("adopted");
+    expect(decision.failedReasons).toEqual([]);
+    expect(decision.text).toContain("QQQ 科技集中度");
+    expect(decision.text).toContain("TLT 对利率预期");
+  });
+
   it("does not apply retail position filters to generic finance education", () => {
     expect(
       findVisibleAnswerAdoptionGateFailures({
