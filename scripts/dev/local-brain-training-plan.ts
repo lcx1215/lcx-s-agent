@@ -222,14 +222,16 @@ type ExternalChannelBindingPlanSnapshot = {
     | "deferred_guard_adapter_mismatch"
     | "deferred_latest_promotion_stale"
     | "ready_for_apply"
-    | "channel_runtime_probe_ok_user_visible_pending";
+    | "channel_runtime_probe_ok_user_visible_pending"
+    | "channel_runtime_probe_ok_user_visible_observed";
   action:
     | "produce_clean_selected_adapter_before_external_channel_binding"
     | "wait_for_current_eval_then_bind_lark_channel_to_selected_clean_adapter"
     | "wait_for_active_guard_then_restart_with_selected_clean_adapter"
     | "run_promotion_audit_then_bind_lark_channel_to_selected_clean_adapter"
     | "bind_lark_external_channel_to_selected_clean_adapter_and_collect_user_visible_proof"
-    | "keep_waiting_for_real_lark_user_visible_proof";
+    | "keep_waiting_for_real_lark_user_visible_proof"
+    | "none_external_channel_user_visible_observed";
   missingProof: string[];
   successCondition: string[];
   statusCommand: string;
@@ -1302,8 +1304,11 @@ function applyExternalChannelOwnerSnapshot(params: {
   const ownerBinding = recordValue(params.ownerSnapshot?.externalChannelBinding);
   const ownerStatus = stringField(ownerBinding, "status");
   const ownerSelectedCleanAdapter = stringField(ownerBinding, "selectedCleanAdapter");
+  const ownerStatusIsRuntimeProof =
+    ownerStatus === "channel_runtime_probe_ok_user_visible_pending" ||
+    ownerStatus === "channel_runtime_probe_ok_user_visible_observed";
   if (
-    ownerStatus !== "channel_runtime_probe_ok_user_visible_pending" ||
+    !ownerStatusIsRuntimeProof ||
     !params.plan.selectedCleanAdapter ||
     ownerSelectedCleanAdapter !== params.plan.selectedCleanAdapter ||
     params.plan.activeTrainingOrEval
@@ -1311,12 +1316,17 @@ function applyExternalChannelOwnerSnapshot(params: {
     return params.plan;
   }
   const missingProof = stringArray(ownerBinding?.missingProof);
+  const userVisibleObserved = ownerBinding?.userVisibleObserved === true;
   return {
     ...params.plan,
-    status: "channel_runtime_probe_ok_user_visible_pending",
-    action: "keep_waiting_for_real_lark_user_visible_proof",
+    status: userVisibleObserved
+      ? "channel_runtime_probe_ok_user_visible_observed"
+      : "channel_runtime_probe_ok_user_visible_pending",
+    action: userVisibleObserved
+      ? "none_external_channel_user_visible_observed"
+      : "keep_waiting_for_real_lark_user_visible_proof",
     missingProof,
-    userVisibleObserved: ownerBinding?.userVisibleObserved === true,
+    userVisibleObserved,
     ownerSnapshotPath: DEFAULT_EXTERNAL_CHANNEL_BINDING_SNAPSHOT_PATH,
     ownerSnapshotGeneratedAt: stringField(params.ownerSnapshot, "generatedAt"),
     ownerSnapshotStatus: ownerStatus,
@@ -2265,11 +2275,13 @@ function buildEvolutionAccelerationQueue(params: {
     status:
       params.externalChannelBinding.status === "ready_for_apply"
         ? "ready_when_idle"
-        : params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
-          ? "blocked_by_missing_proof"
-          : params.externalChannelBinding.activeTrainingOrEval
-            ? "blocked_by_active_training"
-            : "blocked_by_missing_proof",
+        : params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_observed"
+          ? "complete"
+          : params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
+            ? "blocked_by_missing_proof"
+            : params.externalChannelBinding.activeTrainingOrEval
+              ? "blocked_by_active_training"
+              : "blocked_by_missing_proof",
     executionClass: "idle_only_read_only_audit",
     reason:
       "Make Lark, as the owner-agent external communication channel, consume the single selected clean local-brain adapter after eval/MLX is idle and user-visible proof can be collected.",
@@ -2282,11 +2294,13 @@ function buildEvolutionAccelerationQueue(params: {
     blockedByDecisionIds:
       params.externalChannelBinding.status === "ready_for_apply"
         ? []
-        : params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
-          ? ["post_migration_lark_canary_missing"]
-          : params.externalChannelBinding.activeTrainingOrEval
-            ? ["training_already_active", "lark_external_channel_binding_deferred"]
-            : ["lark_external_channel_binding_deferred"],
+        : params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_observed"
+          ? []
+          : params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
+            ? ["post_migration_lark_canary_missing"]
+            : params.externalChannelBinding.activeTrainingOrEval
+              ? ["training_already_active", "lark_external_channel_binding_deferred"]
+              : ["lark_external_channel_binding_deferred"],
     notTouched: commonNotTouched,
   });
 

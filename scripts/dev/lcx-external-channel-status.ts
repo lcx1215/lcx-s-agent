@@ -151,12 +151,19 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const legacyDevLiveDrift = recordValue(legacy.devLiveDrift);
     const bindingStatus = binding?.status;
     const bindingProvedChannelBound =
-      bindingStatus === "channel_runtime_probe_ok_user_visible_pending";
+      bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
+      bindingStatus === "channel_runtime_probe_ok_user_visible_observed";
     const bindingUserVisibleObserved = binding?.userVisibleObserved === true;
     const externalChannelBound =
       bindingProvedChannelBound || legacyExternalChannelStatus?.externalChannelBound === true;
+    const visibleProofUserVisibleObserved =
+      externalChannelBound &&
+      visibleProof?.status === "live_visible_fixed" &&
+      visibleProof.acceptanceMatched === true;
     const userVisibleObserved =
-      bindingUserVisibleObserved || legacyExternalChannelStatus?.userVisibleObserved === true;
+      bindingUserVisibleObserved ||
+      legacyExternalChannelStatus?.userVisibleObserved === true ||
+      visibleProofUserVisibleObserved;
     const externalChannelStatus = {
       ...legacyExternalChannelStatus,
       externalChannelBound,
@@ -167,7 +174,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
         bindingStatus,
       }),
       canonicalBindingStatus: bindingStatus,
-      canonicalBindingMissingProof: binding?.missingProof,
+      canonicalBindingMissingProof: userVisibleObserved ? [] : binding?.missingProof,
       canonicalBindingSelectedCleanAdapter: binding?.selectedCleanAdapter,
       canonicalBindingOwner: "lcx-external-channel-binding",
     };

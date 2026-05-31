@@ -733,11 +733,31 @@ function readLiveVisibleProof(params: {
   const inbound = records.filter((record) => record.stage === "inbound");
   const outboundResult = records.filter((record) => record.stage === "outbound_result");
   const failedOutbound = outboundResult.filter((record) => record.deliveryStatus !== "success");
-  const acceptanceMatched = outboundResult.some(
-    (record) =>
-      typeof record.textPreview === "string" &&
-      record.textPreview.includes(params.acceptancePhrase),
+  const acceptanceInboundKeys = new Set(
+    inbound
+      .filter(
+        (record) =>
+          typeof record.textPreview === "string" &&
+          record.textPreview.includes(params.acceptancePhrase),
+      )
+      .flatMap((record) =>
+        [record.correlationId, record.messageId].filter(
+          (value): value is string => typeof value === "string" && value.length > 0,
+        ),
+      ),
   );
+  const acceptanceMatched = outboundResult.some((record) => {
+    if (record.deliveryStatus !== "success") {
+      return false;
+    }
+    const textPreview = typeof record.textPreview === "string" ? record.textPreview : "";
+    if (textPreview.includes(params.acceptancePhrase)) {
+      return true;
+    }
+    return [record.correlationId, record.messageId].some(
+      (value) => typeof value === "string" && acceptanceInboundKeys.has(value),
+    );
+  });
   const latestInbound = inbound.at(-1);
   const latestOutboundResult = outboundResult.at(-1);
   const status =

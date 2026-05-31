@@ -23,6 +23,7 @@ type BindingDecision = {
     | "deferred_training_plan_not_ready"
     | "ready_for_apply"
     | "applied_runtime_probe_ok"
+    | "applied_runtime_user_visible_observed"
     | "applied_runtime_probe_failed";
   action:
     | "fix_training_plan_owner_first"
@@ -30,12 +31,13 @@ type BindingDecision = {
     | "wait_for_training_plan_live_binding_ready"
     | "run_apply_when_operator_allows_live_runtime_restart"
     | "keep_waiting_for_real_lark_user_seen_proof"
+    | "no_action_external_channel_user_visible_observed"
     | "debug_live_runtime_probe_before_claiming_bound";
   selectedCleanAdapter?: string;
   missingProof: string[];
   heavyActive: boolean;
   activeProcessSummary: Array<{ pid?: number; role?: string; elapsed?: string }>;
-  liveUserSeen: false;
+  liveUserSeen: boolean;
   liveTouched: boolean;
   providerConfigTouched: false;
   protectedMemoryTouched: false;
@@ -53,6 +55,7 @@ type ExternalChannelBindingSummary = {
     | "deferred_training_plan_not_ready"
     | "ready_for_channel_bind_apply"
     | "channel_runtime_probe_ok_user_visible_pending"
+    | "channel_runtime_probe_ok_user_visible_observed"
     | "channel_runtime_probe_failed";
   action:
     | "fix_training_plan_owner_first"
@@ -60,13 +63,14 @@ type ExternalChannelBindingSummary = {
     | "wait_for_training_plan_external_channel_ready"
     | "run_apply_when_operator_allows_lark_channel_restart"
     | "keep_waiting_for_real_lark_user_visible_proof"
+    | "none_external_channel_user_visible_observed"
     | "debug_lark_channel_probe_before_claiming_user_visible";
   missingProof: string[];
-  userVisibleObserved: false;
+  userVisibleObserved: boolean;
   legacyLiveCompatibility: {
     legacyScript: "lcx-live-lark-brain-binding";
     legacyDecisionStatus: BindingDecision["status"];
-    legacyLiveUserSeen: false;
+    legacyLiveUserSeen: boolean;
   };
 };
 
@@ -197,10 +201,15 @@ function requireRuntimeApply(decision: BindingDecision): BindingDecision {
   };
 }
 
+function removeRuntimeProofNames(missingProof: string[]): string[] {
+  return missingProof.filter((entry) => !RUNTIME_PROOF_NAMES.includes(entry));
+}
+
 export function buildExternalChannelBindingDecision(params: {
   trainingPlan?: JsonRecord;
   apply: boolean;
   larkLoopDiagnoseOk?: boolean;
+  userVisibleObserved?: boolean;
   liveTouched: boolean;
 }): BindingDecision {
   const binding =
@@ -213,6 +222,14 @@ export function buildExternalChannelBindingDecision(params: {
   const selectedCleanAdapter = stringValue(binding?.selectedCleanAdapter);
   const missingProof = stringArray(binding?.missingProof);
   const bindingStatus = stringValue(binding?.status);
+  const userVisibleObserved = params.userVisibleObserved === true;
+  const missingAfterUserVisibleProof = missingProof.filter(
+    (entry) =>
+      externalProofName(entry) !== "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+  );
+  const missingAfterRuntimeAndUserVisibleProof = removeRuntimeProofNames(
+    missingAfterUserVisibleProof,
+  );
 
   if (!params.trainingPlan || !binding) {
     return {
@@ -243,7 +260,24 @@ export function buildExternalChannelBindingDecision(params: {
     };
   }
 
-  if (bindingStatus === "channel_runtime_probe_ok_user_visible_pending") {
+  if (
+    bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
+    bindingStatus === "channel_runtime_probe_ok_user_visible_observed"
+  ) {
+    if (userVisibleObserved) {
+      return {
+        status: "applied_runtime_user_visible_observed",
+        action: "no_action_external_channel_user_visible_observed",
+        selectedCleanAdapter,
+        missingProof: missingAfterRuntimeAndUserVisibleProof,
+        heavyActive,
+        activeProcessSummary: active,
+        liveUserSeen: true,
+        liveTouched: params.liveTouched,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+      };
+    }
     return {
       status: "applied_runtime_probe_ok",
       action: "keep_waiting_for_real_lark_user_seen_proof",
@@ -288,18 +322,29 @@ export function buildExternalChannelBindingDecision(params: {
     };
   }
 
+  const runtimeProbeOk = params.larkLoopDiagnoseOk === true;
   return {
-    status: params.larkLoopDiagnoseOk ? "applied_runtime_probe_ok" : "applied_runtime_probe_failed",
-    action: params.larkLoopDiagnoseOk
-      ? "keep_waiting_for_real_lark_user_seen_proof"
-      : "debug_live_runtime_probe_before_claiming_bound",
+    status:
+      runtimeProbeOk && userVisibleObserved
+        ? "applied_runtime_user_visible_observed"
+        : runtimeProbeOk
+          ? "applied_runtime_probe_ok"
+          : "applied_runtime_probe_failed",
+    action:
+      runtimeProbeOk && userVisibleObserved
+        ? "no_action_external_channel_user_visible_observed"
+        : runtimeProbeOk
+          ? "keep_waiting_for_real_lark_user_seen_proof"
+          : "debug_live_runtime_probe_before_claiming_bound",
     selectedCleanAdapter,
-    missingProof: missingProof.filter((entry) => {
-      return !params.larkLoopDiagnoseOk || !RUNTIME_PROOF_NAMES.includes(entry);
-    }),
+    missingProof: userVisibleObserved
+      ? removeRuntimeProofNames(missingAfterUserVisibleProof)
+      : missingProof.filter((entry) => {
+          return !runtimeProbeOk || !RUNTIME_PROOF_NAMES.includes(entry);
+        }),
     heavyActive,
     activeProcessSummary: active,
-    liveUserSeen: false,
+    liveUserSeen: userVisibleObserved,
     liveTouched: params.liveTouched,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
@@ -338,6 +383,7 @@ function buildExternalChannelBindingSummary(
     deferred_training_plan_not_ready: "deferred_training_plan_not_ready",
     ready_for_apply: "ready_for_channel_bind_apply",
     applied_runtime_probe_ok: "channel_runtime_probe_ok_user_visible_pending",
+    applied_runtime_user_visible_observed: "channel_runtime_probe_ok_user_visible_observed",
     applied_runtime_probe_failed: "channel_runtime_probe_failed",
   };
   const actionMap: Record<BindingDecision["action"], ExternalChannelBindingSummary["action"]> = {
@@ -348,6 +394,7 @@ function buildExternalChannelBindingSummary(
     run_apply_when_operator_allows_live_runtime_restart:
       "run_apply_when_operator_allows_lark_channel_restart",
     keep_waiting_for_real_lark_user_seen_proof: "keep_waiting_for_real_lark_user_visible_proof",
+    no_action_external_channel_user_visible_observed: "none_external_channel_user_visible_observed",
     debug_live_runtime_probe_before_claiming_bound:
       "debug_lark_channel_probe_before_claiming_user_visible",
   };
@@ -360,11 +407,11 @@ function buildExternalChannelBindingSummary(
     status: statusMap[decision.status],
     action: actionMap[decision.action],
     missingProof: decision.missingProof.map(externalProofName),
-    userVisibleObserved: false,
+    userVisibleObserved: decision.liveUserSeen,
     legacyLiveCompatibility: {
       legacyScript: "lcx-live-lark-brain-binding",
       legacyDecisionStatus: decision.status,
-      legacyLiveUserSeen: false,
+      legacyLiveUserSeen: decision.liveUserSeen,
     },
   };
 }
@@ -414,12 +461,39 @@ async function readTrainingPlan(): Promise<JsonRecord | undefined> {
   }
 }
 
+async function readUserVisibleObserved(): Promise<boolean> {
+  const result = await runCommand(
+    process.execPath,
+    ["--import", "tsx", "scripts/dev/lcx-promote-live.ts", "--status", "--json", "--with-probe"],
+    REPO_ROOT,
+  );
+  if (!result.ok) {
+    return false;
+  }
+  try {
+    const payload = JSON.parse(result.stdout) as JsonRecord;
+    const proof = recordValue(payload.visibleProof);
+    return (
+      stringValue(proof?.status) === "live_visible_fixed" &&
+      booleanValue(proof?.acceptanceMatched) === true &&
+      typeof proof?.freshInboundCount === "number" &&
+      proof.freshInboundCount > 0 &&
+      typeof proof?.freshOutboundResultCount === "number" &&
+      proof.freshOutboundResultCount > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function runExternalChannelBinding(options: CliOptions): Promise<JsonRecord> {
   const startedAt = new Date().toISOString();
   const trainingPlan = await readTrainingPlan();
+  const userVisibleObserved = await readUserVisibleObserved();
   let decision = buildExternalChannelBindingDecision({
     trainingPlan,
     apply: false,
+    userVisibleObserved,
     liveTouched: false,
   });
   const commands: JsonRecord[] = [];
@@ -443,8 +517,10 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
   const previousExternalChannel = recordValue(previousSnapshot?.externalChannelBinding);
   const previousDiagnose = recordValue(previousSnapshot?.larkLoopDiagnose);
   const previousChannelStillMatches =
-    stringValue(previousExternalChannel?.status) ===
-      "channel_runtime_probe_ok_user_visible_pending" &&
+    (stringValue(previousExternalChannel?.status) ===
+      "channel_runtime_probe_ok_user_visible_pending" ||
+      stringValue(previousExternalChannel?.status) ===
+        "channel_runtime_probe_ok_user_visible_observed") &&
     stringValue(previousExternalChannel?.selectedCleanAdapter) === decision.selectedCleanAdapter &&
     sidecarDriftIsZero(liveSidecarDriftBefore) &&
     booleanValue(previousDiagnose?.ok) === true;
@@ -453,6 +529,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
       trainingPlan,
       apply: true,
       larkLoopDiagnoseOk: true,
+      userVisibleObserved,
       liveTouched: false,
     });
     larkLoopDiagnose = {
@@ -486,6 +563,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
       trainingPlan,
       apply: true,
       larkLoopDiagnoseOk: diagnose.ok && recordValue(larkLoopDiagnose)?.ok === true,
+      userVisibleObserved,
       liveTouched: false,
     });
   }
@@ -544,6 +622,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
       trainingPlan,
       apply: true,
       larkLoopDiagnoseOk: diagnose.ok && recordValue(larkLoopDiagnose)?.ok === true,
+      userVisibleObserved,
       liveTouched: syncApply.ok || build.ok || restart.ok,
     });
   }
