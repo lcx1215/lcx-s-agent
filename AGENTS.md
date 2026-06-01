@@ -588,6 +588,15 @@ started-is-not-learned, numeric data gateway, source conflict, provider council
 evidence, model disagreement, and vague non-answer. A terse ask that cannot be
 safely classified must fail cleanly with a concrete failed reason instead of
 falling through to a generic intro, silent success, or direct action answer.
+The paired positive product-quality owner is
+`node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json`.
+It must prove that good concise answers are adopted, not only that bad answers
+are rejected. It covers status with checked evidence, useful missing-data
+answers, portfolio-risk frameworks, learning sedimentation boundaries, model
+disagreement arbitration, async receipt experience, plain entry/exit wording,
+and user-supplied arithmetic. If this gate fails, LCX should return or repair a
+clear failed reason instead of becoming vague, over-conservative, generic, or
+internally worded.
 Product-grade hardening must keep the fixed canaries and generated family
 fuzzer wired into existing owners:
 real short Lark asks such as `能买吗`, `加不加仓`, `学一下这个链接`, and `到哪了`;

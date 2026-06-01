@@ -34,6 +34,9 @@ function baseInputs() {
         "retrieval_apply_eval_review_required",
         "finance_data_gateway_snapshot_required_for_numbers",
         "finance_data_conflicts_route_to_provenance_review",
+        "positive_visible_answer_acceptance_required",
+        "direct_answer_not_overconservative_required",
+        "visible_answer_quality_fuzzer_required",
       ],
       actionableFailures: [],
     }),
@@ -58,6 +61,37 @@ function baseInputs() {
           caseId: "short_finance_action_intent_01",
           familyId: "short_finance_action_intent",
           ask: "能买吗",
+        },
+      ],
+    }),
+    visibleAnswerQualityFuzzer: owner("lcx-visible-answer-quality-fuzzer", {
+      ok: true,
+      boundary: "dev_visible_answer_quality_fuzzer_only",
+      macroContract: {
+        positiveAcceptanceNotOnlyRejection: true,
+        conciseDirectAnswerRequired: true,
+        noVagueConservativeFallback: true,
+      },
+      summary: {
+        families: 8,
+        positive: 8,
+        negative: 14,
+        total: 22,
+        passed: 22,
+        failed: 0,
+        positiveFailures: 0,
+        negativeFailures: 0,
+      },
+      failedCases: [],
+      perFamily: [
+        {
+          id: "status_with_checked_evidence",
+          productContract:
+            "status asks answer current state, blocker, and next step from owner evidence",
+          positive: 1,
+          negative: 2,
+          passed: 3,
+          failed: 0,
         },
       ],
     }),
@@ -232,7 +266,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       }),
     );
     expect(result.summary).toEqual(
-      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 10 }),
+      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 11 }),
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
       "natural_plain_probe",
@@ -240,6 +274,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       "finance_research_prompt",
       "real_short_lark_canary_suite",
       "short_intent_family_fuzzer",
+      "visible_answer_quality_fuzzer",
       "three_provider_council_receipt",
       "learning_sedimentation_closed_loop",
       "finance_gateway_async_receipt_experience",
@@ -264,6 +299,10 @@ describe("lcx-commercial-acceptance-harness", () => {
           requiredFor: "unknown_short_intent_clean_failure",
         }),
         expect.objectContaining({
+          id: "visible_answer_quality_fuzzer",
+          requiredFor: "direct_answer_quality",
+        }),
+        expect.objectContaining({
           id: "learning_sedimentation_closed_loop",
           requiredFor: "learning_absorption_truth",
         }),
@@ -277,6 +316,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       expect.arrayContaining([
         "provider_council_three_role_evidence_present",
         "short_intent_family_fuzzer_clean",
+        "visible_answer_quality_fuzzer_clean",
         "module_learning_closed_loop_clean",
         "finance_data_gateway_contract_clean",
       ]),
@@ -488,6 +528,42 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
+  it("blocks release when good visible answers are no longer adopted", () => {
+    const inputs = baseInputs();
+    inputs.visibleAnswerQualityFuzzer = owner("lcx-visible-answer-quality-fuzzer", {
+      ok: true,
+      summary: {
+        families: 8,
+        positive: 8,
+        negative: 14,
+        total: 22,
+        passed: 21,
+        failed: 1,
+        positiveFailures: 1,
+        negativeFailures: 0,
+      },
+      macroContract: {
+        positiveAcceptanceNotOnlyRejection: true,
+        conciseDirectAnswerRequired: true,
+      },
+      failedCases: [{ caseId: "market_data_boundary_still_useful_positive" }],
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.failedGates).toContain("visible_answer_quality_fuzzer_regression");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "visible_answer_quality_fuzzer_regression",
+          status: "failed",
+          severity: "P1",
+        }),
+      ]),
+    );
+  });
+
   it("treats active Qwen guard as watch-only and never as permission to start overlap", () => {
     const inputs = baseInputs();
     inputs.trainingPlan = owner("local-brain-training-plan", {
@@ -554,6 +630,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       expect.arrayContaining([
         "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
         "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
+        "node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json",
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       ]),
     );

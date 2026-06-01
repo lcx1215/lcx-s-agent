@@ -32,6 +32,7 @@ type AcceptanceGate = {
 type HarnessInputs = {
   commercialAnswerPipeline?: OwnerSnapshot;
   shortIntentFuzzer?: OwnerSnapshot;
+  visibleAnswerQualityFuzzer?: OwnerSnapshot;
   problemRadar?: OwnerSnapshot;
   flowGraph?: OwnerSnapshot;
   mindModel?: OwnerSnapshot;
@@ -185,6 +186,9 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
     "retrieval_apply_eval_review_required",
     "finance_data_gateway_snapshot_required_for_numbers",
     "finance_data_conflicts_route_to_provenance_review",
+    "positive_visible_answer_acceptance_required",
+    "direct_answer_not_overconservative_required",
+    "visible_answer_quality_fuzzer_required",
   ];
   const missingFilters = requiredFilters.filter((filter) => !filters.includes(filter));
   if (failed > 0 || total < 5 || missingFilters.length > 0) {
@@ -249,6 +253,58 @@ function shortIntentFuzzerGate(snapshot: OwnerSnapshot | undefined): AcceptanceG
     },
     nextAction:
       "Keep the 34 fixed canaries as samples only; this owner expands future terse asks by family.",
+  };
+}
+
+function visibleAnswerQualityFuzzerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+  if (!ownerOk(snapshot)) {
+    return ownerUnavailableGate("lcx-visible-answer-quality-fuzzer", snapshot);
+  }
+  const summary = recordValue(snapshot!.payload!.summary);
+  const macroContract = recordValue(snapshot!.payload!.macroContract);
+  const families = numberValue(summary?.families) ?? 0;
+  const positive = numberValue(summary?.positive) ?? 0;
+  const negative = numberValue(summary?.negative) ?? 0;
+  const failed = numberValue(summary?.failed) ?? 0;
+  const positiveFailures = numberValue(summary?.positiveFailures) ?? 0;
+  const positiveAcceptance =
+    booleanValue(macroContract?.positiveAcceptanceNotOnlyRejection) === true;
+  const directAnswerRequired = booleanValue(macroContract?.conciseDirectAnswerRequired) === true;
+  if (
+    failed > 0 ||
+    positiveFailures > 0 ||
+    families < 8 ||
+    positive < 8 ||
+    negative < 10 ||
+    !positiveAcceptance ||
+    !directAnswerRequired
+  ) {
+    return {
+      id: "visible_answer_quality_fuzzer_regression",
+      status: "failed",
+      severity: "P1",
+      owner: "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
+      evidence: {
+        summary,
+        macroContract,
+        failedCases: snapshot!.payload!.failedCases,
+      },
+      nextAction:
+        "Fix the visible answer contract so good direct answers are adopted and vague, generic, or over-conservative answers are rejected.",
+    };
+  }
+  return {
+    id: "visible_answer_quality_fuzzer_clean",
+    status: "passed",
+    severity: "info",
+    owner: "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
+    evidence: {
+      summary,
+      macroContract,
+      perFamily: snapshot!.payload!.perFamily,
+    },
+    nextAction:
+      "Keep product answer quality as a positive acceptance gate, not only a bad-answer rejection gate.",
   };
 }
 
@@ -730,6 +786,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
   const gates = [
     commercialAnswerGate(inputs.commercialAnswerPipeline),
     shortIntentFuzzerGate(inputs.shortIntentFuzzer),
+    visibleAnswerQualityFuzzerGate(inputs.visibleAnswerQualityFuzzer),
     architectureGate(inputs.flowGraph, inputs.mindModel),
     radarGate(inputs.problemRadar),
     externalChannelStatusGate(
@@ -798,6 +855,13 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
         requiredFor: "unknown_short_intent_clean_failure",
       },
       {
+        id: "visible_answer_quality_fuzzer",
+        purpose:
+          "prove concise useful answers are adopted for status, missing data, portfolio risk, learning, model disagreement, async work, entry/exit, and user-supplied arithmetic while vague or over-conservative replies are rejected",
+        owner: "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
+        requiredFor: "direct_answer_quality",
+      },
+      {
         id: "three_provider_council_receipt",
         purpose:
           "prove Kimi/MiniMax/DeepSeek were called as separately attributable roles before citing council evidence",
@@ -823,6 +887,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     ownerCommands: [
       "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
       "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
+      "node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json",
       "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
       "node --import tsx scripts/dev/lcx-mind-model.ts --json",
@@ -883,6 +948,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
   const [
     commercialAnswerPipeline,
     shortIntentFuzzer,
+    visibleAnswerQualityFuzzer,
     problemRadar,
     flowGraph,
     mindModel,
@@ -903,6 +969,11 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     runJsonOwner("lcx-lark-short-intent-fuzzer", "scripts/dev/lcx-lark-short-intent-fuzzer.ts", [
       "--json",
     ]),
+    runJsonOwner(
+      "lcx-visible-answer-quality-fuzzer",
+      "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
+      ["--json"],
+    ),
     runJsonOwner("lcx-problem-cluster-radar", "scripts/dev/lcx-problem-cluster-radar.ts", [
       "--json",
     ]),
@@ -949,6 +1020,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
   return {
     commercialAnswerPipeline,
     shortIntentFuzzer,
+    visibleAnswerQualityFuzzer,
     problemRadar,
     flowGraph,
     mindModel,

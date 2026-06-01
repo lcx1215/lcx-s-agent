@@ -171,9 +171,9 @@ node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
 ```
 
 It consumes commercial answer pipeline, problem radar, flow graph, mind model,
-external-channel status, training plan, short-intent fuzzer, and system
-doctor/provider council evidence. It is not a new truth owner, does not send
-Lark messages, and does not start training.
+external-channel status, training plan, short-intent fuzzer, visible-answer
+quality fuzzer, and system doctor/provider council evidence. It is not a new
+truth owner, does not send Lark messages, and does not start training.
 The short-intent fuzzer is the owner that prevents the fixed short Lark canaries
 from becoming a brittle whitelist:
 
@@ -184,6 +184,17 @@ node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json
 It generates terse Lark-style variants by failure family and requires unknown
 short asks to fail cleanly with owner evidence or a concrete missing-proof
 reason, not a generic intro, direct action answer, or silent success.
+The visible-answer quality fuzzer is the paired positive gate:
+
+```bash
+node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json
+```
+
+It proves the system adopts concise useful answers for status, missing data,
+portfolio risk, learning, model disagreement, async work, entry/exit, and
+user-supplied arithmetic while still rejecting vague, generic, unsafe, or
+over-conservative replies. This prevents the answer gate from becoming a pure
+rejection machine.
 Treat `blocked` gates as explicit acceptance gaps: post-migration natural Lark
 canary missing, provider degradation, active Qwen guard, or owner-gated module
 learning states are not green release proof.
