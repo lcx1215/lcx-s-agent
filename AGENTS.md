@@ -579,6 +579,14 @@ control-room summary wording. The terminal decision is always either
 `adopt_visible_answer` or `return_failed_reason`; never let model rewrites loop
 without a budget, never treat Qwen as final authority, and never expose raw
 JSON/module labels as the user-visible answer.
+Product-grade hardening must keep four canaries wired into existing owners:
+real short Lark asks such as `能买吗`, `加不加仓`, `学一下这个链接`, and `到哪了`;
+Kimi/MiniMax/DeepSeek council evidence with separately attributable role
+outputs; module-learning source -> retrieval/apply -> eval absorption ->
+fresh-adjacent-task -> keep/downrank/discard closure; and finance data gateway
+snapshots plus async queued/completion/failure receipt boundaries. These are
+not parallel lanes: commercial acceptance consumes the existing owners and must
+fail or block when any proof surface is missing.
 MiniMax Agent may be used as a higher-quality external draft and red-team input
 for this pipeline, but its output is not final authority. LCX must still run
 local contract audit, source/data gates, Qwen patch-only challenge when needed,

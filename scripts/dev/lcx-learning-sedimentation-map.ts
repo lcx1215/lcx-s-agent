@@ -166,6 +166,17 @@ async function moduleReviewCounts(files: FileEntry[]) {
     exactMissingProofReceipts: 0,
     proofGapSummary: {} as Record<string, number>,
     nextProofQueue: [] as unknown[],
+    latestReview: undefined as
+      | {
+          applicationReady: number;
+          evalAbsorbed: number;
+          weakModuleLearning: number;
+          boundaryViolations: number;
+          exactMissingProofReceipts: number;
+          proofGapSummary: Record<string, number>;
+          nextProofQueue: unknown[];
+        }
+      | undefined,
   };
   for (const file of files) {
     const parsed = await readJsonObject(file.path);
@@ -193,6 +204,21 @@ async function moduleReviewCounts(files: FileEntry[]) {
     if (summary.nextProofQueue.length === 0 && Array.isArray(parsed?.nextProofQueue)) {
       summary.nextProofQueue = parsed.nextProofQueue.slice(0, 10);
     }
+    summary.latestReview ??= {
+      applicationReady: numberValue(counts.applicationReady),
+      evalAbsorbed: numberValue(counts.evalAbsorbed),
+      weakModuleLearning: numberValue(counts.weakModuleLearning),
+      boundaryViolations: numberValue(counts.boundaryViolations),
+      exactMissingProofReceipts: numberValue(counts.exactMissingProofReceipts),
+      proofGapSummary: Object.fromEntries(
+        Object.entries(proofGapSummary)
+          .map(([key, value]) => [key, numberValue(value)] as const)
+          .filter(([, count]) => count > 0),
+      ),
+      nextProofQueue: Array.isArray(parsed?.nextProofQueue)
+        ? parsed.nextProofQueue.slice(0, 10)
+        : [],
+    };
   }
   return summary;
 }
@@ -247,13 +273,14 @@ async function buildMap(workspaceDir: string) {
   );
   const acceptedCandidates = await acceptedBrainCandidates(brainReviewFiles);
   const reviewCounts = await moduleReviewCounts(moduleReviews);
+  const activeReviewCounts = reviewCounts.latestReview ?? reviewCounts;
   const moduleAbsorptionReady =
-    reviewCounts.evalAbsorbed > 0 &&
-    reviewCounts.weakModuleLearning === 0 &&
-    reviewCounts.boundaryViolations === 0;
-  const moduleLearningHasWeakReceipts = reviewCounts.weakModuleLearning > 0;
-  const moduleLearningHasBoundaryViolations = reviewCounts.boundaryViolations > 0;
-  const moduleLearningHasEvalAbsorption = reviewCounts.evalAbsorbed > 0;
+    activeReviewCounts.evalAbsorbed > 0 &&
+    activeReviewCounts.weakModuleLearning === 0 &&
+    activeReviewCounts.boundaryViolations === 0;
+  const moduleLearningHasWeakReceipts = activeReviewCounts.weakModuleLearning > 0;
+  const moduleLearningHasBoundaryViolations = activeReviewCounts.boundaryViolations > 0;
+  const moduleLearningHasEvalAbsorption = activeReviewCounts.evalAbsorbed > 0;
   const moduleLearningStatus = moduleLearningHasBoundaryViolations
     ? "boundary_violation_blocks_absorption"
     : moduleAbsorptionReady
@@ -332,13 +359,17 @@ async function buildMap(workspaceDir: string) {
       counts: {
         planReceipts: modulePlanReceipts.length,
         reviewFiles: moduleReviews.length,
-        applicationReady: reviewCounts.applicationReady,
-        evalAbsorbed: reviewCounts.evalAbsorbed,
-        weakModuleLearning: reviewCounts.weakModuleLearning,
-        boundaryViolations: reviewCounts.boundaryViolations,
-        exactMissingProofReceipts: reviewCounts.exactMissingProofReceipts,
-        proofGapSummary: reviewCounts.proofGapSummary,
-        nextProofQueueSize: reviewCounts.nextProofQueue.length,
+        applicationReady: activeReviewCounts.applicationReady,
+        evalAbsorbed: activeReviewCounts.evalAbsorbed,
+        weakModuleLearning: activeReviewCounts.weakModuleLearning,
+        boundaryViolations: activeReviewCounts.boundaryViolations,
+        exactMissingProofReceipts: activeReviewCounts.exactMissingProofReceipts,
+        proofGapSummary: activeReviewCounts.proofGapSummary,
+        nextProofQueueSize: activeReviewCounts.nextProofQueue.length,
+        cumulativeApplicationReady: reviewCounts.applicationReady,
+        cumulativeEvalAbsorbed: reviewCounts.evalAbsorbed,
+        cumulativeWeakModuleLearning: reviewCounts.weakModuleLearning,
+        cumulativeExactMissingProofReceipts: reviewCounts.exactMissingProofReceipts,
       },
       nextGate: "lcx-module-learning-absorption-gate_must_return_absorptionReady_true",
     },

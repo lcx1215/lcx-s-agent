@@ -101,6 +101,13 @@ export type FinanceDataGatewaySnapshot = {
   freshnessWarnings: string[];
   missingEvidence: string[];
   requiredNextSteps: string[];
+  evidenceContract: {
+    requiredFieldMetadata: string[];
+    providerRolePolicy: string;
+    conflictPolicy: string;
+    visibleAnswerPolicy: string;
+    asyncReceiptPolicy: string;
+  };
   riskBoundaries: string[];
   notTouched: string[];
 };
@@ -305,6 +312,23 @@ export function buildFinanceDataGatewaySnapshot(
     freshnessWarnings,
     missingEvidence: unique(missingEvidence).toSorted(),
     requiredNextSteps: unique(requiredNextSteps),
+    evidenceContract: {
+      requiredFieldMetadata: [
+        "sourceTimestamp",
+        "fieldDefinition",
+        "unit_or_currency_when_applicable",
+        "adjusted_status_when_applicable",
+        "sourceUrlOrArtifact",
+      ],
+      providerRolePolicy:
+        "Use primary_market_data only with cross_check_market_data; add official_or_issuer_reference unless explicitly disabled for the use case.",
+      conflictPolicy:
+        "Conflicted values are not resolved by model preference; route them to data_provenance_quality_review before visible use.",
+      visibleAnswerPolicy:
+        "Every current numeric finance answer must show source/time/definition boundaries or mark the number as unverified.",
+      asyncReceiptPolicy:
+        "If data collection runs after the foreground reply, send a queued/completion/failure receipt boundary instead of claiming the number is ready.",
+    },
     riskBoundaries: [
       "research_only",
       "no_trade_advice",

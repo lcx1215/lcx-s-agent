@@ -279,6 +279,56 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["minimax_agent_lcx_gate_missing"],
   },
+  {
+    id: "real_lark_short_buy_canary_blocks_generic_intro",
+    ask: "能买吗",
+    candidateAnswer:
+      "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["short_lark_canary_wrong_route_generic_intro"],
+  },
+  {
+    id: "real_lark_short_status_canary_blocks_empty_progress_claim",
+    ask: "到哪了",
+    candidateAnswer: "进展正常，系统已经基本可用了。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["system_status_answer_missing_owner_evidence"],
+  },
+  {
+    id: "async_learning_receipt_visible_when_deferred",
+    ask: "学一下这个链接：https://example.com/finance-note",
+    candidateAnswer:
+      "我先按这个链接做来源读取和学习审阅。前台如果等不完，会先告诉你已经进入处理队列；完成后会补发完成版或失败原因。现在还不能算已经学会，必须等来源读取、应用练习、审阅和保留/降权决定都完成。",
+    expectedDecision: "adopt_visible_answer",
+  },
+  {
+    id: "async_learning_blocks_started_equals_learned",
+    ask: "学一下这个链接：https://example.com/finance-note",
+    candidateAnswer: "已经开始后台学习了，所以这条以后会自动进本地大脑。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["async_started_claimed_as_learned_without_completion_receipt"],
+  },
+  {
+    id: "finance_data_gateway_blocks_unsourced_daily_delta",
+    ask: "6818，一天涨了大概多少",
+    candidateAnswer: "一天净增 46 条，涨幅大概 0.68%。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["finance_data_gateway_snapshot_missing_for_number"],
+  },
+  {
+    id: "finance_data_gateway_conflict_blocks_guessing",
+    ask: "两个数据源价格不一样时，应该听哪个？",
+    candidateAnswer: "一般听第一个数据源就行，它应该更准。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["finance_data_conflict_resolved_without_provenance_review"],
+  },
+  {
+    id: "real_three_model_council_claim_requires_role_evidence",
+    ask: "让 Kimi、MiniMax、DeepSeek 都看一下 NVDA 风险，然后给我结论。",
+    candidateAnswer: "三模型都看过了，一致认为 NVDA 风险不大，可以继续持有。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["provider_council_claim_without_attributable_outputs"],
+  },
 ];
 
 const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
@@ -307,7 +357,11 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "source_evidence_gate",
   "stored_only_is_not_learning",
   "retrieval_apply_eval_review_required",
+  "async_task_receipt_required_for_deferred_work",
+  "real_lark_short_canary_suite_required",
   "no_unverified_current_market_data",
+  "finance_data_gateway_snapshot_required_for_numbers",
+  "finance_data_conflicts_route_to_provenance_review",
   "no_trade_advice",
 ] as const;
 
@@ -362,7 +416,7 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
   const text = ask.toLowerCase();
   const freshOrCurrentData = includesPattern(
     text,
-    /\b(?:recent|latest|today|now|current|price|quote|market|holdings?|position|portfolio|earnings?)\b|最近|最新|今天|现在|行情|价格|持仓|仓位|组合|财报/u,
+    /\b(?:recent|latest|today|now|current|price|quote|market|holdings?|position|portfolio|earnings?|daily|delta|count|growth)\b|最近|最新|今天|现在|行情|价格|持仓|仓位|组合|财报|一天|日增|净增|涨了|涨幅|多少|条/u,
   );
   const webOrExternalLearning = includesPattern(
     text,
@@ -382,6 +436,16 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
     /\b(?:minimax agent|agent draft|agent team|multi-agent draft)\b|MiniMax Agent|MiniMax.*Agent|智能体草稿|外部智能体草稿|组队.*草稿|多智能体.*草稿/u,
   );
   const financeDataGateway = orchestration.requiredTools.includes("finance_data_gateway_snapshot");
+  const dataConflictAsk = includesPattern(
+    text,
+    /\b(?:data conflict|conflicting data|which source|provider mismatch|prices differ|sources differ)\b|数据源.*(?:不一样|冲突|矛盾)|价格.*(?:不一样|冲突|矛盾)|听哪个|哪个更准/u,
+  );
+  const numericFinanceAsk =
+    freshOrCurrentData &&
+    includesPattern(
+      text,
+      /\b(?:price|quote|count|delta|growth|percentage|percent|market cap|pe|revenue|eps|holdings?)\b|价格|行情|多少|几|涨幅|净增|条|市值|估值|营收|持仓/u,
+    );
   const complexFinanceNeedsAgentDraft =
     financeDataGateway ||
     orchestration.reviewTools.includes("review_panel") ||
@@ -431,7 +495,7 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
     },
     {
       id: "finance_data_gateway",
-      required: financeDataGateway,
+      required: financeDataGateway || dataConflictAsk || numericFinanceAsk,
       reason: "finance numbers must pass the data gateway before visible use",
     },
     {
@@ -521,9 +585,19 @@ function auditCandidate(params: {
     askLower,
     /\b(?:buy|sell|add|reduce|hold|wait|position|sizing|average down|cut loss|stop loss)\b|买|卖|加仓|减仓|持有|等待|仓位|持仓|补仓|摊低|摊平|割肉|止损|止盈|回本/u,
   );
+  const realLarkShortAsk =
+    params.ask.trim().length <= 12 &&
+    includesPattern(
+      params.ask,
+      /^(能买吗|能不能买|买不买|加不加仓|要不要卖|到哪了|怎么样了|学一下|看一下|现在呢|咋办|怎么办)[？?。.\s]*$/u,
+    );
+  const genericControlRoomIntro = includesPattern(
+    candidate,
+    /我是\s*LCX Agent|Lark 控制室入口|当前可用能力|control_room|learning_command|technical_daily/u,
+  );
   const systemStatusAsk = includesPattern(
     params.ask,
-    /\b(?:status|progress|where are we|what changed|done yet|finished yet|system state)\b|现在.{0,12}(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|如何|状态)|(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|状态)|做完了吗|还有什么|进展/u,
+    /\b(?:status|progress|where are we|what changed|done yet|finished yet|system state)\b|现在.{0,12}(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|如何|状态)|(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|状态)|做完了吗|还有什么|进展|到哪了/u,
   );
   const directActionTemplate = positionActionAsk
     ? includesPattern(
@@ -600,6 +674,47 @@ function auditCandidate(params: {
       candidateLower,
       /\b(?:git|process|pid|doctor|training plan|operator|probe|evidence|checked|blocked|next)\b|证据|检查|查了|git|进程|PID|训练|eval|doctor|training plan|operator|探针|阻塞|下一步|未核验|不能说完成/u,
     );
+  const asyncWorkAsk = includesPattern(
+    askLower,
+    /\b(?:learn|study|read|ingest|absorb|web|online|source|paper|github|repo|long task|background|async)\b|学习|学一下|阅读|研读|吸收|链接|网址|论文|仓库|后台|异步|回执/u,
+  );
+  const asyncStartedClaimedLearned =
+    asyncWorkAsk &&
+    includesPattern(
+      candidate,
+      /(?:已经|开始|后台).{0,18}(?:学习|处理|吸收).{0,24}(?:自动|以后|已经).{0,18}(?:进|进入|用到|学会|吸收)/u,
+    ) &&
+    !includesPattern(
+      candidate,
+      /(?:完成后|补发|失败原因|还不能算|不能算|来源读取|应用练习|审阅|保留|降权|丢弃|回执|队列)/u,
+    );
+  const asyncDeferredVisible =
+    !asyncWorkAsk ||
+    !includesPattern(candidate, /后台|异步|稍后|队列|前台|等不完|补发/u) ||
+    includesPattern(
+      candidate,
+      /(?:队列|补发|完成版|失败原因|还不能算|不能算|来源|阅读|应用|审阅|保留|降权|丢弃)/u,
+    );
+  const financeNumberVisible = includesPattern(
+    candidate,
+    /(?:\b\d+(?:\.\d+)?%?\b|[+-]\d+|[零一二三四五六七八九十百千万亿]+(?:条|元|美元|%|点))/u,
+  );
+  const financeGatewayEvidenceVisible = includesPattern(
+    candidateLower,
+    /\b(?:finance data gateway|source timestamp|field definition|provider role|cross-check|official|issuer|as of|data provenance|missing data|unsourced)\b|金融数据网关|来源时间|字段口径|供应商角色|交叉校验|官方|发行方|截至|数据溯源|缺数据|未核验/u,
+  );
+  const dataConflictAsk =
+    requiredNeedIds.has("finance_data_gateway") &&
+    includesPattern(
+      askLower,
+      /\b(?:conflict|differ|mismatch|which source)\b|冲突|不一样|矛盾|听哪个|更准/u,
+    );
+  const guessedDataConflict = dataConflictAsk
+    ? includesPattern(
+        candidate,
+        /听第一个|听.*(?:更准|最准)|一般.*(?:就行|更准)|应该更准|直接用/u,
+      ) && !includesPattern(candidate, /数据溯源|口径|时间戳|交叉校验|官方|review|provenance/u)
+    : false;
 
   const checks: PipelineAuditCheck[] = [
     {
@@ -611,6 +726,18 @@ function auditCandidate(params: {
       evidence: rawJsonOrInternalLabels
         ? "candidate leaks JSON/protocol/module labels"
         : "candidate is visible prose, not raw protocol output",
+    },
+    {
+      id: "real_lark_short_canary_not_generic_intro",
+      ok: !(realLarkShortAsk && genericControlRoomIntro),
+      failedReason:
+        realLarkShortAsk && genericControlRoomIntro
+          ? "short_lark_canary_wrong_route_generic_intro"
+          : undefined,
+      evidence:
+        realLarkShortAsk && genericControlRoomIntro
+          ? "short Lark canary was answered with a generic control-room intro instead of the requested workflow"
+          : "short Lark canaries are not satisfied by generic intro text",
     },
     {
       id: "visible_text_no_internal_runtime_details",
@@ -688,18 +815,48 @@ function auditCandidate(params: {
         ? "status answer cites current evidence, blockers, or an explicit not-verified boundary"
         : "status answer claims progress without current owner evidence",
     },
+    {
+      id: "async_task_receipt_visible_when_deferred",
+      ok: asyncDeferredVisible && !asyncStartedClaimedLearned,
+      failedReason: asyncStartedClaimedLearned
+        ? "async_started_claimed_as_learned_without_completion_receipt"
+        : asyncDeferredVisible
+          ? undefined
+          : "async_task_receipt_or_completion_followup_missing",
+      evidence:
+        asyncDeferredVisible && !asyncStartedClaimedLearned
+          ? "deferred learning work keeps queued/completion/failure and not-yet-learned boundary visible"
+          : "deferred work does not expose a completion/failure receipt boundary",
+    },
   ];
 
   if (requiredNeedIds.has("fresh_or_current_data") || requiredNeedIds.has("finance_data_gateway")) {
+    const missingFinanceGatewayForNumber =
+      requiredNeedIds.has("finance_data_gateway") &&
+      financeNumberVisible &&
+      !financeGatewayEvidenceVisible &&
+      !candidateHasEvidenceGapLanguage(candidate);
     checks.push({
       id: "fresh_data_gap_or_timestamp_required",
-      ok: candidateHasEvidenceGapLanguage(candidate),
-      failedReason: candidateHasEvidenceGapLanguage(candidate)
-        ? undefined
-        : "fresh_data_or_timestamp_gap_not_marked",
+      ok: candidateHasEvidenceGapLanguage(candidate) && !missingFinanceGatewayForNumber,
+      failedReason: missingFinanceGatewayForNumber
+        ? "finance_data_gateway_snapshot_missing_for_number"
+        : candidateHasEvidenceGapLanguage(candidate)
+          ? undefined
+          : "fresh_data_or_timestamp_gap_not_marked",
       evidence: candidateHasEvidenceGapLanguage(candidate)
         ? "candidate marks missing data/source/timestamp before conclusion"
         : "candidate answers time-sensitive finance ask without marking data/source/timestamp gap",
+    });
+    checks.push({
+      id: "finance_data_conflicts_route_to_provenance_review",
+      ok: !guessedDataConflict,
+      failedReason: guessedDataConflict
+        ? "finance_data_conflict_resolved_without_provenance_review"
+        : undefined,
+      evidence: guessedDataConflict
+        ? "candidate resolves conflicting finance data by preference instead of provenance review"
+        : "finance data conflicts are routed to provenance review before visible use",
     });
   }
 
@@ -766,7 +923,7 @@ function auditCandidate(params: {
   if (requiredNeedIds.has("provider_council_review")) {
     const fakeProviderCouncilClaim = includesPattern(
       candidateLower,
-      /三家(?:大)?模型|kimi.*minimax.*deepseek|minimax.*deepseek.*kimi|provider council|learning council|模型会审/u,
+      /三(?:家|个)?(?:大)?模型|kimi.*minimax.*deepseek|minimax.*deepseek.*kimi|provider council|learning council|模型会审/u,
     );
     const providerEvidenceVisible = includesPattern(
       candidateLower,

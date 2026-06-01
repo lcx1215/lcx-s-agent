@@ -113,6 +113,17 @@ describe("finance_data_gateway_snapshot tool", () => {
             sourceTimestamp: "2026-05-13T19:58:00.000Z",
           }),
         ],
+        evidenceContract: expect.objectContaining({
+          requiredFieldMetadata: expect.arrayContaining([
+            "sourceTimestamp",
+            "fieldDefinition",
+            "unit_or_currency_when_applicable",
+            "adjusted_status_when_applicable",
+            "sourceUrlOrArtifact",
+          ]),
+          conflictPolicy: expect.stringContaining("data_provenance_quality_review"),
+          asyncReceiptPolicy: expect.stringContaining("queued/completion/failure"),
+        }),
         conflicts: [],
       }),
     );

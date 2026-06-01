@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 27, failed: 0, total: 27 });
+    expect(payload.summary).toEqual({ passed: 34, failed: 0, total: 34 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -49,6 +49,10 @@ describe("LCX commercial answer pipeline", () => {
         "short_lark_intent_expansion_required",
         "system_status_requires_owner_evidence",
         "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
+        "async_task_receipt_required_for_deferred_work",
+        "real_lark_short_canary_suite_required",
+        "finance_data_gateway_snapshot_required_for_numbers",
+        "finance_data_conflicts_route_to_provenance_review",
       ]),
     );
     expect(payload.scenarios).toEqual(
@@ -187,6 +191,44 @@ describe("LCX commercial answer pipeline", () => {
           scenarioId: "retail_leverage_liquidation_blocks_margin_action",
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "real_lark_short_buy_canary_blocks_generic_intro",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["short_lark_canary_wrong_route_generic_intro"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "async_learning_receipt_visible_when_deferred",
+          actualDecision: "adopt_visible_answer",
+          failedReasons: [],
+        }),
+        expect.objectContaining({
+          scenarioId: "async_learning_blocks_started_equals_learned",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "async_started_claimed_as_learned_without_completion_receipt",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "finance_data_gateway_blocks_unsourced_daily_delta",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "finance_data_gateway_snapshot_missing_for_number",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "finance_data_gateway_conflict_blocks_guessing",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "finance_data_conflict_resolved_without_provenance_review",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "real_three_model_council_claim_requires_role_evidence",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "provider_council_claim_without_attributable_outputs",
+          ]),
         }),
       ]),
     );

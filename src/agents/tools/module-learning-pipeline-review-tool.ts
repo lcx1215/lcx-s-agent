@@ -109,6 +109,7 @@ function filterTerminalMissingProof(params: {
     return params.missingProof;
   }
   const terminalDecisionOptionalProof = new Set([
+    "prior_art_or_existing_artifact_paths",
     "capability_card_or_retrieval_receipt",
     "application_validation_receipt",
     "training_or_eval_absorption_evidence",

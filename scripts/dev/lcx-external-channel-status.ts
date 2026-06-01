@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
+const OWNER_CHILD_TIMEOUT_MS = 30_000;
 
 type CliOptions = {
   json: boolean;
@@ -120,6 +121,17 @@ function settledCommandText(result: PromiseSettledResult<{ stdout: string; stder
   };
 }
 
+function parseOptionalJsonObject(stdout: string): Record<string, unknown> {
+  if (!stdout.trim()) {
+    return {};
+  }
+  try {
+    return parseJsonObjectFromOutput(stdout);
+  } catch {
+    return {};
+  }
+}
+
 export async function runExternalChannelStatus(options: CliOptions) {
   const args = ["--import", "tsx", "scripts/dev/lcx-promote-live.ts", "--status", "--json"];
   if (options.withProbe) {
@@ -134,17 +146,21 @@ export async function runExternalChannelStatus(options: CliOptions) {
         cwd: REPO_ROOT,
         env: process.env,
         maxBuffer: EXEC_MAX_BUFFER,
+        timeout: OWNER_CHILD_TIMEOUT_MS,
+        killSignal: "SIGTERM",
       }),
       execFileAsync(process.execPath, bindingArgs, {
         cwd: REPO_ROOT,
         env: process.env,
         maxBuffer: EXEC_MAX_BUFFER,
+        timeout: OWNER_CHILD_TIMEOUT_MS,
+        killSignal: "SIGTERM",
       }),
     ]);
     const legacyOutput = settledCommandText(legacyResult);
     const bindingOutput = settledCommandText(bindingResult);
-    const legacy = legacyOutput.stdout ? parseJsonObjectFromOutput(legacyOutput.stdout) : {};
-    const bindingPayload = parseJsonObjectFromOutput(bindingOutput.stdout);
+    const legacy = parseOptionalJsonObject(legacyOutput.stdout);
+    const bindingPayload = parseOptionalJsonObject(bindingOutput.stdout);
     const binding = recordValue(bindingPayload.externalChannelBinding);
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
     const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
@@ -188,6 +204,13 @@ export async function runExternalChannelStatus(options: CliOptions) {
       conceptStatus: "legacy_promote_live_status_wrapped_by_external_channel_status",
       externalChannelStatus,
       externalChannelBinding: binding,
+      ownerChildStatus: {
+        timeoutMs: OWNER_CHILD_TIMEOUT_MS,
+        legacyStatusAvailable: Object.keys(legacy).length > 0,
+        bindingStatusAvailable: Object.keys(bindingPayload).length > 0,
+        legacyError: legacyOutput.error,
+        bindingError: bindingOutput.error,
+      },
       devLiveDrift: externalChannelDriftStatus({
         legacyDevLiveDrift,
         externalChannelBound,

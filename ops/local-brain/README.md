@@ -336,7 +336,9 @@ blueprint lane.
 7. Product-grade acceptance: run
    `node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json`
    to judge release readiness across answer quality, radar clusters,
-   external-channel status, training overlap, provider council, and canary gaps.
+   external-channel status, training overlap, provider council, real short Lark
+   canaries, module-learning absorption, finance data gateway, and async receipt
+   boundaries.
    It reports
    `readyForCommercialRelease`; blocked gates are evidence, not a reason to
    claim green.
@@ -352,6 +354,10 @@ gateway requires provider role, source timestamp, timezone, field definition,
 unit/currency, adjusted status, and source URL/artifact. Conflicted primary,
 cross-check, or official/issuer evidence must route to data provenance review
 instead of becoming an unstated model assumption.
+If current data collection or learning review cannot finish in the foreground
+reply, the visible Lark experience must say queued/completion/failure boundary
+plainly and must not claim the data, source, or module has already been
+absorbed.
 
 The context recovery exam is the compressed-window proof. It verifies that a
 future Codex or Claude Code session can recover the agent's global workflow from

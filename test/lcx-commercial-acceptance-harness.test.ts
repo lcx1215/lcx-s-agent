@@ -22,8 +22,17 @@ function baseInputs() {
   return {
     commercialAnswerPipeline: owner("lcx-commercial-answer-pipeline", {
       ok: true,
-      summary: { passed: 5, failed: 0, total: 5 },
-      contractFilters: ["candidate_answer_not_final_authority"],
+      summary: { passed: 34, failed: 0, total: 34 },
+      contractFilters: [
+        "real_lark_short_canary_suite_required",
+        "provider_council_evidence_required",
+        "provider_outputs_not_faked",
+        "async_task_receipt_required_for_deferred_work",
+        "stored_only_is_not_learning",
+        "retrieval_apply_eval_review_required",
+        "finance_data_gateway_snapshot_required_for_numbers",
+        "finance_data_conflicts_route_to_provenance_review",
+      ],
       actionableFailures: [],
     }),
     problemRadar: owner("lcx-problem-cluster-radar", {
@@ -91,6 +100,71 @@ function baseInputs() {
         },
       ],
     }),
+    providerCouncilAcceleration: owner("lcx-provider-council-acceleration", {
+      ok: true,
+      status: "provider_council_acceleration_receipt_written",
+      action: "provider_council_run_completed",
+      freshCompleteCouncil: false,
+      dailyUse: {
+        completeCouncilInWindow: true,
+        missingSuccessfulRoles: [],
+        dueNow: false,
+      },
+      latestCouncil: {
+        path: "bank/knowledge/learning-councils/2026-05-31.json",
+        successfulRoles: ["kimi", "minimax", "deepseek"],
+      },
+      outputsFeed: [
+        "skillopt_candidate_edit",
+        "eval_case",
+        "teacher_curriculum",
+        "rejected_edit_buffer",
+        "discard",
+      ],
+    }),
+    moduleLearningAbsorptionGate: owner("lcx-module-learning-absorption-gate", {
+      ok: true,
+      absorptionReady: true,
+      gateDecision: "ready_for_eval_absorbed_review",
+      absorptionDecision: "keep",
+      blockers: [],
+      counts: {
+        weakReceiptCount: 0,
+        boundaryViolations: 0,
+        missingAbsorptionEvidenceReceipts: 0,
+        evalAbsorbed: 6,
+        terminalNonAbsorbedRows: 2,
+      },
+      terminalNonAbsorbedRows: [
+        {
+          targetModule: "portfolio_risk_gates",
+          status: "stored_only",
+          keepDownrankDiscardDecision: "discard",
+        },
+      ],
+    }),
+    financeDataGatewaySmoke: owner("finance-data-gateway-smoke-clean", {
+      ok: true,
+      qualityStatus: "ready",
+      providerRolesPresent: [
+        "primary_market_data",
+        "cross_check_market_data",
+        "official_or_issuer_reference",
+      ],
+      requiredNextSteps: [],
+      conflicts: [],
+    }),
+    financeDataGatewayConflictSmoke: owner("finance-data-gateway-smoke-conflict", {
+      ok: true,
+      qualityStatus: "needs_review",
+      providerRolesPresent: [
+        "primary_market_data",
+        "cross_check_market_data",
+        "official_or_issuer_reference",
+      ],
+      requiredNextSteps: ["run_data_provenance_quality_review"],
+      conflicts: [{ fieldName: "last_price" }],
+    }),
   };
 }
 
@@ -132,12 +206,16 @@ describe("lcx-commercial-acceptance-harness", () => {
       }),
     );
     expect(result.summary).toEqual(
-      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 6 }),
+      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 9 }),
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
       "natural_plain_probe",
       "optional_fixed_receipt_anchor",
       "finance_research_prompt",
+      "real_short_lark_canary_suite",
+      "three_provider_council_receipt",
+      "learning_sedimentation_closed_loop",
+      "finance_gateway_async_receipt_experience",
     ]);
     expect(result.gates.map((gate) => gate.id)).toContain("user_visible_observed");
     expect(result.canaryPlan).toEqual(
@@ -150,6 +228,25 @@ describe("lcx-commercial-acceptance-harness", () => {
           id: "optional_fixed_receipt_anchor",
           requiredFor: "optional_receipt_anchor",
         }),
+        expect.objectContaining({
+          id: "three_provider_council_receipt",
+          requiredFor: "provider_council_evidence",
+        }),
+        expect.objectContaining({
+          id: "learning_sedimentation_closed_loop",
+          requiredFor: "learning_absorption_truth",
+        }),
+        expect.objectContaining({
+          id: "finance_gateway_async_receipt_experience",
+          requiredFor: "numeric_answer_and_async_reply_quality",
+        }),
+      ]),
+    );
+    expect(result.gates.map((gate) => gate.id)).toEqual(
+      expect.arrayContaining([
+        "provider_council_three_role_evidence_present",
+        "module_learning_closed_loop_clean",
+        "finance_data_gateway_contract_clean",
       ]),
     );
   });

@@ -42,6 +42,10 @@ type HarnessInputs = {
   externalChannelBindingStatus?: OwnerSnapshot;
   trainingPlan?: OwnerSnapshot;
   systemDoctor?: OwnerSnapshot;
+  providerCouncilAcceleration?: OwnerSnapshot;
+  moduleLearningAbsorptionGate?: OwnerSnapshot;
+  financeDataGatewaySmoke?: OwnerSnapshot;
+  financeDataGatewayConflictSmoke?: OwnerSnapshot;
 };
 
 type CliOptions = {
@@ -168,7 +172,19 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
   const summary = recordValue(snapshot!.payload!.summary);
   const failed = numberValue(summary?.failed) ?? 0;
   const total = numberValue(summary?.total) ?? 0;
-  if (failed > 0 || total < 5) {
+  const filters = stringArray(snapshot!.payload!.contractFilters);
+  const requiredFilters = [
+    "real_lark_short_canary_suite_required",
+    "provider_council_evidence_required",
+    "provider_outputs_not_faked",
+    "async_task_receipt_required_for_deferred_work",
+    "stored_only_is_not_learning",
+    "retrieval_apply_eval_review_required",
+    "finance_data_gateway_snapshot_required_for_numbers",
+    "finance_data_conflicts_route_to_provenance_review",
+  ];
+  const missingFilters = requiredFilters.filter((filter) => !filters.includes(filter));
+  if (failed > 0 || total < 5 || missingFilters.length > 0) {
     return {
       id: "commercial_answer_pipeline_regression",
       status: "failed",
@@ -177,6 +193,7 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
       evidence: {
         failed,
         total,
+        missingFilters,
         actionableFailures: snapshot!.payload!.actionableFailures,
       },
       nextAction: "Fix the answer pipeline owner before judging live or Qwen behavior.",
@@ -187,7 +204,7 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
     status: "passed",
     severity: "info",
     owner: "scripts/dev/lcx-commercial-answer-pipeline.ts",
-    evidence: { total, filters: snapshot!.payload!.contractFilters },
+    evidence: { total, filters },
     nextAction: "Keep this as the owner for answer adoption rules.",
   };
 }
@@ -492,6 +509,180 @@ function providerCouncilGate(snapshot: OwnerSnapshot | undefined): AcceptanceGat
   };
 }
 
+function providerCouncilAccelerationGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+  if (!snapshot?.payload) {
+    return {
+      id: "provider_council_acceleration_not_checked",
+      status: "watch",
+      severity: "P3",
+      owner: "scripts/dev/lcx-provider-council-acceleration.ts",
+      evidence: { reason: snapshot?.error ?? "provider council acceleration owner not collected" },
+      nextAction:
+        "Collect the provider-council acceleration owner before claiming Kimi/MiniMax/DeepSeek evidence freshness.",
+    };
+  }
+  const dailyUse = recordValue(snapshot.payload.dailyUse);
+  const missingSuccessfulRoles = stringArray(dailyUse?.missingSuccessfulRoles);
+  const completeCouncilInWindow = booleanValue(dailyUse?.completeCouncilInWindow) === true;
+  const dueNow = booleanValue(dailyUse?.dueNow) === true;
+  const hardBlocks = stringArray(snapshot.payload.hardBlocks);
+  const status = stringValue(snapshot.payload.status);
+  const action = stringValue(snapshot.payload.action);
+  const freshCompleteCouncil = booleanValue(snapshot.payload.freshCompleteCouncil) === true;
+  const runCompleted =
+    status === "provider_council_acceleration_receipt_written" ||
+    action === "provider_council_run_completed";
+  if (
+    runCompleted ||
+    freshCompleteCouncil ||
+    (completeCouncilInWindow && missingSuccessfulRoles.length === 0)
+  ) {
+    return {
+      id: "provider_council_three_role_evidence_present",
+      status: "passed",
+      severity: "info",
+      owner: "scripts/dev/lcx-provider-council-acceleration.ts",
+      evidence: {
+        status,
+        action,
+        dailyUse,
+        latestCouncil: snapshot.payload.latestCouncil,
+        outputsFeed: snapshot.payload.outputsFeed,
+      },
+      nextAction:
+        "Keep Kimi, MiniMax, and DeepSeek as separately attributable evidence inputs; never treat one model as final authority.",
+    };
+  }
+  if (hardBlocks.length > 0) {
+    return {
+      id: "provider_council_blocked_by_owner_gate",
+      status: "watch",
+      severity: "P3",
+      owner: "scripts/dev/lcx-provider-council-acceleration.ts",
+      evidence: { status, action, hardBlocks, dailyUse },
+      nextAction:
+        "Do not force provider calls while git, eval/MLX, or freshness gates block the owner command.",
+    };
+  }
+  return {
+    id: "provider_council_due_without_complete_three_role_evidence",
+    status: dueNow ? "blocked" : "watch",
+    severity: dueNow ? "P2" : "P3",
+    owner: "scripts/dev/lcx-provider-council-acceleration.ts",
+    evidence: { status, action, dailyUse, missingSuccessfulRoles },
+    nextAction:
+      "Run the bounded provider council --write owner once, then consume the receipt through commercial acceptance.",
+  };
+}
+
+function moduleLearningClosedLoopGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+  if (!ownerOk(snapshot)) {
+    return ownerUnavailableGate("lcx-module-learning-absorption-gate", snapshot);
+  }
+  const counts = recordValue(snapshot!.payload!.counts);
+  const blockers = stringArray(snapshot!.payload!.blockers);
+  const weakReceiptCount = numberValue(counts?.weakReceiptCount) ?? 0;
+  const boundaryViolations = numberValue(counts?.boundaryViolations) ?? 0;
+  const missingAbsorptionEvidenceReceipts =
+    numberValue(counts?.missingAbsorptionEvidenceReceipts) ?? 0;
+  const absorptionReady = booleanValue(snapshot!.payload!.absorptionReady) === true;
+  if (
+    !absorptionReady ||
+    blockers.length > 0 ||
+    weakReceiptCount > 0 ||
+    boundaryViolations > 0 ||
+    missingAbsorptionEvidenceReceipts > 0
+  ) {
+    return {
+      id: "module_learning_closed_loop_incomplete",
+      status: "failed",
+      severity: "P2",
+      owner: "scripts/dev/lcx-module-learning-absorption-gate.ts",
+      evidence: {
+        absorptionReady,
+        gateDecision: snapshot!.payload!.gateDecision,
+        counts,
+        blockers,
+        nextActions: snapshot!.payload!.nextActions,
+      },
+      nextAction:
+        "Close source registry, retrieval/apply, eval/training evidence, fresh adjacent task, and keep/downrank/discard proof before claiming learning absorption.",
+    };
+  }
+  return {
+    id: "module_learning_closed_loop_clean",
+    status: "passed",
+    severity: "info",
+    owner: "scripts/dev/lcx-module-learning-absorption-gate.ts",
+    evidence: {
+      gateDecision: snapshot!.payload!.gateDecision,
+      absorptionDecision: snapshot!.payload!.absorptionDecision,
+      counts,
+      terminalNonAbsorbedRows: snapshot!.payload!.terminalNonAbsorbedRows,
+    },
+    nextAction:
+      "Learning sedimentation can be called eval-absorbed only for claimable rows; terminal discard rows remain audit evidence, not learned capability.",
+  };
+}
+
+function financeDataGatewayGate(
+  cleanSnapshot: OwnerSnapshot | undefined,
+  conflictSnapshot: OwnerSnapshot | undefined,
+): AcceptanceGate {
+  if (!ownerOk(cleanSnapshot)) {
+    return ownerUnavailableGate("finance-data-gateway-smoke-clean", cleanSnapshot);
+  }
+  if (!ownerOk(conflictSnapshot)) {
+    return ownerUnavailableGate("finance-data-gateway-smoke-conflict", conflictSnapshot);
+  }
+  const cleanQuality = stringValue(cleanSnapshot!.payload!.qualityStatus);
+  const conflictQuality = stringValue(conflictSnapshot!.payload!.qualityStatus);
+  const cleanRoles = stringArray(cleanSnapshot!.payload!.providerRolesPresent);
+  const conflictNextSteps = stringArray(conflictSnapshot!.payload!.requiredNextSteps);
+  const conflictCount = arrayValue(conflictSnapshot!.payload!.conflicts).length;
+  const cleanReady =
+    cleanQuality === "ready" &&
+    ["primary_market_data", "cross_check_market_data", "official_or_issuer_reference"].every(
+      (role) => cleanRoles.includes(role),
+    );
+  const conflictRouted =
+    conflictQuality === "needs_review" &&
+    conflictCount > 0 &&
+    conflictNextSteps.includes("run_data_provenance_quality_review");
+  if (!cleanReady || !conflictRouted) {
+    return {
+      id: "finance_data_gateway_contract_regression",
+      status: "failed",
+      severity: "P1",
+      owner: "scripts/dev/finance-data-gateway-smoke.ts",
+      evidence: {
+        cleanQuality,
+        cleanRoles,
+        conflictQuality,
+        conflictCount,
+        conflictNextSteps,
+      },
+      nextAction:
+        "Fix the finance data gateway before any visible answer can use current prices, counts, holdings, fundamentals, or conflicted values.",
+    };
+  }
+  return {
+    id: "finance_data_gateway_contract_clean",
+    status: "passed",
+    severity: "info",
+    owner: "scripts/dev/finance-data-gateway-smoke.ts",
+    evidence: {
+      cleanQuality,
+      cleanRoles,
+      conflictQuality,
+      conflictCount,
+      conflictNextSteps,
+    },
+    nextAction:
+      "Use finance_data_gateway_snapshot before current numeric finance answers; route conflicts to data provenance review.",
+  };
+}
+
 export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
   const gates = [
     commercialAnswerGate(inputs.commercialAnswerPipeline),
@@ -503,6 +694,9 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     ),
     trainingGuardGate(inputs.trainingPlan),
     providerCouncilGate(inputs.systemDoctor),
+    providerCouncilAccelerationGate(inputs.providerCouncilAcceleration),
+    moduleLearningClosedLoopGate(inputs.moduleLearningAbsorptionGate),
+    financeDataGatewayGate(inputs.financeDataGatewaySmoke, inputs.financeDataGatewayConflictSmoke),
   ];
   const failed = gates.filter((gate) => gate.status === "failed");
   const blocked = gates.filter((gate) => gate.status === "blocked");
@@ -545,6 +739,35 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
         owner: "scripts/dev/lcx-commercial-answer-pipeline.ts + lcx-flow-graph",
         requiredFor: "core_product_value",
       },
+      {
+        id: "real_short_lark_canary_suite",
+        purpose:
+          "probe short natural asks like 能买吗, 加不加仓, 学一下这个链接, 到哪了 without allowing silent, generic, or wrong-route replies",
+        owner: "scripts/dev/lcx-commercial-answer-pipeline.ts",
+        requiredFor: "entry_exit_quality",
+      },
+      {
+        id: "three_provider_council_receipt",
+        purpose:
+          "prove Kimi/MiniMax/DeepSeek were called as separately attributable roles before citing council evidence",
+        owner: "scripts/dev/lcx-provider-council-acceleration.ts",
+        requiredFor: "provider_council_evidence",
+      },
+      {
+        id: "learning_sedimentation_closed_loop",
+        purpose:
+          "prove source registry, retrieval/apply, eval absorption, fresh adjacent task, and keep/downrank/discard decision before learned claims",
+        owner: "scripts/dev/lcx-module-learning-absorption-gate.ts",
+        requiredFor: "learning_absorption_truth",
+      },
+      {
+        id: "finance_gateway_async_receipt_experience",
+        purpose:
+          "prove finance numbers use gateway provenance and deferred work exposes queued/completion/failure receipt boundaries",
+        owner:
+          "scripts/dev/finance-data-gateway-smoke.ts + scripts/dev/lcx-commercial-answer-pipeline.ts",
+        requiredFor: "numeric_answer_and_async_reply_quality",
+      },
     ],
     ownerCommands: [
       "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
@@ -554,6 +777,10 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
       "node --import tsx scripts/dev/lcx-external-channel-status.ts --json",
       "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
+      "node --import tsx scripts/dev/lcx-provider-council-acceleration.ts --json --profile aggressive",
+      "node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json",
+      "node --import tsx scripts/dev/finance-data-gateway-smoke.ts --json",
+      "node --import tsx scripts/dev/finance-data-gateway-smoke.ts --conflict --json",
     ],
     nextActions: gates
       .filter((gate) => gate.status !== "passed")
@@ -610,6 +837,10 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     externalChannelBindingStatus,
     trainingPlan,
     systemDoctor,
+    providerCouncilAcceleration,
+    moduleLearningAbsorptionGate,
+    financeDataGatewaySmoke,
+    financeDataGatewayConflictSmoke,
   ] = await Promise.all([
     runJsonOwner(
       "lcx-commercial-answer-pipeline",
@@ -640,6 +871,24 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
           error: "doctor skipped by --skip-doctor",
         })
       : runJsonOwner("lcx-system-doctor", "scripts/dev/lcx-system-doctor.ts", ["--json"]),
+    runJsonOwner(
+      "lcx-provider-council-acceleration",
+      "scripts/dev/lcx-provider-council-acceleration.ts",
+      ["--json", "--profile", "aggressive"],
+    ),
+    runJsonOwner(
+      "lcx-module-learning-absorption-gate",
+      "scripts/dev/lcx-module-learning-absorption-gate.ts",
+      ["--json"],
+    ),
+    runJsonOwner("finance-data-gateway-smoke-clean", "scripts/dev/finance-data-gateway-smoke.ts", [
+      "--json",
+    ]),
+    runJsonOwner(
+      "finance-data-gateway-smoke-conflict",
+      "scripts/dev/finance-data-gateway-smoke.ts",
+      ["--conflict", "--json"],
+    ),
   ]);
   return {
     commercialAnswerPipeline,
@@ -651,6 +900,10 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     externalChannelBindingStatus,
     trainingPlan,
     systemDoctor,
+    providerCouncilAcceleration,
+    moduleLearningAbsorptionGate,
+    financeDataGatewaySmoke,
+    financeDataGatewayConflictSmoke,
   };
 }
 
