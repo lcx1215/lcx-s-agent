@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -9,6 +10,12 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 const OWNER_CHILD_TIMEOUT_MS = 30_000;
+const WORKSPACE_DIR = path.join(process.env.HOME ?? "", ".openclaw", "workspace");
+const BINDING_LATEST_PATH = path.join(
+  WORKSPACE_DIR,
+  "state",
+  "lcx-external-channel-binding-latest.json",
+);
 
 type CliOptions = {
   json: boolean;
@@ -132,6 +139,15 @@ function parseOptionalJsonObject(stdout: string): Record<string, unknown> {
   }
 }
 
+async function readLatestBindingSnapshot(): Promise<Record<string, unknown>> {
+  try {
+    const text = await fs.readFile(BINDING_LATEST_PATH, "utf8");
+    return parseOptionalJsonObject(text);
+  } catch {
+    return {};
+  }
+}
+
 export async function runExternalChannelStatus(options: CliOptions) {
   const args = ["--import", "tsx", "scripts/dev/lcx-promote-live.ts", "--status", "--json"];
   if (options.withProbe) {
@@ -160,12 +176,16 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const legacyOutput = settledCommandText(legacyResult);
     const bindingOutput = settledCommandText(bindingResult);
     const legacy = parseOptionalJsonObject(legacyOutput.stdout);
-    const bindingPayload = parseOptionalJsonObject(bindingOutput.stdout);
+    const liveBindingPayload = parseOptionalJsonObject(bindingOutput.stdout);
+    const latestBindingSnapshot =
+      Object.keys(liveBindingPayload).length > 0 ? {} : await readLatestBindingSnapshot();
+    const bindingPayload =
+      Object.keys(liveBindingPayload).length > 0 ? liveBindingPayload : latestBindingSnapshot;
     const binding = recordValue(bindingPayload.externalChannelBinding);
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
     const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
     const legacyDevLiveDrift = recordValue(legacy.devLiveDrift);
-    const bindingStatus = binding?.status;
+    const bindingStatus = binding?.status ?? "unavailable";
     const bindingProvedChannelBound =
       bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
       bindingStatus === "channel_runtime_probe_ok_user_visible_observed";
@@ -208,6 +228,13 @@ export async function runExternalChannelStatus(options: CliOptions) {
         timeoutMs: OWNER_CHILD_TIMEOUT_MS,
         legacyStatusAvailable: Object.keys(legacy).length > 0,
         bindingStatusAvailable: Object.keys(bindingPayload).length > 0,
+        bindingStatusSource:
+          Object.keys(liveBindingPayload).length > 0
+            ? "command"
+            : Object.keys(latestBindingSnapshot).length > 0
+              ? "latest_snapshot"
+              : "unavailable",
+        bindingLatestPath: BINDING_LATEST_PATH,
         legacyError: legacyOutput.error,
         bindingError: bindingOutput.error,
       },

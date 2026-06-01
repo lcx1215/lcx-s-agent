@@ -44,11 +44,28 @@ describe("lcx-external-channel-status", () => {
         userVisibleObserved: expect.any(Boolean),
       }),
     );
-    expect(payload.externalChannelBinding).toEqual(
+    expect(payload.ownerChildStatus).toEqual(
       expect.objectContaining({
-        boundary: "dev_external_channel_binding_operator_only",
+        bindingStatusAvailable: expect.any(Boolean),
+        bindingStatusSource: expect.stringMatching(/^(command|latest_snapshot|unavailable)$/u),
+        bindingLatestPath: expect.stringContaining("lcx-external-channel-binding-latest.json"),
       }),
     );
+    const ownerChildStatus = payload.ownerChildStatus as { bindingStatusAvailable?: boolean };
+    if (ownerChildStatus.bindingStatusAvailable === true) {
+      expect(payload.externalChannelBinding).toEqual(
+        expect.objectContaining({
+          boundary: "dev_external_channel_binding_operator_only",
+        }),
+      );
+    } else {
+      expect(payload.externalChannelStatus).toEqual(
+        expect.objectContaining({
+          canonicalBindingStatus: "unavailable",
+          nextHumanStep: "inspect_lcx_external_channel_binding_owner",
+        }),
+      );
+    }
     expect(payload.visibleProof).toEqual(
       expect.objectContaining({
         replyFlowProbeCommand:

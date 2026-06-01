@@ -282,6 +282,33 @@ function looksLikeApiRouteJsonLabelArtifact(candidate: LarkPendingRoutingCandida
   );
 }
 
+function parseJsonRecord(value: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function looksLikeInternalVisibleAnswerGateArtifact(
+  candidate: LarkPendingRoutingCandidate,
+): boolean {
+  if (candidate.source !== "api_reply") {
+    return false;
+  }
+  const text = candidate.sample.distillableText ?? candidate.utterance ?? "";
+  const parsed = parseJsonRecord(text);
+  return (
+    parsed?.source_kind === "visible_answer_gate_rejection" ||
+    parsed?.no_language_routing_promotion === true ||
+    /"source_kind"\s*:\s*"visible_answer_gate_rejection"/iu.test(text) ||
+    /"no_language_routing_promotion"\s*:\s*true/iu.test(text)
+  );
+}
+
 function looksLikeClarificationBoundaryVisibleReply(
   candidate: LarkPendingRoutingCandidate,
 ): boolean {
@@ -301,6 +328,15 @@ function looksLikeAmbiguousRepeatUserUtterance(candidate: LarkPendingRoutingCand
     return false;
   }
   return /^(重新来|重新|重来|再来|再跑|重跑)(一遍|一次)?[。.!！?？\s]*$/u.test(candidate.utterance);
+}
+
+function looksLikeSyntheticLarkCanaryUserUtterance(
+  candidate: LarkPendingRoutingCandidate,
+): boolean {
+  if (candidate.source !== "lark_user_utterance" || !candidate.utterance) {
+    return false;
+  }
+  return /(?:\blark-canary-[a-z0-9-]+\b|\bLCX[A-Z]?\d+\b)/iu.test(candidate.utterance);
 }
 
 function looksLikeDomainAnswerVisibleReply(candidate: LarkPendingRoutingCandidate): boolean {
@@ -325,6 +361,73 @@ function looksLikeFinanceSourceIntakeArtifact(text: string): boolean {
   );
 }
 
+function resolveVisibleReplySemanticCandidate(
+  candidate: LarkPendingRoutingCandidate,
+): SemanticRouteCandidate | undefined {
+  if (candidate.source !== "lark_visible_reply" || !candidate.utterance) {
+    return undefined;
+  }
+  const text = candidate.utterance;
+  if (
+    /(直接结论|研究框架|不能只凭亏|不能靠亏损幅度|不能直接给交易动作结论|不是交易指令|不是“买\/卖\/加\/减”的执行口令)/iu.test(
+      text,
+    ) &&
+    /(仓位占总资产|风险预算|thesis|原始逻辑|估值|波动率|杠杆|期权|补仓|割肉|减仓|持仓|nvda|tqqq|qqq|tlt|平均加仓|摊低)/iu.test(
+      text,
+    )
+  ) {
+    return {
+      family: "position_risk_adjustment",
+      score: 0.95,
+      matchedUtterance: "visible_position_risk_answer_contract",
+    };
+  }
+  if (
+    /(仓位|平均加仓|摊低|position-sizing|portfolio-sizing|risk-transmission|behavior-error-correction|风险预算|风险门|风险检查)/iu.test(
+      text,
+    )
+  ) {
+    return {
+      family: "position_risk_adjustment",
+      score: 0.95,
+      matchedUtterance: "visible_position_risk_answer_contract",
+    };
+  }
+  if (
+    /(半导体\s*beta|指数期权波动|半导体和指数期权|dealer\s*gamma|\bgamma\b|skew|vix|\biv\b|期限结构|大到期)/iu.test(
+      text,
+    ) &&
+    /(半导体|指数期权|期权波动|dealer|vix|skew|gamma|大到期)/iu.test(text)
+  ) {
+    return {
+      family: "technical_timing",
+      score: 0.9,
+      matchedUtterance: "visible_semiconductor_options_risk_contract",
+    };
+  }
+  if (
+    /(按你给的两个数直接算|算术口径|46\s*\/\s*6818|真实增量|统计口径|两个快照的时间戳)/iu.test(text)
+  ) {
+    return {
+      family: "control_room_aggregate",
+      score: 0.88,
+      matchedUtterance: "visible_arithmetic_status_answer_contract",
+    };
+  }
+  if (
+    /(真实状态必须先读|当前 git 状态|训练\/eval 进程|training plan|operator 状态|状态未核验|进化了什么|还卡在哪)/iu.test(
+      text,
+    )
+  ) {
+    return {
+      family: "control_room_aggregate",
+      score: 0.9,
+      matchedUtterance: "visible_system_status_answer_contract",
+    };
+  }
+  return undefined;
+}
+
 function looksLikePlainRouteLabelReferenceArtifact(text: string): boolean {
   return (
     (/^\s*family\s*[:=]/iu.test(text) &&
@@ -345,6 +448,10 @@ function looksLikePlainRouteLabelReferenceArtifact(text: string): boolean {
 function resolveCandidateSemantic(
   candidate: LarkPendingRoutingCandidate,
 ): SemanticRouteCandidate | undefined {
+  const visibleSemantic = resolveVisibleReplySemanticCandidate(candidate);
+  if (visibleSemantic) {
+    return visibleSemantic;
+  }
   if (candidate.source === "api_reply") {
     return (
       parseApiRouteFamilyHint(candidate.sample?.distillableText) ??
@@ -453,6 +560,16 @@ export function evaluateLarkPendingRoutingCandidate(params: {
       reason: "discarded_by_distillation",
     };
   }
+  if (looksLikeSyntheticLarkCanaryUserUtterance(candidate)) {
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        discardReason: "synthetic_lark_canary_user_probe",
+      },
+      reason: "discarded_by_distillation",
+    };
+  }
   if (looksLikeDomainAnswerVisibleReply(candidate)) {
     return {
       candidate: {
@@ -472,6 +589,17 @@ export function evaluateLarkPendingRoutingCandidate(params: {
         ...candidate,
         status: "discarded",
         discardReason: "api_route_provider_failure",
+      },
+      reason: "discarded_by_distillation",
+    };
+  }
+  if (looksLikeInternalVisibleAnswerGateArtifact(candidate)) {
+    return {
+      candidate: {
+        ...candidate,
+        status: "discarded",
+        discardReason: "internal_visible_answer_gate_artifact",
+        semantic: resolveCandidateSemantic(candidate) ?? { family: "unknown", score: 0 },
       },
       reason: "discarded_by_distillation",
     };
@@ -517,7 +645,8 @@ export function evaluateLarkPendingRoutingCandidate(params: {
       reason: "discarded_by_distillation",
     };
   }
-  const directSemantic = resolveLarkSemanticRouteCandidate(candidate.utterance);
+  const directSemantic =
+    resolveCandidateSemantic(candidate) ?? resolveLarkSemanticRouteCandidate(candidate.utterance);
   const semantic =
     candidate.source === "lark_user_utterance" &&
     params.familyHint?.family &&
@@ -536,13 +665,22 @@ export function evaluateLarkPendingRoutingCandidate(params: {
     id: candidate.id,
     utterance: candidate.utterance,
     family: semantic.family as LarkRoutingFamily,
-    expectedSurface: expectedSurfaceForCandidate({
-      family: semantic.family as LarkRoutingFamily,
-      utterance: candidate.utterance,
-    }),
-    expectedGuardMatchers: expectedGuardMatchersForUtterance(candidate.utterance),
+    expectedSurface:
+      candidate.source === "lark_visible_reply"
+        ? undefined
+        : expectedSurfaceForCandidate({
+            family: semantic.family as LarkRoutingFamily,
+            utterance: candidate.utterance,
+          }),
+    expectedGuardMatchers:
+      candidate.source === "lark_visible_reply"
+        ? undefined
+        : expectedGuardMatchersForUtterance(candidate.utterance),
     truthBoundary: "evidence_required",
-    notes: "Auto-normalized language-routing candidate; not a finance learning artifact.",
+    notes:
+      candidate.source === "lark_visible_reply"
+        ? "Auto-normalized visible reply replay; validates output semantic family only and is not a route-input or finance learning artifact."
+        : "Auto-normalized language-routing candidate; not a finance learning artifact.",
   };
   const deterministic = resolveLarkDeterministicCorpusCase({
     cfg: params.cfg,
@@ -570,6 +708,13 @@ export function evaluateLarkPendingRoutingCandidate(params: {
       candidate: { ...candidate, status: "rejected_language_case", semantic },
       acceptedCase,
       reason: "deterministic_route_failed",
+    };
+  }
+  if (candidate.source === "lark_visible_reply") {
+    return {
+      candidate: { ...candidate, status: "accepted_language_case", semantic },
+      acceptedCase,
+      reason: "accepted_language_case",
     };
   }
   if (

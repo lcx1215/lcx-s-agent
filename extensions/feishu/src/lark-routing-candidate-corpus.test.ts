@@ -68,19 +68,122 @@ describe("lark routing candidate corpus", () => {
         id: candidate.id,
         utterance: "去学习世界顶级大学前沿金融论文",
         family: "external_source_coverage_honesty",
-        expectedSurface: "learning_command",
-        expectedGuardMatchers: ["sourceCoverage"],
-        notes: "Auto-normalized language-routing candidate; not a finance learning artifact.",
-      }),
-      score: expect.objectContaining({
-        total: 1,
-        deterministicPassed: 1,
-        semanticCandidatePassed: 1,
+        expectedGuardMatchers: undefined,
+        notes:
+          "Auto-normalized visible reply replay; validates output semantic family only and is not a route-input or finance learning artifact.",
       }),
     });
     expect(JSON.stringify(evaluation)).not.toMatch(
       /finance_learning|finance-learning|memory\/local-memory|capability card/u,
     );
+  });
+
+  it("accepts real visible answer replay contracts and discards internal gate artifacts", () => {
+    const evaluations = evaluateLarkPendingRoutingCandidates({
+      cfg,
+      candidates: [
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "直接结论：不能只凭亏 20% 判断割肉还是补仓；这会把“想回本”的情绪误当成投资逻辑。正确做法是先审计 thesis 和风险预算。NVDA：先分三类：原始逻辑已经坏了、逻辑没坏但估值被重估、逻辑没坏但仓位对账户太重。第一组检查：仓位占总资产多少、成本区间、买入时间、最大可承受回撤、是否有杠杆/期权。",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "没有最新行情，所以这里只能给风险清单，不能说当前市场结论。1. 半导体 beta 风险：SOXX/SMH/NVDA 的市场宽度、财报指引、估值压缩。2. 指数期权波动风险：VIX/IV、偏斜、期限结构、dealer gamma、大到期 pin 或挤压风险。3. 宏观传导风险：利率、美元和流动性。",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "按你给的两个数直接算：46 / 6818 = 0.67%。这只是算术口径，不代表样本池已经核验为真实增量或好样本。要确认真实增量，还要看昨天总数、今天总数、统计口径和两个快照的时间戳。",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_visible_reply",
+          payload:
+            "不能靠聊天记忆或自信回答当前进化状态。真实状态必须先读：当前 git 状态、训练/eval 进程、本地 operator 状态、系统 doctor、training plan、Lark 通道证明。如果这些检查没跑完，只能说“状态未核验”。",
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "api_reply",
+          payload: {
+            source_kind: "visible_answer_gate_rejection",
+            learning_boundary: "brain_distillation_candidate_only",
+            user_message: "我NVDA亏20%，该割肉还是补仓？",
+            failed_reasons: ["english_internal_blocked_label_visible"],
+            rejected_visible_answer: "Boundary And Missing Inputs...",
+            replacement_visible_answer: "直接结论：先审计 thesis 和风险预算。",
+            no_language_routing_promotion: true,
+          },
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "api_reply",
+          payload:
+            '{"source_kind":"visible_answer_gate_rejection","learning_boundary":"brain_distillation_candidate_only","user_message":"明天给我一份半导体和指数期权日报格式","failed_reasons":["daily_semiconductor_options_format_missing"],"rejected_visible_answer":"Data Freshness Status '.repeat(
+              6,
+            ),
+        }),
+        createLarkPendingRoutingCandidate({
+          source: "lark_user_utterance",
+          payload:
+            "E5 Kimi MiniMax DeepSeek disagree, final answer decided by who? no JSON. lark-canary-e5",
+        }),
+      ],
+    });
+
+    expect(evaluations).toEqual([
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({
+          family: "position_risk_adjustment",
+          expectedSurface: undefined,
+          expectedGuardMatchers: undefined,
+        }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({
+          family: "technical_timing",
+          expectedSurface: undefined,
+          expectedGuardMatchers: undefined,
+        }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({
+          family: "control_room_aggregate",
+          expectedSurface: undefined,
+          expectedGuardMatchers: undefined,
+        }),
+      }),
+      expect.objectContaining({
+        reason: "accepted_language_case",
+        acceptedCase: expect.objectContaining({
+          family: "control_room_aggregate",
+          expectedSurface: undefined,
+          expectedGuardMatchers: undefined,
+        }),
+      }),
+      expect.objectContaining({
+        reason: "discarded_by_distillation",
+        candidate: expect.objectContaining({
+          status: "discarded",
+          discardReason: "internal_visible_answer_gate_artifact",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "discarded_by_distillation",
+        candidate: expect.objectContaining({
+          status: "discarded",
+          discardReason: "internal_visible_answer_gate_artifact",
+        }),
+      }),
+      expect.objectContaining({
+        reason: "discarded_by_distillation",
+        candidate: expect.objectContaining({
+          status: "discarded",
+          discardReason: "synthetic_lark_canary_user_probe",
+        }),
+      }),
+    ]);
   });
 
   it("keeps WeChat public-account source learning on the finance pipeline, not language corpus", () => {
