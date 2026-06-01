@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { buildDirectedDailyResearchBrief } from "./lcx-directed-daily-research-brief.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +34,7 @@ type HarnessInputs = {
   commercialAnswerPipeline?: OwnerSnapshot;
   shortIntentFuzzer?: OwnerSnapshot;
   visibleAnswerQualityFuzzer?: OwnerSnapshot;
+  directedDailyResearchBrief?: OwnerSnapshot;
   problemRadar?: OwnerSnapshot;
   flowGraph?: OwnerSnapshot;
   mindModel?: OwnerSnapshot;
@@ -305,6 +307,85 @@ function visibleAnswerQualityFuzzerGate(snapshot: OwnerSnapshot | undefined): Ac
     },
     nextAction:
       "Keep product answer quality as a positive acceptance gate, not only a bad-answer rejection gate.",
+  };
+}
+
+function directedDailyResearchBriefGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+  if (!ownerOk(snapshot)) {
+    return ownerUnavailableGate("lcx-directed-daily-research-brief", snapshot);
+  }
+  const focus = recordValue(snapshot!.payload!.focus);
+  const universe = recordValue(snapshot!.payload!.universe);
+  const outputContract = recordValue(snapshot!.payload!.outputContract);
+  const learningContract = recordValue(snapshot!.payload!.learningContract);
+  const tasks = arrayValue(snapshot!.payload!.tasks).map(recordValue);
+  const indexOptions = stringArray(universe?.indexOptions);
+  const semiconductorAiCompute = stringArray(universe?.semiconductorAiCompute);
+  const requiredEvidence = stringArray(outputContract?.requiredEvidence);
+  const forbiddenVisibleOutputs = stringArray(outputContract?.forbiddenVisibleOutputs);
+  const hasFocusedMode =
+    stringValue(snapshot!.payload!.productMode) ===
+    "focused_daily_research_product_not_open_ended_chat";
+  const hasCoreUniverse =
+    ["SPX", "NDX", "QQQ", "VIX"].every((symbol) => indexOptions.includes(symbol)) &&
+    ["NVDA", "AMD", "AVGO", "TSM", "ASML"].every((symbol) =>
+      semiconductorAiCompute.includes(symbol),
+    );
+  const hasEvidenceContract = [
+    "source_timestamp",
+    "field_definition",
+    "provider_role",
+    "conflict_or_missing_data_status",
+  ].every((field) => requiredEvidence.includes(field));
+  const hasRiskBoundary = [
+    "buy_sell_add_reduce_instruction",
+    "position_percentage",
+    "options_bet_instruction",
+  ].every((field) => forbiddenVisibleOutputs.includes(field));
+  const hasLearningTerminal =
+    booleanValue(learningContract?.sourceNameAndPathRequired) === true &&
+    stringValue(learningContract?.terminalDecision) === "application_ready_or_failedReason";
+  if (
+    !hasFocusedMode ||
+    !hasCoreUniverse ||
+    tasks.length < 4 ||
+    !hasEvidenceContract ||
+    !hasRiskBoundary ||
+    !hasLearningTerminal
+  ) {
+    return {
+      id: "directed_daily_research_brief_regression",
+      status: "failed",
+      severity: "P1",
+      owner: "scripts/dev/lcx-directed-daily-research-brief.ts",
+      evidence: {
+        hasFocusedMode,
+        hasCoreUniverse,
+        taskCount: tasks.length,
+        hasEvidenceContract,
+        hasRiskBoundary,
+        hasLearningTerminal,
+        focus,
+        universe,
+      },
+      nextAction:
+        "Fix the focused daily research owner before relying on it as the main product surface.",
+    };
+  }
+  return {
+    id: "directed_daily_research_brief_clean",
+    status: "passed",
+    severity: "info",
+    owner: "scripts/dev/lcx-directed-daily-research-brief.ts",
+    evidence: {
+      focus,
+      universe,
+      taskCount: tasks.length,
+      outputContract,
+      learningContract,
+    },
+    nextAction:
+      "Use this as the dependable daily product surface while open Q&A remains a guarded follow-up path.",
   };
 }
 
@@ -787,6 +868,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     commercialAnswerGate(inputs.commercialAnswerPipeline),
     shortIntentFuzzerGate(inputs.shortIntentFuzzer),
     visibleAnswerQualityFuzzerGate(inputs.visibleAnswerQualityFuzzer),
+    directedDailyResearchBriefGate(inputs.directedDailyResearchBrief),
     architectureGate(inputs.flowGraph, inputs.mindModel),
     radarGate(inputs.problemRadar),
     externalChannelStatusGate(
@@ -841,6 +923,13 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
         requiredFor: "core_product_value",
       },
       {
+        id: "directed_daily_research_brief",
+        purpose:
+          "prove the main product can produce a daily index-options plus semiconductor/AI compute-chain research packet without relying on open-ended chat",
+        owner: "scripts/dev/lcx-directed-daily-research-brief.ts",
+        requiredFor: "focused_daily_research_product",
+      },
+      {
         id: "real_short_lark_canary_suite",
         purpose:
           "probe short natural asks like 能买吗, 加不加仓, 学一下这个链接, 到哪了 without allowing silent, generic, or wrong-route replies",
@@ -888,6 +977,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
       "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
       "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
       "node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json",
+      "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
       "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
       "node --import tsx scripts/dev/lcx-mind-model.ts --json",
@@ -949,6 +1039,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     commercialAnswerPipeline,
     shortIntentFuzzer,
     visibleAnswerQualityFuzzer,
+    directedDailyResearchBrief,
     problemRadar,
     flowGraph,
     mindModel,
@@ -974,6 +1065,12 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
       "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
       ["--json"],
     ),
+    Promise.resolve({
+      ok: true,
+      owner: "lcx-directed-daily-research-brief",
+      command: "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
+      payload: buildDirectedDailyResearchBrief() as unknown as Record<string, unknown>,
+    }),
     runJsonOwner("lcx-problem-cluster-radar", "scripts/dev/lcx-problem-cluster-radar.ts", [
       "--json",
     ]),
@@ -1021,6 +1118,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     commercialAnswerPipeline,
     shortIntentFuzzer,
     visibleAnswerQualityFuzzer,
+    directedDailyResearchBrief,
     problemRadar,
     flowGraph,
     mindModel,

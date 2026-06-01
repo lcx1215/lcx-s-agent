@@ -95,6 +95,44 @@ function baseInputs() {
         },
       ],
     }),
+    directedDailyResearchBrief: owner("lcx-directed-daily-research-brief", {
+      ok: true,
+      boundary: "dev_directed_daily_research_brief_only",
+      productMode: "focused_daily_research_product_not_open_ended_chat",
+      focus: {
+        primary: "index_options_and_semiconductor_ai_compute_chain",
+        secondary: "timely_stock_candidate_radar",
+        cadence: "daily_low_frequency_research",
+      },
+      universe: {
+        indexOptions: ["SPX", "NDX", "QQQ", "SPY", "IWM", "VIX", "VVIX", "TLT"],
+        semiconductorAiCompute: ["NVDA", "AMD", "AVGO", "TSM", "ASML", "MU", "ARM"],
+      },
+      tasks: [
+        { id: "index_options_regime" },
+        { id: "semiconductor_leader_board" },
+        { id: "timely_stock_candidates" },
+        { id: "risk_gate_and_learning_loop" },
+      ],
+      outputContract: {
+        requiredEvidence: [
+          "source_name_or_artifact",
+          "source_timestamp",
+          "field_definition",
+          "provider_role",
+          "conflict_or_missing_data_status",
+        ],
+        forbiddenVisibleOutputs: [
+          "buy_sell_add_reduce_instruction",
+          "position_percentage",
+          "options_bet_instruction",
+        ],
+      },
+      learningContract: {
+        sourceNameAndPathRequired: true,
+        terminalDecision: "application_ready_or_failedReason",
+      },
+    }),
     problemRadar: owner("lcx-problem-cluster-radar", {
       ok: true,
       summary: {
@@ -266,12 +304,13 @@ describe("lcx-commercial-acceptance-harness", () => {
       }),
     );
     expect(result.summary).toEqual(
-      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 11 }),
+      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 12 }),
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
       "natural_plain_probe",
       "optional_fixed_receipt_anchor",
       "finance_research_prompt",
+      "directed_daily_research_brief",
       "real_short_lark_canary_suite",
       "short_intent_family_fuzzer",
       "visible_answer_quality_fuzzer",
@@ -293,6 +332,10 @@ describe("lcx-commercial-acceptance-harness", () => {
         expect.objectContaining({
           id: "three_provider_council_receipt",
           requiredFor: "provider_council_evidence",
+        }),
+        expect.objectContaining({
+          id: "directed_daily_research_brief",
+          requiredFor: "focused_daily_research_product",
         }),
         expect.objectContaining({
           id: "short_intent_family_fuzzer",
@@ -317,6 +360,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         "provider_council_three_role_evidence_present",
         "short_intent_family_fuzzer_clean",
         "visible_answer_quality_fuzzer_clean",
+        "directed_daily_research_brief_clean",
         "module_learning_closed_loop_clean",
         "finance_data_gateway_contract_clean",
       ]),
@@ -564,6 +608,42 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
+  it("blocks release when the focused daily research product loses its finance evidence contract", () => {
+    const inputs = baseInputs();
+    inputs.directedDailyResearchBrief = owner("lcx-directed-daily-research-brief", {
+      ok: true,
+      productMode: "focused_daily_research_product_not_open_ended_chat",
+      focus: { primary: "index_options_and_semiconductor_ai_compute_chain" },
+      universe: {
+        indexOptions: ["SPX", "NDX", "QQQ", "VIX"],
+        semiconductorAiCompute: ["NVDA", "AMD", "AVGO", "TSM", "ASML"],
+      },
+      tasks: [{ id: "index_options_regime" }],
+      outputContract: {
+        requiredEvidence: ["source_timestamp"],
+        forbiddenVisibleOutputs: ["buy_sell_add_reduce_instruction"],
+      },
+      learningContract: {
+        sourceNameAndPathRequired: true,
+        terminalDecision: "application_ready_or_failedReason",
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.failedGates).toContain("directed_daily_research_brief_regression");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "directed_daily_research_brief_regression",
+          status: "failed",
+          severity: "P1",
+        }),
+      ]),
+    );
+  });
+
   it("treats active Qwen guard as watch-only and never as permission to start overlap", () => {
     const inputs = baseInputs();
     inputs.trainingPlan = owner("local-brain-training-plan", {
@@ -631,6 +711,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
         "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
         "node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json",
+        "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       ]),
     );

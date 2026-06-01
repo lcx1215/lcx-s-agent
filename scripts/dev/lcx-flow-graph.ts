@@ -8,6 +8,10 @@ type FlowNodeId =
   | "local_brain_planner"
   | "finance_research_modules"
   | "finance_data_gateway"
+  | "focused_research_universe"
+  | "directed_daily_research_brief"
+  | "daily_research_packet"
+  | "candidate_watchlist"
   | "primary_market_data_provider"
   | "cross_check_market_data_provider"
   | "official_reference_data_provider"
@@ -189,7 +193,10 @@ type FlowFilterId =
   | "skillopt_external_channel_proof_required"
   | "inventory_only_no_delete"
   | "owner_coverage_required"
-  | "artifact_staleness_visible";
+  | "artifact_staleness_visible"
+  | "focused_daily_product_required"
+  | "daily_research_packet_required"
+  | "candidate_watchlist_not_trade_recommendation";
 
 type SurfaceGroup = "head" | "workflow" | "proof" | "boundary";
 
@@ -257,6 +264,10 @@ const NODE_IDS: FlowNodeId[] = [
   "local_brain_planner",
   "finance_research_modules",
   "finance_data_gateway",
+  "focused_research_universe",
+  "directed_daily_research_brief",
+  "daily_research_packet",
+  "candidate_watchlist",
   "primary_market_data_provider",
   "cross_check_market_data_provider",
   "official_reference_data_provider",
@@ -440,6 +451,9 @@ const FILTER_IDS: FlowFilterId[] = [
   "inventory_only_no_delete",
   "owner_coverage_required",
   "artifact_staleness_visible",
+  "focused_daily_product_required",
+  "daily_research_packet_required",
+  "candidate_watchlist_not_trade_recommendation",
 ];
 
 const FLOW_SCENARIOS: FlowScenario[] = [
@@ -482,6 +496,61 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
     feedbackEdges: [["review_panel", "finance_research_modules"]],
     receipts: ["feishu-reply-flow", "finance_learning_capability_apply", "review_panel"],
+  },
+  {
+    id: "directed_daily_research_brief_waterflow",
+    family: "focused_daily_finance_research_product",
+    objective:
+      "The main daily product should produce an index-options plus semiconductor/AI compute-chain research packet with candidate radar, evidence gates, risk boundaries, and learning sedimentation instead of relying on open-ended chat.",
+    start: "schedule_gate",
+    end: "daily_research_packet",
+    requiredNodes: [
+      "schedule_gate",
+      "focused_research_universe",
+      "directed_daily_research_brief",
+      "finance_data_gateway",
+      "finance_research_modules",
+      "candidate_watchlist",
+      "source_registry",
+      "causal_map",
+      "review_panel",
+      "daily_research_packet",
+    ],
+    requiredFilters: [
+      "focused_daily_product_required",
+      "daily_research_packet_required",
+      "source_evidence_gate",
+      "fresh_timestamp_required",
+      "field_definition_required",
+      "conflicted_data_blocks_conclusion",
+      "research_only_boundary",
+      "no_trade_advice",
+      "no_unverified_current_market_data",
+      "candidate_watchlist_not_trade_recommendation",
+      "retrieval_apply_eval_review_required",
+    ],
+    edges: [
+      ["schedule_gate", "focused_research_universe"],
+      ["focused_research_universe", "directed_daily_research_brief"],
+      ["directed_daily_research_brief", "finance_data_gateway"],
+      ["finance_data_gateway", "finance_research_modules"],
+      ["finance_research_modules", "candidate_watchlist"],
+      ["finance_research_modules", "source_registry"],
+      ["source_registry", "causal_map"],
+      ["candidate_watchlist", "review_panel"],
+      ["causal_map", "review_panel"],
+      ["review_panel", "daily_research_packet"],
+    ],
+    feedbackEdges: [
+      ["review_panel", "finance_research_modules"],
+      ["daily_research_packet", "finance_learning_memory"],
+    ],
+    receipts: [
+      "lcx-directed-daily-research-brief-latest",
+      "finance_data_gateway_snapshot",
+      "review_panel",
+      "learning_sedimentation_review",
+    ],
   },
   {
     id: "module_learning_internalization_waterflow",
@@ -1517,6 +1586,26 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     ],
   },
   {
+    id: "focused_daily_research_product_cluster",
+    philosophy:
+      "open Q&A is a guarded follow-up path, while the dependable finance product is one focused daily research packet",
+    ownerScenario: "directed_daily_research_brief_waterflow",
+    ownerNode: "directed_daily_research_brief",
+    sameClassTerms: [
+      "lcx-directed-daily-research-brief",
+      "index options daily brief",
+      "semiconductor AI compute chain",
+      "timely stock candidate radar",
+      "focused daily research product",
+    ],
+    mergeFilters: [
+      "focused_daily_product_required",
+      "daily_research_packet_required",
+      "candidate_watchlist_not_trade_recommendation",
+      "single_owner_required",
+    ],
+  },
+  {
     id: "commercial_acceptance_harness_cluster",
     philosophy:
       "commercial acceptance is one product-grade exam that consumes owner outputs, error budgets, and Lark external-channel canaries without replacing those owners",
@@ -1749,6 +1838,21 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     ],
   },
   {
+    id: "focused_daily_research_product_entrypoints",
+    ownerCluster: "focused_daily_research_product_cluster",
+    ownerPath: "scripts/dev/lcx-directed-daily-research-brief.ts",
+    watchedPathTerms: [
+      "directed-daily-research",
+      "focused daily research",
+      "index-options",
+      "semiconductor",
+    ],
+    allowedPaths: [
+      "scripts/dev/lcx-directed-daily-research-brief.ts",
+      "test/lcx-directed-daily-research-brief.test.ts",
+    ],
+  },
+  {
     id: "qwen_training_operation_entrypoints",
     ownerCluster: "senior_trader_failure_focus_cluster",
     ownerPath: "scripts/dev/local-brain-training-plan.ts",
@@ -1900,6 +2004,7 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
 
 const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   lark_finance_research_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
+  directed_daily_research_brief_waterflow: "scripts/dev/lcx-directed-daily-research-brief.ts",
   module_learning_internalization_waterflow: "scripts/dev/module-learning-pipeline-review.ts",
   training_failure_feedback_waterflow: "scripts/dev/local-brain-training-plan.ts",
   dev_to_external_channel_lark_waterflow: "scripts/dev/lcx-external-channel-binding.ts",
@@ -1923,6 +2028,8 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
 
 const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
   lark_finance_research_waterflow: "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
+  directed_daily_research_brief_waterflow:
+    "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
   module_learning_internalization_waterflow:
     "node --import tsx scripts/dev/module-learning-pipeline-review.ts --json",
   training_failure_feedback_waterflow:
@@ -1976,6 +2083,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/dev/lcx-universe-index.ts",
     "scripts/dev/lcx-commercial-answer-pipeline.ts",
     "scripts/dev/lcx-commercial-acceptance-harness.ts",
+    "scripts/dev/lcx-directed-daily-research-brief.ts",
     "scripts/dev/lcx-learning-sedimentation-bridge.ts",
     "scripts/dev/lcx-learning-sedimentation-audit.ts",
     "scripts/dev/lcx-learning-sedimentation-map.ts",

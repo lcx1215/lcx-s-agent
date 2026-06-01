@@ -141,6 +141,19 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "directed_daily_research_brief_waterflow",
+          feedbackEdgeCount: 2,
+          receipts: expect.arrayContaining(["lcx-directed-daily-research-brief-latest"]),
+          requiredFilters: expect.arrayContaining([
+            "focused_daily_product_required",
+            "daily_research_packet_required",
+            "candidate_watchlist_not_trade_recommendation",
+            "fresh_timestamp_required",
+            "field_definition_required",
+            "no_trade_advice",
+          ]),
+        }),
+        expect.objectContaining({
           id: "module_learning_internalization_waterflow",
           requiredFilters: expect.arrayContaining([
             "stored_only_is_not_learning",
@@ -375,6 +388,16 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "focused_daily_research_product_cluster",
+          ownerScenario: "directed_daily_research_brief_waterflow",
+          mergeFilters: expect.arrayContaining([
+            "focused_daily_product_required",
+            "daily_research_packet_required",
+            "candidate_watchlist_not_trade_recommendation",
+            "single_owner_required",
+          ]),
+        }),
+        expect.objectContaining({
           id: "commercial_acceptance_harness_cluster",
           ownerScenario: "commercial_acceptance_harness_waterflow",
           mergeFilters: expect.arrayContaining([
@@ -476,6 +499,15 @@ describe("LCX flow graph exam", () => {
           ownerCluster: "finance_data_quality_cluster",
           watchedPathTerms: expect.arrayContaining(["finance-data-gateway"]),
         }),
+        expect.objectContaining({
+          id: "focused_daily_research_product_entrypoints",
+          ownerCluster: "focused_daily_research_product_cluster",
+          ownerPath: "scripts/dev/lcx-directed-daily-research-brief.ts",
+          allowedPaths: expect.arrayContaining([
+            "scripts/dev/lcx-directed-daily-research-brief.ts",
+            "test/lcx-directed-daily-research-brief.test.ts",
+          ]),
+        }),
       ]),
     );
     expect(payload.sharedEntrypointOwnerRules).toEqual(
@@ -551,6 +583,16 @@ describe("LCX flow graph exam", () => {
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:candidate_answer_not_final_authority",
             "missing_or_skipped_filter:terminal_decision_required",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "directed_daily_research_brief_waterflow",
+          ownerEntrypoint: "scripts/dev/lcx-directed-daily-research-brief.ts",
+          fastCheck: "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
+          evidenceReceipts: expect.arrayContaining(["lcx-directed-daily-research-brief-latest"]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:focused_daily_product_required",
+            "missing_or_skipped_filter:daily_research_packet_required",
           ]),
         }),
         expect.objectContaining({
