@@ -19,8 +19,10 @@ describe("visible answer adoption gate", () => {
         failedReasons: expect.arrayContaining(["chinese_action_framework_language"]),
       }),
     );
-    expect(decision.text).toContain("这是研究框架，不是交易指令");
+    expect(decision.text).toContain("直接结论");
+    expect(decision.text).toContain("thesis 和风险预算");
     expect(decision.text).toContain("仓位占总资产");
+    expect(decision.text).toContain("反证条件");
     expect(decision.text).not.toContain("均价策略");
     expect(decision.text).not.toContain("止损策略");
     expect(decision.text).not.toContain("抄底");
@@ -43,7 +45,7 @@ describe("visible answer adoption gate", () => {
     );
     expect(decision.text).toContain("NVDA：");
     expect(decision.text).toContain("仓位占总资产");
-    expect(decision.text).toContain("失效条件");
+    expect(decision.text).toContain("反证条件");
     expect(decision.text).not.toContain("QQQ：");
     expect(decision.text).not.toContain("TLT：");
     expect(decision.text).not.toContain("继续拿着");
@@ -64,8 +66,9 @@ describe("visible answer adoption gate", () => {
         "english_direct_position_action_language",
       ]),
     );
-    expect(decision.text).toContain("Research-only frame, not a trading instruction");
-    expect(decision.text).toContain("position size versus total portfolio");
+    expect(decision.text).toContain("Direct answer");
+    expect(decision.text).toContain("thesis and risk audit");
+    expect(decision.text).toContain("position weight versus total portfolio");
     expect(decision.text).not.toContain("Current Stance");
     expect(decision.text).not.toContain("Action Triggers");
   });
@@ -85,11 +88,12 @@ describe("visible answer adoption gate", () => {
       expect.arrayContaining(["chinese_direct_position_action_language"]),
     );
     expect(optionDecision.text).toContain("杠杆/期权到期风险");
+    expect(optionDecision.text).toContain("三层做研究检查");
     expect(optionDecision.text).not.toContain("满仓");
     expect(optionDecision.text).not.toContain("梭哈");
 
     expect(leverageDecision.status).toBe("replaced");
-    expect(leverageDecision.text).toContain("不给交易指令");
+    expect(leverageDecision.text).toContain("不是“买/卖/加/减”的执行口令");
     expect(leverageDecision.text).not.toContain("加保证金");
   });
 
@@ -137,7 +141,8 @@ describe("visible answer adoption gate", () => {
     expect(decision.failedReasons).toEqual(
       expect.arrayContaining(["stale_prior_answer_deferral_for_standalone_finance_ask"]),
     );
-    expect(decision.text).toContain("这是研究框架，不是交易指令");
+    expect(decision.text).toContain("直接结论");
+    expect(decision.text).toContain("优先级");
     expect(decision.text).toContain("QQQ：");
     expect(decision.text).toContain("TLT：");
     expect(decision.text).toContain("NVDA：");
@@ -153,7 +158,8 @@ describe("visible answer adoption gate", () => {
     });
 
     expect(decision.status).toBe("replaced");
-    expect(decision.text).toContain("这是研究框架，不是交易指令。");
+    expect(decision.text).toContain("直接结论");
+    expect(decision.text).toContain("优先级");
     expect(decision.text).toContain("QQQ：");
     expect(decision.text).toContain("TLT：");
     expect(decision.text).toContain("NVDA：");
@@ -228,7 +234,8 @@ describe("visible answer adoption gate", () => {
       ]),
     );
     expect(decision.text).toContain("NVDA：");
-    expect(decision.text).toContain("这是研究框架，不是交易指令");
+    expect(decision.text).toContain("直接结论");
+    expect(decision.text).toContain("反证条件");
     expect(decision.text).not.toContain("Boundary And Missing Inputs");
     expect(decision.text).not.toContain("blocked");
     expect(decision.text).not.toContain("B7");

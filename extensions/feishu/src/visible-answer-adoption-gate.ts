@@ -401,22 +401,23 @@ function prefersChinese(text: string): boolean {
 function renderPortfolioRiskFrameworkReply(userMessage: string): string {
   if (!prefersChinese(userMessage)) {
     return [
-      "Research-only frame, not a trading instruction.",
-      "For QQQ, watch whether mega-cap tech breadth, earnings revision tone, and valuation compression move in the same direction.",
-      "For TLT, watch the path of real yields, Fed repricing, Treasury supply, and whether bonds still hedge equity stress.",
-      "For NVDA, separate company-specific risk from index risk: earnings guidance, margin expectations, AI capex narrative, and concentration in QQQ.",
-      "Missing data: position weights, cost ranges, time horizon, max drawdown budget, leverage/options exposure, and timestamped prices, rates, volatility, earnings, and valuation sources.",
-      "Invalidation: the framework must reset if rates move sharply against the base case, NVDA guidance changes the earnings story, QQQ breadth improves or breaks materially, or QQQ/TLT correlation stops behaving as assumed.",
+      "Direct answer: I cannot turn this into add/reduce/hold advice without fresh data and your position context. I can give a research ranking.",
+      "Priority order: 1. rates/liquidity, because they reprice both QQQ and TLT; 2. semiconductor earnings and AI-capex narrative, because NVDA can dominate portfolio beta; 3. cross-asset correlation, because TLT may stop hedging QQQ/NVDA in an inflation shock.",
+      "QQQ: watch breadth under mega-cap tech, earnings revision tone, valuation compression, and whether downside is broadening beyond a few leaders.",
+      "TLT: watch real yields, Fed repricing, Treasury supply, and whether duration still offsets equity stress or becomes the same macro bet.",
+      "NVDA: separate company-specific risk from index risk: earnings guidance, margin expectations, AI capex narrative, supply-chain constraints, and QQQ concentration.",
+      "Data I need next: position weights, cost ranges, holding horizon, max drawdown budget, leverage/options exposure, timestamped prices, rates, volatility, earnings, and valuation sources.",
+      "What would change the view: rates break sharply against the base case, NVDA guidance changes the earnings story, QQQ breadth materially improves or deteriorates, or QQQ/TLT correlation stops matching the hedge assumption.",
     ].join("\n\n");
   }
 
   return [
-    "这是研究框架，不是交易指令。",
-    "QQQ：重点看科技权重集中度、市场宽度、估值压缩、收益率上行对成长股折现的压力。",
-    "TLT：重点看实际利率、Fed 预期、长债供给、避险时它是否还能对冲股票波动。",
-    "NVDA：要把公司单点风险和 QQQ 指数风险分开看，重点是财报/指引、毛利率预期、AI capex 叙事和估值敏感度。",
-    "缺的数据：三只标的的组合权重、成本区间、持有期限、最大可承受回撤、是否有杠杆/期权，以及带时间戳的价格、利率、波动率、财报和估值来源。",
-    "失效条件：利率路径突然反向、NVDA 指引改变盈利叙事、QQQ 宽度明显修复或恶化、QQQ/TLT 相关性失去原来的对冲假设，都要重做框架。",
+    "直接结论：现在不能把它翻译成加仓/减仓/持有指令；能给的是研究排序。优先级先看利率和流动性，再看半导体盈利叙事，最后看组合相关性。",
+    "QQQ：核心不是“科技好不好”，而是巨头集中度、市场宽度、盈利预期和估值压缩是不是同向恶化；如果宽度修复，风险会降一档。",
+    "TLT：看真实利率、Fed 预期、长债供给和避险属性。通胀冲击下 TLT 可能不再对冲 QQQ/NVDA，而是变成同一个宏观风险。",
+    "NVDA：要和 QQQ 指数风险拆开。重点看财报/指引、毛利率、AI capex 叙事、供应链约束、估值敏感度，以及它在组合里的单点风险。",
+    "下一步数据：三只标的的权重、成本区间、持有期限、最大可承受回撤、杠杆/期权暴露，以及带时间戳的价格、利率、波动率、财报和估值来源。",
+    "反证条件：利率路径突然反向、NVDA 指引改变盈利故事、QQQ 宽度明显修复或恶化、QQQ/TLT 相关性不再符合对冲假设，都要重做结论。",
   ].join("\n\n");
 }
 
@@ -424,20 +425,21 @@ function renderSinglePositionRiskFrameworkReply(userMessage: string): string {
   const ticker = mentionedKnownTickers(userMessage)[0] ?? "这个标的";
   if (!prefersChinese(userMessage)) {
     return [
-      "Research-only frame, not a trading instruction.",
-      `${ticker}: separate the loss-recovery impulse from the risk check. Do not turn the drawdown into an action label.`,
-      "Check four things: position size versus total portfolio, original thesis versus current evidence, valuation and earnings-risk reset, and whether volatility/liquidity has changed the downside path.",
-      "Missing data: position weight, cost range, entry date, time horizon, max drawdown budget, whether leverage/options are involved, and timestamped price, earnings, valuation, volatility, and liquidity sources.",
-      "Invalidation: rerun the frame if earnings guidance changes the thesis, valuation compression accelerates, volatility regime shifts, position size exceeds the risk budget, or the original thesis cannot be stated in evidence terms.",
+      "Direct answer: I cannot choose cut/add/hold from the loss percentage alone. The useful answer is a thesis and risk audit.",
+      `${ticker}: split the problem into three buckets: thesis broken, thesis intact but valuation reset, or position size too large for the account. Each bucket implies a different risk response, but none can be inferred from drawdown alone.`,
+      "First checks: position weight versus total portfolio, cost range, entry date, original thesis, current earnings/valuation evidence, volatility/liquidity regime, and whether leverage/options amplify forced-selling risk.",
+      "What I would output after data: thesis status, risk budget breach or not, evidence that would invalidate the position, and what to monitor next. Not execution instructions.",
+      "What would change the view: guidance breaks the thesis, valuation compression accelerates, volatility regime shifts, the position exceeds risk budget, or the original thesis cannot be stated in evidence terms.",
     ].join("\n\n");
   }
 
   return [
-    "这是研究框架，不是交易指令。",
-    `${ticker}：先把“想回本”的情绪和风险检查分开，不能把亏损幅度直接翻译成操作动作。`,
-    "先看四件事：仓位占总资产多少、原始买入逻辑现在有没有被证据破坏、估值/财报预期是否重新定价、波动率和流动性有没有让下行路径变差。",
-    "缺的数据：仓位比例、成本区间、买入时间、持有期限、最大可承受回撤、是否用了杠杆/期权，以及带时间戳的价格、财报、估值、波动率和流动性来源。",
-    "失效条件：财报指引改变原始逻辑、估值压缩加速、波动率 regime 变化、仓位超过风险预算，或者你说不清原始 thesis 时，都要重做风险框架。",
+    "直接结论：不能只凭亏 20% 判断割肉还是补仓；这会把“想回本”的情绪误当成投资逻辑。正确做法是先审计 thesis 和风险预算。",
+    `${ticker}：先分三类：原始逻辑已经坏了、逻辑没坏但估值被重估、逻辑没坏但仓位对账户太重。三类的风险处理完全不同，不能从亏损幅度直接推出。`,
+    "第一组检查：仓位占总资产多少、成本区间、买入时间、原始买入理由、持有期限、最大可承受回撤、是否有杠杆/期权。",
+    "第二组检查：带时间戳的价格、财报/指引、估值、波动率、流动性；尤其看下跌是不是基本面破坏、估值压缩，还是短期波动。",
+    "我能给的输出：thesis 是否还成立、是否触发风险预算、哪些证据会推翻原判断、下一步该盯哪些数据；不是买卖指令。",
+    "反证条件：财报指引破坏原逻辑、估值压缩加速、波动率 regime 变化、仓位超过风险预算，或你说不清原始 thesis。",
   ].join("\n\n");
 }
 
@@ -567,20 +569,20 @@ function renderSemiconductorOptionsRiskReply(userMessage: string): string {
 function renderMarketDataBoundaryReply(userMessage: string): string {
   if (!prefersChinese(userMessage)) {
     return [
-      "Without fresh market data, I cannot state the current risk level or imply real-time prices.",
-      "Confidence boundary: this is a low-confidence framework answer until each source has a timestamp, provider, field definition, unit/currency, and adjusted/unadjusted status where relevant.",
-      "Data list: current VIX, 10Y Treasury yield, DXY, high-yield spread, major index prices, relevant ETF or single-name prices, recent earnings/news timestamps, and the portfolio weights if the question is position-specific.",
-      "Allowed answer: describe what each missing data point would change and what would invalidate the framework.",
-      "Not allowed: buy/sell/add/reduce instructions, precise levels, or claims that pretend stale data is live.",
+      "Direct answer: without fresh market data, the answer can only be a confidence-bounded research frame, not a current-market call.",
+      "Confidence boundary: every market claim needs source, timestamp, field definition, unit/currency, and adjusted/unadjusted status. Missing any of those downgrades the answer.",
+      "Data list: VIX, 10Y Treasury yield, DXY, high-yield spread, index prices, relevant ETF/single-name prices, recent earnings/news timestamps, and portfolio weights when the question is position-specific.",
+      "Useful output even before data: explain what each missing field would change, which scenario is most sensitive to it, and what evidence would invalidate the frame.",
+      "Forbidden output: buy/sell/add/reduce instructions, precise levels, or pretending stale data is current.",
     ].join("\n\n");
   }
 
   return [
-    "没有最新行情时，不能判断当前风险等级，也不能装作有实时价格。",
-    "可信度边界：只能给低可信度研究框架；每个数据都要带时间戳、来源、字段口径、单位/币种，价格类还要说明是否复权或延迟。",
-    "数据清单：VIX、10Y 美债收益率、DXY、高收益债利差、主要指数价格、相关 ETF/个股最新价、最近财报/新闻时间戳；如果是持仓问题，还要有仓位比例、成本区间、持有周期和最大可承受回撤。",
-    "可以回答：这些数据分别会影响什么判断，以及什么证据会让原框架失效。",
-    "不能回答：买卖加减仓指令、精确点位判断，或把旧数据说成当前事实。",
+    "直接结论：没有最新行情时，只能给带可信度边界的研究框架，不能给当前市场判断。",
+    "可信度边界：每个市场 claim 都要有来源、时间戳、字段口径、单位/币种；价格类还要说明复权/延迟口径。缺一项，可信度就降级。",
+    "数据清单：VIX、10Y 美债收益率、DXY、高收益债利差、主要指数价格、相关 ETF/个股最新价、最近财报/新闻时间戳；持仓问题还要有仓位比例、成本区间、持有周期和最大可承受回撤。",
+    "仍然可以有用：先说明每个缺失字段会改变哪类判断、哪个场景最敏感、什么证据会推翻原框架。",
+    "不能输出：买卖加减仓指令、精确点位判断，或者把旧数据包装成当前事实。",
   ].join("\n\n");
 }
 
@@ -702,10 +704,10 @@ function renderPositionRiskRescueReply(userMessage: string): string {
   }
 
   return [
-    "这类问题不能直接给交易动作结论。",
-    "现在缺：标的、组合占比、成本区间、期限、风险预算、最大可承受回撤、杠杆或期权到期信息，以及最新价格、财报、估值和流动性来源时间戳。",
-    "能做的是研究检查：集中度、基本面是否被破坏、估值压缩、利率和流动性压力、杠杆/期权到期风险、技术面仅作观察、亏损后的行为风险。",
-    "补齐数据后也只给研究结论、风险门和失效条件，不给交易指令。",
+    "直接结论：这类问题不能直接给交易动作结论；现在还缺最基本的标的和账户上下文。",
+    "现在缺：标的、组合占比、成本区间、持有期限、风险预算、最大可承受回撤；如果有杠杆或期权，还要补到期日、杠杆/期权到期风险和强平/行权风险。",
+    "我会按三层做研究检查：基本面有没有被破坏，估值/宏观流动性是不是在压缩，组合层面是否已经过度集中或相关性失控。",
+    "有最新数据后，输出应该是风险等级、证据链、失效条件和下一步监控项；不是“买/卖/加/减”的执行口令。",
   ].join("\n\n");
 }
 
