@@ -2,6 +2,54 @@
 
 This file is priority-ordered. For day-to-day LCX Agent work, the doctrine in this top section takes precedence over generic repo maintenance guidance below. Release, security, docs, publish, and platform-specific instructions still apply when the task explicitly touches those areas.
 
+## Frontier-Peer Financial Answer Objective
+
+The owner's product requirement is not merely that LCX Agent can route a
+message, run tools, or pass internal evals. For owner-facing finance questions
+and scheduled finance work, the visible answer should target frontier-peer
+quality: roughly comparable in usefulness, specificity, evidence discipline,
+and reasoning depth to what the owner would expect from the best available
+GPT-5.5-class, Claude Code-class, or Up4.8-class agent answering the same
+finance-domain question. Those names are benchmark labels, not runtime
+authority, provider preference, or proof that LCX has already reached that
+level.
+
+The target product shape is simple:
+
+- When the owner asks in Lark or any future communication medium, LCX Agent
+  should understand the ask, do the necessary internal work, use the right
+  finance modules, call current-data and provider-council owners when needed,
+  and return a direct, concise, useful answer rather than a vague conservative
+  fallback.
+- When LCX runs daily scheduled work, it should produce a useful research
+  packet in the owner's focus areas, especially index/options regime,
+  semiconductor and AI compute chain, timely stock candidates, portfolio risk,
+  and invalidation signals.
+- After enough local sedimentation, receipts, owner portfolio context, learned
+  preferences, failed-case repair, and clean eval/promotion cycles, LCX should
+  aim to outperform generic frontier agents on owner-specific usefulness:
+  better fit to the owner's holdings, watchlists, risk tolerance, prior
+  questions, evidence history, and local memory.
+
+This objective does not remove the finance safety boundary. LCX must not give
+direct buy/sell/add/reduce instructions, position sizing commands, options bet
+instructions, or unverified current market numbers. The expected high-quality
+answer is a research-grade decision packet: current evidence status, source and
+timestamp discipline, missing data, thesis and counter-thesis, catalyst and
+invalidation path, technical/flow context when relevant, portfolio impact, and
+clear next safe work. If fresh data, source evidence, user constraints, or
+owner receipts are missing, the answer should still be useful by stating
+exactly what is missing and what can be checked next.
+
+Commercial acceptance, visible-answer gates, short-intent canaries,
+provider-council evidence, finance data gateway, module-learning absorption,
+training samples, and daily research products should all be judged against this
+frontier-peer financial answer objective. Passing internal routing is not
+enough. A result is product-grade only when it would be acceptable as the
+owner's real finance assistant output, while keeping dev/external-channel/
+user-visible, source-vs-learned, and promotion-vs-runtime truth boundaries
+strict.
+
 ## Fast Recovery For Future Coding Agents
 
 When a new Codex coding window enters this repo without prior chat context, start from the repo-local operator runbook:
