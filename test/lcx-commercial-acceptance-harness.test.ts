@@ -95,6 +95,29 @@ function baseInputs() {
         },
       ],
     }),
+    larkLoopDiagnose: owner("lark-loop-diagnose", {
+      ok: true,
+      liveHandoffReceipts: {
+        count: 8,
+        latestPath: "memory/lark-language-handoff-receipts/2026-06-01/om_clean.json",
+      },
+      languageCandidates: {
+        candidateArtifactCount: 4,
+        candidateCount: 12,
+        latestCandidatePath: "memory/lark-language-routing-candidates/2026-06-01/om_clean.json",
+        latestCandidateGeneratedAt: "2026-06-01T12:00:00.000Z",
+        currentReplay: {
+          source: "candidate_artifacts",
+          candidateCount: 12,
+        },
+        autodataLoop: {
+          status: "ready_for_reviewed_batch_absorption",
+          currentReplayRejectedRate: 0.08,
+          topRejectedReason: null,
+          topRejectedSemanticFamily: null,
+        },
+      },
+    }),
     directedDailyResearchBrief: owner("lcx-directed-daily-research-brief", {
       ok: true,
       boundary: "dev_directed_daily_research_brief_only",
@@ -304,13 +327,14 @@ describe("lcx-commercial-acceptance-harness", () => {
       }),
     );
     expect(result.summary).toEqual(
-      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 12 }),
+      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 13 }),
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
       "natural_plain_probe",
       "optional_fixed_receipt_anchor",
       "finance_research_prompt",
       "directed_daily_research_brief",
+      "real_lark_candidate_capture_replay",
       "real_short_lark_canary_suite",
       "short_intent_family_fuzzer",
       "visible_answer_quality_fuzzer",
@@ -608,6 +632,42 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
+  it("blocks release when real Lark handoffs exist but candidate capture is missing", () => {
+    const inputs = baseInputs();
+    inputs.larkLoopDiagnose = owner("lark-loop-diagnose", {
+      ok: true,
+      liveHandoffReceipts: {
+        count: 12,
+        latestPath: "memory/lark-language-handoff-receipts/2026-06-01/om_real.json",
+      },
+      languageCandidates: {
+        candidateArtifactCount: 0,
+        candidateCount: 0,
+        currentReplay: {
+          source: "handoff_receipt_derived",
+          candidateCount: 24,
+        },
+        autodataLoop: {
+          status: "needs_candidate_capture",
+        },
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.blockedGates).toContain("real_lark_candidate_capture_missing");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "real_lark_candidate_capture_missing",
+          status: "blocked",
+          severity: "P1",
+        }),
+      ]),
+    );
+  });
+
   it("blocks release when the focused daily research product loses its finance evidence contract", () => {
     const inputs = baseInputs();
     inputs.directedDailyResearchBrief = owner("lcx-directed-daily-research-brief", {
@@ -711,6 +771,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
         "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
         "node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json",
+        "pnpm --silent openclaw capabilities lark-loop-diagnose --json",
         "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       ]),

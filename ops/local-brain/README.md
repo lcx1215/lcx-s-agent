@@ -195,6 +195,20 @@ portfolio risk, learning, model disagreement, async work, entry/exit, and
 user-supplied arithmetic while still rejecting vague, generic, unsafe, or
 over-conservative replies. This prevents the answer gate from becoming a pure
 rejection machine.
+The real Lark candidate capture/replay gate is the field-proof companion:
+
+```bash
+pnpm --silent openclaw capabilities lark-loop-diagnose --json
+```
+
+It must show that real Lark user utterances and final visible replies are
+persisted under `memory/lark-language-routing-candidates/` and replayed through
+the routing/visible-answer owners. Handoff receipts alone are not enough; if
+`candidateArtifactCount=0` while handoff receipts exist, the system has only
+inferred proof and commercial acceptance must block or watch it. This keeps the
+entry/exit product loop from passing only synthetic canaries while real Lark
+answers still leak wrong routing, silence, generic intros, or useless cautious
+fallbacks.
 The focused daily finance product owner is:
 
 ```bash

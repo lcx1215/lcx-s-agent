@@ -34,6 +34,7 @@ type HarnessInputs = {
   commercialAnswerPipeline?: OwnerSnapshot;
   shortIntentFuzzer?: OwnerSnapshot;
   visibleAnswerQualityFuzzer?: OwnerSnapshot;
+  larkLoopDiagnose?: OwnerSnapshot;
   directedDailyResearchBrief?: OwnerSnapshot;
   problemRadar?: OwnerSnapshot;
   flowGraph?: OwnerSnapshot;
@@ -307,6 +308,112 @@ function visibleAnswerQualityFuzzerGate(snapshot: OwnerSnapshot | undefined): Ac
     },
     nextAction:
       "Keep product answer quality as a positive acceptance gate, not only a bad-answer rejection gate.",
+  };
+}
+
+function larkLoopDiagnoseGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+  if (!ownerOk(snapshot)) {
+    return ownerUnavailableGate("lark-loop-diagnose", snapshot);
+  }
+  const liveHandoffReceipts = recordValue(snapshot!.payload!.liveHandoffReceipts);
+  const languageCandidates = recordValue(snapshot!.payload!.languageCandidates);
+  const currentReplay = recordValue(languageCandidates?.currentReplay);
+  const autodataLoop = recordValue(languageCandidates?.autodataLoop);
+  const handoffReceiptCount = numberValue(liveHandoffReceipts?.count) ?? 0;
+  const candidateArtifactCount = numberValue(languageCandidates?.candidateArtifactCount) ?? 0;
+  const candidateCount = numberValue(languageCandidates?.candidateCount) ?? 0;
+  const currentReplaySource = stringValue(currentReplay?.source);
+  const currentReplayCandidateCount = numberValue(currentReplay?.candidateCount) ?? 0;
+  const currentReplayRejectedRate = numberValue(autodataLoop?.currentReplayRejectedRate) ?? 0;
+  const autodataStatus = stringValue(autodataLoop?.status);
+  const latestCandidatePath = stringValue(languageCandidates?.latestCandidatePath);
+  const latestCandidateGeneratedAt = stringValue(languageCandidates?.latestCandidateGeneratedAt);
+  const topRejectedReason = stringValue(autodataLoop?.topRejectedReason);
+  const topRejectedSemanticFamily = stringValue(autodataLoop?.topRejectedSemanticFamily);
+
+  if (handoffReceiptCount > 0 && candidateArtifactCount === 0) {
+    return {
+      id: "real_lark_candidate_capture_missing",
+      status: "blocked",
+      severity: "P1",
+      owner: "pnpm openclaw capabilities lark-loop-diagnose",
+      evidence: {
+        handoffReceiptCount,
+        candidateArtifactCount,
+        candidateCount,
+        currentReplaySource,
+        currentReplayCandidateCount,
+        autodataStatus,
+        latestHandoffPath: liveHandoffReceipts?.latestPath,
+      },
+      nextAction:
+        "Persist real Lark user-message and final-visible-reply candidate artifacts before trusting replay, fuzzer, or user-visible quality claims.",
+    };
+  }
+  if (candidateArtifactCount > 0 && candidateCount < 10) {
+    return {
+      id: "real_lark_candidate_capture_too_thin",
+      status: "watch",
+      severity: "P2",
+      owner: "pnpm openclaw capabilities lark-loop-diagnose",
+      evidence: {
+        candidateArtifactCount,
+        candidateCount,
+        latestCandidatePath,
+        latestCandidateGeneratedAt,
+        autodataStatus,
+        currentReplayRejectedRate,
+        topRejectedReason,
+        topRejectedSemanticFamily,
+      },
+      nextAction:
+        "Keep capturing real Lark turns until the replay pool is broad enough to catch wrong routing, silent fallback, and poor visible replies.",
+    };
+  }
+  if (
+    autodataStatus === "needs_route_family_hardening" ||
+    currentReplayRejectedRate >= 0.3 ||
+    topRejectedReason === "semantic_family_unknown" ||
+    topRejectedReason === "deterministic_route_failed"
+  ) {
+    return {
+      id: "real_lark_candidate_replay_regression",
+      status: "failed",
+      severity: "P2",
+      owner: "pnpm openclaw capabilities lark-loop-diagnose",
+      evidence: {
+        candidateArtifactCount,
+        candidateCount,
+        latestCandidatePath,
+        latestCandidateGeneratedAt,
+        autodataStatus,
+        currentReplayRejectedRate,
+        topRejectedReason,
+        topRejectedSemanticFamily,
+        rejectedExamples: languageCandidates?.rejectedExamples,
+      },
+      nextAction:
+        "Repair the shared routing and visible-answer contracts from rejected real Lark candidates before adding one-off prompt exceptions.",
+    };
+  }
+  return {
+    id: "real_lark_candidate_replay_clean",
+    status: "passed",
+    severity: "info",
+    owner: "pnpm openclaw capabilities lark-loop-diagnose",
+    evidence: {
+      handoffReceiptCount,
+      candidateArtifactCount,
+      candidateCount,
+      latestCandidatePath,
+      latestCandidateGeneratedAt,
+      autodataStatus,
+      currentReplayRejectedRate,
+      topRejectedReason,
+      topRejectedSemanticFamily,
+    },
+    nextAction:
+      "Keep real Lark candidate capture tied to the visible answer gate; fuzzer-only proof is not enough.",
   };
 }
 
@@ -868,6 +975,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     commercialAnswerGate(inputs.commercialAnswerPipeline),
     shortIntentFuzzerGate(inputs.shortIntentFuzzer),
     visibleAnswerQualityFuzzerGate(inputs.visibleAnswerQualityFuzzer),
+    larkLoopDiagnoseGate(inputs.larkLoopDiagnose),
     directedDailyResearchBriefGate(inputs.directedDailyResearchBrief),
     architectureGate(inputs.flowGraph, inputs.mindModel),
     radarGate(inputs.problemRadar),
@@ -930,6 +1038,13 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
         requiredFor: "focused_daily_research_product",
       },
       {
+        id: "real_lark_candidate_capture_replay",
+        purpose:
+          "prove real Lark user utterances and final visible replies are persisted as replayable candidate artifacts, not only inferred from handoff receipts",
+        owner: "pnpm openclaw capabilities lark-loop-diagnose",
+        requiredFor: "entry_exit_quality",
+      },
+      {
         id: "real_short_lark_canary_suite",
         purpose:
           "probe short natural asks like 能买吗, 加不加仓, 学一下这个链接, 到哪了 without allowing silent, generic, or wrong-route replies",
@@ -977,6 +1092,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
       "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
       "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
       "node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json",
+      "pnpm --silent openclaw capabilities lark-loop-diagnose --json",
       "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
       "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
@@ -1034,11 +1150,48 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
   }
 }
 
+async function runPnpmJsonOwner(owner: string, args: readonly string[]) {
+  const command = `pnpm --silent ${args.join(" ")}`;
+  try {
+    const result = await execFileAsync("pnpm", ["--silent", ...args], {
+      cwd: repoRoot,
+      env: process.env,
+      maxBuffer: EXEC_MAX_BUFFER,
+      timeout: 120_000,
+    });
+    const payload = parseJsonObjectFromOutput(result.stdout);
+    return { ok: booleanValue(payload.ok) !== false, owner, command, payload };
+  } catch (error) {
+    const details = error as { stdout?: string; stderr?: string; message?: string };
+    if (details.stdout) {
+      try {
+        const payload = parseJsonObjectFromOutput(details.stdout);
+        return {
+          ok: false,
+          owner,
+          command,
+          payload,
+          error: details.message ?? "owner command returned nonzero",
+        };
+      } catch {
+        // Fall through to the raw error snapshot.
+      }
+    }
+    return {
+      ok: false,
+      owner,
+      command,
+      error: [details.message, details.stderr?.slice(-500)].filter(Boolean).join("\n"),
+    };
+  }
+}
+
 async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs> {
   const [
     commercialAnswerPipeline,
     shortIntentFuzzer,
     visibleAnswerQualityFuzzer,
+    larkLoopDiagnose,
     directedDailyResearchBrief,
     problemRadar,
     flowGraph,
@@ -1065,6 +1218,12 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
       "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
       ["--json"],
     ),
+    runPnpmJsonOwner("lark-loop-diagnose", [
+      "openclaw",
+      "capabilities",
+      "lark-loop-diagnose",
+      "--json",
+    ]),
     Promise.resolve({
       ok: true,
       owner: "lcx-directed-daily-research-brief",
@@ -1118,6 +1277,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     commercialAnswerPipeline,
     shortIntentFuzzer,
     visibleAnswerQualityFuzzer,
+    larkLoopDiagnose,
     directedDailyResearchBrief,
     problemRadar,
     flowGraph,

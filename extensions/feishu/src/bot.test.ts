@@ -2915,9 +2915,26 @@ confidence: high
       },
     });
 
-    await expect(
-      fs.access(path.join(tempDir, "memory", "lark-language-routing-candidates")),
-    ).rejects.toThrow();
+    const languageCandidateRoot = path.join(tempDir, "memory", "lark-language-routing-candidates");
+    const [languageCandidateDateDir] = await fs.readdir(languageCandidateRoot);
+    const languageCandidateText = await fs.readFile(
+      path.join(languageCandidateRoot, languageCandidateDateDir, "msg-language-capture.json"),
+      "utf-8",
+    );
+    const languageCandidate = JSON.parse(languageCandidateText) as {
+      boundary: string;
+      source: string;
+      noFinanceLearningArtifact: boolean;
+      candidates: Array<{ boundary: string; source: string }>;
+    };
+    expect(languageCandidate).toMatchObject({
+      boundary: "language_routing_only",
+      source: "feishu_final_reply_capture",
+      noFinanceLearningArtifact: true,
+    });
+    expect(languageCandidate.candidates.map((candidate) => candidate.source)).toEqual(
+      expect.arrayContaining(["lark_user_utterance", "lark_visible_reply"]),
+    );
     await expect(
       fs.access(path.join(tempDir, "memory", "lark-language-routing-reviews")),
     ).rejects.toThrow();
@@ -6364,7 +6381,7 @@ describe("learning council routing", () => {
 
     const mockDispatchReplyFromConfig = vi.fn(async () => ({
       queuedFinal: false,
-      counts: { final: 0 },
+      counts: { tool: 0, block: 0, final: 0 },
     }));
     const mockWithReplyDispatcher = vi.fn(
       async ({
@@ -7760,9 +7777,12 @@ describe("learning council routing", () => {
     expect(applyUsageReviewText).toContain('"usageReceipts": 1');
     expect(applyUsageReviewText).toContain('"successfulApplications": 1');
 
-    await expect(
-      fs.access(path.join(tempDir, "memory", "lark-language-routing-candidates")),
-    ).rejects.toThrow();
+    const languageCandidateRoot = path.join(tempDir, "memory", "lark-language-routing-candidates");
+    const [languageCandidateDateDir] = await fs.readdir(languageCandidateRoot);
+    const languageCandidateFiles = await fs.readdir(
+      path.join(languageCandidateRoot, languageCandidateDateDir),
+    );
+    expect(languageCandidateFiles).toContain("msg-finance-pipeline-live.json");
     await expect(
       fs.access(path.join(tempDir, "memory", "lark-language-routing-reviews")),
     ).rejects.toThrow();

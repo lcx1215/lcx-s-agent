@@ -96,6 +96,17 @@ external-channel status, training overlap, and provider council evidence. It mus
 replace those owners, send Lark messages, start training, change provider
 config, touch protected memory, or claim `user-visible-observed` without real
 post-migration Lark evidence.
+Commercial answer quality must be judged against frontier peer-level finance
+assistant behavior, not against "does not crash" or a few hard-coded short
+phrases. For Lark or any future communication adapter, the owner expectation is:
+the user asks naturally, the system classifies the ask, gathers evidence through
+the selected clean LCX Agent path, uses Kimi/MiniMax/DeepSeek and local Qwen only
+as attributable candidate/challenge evidence, then returns a concise useful
+answer or an exact blocked reason. A local fuzzer pass is not enough if real
+Lark user utterances and final visible replies are not captured as replayable
+candidate artifacts. `lark-loop-diagnose` must expose that capture/replay truth,
+and commercial acceptance must block or watch real-candidate gaps instead of
+treating handoff receipts alone as product proof.
 
 ## Governance Stack Autopilot
 

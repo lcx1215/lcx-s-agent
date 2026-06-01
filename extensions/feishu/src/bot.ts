@@ -102,6 +102,7 @@ import {
   writeLarkLanguageHandoffReceipt,
   type LarkLanguageHandoffReceiptArtifact,
 } from "./lark-language-handoff-receipts.js";
+import { writeLarkLanguageRoutingCandidateCapture } from "./lark-routing-candidate-corpus.js";
 import { resolveLarkAgentInstructionHandoff } from "./lark-routing-corpus.js";
 import { runFeishuLearningCouncil } from "./learning-council.js";
 import {
@@ -136,7 +137,12 @@ import {
   type FeishuChatSurfaceName,
   type ResolvedFeishuSurfaceRouting,
 } from "./surfaces.js";
-import type { FeishuMessageContext, FeishuMediaInfo, ResolvedFeishuAccount } from "./types.js";
+import type {
+  FeishuConfig,
+  FeishuMessageContext,
+  FeishuMediaInfo,
+  ResolvedFeishuAccount,
+} from "./types.js";
 import type { DynamicAgentCreationConfig } from "./types.js";
 import {
   applyVisibleAnswerAdoptionGate,
@@ -1108,8 +1114,17 @@ type FeishuReplyDispatcherShape = {
 
 type FeishuFinalTextSendResult = {
   queuedFinal: boolean;
-  counts: { final: number };
+  counts: { tool: number; block: number; final: number };
 };
+
+function finalReplyOnlyCounts(final: number): FeishuFinalTextSendResult["counts"] {
+  return { tool: 0, block: 0, final };
+}
+
+function resolveFeishuChannelConfig(cfg: ClawdbotConfig): FeishuConfig {
+  const channelConfig = (cfg as OpenClawConfig).channels?.feishu;
+  return (channelConfig ?? cfg) as FeishuConfig;
+}
 
 type FeishuLearningCouncilCompletedVisibleRun =
   | { status: "completed"; text: string }
@@ -1559,7 +1574,7 @@ async function sendFeishuFinalTextReply(params: {
       const queuedFinal = params.dispatcher.sendFinalReply({
         text: normalizeFeishuDisplayText(params.text),
       });
-      return { queuedFinal, counts: { final: queuedFinal ? 1 : 0 } };
+      return { queuedFinal, counts: finalReplyOnlyCounts(queuedFinal ? 1 : 0) };
     },
   });
 }
@@ -1633,7 +1648,7 @@ async function sendFeishuBackendFactAnswerComposerReply(params: {
     const queuedFinal = Boolean(composerResult?.queuedFinal);
     const finalCount = Number(composerResult?.counts?.final ?? 0);
     if (queuedFinal && finalCount > 0) {
-      return { queuedFinal, counts: { final: finalCount } };
+      return { queuedFinal, counts: finalReplyOnlyCounts(finalCount) };
     }
     params.log(
       `feishu[${params.accountId}]: Lark answer composer queued no final for ${params.label}; falling back to factual template`,
@@ -3786,6 +3801,59 @@ async function persistLarkBrainDistillationCandidateCaptureWithFailureReceipt(pa
   void capture;
 }
 
+async function persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt(params: {
+  cfg: ClawdbotConfig;
+  agentId: string;
+  targetSurface?: FeishuChatSurfaceName;
+  effectiveSurface?: FeishuChatSurfaceName;
+  chatId: string;
+  sessionKey: string;
+  messageId: string;
+  userMessage: string;
+  finalReplyText: string;
+  apiReplyPayloads?: readonly unknown[];
+}) {
+  try {
+    const workspaceDir = resolveAgentWorkspaceDir(params.cfg as OpenClawConfig, params.agentId);
+    await writeLarkLanguageRoutingCandidateCapture({
+      workspaceDir,
+      cfg: resolveFeishuChannelConfig(params.cfg),
+      agentId: params.agentId,
+      targetSurface: params.targetSurface,
+      effectiveSurface: params.effectiveSurface,
+      chatId: params.chatId,
+      sessionKey: params.sessionKey,
+      messageId: params.messageId,
+      userMessage: params.userMessage,
+      finalReplyText: params.finalReplyText,
+      apiReplyPayloads: params.apiReplyPayloads,
+    });
+  } catch (error) {
+    await recordOperationalAnomaly({
+      cfg: params.cfg,
+      category: "write_edit_failure",
+      severity: "medium",
+      source: "feishu.lark_language_routing_candidates",
+      problem: "failed to persist lark language-routing candidate capture",
+      evidence: [
+        "failure_stage=language_routing_candidate_capture",
+        "boundary=language_routing_only",
+        "finance_learning_artifact=false",
+        "formal_routing_corpus_promotion=false_until_reviewed",
+        `surface=${params.targetSurface ?? "none"}`,
+        `effective_surface=${params.effectiveSurface ?? params.targetSurface ?? "none"}`,
+        `chat_id=${params.chatId}`,
+        `message_id=${params.messageId}`,
+        `error=${String(error)}`,
+      ],
+      impact:
+        "the Feishu reply was still delivered, but this real turn did not enter the routing replay/review loop",
+      suggestedScope:
+        "repair the independent lark-language-routing-candidates artifact path before trusting Lark canary or answer-quality claims",
+    });
+  }
+}
+
 async function persistLarkLanguageHandoffReceiptWithFailureReceipt(params: {
   cfg: ClawdbotConfig;
   agentId: string;
@@ -4340,6 +4408,18 @@ async function persistCapturedFeishuSurfaceLine(params: {
     messageId: params.messageId,
     userMessage: params.userMessage,
     finalReplyText,
+  });
+  await persistLarkLanguageRoutingCandidateCaptureWithFailureReceipt({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    targetSurface: params.targetSurface,
+    effectiveSurface: params.effectiveSurface,
+    chatId: params.chatId,
+    sessionKey: params.sessionKey,
+    messageId: params.messageId,
+    userMessage: params.userMessage,
+    finalReplyText,
+    apiReplyPayloads: params.apiReplyPayloads,
   });
   await persistLarkBrainDistillationCandidateCaptureWithFailureReceipt({
     cfg: params.cfg,
