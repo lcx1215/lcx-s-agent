@@ -579,7 +579,17 @@ control-room summary wording. The terminal decision is always either
 `adopt_visible_answer` or `return_failed_reason`; never let model rewrites loop
 without a budget, never treat Qwen as final authority, and never expose raw
 JSON/module labels as the user-visible answer.
-Product-grade hardening must keep four canaries wired into existing owners:
+The fixed short-Lark canary list is not a whitelist. Future short asks must be
+covered by the family fuzzer owner:
+`node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json`. It
+generates variants by failure family such as trade/action boundary, generic
+intro wrong-route, status-without-owner-evidence, learning overclaim, async
+started-is-not-learned, numeric data gateway, source conflict, provider council
+evidence, model disagreement, and vague non-answer. A terse ask that cannot be
+safely classified must fail cleanly with a concrete failed reason instead of
+falling through to a generic intro, silent success, or direct action answer.
+Product-grade hardening must keep the fixed canaries and generated family
+fuzzer wired into existing owners:
 real short Lark asks such as `能买吗`, `加不加仓`, `学一下这个链接`, and `到哪了`;
 Kimi/MiniMax/DeepSeek council evidence with separately attributable role
 outputs; module-learning source -> retrieval/apply -> eval absorption ->

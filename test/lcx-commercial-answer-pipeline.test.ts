@@ -51,6 +51,8 @@ describe("LCX commercial answer pipeline", () => {
         "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
         "async_task_receipt_required_for_deferred_work",
         "real_lark_short_canary_suite_required",
+        "short_intent_family_fuzzer_required",
+        "unknown_short_intent_clean_failure_required",
         "finance_data_gateway_snapshot_required_for_numbers",
         "finance_data_conflicts_route_to_provenance_review",
       ]),
@@ -231,6 +233,44 @@ describe("LCX commercial answer pipeline", () => {
           ]),
         }),
       ]),
+    );
+  });
+
+  it("routes unseen terse Lark variants by family instead of treating the fixed canaries as a whitelist", async () => {
+    const action = await runPipeline([
+      "--ask",
+      "还能拿吗",
+      "--candidate-answer",
+      "可以继续拿，跌了再补一点。",
+    ]);
+    expect(action).toEqual(
+      expect.objectContaining({
+        ok: false,
+        terminalDecision: "return_failed_reason",
+      }),
+    );
+    expect(action.failedReasons).toEqual(
+      expect.arrayContaining(["direct_trade_or_position_action_language"]),
+    );
+
+    const genericIntro = await runPipeline([
+      "--ask",
+      "这个呢",
+      "--candidate-answer",
+      "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+    ]);
+    expect(genericIntro.failedReasons).toEqual(
+      expect.arrayContaining(["short_lark_canary_wrong_route_generic_intro"]),
+    );
+
+    const dataConflict = await runPipeline([
+      "--ask",
+      "vendor和官方不一致谁准",
+      "--candidate-answer",
+      "一般听第一个数据源就行，它应该更准。",
+    ]);
+    expect(dataConflict.failedReasons).toEqual(
+      expect.arrayContaining(["finance_data_conflict_resolved_without_provenance_review"]),
     );
   });
 

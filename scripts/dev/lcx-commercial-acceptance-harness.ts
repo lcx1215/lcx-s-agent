@@ -31,6 +31,7 @@ type AcceptanceGate = {
 
 type HarnessInputs = {
   commercialAnswerPipeline?: OwnerSnapshot;
+  shortIntentFuzzer?: OwnerSnapshot;
   problemRadar?: OwnerSnapshot;
   flowGraph?: OwnerSnapshot;
   mindModel?: OwnerSnapshot;
@@ -175,6 +176,8 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
   const filters = stringArray(snapshot!.payload!.contractFilters);
   const requiredFilters = [
     "real_lark_short_canary_suite_required",
+    "short_intent_family_fuzzer_required",
+    "unknown_short_intent_clean_failure_required",
     "provider_council_evidence_required",
     "provider_outputs_not_faked",
     "async_task_receipt_required_for_deferred_work",
@@ -206,6 +209,46 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
     owner: "scripts/dev/lcx-commercial-answer-pipeline.ts",
     evidence: { total, filters },
     nextAction: "Keep this as the owner for answer adoption rules.",
+  };
+}
+
+function shortIntentFuzzerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+  if (!ownerOk(snapshot)) {
+    return ownerUnavailableGate("lcx-lark-short-intent-fuzzer", snapshot);
+  }
+  const summary = recordValue(snapshot!.payload!.summary);
+  const macroContract = recordValue(snapshot!.payload!.macroContract);
+  const generated = numberValue(summary?.generated) ?? 0;
+  const families = numberValue(summary?.families) ?? 0;
+  const failed = numberValue(summary?.failed) ?? 0;
+  const notWhitelist = booleanValue(macroContract?.notWhitelist) === true;
+  if (failed > 0 || generated < 40 || families < 8 || !notWhitelist) {
+    return {
+      id: "short_intent_family_fuzzer_regression",
+      status: "failed",
+      severity: "P1",
+      owner: "scripts/dev/lcx-lark-short-intent-fuzzer.ts",
+      evidence: {
+        summary,
+        notWhitelist,
+        failedCases: snapshot!.payload!.failedCases,
+      },
+      nextAction:
+        "Fix shared short-intent routing/audit rules before adding more hand-written Lark canaries.",
+    };
+  }
+  return {
+    id: "short_intent_family_fuzzer_clean",
+    status: "passed",
+    severity: "info",
+    owner: "scripts/dev/lcx-lark-short-intent-fuzzer.ts",
+    evidence: {
+      summary,
+      macroContract,
+      generatedEvalSeeds: snapshot!.payload!.generatedEvalSeeds,
+    },
+    nextAction:
+      "Keep the 34 fixed canaries as samples only; this owner expands future terse asks by family.",
   };
 }
 
@@ -686,6 +729,7 @@ function financeDataGatewayGate(
 export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
   const gates = [
     commercialAnswerGate(inputs.commercialAnswerPipeline),
+    shortIntentFuzzerGate(inputs.shortIntentFuzzer),
     architectureGate(inputs.flowGraph, inputs.mindModel),
     radarGate(inputs.problemRadar),
     externalChannelStatusGate(
@@ -747,6 +791,13 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
         requiredFor: "entry_exit_quality",
       },
       {
+        id: "short_intent_family_fuzzer",
+        purpose:
+          "generate short Lark variants by failure family beyond the fixed canary list, proving unknown terse asks fail cleanly instead of falling through to generic or silent answers",
+        owner: "scripts/dev/lcx-lark-short-intent-fuzzer.ts",
+        requiredFor: "unknown_short_intent_clean_failure",
+      },
+      {
         id: "three_provider_council_receipt",
         purpose:
           "prove Kimi/MiniMax/DeepSeek were called as separately attributable roles before citing council evidence",
@@ -771,6 +822,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     ],
     ownerCommands: [
       "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
+      "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
       "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
       "node --import tsx scripts/dev/lcx-mind-model.ts --json",
@@ -830,6 +882,7 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
 async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs> {
   const [
     commercialAnswerPipeline,
+    shortIntentFuzzer,
     problemRadar,
     flowGraph,
     mindModel,
@@ -847,6 +900,9 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
       "scripts/dev/lcx-commercial-answer-pipeline.ts",
       ["--json"],
     ),
+    runJsonOwner("lcx-lark-short-intent-fuzzer", "scripts/dev/lcx-lark-short-intent-fuzzer.ts", [
+      "--json",
+    ]),
     runJsonOwner("lcx-problem-cluster-radar", "scripts/dev/lcx-problem-cluster-radar.ts", [
       "--json",
     ]),
@@ -892,6 +948,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
   ]);
   return {
     commercialAnswerPipeline,
+    shortIntentFuzzer,
     problemRadar,
     flowGraph,
     mindModel,

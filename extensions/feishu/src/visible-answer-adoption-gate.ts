@@ -6,7 +6,7 @@ export type VisibleAnswerAdoptionGateDecision = {
 };
 
 const DIRECT_POSITION_ASK_PATTERN =
-  /\b(?:should\s+(?:i|we)|do\s+(?:i|we)|can\s+(?:i|we)|recommend|buy|sell|add|reduce|average down|cut loss|stop loss|recover quickly|make.*back|call|put|margin|leverage|liquidation)\b|买|卖|加仓|减仓|补仓|摊低|摊平|割肉|止损|止盈|回本|快点回本|赌|梭哈|满仓|杠杆|保证金|爆仓|要不要|该不该|应不应该|能不能|能不能买|能买吗|能买么|可不可以|到底应该|直接告诉我/u;
+  /\b(?:should\s+(?:i|we)|do\s+(?:i|we)|can\s+(?:i|we)|recommend|buy|sell|add|reduce|average down|cut loss|stop loss|recover quickly|make.*back|call|put|margin|leverage|liquidation|enter|exit|chase)\b|买|卖|加仓|加一点|减仓|补仓|摊低|摊平|割肉|止损|止盈|回本|快点回本|赌|梭哈|满仓|杠杆|保证金|爆仓|要不要|该不该|应不应该|能不能|能不能买|能买吗|能买么|能上|上不上|冲不冲|追不追|要不要冲|要不要上|能拿|还能拿|有没有戏|可不可以|到底应该|直接告诉我/u;
 
 const HOLD_OR_WAIT_ACTION_ASK_PATTERN =
   /(?:要不要|该不该|应不应该|到底应该|建议|可以|直接告诉我).{0,16}(持有|继续拿着|继续拿|等待)/u;
@@ -18,7 +18,7 @@ const ENGLISH_POSITION_ACTION_PATTERN =
   /\b(?:should|recommend|can|must|do not|don't|avoid|wait|hold)\b.{0,32}\b(?:buy|sell|add|reduce|average down|cut(?: the)? loss|hold|wait|stop loss|target price)\b/iu;
 
 const CHINESE_POSITION_ACTION_PATTERN =
-  /(?:应该|建议|可以|不要|别|先别|不建议|先说结论).{0,22}(买|卖|买入|卖出|加仓|减仓|补仓|摊低|摊平|割肉|砍仓|抄底|止损|止盈|持有|等待|赌|梭哈|满仓|加保证金|上杠杆|降杠杆)/u;
+  /(?:应该|建议|可以|不要|别|先别|不建议|先说结论).{0,22}(买|卖|买入|卖出|加仓|减仓|补仓|摊低|摊平|割肉|砍仓|抄底|止损|止盈|持有|等待|上|冲|追|拿|赌|梭哈|满仓|加保证金|上杠杆|降杠杆)/u;
 
 const CHINESE_ACTION_FRAMEWORK_PATTERN =
   /均价策略|止损策略|减亏两条路|抄底|砍仓|摊低成本|快点回本|赌财报|梭哈|满仓|加保证金|爆仓自救/u;
@@ -54,7 +54,7 @@ const SYSTEM_CAPABILITY_VISIBLE_PATTERN =
   /\b(?:system has|system does not have|system is connected|real[-\s]?time market data source|market data API|broker feed|data subscription)\b|系统(?:没有|未|已|可以|无法|不能).{0,24}(?:连接|提供|调用|访问|实时|行情|数据源|能力)|行情\s*API|broker\s*feed|实时数据订阅/u;
 
 const MARKET_DATA_BOUNDARY_ASK_PATTERN =
-  /\b(?:latest|current|real[-\s]?time|live quotes?|market data|VIX|DXY|HY spread|10Y)\b|最新行情|实时行情|当前行情|市场风险|可信度边界|数据清单|VIX|DXY|HY\s*spread|10Y|十年期|高收益债利差/u;
+  /\b(?:latest|current|real[-\s]?time|live quotes?|market data|VIX|DXY|HY spread|10Y|risk)\b|最新行情|实时行情|当前行情|市场风险|风险|危险|可信度边界|数据清单|VIX|DXY|HY\s*spread|10Y|十年期|高收益债利差/u;
 
 const ANSWER_PIPELINE_ASK_PATTERN =
   /(?:入口|出口|发.{0,8}消息|收到.{0,8}消息|智能体最后|最后.{0,8}答案|给我.{0,8}答案|答案.{0,8}(?:保守|模棱两可|废话|泛泛)|保守|模棱两可|废话|屁话|弄好|做好)/u;
@@ -63,7 +63,10 @@ const LEARNING_SOURCE_ASK_PATTERN =
   /\b(?:learn|study|read|source|url|link|github|repo|paper|blog|article)\b|学一下|学习一下|学习这个|读一下|看看这个|链接|来源|网页|论文|博客|文章|开源|项目/u;
 
 const SYSTEM_STATUS_ASK_PATTERN =
-  /\b(?:status|progress|where are we|what changed|done yet|finished yet|system state)\b|现在.{0,12}(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|如何|状态)|(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|状态)|做完了吗|还有什么|进展/u;
+  /\b(?:status|progress|where are we|what changed|done yet|finished yet|system state)\b|现在.{0,12}(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|如何|状态)|(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|状态)|做完了吗|系统能用了吗|大脑怎么样|训练怎么样|现在什么状态|状态呢|还有什么|进展/u;
+
+const SHORT_AMBIGUOUS_VISIBLE_ASK_PATTERN =
+  /^(?:怎么看|咋看|最近怎么看|现在呢|这个呢|咋办|怎么办|靠谱不|靠谱吗|行不行|可以吗|能不能简单说|还有戏吗)[？?。.\s]*$/u;
 
 const VAGUE_CONSERVATIVE_NONANSWER_PATTERN =
   /(?:这个问题)?(?:比较|很)?复杂|不能一概而论|取决于|需要更多(?:信息|背景|上下文)|信息不足|数据不足|无法(?:判断|确定|给出)|不能(?:判断|确定|给出)|建议(?:谨慎|进一步观察)|需要综合考虑/u;
@@ -158,6 +161,10 @@ function looksLikeSystemStatusAsk(userMessage: string): boolean {
   return SYSTEM_STATUS_ASK_PATTERN.test(userMessage);
 }
 
+function looksLikeShortAmbiguousVisibleAsk(userMessage: string): boolean {
+  return userMessage.trim().length <= 14 && SHORT_AMBIGUOUS_VISIBLE_ASK_PATTERN.test(userMessage);
+}
+
 function looksLikeVagueConservativeNonAnswer(answerText: string): boolean {
   const compact = answerText.trim();
   return (
@@ -214,6 +221,7 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
       looksLikeAnswerPipelineAsk(params.userMessage) ||
       looksLikeLearningSourceAsk(params.userMessage) ||
       looksLikeSystemStatusAsk(params.userMessage) ||
+      looksLikeShortAmbiguousVisibleAsk(params.userMessage) ||
       explicitVisibleContract) &&
     looksLikeVagueConservativeNonAnswer(params.answerText)
   ) {

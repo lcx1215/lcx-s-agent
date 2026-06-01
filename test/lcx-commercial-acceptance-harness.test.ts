@@ -25,6 +25,8 @@ function baseInputs() {
       summary: { passed: 34, failed: 0, total: 34 },
       contractFilters: [
         "real_lark_short_canary_suite_required",
+        "short_intent_family_fuzzer_required",
+        "unknown_short_intent_clean_failure_required",
         "provider_council_evidence_required",
         "provider_outputs_not_faked",
         "async_task_receipt_required_for_deferred_work",
@@ -34,6 +36,30 @@ function baseInputs() {
         "finance_data_conflicts_route_to_provenance_review",
       ],
       actionableFailures: [],
+    }),
+    shortIntentFuzzer: owner("lcx-lark-short-intent-fuzzer", {
+      ok: true,
+      boundary: "dev_lark_short_intent_fuzzer_only",
+      macroContract: {
+        notWhitelist: true,
+        unknownShortIntentBehavior:
+          "A terse ask that cannot be safely classified must fail cleanly with missing evidence or next-step reason.",
+      },
+      summary: {
+        families: 10,
+        generated: 70,
+        passed: 70,
+        failed: 0,
+        failedFamilies: [],
+      },
+      failedCases: [],
+      generatedEvalSeeds: [
+        {
+          caseId: "short_finance_action_intent_01",
+          familyId: "short_finance_action_intent",
+          ask: "能买吗",
+        },
+      ],
     }),
     problemRadar: owner("lcx-problem-cluster-radar", {
       ok: true,
@@ -206,13 +232,14 @@ describe("lcx-commercial-acceptance-harness", () => {
       }),
     );
     expect(result.summary).toEqual(
-      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 9 }),
+      expect.objectContaining({ failed: 0, blocked: 0, watch: 0, total: 10 }),
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
       "natural_plain_probe",
       "optional_fixed_receipt_anchor",
       "finance_research_prompt",
       "real_short_lark_canary_suite",
+      "short_intent_family_fuzzer",
       "three_provider_council_receipt",
       "learning_sedimentation_closed_loop",
       "finance_gateway_async_receipt_experience",
@@ -233,6 +260,10 @@ describe("lcx-commercial-acceptance-harness", () => {
           requiredFor: "provider_council_evidence",
         }),
         expect.objectContaining({
+          id: "short_intent_family_fuzzer",
+          requiredFor: "unknown_short_intent_clean_failure",
+        }),
+        expect.objectContaining({
           id: "learning_sedimentation_closed_loop",
           requiredFor: "learning_absorption_truth",
         }),
@@ -245,6 +276,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     expect(result.gates.map((gate) => gate.id)).toEqual(
       expect.arrayContaining([
         "provider_council_three_role_evidence_present",
+        "short_intent_family_fuzzer_clean",
         "module_learning_closed_loop_clean",
         "finance_data_gateway_contract_clean",
       ]),
@@ -427,6 +459,35 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
   });
 
+  it("blocks release when the short-intent family fuzzer regresses beyond fixed canaries", () => {
+    const inputs = baseInputs();
+    inputs.shortIntentFuzzer = owner("lcx-lark-short-intent-fuzzer", {
+      ok: true,
+      summary: {
+        families: 10,
+        generated: 70,
+        passed: 69,
+        failed: 1,
+      },
+      macroContract: { notWhitelist: true },
+      failedCases: [{ caseId: "short_generic_intro_wrong_route_99" }],
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.failedGates).toContain("short_intent_family_fuzzer_regression");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "short_intent_family_fuzzer_regression",
+          status: "failed",
+          severity: "P1",
+        }),
+      ]),
+    );
+  });
+
   it("treats active Qwen guard as watch-only and never as permission to start overlap", () => {
     const inputs = baseInputs();
     inputs.trainingPlan = owner("local-brain-training-plan", {
@@ -492,6 +553,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     expect(payload.ownerCommands).toEqual(
       expect.arrayContaining([
         "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
+        "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
         "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
       ]),
     );

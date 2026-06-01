@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { buildLarkAnswerAuditPolicy } from "../../extensions/feishu/src/lark-language-handoff-receipts.js";
 import {
   applyVisibleAnswerAdoptionGate,
@@ -359,6 +360,8 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "retrieval_apply_eval_review_required",
   "async_task_receipt_required_for_deferred_work",
   "real_lark_short_canary_suite_required",
+  "short_intent_family_fuzzer_required",
+  "unknown_short_intent_clean_failure_required",
   "no_unverified_current_market_data",
   "finance_data_gateway_snapshot_required_for_numbers",
   "finance_data_conflicts_route_to_provenance_review",
@@ -416,11 +419,11 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
   const text = ask.toLowerCase();
   const freshOrCurrentData = includesPattern(
     text,
-    /\b(?:recent|latest|today|now|current|price|quote|market|holdings?|position|portfolio|earnings?|daily|delta|count|growth)\b|最近|最新|今天|现在|行情|价格|持仓|仓位|组合|财报|一天|日增|净增|涨了|涨幅|多少|条/u,
+    /\b(?:recent|latest|today|now|current|price|quote|market|holdings?|position|portfolio|earnings?|daily|delta|count|growth)\b|最近|最新|今天|现在|行情|价格|报价|持仓|仓位|组合|财报|一天|日增|净增|涨了|涨幅|多少|条/u,
   );
   const webOrExternalLearning = includesPattern(
     text,
-    /\b(?:learn|study|web|online|internet|paper|blog|interview|podcast|source|github|repo)\b|学习|网上|联网|网页|论文|博客|访谈|播客|来源|链接|开源|项目/u,
+    /\b(?:learn|study|read|ingest|absorb|web|online|internet|paper|blog|interview|podcast|source|github|repo|report)\b|学|学习|读|研读|吸收|沉淀|网上|联网|网页|论文|博客|访谈|播客|来源|链接|网址|报告|资料|开源|项目/u,
   );
   const explicitLocalMemoryRecall = includesPattern(
     text,
@@ -429,7 +432,7 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
   const localMemoryRecall = explicitLocalMemoryRecall || webOrExternalLearning;
   const modelDisagreement = includesPattern(
     text,
-    /\b(?:model disagreement|which model|conflict|kimi.*minimax.*deepseek|minimax.*deepseek.*kimi)\b|大模型|模型.*分歧|分歧|冲突|意见不一致|怎么裁决|听谁/u,
+    /\b(?:model disagreement|which model|conflict|provider council|kimi|minimax|deepseek|kimi.*minimax.*deepseek|minimax.*deepseek.*kimi)\b|大模型|三模型|三个模型|三家模型|模型会审|模型.*分歧|分歧|冲突|意见不一致|不一致|怎么裁|怎么裁决|听谁/u,
   );
   const minimaxAgentDraft = includesPattern(
     text,
@@ -438,7 +441,7 @@ function resolveNeeds(ask: string, orchestration: FinanceBrainOrchestrationPlan)
   const financeDataGateway = orchestration.requiredTools.includes("finance_data_gateway_snapshot");
   const dataConflictAsk = includesPattern(
     text,
-    /\b(?:data conflict|conflicting data|which source|provider mismatch|prices differ|sources differ)\b|数据源.*(?:不一样|冲突|矛盾)|价格.*(?:不一样|冲突|矛盾)|听哪个|哪个更准/u,
+    /\b(?:data conflict|conflicting data|which source|provider mismatch|prices differ|quotes? differ|sources differ|vendor)\b|数据源.*(?:不一样|冲突|矛盾|打架)|数据.*(?:不一样|冲突|矛盾|打架)|价格.*(?:不一样|冲突|矛盾)|报价.*(?:不同|不一样|冲突|矛盾)|vendor.*官方.*不一致|官方.*vendor.*不一致|听哪个|哪个更准|谁准/u,
   );
   const numericFinanceAsk =
     freshOrCurrentData &&
@@ -583,13 +586,13 @@ function auditCandidate(params: {
 
   const positionActionAsk = includesPattern(
     askLower,
-    /\b(?:buy|sell|add|reduce|hold|wait|position|sizing|average down|cut loss|stop loss)\b|买|卖|加仓|减仓|持有|等待|仓位|持仓|补仓|摊低|摊平|割肉|止损|止盈|回本/u,
+    /\b(?:buy|sell|add|reduce|hold|wait|position|sizing|average down|cut loss|stop loss|enter|exit|chase)\b|买|卖|加仓|加一点|减仓|持有|等待|仓位|持仓|补仓|摊低|摊平|割肉|止损|止盈|回本|能上|上不上|冲不冲|追不追|要不要冲|有没有戏|能拿|还能拿/u,
   );
   const realLarkShortAsk =
     params.ask.trim().length <= 12 &&
     includesPattern(
       params.ask,
-      /^(能买吗|能不能买|买不买|加不加仓|要不要卖|到哪了|怎么样了|学一下|看一下|现在呢|咋办|怎么办)[？?。.\s]*$/u,
+      /^(能买吗|能不能买|买不买|加不加仓|要不要卖|能上吗|上不上|冲不冲|追不追|能不能冲|要不要冲|要不要上|有没有戏|还有戏吗|能拿吗|还能拿吗|加一点行吗|到哪了|怎么样了|做完了吗|进展呢|状态呢|现在呢|这个呢|咋办|怎么办|怎么看|咋看|靠谱不|靠谱吗|行不行|可以吗|学一下|看一下)[？?。.\s]*$/u,
     );
   const genericControlRoomIntro = includesPattern(
     candidate,
@@ -597,7 +600,7 @@ function auditCandidate(params: {
   );
   const systemStatusAsk = includesPattern(
     params.ask,
-    /\b(?:status|progress|where are we|what changed|done yet|finished yet|system state)\b|现在.{0,12}(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|如何|状态)|(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|状态)|做完了吗|还有什么|进展|到哪了/u,
+    /\b(?:status|progress|where are we|what changed|done yet|finished yet|system state)\b|现在.{0,12}(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|如何|状态)|(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|状态)|做完了吗|系统能用了吗|大脑怎么样|训练怎么样|现在什么状态|状态呢|还有什么|进展|到哪了/u,
   );
   const directActionTemplate = positionActionAsk
     ? includesPattern(
@@ -608,7 +611,7 @@ function auditCandidate(params: {
   const directChinesePositionInstruction = positionActionAsk
     ? includesPattern(
         candidate,
-        /(?:应该|建议|可以|不要|别|先别|不建议).{0,14}(买|卖|买入|卖出|加仓|减仓|补仓|摊低|摊平|割|割肉|持有|等待|止损|止盈|做多|做空)/u,
+        /(?:应该|建议|可以|不要|别|先别|不建议).{0,14}(买|卖|买入|卖出|加仓|减仓|补仓|摊低|摊平|割|割肉|持有|等待|止损|止盈|做多|做空|上|冲|追|拿)/u,
       )
     : false;
   const directHighRiskRecoveryInstruction = positionActionAsk
@@ -676,7 +679,7 @@ function auditCandidate(params: {
     );
   const asyncWorkAsk = includesPattern(
     askLower,
-    /\b(?:learn|study|read|ingest|absorb|web|online|source|paper|github|repo|long task|background|async)\b|学习|学一下|阅读|研读|吸收|链接|网址|论文|仓库|后台|异步|回执/u,
+    /\b(?:learn|study|read|ingest|absorb|web|online|source|paper|github|repo|report|long task|background|async|queue)\b|学习|学一下|阅读|研读|研究|吸收|沉淀|链接|网址|论文|报告|资料|仓库|后台|异步|队列|排队|处理|回执/u,
   );
   const asyncStartedClaimedLearned =
     asyncWorkAsk &&
@@ -707,7 +710,7 @@ function auditCandidate(params: {
     requiredNeedIds.has("finance_data_gateway") &&
     includesPattern(
       askLower,
-      /\b(?:conflict|differ|mismatch|which source)\b|冲突|不一样|矛盾|听哪个|更准/u,
+      /\b(?:conflict|differ|mismatch|which source|vendor)\b|冲突|不一样|不一致|矛盾|打架|不同|听哪个|更准|谁准|用哪个/u,
     );
   const guessedDataConflict = dataConflictAsk
     ? includesPattern(
@@ -958,7 +961,7 @@ function auditCandidate(params: {
   return checks;
 }
 
-function buildPipelineResult(ask: string, candidateAnswer: string) {
+export function buildPipelineResult(ask: string, candidateAnswer: string) {
   const orchestration = planFinanceBrainOrchestration({
     text: ask,
     hasHoldingsOrPortfolioContext: /持仓|仓位|组合|portfolio|position|holdings?/iu.test(ask),
@@ -1078,7 +1081,7 @@ function buildPipelineResult(ask: string, candidateAnswer: string) {
   };
 }
 
-function runScenarioSuite() {
+export function runScenarioSuite() {
   const results = BUILT_IN_SCENARIOS.map((scenario) => {
     const result = buildPipelineResult(scenario.ask, scenario.candidateAnswer);
     const expectedFailedReasons = scenario.expectedFailedReasons ?? [];
@@ -1116,14 +1119,16 @@ function runScenarioSuite() {
   };
 }
 
-const options = parseArgs(process.argv.slice(2));
-const result =
-  options.ask && options.candidateAnswer
-    ? buildPipelineResult(options.ask, options.candidateAnswer)
-    : runScenarioSuite();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const options = parseArgs(process.argv.slice(2));
+  const result =
+    options.ask && options.candidateAnswer
+      ? buildPipelineResult(options.ask, options.candidateAnswer)
+      : runScenarioSuite();
 
-if (options.json) {
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-} else {
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  }
 }
