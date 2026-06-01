@@ -33,19 +33,19 @@ const MODEL_DISAGREEMENT_ARBITRATION_ASK_PATTERN =
   /\b(?:provider council|model disagreement|which model|conflicting models)\b|(?:模型意见|意见不一致|模型分歧|怎么裁决|听谁|谁说得对|采信谁)/u;
 
 const GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN =
-  /我是\s*(?:LCX Agent|OpenClaw).{0,40}(?:Lark\s*)?控制室入口|可以把自然语言请求分到|工作面|finance learning pipeline/u;
+  /我是\s*(?:LCX Agent|OpenClaw).{0,40}(?:Lark\s*)?控制室入口|我是你在\s*Lark\s*里联系\s*LCX Agent\s*的入口|当前可用能力|可以把自然语言请求分到|工作面|finance learning pipeline/u;
 
 const EXPLICIT_VISIBLE_CONTRACT_ASK_PATTERN =
   /\b(?:only|do not|don't|without|no json|no internal|answer directly|do not mention|do not cite previous)\b|只说|只给|直接|不要|别|不得|不要暴露|不要引用|不要给|不要装|不能暴露|别暴露|只要/u;
 
 const NO_INTERNAL_DETAIL_CONTRACT_ASK_PATTERN =
-  /\b(?:no json|no internal|do not expose|do not mention message id|receipt path)\b|不要暴露|不能暴露|别暴露|内部\s*JSON|后台细节|message\s*id|receipt\s*path|回执路径|内部路径|内部文件|内部标签/u;
+  /\b(?:no json|no internal|do not expose|do not mention message id|receipt path)\b|不要暴露|不能暴露|别暴露|内部\s*JSON|后台细节|message\s*id|receipt\s*path|回执路径|内部路径|内部文件|内部标签/iu;
 
 const NO_SYSTEM_CAPABILITY_CONTRACT_ASK_PATTERN =
   /\b(?:do not mention system capability|do not talk about system capability|no system capability)\b|不要讲系统能力|不要说系统能力|别讲系统能力|不讲系统能力/u;
 
 const INTERNAL_VISIBLE_DETAIL_PATTERN =
-  /^\s*\{|\b(?:control_room|learning_command|technical_daily|fundamental_research|knowledge_maintenance|ops_audit|answer_audit|bounded_answer_review|handoff|receipt path|message id|messageId|correlationId|deliveryMessageId|retrieval\/apply|eval\/training absorption)\b|om_[a-z0-9_]{12,}|分发状态/u;
+  /^\s*\{|\b(?:control_room|learning_command|technical_daily|fundamental_research|knowledge_maintenance|ops_audit|answer_audit|bounded_answer_review|handoff|receipt path|message id|messageId|correlationId|deliveryMessageId|retrieval\/apply|eval\/training absorption|rationale|work_order|output_contract|required_modules|backend_tool)\b|识别理由|om_[a-z0-9_]{12,}|分发状态/u;
 
 const ANSWER_PIPELINE_INTERNAL_VISIBLE_PATTERN =
   /\b(?:control_room|bounded_answer_review|answer_audit|work_order|output_contract|chat_id|message_id|model_judgments|agent_task|verification_status|verification|final_answer|diverged_count|intent_family|suggested_action|dominant_family|publish|confidence|foundation|dev-fixed|probe-fixed|live-visible-fixed|live-fixed)\b|控制摘要|分发状态|工作面|模型\s*[:：]\s*模型[ABCＡＢＣ]|模型[ABCＡＢＣ]/u;
@@ -61,6 +61,9 @@ const MARKET_DATA_BOUNDARY_ASK_PATTERN =
 
 const ANSWER_PIPELINE_ASK_PATTERN =
   /(?:入口|出口|发.{0,8}消息|收到.{0,8}消息|智能体最后|最后.{0,8}答案|给我.{0,8}答案|答案.{0,8}(?:保守|模棱两可|废话|泛泛)|保守|模棱两可|废话|屁话|弄好|做好)/u;
+
+const GENERIC_ENTRY_EXIT_ANSWER_PATTERN =
+  /能弄好，而且出口必须简单|入口只做四件事|内部可以让\s*Kimi、MiniMax、DeepSeek|质量关要拦掉五类废答案/u;
 
 const LEARNING_SOURCE_ASK_PATTERN =
   /\b(?:learn|study|read|source|url|link|github|repo|paper|blog|article)\b|学一下|学习一下|学习这个|读一下|看看这个|链接|来源|网页|论文|博客|文章|开源|项目/u;
@@ -80,8 +83,23 @@ const USEFUL_VISIBLE_NEXT_STEP_PATTERN =
 const MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN =
   /\b(?:evidence order|source|timestamp|local gate|cannot directly trust|not final authority|arbitration)\b|证据排序|一手来源|时间戳|本地\s*gate|不能直接采信|不能按模型名|候选意见|最终权威|本地把关|裁决/u;
 
+const MODEL_DISAGREEMENT_DECIDER_PATTERN =
+  /\b(?:do not decide by model name|majority vote|local gates?|final authority|not final authority|evidence order|arbitration)\b|不能按模型名|不能.*投票|本地\s*gate|最终答案|最终权威|不直接采信|证据排序/u;
+
 const VISIBLE_INTERNAL_TAIL_LINE_PATTERN =
   /^\s*(?:分发状态|本次识别|识别理由|原始问题|publish|confidence|foundation)\s*[:：].*$/gmu;
+
+const RAW_WORK_ORDER_VISIBLE_PATTERN =
+  /^\s*```json|^\s*\{[\s\S]{0,2200}(?:"family"|"confidence"|"work_order"|"output_contract"|"required_modules")|(?:work_order|output_contract|required_modules|backend_tool)\s*[:：]/iu;
+
+const USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN =
+  /(?:\d[\d,，]*).{0,24}(?:净增|增加|新增|涨|增长|多了|\+).{0,16}(?:\d[\d,，]*)|(?:\d[\d,，]*).{0,16}(?:大概|约|多少).{0,12}(?:比例|百分比|涨幅|增长率)/u;
+
+const DAILY_SEMICONDUCTOR_OPTIONS_FORMAT_ASK_PATTERN =
+  /(?:每天|每日|自动|产出格式|格式).{0,24}(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options)|(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options).{0,32}(?:每天|每日|自动|产出格式|格式)/iu;
+
+const SEMICONDUCTOR_OPTIONS_RISK_ASK_PATTERN =
+  /(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options).{0,32}(?:风险|看哪|关注|危险|三个|3个)|(?:风险|看哪|关注|危险|三个|3个).{0,32}(?:半导体|芯片|semiconductor).{0,32}(?:指数期权|期权|options)/iu;
 
 function mentionedKnownTickers(text: string): string[] {
   const matches = new Set<string>();
@@ -156,12 +174,28 @@ function looksLikeAnswerPipelineAsk(userMessage: string): boolean {
   return ANSWER_PIPELINE_ASK_PATTERN.test(userMessage);
 }
 
+function looksLikeGenericEntryExitAnswer(answerText: string): boolean {
+  return GENERIC_ENTRY_EXIT_ANSWER_PATTERN.test(answerText);
+}
+
 function looksLikeLearningSourceAsk(userMessage: string): boolean {
   return LEARNING_SOURCE_ASK_PATTERN.test(userMessage);
 }
 
 function looksLikeSystemStatusAsk(userMessage: string): boolean {
   return SYSTEM_STATUS_ASK_PATTERN.test(userMessage);
+}
+
+function looksLikeUserSuppliedArithmeticPercentAsk(userMessage: string): boolean {
+  return USER_SUPPLIED_ARITHMETIC_PERCENT_ASK_PATTERN.test(userMessage);
+}
+
+function looksLikeDailySemiconductorOptionsFormatAsk(userMessage: string): boolean {
+  return DAILY_SEMICONDUCTOR_OPTIONS_FORMAT_ASK_PATTERN.test(userMessage);
+}
+
+function looksLikeSemiconductorOptionsRiskAsk(userMessage: string): boolean {
+  return SEMICONDUCTOR_OPTIONS_RISK_ASK_PATTERN.test(userMessage);
 }
 
 function looksLikeShortAmbiguousVisibleAsk(userMessage: string): boolean {
@@ -176,12 +210,40 @@ function looksLikeVagueConservativeNonAnswer(answerText: string): boolean {
   );
 }
 
+function extractsUsefulArithmeticPercent(answerText: string): boolean {
+  return /(?:\d[\d,，]*\s*\/\s*\d[\d,，]*|0\.\d{1,3}\s*%|约等于\s*0\.\d|大概\s*0\.\d|百分之\s*零点)/u.test(
+    answerText,
+  );
+}
+
+function extractsDailyResearchFormat(answerText: string): boolean {
+  return (
+    /(?:每日|每天|日更|日报|固定模板|产出格式)/u.test(answerText) &&
+    /(?:半导体|芯片|SOXX|SMH|NVDA)/iu.test(answerText) &&
+    /(?:指数期权|期权|IV|VIX|skew|偏斜|期限结构|gamma)/iu.test(answerText) &&
+    /(?:数据时间戳|来源|缺失数据|触发条件|风险|结论)/u.test(answerText)
+  );
+}
+
+function extractsSemiconductorOptionsRiskList(answerText: string): boolean {
+  const riskAnchors = [
+    /(?:半导体|芯片|SOXX|SMH|NVDA).{0,32}(?:风险|波动|财报|估值|集中度|供需|capex|AI)/iu,
+    /(?:指数期权|期权|VIX|IV|skew|偏斜|期限结构|gamma|dealer).{0,40}(?:风险|波动|挤压|对冲|到期)/iu,
+    /(?:利率|美元|流动性|宏观|美债|收益率|DXY|credit|信用).{0,36}(?:风险|压力|传导|冲击)/iu,
+  ];
+  return riskAnchors.filter((pattern) => pattern.test(answerText)).length >= 2;
+}
+
 export function findVisibleAnswerAdoptionGateFailures(params: {
   userMessage: string;
   answerText: string;
 }): string[] {
   const failures: string[] = [];
   const explicitVisibleContract = looksLikeExplicitVisibleContractAsk(params.userMessage);
+
+  if (RAW_WORK_ORDER_VISIBLE_PATTERN.test(params.answerText)) {
+    failures.push("raw_work_order_json_visible_answer");
+  }
 
   if (
     (looksLikeStandalonePortfolioRiskAsk(params.userMessage) ||
@@ -203,6 +265,37 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
     GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN.test(params.answerText)
   ) {
     failures.push("explicit_visible_contract_ignored_by_generic_intro");
+  }
+
+  if (
+    looksLikeGenericEntryExitAnswer(params.answerText) &&
+    (looksLikeUserSuppliedArithmeticPercentAsk(params.userMessage) ||
+      looksLikeDailySemiconductorOptionsFormatAsk(params.userMessage) ||
+      looksLikeSemiconductorOptionsRiskAsk(params.userMessage) ||
+      looksLikeModelDisagreementArbitrationAsk(params.userMessage))
+  ) {
+    failures.push("wrong_route_generic_entry_exit_answer");
+  }
+
+  if (
+    looksLikeUserSuppliedArithmeticPercentAsk(params.userMessage) &&
+    !extractsUsefulArithmeticPercent(params.answerText)
+  ) {
+    failures.push("user_supplied_arithmetic_not_answered_directly");
+  }
+
+  if (
+    looksLikeDailySemiconductorOptionsFormatAsk(params.userMessage) &&
+    !extractsDailyResearchFormat(params.answerText)
+  ) {
+    failures.push("daily_semiconductor_options_format_missing");
+  }
+
+  if (
+    looksLikeSemiconductorOptionsRiskAsk(params.userMessage) &&
+    !extractsSemiconductorOptionsRiskList(params.answerText)
+  ) {
+    failures.push("semiconductor_options_risk_answer_incomplete");
   }
 
   if (
@@ -242,7 +335,8 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
   if (looksLikeModelDisagreementArbitrationAsk(params.userMessage)) {
     if (
       GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN.test(params.answerText) ||
-      !MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN.test(params.answerText)
+      !MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN.test(params.answerText) ||
+      !MODEL_DISAGREEMENT_DECIDER_PATTERN.test(params.answerText)
     ) {
       failures.push("provider_council_arbitration_answer_missing");
     }
@@ -317,7 +411,7 @@ function renderSinglePositionRiskFrameworkReply(userMessage: string): string {
 function renderProviderCouncilArbitrationReply(userMessage: string): string {
   if (!prefersChinese(userMessage)) {
     return [
-      "Do not decide by model name or majority vote.",
+      "Final decider: the local evidence gate, not Kimi, MiniMax, DeepSeek, or a majority vote.",
       "Evidence order: primary source or timestamped data first, then reproducible calculations and local rules, then Kimi/MiniMax/DeepSeek as candidate opinions.",
       "Local gates: freshness, source quality, finance-data provenance, trade-advice boundary, and contradiction checks must pass before any answer is adopted.",
       "If the models disagree, keep the shared evidence, mark the conflict, downrank claims without sources or timestamps, and return a blocked reason when the evidence is not enough.",
@@ -326,11 +420,114 @@ function renderProviderCouncilArbitrationReply(userMessage: string): string {
   }
 
   return [
-    "不能按模型名投票，也不能因为 Kimi、MiniMax 或 DeepSeek 说得像就直接采信。",
+    "最后说了算的是本地证据 gate，不是 Kimi、MiniMax、DeepSeek，也不是多数投票。",
     "证据排序：一手来源和带时间戳的数据优先，其次是可复现计算和本地规则，最后才是三家模型的候选意见。",
     "本地 gate 必须先过：数据新鲜度、来源质量、金融数据口径、交易建议边界、互相矛盾的 claim 检查。",
     "三家不一致时：保留共同证据，标出分歧，把没有来源或时间戳的判断降权；证据不够就返回阻塞原因，不硬拍板。",
     "最终答案只能由本地 gate 采纳，不直接采信任何一个模型。",
+  ].join("\n\n");
+}
+
+function extractNumericValues(text: string): number[] {
+  return [...text.matchAll(/\d[\d,，]*/gu)]
+    .map((match) => Number(match[0].replace(/[，,]/gu, "")))
+    .filter((value) => Number.isFinite(value));
+}
+
+function extractArithmeticBaseAndDelta(text: string): { base: number; delta: number } | null {
+  const normalized = text
+    .replace(/(?:探针|复测)[A-Z]\d+/giu, "")
+    .replace(/\blark-canary-[a-z]\d+\b/giu, "")
+    .replace(/[，,]/gu, "");
+  const netIncreaseMatch = normalized.match(
+    /(?<base>\d+).{0,20}(?:净增|新增|增加|涨了|涨|增长|多了|\+)\s*(?<delta>\d+)/u,
+  );
+  if (netIncreaseMatch?.groups) {
+    const base = Number(netIncreaseMatch.groups.base);
+    const delta = Number(netIncreaseMatch.groups.delta);
+    if (Number.isFinite(base) && Number.isFinite(delta) && base > 0 && delta > 0) {
+      return { base, delta };
+    }
+  }
+
+  const filtered = extractNumericValues(text).filter((value) => value >= 10);
+  if (filtered.length >= 2) {
+    const sorted = [...filtered].sort((a, b) => b - a);
+    return { base: sorted[0], delta: sorted[sorted.length - 1] };
+  }
+  return null;
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(2).replace(/\.?0+$/u, "")}%`;
+}
+
+function renderUserSuppliedArithmeticPercentReply(userMessage: string): string {
+  const pair = extractArithmeticBaseAndDelta(userMessage);
+  if (pair) {
+    const { base, delta } = pair;
+    const percent = (delta / base) * 100;
+    if (Number.isFinite(percent)) {
+      if (!prefersChinese(userMessage)) {
+        return [
+          `Using only the two numbers you gave: ${delta} / ${base} = ${formatPercent(percent)}.`,
+          "This is just the arithmetic ratio, not proof that the sample pool was audited.",
+          "To verify the real daily increase, I would need yesterday's total, today's total, the counting rule, and the timestamp of both snapshots.",
+        ].join("\n\n");
+      }
+      return [
+        `按你给的两个数直接算：${delta} / ${base} = ${formatPercent(percent)}。`,
+        "这只是算术口径，不代表样本池已经核验为真实增量或好样本。",
+        "要确认真实增量，还要看昨天总数、今天总数、统计口径和两个快照的时间戳。",
+      ].join("\n\n");
+    }
+  }
+
+  if (!prefersChinese(userMessage)) {
+    return "I need two numeric values to calculate the ratio directly: the base count and the increase.";
+  }
+  return "要直接算比例，需要两个数：基数和新增数。现在没有足够数字，不能硬算。";
+}
+
+function renderDailySemiconductorOptionsFormatReply(userMessage: string): string {
+  if (!prefersChinese(userMessage)) {
+    return [
+      "Daily output format:",
+      "1. Direct view: one-line conclusion, confidence boundary, and whether fresh data is missing.",
+      "2. Semiconductor: SOXX/SMH/NVDA/major names, breadth, earnings/news timestamps, valuation pressure, AI capex narrative, and invalidation signals.",
+      "3. Index options: VIX/IV, skew, term structure, put-call pressure, dealer gamma or large-expiry risk, with timestamped source fields.",
+      "4. Cross-asset risk: 10Y yield, DXY, credit/liquidity, and whether rates are amplifying or easing equity risk.",
+      "5. Next action for the agent: data gaps to fetch, items to watch tomorrow, and what would change the view. Research-only, no execution instruction.",
+    ].join("\n\n");
+  }
+
+  return [
+    "每日产出格式：",
+    "1. 直接结论：今天最重要的 1 句话、可信度边界、哪些实时数据缺失。",
+    "2. 半导体：SOXX/SMH/NVDA/核心个股，市场宽度、财报/新闻时间戳、估值压力、AI capex 叙事、失效信号。",
+    "3. 指数期权：VIX/IV、偏斜、期限结构、put-call 压力、dealer gamma 或大到期风险，每项都带来源和时间戳。",
+    "4. 跨资产：10Y 美债、DXY、信用/流动性，判断利率和美元是在放大还是缓解权益风险。",
+    "5. 明日跟踪：缺什么数据、明天优先看什么、什么证据会改变结论。只做研究，不给交易指令。",
+  ].join("\n\n");
+}
+
+function renderSemiconductorOptionsRiskReply(userMessage: string): string {
+  if (!prefersChinese(userMessage)) {
+    return [
+      "Fresh market data is not available here, so this is a risk checklist, not a current-market conclusion.",
+      "1. Semiconductor beta risk: SOXX/SMH/NVDA breadth, earnings guidance, valuation compression, and whether AI capex expectations are being repriced. [DATA_MISSING: current prices, breadth, earnings/news timestamps]",
+      "2. Index-options volatility risk: VIX/IV level, skew, term structure, put-call pressure, dealer gamma, and large-expiry pin or squeeze risk. [DATA_MISSING: current IV/skew/gamma/expiry data]",
+      "3. Macro transmission risk: 10Y yield, DXY, credit/liquidity, and whether rates plus dollar pressure hit growth multiples. [DATA_MISSING: current rates, DXY, credit spreads]",
+      "Next step: fetch timestamped market-data snapshots before turning this into a ranked daily note.",
+    ].join("\n\n");
+  }
+
+  return [
+    "没有最新行情，所以这里只能给风险清单，不能说当前市场结论。",
+    "1. 半导体 beta 风险：SOXX/SMH/NVDA 的市场宽度、财报指引、估值压缩、AI capex 预期是否被重定价。[DATA_MISSING: 当前价格、宽度、财报/新闻时间戳]",
+    "2. 指数期权波动风险：VIX/IV、偏斜、期限结构、put-call 压力、dealer gamma、大到期 pin 或挤压风险。[DATA_MISSING: 当前 IV/skew/gamma/到期数据]",
+    "3. 宏观传导风险：10Y 美债、DXY、信用/流动性，利率和美元是否同时压成长股估值。[DATA_MISSING: 当前利率、美元、信用利差]",
+    "下一步：先补带时间戳的数据快照，再把三类风险排优先级。",
   ].join("\n\n");
 }
 
@@ -501,6 +698,42 @@ export function applyVisibleAnswerAdoptionGate(params: {
     };
   }
 
+  if (looksLikeUserSuppliedArithmeticPercentAsk(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderUserSuppliedArithmeticPercentReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
+  if (looksLikeDailySemiconductorOptionsFormatAsk(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderDailySemiconductorOptionsFormatReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
+  if (looksLikeSemiconductorOptionsRiskAsk(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderSemiconductorOptionsRiskReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
+  if (looksLikeModelDisagreementArbitrationAsk(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderProviderCouncilArbitrationReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
   if (looksLikeAnswerPipelineAsk(params.userMessage)) {
     return {
       status: "replaced",
@@ -528,15 +761,6 @@ export function applyVisibleAnswerAdoptionGate(params: {
     };
   }
 
-  if (looksLikeModelDisagreementArbitrationAsk(params.userMessage)) {
-    return {
-      status: "replaced",
-      text: renderProviderCouncilArbitrationReply(params.userMessage),
-      originalText: text,
-      failedReasons,
-    };
-  }
-
   if (
     failedReasons.some((reason) =>
       [
@@ -545,6 +769,8 @@ export function applyVisibleAnswerAdoptionGate(params: {
         "internal_visible_detail_leak_against_user_contract",
         "system_capability_leak_against_user_contract",
         "vague_conservative_nonanswer_without_useful_next_step",
+        "raw_work_order_json_visible_answer",
+        "wrong_route_generic_entry_exit_answer",
       ].includes(reason),
     )
   ) {

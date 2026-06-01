@@ -212,6 +212,17 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["provider_council_arbitration_answer_missing"],
   },
   {
+    id: "real_lark_provider_disagreement_blocks_capability_intro_and_rationale",
+    ask: "E2 Kimi MiniMax DeepSeek disagree who decides no JSON. lark-canary-e2",
+    candidateAnswer:
+      "我是你在 Lark 里联系 LCX Agent 的入口。当前可用能力: 把你的自然语言问题转成研究、学习、复盘、审计或工程任务。证据: 识别理由: User is reporting a multi-model disagreement scenario.",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: [
+      "provider_council_arbitration_answer_missing",
+      "internal_visible_detail_leak_against_user_contract",
+    ],
+  },
+  {
     id: "explicit_visible_contract_blocks_generic_control_room_intro",
     ask: "我问一个简单问题：没有最新行情时怎么回答？只给可信度边界和数据清单，不要讲系统能力，不要暴露内部标签。",
     candidateAnswer:
@@ -323,6 +334,38 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     candidateAnswer: "一天净增 46 条，涨幅大概 0.68%。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["finance_data_gateway_snapshot_missing_for_number"],
+  },
+  {
+    id: "real_lark_arithmetic_canary_blocks_generic_entry_exit_answer",
+    ask: "LCX真实入口探针B5：6818一天净增46条，大概涨了多少比例？直接算，别绕。验收码 lark-canary-b5",
+    candidateAnswer:
+      "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["user_supplied_arithmetic_not_answered_directly"],
+  },
+  {
+    id: "real_lark_daily_semiconductor_options_format_blocks_generic_entry_exit_answer",
+    ask: "LCX真实入口探针B10：别废话，给我一个每天自动研究半导体和指数期权的产出格式。验收码 lark-canary-b10",
+    candidateAnswer:
+      "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["daily_semiconductor_options_format_missing"],
+  },
+  {
+    id: "real_lark_semiconductor_options_risk_requires_three_risk_families",
+    ask: "LCX真实复测C4：今天半导体和指数期权最该看哪三个风险？没有实时数据就明确说。验收码 lark-canary-c4",
+    candidateAnswer:
+      "实时数据不可用，本次与B8一致。web_search无法返回当前价格/IV/VIX数据，三个风险点均标注 [DATA_MISSING]。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["semiconductor_options_risk_answer_incomplete"],
+  },
+  {
+    id: "real_lark_visible_answer_blocks_raw_work_order_json",
+    ask: "今天半导体和指数期权最该看哪三个风险？没有实时数据就明确说。",
+    candidateAnswer:
+      '{"family":"technical_timing","confidence":0.95,"work_order":{"output_contract":"三个风险点列表"}}',
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["raw_work_order_json_visible_answer"],
   },
   {
     id: "finance_data_gateway_conflict_blocks_guessing",

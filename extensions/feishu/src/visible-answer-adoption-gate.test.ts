@@ -244,6 +244,131 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("receipt path");
   });
 
+  it("keeps provider disagreement ahead of generic entry-exit canary wording", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "LCX真实入口探针B6：Kimi、MiniMax、DeepSeek意见不一致时，最后谁说了算？不要暴露内部JSON。验收码 lark-canary-b6",
+      answerText:
+        "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。\n入口只做四件事：判断你要什么、需要什么证据、风险等级多高、该走哪个任务族。\n内部可以让 Kimi、MiniMax、DeepSeek、本地大脑、记忆和工具一起出草稿/反方/证据缺口，但任何一个都不能直接当最终答案。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "provider_council_arbitration_answer_missing",
+        "wrong_route_generic_entry_exit_answer",
+      ]),
+    );
+    expect(decision.text).toContain("证据排序");
+    expect(decision.text).toContain("最后说了算的是本地证据 gate");
+    expect(decision.text).toContain("不是多数投票");
+    expect(decision.text).not.toContain("入口只做四件事");
+  });
+
+  it("replaces Lark entry capability replies for English provider disagreement asks", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "E2 Kimi MiniMax DeepSeek disagree who decides no JSON. lark-canary-e2",
+      answerText:
+        "我是你在 Lark 里联系 LCX Agent 的入口。\n当前可用能力:\n• 把你的自然语言问题转成研究、学习、复盘、审计或工程任务。\n证据:\n• 识别理由: User is reporting a multi-model disagreement scenario (Kimi/MiniMax/DeepSeek disagree) with no JSON output on lark-canary-e2.",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "internal_visible_detail_leak_against_user_contract",
+        "provider_council_arbitration_answer_missing",
+      ]),
+    );
+    expect(decision.text).toContain(
+      "Final decider: the local evidence gate, not Kimi, MiniMax, DeepSeek, or a majority vote",
+    );
+    expect(decision.text).toContain("No single provider is directly trusted as final authority");
+    expect(decision.text).not.toContain("当前可用能力");
+    expect(decision.text).not.toContain("识别理由");
+  });
+
+  it("answers user-supplied arithmetic directly instead of generic entry-exit text", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "LCX真实入口探针B5：6818一天净增46条，大概涨了多少比例？直接算，别绕。验收码 lark-canary-b5",
+      answerText: "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "user_supplied_arithmetic_not_answered_directly",
+        "wrong_route_generic_entry_exit_answer",
+      ]),
+    );
+    expect(decision.text).toContain("46 / 6818 = 0.67%");
+    expect(decision.text).toContain("算术口径");
+    expect(decision.text).not.toContain("出口必须简单");
+  });
+
+  it("requires a concrete daily semiconductor and index-options output format", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "LCX真实入口探针B10：别废话，给我一个每天自动研究半导体和指数期权的产出格式。验收码 lark-canary-b10",
+      answerText: "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "daily_semiconductor_options_format_missing",
+        "wrong_route_generic_entry_exit_answer",
+      ]),
+    );
+    expect(decision.text).toContain("每日产出格式");
+    expect(decision.text).toContain("半导体");
+    expect(decision.text).toContain("指数期权");
+    expect(decision.text).toContain("时间戳");
+    expect(decision.text).not.toContain("入口只做四件事");
+  });
+
+  it("expands semiconductor and index-options risk asks even when live data is missing", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage:
+        "LCX真实复测C4：今天半导体和指数期权最该看哪三个风险？没有实时数据就明确说。验收码 lark-canary-c4",
+      answerText:
+        "实时数据不可用，本次与B8一致。web_search无法返回当前价格/IV/VIX数据，三个风险点均标注 [DATA_MISSING]。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["semiconductor_options_risk_answer_incomplete"]),
+    );
+    expect(decision.text).toContain("半导体 beta 风险");
+    expect(decision.text).toContain("指数期权波动风险");
+    expect(decision.text).toContain("宏观传导风险");
+    expect(decision.text).toContain("[DATA_MISSING");
+    expect(decision.text).not.toContain("web_search无法返回");
+  });
+
+  it("rejects visible JSON work orders before sending to Lark", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "今天半导体和指数期权最该看哪三个风险？没有实时数据就明确说。",
+      answerText: [
+        "```json",
+        "{",
+        '  "family": "technical_timing",',
+        '  "confidence": 0.95,',
+        '  "work_order": { "output_contract": "三个风险点列表" }',
+        "}",
+        "```",
+      ].join("\n"),
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["raw_work_order_json_visible_answer"]),
+    );
+    expect(decision.text).toContain("半导体 beta 风险");
+    expect(decision.text).not.toContain("work_order");
+    expect(decision.text).not.toContain("confidence");
+  });
+
   it("generalizes explicit-output-contract failures beyond provider disagreement", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage:
