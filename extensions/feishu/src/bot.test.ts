@@ -8273,11 +8273,14 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("当前状态：dev-fixed");
-    expect(replyText).toContain("probe-fixed");
-    expect(replyText).toContain("live-visible-fixed");
-    expect(replyText).toContain("发送成功回执");
-    expect(replyText).toContain("状态回读走确定性边界");
+    expect(replyText).toContain("当前状态：分三层看");
+    expect(replyText).toContain("本地修好");
+    expect(replyText).toContain("通道接上");
+    expect(replyText).toContain("你这边真的看到正确回复");
+    expect(replyText).toContain("处理边界：这类状态回读走确定性证据");
+    expect(replyText).not.toContain("当前状态：dev-fixed");
+    expect(replyText).not.toContain("probe-fixed");
+    expect(replyText).not.toContain("live-visible-fixed");
     expect(replyText).not.toContain("交接回执:");
     expect(replyText).not.toContain("Handoff receipt:");
     expect(replyText).not.toContain("protocol_status_readback_guard");
@@ -8314,7 +8317,7 @@ describe("learning council routing", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("answers live acceptance phrase probes without appending distribution status", async () => {
+  it("answers legacy live acceptance phrase probes with external-channel boundaries", async () => {
     const baseDispatcher = {
       sendToolResult: vi.fn(() => false),
       sendBlockReply: vi.fn(() => false),
@@ -8356,9 +8359,12 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toBe(
-      "lark-live-visible-fixed-agent-architecture-20260514（这是重启后的真实链路。）",
-    );
+    expect(replyText).toContain("外部通道验收请求已识别");
+    expect(replyText).toContain("Lark 只是你和 LCX Agent 通信的外部通道");
+    expect(replyText).toContain("legacy-external-channel-code-agent-architecture-20260514");
+    expect(replyText).toContain("必须看同一轮 Lark 入站和出站回执");
+    expect(replyText).not.toContain("lark-live-visible-fixed-agent-architecture-20260514");
+    expect(replyText).not.toContain("live-visible-fixed");
     expect(replyText).not.toContain("分发状态");
     expect(replyText).not.toContain("Distribution:");
     expect(replyText).not.toContain("交接回执:");

@@ -391,6 +391,22 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).not.toContain("foundation:");
   });
 
+  it("rejects status answers that expose legacy proof labels", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "现在系统进化到哪一步了？不要流水账，只说当前等级、卡点、下一步。",
+      answerText:
+        "Dev-fixed: 本地通过。Probe-fixed: channel probe 通过。Live-visible-fixed: 等真实 Lark inbound/outbound。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["single_entry_single_exit_internal_label_leak"]),
+    );
+    expect(decision.text).toContain("不能靠聊天记忆或自信回答当前进化状态");
+    expect(decision.text).not.toContain("Dev-fixed");
+    expect(decision.text).not.toContain("Live-visible-fixed");
+  });
+
   it("strips internal distribution tails from otherwise valid visible answers", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage: "最近市场风险怎么样？没有实时数据就只说边界。",

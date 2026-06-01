@@ -4192,10 +4192,16 @@ function renderFeishuLiveAcceptanceReadbackReply(userMessage: string): string | 
   if (!phrase || !isFeishuLiveAcceptanceReadbackAsk(userMessage)) {
     return undefined;
   }
-  if (/(说明|真实链路|重启|restart)/iu.test(userMessage)) {
-    return `${phrase}（这是重启后的真实链路。）`;
-  }
-  return phrase;
+  const needsRestartClaim = /(说明|真实链路|重启|restart)/iu.test(userMessage);
+  return [
+    "外部通道验收请求已识别，但旧 live 验收短语不再作为可见成功口径。",
+    "",
+    "当前口径: Lark 只是你和 LCX Agent 通信的外部通道；成功必须拆成本地修好、通道接上、真实入站和真实出站可见。",
+    `旧验收码: ${phrase.replace(/\blark-live-visible-fixed-/u, "legacy-external-channel-code-")}`,
+    needsRestartClaim
+      ? "边界: 不能仅凭短语回显说明重启后的真实链路，必须看同一轮 Lark 入站和出站回执。"
+      : "边界: 不能仅凭短语回显说明真实可见，必须看同一轮 Lark 入站和出站回执。",
+  ].join("\n");
 }
 
 function renderFeishuProtocolStatusReadbackReply(params: {
@@ -4208,11 +4214,11 @@ function renderFeishuProtocolStatusReadbackReply(params: {
   }
   if (shouldUseConciseFeishuStatusReadback(params.userMessage)) {
     return [
-      "当前状态：dev-fixed 只代表本地代码和测试通过；probe-fixed 只代表 gateway/channel 探活通过；live-visible-fixed 必须等真实 Lark 入站和发送成功回执都落账后才算，不能提前混成完成。",
-      "后台处理：这类状态回读走确定性边界，不调用大模型自由生成，也不执行 build、restart 或 probe。",
+      "当前状态：分三层看，本地修好、通道接上、你这边真的看到正确回复；少一层都不能说完成。",
+      "处理边界：这类状态回读走确定性证据，不调用模型自由发挥，也不执行 build、restart 或 probe。",
     ].join("\n");
   }
-  const fallback = "🧭 Status readback\nfailedReason: protocol_status_readback_unavailable";
+  const fallback = "当前状态回读：状态证据暂不可用。\n原因：protocol_status_readback_unavailable";
   const visibleLines = (params.protocolText?.trim() || fallback).split(/\r?\n/u).filter((line) => {
     const trimmed = line.trim();
     return (

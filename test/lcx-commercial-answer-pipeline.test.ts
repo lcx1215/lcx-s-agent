@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 34, failed: 0, total: 34 });
+    expect(payload.summary).toEqual({ passed: 35, failed: 0, total: 35 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -137,6 +137,11 @@ describe("LCX commercial answer pipeline", () => {
         }),
         expect.objectContaining({
           scenarioId: "single_entry_single_exit_blocks_visible_protocol_contract",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining(["single_entry_single_exit_internal_label_leak"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "status_readback_blocks_legacy_proof_labels_in_visible_answer",
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining(["single_entry_single_exit_internal_label_leak"]),
         }),

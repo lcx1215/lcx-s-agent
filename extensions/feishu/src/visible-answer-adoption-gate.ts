@@ -48,7 +48,10 @@ const INTERNAL_VISIBLE_DETAIL_PATTERN =
   /^\s*\{|\b(?:control_room|learning_command|technical_daily|fundamental_research|knowledge_maintenance|ops_audit|answer_audit|bounded_answer_review|handoff|receipt path|message id|messageId|correlationId|deliveryMessageId|retrieval\/apply|eval\/training absorption)\b|om_[a-z0-9_]{12,}|分发状态/u;
 
 const ANSWER_PIPELINE_INTERNAL_VISIBLE_PATTERN =
-  /\b(?:control_room|bounded_answer_review|answer_audit|work_order|output_contract|chat_id|message_id|model_judgments|agent_task|verification_status|verification|final_answer|diverged_count|intent_family|suggested_action|dominant_family|publish|confidence|foundation)\b|控制摘要|分发状态|工作面|模型\s*[:：]\s*模型[ABCＡＢＣ]|模型[ABCＡＢＣ]/u;
+  /\b(?:control_room|bounded_answer_review|answer_audit|work_order|output_contract|chat_id|message_id|model_judgments|agent_task|verification_status|verification|final_answer|diverged_count|intent_family|suggested_action|dominant_family|publish|confidence|foundation|dev-fixed|probe-fixed|live-visible-fixed|live-fixed)\b|控制摘要|分发状态|工作面|模型\s*[:：]\s*模型[ABCＡＢＣ]|模型[ABCＡＢＣ]/u;
+
+const LEGACY_PROOF_LABEL_VISIBLE_PATTERN =
+  /\b(?:dev-fixed|probe-fixed|live-visible-fixed|live-fixed)\b/iu;
 
 const SYSTEM_CAPABILITY_VISIBLE_PATTERN =
   /\b(?:system has|system does not have|system is connected|real[-\s]?time market data source|market data API|broker feed|data subscription)\b|系统(?:没有|未|已|可以|无法|不能).{0,24}(?:连接|提供|调用|访问|实时|行情|数据源|能力)|行情\s*API|broker\s*feed|实时数据订阅/u;
@@ -229,8 +232,9 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
   }
 
   if (
-    looksLikeAnswerPipelineAsk(params.userMessage) &&
-    ANSWER_PIPELINE_INTERNAL_VISIBLE_PATTERN.test(params.answerText)
+    LEGACY_PROOF_LABEL_VISIBLE_PATTERN.test(params.answerText) ||
+    (looksLikeAnswerPipelineAsk(params.userMessage) &&
+      ANSWER_PIPELINE_INTERNAL_VISIBLE_PATTERN.test(params.answerText))
   ) {
     failures.push("single_entry_single_exit_internal_label_leak");
   }

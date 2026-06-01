@@ -1050,17 +1050,19 @@ describe("handleCommands context", () => {
       const params = buildParams(question, cfg);
       const result = await handleCommands(params);
       expect(result.shouldContinue).toBe(false);
-      expect(result.reply?.text).toContain("🧭 Status readback");
-      expect(result.reply?.text).toContain("这是状态回读，不是进度包装。");
+      expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
       expect(result.reply?.text).toContain(
-        "Probe-fixed: 只代表 gateway/channel probe 通过，不能替代真实可见回复。",
+        "通道接上：只代表 Lark 运输层已重启并探活，不等于你已经看到了正确答案。",
       );
-      expect(result.reply?.text).toContain("Live-visible-fixed: 必须同时看到迁移");
+      expect(result.reply?.text).toContain("你这边真的可见：必须有真实 Lark 入站");
       expect(result.reply?.text).toContain(
-        "可见 Lark/Feishu reply-flow 证据: 本次回复发出前无法自证，必须看随后 outbound_result。",
+        "可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。",
       );
       expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).not.toHaveBeenCalled();
-      expect(result.reply?.text).toContain("下一步检查: 明确第一层缺失证据");
+      expect(result.reply?.text).toContain("下一步检查: 找第一层缺失证据");
+      expect(result.reply?.text).not.toContain("Dev-fixed:");
+      expect(result.reply?.text).not.toContain("Probe-fixed:");
+      expect(result.reply?.text).not.toContain("Live-visible-fixed:");
       expect(result.reply?.text).not.toContain("ℹ️ Help");
     },
   );
@@ -1095,7 +1097,7 @@ describe("handleCommands context", () => {
 
     expect(result.shouldContinue).toBe(false);
     expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
-    expect(result.reply?.text).toContain("🧭 Status readback");
+    expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
     expect(result.reply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
     expect(result.reply?.text).toContain("Reply-path status evidence: visible_reply_delivered");
     expect(result.reply?.text).toContain(
@@ -1133,7 +1135,7 @@ describe("handleCommands context", () => {
 
     expect(result.shouldContinue).toBe(false);
     expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
-    expect(result.reply?.text).toContain("🧭 Status readback");
+    expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
     expect(result.reply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
     expect(result.reply?.text).toContain("Reply-path status evidence: visible_reply_delivered");
     expect(result.reply?.text).toContain(
@@ -1167,11 +1169,11 @@ describe("handleCommands context", () => {
 
     expect(result.shouldContinue).toBe(false);
     expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
-    expect(result.reply?.text).toContain("🧭 Status readback");
+    expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
     expect(result.reply?.text).toContain(
-      "可见 Lark/Feishu reply-flow 证据: 本次回复发出前无法自证，必须看随后 outbound_result。",
+      "可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。",
     );
-    expect(result.reply?.text).toContain("下一步检查: 明确第一层缺失证据");
+    expect(result.reply?.text).toContain("下一步检查: 找第一层缺失证据");
   });
 
   it("keeps Feishu status-readback deterministic when reply-flow evidence read fails", async () => {
@@ -1200,11 +1202,11 @@ describe("handleCommands context", () => {
 
     expect(result.shouldContinue).toBe(false);
     expect(vi.mocked(summarizeRecentFeishuReplyFlowEvidence)).toHaveBeenCalledOnce();
-    expect(result.reply?.text).toContain("🧭 Status readback");
+    expect(result.reply?.text).toContain("当前状态回读：先看本地证据");
     expect(result.reply?.text).toContain(
-      "可见 Lark/Feishu reply-flow 证据: 本次回复发出前无法自证，必须看随后 outbound_result。",
+      "可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。",
     );
-    expect(result.reply?.text).toContain("下一步检查: 明确第一层缺失证据");
+    expect(result.reply?.text).toContain("下一步检查: 找第一层缺失证据");
   });
 
   it.each(["lobster开了吗？", "is lobster on"])(

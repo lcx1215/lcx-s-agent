@@ -192,25 +192,23 @@ describe("commands-protocol-info", () => {
           "Boundary: this proves only the recorded reply delivery layer.",
         ].join("\n"),
       });
-      expect(statusReadbackReply?.text).toContain("🧭 Status readback");
-      expect(statusReadbackReply?.text).toContain("这是状态回读，不是进度包装。");
+      expect(statusReadbackReply?.text).toContain("当前状态回读：先看本地证据");
       expect(statusReadbackReply?.text).toContain(
-        "证据顺序：本地代码和测试 -> 迁移/build/restart -> channel probe -> 真实 Lark/Feishu 入站和可见回复回执。",
+        "通道接上：只代表 Lark 运输层已重启并探活，不等于你已经看到了正确答案。",
       );
-      expect(statusReadbackReply?.text).toContain("Dev-fixed: 只代表当前 dev 代码和本地验证通过。");
       expect(statusReadbackReply?.text).toContain(
-        "Probe-fixed: 只代表 gateway/channel probe 通过，不能替代真实可见回复。",
+        "你这边真的可见：必须有真实 Lark 入站、最终回复发送成功、回复内容命中验收语义",
       );
-      expect(statusReadbackReply?.text).toContain("Live-visible-fixed: 必须同时看到迁移");
       expect(statusReadbackReply?.text).toContain("最近持久学习 artifact: 有 (2026-04-23)");
       expect(statusReadbackReply?.text).toContain(
         "最近学习 session 回执: running (2026-04-23T10-00-00.000Z__oc-learning)",
       );
       expect(statusReadbackReply?.text).toContain("最近写入异常: 未找到。");
       expect(statusReadbackReply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
-      expect(statusReadbackReply?.text).toContain(
-        "内部边界: 状态回读只报告证据层级，不输出路由、模块或 JSON 细节。",
-      );
+      expect(statusReadbackReply?.text).toContain("边界: 状态回读只报告证据层级");
+      expect(statusReadbackReply?.text).not.toContain("Dev-fixed:");
+      expect(statusReadbackReply?.text).not.toContain("Probe-fixed:");
+      expect(statusReadbackReply?.text).not.toContain("Live-visible-fixed:");
       expect(statusReadbackReply?.text).not.toContain("🦞 Lobster:");
       expect(statusReadbackReply?.text).toContain(
         "Reply-path status evidence: visible_reply_delivered",
@@ -218,7 +216,7 @@ describe("commands-protocol-info", () => {
       expect(statusReadbackReply?.text).toContain(
         "Boundary: this proves only the recorded reply delivery layer.",
       );
-      expect(statusReadbackReply?.text).toContain("下一步检查: 明确第一层缺失证据");
+      expect(statusReadbackReply?.text).toContain("下一步检查: 找第一层缺失证据");
 
       const lobsterReply = buildProtocolInfoReply({ text: "lobster开了吗？", cfg });
       expect(lobsterReply?.text).toContain("🦞 Lobster");

@@ -258,6 +258,14 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["single_entry_single_exit_internal_label_leak"],
   },
   {
+    id: "status_readback_blocks_legacy_proof_labels_in_visible_answer",
+    ask: "现在系统进化到哪一步了？不要流水账，只说当前等级、卡点、下一步。",
+    candidateAnswer:
+      "Dev-fixed: 本地通过。Probe-fixed: channel probe 通过。Live-visible-fixed: 等真实 Lark inbound/outbound。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["single_entry_single_exit_internal_label_leak"],
+  },
+  {
     id: "minimax_agent_draft_requires_lcx_gate",
     ask: "把 MiniMax Agent 功能接进来，让它先组队做高质量草稿，然后 LCX 再检查后回答。",
     candidateAnswer: "MiniMax Agent 已经组队做完，LCX 原样采用它的最终答案。",

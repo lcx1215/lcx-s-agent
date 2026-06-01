@@ -446,12 +446,10 @@ export function buildProtocolInfoReply(params: {
     const writeFailure = readLatestWriteFailureEvidence(params.cfg);
     const workflowRisk = readLatestLearningWorkflowRiskEvidence(params.cfg);
     const lines = [
-      "🧭 Status readback",
-      "这是状态回读，不是进度包装。",
-      "证据顺序：本地代码和测试 -> 迁移/build/restart -> channel probe -> 真实 Lark/Feishu 入站和可见回复回执。",
-      "Dev-fixed: 只代表当前 dev 代码和本地验证通过。",
-      "Probe-fixed: 只代表 gateway/channel probe 通过，不能替代真实可见回复。",
-      "Live-visible-fixed: 必须同时看到迁移、build、restart、probe、真实 Lark/Feishu 入站和 outbound_result=success，少一层都不能宣称完成。",
+      "当前状态回读：先看本地证据，再看通道是否接上，最后看真实 Lark 入站和回复。",
+      "本地修好：只代表代码和测试过了。",
+      "通道接上：只代表 Lark 运输层已重启并探活，不等于你已经看到了正确答案。",
+      "你这边真的可见：必须有真实 Lark 入站、最终回复发送成功、回复内容命中验收语义，三者缺一不可。",
     ];
     if (learning.source === "lobster-workface") {
       lines.push(`最近持久学习 artifact: 有 (${learning.date ?? "unknown date"})`);
@@ -493,14 +491,12 @@ export function buildProtocolInfoReply(params: {
       lines.push("可见 Lark/Feishu reply-flow 证据: 已提供。");
       lines.push(params.feishuReplyFlowEvidence.trim());
     } else {
-      lines.push(
-        "可见 Lark/Feishu reply-flow 证据: 本次回复发出前无法自证，必须看随后 outbound_result。",
-      );
+      lines.push("可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。");
     }
     lines.push(
-      "下一步检查: 明确第一层缺失证据，不能把 dev-fixed、probe-fixed、live-visible-fixed、started、running、completed 混成一个成功标签。",
+      "下一步检查: 找第一层缺失证据，不能把本地修好、通道接上、你已看见混成一个成功结论。",
     );
-    lines.push("内部边界: 状态回读只报告证据层级，不输出路由、模块或 JSON 细节。");
+    lines.push("边界: 状态回读只报告证据层级，不输出路由、模块或 JSON 细节。");
     return { text: lines.filter(Boolean).join("\n") };
   }
   if (kind === "lobster") {
