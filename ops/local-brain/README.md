@@ -195,6 +195,19 @@ portfolio risk, learning, model disagreement, async work, entry/exit, and
 user-supplied arithmetic while still rejecting vague, generic, unsafe, or
 over-conservative replies. This prevents the answer gate from becoming a pure
 rejection machine.
+The focused daily finance product owner is:
+
+```bash
+node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json
+```
+
+Use `--write` only when the operator wants a durable daily packet written under
+the workspace state and memory directories. This owner deliberately narrows the
+main daily product to index options, semiconductor/AI compute-chain research,
+timely-stock candidate radar, risk gates, invalidation, and learning
+sedimentation. It does not fetch live data, send Lark messages, start training,
+or produce trading instructions. Open Q&A remains a follow-up surface; the daily
+packet is the dependable research surface.
 Treat `blocked` gates as explicit acceptance gaps: post-migration natural Lark
 canary missing, provider degradation, active Qwen guard, or owner-gated module
 learning states are not green release proof.

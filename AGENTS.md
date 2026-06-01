@@ -606,6 +606,15 @@ fresh-adjacent-task -> keep/downrank/discard closure; and finance data gateway
 snapshots plus async queued/completion/failure receipt boundaries. These are
 not parallel lanes: commercial acceptance consumes the existing owners and must
 fail or block when any proof surface is missing.
+Do not force all product value through open-ended Q&A. The focused daily finance
+product owner is
+`node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json`.
+It makes the main daily output an index-options plus semiconductor/AI compute
+chain research packet, with timely-stock candidate radar, evidence checklist,
+risk gates, invalidation, and learning sedimentation. Q&A remains useful for
+follow-ups and direct owner questions, but the daily packet is the dependable
+research surface when broad open-ended answers are too hard to make product
+grade.
 MiniMax Agent may be used as a higher-quality external draft and red-team input
 for this pipeline, but its output is not final authority. LCX must still run
 local contract audit, source/data gates, Qwen patch-only challenge when needed,
