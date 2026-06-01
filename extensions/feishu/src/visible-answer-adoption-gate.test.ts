@@ -190,6 +190,50 @@ describe("visible answer adoption gate", () => {
     expect(addDecision.text).not.toContain("先别加仓");
   });
 
+  it("rejects legacy probe context bleed for normal add-position asks", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "加不加仓？",
+      answerText:
+        '回答：无法直接判断，加仓决策blocked。与探针B2结论一致：不知道NVDA占你账户净值多少。复测记录：B2→B7→D4→当前，四次均维持"blocked"结论。',
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "legacy_test_artifact_visible_answer",
+        "english_internal_blocked_label_visible",
+        "unasked_ticker_context_bleed_in_position_reply",
+      ]),
+    );
+    expect(decision.text).toContain("不能直接给交易动作结论");
+    expect(decision.text).toContain("现在缺：标的");
+    expect(decision.text).not.toContain("探针");
+    expect(decision.text).not.toContain("复测");
+    expect(decision.text).not.toContain("blocked");
+    expect(decision.text).not.toContain("NVDA");
+  });
+
+  it("rejects old probe shorthand and blocked labels for real single-stock loss asks", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "我NVDA亏20%，该割肉还是补仓？",
+      answerText:
+        "Boundary And Missing Inputs\n\n结论blocked — 缺少四项关键数据，与B7一致：持仓数量和成本均价、账户总仓位、风险预算、持有期限。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "legacy_test_artifact_visible_answer",
+        "english_internal_blocked_label_visible",
+      ]),
+    );
+    expect(decision.text).toContain("NVDA：");
+    expect(decision.text).toContain("这是研究框架，不是交易指令");
+    expect(decision.text).not.toContain("Boundary And Missing Inputs");
+    expect(decision.text).not.toContain("blocked");
+    expect(decision.text).not.toContain("B7");
+  });
+
   it("turns no-final short learning asks into source and absorption boundaries", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage: "学一下这个链接：https://example.com/finance-note",
@@ -389,6 +433,27 @@ describe("visible answer adoption gate", () => {
     expect(decision.text).toContain("数据清单");
     expect(decision.text).not.toContain("control_room");
     expect(decision.text).not.toContain("learning_command");
+  });
+
+  it("keeps market-data boundary asks away from generic Lark capability intros without needing special tokens", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "没有最新行情时怎么回答？",
+      answerText:
+        "我是你在 Lark 里联系 LCX Agent 的入口。当前可用能力: 把你的自然语言问题转成研究、学习、复盘、审计或工程任务。代码修好、通道重启、探针通过之后再说。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining([
+        "legacy_test_artifact_visible_answer",
+        "market_data_boundary_wrong_route_generic_intro",
+      ]),
+    );
+    expect(decision.text).toContain("没有最新行情时");
+    expect(decision.text).toContain("可信度边界");
+    expect(decision.text).toContain("数据清单");
+    expect(decision.text).not.toContain("当前可用能力");
+    expect(decision.text).not.toContain("探针");
   });
 
   it("blocks system-capability explanations when the user asks only for market-data boundaries", () => {

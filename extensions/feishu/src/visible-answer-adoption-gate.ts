@@ -53,6 +53,11 @@ const ANSWER_PIPELINE_INTERNAL_VISIBLE_PATTERN =
 const LEGACY_PROOF_LABEL_VISIBLE_PATTERN =
   /\b(?:dev-fixed|probe-fixed|live-visible-fixed|live-fixed)\b/iu;
 
+const LEGACY_TEST_ARTIFACT_VISIBLE_PATTERN =
+  /\b(?:lark-canary|canary|LCX[-_ ]?[A-Z]\d+[a-z]?|[A-Z]\d+[a-z]?\s*探针)\b|[A-Z]\d+[a-z]?\s*(?:一致|结论|复测|通过|失败)|(?:真实)?(?:入口)?探针|验收码|复测记录|复测\s*[:：]|与探针|同一批\s*probe|probe\s*(?:结果|层|发送|通过)|channel\s*probe/iu;
+
+const CHINESE_INTERNAL_BLOCKED_LABEL_PATTERN = /\b(?:blocked|Boundary And Missing Inputs)\b/iu;
+
 const SYSTEM_CAPABILITY_VISIBLE_PATTERN =
   /\b(?:system has|system does not have|system is connected|real[-\s]?time market data source|market data API|broker feed|data subscription)\b|系统(?:没有|未|已|可以|无法|不能).{0,24}(?:连接|提供|调用|访问|实时|行情|数据源|能力)|行情\s*API|broker\s*feed|实时数据订阅/u;
 
@@ -107,6 +112,12 @@ function mentionedKnownTickers(text: string): string[] {
     matches.add(match[1].toUpperCase());
   }
   return [...matches];
+}
+
+function hasUnaskedKnownTickerLeak(userMessage: string, answerText: string): boolean {
+  const requested = new Set(mentionedKnownTickers(userMessage));
+  const answered = mentionedKnownTickers(answerText);
+  return answered.some((ticker) => !requested.has(ticker));
 }
 
 function looksLikeDirectPositionRiskAsk(userMessage: string): boolean {
@@ -245,6 +256,17 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
     failures.push("raw_work_order_json_visible_answer");
   }
 
+  if (LEGACY_TEST_ARTIFACT_VISIBLE_PATTERN.test(params.answerText)) {
+    failures.push("legacy_test_artifact_visible_answer");
+  }
+
+  if (
+    prefersChinese(params.userMessage) &&
+    CHINESE_INTERNAL_BLOCKED_LABEL_PATTERN.test(params.answerText)
+  ) {
+    failures.push("english_internal_blocked_label_visible");
+  }
+
   if (
     (looksLikeStandalonePortfolioRiskAsk(params.userMessage) ||
       looksLikeDirectPositionRiskAsk(params.userMessage) ||
@@ -265,6 +287,13 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
     GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN.test(params.answerText)
   ) {
     failures.push("explicit_visible_contract_ignored_by_generic_intro");
+  }
+
+  if (
+    looksLikeMarketDataBoundaryAsk(params.userMessage) &&
+    GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN.test(params.answerText)
+  ) {
+    failures.push("market_data_boundary_wrong_route_generic_intro");
   }
 
   if (
@@ -344,6 +373,10 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
 
   if (!looksLikeDirectPositionRiskAsk(params.userMessage)) {
     return [...new Set(failures)];
+  }
+
+  if (hasUnaskedKnownTickerLeak(params.userMessage, params.answerText)) {
+    failures.push("unasked_ticker_context_bleed_in_position_reply");
   }
 
   if (ACTION_STANCE_HEADING_PATTERN.test(params.answerText)) {
@@ -734,6 +767,15 @@ export function applyVisibleAnswerAdoptionGate(params: {
     };
   }
 
+  if (looksLikeMarketDataBoundaryAsk(params.userMessage)) {
+    return {
+      status: "replaced",
+      text: renderMarketDataBoundaryReply(params.userMessage),
+      originalText: text,
+      failedReasons,
+    };
+  }
+
   if (looksLikeAnswerPipelineAsk(params.userMessage)) {
     return {
       status: "replaced",
@@ -771,6 +813,8 @@ export function applyVisibleAnswerAdoptionGate(params: {
         "vague_conservative_nonanswer_without_useful_next_step",
         "raw_work_order_json_visible_answer",
         "wrong_route_generic_entry_exit_answer",
+        "legacy_test_artifact_visible_answer",
+        "english_internal_blocked_label_visible",
       ].includes(reason),
     )
   ) {
