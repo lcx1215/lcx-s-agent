@@ -1,5 +1,5 @@
 # Builds the primary OpenClaw gateway and CLI container image.
-FROM node:22-bookworm@sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935
+FROM node:26-bookworm@sha256:076dd90a458a4baf8b8d2716f022a2c8db245dbe70c7de38bacad1708258eeab
 
 # OCI base-image metadata for downstream image consumers.
 # If you change these annotations, also update:
