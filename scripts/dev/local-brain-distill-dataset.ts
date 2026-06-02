@@ -665,7 +665,7 @@ function buildCompletion(params: {
     supporting_modules: packedModules.supporting_modules,
     required_tools: packedModules.required_tools,
     missing_data: compactList(params.missingData ?? [], MAX_MISSING_DATA),
-    risk_boundaries: compactList(params.riskBoundaries ?? BOUNDARIES, MAX_RISK_BOUNDARIES),
+    risk_boundaries: normalizeRiskBoundaries(params.riskBoundaries ?? BOUNDARIES),
     next_step: compactText(params.nextStep, MAX_NEXT_STEP_CHARS),
     rejected_context: compactList(
       params.rejectedContext ?? DEFAULT_REJECTED_CONTEXT,

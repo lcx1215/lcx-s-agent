@@ -164,6 +164,113 @@ describe("local brain distill dataset", () => {
     });
   });
 
+  it("canonicalizes handoff safety text into machine-checkable risk boundaries", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-handoff-"));
+    const workspaceDir = path.join(fixtureRoot, "workspace");
+    const outDir = path.join(fixtureRoot, "dataset");
+    const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const handoffDir = path.join(
+      workspaceDir,
+      "memory",
+      "lark-language-handoff-receipts",
+      "2026-06-02",
+    );
+    await fs.mkdir(receiptsDir, { recursive: true });
+    await fs.mkdir(handoffDir, { recursive: true });
+    await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        fs.writeFile(
+          path.join(receiptsDir, `receipt-${index + 1}.md`),
+          [
+            "## User Ask",
+            `- Decompose research-only portfolio workflow smoke filler ${index + 1}: QQQ, TLT, NVDA, rates, and risk gate.`,
+            "",
+            "- **Surface**: control_room",
+            "",
+            "## Final Reply Summary",
+            `- Smoke filler ${index + 1} covers macro rates, ETF regime, company fundamentals, and portfolio risk.`,
+            "",
+          ].join("\n"),
+        ),
+      ),
+    );
+    await fs.writeFile(
+      path.join(handoffDir, "handoff.json"),
+      JSON.stringify({
+        boundary: "language_handoff_only",
+        generatedAt: "2026-06-02T00:00:00.000Z",
+        userMessage: "加不加仓？",
+        targetSurface: "technical_daily",
+        noExecutionApproval: false,
+        noFinanceLearningArtifact: false,
+        handoff: {
+          family: "position_risk_adjustment",
+          apiCandidate: {
+            family: "position_risk_adjustment",
+            rationale: "用户问加不加仓但缺仓位和成本基础，按 research-only 风险检查。",
+            workOrder: {
+              objective: "对持仓标的进行加仓前风险研究检查，不执行交易",
+              evidenceRequired: ["持仓标的是什么", "成本基础或资金权重"],
+              safetyBoundaries: [
+                "必须先问仓位和成本基础，未提供则block精确建议",
+                "所有结论标记为研究参考而非执行授权",
+              ],
+            },
+          },
+        },
+      }),
+    );
+
+    await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-dataset.ts",
+        "--workspace",
+        workspaceDir,
+        "--out",
+        outDir,
+        "--json",
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: fixtureRoot },
+      },
+    );
+
+    const splitExamples = (
+      await Promise.all(
+        ["train.jsonl", "valid.jsonl", "test.jsonl"].map((fileName) =>
+          parseJsonl(path.join(outDir, fileName)),
+        ),
+      )
+    ).flat() as Array<{
+      completion: string;
+      meta?: { sourceKind?: string };
+    }>;
+    const handoffExample = splitExamples.find(
+      (entry) => entry.meta?.sourceKind === "lark_language_handoff_receipt",
+    );
+    expect(handoffExample).toBeTruthy();
+    const completion = JSON.parse(handoffExample?.completion ?? "{}") as {
+      risk_boundaries?: string[];
+    };
+    expect(completion.risk_boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_execution_authority"]),
+    );
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/dev/local-brain-distill-smoke.ts", "--data", outDir, "--json"],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: fixtureRoot },
+      },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({ ok: true });
+  });
+
   it("sanitizes accepted review plans before dataset training output", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-local-brain-review-"));
     const workspaceDir = path.join(fixtureRoot, "workspace");
