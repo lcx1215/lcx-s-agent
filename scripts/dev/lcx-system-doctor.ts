@@ -38,6 +38,10 @@ const LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS = resolvePositiveTimeout(
   process.env.LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS,
   5_000,
 );
+const EXTERNAL_CHANNEL_BINDING_TIMEOUT_MS = resolvePositiveTimeout(
+  process.env.EXTERNAL_CHANNEL_BINDING_TIMEOUT_MS,
+  110_000,
+);
 const LIVE_SIDECAR_REPO =
   process.env.LCX_LIVE_SIDECAR ??
   path.join(LCX_USER_HOME, ".openclaw", "live-sidecars", "lcx-s-openclaw");
@@ -1200,6 +1204,7 @@ checks.push(
     command: process.execPath,
     args: ["--import", "tsx", "scripts/dev/lcx-external-channel-binding.ts", "--json"],
     parseJson: true,
+    timeoutMs: EXTERNAL_CHANNEL_BINDING_TIMEOUT_MS,
   }),
 );
 checks.push(

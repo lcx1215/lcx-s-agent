@@ -13,6 +13,11 @@ const DEFAULT_SNAPSHOT_PATH =
 const SYNC_DOCTOR =
   "/Users/liuchengxu/.codex/skills/live-sidecar-sync-doctor/scripts/live-sidecar-sync-doctor.sh";
 const MAX_BUFFER = 64 * 1024 * 1024;
+const DEFAULT_COMMAND_TIMEOUT_MS = (() => {
+  const value = Number(process.env.LCX_EXTERNAL_CHANNEL_COMMAND_TIMEOUT_MS ?? "");
+  return Number.isFinite(value) && value > 0 ? value : 90_000;
+})();
+const SIDECAR_BUILD_TIMEOUT_MS = 600_000;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -420,12 +425,14 @@ async function runCommand(
   command: string,
   args: string[],
   cwd: string,
+  timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
 ): Promise<{ ok: boolean; command: string; stdout: string; stderr: string; error?: string }> {
   try {
     const result = await execFileAsync(command, args, {
       cwd,
       encoding: "utf8",
       maxBuffer: MAX_BUFFER,
+      timeout: timeoutMs,
     });
     return {
       ok: true,
@@ -434,13 +441,22 @@ async function runCommand(
       stderr: result.stderr,
     };
   } catch (error) {
-    const details = error as { stdout?: string; stderr?: string; message?: string };
+    const details = error as {
+      stdout?: string;
+      stderr?: string;
+      message?: string;
+      killed?: boolean;
+      signal?: string;
+    };
     return {
       ok: false,
       command: [command, ...args].join(" "),
       stdout: details.stdout ?? "",
       stderr: details.stderr ?? "",
-      error: details.message ?? String(error),
+      error:
+        details.killed === true
+          ? `command timed out after ${timeoutMs}ms${details.signal ? ` (${details.signal})` : ""}`
+          : (details.message ?? String(error)),
     };
   }
 }
@@ -572,7 +588,12 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     const syncApply = await runCommand(SYNC_DOCTOR, ["--apply"], REPO_ROOT);
     commands.push({ name: "live-sidecar-sync-doctor --apply", ok: syncApply.ok });
     const build = syncApply.ok
-      ? await runCommand("corepack", ["pnpm", "build"], options.sidecarRoot)
+      ? await runCommand(
+          "corepack",
+          ["pnpm", "build"],
+          options.sidecarRoot,
+          SIDECAR_BUILD_TIMEOUT_MS,
+        )
       : { ok: false, command: "corepack pnpm build", stdout: "", stderr: "", error: "sync_failed" };
     commands.push({ name: "sidecar pnpm build", ok: build.ok });
     const restart = build.ok
