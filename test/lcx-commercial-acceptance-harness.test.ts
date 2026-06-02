@@ -38,6 +38,24 @@ function baseInputs() {
         "direct_answer_not_overconservative_required",
         "visible_answer_quality_fuzzer_required",
       ],
+      productGovernor: {
+        ok: true,
+        coverage: {
+          totalFilters: 38,
+          ownedFilters: 38,
+          unownedFilters: [],
+          unknownOwnedFilters: [],
+          duplicatedFilters: [],
+        },
+        requiredMacroContracts: [
+          "visible_answer_value",
+          "single_entry_single_exit",
+          "candidate_authority_and_council_evidence",
+          "source_learning_and_memory_truth",
+          "finance_data_and_trade_boundary",
+          "owner_status_and_async_receipts",
+        ],
+      },
       actionableFailures: [],
     }),
     shortIntentFuzzer: owner("lcx-lark-short-intent-fuzzer", {
@@ -387,6 +405,56 @@ describe("lcx-commercial-acceptance-harness", () => {
         "directed_daily_research_brief_clean",
         "module_learning_closed_loop_clean",
         "finance_data_gateway_contract_clean",
+      ]),
+    );
+  });
+
+  it("blocks release when answer micro rules are not attached to macro product contracts", () => {
+    const inputs = baseInputs();
+    inputs.commercialAnswerPipeline = owner("lcx-commercial-answer-pipeline", {
+      ok: true,
+      summary: { passed: 34, failed: 0, total: 34 },
+      contractFilters: [
+        "real_lark_short_canary_suite_required",
+        "short_intent_family_fuzzer_required",
+        "unknown_short_intent_clean_failure_required",
+        "provider_council_evidence_required",
+        "provider_outputs_not_faked",
+        "async_task_receipt_required_for_deferred_work",
+        "stored_only_is_not_learning",
+        "retrieval_apply_eval_review_required",
+        "finance_data_gateway_snapshot_required_for_numbers",
+        "finance_data_conflicts_route_to_provenance_review",
+        "positive_visible_answer_acceptance_required",
+        "direct_answer_not_overconservative_required",
+        "visible_answer_quality_fuzzer_required",
+      ],
+      productGovernor: {
+        ok: false,
+        coverage: {
+          totalFilters: 38,
+          ownedFilters: 37,
+          unownedFilters: ["all_visible_answers_require_decision_value"],
+        },
+      },
+      actionableFailures: [],
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.failedGates).toContain("commercial_answer_pipeline_regression");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "commercial_answer_pipeline_regression",
+          status: "failed",
+          severity: "P1",
+          evidence: expect.objectContaining({
+            productGovernorOk: false,
+            unownedFilters: ["all_visible_answers_require_decision_value"],
+          }),
+        }),
       ]),
     );
   });

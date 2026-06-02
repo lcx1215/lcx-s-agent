@@ -37,6 +37,28 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
         positiveAcceptanceNotOnlyRejection: true,
         conciseDirectAnswerRequired: true,
         noVagueConservativeFallback: true,
+        macroCoverageComplete: true,
+      }),
+    );
+    expect(payload.macroCoverage).toEqual(
+      expect.objectContaining({
+        requiredMacroContracts: [
+          "visible_answer_value",
+          "single_entry_single_exit",
+          "candidate_authority_and_council_evidence",
+          "source_learning_and_memory_truth",
+          "finance_data_and_trade_boundary",
+          "owner_status_and_async_receipts",
+        ],
+        coveredMacroContracts: expect.arrayContaining([
+          "visible_answer_value",
+          "single_entry_single_exit",
+          "candidate_authority_and_council_evidence",
+          "source_learning_and_memory_truth",
+          "finance_data_and_trade_boundary",
+          "owner_status_and_async_receipts",
+        ]),
+        missingMacroContracts: [],
       }),
     );
     expect(payload.summary).toEqual(
@@ -54,11 +76,13 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
       expect.arrayContaining([
         expect.objectContaining({
           caseId: "status_with_checked_evidence_positive",
+          macroContractId: "owner_status_and_async_receipts",
           actualDecision: "adopt_visible_answer",
           ok: true,
         }),
         expect.objectContaining({
           caseId: "all_domain_answer_value_not_professional_filler_positive",
+          macroContractId: "visible_answer_value",
           actualDecision: "adopt_visible_answer",
           ok: true,
         }),
@@ -74,6 +98,7 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
         }),
         expect.objectContaining({
           caseId: "single_stock_loss_recovery_risk_triage_positive",
+          macroContractId: "finance_data_and_trade_boundary",
           actualDecision: "adopt_visible_answer",
           ok: true,
         }),

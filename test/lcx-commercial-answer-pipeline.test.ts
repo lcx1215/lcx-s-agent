@@ -33,6 +33,56 @@ describe("LCX commercial answer pipeline", () => {
       }),
     );
     expect(payload.summary).toEqual({ passed: 42, failed: 0, total: 42 });
+    expect(payload.productGovernor).toEqual(
+      expect.objectContaining({
+        ok: true,
+        macroPolicy: expect.stringContaining("Macro product contracts own answer quality"),
+        requiredMacroContracts: [
+          "visible_answer_value",
+          "single_entry_single_exit",
+          "candidate_authority_and_council_evidence",
+          "source_learning_and_memory_truth",
+          "finance_data_and_trade_boundary",
+          "owner_status_and_async_receipts",
+        ],
+        coverage: expect.objectContaining({
+          totalFilters: 38,
+          ownedFilters: 38,
+          unownedFilters: [],
+          unknownOwnedFilters: [],
+          duplicatedFilters: [],
+        }),
+      }),
+    );
+    expect(payload.productGovernor).toEqual(
+      expect.objectContaining({
+        contracts: expect.arrayContaining([
+          expect.objectContaining({
+            id: "visible_answer_value",
+            ownsFilters: expect.arrayContaining([
+              "all_visible_answers_require_decision_value",
+              "visible_answer_quality_fuzzer_required",
+            ]),
+          }),
+          expect.objectContaining({
+            id: "finance_data_and_trade_boundary",
+            ownsFilters: expect.arrayContaining([
+              "single_stock_loss_reply_requires_concrete_risk_triage",
+              "finance_data_gateway_snapshot_required_for_numbers",
+              "no_trade_advice",
+            ]),
+          }),
+          expect.objectContaining({
+            id: "candidate_authority_and_council_evidence",
+            ownsFilters: expect.arrayContaining([
+              "provider_outputs_not_faked",
+              "minimax_agent_draft_not_final_authority",
+              "qwen_challenger_not_final_authority",
+            ]),
+          }),
+        ]),
+      }),
+    );
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",

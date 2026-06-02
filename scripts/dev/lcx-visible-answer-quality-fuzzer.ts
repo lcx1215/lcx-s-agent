@@ -8,6 +8,13 @@ type CliOptions = {
 
 type QualityFamily = {
   id: string;
+  macroContractId:
+    | "visible_answer_value"
+    | "single_entry_single_exit"
+    | "candidate_authority_and_council_evidence"
+    | "source_learning_and_memory_truth"
+    | "finance_data_and_trade_boundary"
+    | "owner_status_and_async_receipts";
   ask: string;
   goodAnswer: string;
   requiredEvidence: RegExp[];
@@ -75,6 +82,7 @@ const GENERIC_FORBIDDEN_VISIBLE_TEXT = [
 const QUALITY_FAMILIES: QualityFamily[] = [
   {
     id: "all_domain_answer_value_not_professional_filler",
+    macroContractId: "visible_answer_value",
     ask: "我的日报应该怎么改得更有用？",
     goodAnswer:
       "先改三处：第一，把开头从背景介绍换成今天最重要的一个结论；第二，每个判断后面只留一条关键证据和时间戳；第三，结尾固定给下一步动作、缺失数据和失效条件。这样读者不用猜你到底想让他看什么。",
@@ -99,6 +107,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "status_with_checked_evidence",
+    macroContractId: "owner_status_and_async_receipts",
     ask: "现在系统到哪了？",
     goodAnswer:
       "查过当前本地 owner 输出后，能确认三件事：Lark 外部通道已绑定并有用户可见回路，commercial acceptance 主门通过，radar 只剩 P3 观察项。这个状态的证据时间戳以刚才检查为准；下一步是继续压入口出口质量，不启动训练。",
@@ -130,6 +139,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "market_data_boundary_still_useful",
+    macroContractId: "finance_data_and_trade_boundary",
     ask: "没有最新行情时怎么回答？只给可信度边界和数据清单。",
     goodAnswer:
       "先说边界：没有最新行情时，不能给当前价格、涨幅或仓位结论。可以先列需要的数据：价格来源和时间戳、成交量、持仓权重、成本区间、风险预算；拿到后再做研究判断。",
@@ -155,6 +165,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "portfolio_risk_direct_framework",
+    macroContractId: "finance_data_and_trade_boundary",
     ask: "我有 QQQ 和 TLT，接下来一周看什么风险？",
     goodAnswer:
       "只做研究框架，不给买卖指令。接下来一周先看三类风险：美债利率和通胀预期对 TLT 的压力，科技估值和盈利预期对 QQQ 的压力，股票债券相关性是否同时走坏。还需要你的权重、成本区间、期限和数据时间戳。",
@@ -176,6 +187,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "single_stock_loss_recovery_risk_triage",
+    macroContractId: "finance_data_and_trade_boundary",
     ask: "我NVDA亏20%，该割肉还是补仓？",
     goodAnswer:
       "风险结论：NVDA 亏 20% 本身不是补仓理由。默认风险门：补仓资格=未通过，直到你把 thesis、仓位占比和强制风险补齐。\n\n三档决策树：A. 红灯：有杠杆/期权、仓位对账户太重，或者说不清买入 thesis，目标先变成账户风险控制。B. 黄灯：thesis 没坏，但估值被重估或市场流动性在压缩，先做研究复核，等财报/指引/估值证据更新后再谈新增风险。C. 绿灯：thesis 仍成立、单票仓位仍在你的风险预算内、没有杠杆/期权强制风险，且最新数据支持原逻辑，才有资格讨论新的风险预算。\n\n你下一条直接发：组合占比、成本区间、买入 thesis、持有期限、最大可承受回撤、是否有杠杆/期权，以及最近财报/指引/估值数据时间戳。",
@@ -211,6 +223,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "learning_link_with_sedimentation_boundary",
+    macroContractId: "source_learning_and_memory_truth",
     ask: "学一下这个链接：https://example.com/finance-note",
     goodAnswer:
       "可以开始处理，但现在不能说已经学会。先登记来源和实际阅读范围，再和本地旧规则对照，做一个相邻应用练习，经过审阅后决定保留、降权或丢弃；完成后再给你完成版或失败原因。",
@@ -233,6 +246,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "model_council_evidence_arbitration",
+    macroContractId: "candidate_authority_and_council_evidence",
     ask: "Kimi、MiniMax、DeepSeek 和本地大脑不一致时听谁？",
     goodAnswer:
       "不直接听某一个模型。先按证据排序：官方或原始来源、时间戳和口径优先；Kimi、MiniMax、DeepSeek 各自输出只当候选，分歧点要列出来；本地规则只负责检查风险边界和旧记忆是否过时，最后采用能被证据支撑的结论。",
@@ -254,6 +268,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "async_receipt_experience",
+    macroContractId: "source_learning_and_memory_truth",
     ask: "现在帮我研究一篇报告，前台等不完怎么办？",
     goodAnswer:
       "前台等不完时先给你一个队列状态：已开始读取来源，但还不能算完成。后面必须补发完成版或失败原因，完成版要包含来源范围、应用验证、审阅结论和保留/降权/丢弃决定。",
@@ -277,6 +292,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "entry_exit_no_fluff",
+    macroContractId: "single_entry_single_exit",
     ask: "入口出口怎么跑才不废话？",
     goodAnswer:
       "入口先判断你要的是状态、研究、学习还是排错；需要数据就先列缺口，需要模型会审就把各自证据分开；出口只给结论、关键依据、缺什么和下一步，不讲后台标签，不用泛泛的谨慎话。",
@@ -299,6 +315,7 @@ const QUALITY_FAMILIES: QualityFamily[] = [
   },
   {
     id: "user_given_arithmetic_with_boundary",
+    macroContractId: "finance_data_and_trade_boundary",
     ask: "6818，一天净增46条，大概涨多少？",
     goodAnswer:
       "按你给的两个数直接算，46 / 6818 约等于 0.67%。这个只是算术口径，不代表样本池已核验；要确认真实增量，还需要昨天总数、今天总数和统计时间。",
@@ -342,6 +359,7 @@ function runPositiveCase(family: QualityFamily) {
   return {
     caseId: `${family.id}_positive`,
     familyId: family.id,
+    macroContractId: family.macroContractId,
     mode: "positive_acceptance" as const,
     ask: family.ask,
     expectedDecision: "adopt_visible_answer",
@@ -366,6 +384,7 @@ function runNegativeCase(family: QualityFamily, candidate: QualityFamily["badCan
   return {
     caseId: `${family.id}_${candidate.id}`,
     familyId: family.id,
+    macroContractId: family.macroContractId,
     mode: "negative_rejection" as const,
     ask: family.ask,
     expectedDecision: "return_failed_reason",
@@ -395,6 +414,7 @@ export function runVisibleAnswerQualityFuzzer(options: { maxPerFamily?: number }
     const failedInFamily = familyResults.filter((entry) => !entry.ok);
     return {
       id: family.id,
+      macroContractId: family.macroContractId,
       productContract: family.productContract,
       positive: familyResults.filter((entry) => entry.mode === "positive_acceptance").length,
       negative: familyResults.filter((entry) => entry.mode === "negative_rejection").length,
@@ -402,13 +422,26 @@ export function runVisibleAnswerQualityFuzzer(options: { maxPerFamily?: number }
       failed: failedInFamily.length,
     };
   });
+  const requiredMacroContracts = [
+    "visible_answer_value",
+    "single_entry_single_exit",
+    "candidate_authority_and_council_evidence",
+    "source_learning_and_memory_truth",
+    "finance_data_and_trade_boundary",
+    "owner_status_and_async_receipts",
+  ] as const;
+  const coveredMacroContracts = new Set(QUALITY_FAMILIES.map((family) => family.macroContractId));
+  const missingMacroContracts = requiredMacroContracts.filter(
+    (contractId) => !coveredMacroContracts.has(contractId),
+  );
   return {
-    ok: failed.length === 0,
+    ok: failed.length === 0 && missingMacroContracts.length === 0,
     boundary: "dev_visible_answer_quality_fuzzer_only",
     macroContract: {
       positiveAcceptanceNotOnlyRejection: true,
       conciseDirectAnswerRequired: true,
       noVagueConservativeFallback: true,
+      macroCoverageComplete: missingMacroContracts.length === 0,
       notWhitelist:
         "Families cover product answer contracts across ordinary Q&A, status, missing data, portfolio risk, learning, model disagreement, async work, entry/exit, and user-supplied arithmetic.",
       modelBoundary:
@@ -423,6 +456,13 @@ export function runVisibleAnswerQualityFuzzer(options: { maxPerFamily?: number }
       failed: failed.length,
       positiveFailures: positiveFailures.length,
       negativeFailures: negativeFailures.length,
+    },
+    macroCoverage: {
+      requiredMacroContracts,
+      coveredMacroContracts: [...coveredMacroContracts],
+      missingMacroContracts,
+      policy:
+        "Fuzzer families are macro product-contract probes. A future concrete failure may add a micro case only if it belongs to one of these macro contracts.",
     },
     perFamily,
     failedCases: failed,

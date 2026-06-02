@@ -440,6 +440,158 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "no_trade_advice",
 ] as const;
 
+type CommercialAnswerPipelineFilter = (typeof COMMERCIAL_ANSWER_PIPELINE_FILTERS)[number];
+
+type MacroProductContractId =
+  | "visible_answer_value"
+  | "single_entry_single_exit"
+  | "candidate_authority_and_council_evidence"
+  | "source_learning_and_memory_truth"
+  | "finance_data_and_trade_boundary"
+  | "owner_status_and_async_receipts";
+
+type MacroProductContract = {
+  id: MacroProductContractId;
+  invariant: string;
+  ownsFilters: CommercialAnswerPipelineFilter[];
+  microRulePolicy: string;
+};
+
+const MACRO_PRODUCT_CONTRACTS = [
+  {
+    id: "visible_answer_value",
+    invariant:
+      "Every visible answer must give direct decision value, concrete next action, or a named failed reason; professional filler, vague caution, and generic intros are not acceptable products.",
+    ownsFilters: [
+      "answer_audit",
+      "bounded_answer_review",
+      "terminal_decision_required",
+      "post_council_gate_replacement_returns_failed_reason",
+      "explicit_visible_contract_must_be_answered_directly",
+      "vague_conservative_nonanswer_rejected",
+      "positive_visible_answer_acceptance_required",
+      "direct_answer_not_overconservative_required",
+      "all_visible_answers_require_decision_value",
+      "visible_answer_quality_fuzzer_required",
+      "no_raw_json_visible_reply",
+      "no_internal_runtime_details_visible",
+    ],
+    microRulePolicy:
+      "Specific bad-answer patterns may be added only as examples of this product value gate, not as the only protected wording.",
+  },
+  {
+    id: "single_entry_single_exit",
+    invariant:
+      "Lark, WeChat, SMS, or any other channel is just an external transport; the product has one intake, one internal answer path, and one plain user-visible exit.",
+    ownsFilters: [
+      "single_entry_single_exit_visible_answer_required",
+      "single_entry_single_exit_internal_labels_hidden",
+      "short_lark_intent_expansion_required",
+      "real_lark_short_canary_suite_required",
+      "short_intent_family_fuzzer_required",
+      "unknown_short_intent_clean_failure_required",
+    ],
+    microRulePolicy:
+      "Fixed canaries are samples; terse unseen phrases must route by semantic family and exit as plain answers.",
+  },
+  {
+    id: "candidate_authority_and_council_evidence",
+    invariant:
+      "Remote providers, MiniMax Agent, Qwen, and local drafts are candidate evidence only; final adoption belongs to the LCX local contract gate with attributable role evidence.",
+    ownsFilters: [
+      "candidate_answer_not_final_authority",
+      "provider_council_evidence_required",
+      "provider_outputs_not_faked",
+      "minimax_agent_draft_not_final_authority",
+      "minimax_agent_output_requires_lcx_gate",
+      "minimax_agent_runtime_claim_requires_receipt",
+      "qwen_challenger_not_final_authority",
+      "qwen_challenge_patch_only",
+      "model_rewrite_budget_required",
+    ],
+    microRulePolicy:
+      "Provider-specific failures must strengthen candidate/evidence arbitration instead of making one provider authoritative.",
+  },
+  {
+    id: "source_learning_and_memory_truth",
+    invariant:
+      "Learning, memory, and sedimentation claims require source intake, application/review evidence, and learned-vs-started boundaries before they can affect visible answers.",
+    ownsFilters: [
+      "source_evidence_gate",
+      "stored_only_is_not_learning",
+      "retrieval_apply_eval_review_required",
+      "async_task_receipt_required_for_deferred_work",
+    ],
+    microRulePolicy:
+      "A new link, receipt, or module-learning repair must preserve the started/finished/absorbed distinction.",
+  },
+  {
+    id: "finance_data_and_trade_boundary",
+    invariant:
+      "Finance answers must separate research from execution, use sourced/timestamped numbers, route conflicts to provenance review, and give useful risk triage without direct trade action.",
+    ownsFilters: [
+      "single_stock_loss_reply_requires_concrete_risk_triage",
+      "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
+      "no_unverified_current_market_data",
+      "finance_data_gateway_snapshot_required_for_numbers",
+      "finance_data_conflicts_route_to_provenance_review",
+      "no_trade_advice",
+    ],
+    microRulePolicy:
+      "Ticker-specific cases such as NVDA are regression samples for the general finance research boundary.",
+  },
+  {
+    id: "owner_status_and_async_receipts",
+    invariant:
+      "Status and deferred-work replies must be grounded in current owner evidence and must tell the user what is done, blocked, queued, or not verified.",
+    ownsFilters: ["system_status_requires_owner_evidence"],
+    microRulePolicy:
+      "Status wording fixes must remain tied to owner outputs and receipt state, not optimistic product claims.",
+  },
+] as const satisfies readonly MacroProductContract[];
+
+function buildProductGovernor() {
+  const requiredFilters = new Set<CommercialAnswerPipelineFilter>(
+    COMMERCIAL_ANSWER_PIPELINE_FILTERS,
+  );
+  const filterOwners = new Map<CommercialAnswerPipelineFilter, MacroProductContractId[]>();
+  for (const contract of MACRO_PRODUCT_CONTRACTS) {
+    for (const filter of contract.ownsFilters) {
+      const owners = filterOwners.get(filter) ?? [];
+      owners.push(contract.id);
+      filterOwners.set(filter, owners);
+    }
+  }
+  const unownedFilters = [...requiredFilters].filter((filter) => !filterOwners.has(filter));
+  const unknownOwnedFilters = [...filterOwners.keys()].filter(
+    (filter) => !requiredFilters.has(filter),
+  );
+  const duplicatedFilters = [...filterOwners.entries()]
+    .filter(([, owners]) => owners.length > 1)
+    .map(([filter, owners]) => ({ filter, owners }));
+  const ok = unownedFilters.length === 0 && unknownOwnedFilters.length === 0;
+  return {
+    ok,
+    boundary: "dev_commercial_answer_product_governor_only",
+    macroPolicy:
+      "Macro product contracts own answer quality. Micro rules, fixed canaries, ticker regressions, and replay failures are samples that must attach to one macro contract before this owner passes.",
+    microPatchPolicy:
+      "If a real Lark failure appears, add or repair the smallest deterministic rule needed, then attach the rule to a macro contract and add at least one positive acceptance path when the class of answer should be allowed.",
+    requiredMacroContracts: MACRO_PRODUCT_CONTRACTS.map((contract) => contract.id),
+    contracts: MACRO_PRODUCT_CONTRACTS,
+    coverage: {
+      totalFilters: COMMERCIAL_ANSWER_PIPELINE_FILTERS.length,
+      ownedFilters: filterOwners.size,
+      unownedFilters,
+      unknownOwnedFilters,
+      duplicatedFilters,
+    },
+    liveTouched: false,
+    providerConfigTouched: false,
+    protectedMemoryTouched: false,
+  };
+}
+
 function usage(): never {
   throw new Error(
     [
@@ -1034,6 +1186,7 @@ function auditCandidate(params: {
 }
 
 export function buildPipelineResult(ask: string, candidateAnswer: string) {
+  const productGovernor = buildProductGovernor();
   const orchestration = planFinanceBrainOrchestration({
     text: ask,
     hasHoldingsOrPortfolioContext: /持仓|仓位|组合|portfolio|position|holdings?/iu.test(ask),
@@ -1101,6 +1254,7 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
       adoptionGate:
         "LCX must run local contract audit, source/data gates, Qwen patch-only challenge when needed, review panel, and visible answer adoption before any MiniMax Agent draft reaches the user.",
     },
+    productGovernor,
     maxTotalReviewRounds: answerAuditPolicy.maxTotalReviewRounds,
     terminalDecision,
     failedReasons: uniqueFailedReasons,
@@ -1154,6 +1308,7 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
 }
 
 export function runScenarioSuite() {
+  const productGovernor = buildProductGovernor();
   const results = BUILT_IN_SCENARIOS.map((scenario) => {
     const result = buildPipelineResult(scenario.ask, scenario.candidateAnswer);
     const expectedFailedReasons = scenario.expectedFailedReasons ?? [];
@@ -1172,13 +1327,14 @@ export function runScenarioSuite() {
   });
   const failed = results.filter((result) => !result.ok);
   return {
-    ok: failed.length === 0,
+    ok: failed.length === 0 && productGovernor.ok,
     boundary: "dev_commercial_answer_pipeline_only",
     summary: {
       passed: results.length - failed.length,
       failed: failed.length,
       total: results.length,
     },
+    productGovernor,
     contractFilters: COMMERCIAL_ANSWER_PIPELINE_FILTERS,
     scenarios: results,
     actionableFailures: failed.map(

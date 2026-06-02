@@ -178,6 +178,10 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
   const failed = numberValue(summary?.failed) ?? 0;
   const total = numberValue(summary?.total) ?? 0;
   const filters = stringArray(snapshot!.payload!.contractFilters);
+  const productGovernor = recordValue(snapshot!.payload!.productGovernor);
+  const productGovernorCoverage = recordValue(productGovernor?.coverage);
+  const productGovernorOk = booleanValue(productGovernor?.ok) === true;
+  const unownedFilters = stringArray(productGovernorCoverage?.unownedFilters);
   const requiredFilters = [
     "real_lark_short_canary_suite_required",
     "short_intent_family_fuzzer_required",
@@ -194,7 +198,7 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
     "visible_answer_quality_fuzzer_required",
   ];
   const missingFilters = requiredFilters.filter((filter) => !filters.includes(filter));
-  if (failed > 0 || total < 5 || missingFilters.length > 0) {
+  if (failed > 0 || total < 5 || missingFilters.length > 0 || !productGovernorOk) {
     return {
       id: "commercial_answer_pipeline_regression",
       status: "failed",
@@ -204,9 +208,12 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
         failed,
         total,
         missingFilters,
+        productGovernorOk,
+        unownedFilters,
         actionableFailures: snapshot!.payload!.actionableFailures,
       },
-      nextAction: "Fix the answer pipeline owner before judging live or Qwen behavior.",
+      nextAction:
+        "Fix the macro product governor and answer pipeline owner before judging external-channel or Qwen behavior.",
     };
   }
   return {
@@ -214,8 +221,9 @@ function commercialAnswerGate(snapshot: OwnerSnapshot | undefined): AcceptanceGa
     status: "passed",
     severity: "info",
     owner: "scripts/dev/lcx-commercial-answer-pipeline.ts",
-    evidence: { total, filters },
-    nextAction: "Keep this as the owner for answer adoption rules.",
+    evidence: { total, filters, productGovernor },
+    nextAction:
+      "Keep this as the macro owner for answer adoption rules; micro canaries must remain attached to product contracts.",
   };
 }
 
