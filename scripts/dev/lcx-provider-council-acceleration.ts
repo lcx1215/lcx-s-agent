@@ -22,6 +22,7 @@ type CliOptions = {
   profile: "balanced" | "aggressive";
   focus?: string;
   maxFreshMinutes: number;
+  timeoutMs: number;
   pidFixture?: string;
 };
 
@@ -75,7 +76,7 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/dev/lcx-provider-council-acceleration.ts [--write] [--json]",
       "  [--workspace DIR] [--route-agent-id ID] [--profile balanced|aggressive]",
-      "  [--focus TEXT] [--max-fresh-minutes N]",
+      "  [--focus TEXT] [--max-fresh-minutes N] [--timeout-ms N]",
       "",
       "Plans or runs one bounded Kimi/MiniMax/DeepSeek learning-council acceleration pass.",
       "Default is dry-run. --write calls providers only when active eval/MLX is idle, git is clean,",
@@ -108,6 +109,7 @@ function parseArgs(args: string[]): CliOptions {
     routeAgentId: "main",
     profile: "balanced",
     maxFreshMinutes: DEFAULT_FRESH_MINUTES,
+    timeoutMs: 900_000,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -136,6 +138,9 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--max-fresh-minutes") {
       options.maxFreshMinutes = positiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--timeout-ms") {
+      options.timeoutMs = positiveInteger(readValue(args, index));
       index += 1;
     } else if (arg === "--pid-fixture") {
       options.pidFixture = readValue(args, index);
@@ -477,6 +482,20 @@ async function runCouncil(prompt: string, options: CliOptions): Promise<string> 
   });
 }
 
+function runCouncilWithTimeout(prompt: string, options: CliOptions): Promise<string> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`provider council timeout after ${options.timeoutMs}ms`));
+    }, options.timeoutMs);
+  });
+  return Promise.race([runCouncil(prompt, options), timeout]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
+}
+
 function renderText(details: Record<string, unknown>) {
   const dailyUse = recordValue(details.dailyUse);
   return [
@@ -484,6 +503,7 @@ function renderText(details: Record<string, unknown>) {
     `boundary=${displayValue(details.boundary)}`,
     `write=${displayValue(details.write)}`,
     `profile=${displayValue(details.profile)}`,
+    `timeout_ms=${displayValue(details.timeoutMs)}`,
     `git_clean=${displayValue(details.gitClean)}`,
     `active_eval_or_mlx=${displayValue(details.activeEvalOrMlx)}`,
     `fresh_complete_council=${displayValue(details.freshCompleteCouncil)}`,
@@ -520,24 +540,41 @@ async function main() {
   ];
   const canRunProviderCouncilNow = hardBlocks.length === 0;
   let providerResultSnippet: string | undefined;
+  let providerRunError: string | undefined;
+  let providerRunTimedOut = false;
+  let forceExitAfterOutput = false;
   let action = options.write ? "deferred" : "dry_run_plan_only";
   let status = options.write ? "deferred_by_safety_gate" : "ready_plan";
+  let ok = !options.write || canRunProviderCouncilNow;
 
   if (options.write && canRunProviderCouncilNow) {
-    const result = await runCouncil(prompt, options);
-    providerResultSnippet = result.slice(0, 2_000);
-    action = "provider_council_run_completed";
-    status = "provider_council_acceleration_receipt_written";
+    try {
+      const result = await runCouncilWithTimeout(prompt, options);
+      providerResultSnippet = result.slice(0, 2_000);
+      action = "provider_council_run_completed";
+      status = "provider_council_acceleration_receipt_written";
+      ok = true;
+    } catch (error) {
+      providerRunError = error instanceof Error ? error.message : String(error);
+      providerRunTimedOut = providerRunError.includes("provider council timeout");
+      forceExitAfterOutput = providerRunTimedOut;
+      action = providerRunTimedOut
+        ? "provider_council_run_timed_out"
+        : "provider_council_run_failed";
+      status = "provider_council_acceleration_failed";
+      ok = false;
+    }
   }
 
   const details = {
-    ok: !options.write || canRunProviderCouncilNow,
+    ok,
     boundary: "dev_provider_council_acceleration_only",
     checkedAt: new Date().toISOString(),
     status,
     action,
     profile: options.profile,
     write: options.write,
+    timeoutMs: options.timeoutMs,
     workspaceDir: options.workspaceDir,
     routeAgentId: options.routeAgentId,
     gitClean,
@@ -559,6 +596,8 @@ async function main() {
     skillOptLiteStatus: trainingTruth.skillOptLiteStatus,
     plannedPrompt: prompt,
     providerResultSnippet,
+    providerRunError,
+    providerRunTimedOut,
     nextSafeCommand:
       "node --import tsx scripts/dev/lcx-provider-council-acceleration.ts --write --json --profile aggressive",
     outputsFeed: [
@@ -577,6 +616,9 @@ async function main() {
     console.log(JSON.stringify(details, null, 2));
   } else {
     process.stdout.write(`${renderText(details)}\n`);
+  }
+  if (forceExitAfterOutput) {
+    process.exit(1);
   }
 }
 
