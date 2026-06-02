@@ -183,6 +183,7 @@ const PATH_RULES: PathRule[] = [
     lane: "lark_feishu_visible_reply",
     patterns: [
       /^scripts\/dev\/lcx-commercial-answer-pipeline\.ts$/u,
+      /^scripts\/dev\/lcx-visible-answer-quality-fuzzer\.ts$/u,
       /^extensions\/feishu\//u,
       /^src\/auto-reply\/reply\/get-reply-run\.ts$/u,
       /^src\/auto-reply\/reply\/skill-autocue\.ts$/u,

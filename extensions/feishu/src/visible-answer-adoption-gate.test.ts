@@ -19,10 +19,10 @@ describe("visible answer adoption gate", () => {
         failedReasons: expect.arrayContaining(["chinese_action_framework_language"]),
       }),
     );
-    expect(decision.text).toContain("直接结论");
-    expect(decision.text).toContain("thesis 和风险预算");
-    expect(decision.text).toContain("仓位占总资产");
-    expect(decision.text).toContain("反证条件");
+    expect(decision.text).toContain("风险结论");
+    expect(decision.text).toContain("补仓资格=未通过");
+    expect(decision.text).toContain("三档决策树");
+    expect(decision.text).toContain("具体阈值");
     expect(decision.text).not.toContain("均价策略");
     expect(decision.text).not.toContain("止损策略");
     expect(decision.text).not.toContain("抄底");
@@ -43,9 +43,10 @@ describe("visible answer adoption gate", () => {
         "chinese_direct_position_action_language",
       ]),
     );
-    expect(decision.text).toContain("NVDA：");
-    expect(decision.text).toContain("仓位占总资产");
-    expect(decision.text).toContain("反证条件");
+    expect(decision.text).toContain("风险结论：NVDA");
+    expect(decision.text).toContain("补仓资格=未通过");
+    expect(decision.text).toContain("三档决策树");
+    expect(decision.text).toContain("你下一条直接发");
     expect(decision.text).not.toContain("QQQ：");
     expect(decision.text).not.toContain("TLT：");
     expect(decision.text).not.toContain("继续拿着");
@@ -67,8 +68,9 @@ describe("visible answer adoption gate", () => {
       ]),
     );
     expect(decision.text).toContain("Direct answer");
-    expect(decision.text).toContain("thesis and risk audit");
-    expect(decision.text).toContain("position weight versus total portfolio");
+    expect(decision.text).toContain("Default risk gate");
+    expect(decision.text).toContain("Decision tree");
+    expect(decision.text).toContain("Concrete thresholds to send next");
     expect(decision.text).not.toContain("Current Stance");
     expect(decision.text).not.toContain("Action Triggers");
   });
@@ -233,9 +235,9 @@ describe("visible answer adoption gate", () => {
         "english_internal_blocked_label_visible",
       ]),
     );
-    expect(decision.text).toContain("NVDA：");
-    expect(decision.text).toContain("直接结论");
-    expect(decision.text).toContain("反证条件");
+    expect(decision.text).toContain("风险结论：NVDA");
+    expect(decision.text).toContain("补仓资格=未通过");
+    expect(decision.text).toContain("三档决策树");
     expect(decision.text).not.toContain("Boundary And Missing Inputs");
     expect(decision.text).not.toContain("blocked");
     expect(decision.text).not.toContain("B7");

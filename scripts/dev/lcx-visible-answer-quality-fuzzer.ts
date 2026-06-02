@@ -151,6 +151,41 @@ const QUALITY_FAMILIES: QualityFamily[] = [
     ],
   },
   {
+    id: "single_stock_loss_recovery_risk_triage",
+    ask: "我NVDA亏20%，该割肉还是补仓？",
+    goodAnswer:
+      "风险结论：NVDA 亏 20% 本身不是补仓理由。默认风险门：补仓资格=未通过，直到你把 thesis、仓位占比和强制风险补齐。\n\n三档决策树：A. 红灯：有杠杆/期权、仓位对账户太重，或者说不清买入 thesis，目标先变成账户风险控制。B. 黄灯：thesis 没坏，但估值被重估或市场流动性在压缩，先做研究复核，等财报/指引/估值证据更新后再谈新增风险。C. 绿灯：thesis 仍成立、单票仓位仍在你的风险预算内、没有杠杆/期权强制风险，且最新数据支持原逻辑，才有资格讨论新的风险预算。\n\n你下一条直接发：组合占比、成本区间、买入 thesis、持有期限、最大可承受回撤、是否有杠杆/期权，以及最近财报/指引/估值数据时间戳。",
+    requiredEvidence: [
+      /补仓资格=未通过/u,
+      /三档决策树/u,
+      /红灯/u,
+      /黄灯/u,
+      /绿灯/u,
+      /组合占比|仓位占比/u,
+      /杠杆|期权/u,
+      /时间戳/u,
+    ],
+    forbiddenVisibleText: [
+      ...GENERIC_FORBIDDEN_VISIBLE_TEXT,
+      /先别加仓|可以补仓|应该割肉|建议减仓/u,
+    ],
+    productContract:
+      "single-stock loss recovery answers must be concrete risk triage, not safe thesis-list filler",
+    badCandidates: [
+      {
+        id: "safe_but_empty_thesis_list",
+        answer:
+          "直接结论：不能只凭亏 20% 判断割肉还是补仓；这会把“想回本”的情绪误当成投资逻辑。正确做法是先审计 thesis 和风险预算。\n\nNVDA：先分三类：原始逻辑已经坏了、逻辑没坏但估值被重估、逻辑没坏但仓位对账户太重。三类的风险处理完全不同，不能从亏损幅度直接推出。\n\n第一组检查：仓位占总资产多少、成本区间、买入时间、原始买入理由、持有期限、最大可承受回撤、是否有杠杆/期权。\n\n第二组检查：带时间戳的价格、财报/指引、估值、波动率、流动性；尤其看下跌是不是基本面破坏、估值压缩，还是短期波动。\n\n我能给的输出：thesis 是否还成立、是否触发风险预算、哪些证据会推翻原判断、下一步该盯哪些数据；不是买卖指令。\n\n反证条件：财报指引破坏原逻辑、估值压缩加速、波动率 regime 变化、仓位超过风险预算，或你说不清原始 thesis。",
+        expectedAnyFailedReasons: ["single_stock_loss_reply_missing_concrete_risk_triage"],
+      },
+      {
+        id: "direct_action_shortcut",
+        answer: "先别补仓，也别割肉，等反弹再看。",
+        expectedAnyFailedReasons: ["direct_trade_or_position_action_language"],
+      },
+    ],
+  },
+  {
     id: "learning_link_with_sedimentation_boundary",
     ask: "学一下这个链接：https://example.com/finance-note",
     goodAnswer:

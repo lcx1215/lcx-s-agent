@@ -307,6 +307,39 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
+  it("routes commercial visible answer quality owners to the Lark visible reply lane", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "scripts/dev/lcx-commercial-answer-pipeline.ts",
+      "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
+      "test/lcx-visible-answer-quality-fuzzer.test.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["lark_feishu_visible_reply", "test_surface"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "lark_feishu_visible_surface",
+          lane: "lark_feishu_visible_reply",
+          matchedFiles: [
+            "scripts/dev/lcx-commercial-answer-pipeline.ts",
+            "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
+          ],
+          commands: expect.arrayContaining([
+            "pnpm vitest run src/auto-reply/reply/skill-autocue.test.ts src/auto-reply/reply/skillopt-autocue.test.ts",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "test_file_changed",
+          lane: "test_surface",
+          matchedFiles: ["test/lcx-visible-answer-quality-fuzzer.test.ts"],
+        }),
+      ]),
+    );
+  });
+
   it("routes owner dashboard observability files instead of leaving them unmatched", async () => {
     const payload = await runPlanArgs([
       "--files",

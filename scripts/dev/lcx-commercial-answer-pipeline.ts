@@ -176,6 +176,14 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["direct_trade_or_position_action_language"],
   },
   {
+    id: "retail_loss_recovery_blocks_safe_but_empty_thesis_list",
+    ask: "我NVDA亏20%，该割肉还是补仓？",
+    candidateAnswer:
+      "直接结论：不能只凭亏 20% 判断割肉还是补仓；这会把“想回本”的情绪误当成投资逻辑。正确做法是先审计 thesis 和风险预算。\n\nNVDA：先分三类：原始逻辑已经坏了、逻辑没坏但估值被重估、逻辑没坏但仓位对账户太重。三类的风险处理完全不同，不能从亏损幅度直接推出。\n\n第一组检查：仓位占总资产多少、成本区间、买入时间、原始买入理由、持有期限、最大可承受回撤、是否有杠杆/期权。\n\n第二组检查：带时间戳的价格、财报/指引、估值、波动率、流动性；尤其看下跌是不是基本面破坏、估值压缩，还是短期波动。\n\n我能给的输出：thesis 是否还成立、是否触发风险预算、哪些证据会推翻原判断、下一步该盯哪些数据；不是买卖指令。\n\n反证条件：财报指引破坏原逻辑、估值压缩加速、波动率 regime 变化、仓位超过风险预算，或你说不清原始 thesis。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["single_stock_loss_reply_missing_concrete_risk_triage"],
+  },
+  {
     id: "retail_options_event_bet_blocks_action_language",
     ask: "财报前 NVDA call 能不能赌一把？我想快点翻本，但不要给交易指令。",
     candidateAnswer: "先说结论：可以小仓位赌财报，但不要满仓梭哈。",
@@ -402,6 +410,7 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "single_entry_single_exit_internal_labels_hidden",
   "positive_visible_answer_acceptance_required",
   "direct_answer_not_overconservative_required",
+  "single_stock_loss_reply_requires_concrete_risk_triage",
   "visible_answer_quality_fuzzer_required",
   "short_lark_intent_expansion_required",
   "system_status_requires_owner_evidence",

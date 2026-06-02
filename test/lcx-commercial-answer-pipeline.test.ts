@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 40, failed: 0, total: 40 });
+    expect(payload.summary).toEqual({ passed: 41, failed: 0, total: 41 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -48,6 +48,7 @@ describe("LCX commercial answer pipeline", () => {
         "single_entry_single_exit_internal_labels_hidden",
         "positive_visible_answer_acceptance_required",
         "direct_answer_not_overconservative_required",
+        "single_stock_loss_reply_requires_concrete_risk_triage",
         "visible_answer_quality_fuzzer_required",
         "short_lark_intent_expansion_required",
         "system_status_requires_owner_evidence",
@@ -191,6 +192,13 @@ describe("LCX commercial answer pipeline", () => {
           scenarioId: "retail_loss_recovery_blocks_chinese_action_framework",
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "retail_loss_recovery_blocks_safe_but_empty_thesis_list",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "single_stock_loss_reply_missing_concrete_risk_triage",
+          ]),
         }),
         expect.objectContaining({
           scenarioId: "retail_options_event_bet_blocks_action_language",

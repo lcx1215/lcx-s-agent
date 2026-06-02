@@ -162,6 +162,25 @@ function looksLikeSingleStockLossRecoveryAsk(userMessage: string): boolean {
   );
 }
 
+function extractsConcreteSingleStockLossTriage(answerText: string): boolean {
+  const defaultRiskGate =
+    /(?:补仓|加仓)资格\s*[=＝:：]?\s*(?:未通过|不通过|先不通过)|默认风险门|亏损(?:本身)?不是(?:补仓|加仓)理由/u.test(
+      answerText,
+    );
+  const decisionTree = /(?:红灯|黄灯|绿灯|三档|决策树|A[.、]|B[.、]|C[.、]|①|②|③)/u.test(
+    answerText,
+  );
+  const concreteThresholdOrForcedRisk =
+    /(?:单票|仓位|组合占比|账户).{0,28}(?:\d{1,2}\s*(?:-|到|~|–)?\s*\d{0,2}\s*%|超过|上限|太重)|(?:杠杆|期权|融资|保证金|最大可承受回撤|强平)/u.test(
+      answerText,
+    );
+  const nextUserInputs =
+    /(?:你(?:下一条)?(?:发|补)|需要你|下一步(?:先)?(?:补|给)|总资产|账户规模|仓位占比|组合占比|成本区间|持有期限|杠杆|期权|最大可承受回撤)/u.test(
+      answerText,
+    );
+  return defaultRiskGate && decisionTree && concreteThresholdOrForcedRisk && nextUserInputs;
+}
+
 function looksLikeModelDisagreementArbitrationAsk(userMessage: string): boolean {
   if (MODEL_DISAGREEMENT_ARBITRATION_ASK_PATTERN.test(userMessage)) {
     return true;
@@ -375,6 +394,13 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
     return [...new Set(failures)];
   }
 
+  if (
+    looksLikeSingleStockLossRecoveryAsk(params.userMessage) &&
+    !extractsConcreteSingleStockLossTriage(params.answerText)
+  ) {
+    failures.push("single_stock_loss_reply_missing_concrete_risk_triage");
+  }
+
   if (hasUnaskedKnownTickerLeak(params.userMessage, params.answerText)) {
     failures.push("unasked_ticker_context_bleed_in_position_reply");
   }
@@ -425,21 +451,19 @@ function renderSinglePositionRiskFrameworkReply(userMessage: string): string {
   const ticker = mentionedKnownTickers(userMessage)[0] ?? "这个标的";
   if (!prefersChinese(userMessage)) {
     return [
-      "Direct answer: I cannot choose cut/add/hold from the loss percentage alone. The useful answer is a thesis and risk audit.",
-      `${ticker}: split the problem into three buckets: thesis broken, thesis intact but valuation reset, or position size too large for the account. Each bucket implies a different risk response, but none can be inferred from drawdown alone.`,
-      "First checks: position weight versus total portfolio, cost range, entry date, original thesis, current earnings/valuation evidence, volatility/liquidity regime, and whether leverage/options amplify forced-selling risk.",
-      "What I would output after data: thesis status, risk budget breach or not, evidence that would invalidate the position, and what to monitor next. Not execution instructions.",
-      "What would change the view: guidance breaks the thesis, valuation compression accelerates, volatility regime shifts, the position exceeds risk budget, or the original thesis cannot be stated in evidence terms.",
+      `Direct answer: ${ticker} loss alone is not a reason to average down. Default risk gate: add-qualification = not passed until thesis, position weight, and forced-risk inputs are checked.`,
+      "Decision tree: A. Red light: leverage/options, margin pressure, position too large for the account, or no written thesis. First objective is account-risk control, not making the loss back fast. B. Yellow light: thesis still intact but valuation reset; keep it in research mode and wait for fresh earnings/valuation evidence before increasing risk. C. Green light: thesis intact, position weight inside budget, no leverage/options, and fresh data supports the thesis; only then can a new risk-budget decision be discussed.",
+      "Concrete thresholds to send next: portfolio weight, cost range, entry date, holding horizon, max drawdown budget, leverage/options exposure, and timestamped earnings, valuation, volatility, and liquidity sources. If single-name weight is already above your own cap, treat that as a risk-budget breach before any recovery plan.",
+      "Output after data: thesis status, risk-budget status, what evidence would invalidate the position, and what to monitor next. This is still research/risk gating, not execution instruction.",
     ].join("\n\n");
   }
 
   return [
-    "直接结论：不能只凭亏 20% 判断割肉还是补仓；这会把“想回本”的情绪误当成投资逻辑。正确做法是先审计 thesis 和风险预算。",
-    `${ticker}：先分三类：原始逻辑已经坏了、逻辑没坏但估值被重估、逻辑没坏但仓位对账户太重。三类的风险处理完全不同，不能从亏损幅度直接推出。`,
-    "第一组检查：仓位占总资产多少、成本区间、买入时间、原始买入理由、持有期限、最大可承受回撤、是否有杠杆/期权。",
-    "第二组检查：带时间戳的价格、财报/指引、估值、波动率、流动性；尤其看下跌是不是基本面破坏、估值压缩，还是短期波动。",
-    "我能给的输出：thesis 是否还成立、是否触发风险预算、哪些证据会推翻原判断、下一步该盯哪些数据；不是买卖指令。",
-    "反证条件：财报指引破坏原逻辑、估值压缩加速、波动率 regime 变化、仓位超过风险预算，或你说不清原始 thesis。",
+    `风险结论：${ticker} 亏 20% 本身不是补仓理由。默认风险门：补仓资格=未通过，直到你把 thesis、仓位占比和强制风险补齐。`,
+    "三档决策树：A. 红灯：有杠杆/期权、仓位对账户太重、快到强平/到期，或者说不清买入 thesis。目标先变成账户风险控制，不能把“想回本”当策略。B. 黄灯：thesis 没坏，但估值被重估或市场流动性在压缩；先做研究复核，等财报/指引/估值证据更新后再谈新增风险。C. 绿灯：thesis 仍成立、单票仓位仍在你的风险预算内、没有杠杆/期权强制风险，且最新数据支持原逻辑，才有资格讨论新的风险预算。",
+    "具体阈值：如果单票仓位已经超过你给账户设的上限，或一次下跌已经打到最大可承受回撤，就先按风险预算违约处理；如果没有自己的上限，我会先让你定组合占比、最大回撤和持有期限，再做判断。",
+    "你下一条直接发：总资产或组合占比、NVDA 成本区间、买入 thesis、持有期限、最大可承受回撤、是否有杠杆/期权，以及最近财报/指引/估值数据时间戳。",
+    "我拿到后给你四项：thesis 是否还成立、风险预算是否违约、哪些证据会推翻原判断、接下来优先盯什么；不给执行口令。",
   ].join("\n\n");
 }
 
