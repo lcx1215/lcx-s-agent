@@ -32,7 +32,7 @@ describe("LCX commercial answer pipeline", () => {
         protectedMemoryTouched: false,
       }),
     );
-    expect(payload.summary).toEqual({ passed: 41, failed: 0, total: 41 });
+    expect(payload.summary).toEqual({ passed: 42, failed: 0, total: 42 });
     expect(payload.contractFilters).toEqual(
       expect.arrayContaining([
         "provider_council_evidence_required",
@@ -48,6 +48,7 @@ describe("LCX commercial answer pipeline", () => {
         "single_entry_single_exit_internal_labels_hidden",
         "positive_visible_answer_acceptance_required",
         "direct_answer_not_overconservative_required",
+        "all_visible_answers_require_decision_value",
         "single_stock_loss_reply_requires_concrete_risk_triage",
         "visible_answer_quality_fuzzer_required",
         "short_lark_intent_expansion_required",
@@ -198,6 +199,13 @@ describe("LCX commercial answer pipeline", () => {
           actualDecision: "return_failed_reason",
           failedReasons: expect.arrayContaining([
             "single_stock_loss_reply_missing_concrete_risk_triage",
+          ]),
+        }),
+        expect.objectContaining({
+          scenarioId: "all_domain_answer_blocks_professional_filler_without_value",
+          actualDecision: "return_failed_reason",
+          failedReasons: expect.arrayContaining([
+            "generic_professional_filler_without_answer_value",
           ]),
         }),
         expect.objectContaining({

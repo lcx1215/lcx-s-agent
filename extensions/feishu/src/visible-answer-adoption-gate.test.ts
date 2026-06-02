@@ -5,6 +5,21 @@ import {
 } from "./visible-answer-adoption-gate.js";
 
 describe("visible answer adoption gate", () => {
+  it("rejects professional-sounding filler for ordinary visible questions", () => {
+    const decision = applyVisibleAnswerAdoptionGate({
+      userMessage: "我的日报应该怎么改得更有用？",
+      answerText:
+        "日报要更有用，需要综合考虑目标、受众、结构、数据、风险和表达方式。这个问题不能一概而论，建议先明确使用场景，再逐步优化。",
+    });
+
+    expect(decision.status).toBe("replaced");
+    expect(decision.failedReasons).toEqual(
+      expect.arrayContaining(["generic_professional_filler_without_answer_value"]),
+    );
+    expect(decision.text).not.toContain("需要综合考虑目标、受众");
+    expect(decision.text).not.toContain("不能一概而论");
+  });
+
   it("replaces retail loss-recovery action frameworks before visible Lark send", () => {
     const decision = applyVisibleAnswerAdoptionGate({
       userMessage:

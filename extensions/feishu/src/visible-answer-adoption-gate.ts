@@ -71,7 +71,7 @@ const GENERIC_ENTRY_EXIT_ANSWER_PATTERN =
   /能弄好，而且出口必须简单|入口只做四件事|内部可以让\s*Kimi、MiniMax、DeepSeek|质量关要拦掉五类废答案/u;
 
 const LEARNING_SOURCE_ASK_PATTERN =
-  /\b(?:learn|study|read|source|url|link|github|repo|paper|blog|article)\b|学一下|学习一下|学习这个|读一下|看看这个|链接|来源|网页|论文|博客|文章|开源|项目/u;
+  /\b(?:learn|study|read|source|url|link|github|repo|paper|blog|article)\b|学一下|学习一下|学习这个|学了|学习|吸收|读取|读一下|读这个|看看这个|链接|来源|网页|论文|博客|文章|开源|项目|文件|PDF/u;
 
 const SYSTEM_STATUS_ASK_PATTERN =
   /\b(?:status|progress|where are we|what changed|done yet|finished yet|system state)\b|现在.{0,12}(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|如何|状态)|(?:系统|进化|训练|大脑|智能体).{0,12}(?:到哪|怎么样|状态)|做完了吗|系统能用了吗|大脑怎么样|训练怎么样|现在什么状态|状态呢|还有什么|进展/u;
@@ -84,6 +84,33 @@ const VAGUE_CONSERVATIVE_NONANSWER_PATTERN =
 
 const USEFUL_VISIBLE_NEXT_STEP_PATTERN =
   /(?:结论|直接说|先说|现在能说|我能说|可以先|下一步|需要补|缺(?:的)?(?:数据|信息)|数据清单|证据|来源|时间戳|失效条件|风险门|检查|按.{0,10}顺序|1[.、]|第一|第二)/u;
+
+const NORMAL_VISIBLE_ASK_PATTERN =
+  /[？?]|(?:怎么|为什么|帮我|给我|看一下|看下|改|写|总结|解释|判断|分析|到哪|怎么样|风险|要不要|该不该|能不能|可以吗|怎么办|做什么|有什么|多少|学一下|学习一下|现在|今天|明天|日报|报告|链接)/u;
+
+const PROFESSIONAL_FILLER_PATTERN =
+  /(?:需要综合考虑|不能一概而论|取决于|需要更多(?:信息|背景|上下文)|正确做法是先|先审计|不能只凭|不能从.{0,24}直接推出|我能给的输出|第一组检查|第二组检查|反证条件|需要先.{0,28}(?:检查|审计|确认|补齐)|要先.{0,28}(?:检查|审计|确认|补齐)|建议先.{0,28}(?:观察|确认|补齐)|需要从.{0,32}(?:维度|角度|层面)|先分(?:三|几)类)/u;
+
+const DIRECT_VISIBLE_VALUE_PATTERN =
+  /(?:风险结论|当前判断|默认判断|优先级|排序|第一优先|最该看|答案是|结论是|约等于|大概\s*\d|百分之|已确认|还剩|卡在|能确认|不能确认|可以开始|不能说已经|先改|先做|先看|先登记|三档决策树|红灯|黄灯|绿灯|具体阈值|具体做法|下一条直接发|下一步(?:是|先)|直接算|按你给的)/u;
+
+const PROTOCOL_TRUTH_SURFACE_ASK_PATTERN =
+  /(?:现在你是谁|你能做什么|当前可用能力|不可用边界|外部通道|Lark.{0,24}(?:通信|沟通|媒介|入口)|验收|acceptance code|identity test|protocol truth|真实链路)/iu;
+
+const PROTOCOL_TRUTH_SURFACE_ANSWER_PATTERN =
+  /(?:外部通道验收请求已识别|Lark 只是你和 LCX Agent 通信的外部通道|我是你在 Lark 里联系 LCX Agent 的入口|当前可用能力:|不可用边界:|下一步会做什么:|必须看同一轮 Lark 入站和出站回执)/u;
+
+const SOURCE_REQUIRED_TRUTH_ASK_PATTERN =
+  /\b(?:source_required|failedReason|source check|missing source|acceptance code)\b|(?:缺来源|没有(?:给|提供).{0,16}(?:链接|网址|URL|文件|路径|仓库|论文|DOI|source)|没给.{0,16}(?:链接|网址|URL|文件|路径|仓库|论文|DOI|source)|不能假装|不要说\s*application_ready|不要假装已经学)/iu;
+
+const SOURCE_REQUIRED_TRUTH_ANSWER_PATTERN =
+  /(?:任务类型:\s*来源缺失检查|还缺来源:\s*是|失败原因:\s*没有提供链接、本地文件或完整来源|下一步:|边界:|证据:)/u;
+
+const CONCRETE_SOURCE_IDENTIFIER_PATTERN =
+  /(https?:\/\/\S+|file:\/\/\S+|(?:^|\s)(?:\.{1,2}\/|\/)?[\w./ -]+\.(?:md|txt|pdf|html?|csv|json|jsonl)|(?:arXiv:\s*)?\b\d{4}\.\d{4,5}(?:v\d+)?\b|10\.\d{4,9}\/[-._;()/:A-Z0-9]+|\b[\w.-]+\/[\w.-]+\b)/iu;
+
+const IMPLICIT_MISSING_SOURCE_LEARNING_ASK_PATTERN =
+  /(?:这个网页|这个链接|这个网址|这个项目|这个仓库|这篇(?:论文|文章|博客|公众号)|这个\s*PDF|PDF\s*学了|去\s*(?:Google|GitHub|arXiv)|学习.{0,20}(?:论文|项目|网页|文章|材料|文件)|吸收.{0,20}(?:论文|项目|网页|文章|材料|文件)|文件路径|仓库链接|论文链接|网址)/iu;
 
 const MODEL_DISAGREEMENT_ARBITRATION_TERMS_PATTERN =
   /\b(?:evidence order|source|timestamp|local gate|cannot directly trust|not final authority|arbitration)\b|证据排序|一手来源|时间戳|本地\s*gate|不能直接采信|不能按模型名|候选意见|最终权威|本地把关|裁决/u;
@@ -240,6 +267,39 @@ function looksLikeVagueConservativeNonAnswer(answerText: string): boolean {
   );
 }
 
+function looksLikeNormalVisibleAsk(userMessage: string): boolean {
+  return NORMAL_VISIBLE_ASK_PATTERN.test(userMessage.trim());
+}
+
+function looksLikeProfessionalFillerWithoutAnswerValue(answerText: string): boolean {
+  const compact = answerText.trim();
+  return PROFESSIONAL_FILLER_PATTERN.test(compact) && !DIRECT_VISIBLE_VALUE_PATTERN.test(compact);
+}
+
+function looksLikeProtocolTruthSurfaceReply(userMessage: string, answerText: string): boolean {
+  return (
+    PROTOCOL_TRUTH_SURFACE_ASK_PATTERN.test(userMessage) &&
+    PROTOCOL_TRUTH_SURFACE_ANSWER_PATTERN.test(answerText)
+  );
+}
+
+function looksLikeSourceRequiredTruthReply(userMessage: string, answerText: string): boolean {
+  return (
+    looksLikeMissingSourceLearningAsk(userMessage) &&
+    SOURCE_REQUIRED_TRUTH_ANSWER_PATTERN.test(answerText)
+  );
+}
+
+function looksLikeMissingSourceLearningAsk(userMessage: string): boolean {
+  const text = userMessage.trim();
+  return (
+    looksLikeLearningSourceAsk(text) &&
+    !CONCRETE_SOURCE_IDENTIFIER_PATTERN.test(text) &&
+    (SOURCE_REQUIRED_TRUTH_ASK_PATTERN.test(text) ||
+      IMPLICIT_MISSING_SOURCE_LEARNING_ASK_PATTERN.test(text))
+  );
+}
+
 function extractsUsefulArithmeticPercent(answerText: string): boolean {
   return /(?:\d[\d,，]*\s*\/\s*\d[\d,，]*|0\.\d{1,3}\s*%|约等于\s*0\.\d|大概\s*0\.\d|百分之\s*零点)/u.test(
     answerText,
@@ -270,16 +330,26 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
 }): string[] {
   const failures: string[] = [];
   const explicitVisibleContract = looksLikeExplicitVisibleContractAsk(params.userMessage);
+  const protocolTruthSurfaceReply = looksLikeProtocolTruthSurfaceReply(
+    params.userMessage,
+    params.answerText,
+  );
+  const sourceRequiredTruthReply = looksLikeSourceRequiredTruthReply(
+    params.userMessage,
+    params.answerText,
+  );
+  const explicitTruthSurfaceReply = protocolTruthSurfaceReply || sourceRequiredTruthReply;
 
   if (RAW_WORK_ORDER_VISIBLE_PATTERN.test(params.answerText)) {
     failures.push("raw_work_order_json_visible_answer");
   }
 
-  if (LEGACY_TEST_ARTIFACT_VISIBLE_PATTERN.test(params.answerText)) {
+  if (!explicitTruthSurfaceReply && LEGACY_TEST_ARTIFACT_VISIBLE_PATTERN.test(params.answerText)) {
     failures.push("legacy_test_artifact_visible_answer");
   }
 
   if (
+    !explicitTruthSurfaceReply &&
     prefersChinese(params.userMessage) &&
     CHINESE_INTERNAL_BLOCKED_LABEL_PATTERN.test(params.answerText)
   ) {
@@ -303,6 +373,7 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
 
   if (
     explicitVisibleContract &&
+    !protocolTruthSurfaceReply &&
     GENERIC_CONTROL_ROOM_CAPABILITY_ANSWER_PATTERN.test(params.answerText)
   ) {
     failures.push("explicit_visible_contract_ignored_by_generic_intro");
@@ -347,6 +418,7 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
   }
 
   if (
+    !explicitTruthSurfaceReply &&
     NO_INTERNAL_DETAIL_CONTRACT_ASK_PATTERN.test(params.userMessage) &&
     INTERNAL_VISIBLE_DETAIL_PATTERN.test(params.answerText)
   ) {
@@ -367,14 +439,23 @@ export function findVisibleAnswerAdoptionGateFailures(params: {
       looksLikeSystemStatusAsk(params.userMessage) ||
       looksLikeShortAmbiguousVisibleAsk(params.userMessage) ||
       explicitVisibleContract) &&
+    !explicitTruthSurfaceReply &&
     looksLikeVagueConservativeNonAnswer(params.answerText)
   ) {
     failures.push("vague_conservative_nonanswer_without_useful_next_step");
   }
 
   if (
+    looksLikeNormalVisibleAsk(params.userMessage) &&
+    looksLikeProfessionalFillerWithoutAnswerValue(params.answerText)
+  ) {
+    failures.push("generic_professional_filler_without_answer_value");
+  }
+
+  if (
     LEGACY_PROOF_LABEL_VISIBLE_PATTERN.test(params.answerText) ||
-    (looksLikeAnswerPipelineAsk(params.userMessage) &&
+    (!explicitTruthSurfaceReply &&
+      looksLikeAnswerPipelineAsk(params.userMessage) &&
       ANSWER_PIPELINE_INTERNAL_VISIBLE_PATTERN.test(params.answerText))
   ) {
     failures.push("single_entry_single_exit_internal_label_leak");
@@ -485,6 +566,27 @@ function renderProviderCouncilArbitrationReply(userMessage: string): string {
     "三家不一致时：保留共同证据，标出分歧，把没有来源或时间戳的判断降权；证据不够就返回阻塞原因，不硬拍板。",
     "最终答案只能由本地 gate 采纳，不直接采信任何一个模型。",
   ].join("\n\n");
+}
+
+function extractVisibleAcceptanceCode(text: string): string | undefined {
+  return text.match(/\b(?:lark|live|feishu|migration)[A-Za-z0-9_-]*-[A-Za-z0-9_-]*\b/u)?.[0];
+}
+
+function renderSourceRequiredTruthReply(userMessage: string): string {
+  const acceptanceCode = extractVisibleAcceptanceCode(userMessage);
+  return [
+    "不能直接学：这条消息没有给可核验来源，所以我不会假装已经读取、学习或内化。",
+    "",
+    "任务类型: 来源缺失检查",
+    "还缺来源: 是",
+    "失败原因: 没有提供链接、本地文件或完整来源",
+    "下一步: 先给出明确 URL、本地文件路径、论文编号/DOI、仓库名，或直接粘贴完整原文；之后再运行学习流水线。",
+    "边界: 不搜索、不抓取、不学习、不保留，也不声称已经学会。",
+    "证据: 用户明确要求 source_required / 缺来源处理，且当前消息没有可核验 URL、本地文件路径、论文编号/DOI、仓库名或完整原文。",
+    acceptanceCode ? `验收码: ${acceptanceCode}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function extractNumericValues(text: string): number[] {
@@ -631,6 +733,10 @@ function renderAnswerPipelineContractReply(userMessage: string): string {
 }
 
 function renderLearningSourceIntakeReply(userMessage: string): string {
+  if (looksLikeMissingSourceLearningAsk(userMessage)) {
+    return renderSourceRequiredTruthReply(userMessage);
+  }
+
   if (!prefersChinese(userMessage)) {
     return [
       "I can learn it, but I cannot claim it is learned from the sentence alone.",
@@ -841,6 +947,7 @@ export function applyVisibleAnswerAdoptionGate(params: {
         "wrong_route_generic_entry_exit_answer",
         "legacy_test_artifact_visible_answer",
         "english_internal_blocked_label_visible",
+        "generic_professional_filler_without_answer_value",
       ].includes(reason),
     )
   ) {

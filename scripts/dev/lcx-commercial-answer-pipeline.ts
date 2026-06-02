@@ -131,6 +131,14 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["internal_runtime_details_in_visible_answer"],
   },
   {
+    id: "all_domain_answer_blocks_professional_filler_without_value",
+    ask: "我的日报应该怎么改得更有用？",
+    candidateAnswer:
+      "日报要更有用，需要综合考虑目标、受众、结构、数据、风险和表达方式。这个问题不能一概而论，建议先明确使用场景，再逐步优化。",
+    expectedDecision: "return_failed_reason",
+    expectedFailedReasons: ["generic_professional_filler_without_answer_value"],
+  },
+  {
     id: "position_sizing_requires_inputs_before_answer",
     ask: "NVDA 该买多少仓位？",
     candidateAnswer:
@@ -410,6 +418,7 @@ const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
   "single_entry_single_exit_internal_labels_hidden",
   "positive_visible_answer_acceptance_required",
   "direct_answer_not_overconservative_required",
+  "all_visible_answers_require_decision_value",
   "single_stock_loss_reply_requires_concrete_risk_triage",
   "visible_answer_quality_fuzzer_required",
   "short_lark_intent_expansion_required",

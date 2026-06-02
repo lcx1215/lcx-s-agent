@@ -41,10 +41,10 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
     );
     expect(payload.summary).toEqual(
       expect.objectContaining({
-        families: 9,
-        positive: 9,
-        negative: 16,
-        total: 25,
+        families: 10,
+        positive: 10,
+        negative: 18,
+        total: 28,
         failed: 0,
         positiveFailures: 0,
         negativeFailures: 0,
@@ -54,6 +54,11 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
       expect.arrayContaining([
         expect.objectContaining({
           caseId: "status_with_checked_evidence_positive",
+          actualDecision: "adopt_visible_answer",
+          ok: true,
+        }),
+        expect.objectContaining({
+          caseId: "all_domain_answer_value_not_professional_filler_positive",
           actualDecision: "adopt_visible_answer",
           ok: true,
         }),
@@ -100,6 +105,14 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
             "single_stock_loss_reply_missing_concrete_risk_triage",
           ]),
         }),
+        expect.objectContaining({
+          caseId: "all_domain_answer_value_not_professional_filler_generic_consulting_words",
+          actualDecision: "return_failed_reason",
+          ok: true,
+          failedReasons: expect.arrayContaining([
+            "generic_professional_filler_without_answer_value",
+          ]),
+        }),
       ]),
     );
     expect(payload.failedCases).toEqual([]);
@@ -115,10 +128,10 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
     );
     expect(payload.summary).toEqual(
       expect.objectContaining({
-        families: 9,
-        positive: 9,
-        negative: 9,
-        total: 18,
+        families: 10,
+        positive: 10,
+        negative: 10,
+        total: 20,
         failed: 0,
       }),
     );

@@ -2372,12 +2372,13 @@ describe("classified publish routing", () => {
     });
 
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("这是研究框架，不是交易指令"),
+      text: expect.stringContaining("风险结论：NVDA"),
     });
     const visibleText = (
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0].text;
-    expect(visibleText).toContain("风险检查");
+    expect(visibleText).toContain("补仓资格=未通过");
+    expect(visibleText).toContain("三档决策树");
     expect(visibleText).not.toContain("均价策略");
     expect(visibleText).not.toContain("止损策略");
     expect(visibleText).not.toContain("抄底");
@@ -6465,11 +6466,11 @@ describe("learning council routing", () => {
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
     )[0]?.[0]).text;
-    expect(replyText).toContain("这是研究框架，不是交易指令。");
+    expect(replyText).toContain("直接结论：现在不能把它翻译成加仓/减仓/持有指令");
     expect(replyText).toContain("QQQ：");
     expect(replyText).toContain("TLT：");
     expect(replyText).toContain("NVDA：");
-    expect(replyText).toContain("缺的数据：三只标的的组合权重");
+    expect(replyText).toContain("下一步数据：三只标的的权重");
     expect(replyText).not.toContain("family");
     expect(replyText).not.toContain("confidence");
     expect(replyText).not.toContain("work_order");

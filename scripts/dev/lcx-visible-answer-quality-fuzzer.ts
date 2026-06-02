@@ -74,6 +74,30 @@ const GENERIC_FORBIDDEN_VISIBLE_TEXT = [
 
 const QUALITY_FAMILIES: QualityFamily[] = [
   {
+    id: "all_domain_answer_value_not_professional_filler",
+    ask: "我的日报应该怎么改得更有用？",
+    goodAnswer:
+      "先改三处：第一，把开头从背景介绍换成今天最重要的一个结论；第二，每个判断后面只留一条关键证据和时间戳；第三，结尾固定给下一步动作、缺失数据和失效条件。这样读者不用猜你到底想让他看什么。",
+    requiredEvidence: [/先改三处/u, /一个结论/u, /关键证据/u, /时间戳/u, /下一步/u, /失效条件/u],
+    forbiddenVisibleText: [...GENERIC_FORBIDDEN_VISIBLE_TEXT],
+    productContract:
+      "every visible answer must return decision value or a concrete next action, not professional-sounding filler",
+    badCandidates: [
+      {
+        id: "generic_consulting_words",
+        answer:
+          "日报要更有用，需要综合考虑目标、受众、结构、数据、风险和表达方式。这个问题不能一概而论，建议先明确使用场景，再逐步优化。",
+        expectedAnyFailedReasons: ["generic_professional_filler_without_answer_value"],
+      },
+      {
+        id: "process_only_checklist",
+        answer:
+          "正确做法是先审计日报的目标和边界。第一组检查：目标、受众、使用期限。第二组检查：数据、结构、表达。反证条件：如果目标不清楚，就不能判断怎么改。",
+        expectedAnyFailedReasons: ["generic_professional_filler_without_answer_value"],
+      },
+    ],
+  },
+  {
     id: "status_with_checked_evidence",
     ask: "现在系统到哪了？",
     goodAnswer:
@@ -386,7 +410,7 @@ export function runVisibleAnswerQualityFuzzer(options: { maxPerFamily?: number }
       conciseDirectAnswerRequired: true,
       noVagueConservativeFallback: true,
       notWhitelist:
-        "Families cover product answer contracts: status, missing data, portfolio risk, learning, model disagreement, async work, entry/exit, and user-supplied arithmetic.",
+        "Families cover product answer contracts across ordinary Q&A, status, missing data, portfolio risk, learning, model disagreement, async work, entry/exit, and user-supplied arithmetic.",
       modelBoundary:
         "Remote model and Qwen outputs stay candidate evidence; the local visible answer gate decides adopt_visible_answer or return_failed_reason.",
     },
