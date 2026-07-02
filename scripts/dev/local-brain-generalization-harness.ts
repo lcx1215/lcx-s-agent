@@ -12,19 +12,27 @@
 //   node --import tsx scripts/dev/local-brain-generalization-harness.ts --emit-holdout 300 > holdout.jsonl
 //   node --import tsx scripts/dev/local-brain-generalization-harness.ts --self-check
 //
-// Each JSONL row is {id, userAsk, target:{requiredModules,...}}. Feed userAsk
-// to Qwen, parse its JSON plan, then score with scorePlan() against target.
+// Training-stream (MLX-LM dataset) modes emit {prompt, completion, meta} rows
+// byte-compatible with datasets/thought-flow-v1/train.jsonl:
+//   node --import tsx scripts/dev/local-brain-generalization-harness.ts --emit-train-dataset 20000 > gen-train.jsonl
+//   node --import tsx scripts/dev/local-brain-generalization-harness.ts --emit-holdout-dataset 500 > gen-valid.jsonl
+//
+// Each --emit-*/target JSONL row is {id, userAsk, target:{requiredModules,...}}.
+// Feed userAsk to Qwen, parse its JSON plan, then score with scorePlan().
 
 import {
   generateCases,
   oraclePlan,
   scorePlan,
+  toDatasetRow,
   type GeneratedCase,
 } from "./local-brain-generalization-generator.js";
 
 type Options = {
   emitTrain?: number;
   emitHoldout?: number;
+  emitTrainDataset?: number;
+  emitHoldoutDataset?: number;
   selfCheck: boolean;
   seed: number;
   holdoutFraction: number;
@@ -38,6 +46,10 @@ function parseArgs(argv: string[]): Options {
       options.emitTrain = Number(argv[(i += 1)]);
     } else if (arg === "--emit-holdout") {
       options.emitHoldout = Number(argv[(i += 1)]);
+    } else if (arg === "--emit-train-dataset") {
+      options.emitTrainDataset = Number(argv[(i += 1)]);
+    } else if (arg === "--emit-holdout-dataset") {
+      options.emitHoldoutDataset = Number(argv[(i += 1)]);
     } else if (arg === "--self-check") {
       options.selfCheck = true;
     } else if (arg === "--seed") {
@@ -65,6 +77,23 @@ function emit(cases: GeneratedCase[]): void {
         },
       })}\n`,
     );
+  }
+}
+
+// Emit MLX-LM training rows. Each generated completion is validated against its
+// own case with scorePlan() before it is written, so a self-inconsistent label
+// can never leak into the training set (fail closed instead).
+function emitDataset(cases: GeneratedCase[]): void {
+  for (const c of cases) {
+    const row = toDatasetRow(c);
+    const plan = JSON.parse(row.completion) as Parameters<typeof scorePlan>[0];
+    const verdict = scorePlan(plan, c);
+    if (!verdict.ok) {
+      throw new Error(
+        `generated completion fails its own scorer for ${c.id}: ${verdict.reasons.join(";")}`,
+      );
+    }
+    process.stdout.write(`${JSON.stringify(row)}\n`);
   }
 }
 
@@ -142,6 +171,26 @@ function main(): number {
   if (options.emitHoldout) {
     emit(
       generateCases(options.emitHoldout, {
+        seed: options.seed,
+        split: "holdout",
+        holdoutFraction: options.holdoutFraction,
+      }),
+    );
+    return 0;
+  }
+  if (options.emitTrainDataset) {
+    emitDataset(
+      generateCases(options.emitTrainDataset, {
+        seed: options.seed,
+        split: "train",
+        holdoutFraction: options.holdoutFraction,
+      }),
+    );
+    return 0;
+  }
+  if (options.emitHoldoutDataset) {
+    emitDataset(
+      generateCases(options.emitHoldoutDataset, {
         seed: options.seed,
         split: "holdout",
         holdoutFraction: options.holdoutFraction,

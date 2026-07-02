@@ -7,6 +7,7 @@ import {
   oraclePlan,
   sampleFeatures,
   scorePlan,
+  toDatasetRow,
   type GeneratedCase,
   type PlanOutput,
   type TaskFeatures,
@@ -157,5 +158,42 @@ describe("memorization-vs-rule probe (the whole point)", () => {
     const passed = train.filter((c) => scorePlan(memorizer(c.userAsk), c).ok).length;
     // High train score + low holdout score = the brittleness signature.
     expect(passed / train.length).toBeGreaterThan(0.95);
+  });
+});
+
+describe("infinite training-stream dataset rows", () => {
+  it("every generated completion passes its own case scorer (never train a bad label)", () => {
+    // If any generated (prompt, completion) taught the model an answer the
+    // production scorer rejects, training would be actively harmful. Assert the
+    // whole stream is self-consistent across a large sample.
+    const cases = generateCases(1500, { seed: 314, split: "all" });
+    for (const c of cases) {
+      const row = toDatasetRow(c);
+      const plan = JSON.parse(row.completion) as PlanOutput;
+      const verdict = scorePlan(plan, c);
+      expect(verdict.ok, `${c.id}: ${verdict.reasons.join(";")}`).toBe(true);
+    }
+  });
+
+  it("emits the exact MLX-LM row shape {prompt, completion, meta}", () => {
+    const [row] = generateCases(1, { seed: 1 }).map(toDatasetRow);
+    expect(Object.keys(row).toSorted()).toEqual(["completion", "meta", "prompt"]);
+    // Prompt prefix must match the real dataset's system preamble verbatim.
+    expect(row.prompt.startsWith("You are the LCX Agent local auxiliary thought-flow model.")).toBe(
+      true,
+    );
+    expect(row.prompt).toContain("user_or_task:");
+    // Completion must be a single compact JSON line (no newlines).
+    expect(row.completion.includes("\n")).toBe(false);
+    expect(row.meta.source).toBe("generalization_generator");
+  });
+
+  it("train/holdout dataset rows stay disjoint by feature signature", () => {
+    const train = generateCases(300, { seed: 21, split: "train", holdoutFraction: 0.25 });
+    const holdout = generateCases(120, { seed: 21, split: "holdout", holdoutFraction: 0.25 });
+    const trainSigs = new Set(train.map((c) => toDatasetRow(c).meta.featureSignature));
+    for (const c of holdout) {
+      expect(trainSigs.has(toDatasetRow(c).meta.featureSignature)).toBe(false);
+    }
   });
 });
