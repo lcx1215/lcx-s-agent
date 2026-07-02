@@ -53,6 +53,11 @@ export type TaskFeatures = {
   crossMarket: boolean; // spans >= 2 distinct markets (us/a-share/index/crypto)
   oldContextPollution: boolean; // prior Lark thread that must be rejected
   redTeam: boolean; // explicit invalidation / counter-thesis requested
+  // Production-aligned semantic dimensions (only meaningful with a company/asset):
+  fundamentalsDeep: boolean; // value-investing / deep fundamental research intent
+  eventRisk: boolean; // earnings / FOMC / CPI event-driven framing
+  technicalTiming: boolean; // chart / price-volume timing framing
+  valuationModeling: boolean; // DCF / comps / financial-model build request
 };
 
 export type GeneratedCase = {
@@ -169,6 +174,44 @@ export function deriveLabel(features: TaskFeatures): DerivedLabel {
     missingData.push("red_team_invalidation_evidence");
   }
 
+  const hasAsset = features.assetClasses.length > 0;
+
+  // (i) Deep fundamentals / value-investing: anchor on company_fundamentals_value
+  //     + causal_map; require filing evidence; fundamentals-first boundary.
+  //     Mirrors value_investing_fundamental_core / single_company_fundamental_risk.
+  if (hasAsset && features.fundamentalsDeep) {
+    modules.push("company_fundamentals_value", "causal_map");
+    missingData.push("latest_company_fundamental_inputs");
+    riskBoundaries.push("no_unverified_filing_claims");
+  }
+
+  // (j) Event risk (earnings/FOMC/CPI): event_driven module + a no-same-day
+  //     boundary. Mirrors fomc_cpi_event_risk_preflight / event_gap cases.
+  if (hasAsset && features.eventRisk) {
+    modules.push("event_driven");
+    riskBoundaries.push("no_trade_advice");
+  }
+
+  // (k) Technical timing: technical_timing is a timing context, never standalone
+  //     alpha; needs price/volume inputs. Mirrors technical_timing_not_standalone_alpha.
+  if (hasAsset && features.technicalTiming) {
+    modules.push("technical_timing");
+    missingData.push("price_volume_breadth_and_technical_regime_inputs");
+    riskBoundaries.push("technical_timing_not_standalone_alpha");
+  }
+
+  // (l) Valuation modeling (DCF/comps): financial_modeling_valuation_qc +
+  //     research_artifact_qc; require model assumptions; no model-math guessing.
+  //     Mirrors financial_modeling_valuation_qc_chain.
+  if (hasAsset && features.valuationModeling) {
+    modules.push("financial_modeling_valuation_qc", "research_artifact_qc");
+    missingData.push(
+      "model_assumptions_sensitivity_and_audit_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+    );
+    riskBoundaries.push("no_model_math_guessing");
+  }
+
   // (h) Learning-intake tasks use the internalization chain; a missing source
   //     is the dominant gap and suppresses finance-module requirements.
   if (features.learningRequest) {
@@ -192,12 +235,16 @@ export function deriveLabel(features: TaskFeatures): DerivedLabel {
   }
 
   const requiredModules = uniqueSorted(modules.map(assertModule));
-  // minModuleMatches scales with task complexity but never demands 100% recall,
-  // matching the eval bank's 60-85% band — enough to punish laziness, not so
-  // strict that a correct-but-terse plan fails.
-  const minModuleMatches = Math.max(
-    features.assetClasses.length === 0 && features.learningRequest ? 2 : 1,
-    Math.floor(requiredModules.length * 0.7),
+  // The completion can carry at most PACK_CAP module ids (primary 8 +
+  // supporting 6 + required_tools 6). minModuleMatches scales with complexity
+  // (eval bank's 60-85% band) but is clamped to what a valid completion can
+  // actually satisfy, so a correctly-packed oracle plan never fails its own
+  // scorer even when requiredModules exceeds the cap.
+  const PACK_CAP = 20;
+  const floor = features.assetClasses.length === 0 && features.learningRequest ? 2 : 1;
+  const minModuleMatches = Math.min(
+    Math.min(requiredModules.length, PACK_CAP),
+    Math.max(floor, Math.floor(requiredModules.length * 0.7)),
   );
 
   return {
@@ -242,7 +289,7 @@ const ALL_ASSET_CLASSES: AssetClass[] = [
   "bond_duration",
 ];
 
-const DISTINCT_MARKETS: AssetClass[] = new Set(["us_equity", "a_share", "index", "crypto"]);
+const DISTINCT_MARKETS: Set<AssetClass> = new Set(["us_equity", "a_share", "index", "crypto"]);
 
 // Draw a random, internally-consistent feature vector.
 // Seeded Fisher-Yates shuffle: unbiased and stable, unlike sort(random).
@@ -262,16 +309,24 @@ export function sampleFeatures(rng: () => number): TaskFeatures {
   const shuffled = shuffle(rng, ALL_ASSET_CLASSES);
   const assetClasses = shuffled.slice(0, assetCount);
   const distinctMarkets = new Set(assetClasses.filter((a) => DISTINCT_MARKETS.has(a)));
+  const hasAsset = assetClasses.length > 0;
+  const hasEquity = assetClasses.includes("us_equity");
   return {
     assetClasses,
     dataSupplied: rng() < 0.35,
     learningRequest,
     sourceSupplied: learningRequest ? rng() < 0.5 : false,
-    tradeWording: assetClasses.length > 0 && rng() < 0.4,
-    portfolioContext: assetClasses.length > 0 && rng() < 0.45,
+    tradeWording: hasAsset && rng() < 0.4,
+    portfolioContext: hasAsset && rng() < 0.45,
     crossMarket: distinctMarkets.size >= 2,
     oldContextPollution: rng() < 0.3,
-    redTeam: assetClasses.length > 0 && rng() < 0.3,
+    redTeam: hasAsset && rng() < 0.3,
+    // Deep-fundamentals / valuation framing is most natural for single-name
+    // equity; event and technical framing apply to any asset.
+    fundamentalsDeep: hasEquity && rng() < 0.4,
+    eventRisk: hasAsset && rng() < 0.3,
+    technicalTiming: hasAsset && rng() < 0.35,
+    valuationModeling: hasEquity && rng() < 0.3,
   };
 }
 
@@ -288,6 +343,10 @@ export function featureSignature(features: TaskFeatures): string {
     `pc:${Number(features.portfolioContext)}`,
     `xm:${Number(features.crossMarket)}`,
     `rt:${Number(features.redTeam)}`,
+    `fd:${Number(features.fundamentalsDeep)}`,
+    `ev:${Number(features.eventRisk)}`,
+    `tt:${Number(features.technicalTiming)}`,
+    `vm:${Number(features.valuationModeling)}`,
   ].join("|");
 }
 
@@ -353,6 +412,22 @@ function renderAsk(features: TaskFeatures, rng: () => number): string {
     parts.push(
       pick(rng, ["还要一轮反方论证：如果判断错了哪些数据会证伪", "并给出证伪条件", "加上红队反证"]),
     );
+  }
+  if (features.fundamentalsDeep) {
+    parts.push(
+      pick(rng, ["，重点是基本面和内在价值", "，先看收入质量、护城河和估值", "，做深度基本面研究"]),
+    );
+  }
+  if (features.eventRisk) {
+    parts.push(
+      pick(rng, ["，财报和 FOMC 前的事件风险", "，考虑 CPI/财报事件窗口", "，事件驱动视角"]),
+    );
+  }
+  if (features.technicalTiming) {
+    parts.push(pick(rng, ["，技术面只作 timing 参考", "，结合量价择时背景", "，看技术面 timing"]));
+  }
+  if (features.valuationModeling) {
+    parts.push(pick(rng, ["，还要 DCF/comps 估值模型", "，做财务建模和估值 QC", "，建估值模型"]));
   }
   if (assets.length > 0) {
     parts.push(

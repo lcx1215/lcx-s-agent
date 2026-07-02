@@ -13,69 +13,77 @@ import {
   type TaskFeatures,
 } from "./local-brain-generalization-generator.js";
 
+// Build a TaskFeatures with all flags off, overriding only what a test cares
+// about. Keeps tests robust as new feature axes are added to the generator.
+function baseFeatures(overrides: Partial<TaskFeatures> = {}): TaskFeatures {
+  return {
+    assetClasses: [],
+    dataSupplied: false,
+    learningRequest: false,
+    sourceSupplied: false,
+    tradeWording: false,
+    portfolioContext: false,
+    crossMarket: false,
+    oldContextPollution: false,
+    redTeam: false,
+    fundamentalsDeep: false,
+    eventRisk: false,
+    technicalTiming: false,
+    valuationModeling: false,
+    ...overrides,
+  };
+}
+
 describe("deriveLabel (deterministic feature -> label rule)", () => {
   it("is a pure function: same features yield identical labels", () => {
-    const features: TaskFeatures = {
+    const features = baseFeatures({
       assetClasses: ["us_equity", "etf"],
-      dataSupplied: false,
-      learningRequest: false,
-      sourceSupplied: false,
       tradeWording: true,
       portfolioContext: true,
-      crossMarket: false,
       oldContextPollution: true,
-      redTeam: false,
-    };
+    });
     expect(deriveLabel(features)).toEqual(deriveLabel(features));
   });
 
   it("requires the data gateway + missing snapshot when no source is supplied", () => {
-    const label = deriveLabel({
-      assetClasses: ["us_equity"],
-      dataSupplied: false,
-      learningRequest: false,
-      sourceSupplied: false,
-      tradeWording: false,
-      portfolioContext: false,
-      crossMarket: false,
-      oldContextPollution: false,
-      redTeam: false,
-    });
+    const label = deriveLabel(baseFeatures({ assetClasses: ["us_equity"] }));
     expect(label.requiredModules).toContain("finance_data_gateway");
     expect(label.requiredMissingData).toContain("fresh_market_data_snapshot");
     expect(label.requiredRiskBoundaries).toContain("no_unverified_current_market_data");
   });
 
   it("converts trade wording into a research gate boundary", () => {
-    const label = deriveLabel({
-      assetClasses: ["us_equity"],
-      dataSupplied: true,
-      learningRequest: false,
-      sourceSupplied: false,
-      tradeWording: true,
-      portfolioContext: false,
-      crossMarket: false,
-      oldContextPollution: false,
-      redTeam: false,
-    });
+    const label = deriveLabel(
+      baseFeatures({ assetClasses: ["us_equity"], dataSupplied: true, tradeWording: true }),
+    );
     expect(label.requiredRiskBoundaries).toContain("no_trade_advice");
     expect(label.requiredRiskBoundaries).toContain("risk_gate_before_action_language");
   });
 
   it("forbids finance fan-out for a sourceless learning audit", () => {
-    const label = deriveLabel({
-      assetClasses: [],
-      dataSupplied: false,
-      learningRequest: true,
-      sourceSupplied: false,
-      tradeWording: false,
-      portfolioContext: false,
-      crossMarket: false,
-      oldContextPollution: false,
-      redTeam: false,
-    });
+    const label = deriveLabel(baseFeatures({ learningRequest: true }));
     expect(label.requiredMissingData).toContain("source_url_or_local_source_path");
     expect(label.forbiddenModules.length).toBeGreaterThan(0);
+  });
+
+  it("routes deep fundamentals + valuation modeling to the right modules", () => {
+    const label = deriveLabel(
+      baseFeatures({
+        assetClasses: ["us_equity"],
+        fundamentalsDeep: true,
+        valuationModeling: true,
+      }),
+    );
+    expect(label.requiredModules).toContain("company_fundamentals_value");
+    expect(label.requiredModules).toContain("financial_modeling_valuation_qc");
+    expect(label.requiredRiskBoundaries).toContain("no_model_math_guessing");
+    expect(label.requiredRiskBoundaries).toContain("no_unverified_filing_claims");
+  });
+
+  it("keeps technical timing as a non-standalone-alpha boundary", () => {
+    const label = deriveLabel(baseFeatures({ assetClasses: ["etf"], technicalTiming: true }));
+    expect(label.requiredModules).toContain("technical_timing");
+    expect(label.requiredRiskBoundaries).toContain("technical_timing_not_standalone_alpha");
   });
 
   it("only references modules from the real taxonomy", () => {
