@@ -181,12 +181,12 @@ protected memory, or claims `user-visible-observed`.
 ### Track B — compose then audit (reuses the existing model interface + audit)
 
 - `src/agents/finance-answer-composer.ts` — `composeFinanceAnswer` renders the
-  live gateway snapshot into an honest grounding block (numbers only with source
-  - timestamp; blocked/needs-review stated plainly), then calls the SAME real
-    model interface the agent already uses (Kimi / DeepSeek / MiniMax via the
-    gateway `agent` method), injected as `FinanceModelCaller` so it is
-    offline-testable. It returns a candidate answer; it is NOT the final
-    authority. Empty ask or empty model output fails closed.
+  live gateway snapshot into an honest grounding block (numbers only with their
+  source and timestamp; blocked/needs-review stated plainly), then calls the
+  SAME real model interface the agent already uses (Kimi / DeepSeek / MiniMax
+  via the gateway `agent` method), injected as `FinanceModelCaller` so it is
+  offline-testable. It returns a candidate answer; it is NOT the final
+  authority. Empty ask or empty model output fails closed.
 - The candidate is handed to the existing terminal audit
   `buildPipelineResult` (unchanged) — that gate stays the authority.
 - `src/agents/finance-answer-composer.test.ts` (6 tests) +
