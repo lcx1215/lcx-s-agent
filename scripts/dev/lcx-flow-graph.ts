@@ -1938,6 +1938,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "source-registry",
     ],
     allowedPaths: [
+      "scripts/dev/finance-data-gateway-live-smoke.ts",
       "scripts/dev/finance-data-gateway-smoke.ts",
       "src/agents/finance-data-gateway.ts",
       "src/agents/openclaw-tools.finance-article-source-registry-registration.test.ts",
