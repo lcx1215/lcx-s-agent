@@ -16,12 +16,14 @@
 // byte-compatible with datasets/thought-flow-v1/train.jsonl:
 //   node --import tsx scripts/dev/local-brain-generalization-harness.ts --emit-train-dataset 20000 > gen-train.jsonl
 //   node --import tsx scripts/dev/local-brain-generalization-harness.ts --emit-holdout-dataset 500 > gen-valid.jsonl
+// Add --with-prerequisites to interleave each hard case's simpler prerequisite.
 //
 // Each --emit-*/target JSONL row is {id, userAsk, target:{requiredModules,...}}.
 // Feed userAsk to Qwen, parse its JSON plan, then score with scorePlan().
 
 import {
   generateCases,
+  generateCasesWithPrerequisites,
   oraclePlan,
   scorePlan,
   toDatasetRow,
@@ -36,10 +38,16 @@ type Options = {
   selfCheck: boolean;
   seed: number;
   holdoutFraction: number;
+  withPrerequisites: boolean;
 };
 
 function parseArgs(argv: string[]): Options {
-  const options: Options = { selfCheck: false, seed: 1, holdoutFraction: 0.2 };
+  const options: Options = {
+    selfCheck: false,
+    seed: 1,
+    holdoutFraction: 0.2,
+    withPrerequisites: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--emit-train") {
@@ -50,6 +58,8 @@ function parseArgs(argv: string[]): Options {
       options.emitTrainDataset = Number(argv[(i += 1)]);
     } else if (arg === "--emit-holdout-dataset") {
       options.emitHoldoutDataset = Number(argv[(i += 1)]);
+    } else if (arg === "--with-prerequisites") {
+      options.withPrerequisites = true;
     } else if (arg === "--self-check") {
       options.selfCheck = true;
     } else if (arg === "--seed") {
@@ -178,9 +188,12 @@ function main(): number {
     );
     return 0;
   }
+  // With --with-prerequisites, each hard case is followed by its simpler
+  // prerequisite so the training/eval set can prove both pass.
+  const gen = options.withPrerequisites ? generateCasesWithPrerequisites : generateCases;
   if (options.emitTrainDataset) {
     emitDataset(
-      generateCases(options.emitTrainDataset, {
+      gen(options.emitTrainDataset, {
         seed: options.seed,
         split: "train",
         holdoutFraction: options.holdoutFraction,
@@ -190,7 +203,7 @@ function main(): number {
   }
   if (options.emitHoldoutDataset) {
     emitDataset(
-      generateCases(options.emitHoldoutDataset, {
+      gen(options.emitHoldoutDataset, {
         seed: options.seed,
         split: "holdout",
         holdoutFraction: options.holdoutFraction,

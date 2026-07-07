@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { generateCases, scorePlan, toDatasetRow } from "./local-brain-generalization-generator.js";
 import {
   LOCAL_BRAIN_CONTRACT_HINTS,
   LOCAL_BRAIN_MODULE_TAXONOMY,
@@ -9,7 +11,7 @@ import {
   packLocalBrainModuleFields,
 } from "./local-brain-taxonomy.js";
 
-type DistillExample = {
+export type DistillExample = {
   prompt: string;
   completion: string;
   meta: {
@@ -24,6 +26,14 @@ type CliOptions = {
   outDir: string;
   maxFiles: number;
   json: boolean;
+  // Number of infinite-stream generated cases to mix into the TRAIN pool only.
+  // 0 (default) keeps the historical receipt-only dataset unchanged.
+  mixGenerated: number;
+  // Seed for the generator so a rebuild is reproducible.
+  generatedSeed: number;
+  // Held-out fraction the generator reserves; mixed train rows are drawn from
+  // the "train" split so they never overlap the harness generalization holdout.
+  generatedHoldoutFraction: number;
 };
 
 const DEFAULT_OUT_DIR = path.join(
@@ -57,12 +67,16 @@ const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
   lark_language_handoff_receipt: "workflow_receipt",
   module_learning_plan_receipt: "plan_only_receipt",
   module_learning_review_receipt: "review_only_receipt",
+  // Synthetic rule-derived rows: high internal consistency but not a real
+  // receipt or human-curated gold. Kept as its own tier so the manifest never
+  // conflates generated volume with real workflow evidence.
+  generalization_generator: "synthetic_rule_generated",
 };
 
 function usage(): never {
   throw new Error(
     [
-      "Usage: node --import tsx scripts/dev/local-brain-distill-dataset.ts [--workspace DIR] [--out DIR] [--max-files N] [--json]",
+      "Usage: node --import tsx scripts/dev/local-brain-distill-dataset.ts [--workspace DIR] [--out DIR] [--max-files N] [--mix-generated N] [--generated-seed N] [--generated-holdout-fraction F] [--json]",
       "",
       "Builds MLX-LM prompt/completion JSONL for a local auxiliary thought-flow model.",
     ].join("\n"),
@@ -91,6 +105,9 @@ function parseArgs(args: string[]): CliOptions {
     outDir: DEFAULT_OUT_DIR,
     maxFiles: 250,
     json: false,
+    mixGenerated: 0,
+    generatedSeed: 1,
+    generatedHoldoutFraction: 0.2,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -102,6 +119,19 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--max-files") {
       options.maxFiles = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--mix-generated") {
+      options.mixGenerated = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--generated-seed") {
+      options.generatedSeed = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--generated-holdout-fraction") {
+      const parsed = Number(readValue(args, index));
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed >= 1) {
+        usage();
+      }
+      options.generatedHoldoutFraction = parsed;
       index += 1;
     } else if (arg === "--json") {
       options.json = true;
@@ -1232,7 +1262,7 @@ async function collectExamplesFromFiles(
   return examples;
 }
 
-function splitExamples(examples: DistillExample[]): {
+export function splitExamples(examples: DistillExample[]): {
   train: DistillExample[];
   valid: DistillExample[];
   test: DistillExample[];
@@ -1250,13 +1280,20 @@ function splitExamples(examples: DistillExample[]): {
         example.meta.sourceKind === "module_learning_review_receipt",
     )
     .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
+  // Synthetic generated rows are TRAIN-ONLY: keep test/valid on the real receipt
+  // distribution so eval never scores the model on its own synthetic labels, and
+  // the generalization holdout stays the sole rule-vs-memorization probe.
+  const generated = examples
+    .filter((example) => example.meta.sourceKind === "generalization_generator")
+    .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
   const sorted = examples
     .filter(
       (example) =>
         example.meta.sourceKind !== "curated_seed" &&
         example.meta.sourceKind !== "brain_distillation_review" &&
         example.meta.sourceKind !== "module_learning_plan_receipt" &&
-        example.meta.sourceKind !== "module_learning_review_receipt",
+        example.meta.sourceKind !== "module_learning_review_receipt" &&
+        example.meta.sourceKind !== "generalization_generator",
     )
     .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
   const testCount = Math.max(1, Math.floor(sorted.length * 0.1));
@@ -1264,7 +1301,9 @@ function splitExamples(examples: DistillExample[]): {
   return {
     test: sorted.slice(0, testCount),
     valid: sorted.slice(testCount, testCount + validCount),
-    train: sorted.slice(testCount + validCount).concat(reviewedBrain, moduleLearning, curated),
+    train: sorted
+      .slice(testCount + validCount)
+      .concat(reviewedBrain, moduleLearning, curated, generated),
   };
 }
 
@@ -2449,6 +2488,39 @@ function buildSeedExamples(): DistillExample[] {
   ).flat();
 }
 
+// Build DistillExample rows from the infinite generalization stream, drawn from
+// the generator's TRAIN split so they never overlap the harness holdout probe.
+// Each row is validated against its own case with scorePlan() before it is
+// admitted, so a self-inconsistent synthetic label can never enter the training
+// pool (fail closed instead of training the model toward a rejected answer).
+export function buildGeneratedExamples(
+  count: number,
+  seed: number,
+  holdoutFraction: number,
+): DistillExample[] {
+  const cases = generateCases(count, { seed, split: "train", holdoutFraction });
+  const examples: DistillExample[] = [];
+  for (const generated of cases) {
+    const row = toDatasetRow(generated);
+    const plan = JSON.parse(row.completion) as Parameters<typeof scorePlan>[0];
+    const verdict = scorePlan(plan, generated);
+    if (!verdict.ok) {
+      throw new Error(
+        `generated completion fails its own scorer for ${generated.id}: ${verdict.reasons.join(";")}`,
+      );
+    }
+    examples.push({
+      prompt: row.prompt,
+      completion: row.completion,
+      meta: {
+        sourcePath: `generalization-generator/${generated.id}.json`,
+        sourceKind: "generalization_generator",
+      },
+    });
+  }
+  return examples;
+}
+
 async function writeFileAtomic(filePath: string, content: string): Promise<void> {
   const tempPath = path.join(
     path.dirname(filePath),
@@ -2480,86 +2552,114 @@ async function writeJsonl(filePath: string, examples: DistillExample[]): Promise
   await fs.rename(tempPath, filePath);
 }
 
-const options = parseArgs(process.argv.slice(2));
-const memoryDir = path.join(options.workspaceDir, "memory");
-const roots = [
-  path.join(memoryDir, "lark-language-handoff-receipts"),
-  path.join(memoryDir, "finance-learning-apply-usage-receipts"),
-  path.join(memoryDir, "feishu-work-receipts"),
-  path.join(memoryDir, "lark-brain-distillation-candidates"),
-  path.join(memoryDir, "lark-brain-distillation-reviews"),
-  path.join(memoryDir, "module-learning-pipeline-plan-receipts"),
-  path.join(memoryDir, "module-learning-pipeline-reviews"),
-];
-const files = (await Promise.all(roots.map((root) => collectFiles(root, options.maxFiles)))).flat();
-const examples = (await collectExamplesFromFiles(files, options.workspaceDir)).concat(
-  buildSeedExamples(),
-);
+async function main(): Promise<void> {
+  const options = parseArgs(process.argv.slice(2));
+  const memoryDir = path.join(options.workspaceDir, "memory");
+  const roots = [
+    path.join(memoryDir, "lark-language-handoff-receipts"),
+    path.join(memoryDir, "finance-learning-apply-usage-receipts"),
+    path.join(memoryDir, "feishu-work-receipts"),
+    path.join(memoryDir, "lark-brain-distillation-candidates"),
+    path.join(memoryDir, "lark-brain-distillation-reviews"),
+    path.join(memoryDir, "module-learning-pipeline-plan-receipts"),
+    path.join(memoryDir, "module-learning-pipeline-reviews"),
+  ];
+  const files = (
+    await Promise.all(roots.map((root) => collectFiles(root, options.maxFiles)))
+  ).flat();
+  const generatedExamples =
+    options.mixGenerated > 0
+      ? buildGeneratedExamples(
+          options.mixGenerated,
+          options.generatedSeed,
+          options.generatedHoldoutFraction,
+        )
+      : [];
+  const examples = (await collectExamplesFromFiles(files, options.workspaceDir))
+    .concat(buildSeedExamples())
+    .concat(generatedExamples);
 
-if (examples.length < 3) {
-  throw new Error(`Not enough distillation examples: ${examples.length}`);
+  if (examples.length < 3) {
+    throw new Error(`Not enough distillation examples: ${examples.length}`);
+  }
+
+  const splits = splitExamples(examples);
+  await fs.mkdir(options.outDir, { recursive: true });
+  await writeJsonl(path.join(options.outDir, "train.jsonl"), splits.train);
+  await writeJsonl(path.join(options.outDir, "valid.jsonl"), splits.valid);
+  await writeJsonl(path.join(options.outDir, "test.jsonl"), splits.test);
+
+  const allSourceKinds = sourceKindCounts(examples);
+  const manifest = {
+    ok: true,
+    boundary: "local_auxiliary_thought_flow_only",
+    workspaceDir: options.workspaceDir,
+    outDir: options.outDir,
+    counts: {
+      sourceFiles: files.length,
+      examples: examples.length,
+      train: splits.train.length,
+      valid: splits.valid.length,
+      test: splits.test.length,
+    },
+    sourceKinds: allSourceKinds,
+    trainSourceKinds: sourceKindCounts(splits.train),
+    generatedMix: {
+      boundary: "synthetic_rule_generated_train_only",
+      requested: options.mixGenerated,
+      admitted: generatedExamples.length,
+      seed: options.generatedSeed,
+      holdoutFraction: options.generatedHoldoutFraction,
+      split: "train",
+      inTestOrValid: false,
+      note: "Infinite-stream rows are self-scored before admission and mixed into the train pool only; test/valid stay on the real receipt distribution and the generalization holdout stays the sole rule-vs-memorization probe.",
+    },
+    teacherReviewQuality: teacherReviewQualitySummary(examples),
+    sampleTrust: {
+      boundary: "dev_local_brain_sample_trust_summary_only",
+      sourceTrustTiers: SOURCE_KIND_TRUST_TIERS,
+      sourceTrustTierCounts: trustTierCounts(examples),
+      trainTrustTierCounts: trustTierCounts(splits.train),
+      highestTrustSourceKind: "curated_seed",
+      largestTeacherSourceKind: "brain_distillation_review",
+      hardEvalProofSeparateFromTrainingSamples: true,
+      teacherDistillationIsTrainingMaterialNotPromotionProof: true,
+      planAndReviewReceiptsAreWorkflowEvidenceNotAbsorptionProof: true,
+      recommendedNextHardening: [
+        "expand_curated_seed_gold_set",
+        "keep_teacher_reviews_bounded_in_train_slice",
+        "stratify_teacher_reviews_by_failure_family_and_quality",
+        "grow_hardened_eval_by_capability_family",
+      ],
+    },
+    notTouched: [
+      "external_channel_sender",
+      "provider_config",
+      "protected_repo_memory",
+      "formal_lark_routing_corpus",
+      "finance_doctrine",
+    ],
+  };
+  await writeFileAtomic(path.join(options.outDir, "manifest.json"), `${compactJson(manifest)}\n`);
+
+  if (options.json) {
+    process.stdout.write(`${compactJson(manifest)}\n`);
+  } else {
+    process.stdout.write(
+      [
+        "local brain distillation dataset built",
+        `out_dir=${options.outDir}`,
+        `examples=${examples.length}`,
+        `train=${splits.train.length}`,
+        `valid=${splits.valid.length}`,
+        `test=${splits.test.length}`,
+      ].join("\n") + "\n",
+    );
+  }
 }
 
-const splits = splitExamples(examples);
-await fs.mkdir(options.outDir, { recursive: true });
-await writeJsonl(path.join(options.outDir, "train.jsonl"), splits.train);
-await writeJsonl(path.join(options.outDir, "valid.jsonl"), splits.valid);
-await writeJsonl(path.join(options.outDir, "test.jsonl"), splits.test);
-
-const allSourceKinds = sourceKindCounts(examples);
-const manifest = {
-  ok: true,
-  boundary: "local_auxiliary_thought_flow_only",
-  workspaceDir: options.workspaceDir,
-  outDir: options.outDir,
-  counts: {
-    sourceFiles: files.length,
-    examples: examples.length,
-    train: splits.train.length,
-    valid: splits.valid.length,
-    test: splits.test.length,
-  },
-  sourceKinds: allSourceKinds,
-  trainSourceKinds: sourceKindCounts(splits.train),
-  teacherReviewQuality: teacherReviewQualitySummary(examples),
-  sampleTrust: {
-    boundary: "dev_local_brain_sample_trust_summary_only",
-    sourceTrustTiers: SOURCE_KIND_TRUST_TIERS,
-    sourceTrustTierCounts: trustTierCounts(examples),
-    trainTrustTierCounts: trustTierCounts(splits.train),
-    highestTrustSourceKind: "curated_seed",
-    largestTeacherSourceKind: "brain_distillation_review",
-    hardEvalProofSeparateFromTrainingSamples: true,
-    teacherDistillationIsTrainingMaterialNotPromotionProof: true,
-    planAndReviewReceiptsAreWorkflowEvidenceNotAbsorptionProof: true,
-    recommendedNextHardening: [
-      "expand_curated_seed_gold_set",
-      "keep_teacher_reviews_bounded_in_train_slice",
-      "stratify_teacher_reviews_by_failure_family_and_quality",
-      "grow_hardened_eval_by_capability_family",
-    ],
-  },
-  notTouched: [
-    "external_channel_sender",
-    "provider_config",
-    "protected_repo_memory",
-    "formal_lark_routing_corpus",
-    "finance_doctrine",
-  ],
-};
-await writeFileAtomic(path.join(options.outDir, "manifest.json"), `${compactJson(manifest)}\n`);
-
-if (options.json) {
-  process.stdout.write(`${compactJson(manifest)}\n`);
-} else {
-  process.stdout.write(
-    [
-      "local brain distillation dataset built",
-      `out_dir=${options.outDir}`,
-      `examples=${examples.length}`,
-      `train=${splits.train.length}`,
-      `valid=${splits.valid.length}`,
-      `test=${splits.test.length}`,
-    ].join("\n") + "\n",
-  );
+// Only run the build when invoked directly, so tests can import the exported
+// helpers without triggering a dataset write (mirrors lcx-agent-exam.ts guard).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
 }

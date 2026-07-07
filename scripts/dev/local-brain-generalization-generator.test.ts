@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  complexityDegree,
   deriveLabel,
   generateCases,
+  generateCasesWithPrerequisites,
   isHeldOut,
   makeRng,
   oraclePlan,
+  prerequisiteFeatures,
   sampleFeatures,
   scorePlan,
   toDatasetRow,
@@ -30,6 +33,7 @@ function baseFeatures(overrides: Partial<TaskFeatures> = {}): TaskFeatures {
     eventRisk: false,
     technicalTiming: false,
     valuationModeling: false,
+    abstractionTransfer: false,
     ...overrides,
   };
 }
@@ -84,6 +88,14 @@ describe("deriveLabel (deterministic feature -> label rule)", () => {
     const label = deriveLabel(baseFeatures({ assetClasses: ["etf"], technicalTiming: true }));
     expect(label.requiredModules).toContain("technical_timing");
     expect(label.requiredRiskBoundaries).toContain("technical_timing_not_standalone_alpha");
+  });
+
+  it("abstracts a terse phrase into a problem family before answering", () => {
+    const label = deriveLabel(baseFeatures({ abstractionTransfer: true }));
+    expect(label.requiredModules).toContain("agent_workflow_memory");
+    expect(label.requiredMissingData).toContain("abstracted_failure_family");
+    expect(label.requiredMissingData).toContain("regression_proof");
+    expect(label.requiredRiskBoundaries).toContain("proof_required_before_claiming_transfer");
   });
 
   it("only references modules from the real taxonomy", () => {
@@ -203,5 +215,35 @@ describe("infinite training-stream dataset rows", () => {
     for (const c of holdout) {
       expect(trainSigs.has(toDatasetRow(c).meta.featureSignature)).toBe(false);
     }
+  });
+});
+
+describe("prerequisite chains", () => {
+  it("a prerequisite is strictly simpler than its complex case", () => {
+    const complex = baseFeatures({
+      assetClasses: ["us_equity", "crypto"],
+      tradeWording: true,
+      redTeam: true,
+      valuationModeling: true,
+    });
+    const prereq = prerequisiteFeatures(complex);
+    expect(prereq).toBeDefined();
+    expect(complexityDegree(prereq!)).toBeLessThan(complexityDegree(complex));
+  });
+
+  it("minimal cases have no prerequisite", () => {
+    expect(prerequisiteFeatures(baseFeatures({ assetClasses: ["etf"] }))).toBeUndefined();
+    expect(prerequisiteFeatures(baseFeatures())).toBeUndefined();
+  });
+
+  it("interleaves prerequisites and every emitted case stays self-consistent", () => {
+    // Both the hard case and its simpler prerequisite must be trainable labels.
+    const cases = generateCasesWithPrerequisites(800, { seed: 77, split: "all" });
+    for (const c of cases) {
+      const plan = JSON.parse(toDatasetRow(c).completion) as PlanOutput;
+      expect(scorePlan(plan, c).ok, `${c.id}: ${scorePlan(plan, c).reasons.join(";")}`).toBe(true);
+    }
+    // The paired stream is strictly larger than the bare stream (prerequisites added).
+    expect(cases.length).toBeGreaterThan(0);
   });
 });

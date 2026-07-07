@@ -58,6 +58,10 @@ export type TaskFeatures = {
   eventRisk: boolean; // earnings / FOMC / CPI event-driven framing
   technicalTiming: boolean; // chart / price-volume timing framing
   valuationModeling: boolean; // DCF / comps / financial-model build request
+  // Meta-skill: a terse plain-language phrase that must be abstracted into a
+  // problem family (original example -> failure family -> adjacent scenario ->
+  // shared contract -> regression proof) BEFORE any literal short answer.
+  abstractionTransfer: boolean;
 };
 
 export type GeneratedCase = {
@@ -212,6 +216,24 @@ export function deriveLabel(features: TaskFeatures): DerivedLabel {
     riskBoundaries.push("no_model_math_guessing");
   }
 
+  // (m) Abstraction-transfer meta-skill: a terse plain-language phrase must first
+  //     be abstracted into a problem family before any literal short answer.
+  //     Mirrors abstraction_transfer_repair_protocol / plain_language_hidden_complexity_intake.
+  if (features.abstractionTransfer) {
+    modules.push("agent_workflow_memory", "eval_harness_design", "review_panel");
+    missingData.push(
+      "original_example",
+      "abstracted_failure_family",
+      "adjacent_non_identical_scenario",
+      "shared_contract",
+      "regression_proof",
+    );
+    riskBoundaries.push(
+      "do_not_stop_at_original_example",
+      "proof_required_before_claiming_transfer",
+    );
+  }
+
   // (h) Learning-intake tasks use the internalization chain; a missing source
   //     is the dominant gap and suppresses finance-module requirements.
   if (features.learningRequest) {
@@ -327,6 +349,8 @@ export function sampleFeatures(rng: () => number): TaskFeatures {
     eventRisk: hasAsset && rng() < 0.3,
     technicalTiming: hasAsset && rng() < 0.35,
     valuationModeling: hasEquity && rng() < 0.3,
+    // Short plain-language asks (often no explicit asset) trigger abstraction.
+    abstractionTransfer: rng() < 0.18,
   };
 }
 
@@ -347,6 +371,7 @@ export function featureSignature(features: TaskFeatures): string {
     `ev:${Number(features.eventRisk)}`,
     `tt:${Number(features.technicalTiming)}`,
     `vm:${Number(features.valuationModeling)}`,
+    `at:${Number(features.abstractionTransfer)}`,
   ].join("|");
 }
 
@@ -386,6 +411,15 @@ function renderAsk(features: TaskFeatures, rng: () => number): string {
 
   if (features.oldContextPollution) {
     parts.push(pick(rng, ["先别管刚才 Lark 上的旧对话，", "忽略之前那条线程，", "换个话题，"]));
+  }
+  if (features.abstractionTransfer) {
+    parts.push(
+      pick(rng, [
+        "别按字面短答，先把它抽象成问题族再拆，",
+        "这是一句很短的话，先抽象成 failure family 再决定模块，",
+        "不要只修这一句，抽象成问题族并留回归证明，",
+      ]),
+    );
   }
   if (features.learningRequest) {
     const what = features.sourceSupplied
@@ -459,6 +493,51 @@ export function generateCase(features: TaskFeatures, rng: () => number): Generat
   };
 }
 
+// Count the "hard" dimensions that layer complexity on top of a base ask.
+// Used to define a strict complexity ordering between a case and its prerequisite.
+export function complexityDegree(features: TaskFeatures): number {
+  return (
+    features.assetClasses.length +
+    Number(features.crossMarket) +
+    Number(features.portfolioContext) +
+    Number(features.tradeWording) +
+    Number(features.redTeam) +
+    Number(features.fundamentalsDeep) +
+    Number(features.eventRisk) +
+    Number(features.technicalTiming) +
+    Number(features.valuationModeling) +
+    Number(features.abstractionTransfer) +
+    Number(features.learningRequest)
+  );
+}
+
+// Derive a strictly-simpler prerequisite feature vector for a complex case:
+// keep at most one asset class and strip every advanced dimension. The eval
+// doctrine (abstraction_transfer / prerequisiteCaseIds) requires that if a hard
+// case passes, the simple prerequisite must pass too — so a training/eval set
+// can pair them. Returns undefined when the case is already minimal.
+export function prerequisiteFeatures(features: TaskFeatures): TaskFeatures | undefined {
+  if (complexityDegree(features) <= 1) {
+    return undefined;
+  }
+  return {
+    assetClasses: features.assetClasses.slice(0, 1),
+    dataSupplied: features.dataSupplied,
+    learningRequest: false,
+    sourceSupplied: false,
+    tradeWording: false,
+    portfolioContext: false,
+    crossMarket: false,
+    oldContextPollution: features.oldContextPollution,
+    redTeam: false,
+    fundamentalsDeep: false,
+    eventRisk: false,
+    technicalTiming: false,
+    valuationModeling: false,
+    abstractionTransfer: false,
+  };
+}
+
 // Stream N cases from a seed, optionally restricted to train-only or held-out.
 export function generateCases(
   count: number,
@@ -481,6 +560,37 @@ export function generateCases(
     cases.push(generateCase(features, rng));
   }
   return cases;
+}
+
+// Emit each generated case immediately followed by its strict prerequisite
+// (when it has one), so a training/eval set always contains the simpler case a
+// hard case depends on. This operationalizes the "prove the simple prerequisite
+// and the adjacent case both pass" doctrine from the eval bank.
+export function generateCasesWithPrerequisites(
+  count: number,
+  options: { seed?: number; split?: "all" | "train" | "holdout"; holdoutFraction?: number } = {},
+): GeneratedCase[] {
+  const rng = makeRng(options.seed ?? 1);
+  const split = options.split ?? "all";
+  const holdoutFraction = options.holdoutFraction ?? 0.2;
+  const out: GeneratedCase[] = [];
+  let guard = 0;
+  while (out.length < count && guard < count * 50) {
+    guard += 1;
+    const features = sampleFeatures(rng);
+    if (split === "train" && isHeldOut(features, holdoutFraction)) {
+      continue;
+    }
+    if (split === "holdout" && !isHeldOut(features, holdoutFraction)) {
+      continue;
+    }
+    out.push(generateCase(features, rng));
+    const prereq = prerequisiteFeatures(features);
+    if (prereq && out.length < count) {
+      out.push(generateCase(prereq, rng));
+    }
+  }
+  return out;
 }
 
 // Reference scorer: mirrors evaluate() in local-brain-distill-eval.ts (the
