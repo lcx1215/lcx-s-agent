@@ -435,12 +435,7 @@ function targetReviewIndexes(
 function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRecord {
   const sourcePath =
     typeof record.meta?.sourcePath === "string" ? record.meta.sourcePath : "unknown-source";
-  const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
-  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim();
-  const hasLegacySourceContext =
-    rawPrompt.includes("\nsource_kind:") || rawPrompt.includes("\nsource_summary:");
-  const prompt =
-    userAsk && hasLegacySourceContext ? buildLocalBrainTrainingPrompt({ userAsk }) : rawPrompt;
+  const { prompt, rewritten } = normalizePromptContract(record);
   return {
     ...record,
     prompt,
@@ -449,8 +444,20 @@ function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRe
       sourcePath: `${sourcePath}#train-slice-${lane}-${repeat + 1}`,
       curriculumSlice: true,
       promptContractVersion: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
-      promptContractRewritten: Boolean(userAsk && hasLegacySourceContext),
+      promptContractRewritten: rewritten,
     },
+  };
+}
+
+function normalizePromptContract(record: JsonRecord): { prompt: string; rewritten: boolean } {
+  const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim();
+  const hasLegacySourceContext =
+    rawPrompt.includes("\nsource_kind:") || rawPrompt.includes("\nsource_summary:");
+  return {
+    prompt:
+      userAsk && hasLegacySourceContext ? buildLocalBrainTrainingPrompt({ userAsk }) : rawPrompt,
+    rewritten: Boolean(userAsk && hasLegacySourceContext),
   };
 }
 
@@ -464,13 +471,39 @@ async function writeFileAtomic(filePath: string, content: string | Buffer): Prom
   await fs.rename(tempPath, filePath);
 }
 
-async function copyFileAtomic(sourcePath: string, outPath: string): Promise<number> {
-  const content = await fs.readFile(sourcePath);
-  await writeFileAtomic(outPath, content);
-  return content
-    .toString("utf8")
-    .split(/\r?\n/u)
-    .filter((line) => line.trim()).length;
+async function rewritePromptContractFile(
+  sourcePath: string,
+  outPath: string,
+): Promise<{ rows: number; rewritten: number; legacyUnrewritten: number }> {
+  const lines: string[] = [];
+  let rows = 0;
+  let rewritten = 0;
+  let legacyUnrewritten = 0;
+  for await (const record of readJsonl(sourcePath)) {
+    const normalized = normalizePromptContract(record);
+    const prompt = normalized.prompt;
+    const hasLegacySourceContext =
+      prompt.includes("\nsource_summary:") || prompt.includes("\nsource_kind:");
+    if (normalized.rewritten) {
+      rewritten += 1;
+    } else if (hasLegacySourceContext) {
+      legacyUnrewritten += 1;
+    }
+    lines.push(
+      JSON.stringify({
+        ...record,
+        prompt,
+        meta: {
+          ...record.meta,
+          promptContractVersion: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+          promptContractRewritten: normalized.rewritten,
+        },
+      }),
+    );
+    rows += 1;
+  }
+  await writeFileAtomic(outPath, lines.length > 0 ? `${lines.join("\n")}\n` : "");
+  return { rows, rewritten, legacyUnrewritten };
 }
 
 async function buildTrainSlice(options: CliOptions): Promise<Record<string, unknown>> {
@@ -551,11 +584,11 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   }
   await fs.rename(tempTrainOut, trainOut);
 
-  const validCopied = await copyFileAtomic(
+  const validPromptContract = await rewritePromptContractFile(
     path.join(options.dataDir, "valid.jsonl"),
     path.join(options.outDir, "valid.jsonl"),
   );
-  const testCopied = await copyFileAtomic(
+  const testPromptContract = await rewritePromptContractFile(
     path.join(options.dataDir, "test.jsonl"),
     path.join(options.outDir, "test.jsonl"),
   );
@@ -585,8 +618,8 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       curatedWritten,
       nonReviewWritten,
       trainWritten,
-      validCopied,
-      testCopied,
+      validCopied: validPromptContract.rows,
+      testCopied: testPromptContract.rows,
     },
     repetition: {
       boundary: "exact_prompt_completion_pair_repetition_only",
@@ -601,6 +634,10 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       sourceKindAndSourceSummaryInModelPrompt: promptContractLegacyUnrewritten === 0,
       rowsRewrittenFromLegacyPrompt: promptContractRewritten,
       legacyRowsStillContainingSourceContext: promptContractLegacyUnrewritten,
+      validRowsRewrittenFromLegacyPrompt: validPromptContract.rewritten,
+      validLegacyRowsStillContainingSourceContext: validPromptContract.legacyUnrewritten,
+      testRowsRewrittenFromLegacyPrompt: testPromptContract.rewritten,
+      testLegacyRowsStillContainingSourceContext: testPromptContract.legacyUnrewritten,
       note: "Legacy rows with a user_or_task line are rebuilt through the shared contract; rows without recoverable user text remain visible for manual review rather than being guessed.",
     },
     sourceKinds: counts.sourceKinds,

@@ -211,8 +211,8 @@ describe("local brain distill train slice", () => {
       meta: { sourceKind: "brain_distillation_review", sourcePath: "legacy" },
     };
     await fs.writeFile(path.join(dataDir, "train.jsonl"), `${JSON.stringify(legacy)}\n`, "utf8");
-    await fs.writeFile(path.join(dataDir, "valid.jsonl"), line("curated_seed", "valid"), "utf8");
-    await fs.writeFile(path.join(dataDir, "test.jsonl"), line("curated_seed", "test"), "utf8");
+    await fs.writeFile(path.join(dataDir, "valid.jsonl"), `${JSON.stringify(legacy)}\n`, "utf8");
+    await fs.writeFile(path.join(dataDir, "test.jsonl"), `${JSON.stringify(legacy)}\n`, "utf8");
 
     const { stdout } = await execFileAsync(
       process.execPath,
@@ -234,15 +234,24 @@ describe("local brain distill train slice", () => {
       promptContract: {
         sourceKindAndSourceSummaryInModelPrompt: boolean;
         rowsRewrittenFromLegacyPrompt: number;
+        validRowsRewrittenFromLegacyPrompt: number;
+        testRowsRewrittenFromLegacyPrompt: number;
       };
     };
     expect(manifest.promptContract).toMatchObject({
       sourceKindAndSourceSummaryInModelPrompt: true,
       rowsRewrittenFromLegacyPrompt: 1,
+      validRowsRewrittenFromLegacyPrompt: 1,
+      testRowsRewrittenFromLegacyPrompt: 1,
     });
     const rows = await parseJsonl(path.join(outDir, "train.jsonl"));
     expect(rows[0]?.prompt).not.toContain("source_summary:");
     expect(rows[0]?.prompt).toContain("user_or_task: 研究 <withheld_contract_id>");
     expect(rows[0]?.meta?.promptContractRewritten).toBe(true);
+    for (const split of ["valid", "test"]) {
+      const splitRows = await parseJsonl(path.join(outDir, `${split}.jsonl`));
+      expect(splitRows[0]?.prompt).not.toContain("source_summary:");
+      expect(splitRows[0]?.meta?.promptContractRewritten).toBe(true);
+    }
   });
 });
