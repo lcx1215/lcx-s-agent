@@ -346,6 +346,37 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("hardens Mag7 concentration prompts with breadth, valuation, index, and portfolio inputs", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "纳指和标普如果越来越集中在 Mag7，我持有 QQQ 和 NVDA 时，怎么拆指数权重、市场宽度、估值、组合暴露和反方论证？",
+      },
+    );
+
+    expect(plan.task_family).toBe("cross_market_finance_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "us_equity_market_structure",
+        "global_index_regime",
+        "company_fundamentals_value",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "us_equity_breadth_earnings_and_valuation_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining(["research_only", "no_trade_advice"]),
+    );
+  });
+
   it("canonicalizes weak high-leverage crypto boundary variants", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {

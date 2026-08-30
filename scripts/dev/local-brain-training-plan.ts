@@ -117,6 +117,7 @@ type QwenCapabilityConsolidationSnapshot = {
     accelerationMode: "targeted_eval_then_full_hardened_eval";
     targetedEvalFirstCaseIds: string[];
     targetedEvalCommand?: string;
+    targetedEvalReceiptPath: string;
     fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean";
     notPromotionProof: true;
     requiredNextStep: string;
@@ -856,6 +857,11 @@ function qwenCapabilityConsolidationSnapshot(params: {
     );
   }
   const targetedEvalFirstCaseIds = latestBlockedHarvestCaseIds.slice(0, 8);
+  const targetedEvalReceiptPath = path.join(
+    DEFAULT_WORKSPACE_DIR,
+    "state",
+    "lcx-targeted-challenger-eval-receipt-latest.json",
+  );
   const targetedEvalCommand =
     latestBlockedCandidate?.adapterPath && targetedEvalFirstCaseIds.length > 0
       ? [
@@ -863,7 +869,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
           `--adapter '${latestBlockedCandidate.adapterPath}'`,
           "--hardened",
           `--case-id ${targetedEvalFirstCaseIds.join(",")}`,
-          "--summary-only --json --timeout-ms 180000",
+          `--summary-only --json --timeout-ms 180000 --receipt ${quoteShellArg(targetedEvalReceiptPath)}`,
         ].join(" ")
       : undefined;
   const blockedCapabilityFamilies = [...blockedCaseCounts.entries()]
@@ -965,6 +971,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
       accelerationMode: "targeted_eval_then_full_hardened_eval",
       targetedEvalFirstCaseIds,
       targetedEvalCommand,
+      targetedEvalReceiptPath,
       fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean",
       notPromotionProof: true,
       requiredNextStep:

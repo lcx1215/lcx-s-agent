@@ -795,11 +795,22 @@ function renderText(details: Record<string, unknown>): string {
   return `${lines.join("\n")}\n`;
 }
 
-function targetedEvalCommand(caseIds: string[], regressionCaseIds: string[]): string {
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function targetedEvalCommand(
+  adapterPath: string | undefined,
+  caseIds: string[],
+  regressionCaseIds: string[],
+  receiptPath: string,
+): string {
+  const adapterArg = adapterPath ? `--adapter ${shellQuote(adapterPath)}` : "--contract-only";
+  const receiptArg = `--receipt ${shellQuote(receiptPath)}`;
   if (caseIds.length > 0) {
-    return `node --import tsx scripts/dev/local-brain-distill-eval.ts --adapter latest-passing --hardened --case-id ${caseIds.join(",")} --summary-only --json --timeout-ms 180000`;
+    return `node --import tsx scripts/dev/local-brain-distill-eval.ts ${adapterArg} --hardened --case-id ${caseIds.join(",")} --summary-only --json --timeout-ms 180000 ${receiptArg}`;
   }
-  return `node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only --case-id ${regressionCaseIds.join(",")} --json`;
+  return `node --import tsx scripts/dev/local-brain-distill-eval.ts ${adapterArg} --contract-only --case-id ${regressionCaseIds.join(",")} --json ${receiptArg}`;
 }
 
 function buildInstantPreflight(params: {
@@ -841,10 +852,17 @@ function buildInstantPreflight(params: {
 
 function buildProofChain(params: {
   truth: LatestAutopilotTruth;
+  adapterPath?: string;
   trainCases: string[];
   regressionCases: string[];
+  receiptPath: string;
 }) {
-  const targetedCommand = targetedEvalCommand(params.trainCases, params.regressionCases);
+  const targetedCommand = targetedEvalCommand(
+    params.adapterPath,
+    params.trainCases,
+    params.regressionCases,
+    params.receiptPath,
+  );
   return {
     boundary: "dev_skillopt_proof_chain_only",
     immediateUse: {
@@ -860,6 +878,8 @@ function buildProofChain(params: {
           ? "blocked_by_active_training_or_eval"
           : "ready_when_idle",
       command: targetedCommand,
+      adapterPath: params.adapterPath,
+      receiptPath: params.receiptPath,
       acceptanceGate: "targeted cases improve and regression cases stay clean",
     },
     modelWeightAbsorption: {
@@ -977,8 +997,10 @@ async function main() {
   );
   const proofChain = buildProofChain({
     truth,
+    adapterPath: truth.latestCandidateAdapter ?? truth.selectedCleanAdapter,
     trainCases: unionTrainCases,
     regressionCases: unionRegressionCases,
+    receiptPath: path.join(workspaceDir, "state", "lcx-skillopt-targeted-eval-receipt-latest.json"),
   });
   const instantPreflight = buildInstantPreflight({
     options,

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
@@ -16,6 +16,7 @@ import {
 type CliOptions = {
   model: string;
   adapterPath?: string;
+  receiptPath?: string;
   pythonBin: string;
   json: boolean;
   noAdapter: boolean;
@@ -189,6 +190,7 @@ function usage(): never {
       "Runs one local inference acceptance check for the auxiliary thought-flow adapter.",
       "Use --adapter latest-passing to resolve the current adapter through minimax-brain-training-guard; this may fall back to the best-evidence training seed and reports that status separately.",
       "Use --contract-only for a fast hardened contract check that does not start MLX.",
+      "Use --receipt PATH to explicitly write a compact case-level receipt; it never proves promotion readiness.",
     ].join("\n"),
   );
 }
@@ -225,6 +227,9 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
     } else if (arg === "--adapter") {
       options.adapterPath = readValue(args, index);
+      index += 1;
+    } else if (arg === "--receipt") {
+      options.receiptPath = path.resolve(readValue(args, index));
       index += 1;
     } else if (arg === "--no-adapter") {
       options.noAdapter = true;
@@ -4832,6 +4837,51 @@ function formatProgressError(error: unknown): string {
   return String(error).replace(/\s+/gu, " ").slice(0, 240);
 }
 
+function formatReceiptError(error: unknown): string {
+  const message = String(error).split(/\r?\n/u, 1)[0]?.trim() ?? String(error);
+  const redacted = message.replace(
+    /(?:model output|command output|stdout|stderr):.*/iu,
+    (match) => match.split(":", 1)[0] + ": <omitted>",
+  );
+  return redacted.replace(/\s+/gu, " ").slice(0, 240);
+}
+
+type EvalReceiptCaseInput = {
+  id: string;
+  acceptance: ReturnType<typeof evaluate>;
+  parseRecovered?: boolean;
+  parseError?: unknown;
+};
+
+function compactEvalReceiptCase(entry: EvalReceiptCaseInput) {
+  const parseRecovered = entry.parseRecovered === true;
+  const parseError =
+    typeof entry.parseError === "string" && entry.parseError.length > 0
+      ? formatReceiptError(entry.parseError)
+      : undefined;
+  const status = parseRecovered
+    ? "parse_recovered"
+    : parseError
+      ? "parse_error"
+      : entry.acceptance.ok
+        ? "passed"
+        : "failed";
+  return {
+    id: entry.id,
+    status,
+    acceptanceOk: entry.acceptance.ok,
+    parseRecovered: parseRecovered || undefined,
+    parseError,
+    diagnostics: {
+      missingFinanceModules: entry.acceptance.missingFinanceModules,
+      missingRequiredData: entry.acceptance.missingRequiredData,
+      missingRequiredRiskBoundaries: entry.acceptance.missingRequiredRiskBoundaries,
+      boundaryOk: entry.acceptance.boundaryOk,
+      oldContextRejected: entry.acceptance.oldContextRejected,
+    },
+  };
+}
+
 const options = parseArgs(process.argv.slice(2));
 const adapterResolution = await resolveEvalAdapter(options);
 const resolvedOptions: CliOptions = {
@@ -4879,8 +4929,8 @@ for (const evalCase of evalCases) {
       rawOutput,
       parsed,
       acceptance: evaluate(parsed, evalCase),
-      parseRecovered: generateResult.parseRecovered || undefined,
-      parseError: generateResult.parseError,
+      ...(generateResult.parseRecovered ? { parseRecovered: true } : {}),
+      ...(generateResult.parseError ? { parseError: generateResult.parseError } : {}),
     });
     if (options.progress) {
       process.stderr.write(
@@ -4974,7 +5024,10 @@ const result = {
     passRate: Number((passedCases.length / caseResults.length).toFixed(3)),
     failedCaseIds: failedCases.map((entry) => entry.id),
     parseErrorCaseIds: failedCases
-      .filter((entry) => "parseError" in entry)
+      .filter((entry) => {
+        const parseError = "parseError" in entry ? entry.parseError : undefined;
+        return typeof parseError === "string" && parseError.length > 0;
+      })
       .map((entry) => entry.id),
     parseRecoveredCaseIds: parseRecoveredCases.map((entry) => entry.id),
     failedCaseDiagnostics,
@@ -4983,7 +5036,60 @@ const result = {
   },
   evalRegistry: buildEvalRegistrySummary(),
   cases: options.summaryOnly ? undefined : caseResults,
+  receiptPath: options.receiptPath ?? null,
 };
+
+if (options.receiptPath) {
+  const receiptCases = (caseResults as EvalReceiptCaseInput[]).map(compactEvalReceiptCase);
+  const receiptSummary = {
+    ...result.summary,
+    failedCaseDiagnostics: receiptCases
+      .filter((entry) => entry.status !== "passed")
+      .map((entry) => ({
+        id: entry.id,
+        status: entry.status,
+        acceptanceOk: entry.acceptanceOk,
+        parseRecovered: entry.parseRecovered,
+        parseError: entry.parseError,
+        ...entry.diagnostics,
+      })),
+  };
+  const receipt = {
+    schemaVersion: "lcx_local_brain_eval_receipt_v1",
+    boundary: "dev_local_brain_eval_receipt_only",
+    generatedAt: new Date().toISOString(),
+    requested: {
+      model: options.model,
+      adapter: options.adapterPath ?? null,
+      caseIds: options.caseIds,
+      hardened: options.hardened,
+      contractOnly: options.contractOnly,
+      timeoutMs: options.timeoutMs,
+    },
+    resolved: {
+      adapterPath: resolvedOptions.adapterPath ?? null,
+      adapterSelectionStatus: adapterResolution.status ?? null,
+      selectedAdapter: adapterResolution.selectedAdapter ?? null,
+      trainingSeedAdapter: adapterResolution.trainingSeedAdapter ?? null,
+    },
+    hierarchy: result.hierarchy,
+    summary: receiptSummary,
+    caseReceipts: receiptCases,
+    evalRegistry: result.evalRegistry,
+    proof: {
+      subsetEval: true,
+      promotionReady: result.summary.promotionReady,
+      promotionProof: false,
+      modelWeightAbsorbed: false,
+      externalChannelApplied: false,
+      liveTouched: false,
+      providerConfigTouched: false,
+      protectedMemoryTouched: false,
+    },
+  };
+  mkdirSync(path.dirname(options.receiptPath), { recursive: true });
+  writeFileSync(options.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+}
 
 process.stdout.write(
   options.json

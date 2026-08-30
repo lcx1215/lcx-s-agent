@@ -586,6 +586,29 @@ describe("minimax brain training guard adapter resolution", () => {
     });
   });
 
+  it("invalidates a passing adapter when a later hardened eval times out", async () => {
+    const fixture = await makeGuardFixture((adapterPrefix) => {
+      const adapter = `${adapterPrefix}-2026-05-11T19-59-45-470Z-r2`;
+      return [
+        passingEval("2026-05-11T20:12:34.085Z", "stable_hardened_eval", adapter, 72),
+        {
+          at: "2026-05-12T03:34:35.887Z",
+          event: "step_timeout",
+          name: "stable_hardened_eval",
+          result: {
+            adapterPath: adapter,
+            timeoutReason: "idle_timeout",
+            summary: { passed: 0, total: 0, failedCaseIds: [] },
+          },
+        },
+      ];
+    });
+
+    await expect(resolveCurrentAdapter(fixture)).rejects.toMatchObject({
+      stderr: expect.stringContaining("no promotion-ready adapter found"),
+    });
+  });
+
   it("reports source-stable dataset shrink in latest-passing resolution", async () => {
     const fixture = await makeGuardFixture((adapterPrefix) => {
       const adapter = `${adapterPrefix}-2026-05-11T19-59-45-470Z-r2`;

@@ -770,7 +770,11 @@ function evalSummaryFromPayload(payload: Record<string, unknown>):
 }
 
 function evalVerdictFromPayload(payload: Record<string, unknown>): EvalVerdict | undefined {
-  if (payload.event !== "step_ok" && payload.event !== "step_non_passing") {
+  if (
+    payload.event !== "step_ok" &&
+    payload.event !== "step_non_passing" &&
+    payload.event !== "step_timeout"
+  ) {
     return undefined;
   }
   if (
@@ -783,6 +787,36 @@ function evalVerdictFromPayload(payload: Record<string, unknown>): EvalVerdict |
   const adapterPath = adapterPathFromEvalEvent(payload);
   if (!adapterPath) {
     return undefined;
+  }
+  if (payload.event === "step_timeout") {
+    const result = payload.result;
+    const summary =
+      result && typeof result === "object" ? (result as { summary?: unknown }).summary : undefined;
+    const total =
+      summary &&
+      typeof summary === "object" &&
+      typeof (summary as { total?: unknown }).total === "number"
+        ? (summary as { total: number }).total
+        : 0;
+    const failedCaseIds =
+      summary &&
+      typeof summary === "object" &&
+      Array.isArray((summary as { failedCaseIds?: unknown }).failedCaseIds)
+        ? (summary as { failedCaseIds: unknown[] }).failedCaseIds.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
+        : [];
+    return {
+      at: typeof payload.at === "string" ? payload.at : "",
+      adapterPath,
+      promotionReady: false,
+      passed: 0,
+      total,
+      passRate: 0,
+      failedCount: Math.max(total, failedCaseIds.length),
+      parseRecoveredCount: 0,
+      source: `${String(payload.name)}_timeout`,
+    };
   }
   const summary = evalSummaryFromPayload({ ...payload, event: "step_ok" });
   if (!summary) {

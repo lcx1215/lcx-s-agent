@@ -1046,6 +1046,92 @@ describe("local-brain-distill-eval", () => {
     expect(targetCase?.parseError).toContain("timed out after 2500ms");
   });
 
+  it("distinguishes a valid contract failure from a parse error and writes a compact receipt", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-receipt-"));
+    const fakePython = path.join(tempDir, "python");
+    const receiptPath = path.join(tempDir, "targeted-eval-receipt.json");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "console.log(JSON.stringify({",
+        "task_family: 'cross_market_finance_research_planning',",
+        "primary_modules: ['us_equity_market_structure','global_index_regime','company_fundamentals_value','quant_math','portfolio_risk_gates','causal_map'],",
+        "supporting_modules: [],",
+        "required_tools: [],",
+        "missing_data: ['fresh_market_data_snapshot'],",
+        "risk_boundaries: ['research_only'],",
+        "next_step: 'request_missing_inputs',",
+        "rejected_context: ['old_lark_conversation_history']",
+        "}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-eval.ts",
+        "--no-adapter",
+        "--python",
+        fakePython,
+        "--case-id",
+        "index_concentration_mag7_portfolio_risk",
+        "--summary-only",
+        "--json",
+        "--receipt",
+        receiptPath,
+      ],
+      {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+        env: { ...process.env, LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0" },
+      },
+    );
+
+    expect(result.status).toBe(1);
+    const payload = JSON.parse(result.stdout) as {
+      summary: {
+        failedCaseIds: string[];
+        parseErrorCaseIds: string[];
+        parseRecoveredCaseIds: string[];
+      };
+      cases?: unknown;
+      receiptPath: string;
+    };
+    expect(payload.summary).toMatchObject({
+      parseErrorCaseIds: [],
+      parseRecoveredCaseIds: [],
+    });
+    expect(payload.summary.failedCaseIds).toContain("index_concentration_mag7_portfolio_risk");
+    expect(payload.cases).toBeUndefined();
+    expect(payload.receiptPath).toBe(receiptPath);
+
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as {
+      schemaVersion: string;
+      boundary: string;
+      summary: { parseErrorCaseIds: string[] };
+      caseReceipts: Array<{ id: string; status: string; acceptanceOk: boolean }>;
+    };
+    expect(receipt).toMatchObject({
+      schemaVersion: "lcx_local_brain_eval_receipt_v1",
+      boundary: "dev_local_brain_eval_receipt_only",
+      summary: { parseErrorCaseIds: [] },
+    });
+    expect(receipt.caseReceipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "index_concentration_mag7_portfolio_risk",
+          status: "failed",
+          acceptanceOk: false,
+        }),
+      ]),
+    );
+    expect(JSON.stringify(receipt)).not.toContain("rawOutput");
+  });
+
   it("retries empty MLX timeouts with a compact prompt without allowing promotion", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-empty-timeout-"));
     const fakePython = path.join(tempDir, "python");

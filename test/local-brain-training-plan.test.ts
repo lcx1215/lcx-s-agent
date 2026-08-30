@@ -538,6 +538,12 @@ describe("local-brain-training-plan", () => {
     expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
       "--case-id index_concentration_mag7_portfolio_risk,short_lark_commodity_scope_01",
     );
+    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
+      "--adapter '/tmp/adapter-r8'",
+    );
+    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
+      "--receipt",
+    );
     expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).not.toContain(
       "stable_hardened_eval_idle_timeout",
     );
