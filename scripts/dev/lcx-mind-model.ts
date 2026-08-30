@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildGlobalEvidenceProjection } from "../../src/shared/global-evidence-projection.ts";
 
 type MindModelSurfaceGroup = "head" | "workflow" | "proof" | "boundary";
 
@@ -68,6 +69,7 @@ const HEAD_SURFACES = [
 ] as const;
 
 const WORKFLOW_SURFACES = [
+  "src/shared/global-evidence-projection.ts",
   "scripts/dev/lcx-mind-model.ts",
   "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-governance-autopilot.ts",
@@ -110,6 +112,7 @@ const WORKFLOW_SURFACES = [
 
 const PROOF_SURFACES = [
   ...WORKFLOW_SURFACES,
+  "src/shared/global-evidence-projection.test.ts",
   "test/lcx-context-recovery-exam.test.ts",
   "test/lcx-flow-graph.test.ts",
   "test/lcx-governance-autopilot.test.ts",
@@ -444,7 +447,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     proofTerms: ["notTouched", "separationContract", "protectedMemoryUntouched"],
     boundaryTerms: ["memory/current-research-line.md", "memory/unified-risk-view.md"],
     nextAction:
-      "Treat boundary flags as hard evidence; never upgrade a dev receipt into live or memory truth.",
+      "Treat boundary flags as hard evidence; never upgrade a core receipt into external-channel or memory truth.",
   },
   {
     id: "mind_model_self_supervision",
@@ -1060,6 +1063,23 @@ async function main() {
   const invariants = MIND_MODEL_INVARIANTS.map((invariant) =>
     invariantVerdict({ invariant, surfaceText }),
   );
+  const globalEvidenceProjection = buildGlobalEvidenceProjection({
+    generatedAt: new Date().toISOString(),
+    sourceOwners: ["lcx-mind-model"],
+    lanes,
+    invariants,
+    delivery: {
+      adapterId: null,
+      state: "unknown",
+      evidenceRefs: [],
+    },
+    boundaries: {
+      externalSender: "not_touched_by_projection",
+      training: "not_touched_by_projection",
+      providerConfig: "not_touched_by_projection",
+      protectedMemory: "not_touched_by_projection",
+    },
+  });
   const failed = lanes.filter((lane) => !lane.ok);
   const failedInvariants = invariants.filter((invariant) => !invariant.ok);
   const result = {
@@ -1079,6 +1099,7 @@ async function main() {
     },
     lanes,
     invariants,
+    globalEvidenceProjection,
     missingSurfaceFiles: missingFiles,
     actionableFailures: [
       ...missingFiles.map((file) => `surface_missing: ${file}`),

@@ -43,6 +43,7 @@ const TAIL_SURFACE_FILES = [
   "scripts/dev/lcx-system-doctor.ts",
   "scripts/dev/lcx-agent-exam.ts",
   "scripts/dev/lcx-mind-model.ts",
+  "src/shared/global-evidence-projection.ts",
   "scripts/dev/lcx-flow-graph.ts",
   "scripts/dev/lcx-context-recovery-exam.ts",
   "scripts/dev/lcx-self-repair-hands.ts",
@@ -186,13 +187,20 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
   },
   {
     id: "mind_model_boundary",
-    headTerms: ["LCX Agent Mind Model", "god-view", "workflow closure"],
+    headTerms: [
+      "LCX Agent Mind Model",
+      "god-view",
+      "workflow closure",
+      "Global Evidence Projection",
+    ],
     tailTerms: [
       "lcx-mind-model",
       "mind-model-consistency",
       "lcx-context-recovery-exam",
       "compressedContextRecovered",
       "MIND_MODEL_LANES",
+      "globalEvidenceProjection",
+      "GLOBAL_EVIDENCE_PROJECTION_VERSION",
     ],
   },
   {

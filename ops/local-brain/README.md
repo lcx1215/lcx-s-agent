@@ -68,6 +68,18 @@ stay visible, core/external-channel/user-visible wording must stay separate,
 content claims need source or unverified flags, and stored sources must not be
 treated as learned module capability.
 
+The same command exposes a read-only `Global Evidence Projection` so Codex,
+LCX, local automation, and every message adapter can consume one neutral
+shape. The projection contains `Capability`, `Evidence`, `Action`, and
+`Delivery` objects. It is not another truth owner: existing owner receipts
+remain authoritative. `Delivery.adapterId` is always present and is `null`
+until a delivery proof is attached; the projection does not send messages,
+start training, change providers, or write protected memory.
+Its boundary statuses are scoped to `projection_only`, so a
+`not_touched_by_projection` value must not be read as a global runtime absence.
+Only an independent owner proof with receipt id, timestamp, and matching
+visibility can move Delivery from `unknown` to `bound` or `observed`.
+
 The LCX Agent Flow Graph is the waterflow exam. It verifies that each task
 family has a start node, terminal node, required modules, filter valve list,
 receipts, and bounded feedback edges. It is designed to catch wrong-flow before

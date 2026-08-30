@@ -48,6 +48,27 @@ describe("LCX mind model god-view architecture check", () => {
       liveTouched: boolean;
       providerConfigTouched: boolean;
       protectedMemoryTouched: boolean;
+      globalEvidenceProjection: {
+        contractVersion: string;
+        mode: string;
+        capabilities: Array<{
+          id: string;
+          coverage: string;
+          maturity: string;
+          adaptability: string;
+        }>;
+        delivery: {
+          adapterId: string | null;
+          state: string;
+        };
+        boundaries: {
+          scope: string;
+          externalSender: string;
+          training: string;
+          providerConfig: string;
+          protectedMemory: string;
+        };
+      };
     };
 
     expect(payload).toEqual(
@@ -64,6 +85,37 @@ describe("LCX mind model god-view architecture check", () => {
     expect(payload.summary.invariantTotal).toBeGreaterThanOrEqual(8);
     expect(payload.summary.total).toBe(payload.summary.laneTotal + payload.summary.invariantTotal);
     expect(payload.missingSurfaceFiles).toEqual([]);
+    expect(payload.globalEvidenceProjection).toEqual(
+      expect.objectContaining({
+        contractVersion: "global_evidence_projection_v1",
+        mode: "read_only_shadow",
+        delivery: { adapterId: null, state: "unknown", evidenceRefs: [] },
+        boundaries: {
+          scope: "projection_only",
+          externalSender: "not_touched_by_projection",
+          training: "not_touched_by_projection",
+          providerConfig: "not_touched_by_projection",
+          protectedMemory: "not_touched_by_projection",
+        },
+      }),
+    );
+    expect(payload.globalEvidenceProjection.capabilities).toHaveLength(payload.summary.laneTotal);
+    expect(payload.globalEvidenceProjection.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "mind_model_self_supervision",
+          coverage: "complete",
+          maturity: "structural",
+          adaptability: "adapter_neutral",
+        }),
+        expect.objectContaining({
+          id: "external_delivery_boundary",
+          coverage: "complete",
+          maturity: "structural",
+          adaptability: "adapter_neutral",
+        }),
+      ]),
+    );
     expect(payload.summary.masterLanes).toEqual(
       expect.arrayContaining([
         "global_doctrine_and_runbook",

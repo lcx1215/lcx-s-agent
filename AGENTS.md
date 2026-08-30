@@ -503,6 +503,19 @@ trading authority. It is a local-only architecture audit that checks whether eac
 main lane still has four things at once: macro rule, workflow entrypoint, proof
 surface, and boundary flag.
 
+The mind model also emits a read-only `Global Evidence Projection` for Codex,
+LCX, local automation, and every message adapter. It is a shared projection,
+not a new owner, memory store, model, provider, training process, or sender.
+Its neutral objects are `Capability` (coverage and maturity), `Evidence`
+(source and status), `Action` (the next bounded step), and `Delivery` (proof
+state plus an opaque `adapterId`). The `adapterId` field is always present and
+is `null` when no delivery proof is attached; no adapter defines the underlying
+fact. Boundary statuses are explicitly scoped to `projection_only` and use
+`unknown`, `not_touched_by_projection`, or `touched`; they are not global
+claims that a runtime action is absent. A `bound` or `observed` Delivery needs
+an independent owner proof with receipt id, timestamp, and matching visibility;
+structural mind-model evidence cannot promote itself.
+
 - Run the mind model when a change could affect more than one loop, when a
   future agent may only see one file, or when the user asks for macro/micro
   alignment:
