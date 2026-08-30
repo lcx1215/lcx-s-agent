@@ -159,6 +159,7 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
     reason:
       "the request is about one-system worktree/runtime drift, sidecar sync, or external-channel migration boundary checks",
     patterns: [
+      // Keep legacy input aliases for routing old requests; current architecture remains one local system/factory.
       /dev.{0,8}live/i,
       /live.{0,12}sidecar/i,
       /runtime.{0,8}drift/i,
