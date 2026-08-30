@@ -542,7 +542,7 @@ process.stdout.write(
   `${JSON.stringify(
     {
       ok: allChecksPassed,
-      scope: "dev_full_system_language_brain_analysis_memory_loop",
+      scope: "local_full_system_language_brain_analysis_memory_loop",
       checks: results,
       skippedCheckCount: skipCount,
       liveTouched: false,

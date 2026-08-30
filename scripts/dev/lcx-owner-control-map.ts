@@ -348,7 +348,7 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
   return {
     ok: true,
     kind: "lcx-owner-control-map",
-    boundary: "dev_owner_control_map_only",
+    boundary: "local_owner_control_map_only",
     checkedAt: input.checkedAt,
     summary: {
       totalItems: items.length,

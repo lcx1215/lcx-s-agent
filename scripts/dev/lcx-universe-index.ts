@@ -316,7 +316,7 @@ async function main() {
   const unmatchedChangedFiles = arrayValue(changeImpact.unmatchedFiles);
   const result = {
     ok: changeImpact.ok && unmatchedChangedFiles.length === 0,
-    boundary: "dev_universe_index_only",
+    boundary: "local_universe_index_only",
     checkedAt: new Date().toISOString(),
     repoRoot,
     latestStatePath: UNIVERSE_INDEX_LATEST_PATH,

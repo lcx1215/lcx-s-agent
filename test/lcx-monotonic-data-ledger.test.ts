@@ -126,7 +126,7 @@ describe("LCX monotonic data ledger", () => {
 
     expect(payload).toMatchObject({
       ok: true,
-      boundary: "dev_monotonic_data_ledger_only",
+      boundary: "local_monotonic_data_ledger_only",
       appendDecision: "append_latest_entry",
       guaranteeLevel: "data_accounting_not_model_capability_guarantee",
       dataset: {

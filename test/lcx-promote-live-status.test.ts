@@ -239,7 +239,7 @@ describe("lcx-promote-live status", () => {
     ).toBe(false);
   });
 
-  it("shows when current dev commit differs from the last live promotion", () => {
+  it("shows when current canonical commit differs from the last live promotion", () => {
     const sourceRoot = tempDir("promote-live-source");
     const targetRoot = tempDir("promote-live-target");
     git(sourceRoot, ["init", "--quiet"]);
@@ -260,24 +260,24 @@ describe("lcx-promote-live status", () => {
     const stdout = runStatus(sourceRoot, targetRoot);
 
     expect(stdout).toContain(`sourceCommit=${promotedCommit}`);
-    expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain(`currentCanonicalCommit=${currentCommit}`);
     expect(stdout).toContain(
-      "externalChannelStatusModel=dev-ready -> external-channel-bound -> user-visible-observed",
+      "externalChannelStatusModel=core-ready -> external-channel-bound -> user-visible-observed",
     );
     expect(stdout).toContain("externalChannel=lark");
     expect(stdout).toContain("externalChannelBound=false");
     expect(stdout).toContain("userVisibleObserved=false");
-    expect(stdout).toContain("statusModel=dev-ready -> live-runtime-updated -> live-user-seen");
+    expect(stdout).toContain("statusModel=core-ready -> live-runtime-updated -> live-user-seen");
     expect(stdout).toContain("devReady=not_checked_by_live_status");
     expect(stdout).toContain("liveRuntimeCommitMatched=false");
     expect(stdout).toContain("liveRuntimeRestartCommandStatus=not_run");
     expect(stdout).toContain("liveRuntimeProbePassed=false");
     expect(stdout).toContain("liveRuntimeUpdated=false");
     expect(stdout).toContain("liveUserSeen=false");
-    expect(stdout).toContain("nextHumanStep=run_dev_tests_then_promote_dev_to_live");
-    expect(stdout).toContain("liveMatchesCurrentDev=false");
+    expect(stdout).toContain("nextHumanStep=run_local_tests_then_promote_local_to_live");
+    expect(stdout).toContain("liveMatchesCurrentCanonical=false");
     expect(stdout).toContain("liveNeedsPromotion=true");
-    expect(stdout).toContain("devLiveDrift=dev_commit_differs");
+    expect(stdout).toContain("devLiveDrift=local_commit_differs");
   });
 
   it("shows parity when the live promotion commit matches a clean dev tree", () => {
@@ -299,14 +299,14 @@ describe("lcx-promote-live status", () => {
     const stdout = runStatus(sourceRoot, targetRoot);
 
     expect(stdout).toContain(`sourceCommit=${currentCommit}`);
-    expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain(`currentCanonicalCommit=${currentCommit}`);
     expect(stdout).toContain(
-      "externalChannelStatusModel=dev-ready -> external-channel-bound -> user-visible-observed",
+      "externalChannelStatusModel=core-ready -> external-channel-bound -> user-visible-observed",
     );
     expect(stdout).toContain("externalChannel=lark");
     expect(stdout).toContain("externalChannelBound=true");
     expect(stdout).toContain("userVisibleObserved=false");
-    expect(stdout).toContain("statusModel=dev-ready -> live-runtime-updated -> live-user-seen");
+    expect(stdout).toContain("statusModel=core-ready -> live-runtime-updated -> live-user-seen");
     expect(stdout).toContain("devReady=not_checked_by_live_status");
     expect(stdout).toContain("liveRuntimeCommitMatched=true");
     expect(stdout).toContain("liveRuntimeRestartCommandStatus=passed");
@@ -327,7 +327,7 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain(
       "replyFlowProbeCommand=node --import tsx scripts/dev/lcx-promote-live.ts --status --with-probe",
     );
-    expect(stdout).toContain("liveMatchesCurrentDev=true");
+    expect(stdout).toContain("liveMatchesCurrentCanonical=true");
     expect(stdout).toContain("liveNeedsPromotion=false");
     expect(stdout).toContain("devLiveDrift=live_matches_current_dev");
   });
@@ -459,7 +459,7 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveUserSeen=true");
     expect(stdout).toContain("externalChannelBound=true");
     expect(stdout).toContain("userVisibleObserved=true");
-    expect(stdout).toContain("nextHumanStep=no_action_current_dev_seen_in_live");
+    expect(stdout).toContain("nextHumanStep=no_action_current_local_seen_in_live");
     expect(stdout).toContain("liveVisibleStatus=post_migration_reply_seen");
     expect(stdout).toContain("freshInboundCount=1");
     expect(stdout).toContain("freshOutboundResultCount=1");
@@ -486,16 +486,16 @@ describe("lcx-promote-live status", () => {
     const stdout = runStatus(sourceRoot, targetRoot);
 
     expect(stdout).toContain(`sourceCommit=${currentCommit}`);
-    expect(stdout).toContain(`currentDevCommit=${currentCommit}`);
+    expect(stdout).toContain(`currentCanonicalCommit=${currentCommit}`);
     expect(stdout).toContain("liveRuntimeCommitMatched=false");
     expect(stdout).toContain("liveRuntimeRestartCommandStatus=passed");
     expect(stdout).toContain("liveRuntimeProbePassed=true");
     expect(stdout).toContain("liveRuntimeUpdated=false");
     expect(stdout).toContain("liveUserSeen=false");
-    expect(stdout).toContain("nextHumanStep=commit_or_clean_dev_then_run_dev_tests");
-    expect(stdout).toContain("liveMatchesCurrentDev=false");
+    expect(stdout).toContain("nextHumanStep=commit_or_clean_local_then_run_local_tests");
+    expect(stdout).toContain("liveMatchesCurrentCanonical=false");
     expect(stdout).toContain("liveNeedsPromotion=true");
-    expect(stdout).toContain("devLiveDrift=current_dev_dirty");
+    expect(stdout).toContain("devLiveDrift=current_local_dirty");
   });
 
   it("does not call matching commit live-runtime-updated without runtime probe evidence", () => {

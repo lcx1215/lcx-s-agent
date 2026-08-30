@@ -13,7 +13,7 @@ function buildFixture(caseName: "clean" | "conflict") {
   return {
     instrument: "QQQ",
     assetClass: "etf",
-    useCase: "dev_gateway_smoke_portfolio_macro_risk_research",
+    useCase: "local_gateway_smoke_portfolio_macro_risk_research",
     asOf: "2026-05-13T20:00:00.000Z",
     freshnessMaxMinutes: 90,
     observations: [

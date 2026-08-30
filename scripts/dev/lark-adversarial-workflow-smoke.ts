@@ -243,7 +243,7 @@ process.stdout.write(
   `${JSON.stringify(
     {
       ok: true,
-      scope: "dev_lark_adversarial_workflow_smoke",
+      scope: "local_lark_adversarial_workflow_smoke",
       cases,
       liveTouched: false,
       providerConfigTouched: false,

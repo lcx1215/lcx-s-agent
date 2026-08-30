@@ -150,8 +150,8 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
     tailTerms: ["PATH_RULES", "recommendedFastCommands"],
   },
   {
-    id: "dev_live_boundary",
-    headTerms: ["dev-fixed", "live-visible-fixed"],
+    id: "local_live_boundary",
+    headTerms: ["core-verified", "live-visible-fixed"],
     tailTerms: ["liveTouched", "providerConfigTouched"],
   },
   {
@@ -179,7 +179,7 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
     headTerms: ["Self-repair hands", "training/eval candidate packets"],
     tailTerms: [
       "lcx-self-repair-hands",
-      "dev_self_repair_hands_only",
+      "local_self_repair_hands_only",
       "candidate_only_not_in_train_slice",
       "self_repair_hands_waterflow",
     ],
@@ -211,7 +211,7 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
     id: "ts_python_boundary",
     headTerms: ["TS Main Control", "Python Engine", "lcx-ts-python-boundary"],
     tailTerms: [
-      "dev_ts_python_boundary_only",
+      "local_ts_python_boundary_only",
       "keep_python_engine",
       "wrap_with_ts_owner",
       "migrate_to_ts_control",
@@ -421,7 +421,7 @@ async function main() {
   const failed = checks.filter((check) => !check.ok);
   const result = {
     ok: failed.length === 0,
-    boundary: "dev_head_tail_consistency_only",
+    boundary: "local_head_tail_consistency_only",
     checkedAt: new Date().toISOString(),
     summary: {
       passed: checks.length - failed.length,

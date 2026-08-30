@@ -38,8 +38,11 @@ type LiveReferenceInventory = {
   needsReviewSamples: LiveReferenceSample[];
 };
 
+const RETIRED_DEV_SEMANTIC_PATTERN =
+  /\bdev-ready\b|\bdev-fixed\b|\bdev-only\b|dev_[a-z]|[a-z]_dev_|dev\/external-channel|\bdev (?:proof|owner|repo|changes?)\b/giu;
+
 const CANONICAL_TERMS = [
-  "dev-ready",
+  "core-ready",
   "cloud-runtime-ready",
   "external-channel-bound",
   "user-visible-observed",
@@ -62,6 +65,7 @@ const CRITICAL_OWNER_FILES = [
   "scripts/dev/lcx-skillopt-lite.ts",
   "scripts/dev/lcx-monotonic-data-ledger.ts",
   "scripts/dev/lcx-live-fadeout-audit.ts",
+  "skills/agent-runtime-drift-auditor/SKILL.md",
   "AGENTS.md",
   "README.md",
   "ops/local-brain/README.md",
@@ -262,6 +266,8 @@ export async function buildLcxLiveFadeoutAudit() {
     flowGraph,
     mindModel,
     skillOptLite,
+    skillOptAutocue,
+    runtimeDriftSkill,
   ] = await Promise.all([
     readText("AGENTS.md"),
     readText("README.md"),
@@ -278,12 +284,64 @@ export async function buildLcxLiveFadeoutAudit() {
     readText("scripts/dev/lcx-flow-graph.ts"),
     readText("scripts/dev/lcx-mind-model.ts"),
     readText("scripts/dev/lcx-skillopt-lite.ts"),
+    readText("src/auto-reply/reply/skillopt-autocue.ts"),
+    readText("skills/agent-runtime-drift-auditor/SKILL.md"),
   ]);
 
   const packageJson = JSON.parse(packageJsonText) as { scripts?: Record<string, string> };
   const scripts = packageJson.scripts ?? {};
 
+  const activeOwnerText = [
+    agents,
+    readme,
+    runbook,
+    bindingOwner,
+    statusOwner,
+    promoteLive,
+    commercialAcceptance,
+    trainingPlan,
+    governanceAutopilot,
+    systemDoctor,
+    contextRecovery,
+    flowGraph,
+    mindModel,
+    skillOptLite,
+    skillOptAutocue,
+    runtimeDriftSkill,
+  ].join("\n");
+
   const checks: FeatureCheck[] = [
+    {
+      id: "active_dev_status_semantics_retired",
+      ok: !RETIRED_DEV_SEMANTIC_PATTERN.test(activeOwnerText),
+      summary:
+        "active doctrine and owner contracts must use core/local/channel states instead of dev status semantics",
+      owner: "scripts/dev/lcx-live-fadeout-audit.ts",
+      evidence: {
+        retiredPattern: RETIRED_DEV_SEMANTIC_PATTERN.source,
+        allowedExamples: ["scripts/dev/", "pnpm dev", "devDependencies", "historical receipts"],
+      },
+      nextAction:
+        "replace active dev status semantics with core-ready, core-verified, or local-only while preserving physical paths and historical receipts",
+    },
+    checkTerms({
+      id: "runtime_drift_skill_uses_unified_local_model",
+      owner: "skills/agent-runtime-drift-auditor/SKILL.md",
+      file: "skills/agent-runtime-drift-auditor/SKILL.md",
+      requiredTerms: [
+        "canonical repository",
+        "linked worktree",
+        "external-channel-bound",
+        "core-ready",
+        "GitHub/GitLab",
+        "not a second repository",
+      ],
+      summary:
+        "runtime drift guidance must describe one local system/repository with worktrees and keep remote feature branches at GitHub/GitLab",
+      text: runtimeDriftSkill,
+      nextAction:
+        "rewrite runtime drift guidance around one local system/factory, linked worktrees, and the external-channel boundary",
+    }),
     checkTerms({
       id: "doctrine_uses_forward_status_model",
       owner: "AGENTS.md + README.md + ops/local-brain/README.md",
@@ -292,30 +350,34 @@ export async function buildLcxLiveFadeoutAudit() {
       summary: "doctrine documents must teach future agents the new status model",
       text: `${agents}\n${readme}\n${runbook}`,
       nextAction:
-        "restore dev-ready/cloud-runtime-ready/external-channel-bound/user-visible-observed wording",
+        "restore core-ready/cloud-runtime-ready/external-channel-bound/user-visible-observed wording",
     }),
     checkTerms({
-      id: "cloud_migration_keeps_single_dev_core",
+      id: "cloud_migration_keeps_single_local_core",
       owner: "AGENTS.md + README.md + ops/local-brain/README.md",
       file: "cloud_migration_docs",
       requiredTerms: [
-        "local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
+        "local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
         "/srv/lcx/lcx-s-openclaw",
         "canonical `~/.openclaw` state",
-        "one canonical dev repo",
-        "not a second live brain",
+        "one LCX system and one factory/runtime",
+        "one canonical repository",
+        "linked Git worktrees",
+        "GitHub/GitLab",
+        "no second repository",
         "Lark, WeChat, SMS",
       ],
-      summary: "cloud migration must move the single LCX dev core, not recreate a dev/live split",
+      summary:
+        "cloud migration must keep one local system/factory and one canonical repository; local isolation uses linked worktrees",
       text: `${agents}\n${readme}\n${runbook}`,
-      nextAction: "restore cloud-runtime-ready wording and single canonical dev core boundary",
+      nextAction: "restore cloud-runtime-ready wording and single canonical LCX core boundary",
     }),
     checkTerms({
       id: "binding_owner_is_canonical",
       owner: "scripts/dev/lcx-external-channel-binding.ts",
       file: "scripts/dev/lcx-external-channel-binding.ts",
       requiredTerms: [
-        "dev_external_channel_binding_operator_only",
+        "local_external_channel_binding_operator_only",
         "channel_runtime_probe_ok_user_visible_pending",
         "userVisibleObserved",
         "legacyLiveCompatibility",
@@ -328,10 +390,10 @@ export async function buildLcxLiveFadeoutAudit() {
       owner: "scripts/dev/lcx-promote-live.ts",
       file: "scripts/dev/lcx-promote-live.ts",
       requiredTerms: [
-        "dev-ready -> external-channel-bound -> user-visible-observed",
+        "core-ready -> external-channel-bound -> user-visible-observed",
         "legacyLiveRuntimeUpdated",
         "legacyLiveUserSeen",
-        "dev_external_channel_status_only",
+        "local_external_channel_status_only",
       ],
       summary: "old promote-live status must remain a legacy compatibility surface",
       text: promoteLive,
@@ -341,9 +403,11 @@ export async function buildLcxLiveFadeoutAudit() {
       owner: "scripts/dev/lcx-external-channel-status.ts",
       file: "scripts/dev/lcx-external-channel-status.ts",
       requiredTerms: [
-        "dev_external_channel_status_only",
+        "local_external_channel_status_only",
         "legacy_promote_live_status_wrapped_by_external_channel_status",
         "legacyPromoteLiveStatus",
+        "canonicalWorktreeDrift",
+        "repositoryDrift",
         "liveTouched: false",
       ],
       summary:
@@ -370,7 +434,7 @@ export async function buildLcxLiveFadeoutAudit() {
       requiredTerms: [
         "ExternalChannelBindingPlanSnapshot",
         "externalChannelBinding",
-        "dev_external_channel_binding_plan_only",
+        "local_external_channel_binding_plan_only",
         "externalChannelMissingProof",
         "lark_external_channel_binding_ready",
         "route_lark_transport_to_selected_clean_answer_path",
@@ -413,7 +477,7 @@ export async function buildLcxLiveFadeoutAudit() {
         "scripts/dev/lcx-live-fadeout-audit.ts",
         "externalChannelBinding",
       ],
-      summary: "system doctor must include the fadeout audit in normal dev checks",
+      summary: "system doctor must include the fadeout audit in normal local checks",
       text: systemDoctor,
     }),
     checkTerms({
@@ -478,11 +542,14 @@ export async function buildLcxLiveFadeoutAudit() {
 
   return {
     ok: failed.length === 0 && referenceFailures.length === 0,
-    boundary: "dev_live_fadeout_audit_only",
+    boundary: "local_live_fadeout_audit_only",
     checkedAt: new Date().toISOString(),
-    statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+    statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
+    repositoryModel:
+      "one local LCX system/factory -> one canonical Git repository -> linked worktree",
+    remoteBranchModel: "GitHub/GitLab feature branch -> review/publish",
     cloudMigrationModel:
-      "local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
+      "local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
     objective:
       "fade old live wording out of LCX authority while preserving upstream live tests, historical receipts, and temporary sidecar compatibility",
     summary: {
@@ -520,6 +587,8 @@ function printHuman(result: Awaited<ReturnType<typeof buildLcxLiveFadeoutAudit>>
   console.log(`ok=${result.ok}`);
   console.log(`boundary=${result.boundary}`);
   console.log(`statusModel=${result.statusModel}`);
+  console.log(`repositoryModel=${result.repositoryModel}`);
+  console.log(`remoteBranchModel=${result.remoteBranchModel}`);
   console.log(`cloudMigrationModel=${result.cloudMigrationModel}`);
   console.log(
     `checks=${result.summary.passed}/${result.summary.total} liveReferenceNeedsReview=${result.summary.liveReferenceNeedsReview}`,

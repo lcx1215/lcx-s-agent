@@ -146,7 +146,7 @@ describe("LCX governance autopilot", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_governance_autopilot_only",
+        boundary: "local_governance_autopilot_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -279,7 +279,7 @@ describe("LCX governance autopilot", () => {
     expect(payload.owners.providerCouncilAcceleration?.action).toEqual(expect.any(String));
     expect(payload.owners.externalChannelStatus).toEqual(
       expect.objectContaining({
-        statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+        statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
         externalChannelBound: expect.any(Boolean),
         userVisibleObserved: expect.any(Boolean),
       }),
@@ -329,7 +329,7 @@ describe("LCX governance autopilot", () => {
       boundary: string;
       autoTriggeredOwnerCommands: string[];
     };
-    expect(latest.boundary).toBe("dev_governance_autopilot_only");
+    expect(latest.boundary).toBe("local_governance_autopilot_only");
     expect(latest.autoTriggeredOwnerCommands).toEqual(payload.autoTriggeredOwnerCommands);
 
     const digestPath =
@@ -368,7 +368,7 @@ describe("LCX governance autopilot", () => {
       providerConfigTouched?: boolean;
       protectedMemoryTouched?: boolean;
     };
-    expect(digest.boundary).toBe("dev_evolution_promotion_digest_only");
+    expect(digest.boundary).toBe("local_evolution_promotion_digest_only");
     expect(digest.autopilot?.ok).toBe(payload.ok);
     expect(digest.autopilot?.summary?.activeTrainingOrEval).toBe(
       payload.summary.activeTrainingOrEval,
@@ -437,7 +437,7 @@ describe("LCX governance autopilot", () => {
 
     const handoff = await fs.readFile(payload.handoffLatestPath, "utf8");
     expect(handoff).toContain("# LCX Context Recovery Handoff");
-    expect(handoff).toContain("boundary: dev_context_recovery_handoff_only");
+    expect(handoff).toContain("boundary: local_context_recovery_handoff_only");
     expect(handoff).toContain("activeTrainingOrEval");
     expect(handoff).toContain("evolutionCooldownActive");
     expect(handoff).toContain("latestEvolutionCooldown");
@@ -452,18 +452,18 @@ describe("LCX governance autopilot", () => {
     expect(handoff).toContain("candidate_eval_dirty_cases");
     expect(handoff).toContain("module_learning_incomplete_evidence");
     expect(handoff).toContain("skillopt_static_or_parse_gap");
-    expect(handoff).toContain("dev_monotonic_data_ledger_only");
+    expect(handoff).toContain("local_monotonic_data_ledger_only");
     expect(handoff).toContain("## Local Failure Trace");
-    expect(handoff).toContain("dev_local_failure_trace_index_only");
+    expect(handoff).toContain("local_failure_trace_index_only");
     expect(handoff).toContain("## Universe Index");
-    expect(handoff).toContain("dev_universe_index_only");
-    expect(handoff).toContain("dev_skillopt_lite_only");
+    expect(handoff).toContain("local_universe_index_only");
+    expect(handoff).toContain("local_skillopt_lite_only");
     expect(handoff).toContain("## Blacktech Upgrade Radar");
-    expect(handoff).toContain("dev_external_agent_upgrade_radar_only");
+    expect(handoff).toContain("local_external_agent_upgrade_radar_only");
     expect(handoff).toContain("## Provider Council Acceleration");
-    expect(handoff).toContain("dev_provider_council_acceleration_only");
+    expect(handoff).toContain("local_provider_council_acceleration_only");
     expect(handoff).toContain("## External Channel Status");
-    expect(handoff).toContain("dev_external_channel_status_only");
+    expect(handoff).toContain("local_external_channel_status_only");
     expect(handoff).toContain("liveTouched: false");
     expect(handoff).toContain("providerConfigTouched: false");
     expect(handoff).toContain("protectedMemoryTouched: false");

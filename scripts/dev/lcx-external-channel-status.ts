@@ -58,28 +58,28 @@ function externalChannelVisibleProof(legacyVisibleProof: Record<string, unknown>
 }
 
 function externalChannelDriftStatus(params: {
-  legacyDevLiveDrift: Record<string, unknown> | undefined;
+  legacyRepositoryDrift: Record<string, unknown> | undefined;
   externalChannelBound: boolean;
 }) {
-  if (!params.legacyDevLiveDrift) {
+  if (!params.legacyRepositoryDrift) {
     return undefined;
   }
+  const { devLiveDrift: legacyDriftState, ...canonicalDrift } = params.legacyRepositoryDrift;
   if (!params.externalChannelBound) {
     return {
-      ...params.legacyDevLiveDrift,
-      legacyLiveMatchesCurrentDev: params.legacyDevLiveDrift.liveMatchesCurrentDev,
-      legacyLiveNeedsPromotion: params.legacyDevLiveDrift.liveNeedsPromotion,
-      legacyDevLiveDrift: params.legacyDevLiveDrift.devLiveDrift,
+      ...canonicalDrift,
+      legacyLiveMatchesCurrentCanonical: params.legacyRepositoryDrift.liveMatchesCurrentCanonical,
+      legacyLiveNeedsPromotion: params.legacyRepositoryDrift.liveNeedsPromotion,
+      repositoryDrift: legacyDriftState,
     };
   }
   return {
-    ...params.legacyDevLiveDrift,
-    liveMatchesCurrentDev: true,
+    ...canonicalDrift,
+    liveMatchesCurrentCanonical: true,
     liveNeedsPromotion: false,
-    devLiveDrift: "external_channel_bound_legacy_commit_diff_ignored",
-    legacyLiveMatchesCurrentDev: params.legacyDevLiveDrift.liveMatchesCurrentDev,
-    legacyLiveNeedsPromotion: params.legacyDevLiveDrift.liveNeedsPromotion,
-    legacyDevLiveDrift: params.legacyDevLiveDrift.devLiveDrift,
+    repositoryDrift: "external_channel_bound_legacy_commit_diff_ignored",
+    legacyLiveMatchesCurrentCanonical: params.legacyRepositoryDrift.liveMatchesCurrentCanonical,
+    legacyLiveNeedsPromotion: params.legacyRepositoryDrift.liveNeedsPromotion,
   };
 }
 
@@ -184,7 +184,8 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const binding = recordValue(bindingPayload.externalChannelBinding);
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
     const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
-    const legacyDevLiveDrift = recordValue(legacy.devLiveDrift);
+    const legacyRepositoryDrift = recordValue(legacy.devLiveDrift);
+    const { devLiveDrift: _legacyDevLiveDrift, ...legacyWithoutDrift } = legacy;
     const bindingStatus = binding?.status ?? "unavailable";
     const bindingProvedChannelBound =
       bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
@@ -215,9 +216,9 @@ export async function runExternalChannelStatus(options: CliOptions) {
       canonicalBindingOwner: "lcx-external-channel-binding",
     };
     return {
-      ...legacy,
+      ...legacyWithoutDrift,
       ok: bindingPayload.ok !== false,
-      boundary: "dev_external_channel_status_only",
+      boundary: "local_external_channel_status_only",
       owner: "lcx-external-channel-status",
       command,
       bindingCommand,
@@ -238,18 +239,18 @@ export async function runExternalChannelStatus(options: CliOptions) {
         legacyError: legacyOutput.error,
         bindingError: bindingOutput.error,
       },
-      devLiveDrift: externalChannelDriftStatus({
-        legacyDevLiveDrift,
+      canonicalWorktreeDrift: externalChannelDriftStatus({
+        legacyRepositoryDrift,
         externalChannelBound,
       }),
       visibleProof,
       legacyPromoteLiveStatus: {
         owner: "lcx-promote-live",
-        boundary: legacy.boundary ?? "dev_external_channel_status_only",
+        boundary: legacy.boundary ?? "local_external_channel_status_only",
         status: legacy.status,
         liveStatus: legacy.liveStatus,
         operatorStatus: legacy.operatorStatus,
-        devLiveDrift: legacyDevLiveDrift,
+        devLiveDrift: legacyRepositoryDrift,
         visibleProof: legacy.visibleProof,
         error: legacyOutput.error,
       },
@@ -261,7 +262,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const details = error as { stdout?: string; stderr?: string; message?: string };
     return {
       ok: false,
-      boundary: "dev_external_channel_status_only",
+      boundary: "local_external_channel_status_only",
       owner: "lcx-external-channel-status",
       command,
       conceptStatus: "legacy_promote_live_status_wrapped_by_external_channel_status",

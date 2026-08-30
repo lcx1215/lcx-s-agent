@@ -6,7 +6,7 @@ export type SkillOptAutoCue = {
   matchedSkillIds: string[];
   bestSkillPaths: string[];
   promptInjection: string;
-  boundary: "dev_skillopt_preflight_only";
+  boundary: "local_skillopt_preflight_only";
   liveTouched: false;
   providerConfigTouched: false;
   protectedMemoryTouched: false;
@@ -181,7 +181,7 @@ function renderPromptInjection(params: {
   );
   return [
     "[SkillOpt-lite runtime preflight - deterministic]",
-    "Boundary: dev_skillopt_preflight_only. This is an internal planning cue, not model-weight absorption, not live-user-seen proof, and not permission to touch provider config, protected memory, external channel sender, or trading authority.",
+    "Boundary: local_skillopt_preflight_only. This is an internal planning cue, not model-weight absorption, not live-user-seen proof, and not permission to touch provider config, protected memory, external channel sender, or trading authority.",
     "",
     ...blocks,
   ].join("\n\n");
@@ -227,7 +227,7 @@ export async function resolveSkillOptAutoCue(params: {
     matchedSkillIds: matched.map((entry) => entry.rule.skillId),
     bestSkillPaths: matched.map((entry) => entry.bestSkillPath),
     promptInjection: renderPromptInjection({ matched }),
-    boundary: "dev_skillopt_preflight_only",
+    boundary: "local_skillopt_preflight_only",
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

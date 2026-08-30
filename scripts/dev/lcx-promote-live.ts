@@ -104,28 +104,28 @@ type GitState = {
   behind: number | null;
 };
 
-type DevLiveDriftStatus = {
+type LegacyRepoLiveDriftStatus = {
   sourceRoot: string;
-  currentDevBranch: string;
-  currentDevCommit: string;
-  currentDevUpstream: string | null;
-  currentDevAheadOfUpstream: number | null;
-  currentDevBehindUpstream: number | null;
-  currentDevTrackedDirtyCount: number;
-  currentDevUntrackedCount: number;
-  liveMatchesCurrentDev: boolean;
+  currentCanonicalBranch: string;
+  currentCanonicalCommit: string;
+  currentCanonicalUpstream: string | null;
+  currentCanonicalAheadOfUpstream: number | null;
+  currentCanonicalBehindUpstream: number | null;
+  currentCanonicalTrackedDirtyCount: number;
+  currentCanonicalUntrackedCount: number;
+  liveMatchesCurrentCanonical: boolean;
   liveNeedsPromotion: boolean;
   devLiveDrift:
     | "missing_state"
     | "source_git_unavailable"
-    | "current_dev_dirty"
-    | "current_dev_has_untracked_files"
+    | "current_local_dirty"
+    | "current_local_has_untracked_files"
     | "live_matches_current_dev"
-    | "dev_commit_differs";
+    | "local_commit_differs";
 };
 
 type OperatorStatus = {
-  statusModel: "dev-ready -> live-runtime-updated -> live-user-seen";
+  statusModel: "core-ready -> live-runtime-updated -> live-user-seen";
   devReady: "not_checked_by_live_status";
   liveRuntimeCommitMatched: boolean;
   liveRuntimeRestartCommandStatus: StepStatus | "not_run";
@@ -133,15 +133,15 @@ type OperatorStatus = {
   liveRuntimeUpdated: boolean;
   liveUserSeen: boolean;
   nextHumanStep:
-    | "commit_or_clean_dev_then_run_dev_tests"
-    | "run_dev_tests_then_promote_dev_to_live"
+    | "commit_or_clean_local_then_run_local_tests"
+    | "run_local_tests_then_promote_local_to_live"
     | "retry_live_restart_then_probe"
     | "send_real_lark_natural_probe"
-    | "no_action_current_dev_seen_in_live";
+    | "no_action_current_local_seen_in_live";
 };
 
 type ExternalChannelStatus = {
-  statusModel: "dev-ready -> external-channel-bound -> user-visible-observed";
+  statusModel: "core-ready -> external-channel-bound -> user-visible-observed";
   channel: "lark";
   role: "owner_agent_communication_medium";
   objective: "lark_receives_current_best_verified_lcx_agent_answer";
@@ -153,7 +153,7 @@ type ExternalChannelStatus = {
   legacyLiveRuntimeUpdated: boolean;
   legacyLiveUserSeen: boolean;
   nextHumanStep: OperatorStatus["nextHumanStep"];
-  boundary: "dev_external_channel_status_only";
+  boundary: "local_external_channel_status_only";
 };
 
 type PromotionReceipt = {
@@ -928,7 +928,7 @@ function renderText(receipt: PromotionReceipt): string {
 function renderStatus(params: {
   args: Args;
   state: PromotionReceipt | null;
-  devLiveDrift: DevLiveDriftStatus;
+  devLiveDrift: LegacyRepoLiveDriftStatus;
   operatorStatus: OperatorStatus;
   externalChannelStatus: ExternalChannelStatus;
   probe: CommandResult | null;
@@ -958,14 +958,14 @@ function renderStatus(params: {
     `nextHumanStep=${params.operatorStatus.nextHumanStep}`,
   ];
   const driftLines = [
-    `currentDevBranch=${params.devLiveDrift.currentDevBranch}`,
-    `currentDevCommit=${params.devLiveDrift.currentDevCommit}`,
-    `currentDevUpstream=${params.devLiveDrift.currentDevUpstream ?? "none"}`,
-    `currentDevAheadOfUpstream=${params.devLiveDrift.currentDevAheadOfUpstream ?? "unknown"}`,
-    `currentDevBehindUpstream=${params.devLiveDrift.currentDevBehindUpstream ?? "unknown"}`,
-    `currentDevTrackedDirtyCount=${params.devLiveDrift.currentDevTrackedDirtyCount}`,
-    `currentDevUntrackedCount=${params.devLiveDrift.currentDevUntrackedCount}`,
-    `liveMatchesCurrentDev=${params.devLiveDrift.liveMatchesCurrentDev}`,
+    `currentCanonicalBranch=${params.devLiveDrift.currentCanonicalBranch}`,
+    `currentCanonicalCommit=${params.devLiveDrift.currentCanonicalCommit}`,
+    `currentCanonicalUpstream=${params.devLiveDrift.currentCanonicalUpstream ?? "none"}`,
+    `currentCanonicalAheadOfUpstream=${params.devLiveDrift.currentCanonicalAheadOfUpstream ?? "unknown"}`,
+    `currentCanonicalBehindUpstream=${params.devLiveDrift.currentCanonicalBehindUpstream ?? "unknown"}`,
+    `currentCanonicalTrackedDirtyCount=${params.devLiveDrift.currentCanonicalTrackedDirtyCount}`,
+    `currentCanonicalUntrackedCount=${params.devLiveDrift.currentCanonicalUntrackedCount}`,
+    `liveMatchesCurrentCanonical=${params.devLiveDrift.liveMatchesCurrentCanonical}`,
     `liveNeedsPromotion=${params.devLiveDrift.liveNeedsPromotion}`,
     `devLiveDrift=${params.devLiveDrift.devLiveDrift}`,
   ];
@@ -1064,14 +1064,14 @@ function summarizePromotionReceiptForOutput(
 
 export function resolveOperatorStatus(params: {
   state: PromotionReceipt | null;
-  devLiveDrift: DevLiveDriftStatus;
+  devLiveDrift: LegacyRepoLiveDriftStatus;
   probe: CommandResult | null;
   visibleProof: LiveVisibleProof | null;
 }): OperatorStatus {
   const devHasLocalChanges =
-    params.devLiveDrift.devLiveDrift === "current_dev_dirty" ||
-    params.devLiveDrift.devLiveDrift === "current_dev_has_untracked_files";
-  const liveRuntimeCommitMatched = params.devLiveDrift.liveMatchesCurrentDev;
+    params.devLiveDrift.devLiveDrift === "current_local_dirty" ||
+    params.devLiveDrift.devLiveDrift === "current_local_has_untracked_files";
+  const liveRuntimeCommitMatched = params.devLiveDrift.liveMatchesCurrentCanonical;
   const liveRuntimeRestartCommandStatus = params.state?.commands.restart?.status ?? "not_run";
   const liveRuntimeProbePassed =
     params.probe?.status === "passed" || params.state?.commands.probe?.status === "passed";
@@ -1082,16 +1082,16 @@ export function resolveOperatorStatus(params: {
     (params.visibleProof?.status === "live_visible_fixed" ||
       params.visibleProof?.status === "post_migration_reply_seen");
   const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
-    ? "commit_or_clean_dev_then_run_dev_tests"
+    ? "commit_or_clean_local_then_run_local_tests"
     : !liveRuntimeCommitMatched
-      ? "run_dev_tests_then_promote_dev_to_live"
+      ? "run_local_tests_then_promote_local_to_live"
       : !liveRuntimeResponsive
         ? "retry_live_restart_then_probe"
         : !liveUserSeen
           ? "send_real_lark_natural_probe"
-          : "no_action_current_dev_seen_in_live";
+          : "no_action_current_local_seen_in_live";
   return {
-    statusModel: "dev-ready -> live-runtime-updated -> live-user-seen",
+    statusModel: "core-ready -> live-runtime-updated -> live-user-seen",
     devReady: "not_checked_by_live_status",
     liveRuntimeCommitMatched,
     liveRuntimeRestartCommandStatus,
@@ -1106,7 +1106,7 @@ export function resolveExternalChannelStatus(
   operatorStatus: OperatorStatus,
 ): ExternalChannelStatus {
   return {
-    statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+    statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
     channel: "lark",
     role: "owner_agent_communication_medium",
     objective: "lark_receives_current_best_verified_lcx_agent_answer",
@@ -1118,46 +1118,46 @@ export function resolveExternalChannelStatus(
     legacyLiveRuntimeUpdated: operatorStatus.liveRuntimeUpdated,
     legacyLiveUserSeen: operatorStatus.liveUserSeen,
     nextHumanStep: operatorStatus.nextHumanStep,
-    boundary: "dev_external_channel_status_only",
+    boundary: "local_external_channel_status_only",
   };
 }
 
-export function readDevLiveDrift(params: {
+export function readLegacyRepoLiveDrift(params: {
   sourceRoot: string;
   state: PromotionReceipt | null;
-}): DevLiveDriftStatus {
+}): LegacyRepoLiveDriftStatus {
   const current = readGitState(params.sourceRoot);
   const sourceGitUnavailable = current.commit === "unknown";
-  const currentDevTrackedDirtyCount = current.trackedDirty.length;
-  const currentDevUntrackedCount = current.untracked.length;
-  const liveMatchesCurrentDev =
+  const currentCanonicalTrackedDirtyCount = current.trackedDirty.length;
+  const currentCanonicalUntrackedCount = current.untracked.length;
+  const liveMatchesCurrentCanonical =
     Boolean(params.state) &&
     !sourceGitUnavailable &&
-    currentDevTrackedDirtyCount === 0 &&
-    currentDevUntrackedCount === 0 &&
+    currentCanonicalTrackedDirtyCount === 0 &&
+    currentCanonicalUntrackedCount === 0 &&
     params.state?.git.commit === current.commit;
-  const devLiveDrift: DevLiveDriftStatus["devLiveDrift"] = !params.state
+  const devLiveDrift: LegacyRepoLiveDriftStatus["devLiveDrift"] = !params.state
     ? "missing_state"
     : sourceGitUnavailable
       ? "source_git_unavailable"
-      : currentDevTrackedDirtyCount > 0
-        ? "current_dev_dirty"
-        : currentDevUntrackedCount > 0
-          ? "current_dev_has_untracked_files"
-          : liveMatchesCurrentDev
+      : currentCanonicalTrackedDirtyCount > 0
+        ? "current_local_dirty"
+        : currentCanonicalUntrackedCount > 0
+          ? "current_local_has_untracked_files"
+          : liveMatchesCurrentCanonical
             ? "live_matches_current_dev"
-            : "dev_commit_differs";
+            : "local_commit_differs";
   return {
     sourceRoot: params.sourceRoot,
-    currentDevBranch: current.branch,
-    currentDevCommit: current.commit,
-    currentDevUpstream: current.upstream,
-    currentDevAheadOfUpstream: current.ahead,
-    currentDevBehindUpstream: current.behind,
-    currentDevTrackedDirtyCount,
-    currentDevUntrackedCount,
-    liveMatchesCurrentDev,
-    liveNeedsPromotion: !liveMatchesCurrentDev,
+    currentCanonicalBranch: current.branch,
+    currentCanonicalCommit: current.commit,
+    currentCanonicalUpstream: current.upstream,
+    currentCanonicalAheadOfUpstream: current.ahead,
+    currentCanonicalBehindUpstream: current.behind,
+    currentCanonicalTrackedDirtyCount,
+    currentCanonicalUntrackedCount,
+    liveMatchesCurrentCanonical,
+    liveNeedsPromotion: !liveMatchesCurrentCanonical,
     devLiveDrift,
   };
 }
@@ -1168,7 +1168,7 @@ export function main(argv = process.argv.slice(2)): number {
     const state = readJsonIfExists<PromotionReceipt>(
       path.join(initialArgs.targetRoot, PROMOTION_STATE_PATH),
     );
-    const devLiveDrift = readDevLiveDrift({
+    const devLiveDrift = readLegacyRepoLiveDrift({
       sourceRoot: initialArgs.sourceRoot,
       state,
     });

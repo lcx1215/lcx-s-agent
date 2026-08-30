@@ -131,7 +131,7 @@ describe("LCX learning sedimentation audit", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_learning_sedimentation_audit_only",
+        boundary: "local_learning_sedimentation_audit_only",
         assessment: "usable_but_module_specific_certification_gap",
         sufficientForCurrentUse: true,
         liveTouched: false,

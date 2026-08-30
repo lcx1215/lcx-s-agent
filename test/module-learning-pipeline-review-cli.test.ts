@@ -48,7 +48,7 @@ describe("module-learning-pipeline-review CLI", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/options.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         moduleFamily: "finance_research",
         status: "application_ready",
@@ -121,7 +121,7 @@ describe("module-learning-pipeline-review CLI", () => {
       defaultWorkspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/risk.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         moduleFamily: "finance_research",
         status: "application_ready",
@@ -165,7 +165,7 @@ describe("module-learning-pipeline-review CLI", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/old.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         moduleFamily: "finance_research",
         status: "application_ready",
@@ -186,7 +186,7 @@ describe("module-learning-pipeline-review CLI", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-12/new.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         moduleFamily: "finance_research",
         status: "eval_absorbed",

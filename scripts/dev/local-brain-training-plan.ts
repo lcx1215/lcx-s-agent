@@ -50,7 +50,7 @@ type EvalTimeoutSnapshot = {
 };
 
 type QwenCapabilityConsolidationSnapshot = {
-  boundary: "dev_qwen_capability_consolidation_only";
+  boundary: "local_qwen_capability_consolidation_only";
   runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble";
   adapterLadderPolicy: "champion_challenger_harvest_into_next_single_adapter";
   capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter";
@@ -69,7 +69,7 @@ type QwenCapabilityConsolidationSnapshot = {
   latestBlockedCandidate?: EvalSnapshot;
   blockedCapabilityFamilies: { caseId: string; count: number }[];
   monotonicIntelligenceGuard: {
-    boundary: "dev_qwen_monotonic_intelligence_guard_only";
+    boundary: "local_qwen_monotonic_intelligence_guard_only";
     guaranteeLevel: "runtime_monotonic_not_every_training_round";
     runtimeInvariant: "never_replace_clean_champion_with_dirty_or_parse_recovered_challenger";
     promotionInvariant: "new_runtime_requires_clean_full_hardened_eval_and_promotion_audit";
@@ -109,7 +109,7 @@ type QwenCapabilityConsolidationSnapshot = {
     };
   };
   capabilityHarvest: {
-    boundary: "dev_blocked_challenger_harvest_only";
+    boundary: "local_blocked_challenger_harvest_only";
     harvestMode: "failed_or_parse_recovered_cases_to_teacher_curriculum";
     sourceBlockedAdapter?: string;
     harvestCaseIds: string[];
@@ -131,7 +131,7 @@ type QwenCapabilityConsolidationSnapshot = {
 };
 
 type ActiveGuardAdapterTruthSnapshot = {
-  boundary: "dev_active_guard_adapter_truth_only";
+  boundary: "local_active_guard_adapter_truth_only";
   latestGuardStartAt?: string;
   guardCurrentAdapter?: string;
   guardTrainingSeedAdapter?: string;
@@ -152,11 +152,11 @@ type ActiveGuardAdapterTruthSnapshot = {
 };
 
 type LegacyLiveLarkBrainBindingSnapshot = {
-  boundary: "dev_live_lark_brain_binding_plan_only";
+  boundary: "local_live_lark_brain_binding_plan_only";
   conceptStatus: "legacy_live_terms_external_channel_owner_current";
   objective: "live_lark_reads_one_selected_clean_local_brain";
   externalChannel: {
-    boundary: "dev_external_channel_binding_plan_only";
+    boundary: "local_external_channel_binding_plan_only";
     channel: "lark";
     role: "owner_agent_communication_medium";
     objective: "lark_receives_current_best_verified_lcx_agent_answer";
@@ -210,7 +210,7 @@ type LegacyLiveLarkBrainBindingSnapshot = {
 };
 
 type ExternalChannelBindingPlanSnapshot = {
-  boundary: "dev_external_channel_binding_plan_only";
+  boundary: "local_external_channel_binding_plan_only";
   channel: "lark";
   role: "owner_agent_communication_medium";
   objective: "lark_receives_current_best_verified_lcx_agent_answer";
@@ -256,7 +256,7 @@ type ExternalChannelBindingPlanSnapshot = {
 };
 
 export type QwenBaseModelMigrationSnapshot = {
-  boundary: "dev_qwen_base_model_migration_plan_only";
+  boundary: "local_qwen_base_model_migration_plan_only";
   currentModel: "Qwen/Qwen3-0.6B";
   candidateModel: "Qwen/Qwen3-1.7B";
   candidateCachePath: string;
@@ -350,7 +350,7 @@ type LocalBrainManifestSnapshot = {
 };
 
 type DatasetRuntimeFreshnessSnapshot = {
-  boundary: "dev_dataset_runtime_freshness_only";
+  boundary: "local_dataset_runtime_freshness_only";
   latestDatasetEventAt: string;
   latestTrainSliceEventAt: string;
   onDiskDatasetNewerThanGuardLog: boolean;
@@ -400,7 +400,7 @@ type EvolutionAccelerationStep = {
 };
 
 type EvolutionAccelerationQueueSnapshot = {
-  boundary: "dev_evolution_acceleration_queue_only";
+  boundary: "local_evolution_acceleration_queue_only";
   objective: "shorten_safe_feedback_loop_without_overlapping_training";
   activeTrainingOrEval: boolean;
   canStartHeavyWorkNow: boolean;
@@ -414,7 +414,7 @@ type EvolutionAccelerationQueueSnapshot = {
 };
 
 type ActiveNonIdleProgressSnapshot = {
-  boundary: "dev_active_non_idle_progress_only";
+  boundary: "local_active_non_idle_progress_only";
   isEmptyWait: false;
   status:
     | "active_eval_in_progress"
@@ -898,7 +898,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
     latestCleanCandidate.adapterPath !== params.latestPassingEval?.adapterPath,
   );
   return {
-    boundary: "dev_qwen_capability_consolidation_only",
+    boundary: "local_qwen_capability_consolidation_only",
     runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble",
     adapterLadderPolicy: "champion_challenger_harvest_into_next_single_adapter",
     capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter",
@@ -911,7 +911,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
     latestBlockedCandidate,
     blockedCapabilityFamilies,
     monotonicIntelligenceGuard: {
-      boundary: "dev_qwen_monotonic_intelligence_guard_only",
+      boundary: "local_qwen_monotonic_intelligence_guard_only",
       guaranteeLevel: "runtime_monotonic_not_every_training_round",
       runtimeInvariant: "never_replace_clean_champion_with_dirty_or_parse_recovered_challenger",
       promotionInvariant: "new_runtime_requires_clean_full_hardened_eval_and_promotion_audit",
@@ -960,7 +960,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
         : undefined,
     },
     capabilityHarvest: {
-      boundary: "dev_blocked_challenger_harvest_only",
+      boundary: "local_blocked_challenger_harvest_only",
       harvestMode: "failed_or_parse_recovered_cases_to_teacher_curriculum",
       sourceBlockedAdapter: latestBlockedCandidate?.adapterPath,
       harvestCaseIds: latestBlockedHarvestCaseIds,
@@ -1049,7 +1049,7 @@ function activeGuardAdapterTruthSnapshot(params: {
       : undefined,
   ].filter((entry): entry is string => Boolean(entry));
   return {
-    boundary: "dev_active_guard_adapter_truth_only",
+    boundary: "local_active_guard_adapter_truth_only",
     latestGuardStartAt,
     guardCurrentAdapter,
     guardTrainingSeedAdapter,
@@ -1143,11 +1143,11 @@ function legacyLiveLarkBrainBindingSnapshot(params: {
     action = "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
   }
   return {
-    boundary: "dev_live_lark_brain_binding_plan_only",
+    boundary: "local_live_lark_brain_binding_plan_only",
     conceptStatus: "legacy_live_terms_external_channel_owner_current",
     objective: "live_lark_reads_one_selected_clean_local_brain",
     externalChannel: {
-      boundary: "dev_external_channel_binding_plan_only",
+      boundary: "local_external_channel_binding_plan_only",
       channel: "lark",
       role: "owner_agent_communication_medium",
       objective: "lark_receives_current_best_verified_lcx_agent_answer",
@@ -1268,7 +1268,7 @@ function externalChannelBindingSnapshot(params: {
       "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
   }
   return {
-    boundary: "dev_external_channel_binding_plan_only",
+    boundary: "local_external_channel_binding_plan_only",
     channel: "lark",
     role: "owner_agent_communication_medium",
     objective: "lark_receives_current_best_verified_lcx_agent_answer",
@@ -1490,7 +1490,7 @@ function datasetRuntimeFreshnessSnapshot(params: {
     latestTrainSliceEventAt,
   );
   return {
-    boundary: "dev_dataset_runtime_freshness_only",
+    boundary: "local_dataset_runtime_freshness_only",
     latestDatasetEventAt,
     latestTrainSliceEventAt,
     onDiskDatasetNewerThanGuardLog,
@@ -1683,7 +1683,7 @@ export function activeGuardEvolutionCooldownSnapshot(activeProcesses: ActiveTrai
     (process) => !process.command.includes("--evolution-cooldown-minutes"),
   );
   return {
-    boundary: "dev_active_guard_evolution_cooldown_only",
+    boundary: "local_active_guard_evolution_cooldown_only",
     activeGuardCount: guards.length,
     activeGuardHasEvolutionCooldown: guards.length > 0 && missingCooldown.length === 0,
     guardsMissingCooldownFlag: missingCooldown.length,
@@ -1774,7 +1774,7 @@ export async function buildQwenBaseModelMigrationPlan(params: {
           ? "keep_qwen3_0_6b_and_do_not_attempt_candidate"
           : "run_no_adapter_smoke_before_any_lora_training";
   return {
-    boundary: "dev_qwen_base_model_migration_plan_only",
+    boundary: "local_qwen_base_model_migration_plan_only",
     currentModel: QWEN_MIGRATION_CURRENT_MODEL,
     candidateModel: QWEN_MIGRATION_CANDIDATE_MODEL,
     candidateCachePath,
@@ -2099,7 +2099,7 @@ function buildDecisions(params: {
   ) {
     decisions.push({
       id: "output_contract_or_parser_failure",
-      lane: "dev_acceptance",
+      lane: "local_acceptance",
       severity: "P2",
       action: "enter_codex_auto_repair_if_repeated",
       reason:
@@ -2444,7 +2444,7 @@ function buildEvolutionAccelerationQueue(params: {
     ["ready_when_idle", "blocked_by_active_training"].includes(step.status),
   );
   const activeNonIdleProgress: ActiveNonIdleProgressSnapshot = {
-    boundary: "dev_active_non_idle_progress_only",
+    boundary: "local_active_non_idle_progress_only",
     isEmptyWait: false,
     status: activeHeavyWork
       ? latestBlockedCaseIds.length > 0
@@ -2489,7 +2489,7 @@ function buildEvolutionAccelerationQueue(params: {
   };
 
   return {
-    boundary: "dev_evolution_acceleration_queue_only",
+    boundary: "local_evolution_acceleration_queue_only",
     objective: "shorten_safe_feedback_loop_without_overlapping_training",
     activeTrainingOrEval,
     canStartHeavyWorkNow,
@@ -2694,7 +2694,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const repairDecisions = decisions.filter((decision) => decision.codexRepairEligible);
   return {
     ok: true,
-    boundary: "dev_local_brain_training_plan_only",
+    boundary: "local_brain_training_plan_only",
     planVersion: "local_brain_training_plan_v1",
     cwd: worktree,
     workspaceDir,
@@ -2750,7 +2750,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
       repairDecisionIds: repairDecisions.map((decision) => decision.id),
       lockCommand: buildRepairLockCommand(worktree),
       allowedScope:
-        "dev-only local-brain training/eval/teacher/doctor scripts, focused tests, and dev-only receipts",
+        "local-only local-brain training/eval/teacher/doctor scripts, focused tests, and local-only receipts",
       forbiddenScope:
         "external channel sender, provider config, protected memory, formal language corpus, finance doctrine, secrets, destructive git, broad architecture",
     },

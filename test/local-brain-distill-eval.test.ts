@@ -65,7 +65,7 @@ describe("local-brain-distill-eval", () => {
     expect(payload.ok).toBe(true);
     expect(payload.summary).toMatchObject({ passed: 2, total: 2, promotionReady: true });
     expect(payload.summary.capabilitySuites.boundary).toBe(
-      "dev_eval_capability_suite_results_only",
+      "local_eval_capability_suite_results_only",
     );
     expect(payload.summary.capabilitySuites.suites.some((suite) => suite.evaluated > 0)).toBe(true);
     expect(payload.hierarchy).toMatchObject({
@@ -275,7 +275,7 @@ describe("local-brain-distill-eval", () => {
     expect(payload.ok).toBe(true);
     expect(payload.summary).toMatchObject({ passed: 12, total: 12, promotionReady: true });
     expect(payload.evalRegistry).toMatchObject({
-      boundary: "dev_eval_registry_expansion_plan_only",
+      boundary: "local_eval_registry_expansion_plan_only",
       promotionTargetCaseCount: 200,
     });
     expect(payload.evalRegistry.currentCaseCount).toBeGreaterThanOrEqual(205);
@@ -1844,7 +1844,7 @@ describe("local-brain-distill-eval", () => {
     };
     expect(receipt).toMatchObject({
       schemaVersion: "lcx_local_brain_eval_receipt_v1",
-      boundary: "dev_local_brain_eval_receipt_only",
+      boundary: "local_brain_eval_receipt_only",
       requested: {
         evaluationMode: "raw_contract",
         learningClaim: "not_proven_by_contract_eval",

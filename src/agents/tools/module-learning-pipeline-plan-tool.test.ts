@@ -20,7 +20,7 @@ describe("module learning pipeline plan tool", () => {
     expect(result.details).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         moduleFamily: "finance_research",
         status: "missing_evidence",
@@ -148,7 +148,7 @@ describe("module learning pipeline plan tool", () => {
           ok: true,
           targetModule,
           moduleFamily: "finance_research",
-          boundary: "dev_module_learning_pipeline_plan",
+          boundary: "local_module_learning_pipeline_plan",
           liveTouched: false,
           providerConfigTouched: false,
           protectedMemoryTouched: false,

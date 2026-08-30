@@ -70,7 +70,7 @@ describe("commands-protocol-info", () => {
     ["is this live-fixed", "status_readback"],
     ["where are we now", "status_readback"],
     [
-      "Status audit what did you just fix in Lark Answer only with current evidence. Separate dev-fixed live-visible-fixed unverified next step proof. If unknown say failedReason.",
+      "Status audit what did you just fix in Lark Answer only with current evidence. Separate core-verified live-visible-fixed unverified next step proof. If unknown say failedReason.",
       "status_readback",
     ],
     ["can you use file_search", "specific_capability"],

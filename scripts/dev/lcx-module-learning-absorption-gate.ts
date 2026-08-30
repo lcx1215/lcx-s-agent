@@ -69,7 +69,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts [--workspace DIR] [--date YYYY-MM-DD] [--guard-log PATH] [--eval-summary PATH] [--json]",
       "",
       "Reads module-learning review receipts and hardened eval evidence, then decides whether module-learning may be called eval_absorbed.",
-      "Default is read-only. --write-absorbed-plan-receipts writes dev/local evidence and superseding eval_absorbed plan receipts only when hardened eval is clean.",
+      "Default is read-only. --write-absorbed-plan-receipts writes local evidence and superseding eval_absorbed plan receipts only when hardened eval is clean.",
     ].join("\n"),
   );
 }
@@ -464,7 +464,7 @@ function buildGate(params: {
   const absorptionReady = perReceiptAbsorbed && globalEvalClean && !evalTimeoutNewerThanEval;
   return {
     ok: true,
-    boundary: "dev_module_learning_absorption_gate_only",
+    boundary: "local_module_learning_absorption_gate_only",
     dateKey: params.dateKey,
     reviewPath: params.reviewPath,
     evalEvidenceSource: params.evalEvidenceSource,
@@ -581,7 +581,7 @@ async function writeAbsorbedPlanReceipts(params: {
       relativePath: evidencePath,
       payload: {
         ok: true,
-        boundary: "dev_module_learning_absorption_evidence",
+        boundary: "local_module_learning_absorption_evidence",
         dateKey: params.dateKey,
         targetModule,
         sourceReceiptPath: receiptPath,

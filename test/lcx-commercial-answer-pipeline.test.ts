@@ -26,7 +26,7 @@ describe("LCX commercial answer pipeline", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_commercial_answer_pipeline_only",
+        boundary: "local_commercial_answer_pipeline_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,

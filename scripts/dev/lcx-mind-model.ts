@@ -191,7 +191,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "maxOperatorStateAgeMs",
       "problemClusters",
     ],
-    boundaryTerms: ["dev_observability_only", "user-visible-observed"],
+    boundaryTerms: ["local_observability_only", "user-visible-observed"],
     nextAction:
       "Start from AGENTS, runbook, doctor, training-plan, and local operator state before coding.",
   },
@@ -273,7 +273,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "self_repair_hands_waterflow",
     ],
     boundaryTerms: [
-      "dev_self_repair_hands_only",
+      "local_self_repair_hands_only",
       "protectedMemoryTouched",
       "providerConfigTouched",
       "liveTouched",
@@ -286,9 +286,9 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     id: "lark_feishu_live_boundary",
     masterLane: "external_channel_boundary",
     objective:
-      "Treat Lark/Feishu as owner-agent communication transport, not a second live brain; keep dev correctness, connector routing, and user-visible proof separate.",
+      "Treat Lark/Feishu as owner-agent communication transport, not a second live brain; keep core correctness, connector routing, and user-visible proof separate.",
     headTerms: [
-      "dev-ready",
+      "core-ready",
       "external-channel-bound",
       "user-visible-observed",
       "legacy-live-runtime-updated",
@@ -325,7 +325,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "post_migration_lark_canary_missing",
     ],
     boundaryTerms: [
-      "dev_commercial_acceptance_harness_only",
+      "local_commercial_acceptance_harness_only",
       "liveTouched",
       "providerConfigTouched",
       "protectedMemoryTouched",
@@ -372,8 +372,8 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "autoTriggeredOwnerCommands",
     ],
     boundaryTerms: [
-      "dev_automation_coordination_only",
-      "dev_context_recovery_exam_only",
+      "local_automation_coordination_only",
+      "local_context_recovery_exam_only",
       "liveTouched",
     ],
     nextAction: "Read local operator receipts first; keep Codex visible automation as one digest.",
@@ -394,10 +394,10 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "autoTriggeredOwnerCommands",
     ],
     proofTerms: [
-      "dev_governance_autopilot_only",
-      "dev_local_failure_trace_index_only",
-      "dev_owner_brief_readable_summary_only",
-      "dev_owner_control_map_only",
+      "local_governance_autopilot_only",
+      "local_failure_trace_index_only",
+      "local_owner_brief_readable_summary_only",
+      "local_owner_control_map_only",
       "test/lcx-governance-autopilot.test.ts",
       "latestStatePath",
     ],
@@ -417,14 +417,14 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     ],
     workflowTerms: [
       "lcx-universe-index",
-      "dev_universe_index_only",
+      "local_universe_index_only",
       "garbageCandidates",
       "ownerCoverage",
     ],
     proofTerms: [
       "test/lcx-universe-index.test.ts",
       "universe_index_recovers_total_inventory",
-      "dev_universe_index_only",
+      "local_universe_index_only",
     ],
     boundaryTerms: [
       "inventory and cleanup candidates only",
@@ -436,7 +436,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
   },
   {
     id: "protected_boundary",
-    masterLane: "dev_live_boundary",
+    masterLane: "local_live_boundary",
     objective:
       "Stop repairs from silently mutating protected memory, provider config, or external-channel sender paths.",
     headTerms: ["protected memory", "provider config", "external-channel sender"],
@@ -454,7 +454,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     headTerms: ["LCX Agent Mind Model", "god-view", "workflow closure"],
     workflowTerms: ["lcx-mind-model", "mind-model-consistency", "MIND_MODEL_LANES"],
     proofTerms: ["lcx-mind-model", "mind-model-consistency"],
-    boundaryTerms: ["dev_mind_model_only", "liveTouched", "providerConfigTouched"],
+    boundaryTerms: ["local_mind_model_only", "liveTouched", "providerConfigTouched"],
     nextAction:
       "Run lcx-mind-model when a future edit risks forgetting adjacent workflows or proof surfaces.",
   },
@@ -466,7 +466,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     headTerms: ["LCX Agent Flow Graph", "waterflow", "filter valve"],
     workflowTerms: ["lcx-flow-graph", "FLOW_SCENARIOS", "requiredFilters"],
     proofTerms: ["flow_graph_exam", "missingRequiredFilters", "test/lcx-flow-graph.test.ts"],
-    boundaryTerms: ["dev_flow_graph_only", "liveTouched", "providerConfigTouched"],
+    boundaryTerms: ["local_flow_graph_only", "liveTouched", "providerConfigTouched"],
     nextAction:
       "Run lcx-flow-graph when a task family could wrong-flow, skip a filter, or recirculate without a guard.",
   },
@@ -483,7 +483,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "ready_via_preflight_context_injection",
     ],
     boundaryTerms: [
-      "dev_skillopt_preflight_only",
+      "local_skillopt_preflight_only",
       "not model-weight absorption",
       "not user-visible-observed proof",
     ],
@@ -570,7 +570,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "test/lcx-flow-graph.test.ts",
     ],
     boundaryTerms: [
-      "dev_external_agent_upgrade_radar_only",
+      "local_external_agent_upgrade_radar_only",
       "no direct install",
       "no wallet connection",
       "no order placement",
@@ -642,13 +642,13 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       "Never run heavy eval and doctor in ways that hide overlap; keep overlap as a hard visible failure.",
   },
   {
-    id: "dev_live_status_words_stay_separate",
+    id: "local_live_status_words_stay_separate",
     category: "boundary",
     objective:
-      "Dev proof, Lark external-channel binding, and real user-visible proof must stay separate while legacy live terms fade out.",
+      "Local proof, Lark external-channel binding, and real user-visible proof must stay separate while legacy live terms fade out.",
     termsBySurface: {
       head: [
-        "dev-ready",
+        "core-ready",
         "external-channel-bound",
         "user-visible-observed",
         "legacy-live-runtime-updated",
@@ -751,7 +751,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     termsBySurface: {
       head: ["SkillOpt-lite", "not Qwen weight absorption", "user-visible-observed proof"],
       workflow: [
-        "dev_skillopt_preflight_only",
+        "local_skillopt_preflight_only",
         "resolveSkillOptAutoCue",
         "applySkillOptAutoCueToBody",
         "lcx-skillopt-lite",
@@ -762,7 +762,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
         "test/lcx-skillopt-lite.test.ts",
       ],
       boundary: [
-        "dev_skillopt_preflight_only",
+        "local_skillopt_preflight_only",
         "not model-weight absorption",
         "not user-visible-observed proof",
       ],
@@ -782,7 +782,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
         "not deletion authority",
       ],
       workflow: [
-        "dev_universe_index_only",
+        "local_universe_index_only",
         "garbageCandidates",
         "no delete/migration/live authority",
       ],
@@ -817,7 +817,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       head: ["LCX Agent Flow Graph", "wrong-flow", "bounded feedback"],
       workflow: ["requiredFilters", "feedbackEdges", "ILLEGAL_EDGES"],
       proof: ["flow_graph_exam", "flow_graph_illegal_shortcuts_absent"],
-      boundary: ["dev_flow_graph_only", "protectedMemoryTouched"],
+      boundary: ["local_flow_graph_only", "protectedMemoryTouched"],
     },
     nextAction:
       "Add or update a flow-graph scenario whenever a new task family can skip filters or recirculate.",
@@ -843,7 +843,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
         "no_wallet_or_order_execution",
       ],
       boundary: [
-        "dev_external_agent_upgrade_radar_only",
+        "local_external_agent_upgrade_radar_only",
         "no direct install",
         "no wallet connection",
         "no order placement",
@@ -895,7 +895,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       head: ["problem cluster radar", "owner outputs", "problemClusters"],
       workflow: ["lcx-problem-cluster-radar", "sourceOwners", "ownerEntrypoint"],
       proof: ["test/lcx-problem-cluster-radar.test.ts", "actionableClusters"],
-      boundary: ["dev_problem_cluster_radar_only", "liveTouched", "providerConfigTouched"],
+      boundary: ["local_problem_cluster_radar_only", "liveTouched", "providerConfigTouched"],
     },
     nextAction:
       "Use lcx-problem-cluster-radar when owner commands are green structurally but current runtime or learning facts still expose P2/P3 clusters.",
@@ -1064,7 +1064,7 @@ async function main() {
   const failedInvariants = invariants.filter((invariant) => !invariant.ok);
   const result = {
     ok: failed.length === 0 && failedInvariants.length === 0 && missingFiles.length === 0,
-    boundary: "dev_mind_model_only",
+    boundary: "local_mind_model_only",
     checkedAt: new Date().toISOString(),
     summary: {
       passed: lanes.length - failed.length + invariants.length - failedInvariants.length,

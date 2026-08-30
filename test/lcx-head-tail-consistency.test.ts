@@ -46,7 +46,7 @@ describe("LCX head-tail consistency doctor", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_head_tail_consistency_only",
+        boundary: "local_head_tail_consistency_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -113,7 +113,7 @@ describe("LCX head-tail consistency doctor", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_change_impact_plan_only",
+        boundary: "local_change_impact_plan_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,

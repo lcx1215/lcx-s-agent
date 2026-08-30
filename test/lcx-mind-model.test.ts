@@ -53,7 +53,7 @@ describe("LCX mind model god-view architecture check", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_mind_model_only",
+        boundary: "local_mind_model_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -69,7 +69,7 @@ describe("LCX mind model god-view architecture check", () => {
         "global_doctrine_and_runbook",
         "qwen_training",
         "finance_research_capability",
-        "dev_live_boundary",
+        "local_live_boundary",
       ]),
     );
     expect(payload.summary.invariantCategories).toEqual(

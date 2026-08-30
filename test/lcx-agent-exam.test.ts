@@ -25,11 +25,11 @@ const cognitiveSources = {
   moduleLearningReviewTool:
     "weakModuleLearning exactMissingProof nextProofOwner proofGapSummary boundaryViolation languageCorpusUntouched protectedMemoryUntouched providerConfigTouched: false",
   larkSurfaces:
-    "dev-fixed means local implementation or tests only; live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started, running, completed, blocked, or unproven",
+    "core-verified means local implementation or tests only; live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started, running, completed, blocked, or unproven",
   localBrainRunbook:
     "live-visible-fixed; fresh real Lark inbound plus visible reply; Do not call local training or synthetic replay `live-visible-fixed`; A stored source, summary, or dataset row is not enough; stored_only; application_ready; eval_absorbed; Do not claim Qwen model-internal learning without retained artifacts and eval evidence; bounded feedback; answer audit; model answer is candidate; Qwen is challenger; terminal decision; Commercial-grade convergence does not mean deleting useful entrypoints; Converge duplicated authority instead; single factual owner",
   answerAuditSurfaces:
-    "buildLarkAnswerAuditPolicy dev_commercial_answer_pipeline_only model_candidate_not_final_authority candidate_answer_not_final_authority challenger_only_not_final_authority answer_audit terminalDecision return_failed_reason local_memory_recall learning_sedimentation_review stored_only_is_not_learning retrieval_apply_eval_review_required",
+    "buildLarkAnswerAuditPolicy local_commercial_answer_pipeline_only model_candidate_not_final_authority candidate_answer_not_final_authority challenger_only_not_final_authority answer_audit terminalDecision return_failed_reason local_memory_recall learning_sedimentation_review stored_only_is_not_learning retrieval_apply_eval_review_required",
   controlRoomSurfaces:
     "one main control room control_room_main_lane specialist detail only on demand",
 };
@@ -42,7 +42,7 @@ describe("lcx-agent-exam", () => {
       l5: false,
       doctor: okCommand("doctor", {
         ok: true,
-        boundary: "dev_observability_only",
+        boundary: "local_observability_only",
         liveTouched: false,
         summary: { passed: 12, failed: 0, skipped: 5 },
       }),
@@ -54,7 +54,7 @@ describe("lcx-agent-exam", () => {
         decisions: [{ id: "continue_medium_training" }],
       }),
       promotionAudit: okCommand("promotion-audit", {
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         promotionDecision: "safe",
         resolverMatchesLatestEval: true,
         realBugsFound: [],
@@ -87,7 +87,7 @@ describe("lcx-agent-exam", () => {
     expect(report).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_exam_only",
+        boundary: "local_exam_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -98,7 +98,7 @@ describe("lcx-agent-exam", () => {
     expect(report.lanes.find((lane) => lane.lane === "live_visible_boundary")).toEqual(
       expect.objectContaining({
         status: "pass",
-        boundary: "dev_fixed_not_live_fixed",
+        boundary: "local_fixed_not_live_fixed",
       }),
     );
     expect(report.lanes.find((lane) => lane.lane === "lark_feishu_visible_loop")).toEqual(
@@ -150,7 +150,7 @@ describe("lcx-agent-exam", () => {
       l5: false,
       doctor: okCommand("doctor", {
         ok: true,
-        boundary: "dev_observability_only",
+        boundary: "local_observability_only",
         liveTouched: false,
         summary: { passed: 12, failed: 0, skipped: 5 },
       }),
@@ -162,7 +162,7 @@ describe("lcx-agent-exam", () => {
         decisions: [{ id: "continue_medium_training" }],
       }),
       promotionAudit: okCommand("promotion-audit", {
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         promotionDecision: "safe",
         resolverMatchesLatestEval: true,
         realBugsFound: [],
@@ -193,7 +193,7 @@ describe("lcx-agent-exam", () => {
       }),
       learningSedimentationAudit: okCommand("learning-audit", {
         ok: true,
-        boundary: "dev_learning_sedimentation_audit_only",
+        boundary: "local_learning_sedimentation_audit_only",
         assessment: "usable_and_module_certifiable",
         chains: {
           moduleLearningPipeline: {
@@ -240,7 +240,7 @@ describe("lcx-agent-exam", () => {
       l5: false,
       doctor: okCommand("doctor", {
         ok: true,
-        boundary: "dev_observability_only",
+        boundary: "local_observability_only",
         liveTouched: false,
         summary: { passed: 12, failed: 0, skipped: 5 },
       }),
@@ -252,7 +252,7 @@ describe("lcx-agent-exam", () => {
         decisions: [{ id: "continue_medium_training" }],
       }),
       promotionAudit: okCommand("promotion-audit", {
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         promotionDecision: "safe",
         resolverMatchesLatestEval: true,
         realBugsFound: [],
@@ -283,7 +283,7 @@ describe("lcx-agent-exam", () => {
       }),
       learningSedimentationAudit: okCommand("learning-audit", {
         ok: true,
-        boundary: "dev_learning_sedimentation_audit_only",
+        boundary: "local_learning_sedimentation_audit_only",
         assessment: "usable_but_not_model_absorbed",
         gaps: [{ id: "module_learning_review_has_weak_receipts", severity: "P2" }],
         chains: {
@@ -340,7 +340,7 @@ describe("lcx-agent-exam", () => {
       l5: false,
       doctor: okCommand("doctor", {
         ok: true,
-        boundary: "dev_observability_only",
+        boundary: "local_observability_only",
         liveTouched: false,
         summary: { passed: 12, failed: 0, skipped: 5 },
       }),
@@ -352,7 +352,7 @@ describe("lcx-agent-exam", () => {
         decisions: [{ id: "continue_medium_training" }],
       }),
       promotionAudit: okCommand("promotion-audit", {
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         promotionDecision: "safe",
         resolverMatchesLatestEval: true,
         realBugsFound: [],
@@ -383,7 +383,7 @@ describe("lcx-agent-exam", () => {
       }),
       learningSedimentationAudit: okCommand("learning-audit", {
         ok: true,
-        boundary: "dev_learning_sedimentation_audit_only",
+        boundary: "local_learning_sedimentation_audit_only",
         assessment: "usable_and_module_certifiable",
         chains: {
           moduleLearningPipeline: {
@@ -424,7 +424,7 @@ describe("lcx-agent-exam", () => {
       l5: false,
       doctor: okCommand("doctor", {
         ok: true,
-        boundary: "dev_observability_only",
+        boundary: "local_observability_only",
         liveTouched: false,
         summary: { passed: 12, failed: 0, skipped: 5 },
       }),
@@ -436,7 +436,7 @@ describe("lcx-agent-exam", () => {
         decisions: [{ id: "teacher_quality_repair" }],
       }),
       promotionAudit: okCommand("promotion-audit", {
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         promotionDecision: "rejected",
         resolverMatchesLatestEval: false,
         realBugsFound: ["latest_eval_not_promotion_ready"],
@@ -494,7 +494,7 @@ describe("lcx-agent-exam", () => {
       l5: false,
       doctor: okCommand("doctor", {
         ok: true,
-        boundary: "dev_observability_only",
+        boundary: "local_observability_only",
         liveTouched: false,
         summary: { passed: 12, failed: 0, skipped: 5 },
       }),
@@ -506,7 +506,7 @@ describe("lcx-agent-exam", () => {
         decisions: [{ id: "eval_not_promotion_ready" }],
       }),
       promotionAudit: okCommand("promotion-audit", {
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         promotionDecision: "hold",
         resolverMatchesLatestEval: true,
         resolverMatchesLatestPassingEval: false,
@@ -554,7 +554,7 @@ describe("lcx-agent-exam", () => {
       l5: true,
       doctor: okCommand("doctor", {
         ok: true,
-        boundary: "dev_observability_only",
+        boundary: "local_observability_only",
         liveTouched: false,
         summary: { passed: 12, failed: 0, skipped: 5 },
       }),
@@ -566,7 +566,7 @@ describe("lcx-agent-exam", () => {
         decisions: [{ id: "continue_medium_training" }],
       }),
       promotionAudit: okCommand("promotion-audit", {
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         promotionDecision: "safe",
         resolverMatchesLatestEval: true,
         realBugsFound: [],
@@ -609,7 +609,7 @@ describe("lcx-agent-exam", () => {
       },
     });
 
-    expect(report.boundary).toBe("dev_exam_with_live_probe");
+    expect(report.boundary).toBe("local_exam_with_live_probe");
     expect(report.liveTouched).toBe(true);
     expect(report.lanes.find((lane) => lane.lane === "live_visible_boundary")).toEqual(
       expect.objectContaining({
@@ -634,7 +634,7 @@ describe("lcx-agent-exam", () => {
       l5: false,
       doctor: okCommand("doctor", {
         ok: true,
-        boundary: "dev_observability_only",
+        boundary: "local_observability_only",
         liveTouched: false,
         summary: { passed: 12, failed: 0, skipped: 5 },
       }),
@@ -646,7 +646,7 @@ describe("lcx-agent-exam", () => {
         decisions: [{ id: "continue_medium_training" }],
       }),
       promotionAudit: okCommand("promotion-audit", {
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         promotionDecision: "safe",
         resolverMatchesLatestEval: true,
         realBugsFound: [],

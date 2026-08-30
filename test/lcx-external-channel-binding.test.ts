@@ -3,10 +3,10 @@ import { buildExternalChannelBindingDecision } from "../scripts/dev/lcx-external
 
 describe("lcx-external-channel-binding", () => {
   const readyTrainingPlan = {
-    boundary: "dev_local_brain_training_plan_only",
+    boundary: "local_brain_training_plan_only",
     activeProcesses: [],
     externalChannelBinding: {
-      boundary: "dev_external_channel_binding_plan_only",
+      boundary: "local_external_channel_binding_plan_only",
       status: "ready_for_apply",
       action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
       selectedCleanAdapter: "/tmp/adapter-clean-r4",
@@ -18,7 +18,7 @@ describe("lcx-external-channel-binding", () => {
       ],
     },
     liveLarkBrainBinding: {
-      boundary: "dev_live_lark_brain_binding_plan_only",
+      boundary: "local_live_lark_brain_binding_plan_only",
       status: "ready_for_live_runtime_binding",
       action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
       selectedCleanAdapter: "/tmp/adapter-clean-r4",

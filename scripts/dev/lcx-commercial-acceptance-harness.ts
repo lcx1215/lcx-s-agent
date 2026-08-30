@@ -64,7 +64,7 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts [--json] [--with-channel-probe] [--skip-doctor]",
       "",
-      "Runs the dev-only commercial acceptance harness.",
+      "Runs the local-only commercial acceptance harness.",
       "It consumes existing owner outputs and never sends Lark messages, starts training, edits provider config, or touches protected memory.",
     ].join("\n"),
   );
@@ -701,7 +701,7 @@ function externalChannelStatusGate(
       acceptanceMatched: visibleProof?.acceptanceMatched,
     },
     nextAction:
-      "Keep dev-ready, external-channel-bound, and user-visible-observed separate; legacy live terms remain compatibility labels.",
+      "Keep core-ready, external-channel-bound, and user-visible-observed separate; legacy live terms remain compatibility labels.",
   };
 }
 
@@ -1004,7 +1004,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
   return {
     ok: failed.length === 0 && blocked.length === 0,
     readyForCommercialRelease: failed.length === 0 && blocked.length === 0,
-    boundary: "dev_commercial_acceptance_harness_only",
+    boundary: "local_commercial_acceptance_harness_only",
     summary: {
       passed: passed.length,
       failed: failed.length,

@@ -201,7 +201,7 @@ export function buildOwnerBrief(input: OwnerBriefInput) {
   return {
     ok: true,
     kind: "lcx-owner-brief",
-    boundary: "dev_owner_brief_readable_summary_only",
+    boundary: "local_owner_brief_readable_summary_only",
     checkedAt: input.checkedAt,
     title: "LCX 老板总览",
     headline: headlineText,

@@ -90,7 +90,7 @@ describe("lcx-provider-council-acceleration CLI", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_provider_council_acceleration_only",
+        boundary: "local_provider_council_acceleration_only",
         status: "ready_plan",
         action: "dry_run_plan_only",
         write: false,

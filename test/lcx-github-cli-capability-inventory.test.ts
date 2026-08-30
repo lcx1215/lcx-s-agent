@@ -56,7 +56,7 @@ describe("lcx-github-cli-capability-inventory", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_github_cli_capability_inventory_only",
+        boundary: "local_github_cli_capability_inventory_only",
         remoteGitHubTouched: false,
         liveTouched: false,
         providerConfigTouched: false,

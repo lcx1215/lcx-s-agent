@@ -67,7 +67,7 @@ describe("LCX local failure trace", () => {
       expect.objectContaining({
         ok: true,
         kind: "lcx-local-failure-trace",
-        boundary: "dev_local_failure_trace_index_only",
+        boundary: "local_failure_trace_index_only",
         checkedAt,
         source: "governance_autopilot",
         result: "blocked",

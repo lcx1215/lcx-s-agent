@@ -572,7 +572,7 @@ function buildProductGovernor() {
   const ok = unownedFilters.length === 0 && unknownOwnedFilters.length === 0;
   return {
     ok,
-    boundary: "dev_commercial_answer_product_governor_only",
+    boundary: "local_commercial_answer_product_governor_only",
     macroPolicy:
       "Macro product contracts own answer quality. Micro rules, fixed canaries, ticker regressions, and replay failures are samples that must attach to one macro contract before this owner passes.",
     microPatchPolicy:
@@ -598,7 +598,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts [--ask TEXT --candidate-answer TEXT] [--json]",
       "",
       "Without --ask, runs the built-in commercial answer pipeline diagnostic scenarios.",
-      "This is dev-only: it audits candidate answer adoption rules and never calls providers, external channel sender, or MLX.",
+      "This is local-only: it audits candidate answer adoption rules and never calls providers, external channel sender, or MLX.",
     ].join("\n"),
   );
 }
@@ -1221,7 +1221,7 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
     uniqueFailedReasons.length === 0 ? "adopt_visible_answer" : "return_failed_reason";
   return {
     ok: uniqueFailedReasons.length === 0,
-    boundary: "dev_commercial_answer_pipeline_only",
+    boundary: "local_commercial_answer_pipeline_only",
     ask,
     candidateAuthority: "model_candidate_not_final_authority",
     qwenRole: answerAuditPolicy.qwenRole,
@@ -1328,7 +1328,7 @@ export function runScenarioSuite() {
   const failed = results.filter((result) => !result.ok);
   return {
     ok: failed.length === 0 && productGovernor.ok,
-    boundary: "dev_commercial_answer_pipeline_only",
+    boundary: "local_commercial_answer_pipeline_only",
     summary: {
       passed: results.length - failed.length,
       failed: failed.length,

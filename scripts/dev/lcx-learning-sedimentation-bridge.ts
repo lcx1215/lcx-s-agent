@@ -254,7 +254,7 @@ async function buildExistingPlanReceiptIndex(params: {
   const index = new Map<string, ExistingPlanReceipt>();
   for (const file of receiptFiles) {
     const receipt = await readJsonObject<Record<string, unknown>>(file.path);
-    if (receipt?.boundary !== "dev_module_learning_pipeline_plan") {
+    if (receipt?.boundary !== "local_module_learning_pipeline_plan") {
       continue;
     }
     const targetModule = typeof receipt.targetModule === "string" ? receipt.targetModule : "";
@@ -419,7 +419,7 @@ export async function buildLearningSedimentationBridge(
 
   return {
     ok: true,
-    boundary: "dev_learning_sedimentation_bridge_only",
+    boundary: "local_learning_sedimentation_bridge_only",
     workspaceDir: options.workspaceDir,
     writePlanReceipts: options.writePlanReceipts,
     candidateCount: candidates.length,

@@ -71,7 +71,7 @@ describe("module-learning-pipeline-plan CLI", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         receiptWritten: false,
         liveTouched: false,
@@ -185,7 +185,7 @@ describe("module-learning-pipeline-plan CLI", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "research_artifact_qc",
         moduleFamily: "finance_research",
         receiptWritten: false,

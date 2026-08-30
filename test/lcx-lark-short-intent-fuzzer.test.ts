@@ -27,7 +27,7 @@ describe("lcx-lark-short-intent-fuzzer", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_lark_short_intent_fuzzer_only",
+        boundary: "local_lark_short_intent_fuzzer_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,

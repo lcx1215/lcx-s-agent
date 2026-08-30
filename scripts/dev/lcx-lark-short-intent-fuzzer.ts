@@ -23,7 +23,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts [--json] [--max-per-family N]",
       "",
       "Generates Lark-style short-intent variants by failure family and runs them through the commercial answer pipeline.",
-      "This is dev-only and never calls providers, sends Lark messages, starts training, or writes protected memory.",
+      "This is local-only and never calls providers, sends Lark messages, starts training, or writes protected memory.",
     ].join("\n"),
   );
 }
@@ -299,7 +299,7 @@ export function runLarkShortIntentFuzzer(options: { maxPerFamily?: number } = {}
   const failedFamilies = perFamily.filter((family) => family.failed > 0).map((family) => family.id);
   return {
     ok: failed.length === 0,
-    boundary: "dev_lark_short_intent_fuzzer_only",
+    boundary: "local_lark_short_intent_fuzzer_only",
     macroContract: {
       notWhitelist: true,
       strategy:

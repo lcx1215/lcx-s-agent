@@ -49,7 +49,7 @@ type BindingDecision = {
 };
 
 type ExternalChannelBindingSummary = {
-  boundary: "dev_external_channel_binding_operator_only";
+  boundary: "local_external_channel_binding_operator_only";
   channel: "lark";
   role: "owner_agent_communication_medium";
   objective: "lark_receives_current_best_verified_lcx_agent_answer";
@@ -404,7 +404,7 @@ function buildExternalChannelBindingSummary(
       "debug_lark_channel_probe_before_claiming_user_visible",
   };
   return {
-    boundary: "dev_external_channel_binding_operator_only",
+    boundary: "local_external_channel_binding_operator_only",
     channel: "lark",
     role: "owner_agent_communication_medium",
     objective: "lark_receives_current_best_verified_lcx_agent_answer",
@@ -652,8 +652,8 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     ok: !["blocked_missing_training_plan", "applied_runtime_probe_failed"].includes(
       decision.status,
     ),
-    boundary: "dev_external_channel_binding_operator_only",
-    legacyBoundary: "dev_live_lark_brain_binding_operator_only",
+    boundary: "local_external_channel_binding_operator_only",
+    legacyBoundary: "local_live_lark_brain_binding_operator_only",
     conceptStatus: "legacy_live_terms_external_channel_owner_current",
     startedAt,
     generatedAt: new Date().toISOString(),

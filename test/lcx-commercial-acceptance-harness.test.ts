@@ -60,7 +60,7 @@ function baseInputs() {
     }),
     shortIntentFuzzer: owner("lcx-lark-short-intent-fuzzer", {
       ok: true,
-      boundary: "dev_lark_short_intent_fuzzer_only",
+      boundary: "local_lark_short_intent_fuzzer_only",
       macroContract: {
         notWhitelist: true,
         unknownShortIntentBehavior:
@@ -84,7 +84,7 @@ function baseInputs() {
     }),
     visibleAnswerQualityFuzzer: owner("lcx-visible-answer-quality-fuzzer", {
       ok: true,
-      boundary: "dev_visible_answer_quality_fuzzer_only",
+      boundary: "local_visible_answer_quality_fuzzer_only",
       macroContract: {
         positiveAcceptanceNotOnlyRejection: true,
         conciseDirectAnswerRequired: true,
@@ -138,7 +138,7 @@ function baseInputs() {
     }),
     directedDailyResearchBrief: owner("lcx-directed-daily-research-brief", {
       ok: true,
-      boundary: "dev_directed_daily_research_brief_only",
+      boundary: "local_directed_daily_research_brief_only",
       productMode: "focused_daily_research_product_not_open_ended_chat",
       focus: {
         primary: "index_options_and_semiconductor_ai_compute_chain",
@@ -214,7 +214,7 @@ function baseInputs() {
         acceptanceMatched: false,
       },
       devLiveDrift: {
-        liveMatchesCurrentDev: true,
+        liveMatchesCurrentCanonical: true,
       },
     }),
     externalChannelBindingStatus: owner("lcx-external-channel-binding", {
@@ -338,7 +338,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       expect.objectContaining({
         ok: true,
         readyForCommercialRelease: true,
-        boundary: "dev_commercial_acceptance_harness_only",
+        boundary: "local_commercial_acceptance_harness_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -518,7 +518,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         acceptanceMatched: false,
       },
       devLiveDrift: {
-        liveMatchesCurrentDev: false,
+        liveMatchesCurrentCanonical: false,
       },
     });
     inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
@@ -584,7 +584,7 @@ describe("lcx-commercial-acceptance-harness", () => {
         acceptanceMatched: false,
       },
       devLiveDrift: {
-        liveMatchesCurrentDev: false,
+        liveMatchesCurrentCanonical: false,
       },
     });
     inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
@@ -830,7 +830,7 @@ describe("lcx-commercial-acceptance-harness", () => {
       ownerCommands: string[];
     };
 
-    expect(payload.boundary).toBe("dev_commercial_acceptance_harness_only");
+    expect(payload.boundary).toBe("local_commercial_acceptance_harness_only");
     expect(payload.liveTouched).toBe(false);
     expect(payload.providerConfigTouched).toBe(false);
     expect(payload.protectedMemoryTouched).toBe(false);

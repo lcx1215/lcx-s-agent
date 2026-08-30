@@ -214,7 +214,7 @@ export function buildLocalFailureTraceReceipt(input: FailureTraceInput) {
   return {
     ok: true,
     kind: "lcx-local-failure-trace",
-    boundary: "dev_local_failure_trace_index_only",
+    boundary: "local_failure_trace_index_only",
     checkedAt: input.checkedAt,
     runId: buildRunId(input.checkedAt, input.source, key),
     source: input.source,
@@ -270,7 +270,7 @@ export type LocalFailureTraceReceipt = ReturnType<typeof buildLocalFailureTraceR
 export function summarizeTraceForHandoff(receipt: LocalFailureTraceReceipt): string {
   return [
     "## Local Failure Trace",
-    "boundary: dev_local_failure_trace_index_only",
+    "boundary: local_failure_trace_index_only",
     `latestPath: ${LOCAL_FAILURE_TRACE_LATEST_PATH}`,
     `jsonlPath: ${LOCAL_FAILURE_TRACE_JSONL_PATH}`,
     `结果: ${receipt.result}`,

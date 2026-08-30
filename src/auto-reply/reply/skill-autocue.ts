@@ -157,7 +157,7 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
   {
     skillName: "agent-runtime-drift-auditor",
     reason:
-      "the request is about dev/live/runtime drift, sidecar sync, or migration boundary checks",
+      "the request is about one-system worktree/runtime drift, sidecar sync, or external-channel migration boundary checks",
     patterns: [
       /dev.{0,8}live/i,
       /live.{0,12}sidecar/i,

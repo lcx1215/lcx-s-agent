@@ -53,7 +53,7 @@ type CommercialBlueprintItem = {
 
 type ExamReport = {
   ok: boolean;
-  boundary: "dev_exam_only" | "dev_exam_with_live_probe";
+  boundary: "local_exam_only" | "local_exam_with_live_probe";
   checkedAt: string;
   liveTouched: boolean;
   providerConfigTouched: false;
@@ -92,7 +92,7 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/dev/lcx-agent-exam.ts [--json] [--live] [--l5]",
       "",
-      "Read-only judge exam for LCX Agent dev/local lanes.",
+      "Read-only judge exam for LCX Agent local lanes.",
       "Default does not touch live, does not start training, and does not run heavy MLX eval.",
       "",
       "Options:",
@@ -168,7 +168,7 @@ function commandFailedLane(lane: string, command: CommandResult): ExamLane {
     lane,
     status: "fail",
     severity: "P1",
-    boundary: "dev_observability_only",
+    boundary: "local_observability_only",
     evidence: [`command=${command.name}`, `error=${command.ok ? "none" : command.error}`],
     issue: "这条线路的证据命令自己失败了，不能继续凭感觉判断。",
     nextAction: `先修 ${command.name}，再重新跑 lcx-agent-exam。`,
@@ -188,7 +188,7 @@ function buildSystemDoctorLane(doctorCommand: CommandResult): ExamLane {
     lane: "system_doctor",
     status: doctor.ok === true && failed === 0 ? "pass" : "fail",
     severity: doctor.ok === true && failed === 0 ? "info" : "P1",
-    boundary: stringValue(doctor.boundary, "dev_observability_only"),
+    boundary: stringValue(doctor.boundary, "local_observability_only"),
     evidence: [
       `ok=${String(doctor.ok)}`,
       `passed=${passed}`,
@@ -227,7 +227,7 @@ function buildTrainingLane(planCommand: CommandResult): ExamLane {
     lane: "training_guard",
     status,
     severity: status === "pass" ? "info" : "P2",
-    boundary: "dev_local_training_only",
+    boundary: "local_training_only",
     evidence: [
       `activeProcesses=${activeProcesses.length}`,
       `nextDecision=${stringValue(topDecision.id, "unknown")}`,
@@ -269,7 +269,7 @@ function buildPromotionLane(auditCommand: CommandResult): ExamLane {
     lane: "qwen_adapter_promotion",
     status,
     severity: status === "pass" ? "info" : status === "warn" ? "P2" : "P1",
-    boundary: stringValue(audit.boundary, "dev_local_brain_promotion_audit_only"),
+    boundary: stringValue(audit.boundary, "local_brain_promotion_audit_only"),
     evidence: [
       `promotionDecision=${decision}`,
       `latestEval=${stringValue(latestEval.name)} ${numberValue(latestEval.passed) ?? 0}/${numberValue(latestEval.total) ?? 0}`,
@@ -369,7 +369,7 @@ function buildLearningSedimentationInventoryLane(
       lane: "learning_sedimentation_inventory",
       status: "not_run",
       severity: "P3",
-      boundary: "dev_learning_sedimentation_audit_not_run",
+      boundary: "local_learning_sedimentation_audit_not_run",
       evidence: ["lcx-learning-sedimentation-audit not run"],
       issue: "没有读取全局学习沉淀库存，不能区分历史 eval_absorbed 和今天新增 review。",
       nextAction: "跑 lcx-learning-sedimentation-audit，把历史模块吸收库存和当天 review 分开看。",
@@ -408,7 +408,7 @@ function buildLearningSedimentationInventoryLane(
     lane: "learning_sedimentation_inventory",
     status,
     severity: status === "pass" ? "info" : status === "warn" ? "P2" : "P1",
-    boundary: stringValue(audit.boundary, "dev_learning_sedimentation_audit_only"),
+    boundary: stringValue(audit.boundary, "local_learning_sedimentation_audit_only"),
     evidence: [
       `assessment=${stringValue(audit.assessment, "unknown")}`,
       `planReceipts=${planReceipts}`,
@@ -474,7 +474,7 @@ function buildThinkingHierarchyLane(sources?: CognitiveIntegritySources): ExamLa
     lane: "thinking_hierarchy_integrity",
     status,
     severity: status === "pass" ? "info" : "P1",
-    boundary: "dev_static_cognitive_contract",
+    boundary: "local_static_cognitive_contract",
     evidence: [
       `doctrineMonotonic=${String(doctrineOk)}`,
       `evalPrerequisiteExpansion=${String(evalOk)}`,
@@ -499,12 +499,13 @@ function buildWorkStatusBoundaryLane(sources?: CognitiveIntegritySources): ExamL
       severity: "P2",
       boundary: "static_contract_sources_missing",
       evidence: ["sourceAudit=false"],
-      issue: "没有读取工作状态契约源码，不能判断 dev/live/started/completed 是否会混说。",
+      issue:
+        "没有读取工作状态契约源码，不能判断 worktree/external-channel/started/completed 是否会混说。",
       nextAction: "重新跑 lcx-agent-exam，让它读取 Lark/status 契约。",
     };
   }
   const larkOk = hasAll(sources.larkSurfaces, [
-    "dev-fixed means local implementation or tests only",
+    "core-verified means local implementation or tests only",
     "live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
     "started, running, completed, blocked, or unproven",
   ]);
@@ -528,7 +529,7 @@ function buildWorkStatusBoundaryLane(sources?: CognitiveIntegritySources): ExamL
     lane: "work_status_boundary_integrity",
     status,
     severity: status === "pass" ? "info" : "P1",
-    boundary: "dev_static_workflow_contract",
+    boundary: "local_static_workflow_contract",
     evidence: [`larkSurfaceBoundary=${String(larkOk)}`, `runbookBoundary=${String(runbookOk)}`],
     issue:
       status === "pass"
@@ -581,7 +582,7 @@ function buildMemorySedimentationLane(sources?: CognitiveIntegritySources): Exam
     lane: "memory_sedimentation_integrity",
     status,
     severity: status === "pass" ? "info" : "P1",
-    boundary: "dev_static_memory_contract",
+    boundary: "local_static_memory_contract",
     evidence: [
       `systemPromptLearningGate=${String(promptOk)}`,
       `moduleReviewBoundary=${String(moduleReviewOk)}`,
@@ -612,7 +613,7 @@ function buildAnswerAuditPipelineLane(sources?: CognitiveIntegritySources): Exam
   }
   const sourceOk = hasAll(sources.answerAuditSurfaces, [
     "buildLarkAnswerAuditPolicy",
-    "dev_commercial_answer_pipeline_only",
+    "local_commercial_answer_pipeline_only",
     "model_candidate_not_final_authority",
     "candidate_answer_not_final_authority",
     "challenger_only_not_final_authority",
@@ -636,7 +637,7 @@ function buildAnswerAuditPipelineLane(sources?: CognitiveIntegritySources): Exam
     lane: "commercial_answer_audit_pipeline",
     status,
     severity: status === "pass" ? "info" : "P1",
-    boundary: "dev_static_lark_answer_audit_contract",
+    boundary: "local_static_lark_answer_audit_contract",
     evidence: [`answerAuditSource=${String(sourceOk)}`, `runbookPolicy=${String(runbookOk)}`],
     issue:
       status === "pass"
@@ -676,7 +677,7 @@ function buildControlRoomProductLane(sources?: CognitiveIntegritySources): ExamL
     lane: "product_control_room",
     status,
     severity: status === "pass" ? "info" : "P1",
-    boundary: "dev_static_product_entrypoint_contract",
+    boundary: "local_static_product_entrypoint_contract",
     evidence: [
       `controlRoomContract=${String(productOk)}`,
       `entrypointConvergence=${String(convergenceOk)}`,
@@ -784,7 +785,7 @@ function buildLiveBoundaryLane(live: boolean, channelCommand: CommandResult | un
       lane: "live_visible_boundary",
       status: "pass",
       severity: "info",
-      boundary: "dev_fixed_not_live_fixed",
+      boundary: "local_fixed_not_live_fixed",
       evidence: ["liveTouched=false", "providerConfigTouched=false", "trainingStarted=false"],
       issue: "本次 exam 明确没有把 dev 证据升级成 live-visible-fixed。",
       nextAction: "只有 migration/build/restart/probe/真实 Lark 入站回复全有，才改 live 状态。",
@@ -825,7 +826,7 @@ function buildAutomationLane(planCommand: CommandResult, doctorCommand: CommandR
       lane: "automation_coordination",
       status: "warn",
       severity: "P2",
-      boundary: "dev_automation_evidence_incomplete",
+      boundary: "local_automation_evidence_incomplete",
       evidence: [
         `trainingPlanOk=${String(planCommand.ok)}`,
         `doctorOk=${String(doctorCommand.ok)}`,
@@ -843,7 +844,7 @@ function buildAutomationLane(planCommand: CommandResult, doctorCommand: CommandR
     lane: "automation_coordination",
     status: activeProcesses.length > 0 && decisions.length > 0 && failed === 0 ? "pass" : "warn",
     severity: activeProcesses.length > 0 && decisions.length > 0 && failed === 0 ? "info" : "P2",
-    boundary: "dev_automation_coordination_only",
+    boundary: "local_automation_coordination_only",
     evidence: [
       `activeProcesses=${activeProcesses.length}`,
       `trainingDecisions=${decisions.length}`,
@@ -916,7 +917,7 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
     {
       id: "live_closure",
       order: 1,
-      title: "dev/live 闭环和真实 Lark 验收",
+      title: "worktree/external-channel 闭环和真实 Lark 验收",
       ownerLane: "live_visible_boundary",
       status:
         params.live && liveLane?.status === "warn" && larkLane?.status !== "fail"
@@ -926,7 +927,7 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
             : "needs_live",
       evidence: liveLane?.evidence ?? ["live lane missing"],
       nextAction:
-        "按 dev-ready -> live-runtime-updated -> live-user-seen 顺序做迁移、重启、probe、真实入站回复验收。",
+        "按 core-ready -> live-runtime-updated -> live-user-seen 顺序做迁移、重启、probe、真实入站回复验收。",
     },
     {
       id: "module_learning_absorption",
@@ -1044,7 +1045,7 @@ export function buildAgentExamReport(params: {
   });
   return {
     ok: fail === 0,
-    boundary: params.live ? "dev_exam_with_live_probe" : "dev_exam_only",
+    boundary: params.live ? "local_exam_with_live_probe" : "local_exam_only",
     checkedAt: params.checkedAt ?? new Date().toISOString(),
     liveTouched: params.live,
     providerConfigTouched: false,

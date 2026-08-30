@@ -33,7 +33,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts [--json] [--max-per-family N]",
       "",
       "Checks that LCX accepts concise useful answers, not only rejects bad answers.",
-      "This is dev-only and never calls providers, sends Lark messages, starts training, or writes protected memory.",
+      "This is local-only and never calls providers, sends Lark messages, starts training, or writes protected memory.",
     ].join("\n"),
   );
 }
@@ -436,7 +436,7 @@ export function runVisibleAnswerQualityFuzzer(options: { maxPerFamily?: number }
   );
   return {
     ok: failed.length === 0 && missingMacroContracts.length === 0,
-    boundary: "dev_visible_answer_quality_fuzzer_only",
+    boundary: "local_visible_answer_quality_fuzzer_only",
     macroContract: {
       positiveAcceptanceNotOnlyRejection: true,
       conciseDirectAnswerRequired: true,

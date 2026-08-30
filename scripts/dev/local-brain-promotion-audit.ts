@@ -228,7 +228,7 @@ export function buildPromotionAudit(params: {
 
   return {
     ok: true,
-    boundary: "dev_local_brain_promotion_audit_only",
+    boundary: "local_brain_promotion_audit_only",
     lane: "promotion_audit",
     promotionDecision,
     latestPassingAdapter: selectedAdapter,

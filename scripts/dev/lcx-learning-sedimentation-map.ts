@@ -518,7 +518,7 @@ async function buildMap(workspaceDir: string) {
 
   return {
     ok: true,
-    boundary: "dev_learning_sedimentation_map_only",
+    boundary: "local_learning_sedimentation_map_only",
     workspaceDir,
     summary: {
       laneCount: lanes.length,

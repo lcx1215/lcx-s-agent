@@ -37,7 +37,7 @@ unless the user explicitly asks for them.
 
 ## Core Boundaries
 
-- `dev-ready` is not `user-visible-observed`.
+- `core-ready` is not `user-visible-observed`.
 - A stored source is not learned capability.
 - A receipt is not model-weight absorption.
 - A `parseRecovered` eval case is not a clean promotion pass.
@@ -125,11 +125,11 @@ data, dataset, eval, and promotion into the next unified clean adapter.
 
 Lark/Feishu is the external communication channel between the owner and LCX
 Agent, not a second live brain or second runtime truth source. User-visible
-proof is intentionally separate from dev proof. Lark official APIs, SDKs, or
+proof is intentionally separate from local proof. Lark official APIs, SDKs, or
 open-source connector code are connector implementations only; they do not own
 model authority, runtime truth, or brain state.
 
-Forward status names are `dev-ready`, `external-channel-bound`, and
+Forward status names are `core-ready`, `external-channel-bound`, and
 `user-visible-observed`. Legacy `live-runtime-updated`, `live-user-seen`, and
 `live-visible-fixed` fields may still appear during migration; treat them as
 `legacy-live-runtime-updated`, `legacy-live-user-seen`, and
@@ -137,7 +137,7 @@ Forward status names are `dev-ready`, `external-channel-bound`, and
 
 | State                    | Meaning                                                             |
 | ------------------------ | ------------------------------------------------------------------- |
-| `dev-ready`              | Local tests, smokes, replay, or evals passed in the dev repo.       |
+| `core-ready`             | Local tests, smokes, replay, or evals passed in the repo.           |
 | `external-channel-bound` | Lark/Feishu transport routes to the selected clean LCX answer path. |
 | `user-visible-observed`  | A real Lark inbound and outbound reply was observed by the owner.   |
 
@@ -184,18 +184,21 @@ to a supported-region cloud control station; it does not create a second live
 brain. The migration target is:
 
 ```text
-local dev core
+local LCX core
   -> cloud-runtime-ready
   -> external-channel-bound
   -> user-visible-observed
 ```
 
-`cloud-runtime-ready` means the cloud control machine has one canonical dev
-repo, one canonical `~/.openclaw` state root, copied/synced operator skills,
+`cloud-runtime-ready` means the cloud control machine has one canonical
+repository checkout, one canonical `~/.openclaw` state root, copied/synced operator skills,
 receipts, logs, selected-clean adapter proof, and governance owners. It does not
 mean live-visible-fixed, user-visible-observed, or model-weight absorption.
-Single repo rule: one canonical dev repo, one canonical state root, no second
-live brain.
+Local system/factory rule: the local machine has one LCX system and one factory/runtime,
+backed by one canonical repository and state root. Local isolation and parallel work
+use linked Git worktrees only; no second repository or deployment checkout is
+authoritative. Feature branches belong to GitHub/GitLab collaboration, review, and
+release, not to the local runtime model.
 
 The preferred repo path after migration is `/srv/lcx/lcx-s-openclaw`; the
 preferred state root is `~/.openclaw`. Lark, WeChat, SMS, Slack, or any future

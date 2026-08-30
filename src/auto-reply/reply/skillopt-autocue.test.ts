@@ -69,7 +69,7 @@ describe("resolveSkillOptAutoCue", () => {
 
     expect(cue?.matchedSkillIds).toEqual(["external_channel_boundary_preflight"]);
     expect(cue?.promptInjection).toContain("live-user-seen");
-    expect(cue?.boundary).toBe("dev_skillopt_preflight_only");
+    expect(cue?.boundary).toBe("local_skillopt_preflight_only");
   });
 
   it("does not inject a matched skill when no accepted best_skill.md exists", async () => {

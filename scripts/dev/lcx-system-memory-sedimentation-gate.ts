@@ -168,7 +168,7 @@ async function buildGate(options: CliOptions) {
       : [];
   return {
     ok: true,
-    boundary: "dev_system_memory_sedimentation_gate_only",
+    boundary: "local_system_memory_sedimentation_gate_only",
     workspaceDir: options.workspaceDir,
     repoDir: options.repoDir,
     recallReady: systemMemoryPresent && protectedMemoryClean,

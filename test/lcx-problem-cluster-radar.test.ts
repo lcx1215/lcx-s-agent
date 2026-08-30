@@ -53,7 +53,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("aggregates owner outputs into actionable problem clusters without owning truth", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         latestEval: {
           at: "2026-05-18T10:00:00.000Z",
           passed: 77,
@@ -122,7 +122,7 @@ describe("lcx-problem-cluster-radar", () => {
     expect(result).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_problem_cluster_radar_only",
+        boundary: "local_problem_cluster_radar_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -168,7 +168,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("treats sedimentation map conflation rules as guardrails, not active incidents", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         latestEval: { passed: 77, total: 77, promotionReady: true, parseRecoveredCaseIds: [] },
         decisions: [],
       }),
@@ -212,7 +212,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("does not treat an empty same-day module gate as a blocker when cumulative absorption is clean", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         latestEval: { passed: 201, total: 201, promotionReady: true, parseRecoveredCaseIds: [] },
         decisions: [],
       }),
@@ -270,11 +270,11 @@ describe("lcx-problem-cluster-radar", () => {
   it("folds guard adapter mismatch into adapter promotion truth", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "guard" }],
         latestEval: { passed: 200, total: 200, promotionReady: true, parseRecoveredCaseIds: [] },
         activeGuardAdapterTruth: {
-          boundary: "dev_active_guard_adapter_truth_only",
+          boundary: "local_active_guard_adapter_truth_only",
           guardCurrentAdapter: "/tmp/adapter-stale-r1",
           selectedCleanAdapter: "/tmp/adapter-clean-r2",
           latestPromotedAdapter: "/tmp/adapter-clean-r2",
@@ -331,7 +331,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("folds external Lark channel proof gaps into adapter promotion truth", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "local_brain_eval" }],
         latestEval: { passed: 200, total: 200, promotionReady: true, parseRecoveredCaseIds: [] },
         qwenCapabilityConsolidation: {
@@ -339,7 +339,7 @@ describe("lcx-problem-cluster-radar", () => {
           selectedCleanAdapter: "/tmp/adapter-clean-r2",
         },
         externalChannelBinding: {
-          boundary: "dev_external_channel_binding_plan_only",
+          boundary: "local_external_channel_binding_plan_only",
           selectedCleanAdapter: "/tmp/adapter-clean-r2",
           status: "deferred_active_training_or_eval",
           action: "wait_for_current_eval_then_bind_external_channel_to_selected_clean_adapter",
@@ -403,11 +403,11 @@ describe("lcx-problem-cluster-radar", () => {
   it("does not call stale latest-promoted truth an active guard adapter mismatch", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "guard" }],
         latestEval: { passed: 200, total: 200, promotionReady: true, parseRecoveredCaseIds: [] },
         activeGuardAdapterTruth: {
-          boundary: "dev_active_guard_adapter_truth_only",
+          boundary: "local_active_guard_adapter_truth_only",
           guardCurrentAdapter: "/tmp/adapter-clean-r2",
           selectedCleanAdapter: "/tmp/adapter-clean-r2",
           latestPromotedAdapter: "/tmp/adapter-stale-promoted-r1",
@@ -465,7 +465,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("reports parseRecovered promotion blocks with the current eval pass count", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         latestEval: {
           at: "2026-05-18T21:05:19.003Z",
           passed: 200,
@@ -522,7 +522,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("does not keep stale eval timeouts as watch clusters after a newer eval verdict", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         latestEval: {
           at: "2026-05-18T12:00:00.000Z",
           passed: 77,
@@ -570,7 +570,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("blocks active eval-timeout repair when the training owner says Codex cannot repair yet", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "guard" }],
         latestEval: { passed: 200, total: 200, promotionReady: true, parseRecoveredCaseIds: [] },
         latestEvalTimeout: {
@@ -626,7 +626,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("preserves repairable sub-signals when a mixed training cluster is owner-blocked", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "guard" }],
         latestEval: { passed: 201, total: 201, promotionReady: false, parseRecoveredCaseIds: [] },
         latestEvalTimeout: {
@@ -695,7 +695,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("moves already-repaired sub-signals into pending owner verification", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "guard" }],
         latestTeacher: {
           at: "2026-05-19T14:35:30.371Z",
@@ -771,7 +771,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("keeps Codex-repairable teacher and output-contract decisions actionable during active training", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "guard" }],
         latestEval: { passed: 201, total: 201, promotionReady: false, parseRecoveredCaseIds: [] },
         decisions: [
@@ -833,12 +833,12 @@ describe("lcx-problem-cluster-radar", () => {
   it("surfaces the Qwen and agent evolution acceleration queue from the training owner", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "guard" }],
         latestEval: { passed: 205, total: 205, promotionReady: true, parseRecoveredCaseIds: [] },
         decisions: [{ id: "training_already_active", codexRepairEligible: false }],
         evolutionAccelerationQueue: {
-          boundary: "dev_evolution_acceleration_queue_only",
+          boundary: "local_evolution_acceleration_queue_only",
           activeTrainingOrEval: true,
           canStartHeavyWorkNow: false,
           readyNowCount: 0,
@@ -904,7 +904,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("treats work-then-evolve cooldown as a deliberate watch window, not a blocked repair", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         activeProcesses: [{ pid: 101, role: "guard" }],
         latestEvolutionCooldown: {
           at: "2026-05-28T04:30:00.000Z",
@@ -914,7 +914,7 @@ describe("lcx-problem-cluster-radar", () => {
         latestEval: { passed: 213, total: 213, promotionReady: true, parseRecoveredCaseIds: [] },
         decisions: [{ id: "training_already_active", codexRepairEligible: false }],
         evolutionAccelerationQueue: {
-          boundary: "dev_evolution_acceleration_queue_only",
+          boundary: "local_evolution_acceleration_queue_only",
           activeTrainingOrEval: true,
           canStartHeavyWorkNow: false,
           readyNowCount: 0,
@@ -966,7 +966,7 @@ describe("lcx-problem-cluster-radar", () => {
   it("surfaces real sedimentation audit gap objects with their severity", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
-        boundary: "dev_local_brain_training_plan_only",
+        boundary: "local_brain_training_plan_only",
         latestEval: { passed: 77, total: 77, promotionReady: true, parseRecoveredCaseIds: [] },
         decisions: [],
       }),
@@ -1022,7 +1022,7 @@ describe("lcx-problem-cluster-radar", () => {
     const result = buildProblemClusterRadar({
       externalAgentUpgrade: owner("lcx-external-agent-upgrade-radar", {
         ok: true,
-        boundary: "dev_external_agent_upgrade_radar_only",
+        boundary: "local_external_agent_upgrade_radar_only",
         summary: {
           registeredCandidateCount: 4,
           architectureIntegratedCount: 4,
@@ -1062,7 +1062,7 @@ describe("lcx-problem-cluster-radar", () => {
     const result = buildProblemClusterRadar({
       externalAgentUpgrade: owner("lcx-external-agent-upgrade-radar", {
         ok: true,
-        boundary: "dev_external_agent_upgrade_radar_only",
+        boundary: "local_external_agent_upgrade_radar_only",
         summary: {
           registeredCandidateCount: 13,
           architectureIntegratedCount: 13,
@@ -1104,7 +1104,7 @@ describe("lcx-problem-cluster-radar", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_problem_cluster_radar_only",
+        boundary: "local_problem_cluster_radar_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,

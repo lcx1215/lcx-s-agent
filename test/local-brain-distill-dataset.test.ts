@@ -413,7 +413,7 @@ describe("local brain distill dataset", () => {
       path.join(planDir, "options.json"),
       JSON.stringify({
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         ...row,
         applicationValidationTask:
           "Use options volatility learning on a fresh QQQ/TLT/NVDA portfolio-risk research task.",

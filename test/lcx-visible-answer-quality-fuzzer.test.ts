@@ -26,7 +26,7 @@ describe("lcx-visible-answer-quality-fuzzer", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_visible_answer_quality_fuzzer_only",
+        boundary: "local_visible_answer_quality_fuzzer_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,

@@ -550,7 +550,7 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
       "routing_family_and_backend_tool_contract",
       "reply_flow_receipt_or_lark_diagnose_output",
       "human_readable_summary_contract",
-      "dev_vs_live_evidence_boundary",
+      "local_vs_legacy_live_evidence_boundary",
     ],
     evidenceFamilies: ["visible_reply_evidence", "routing_receipt", "live_boundary_evidence"],
     moduleSpecificCapabilityRule:
@@ -613,7 +613,7 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
     applicationValidationTask:
       "Apply the ops rule to a fresh health check and report exact command evidence plus failedReason if not healthy.",
     safetyBoundaries: [
-      "dev_fixed_not_live_fixed",
+      "core_verified_not_legacy_live_fixed",
       "no_overlapping_training_start",
       "no_provider_config_change",
       "no_external_channel_sender_change",
@@ -949,7 +949,7 @@ export function createModuleLearningPipelinePlanTool(options?: {
           : null;
       const payload = {
         ok: true,
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: schema.targetModule,
         moduleFamily: schema.moduleFamily,
         status: evidenceStatus,

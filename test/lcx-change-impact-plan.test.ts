@@ -238,7 +238,7 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
-  it("treats --files as a batch file flag and routes live promotion work to the dev/live boundary", async () => {
+  it("treats --files as a batch file flag and routes external-channel work to the local boundary", async () => {
     const payload = await runPlanArgs([
       "--files",
       "scripts/dev/lcx-promote-live.ts",
@@ -252,12 +252,12 @@ describe("lcx-change-impact-plan", () => {
     ]);
     expect(payload.changedFiles).not.toContain("--files");
     expect(payload.unmatchedFiles).toEqual([]);
-    expect(payload.affectedLanes).toEqual(["dev_live_boundary", "test_surface"]);
+    expect(payload.affectedLanes).toEqual(["local_live_boundary", "test_surface"]);
     expect(payload.impacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "live_or_provider_boundary",
-          lane: "dev_live_boundary",
+          lane: "local_live_boundary",
           matchedFiles: ["scripts/dev/lcx-promote-live.ts", "test/lcx-promote-live-status.test.ts"],
           commands: expect.arrayContaining([
             "pnpm vitest run test/lcx-promote-live-status.test.ts",

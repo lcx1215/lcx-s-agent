@@ -357,7 +357,7 @@ export async function buildRealCostLedger(input: CostLedgerInput) {
   return {
     ok: true,
     kind: "lcx-real-cost-ledger",
-    boundary: "dev_cost_observability_only",
+    boundary: "local_cost_observability_only",
     checkedAt: input.checkedAt,
     latestJsonPath: input.outputPaths.latestJsonPath,
     latestMarkdownPath: input.outputPaths.latestMarkdownPath,

@@ -477,7 +477,7 @@ export function createFeishuLiveProbeTool(options?: {
     label: "Feishu Live Probe",
     name: "feishu_live_probe",
     description:
-      "Send a bounded Feishu/Lark live acceptance probe to a configured Lobster surface, wait briefly, read recent chat messages back through the same repo/runtime, evaluate simple must-contain / must-not-contain checks, and write a receipt under memory/feishu-live-probes. Feishu is the API namespace and Lark is the visible app surface for the same integration. Use this to verify live reply behavior after repairs without pretending dev tests are live proof.",
+      "Send a bounded Feishu/Lark live acceptance probe to a configured Lobster surface, wait briefly, read recent chat messages back through the same repo/runtime, evaluate simple must-contain / must-not-contain checks, and write a receipt under memory/feishu-live-probes. Feishu is the API namespace and Lark is the visible app surface for the same integration. Use this to verify live reply behavior after repairs without pretending local tests are live proof.",
     parameters: FeishuLiveProbeSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;

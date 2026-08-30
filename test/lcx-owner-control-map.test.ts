@@ -78,7 +78,7 @@ describe("LCX owner control map", () => {
       expect.objectContaining({
         ok: true,
         kind: "lcx-owner-control-map",
-        boundary: "dev_owner_control_map_only",
+        boundary: "local_owner_control_map_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,

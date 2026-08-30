@@ -43,7 +43,7 @@ describe("lcx-ts-python-boundary", () => {
     const payload = await runBoundary();
 
     expect(payload.ok).toBe(true);
-    expect(payload.boundary).toBe("dev_ts_python_boundary_only");
+    expect(payload.boundary).toBe("local_ts_python_boundary_only");
     expect(payload.unknownFiles).toEqual([]);
     expect(payload.summary.pythonFiles).toBe(
       payload.summary.keep + payload.summary.wrap + payload.summary.migrate,

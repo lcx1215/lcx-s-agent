@@ -568,7 +568,7 @@ async function main() {
 
   const details = {
     ok,
-    boundary: "dev_provider_council_acceleration_only",
+    boundary: "local_provider_council_acceleration_only",
     checkedAt: new Date().toISOString(),
     status,
     action,

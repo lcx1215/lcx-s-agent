@@ -362,7 +362,7 @@ async function buildAudit(workspaceDir: string) {
 
   return {
     ok: true,
-    boundary: "dev_learning_sedimentation_audit_only",
+    boundary: "local_learning_sedimentation_audit_only",
     workspaceDir,
     assessment: sufficientForCurrentUse
       ? moduleLearningCertifiable

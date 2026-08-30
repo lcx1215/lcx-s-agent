@@ -349,7 +349,7 @@ async function main() {
       text: readme,
       fileLabel: "README external-channel status rules",
       required: [
-        "dev-ready",
+        "core-ready",
         "user-visible-observed",
         "legacy-live-visible-fixed",
         "compatibility labels",
@@ -397,7 +397,7 @@ async function main() {
   const failed = checks.filter((check) => !check.ok);
   const result = {
     ok: failed.length === 0,
-    boundary: "dev_doctrine_consistency_only",
+    boundary: "local_doctrine_consistency_only",
     checkedAt: new Date().toISOString(),
     summary: {
       passed: checks.length - failed.length,

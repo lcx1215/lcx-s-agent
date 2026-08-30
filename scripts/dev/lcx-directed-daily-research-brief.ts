@@ -175,7 +175,7 @@ export function buildDirectedDailyResearchBrief(options: { date?: string } = {})
   const dateKey = dateKeyFromOption(options.date);
   return {
     ok: true,
-    boundary: "dev_directed_daily_research_brief_only",
+    boundary: "local_directed_daily_research_brief_only",
     productMode: "focused_daily_research_product_not_open_ended_chat",
     date: dateKey,
     thesis:

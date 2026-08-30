@@ -628,7 +628,7 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "external_agent_upgrade_five_project_distillation",
     userAsk:
-      "网上 GitHub 和 arXiv 有 5 个能加强我们智能体的方向：Agent Lightning、LongMemEval-V2 / AgentRunbook、LightMem / LycheeMemory、ClawBench / WildClawBench、Agent S / CLI-Anything。请把它们融入我们的智能体架构，但不要造平行系统、不要直接安装、不要改 provider config、external channel sender 或 protected memory；先用外部 agent 升级雷达、source registry、license scope、actual reading scope、skill_pattern_distillation、agent_workflow_memory、eval/receipt 和现有 owner 做 dev-only 接入。",
+      "网上 GitHub 和 arXiv 有 5 个能加强我们智能体的方向：Agent Lightning、LongMemEval-V2 / AgentRunbook、LightMem / LycheeMemory、ClawBench / WildClawBench、Agent S / CLI-Anything。请把它们融入我们的智能体架构，但不要造平行系统、不要直接安装、不要改 provider config、external channel sender 或 protected memory；先用外部 agent 升级雷达、source registry、license scope、actual reading scope、skill_pattern_distillation、agent_workflow_memory、eval/receipt 和现有 owner 做 local-only 接入。",
     sourceSummary:
       "five external agent-upgrade candidates requiring existing-owner mapping, isolated source/license review, workflow distillation, eval receipts, and explicit no-direct-runtime-authority boundaries.",
     requiredModules: [
@@ -3907,7 +3907,7 @@ function buildEvalRegistrySummary() {
     };
   });
   return {
-    boundary: "dev_eval_registry_expansion_plan_only",
+    boundary: "local_eval_registry_expansion_plan_only",
     currentCaseCount: EVAL_CASES.length,
     promotionTargetCaseCount: EVAL_EXPANSION_MILESTONES.at(-1),
     nextMilestones: EVAL_EXPANSION_MILESTONES,
@@ -3963,7 +3963,7 @@ function buildEvalCapabilitySuiteResults(caseResults: EvalCaseResult[]) {
       .map((result) => result.id),
   );
   return {
-    boundary: "dev_eval_capability_suite_results_only",
+    boundary: "local_eval_capability_suite_results_only",
     suiteMembership: "overlapping",
     totalEvaluatedCases: caseResults.length,
     suites,
@@ -5653,7 +5653,7 @@ if (options.receiptPath) {
   };
   const receipt = {
     schemaVersion: "lcx_local_brain_eval_receipt_v1",
-    boundary: "dev_local_brain_eval_receipt_only",
+    boundary: "local_brain_eval_receipt_only",
     generatedAt: new Date().toISOString(),
     requested: {
       model: options.model,

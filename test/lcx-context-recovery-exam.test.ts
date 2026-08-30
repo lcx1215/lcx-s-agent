@@ -73,7 +73,7 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_context_recovery_exam_only",
+        boundary: "local_context_recovery_exam_only",
         compressedContextRecovered: true,
         liveTouched: false,
         providerConfigTouched: false,
@@ -124,7 +124,7 @@ describe("LCX compressed context recovery exam", () => {
           userVisibleObserved?: boolean;
           liveRuntimeUpdated?: boolean;
           liveUserSeen?: boolean;
-          liveMatchesCurrentDev?: boolean;
+          liveMatchesCurrentCanonical?: boolean;
         };
         trainingPlan: {
           decisionIds: string[];
@@ -166,7 +166,7 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.ok).toBe(true);
     expect(payload.handoffForNewWindow).toEqual(
       expect.objectContaining({
-        boundary: "dev_context_recovery_handoff_only",
+        boundary: "local_context_recovery_handoff_only",
         owner: "lcx-context-recovery-exam",
       }),
     );
@@ -202,13 +202,13 @@ describe("LCX compressed context recovery exam", () => {
     );
     expect(payload.handoffForNewWindow.selfRepairHands).toEqual(
       expect.objectContaining({
-        boundary: "dev_self_repair_hands_only",
+        boundary: "local_self_repair_hands_only",
         absorptionStatus: "candidate_only_not_in_train_slice",
       }),
     );
     expect(payload.handoffForNewWindow.text).toContain("# LCX New-Window Handoff");
     expect(payload.handoffForNewWindow.text).toContain("do not start overlapping");
-    expect(payload.handoffForNewWindow.text).toContain("context handoff is dev/local evidence");
+    expect(payload.handoffForNewWindow.text).toContain("context handoff is local evidence");
     expect(payload.handoffForNewWindow.text).not.toContain("not live-runtime-updated");
     expect(payload.handoffForNewWindow.text).toContain("External Channel Boundary Truth");
     expect(payload.handoffForNewWindow.text).toContain("volatileOwner=lcx-external-channel-status");

@@ -43,7 +43,7 @@ type ExternalUpgradeCandidate = {
   ownerUseTrigger: string;
   autocueTerms: string[];
   distilledPattern: string;
-  firstDevProbe: string;
+  firstLocalProbe: string;
   requiredReceipts: string[];
   requiredFilters: string[];
   riskBoundaries: string[];
@@ -51,7 +51,7 @@ type ExternalUpgradeCandidate = {
 };
 
 type CandidateVerdict = ExternalUpgradeCandidate & {
-  status: "dev_architecture_integrated";
+  status: "local_architecture_integrated";
   runtimeAuthority: "not_granted";
   missing: string[];
   blockedDirectAdoption: boolean;
@@ -76,8 +76,8 @@ type BlacktechMechanism = {
   ownerGate: string;
   autopilotSurface: string;
   doctrineTerms: string[];
-  currentStatus: "owner_wired_dev_only" | "partially_wired_dev_only";
-  nextSafeDevProbe: string;
+  currentStatus: "owner_wired_local_only" | "partially_wired_local_only";
+  nextSafeLocalProbe: string;
   nextAutomationAction: string;
   blockedUntilIdle?: string;
   requiredProofChain: string[];
@@ -124,7 +124,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     distilledPattern:
       "turn real mistakes into skill packets with variant tasks, static gates, targeted eval, regression eval, train-slice evidence, clean promotion truth, and live preflight cue",
-    firstDevProbe:
+    firstLocalProbe:
       "extend one existing SkillOpt packet with generated adjacent validation cases and compare original versus optimized SOP before any training claim",
     requiredReceipts: [
       "lcx-skillopt-lite",
@@ -141,7 +141,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "real_lark_proof_required",
     ],
     riskBoundaries: [
-      "dev_skillopt_lite_only",
+      "local_skillopt_lite_only",
       "skillopt_preflight_not_weight_absorption",
       "no_provider_config_change",
       "no_external_channel_sender_change",
@@ -169,7 +169,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     autocueTerms: ["Agent Lightning", "trace credit", "credit assignment", "agent RL"],
     distilledPattern:
       "export LCX receipts and failure clusters as trace rows for offline credit assignment; never replace Qwen promotion truth",
-    firstDevProbe:
+    firstLocalProbe:
       "emit a read-only trace fixture from one failed commercial-answer or training cluster and score whether the blamed node matches the owner entrypoint",
     requiredReceipts: [
       "lcx-problem-cluster-radar",
@@ -205,7 +205,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     autocueTerms: ["LongMemEval", "AgentRunbook", "long memory eval", "stale snapshot"],
     distilledPattern:
       "turn LCX handoff, operator latest, module-learning, and external-channel-boundary facts into regression questions for future compressed windows",
-    firstDevProbe:
+    firstLocalProbe:
       "generate a small local memory-regression fixture asking what changed, what is stale, and which owner command proves it",
     requiredReceipts: [
       "lcx-context-recovery-exam",
@@ -225,7 +225,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_external_channel_sender_change",
     ],
     liveBoundary:
-      "external channel can use the same prompt doctrine after migration, but memory regression proof remains dev-only until a real Lark prompt uses it",
+      "external channel can use the same prompt doctrine after migration, but memory regression proof remains local-only until a real Lark prompt uses it",
   },
   {
     id: "local_first_memory_provenance",
@@ -248,7 +248,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     distilledPattern:
       "attach source, timestamp, conflict state, applicability scope, and keep/downrank/discard decision to memory recall instead of trusting extracted summaries",
-    firstDevProbe:
+    firstLocalProbe:
       "take one stale finance rule and produce a provenance packet with source, scope, conflict, downrank decision, and adjacent eval requirement",
     requiredReceipts: [
       "source_registry",
@@ -288,7 +288,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     autocueTerms: ["LightMem", "LycheeMemory", "compact memory", "memory comparison"],
     distilledPattern:
       "compare compact-memory ideas against LCX source/retrieval/apply/eval receipts without replacing protected summaries",
-    firstDevProbe:
+    firstLocalProbe:
       "score one stale-memory/downrank scenario with current LCX receipts versus a compact-memory candidate summary",
     requiredReceipts: [
       "lcx-module-learning-absorption-gate",
@@ -334,7 +334,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     distilledPattern:
       "normalize owner command, model call, tool call, process, file write, artifact, and boundary events into a local trace receipt for later failure attribution",
-    firstDevProbe:
+    firstLocalProbe:
       "emit one local owner-run trace row from governance autopilot linking owner id, command, exit code, parsed status, boundary, and artifact path",
     requiredReceipts: [
       "lcx-governance-autopilot",
@@ -382,7 +382,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     distilledPattern:
       "treat every new tool or skill as untrusted until it has identity, allowlist, least privilege, audit log, uninstall path, and owner boundary",
-    firstDevProbe:
+    firstLocalProbe:
       "score one proposed CLI wrapper or MCP server against tool allowlist, write scope, credential scope, prompt-injection risk, audit log, and uninstall path",
     requiredReceipts: [
       "security-threat-model",
@@ -423,7 +423,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     autocueTerms: ["ClawBench", "WildClawBench", "real task benchmark", "agent benchmark"],
     distilledPattern:
       "convert real task categories into LCX canaries with natural owner prompts, internal route traces, optional acceptance anchors, visible reply checks, and bounded failure reports",
-    firstDevProbe:
+    firstLocalProbe:
       "add one read-only real-work canary that checks whether an answer, owner command, and visible-boundary proof line up",
     requiredReceipts: [
       "lcx-commercial-acceptance-harness",
@@ -438,7 +438,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     riskBoundaries: [
       "no_leaderboard_submission",
       "no_untrusted_task_execution",
-      "dev_ready_not_live_user_seen",
+      "local_ready_not_live_user_seen",
       "protected_memory_guard",
       "no_provider_config_change",
       "no_external_channel_sender_change",
@@ -461,7 +461,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     autocueTerms: ["Agent S", "CLI-Anything", "CLI-Hub", "desktop control"],
     distilledPattern:
       "prefer stable local CLI or official automation first; only distill a wrapper after JSON contract, proof command, and uninstall path exist",
-    firstDevProbe:
+    firstLocalProbe:
       "classify one local command or app with cli-anything-harvester before any wrapper is allowed into LCX runtime",
     requiredReceipts: ["skill-harvester", "cli-anything-harvester", "skill_pattern_distillation"],
     requiredFilters: [
@@ -509,7 +509,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     distilledPattern:
       "use gh as a transparent operator console: read-only repo/issue/PR discovery first, then JSON wrapper contract, permission scope review, dry-run receipt, and explicit owner approval before remote writes or agent delegation",
-    firstDevProbe:
+    firstLocalProbe:
       "run a read-only gh capability inventory that reports gh version, auth scope status, installed extensions, repo identity, and which commands would be remote-write blocked",
     requiredReceipts: [
       "cli-anything-harvester",
@@ -565,7 +565,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     distilledPattern:
       "use specialist roles and handoffs only as workflow structure while keeping volatile truth in one owner per state family",
-    firstDevProbe:
+    firstLocalProbe:
       "classify one LCX workflow into supervisor, handoff, worker, owner-truth, and terminal-decision nodes without changing runtime",
     requiredReceipts: [
       "lcx-flow-graph",
@@ -588,7 +588,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "protected_memory_guard",
     ],
     liveBoundary:
-      "external channel can benefit from clearer role routing only after dev owner checks and migration; this radar grants no external-channel agent framework authority",
+      "external channel can benefit from clearer role routing only after local owner checks and migration; this radar grants no external-channel agent framework authority",
   },
   {
     id: "prediction_market_research_intake",
@@ -619,7 +619,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     distilledPattern:
       "treat prediction markets as weak but useful research sources requiring a real market metadata packet, resolution criteria, timestamp, liquidity, source evidence, ambiguous-resolution review, thin-liquidity downranking, and counterevidence",
-    firstDevProbe:
+    firstLocalProbe:
       "create a paper-only prediction-market research packet with market metadata, source timestamps, resolution ambiguity review, thin-liquidity downrank decision, liquidity caveats, and no execution authority",
     requiredReceipts: [
       "source_registry",
@@ -673,7 +673,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     ],
     distilledPattern:
       "audit strategies with calibration, slippage, liquidity, resolution-risk, sample-out, and failure logs before treating any result as useful research",
-    firstDevProbe:
+    firstLocalProbe:
       "score one paper-only strategy artifact and write a failure log when fees, slippage, sample-out, thin-liquidity, or no-execution compliance is missing",
     requiredReceipts: [
       "source_registry",
@@ -718,7 +718,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     automaticTrigger:
       "When user feedback, failed cases, repeated wrong answers, or SkillOpt/AutoSkill/Skills-Coach wording appears, governance autopilot reads SkillOpt-lite before any eval or training action.",
     ownerGate:
-      "active eval/MLX must be idle before targeted eval, train-slice rebuild, adapter promotion, or external-channel binding; preflight cue stays dev-only while busy",
+      "active eval/MLX must be idle before targeted eval, train-slice rebuild, adapter promotion, or external-channel binding; preflight cue stays local-only while busy",
     autopilotSurface:
       "lcx-governance-autopilot owners.skillOptLite plus owners.externalAgentUpgrade.nextBlacktechProbes",
     doctrineTerms: [
@@ -729,8 +729,8 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "train-slice",
       "external-channel preflight cue",
     ],
-    currentStatus: "partially_wired_dev_only",
-    nextSafeDevProbe:
+    currentStatus: "partially_wired_local_only",
+    nextSafeLocalProbe:
       "extend one accepted SkillOpt packet with generated adjacent validation cases, comparative execution, and a traceable eval receipt",
     nextAutomationAction:
       "autopilot should surface the exact SkillOpt nextIdleCommand, then run at most that one command only after active eval/MLX is idle and owner gates are clean",
@@ -776,8 +776,8 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "long-horizon canaries",
       "visible reply proof",
     ],
-    currentStatus: "owner_wired_dev_only",
-    nextSafeDevProbe:
+    currentStatus: "owner_wired_local_only",
+    nextSafeLocalProbe:
       "add one LCX real-runtime canary that grades owner command output, artifact state, visible boundary wording, and no forbidden side effects",
     nextAutomationAction:
       "autopilot should keep runtime canary gaps visible through commercial acceptance and problem radar until a bounded canary fixture and side-effect audit exist",
@@ -792,12 +792,12 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     forbiddenAuthorities: [
       "leaderboard_driven_runtime_install",
       "untrusted_task_execution",
-      "live_user_seen_claim_from_dev_canary",
+      "live_user_seen_claim_from_local_canary",
       "provider_config_change",
       "protected_memory_write",
     ],
     liveBoundary:
-      "Real-runtime canaries are dev proof until a migrated external-channel path sees fresh real inbound and outbound evidence.",
+      "Real-runtime canaries are local proof until a migrated external-channel path sees fresh real inbound and outbound evidence.",
   },
   {
     id: "unified_trajectory_schema",
@@ -817,11 +817,11 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "tool call and PID linkage",
       "training transition export",
     ],
-    currentStatus: "partially_wired_dev_only",
-    nextSafeDevProbe:
+    currentStatus: "partially_wired_local_only",
+    nextSafeLocalProbe:
       "emit one local trajectory receipt that links owner id, command, exit, parsed boundary, changed artifact, and blamed failure cluster",
     nextAutomationAction:
-      "autopilot should expose missing trace_schema and failure_cluster_link as dev-only next probes instead of inventing a parallel telemetry daemon",
+      "autopilot should expose missing trace_schema and failure_cluster_link as local-only next probes instead of inventing a parallel telemetry daemon",
     requiredProofChain: [
       "owner_run_trace",
       "artifact_side_effect_scope",
@@ -863,8 +863,8 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "keep/downrank/discard",
       "context recovery regression",
     ],
-    currentStatus: "partially_wired_dev_only",
-    nextSafeDevProbe:
+    currentStatus: "partially_wired_local_only",
+    nextSafeLocalProbe:
       "produce a provenance packet for one stale finance-memory rule with source, scope, conflict, downrank decision, and adjacent eval case",
     nextAutomationAction:
       "autopilot should report missing source_registry_record, actual_reading_scope, retrieval/apply validation, and keep/downrank/discard proof before any absorption claim",
@@ -907,8 +907,8 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "boundary",
       "failure attribution",
     ],
-    currentStatus: "partially_wired_dev_only",
-    nextSafeDevProbe:
+    currentStatus: "partially_wired_local_only",
+    nextSafeLocalProbe:
       "write a redacted local trace receipt for one governance autopilot run without eBPF, TLS interception, or extra provider calls",
     nextAutomationAction:
       "autopilot should keep trace observability as a local receipt gap until redaction, artifact scope, and boundary flags pass",
@@ -950,8 +950,8 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "uninstall path",
       "prompt injection defense",
     ],
-    currentStatus: "owner_wired_dev_only",
-    nextSafeDevProbe:
+    currentStatus: "owner_wired_local_only",
+    nextSafeLocalProbe:
       "score one proposed CLI wrapper, MCP server, or external skill through allowlist, write scope, credential scope, audit log, and uninstall path",
     nextAutomationAction:
       "autopilot should block direct adoption and surface the security review owner until the tool permission receipt exists",
@@ -995,8 +995,8 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "extension install review",
       "agent delegation gate",
     ],
-    currentStatus: "partially_wired_dev_only",
-    nextSafeDevProbe:
+    currentStatus: "partially_wired_local_only",
+    nextSafeLocalProbe:
       "add a read-only GitHub CLI capability inventory that reports gh version, auth scope status, installed extensions, current repo remote, and blocked remote-write commands",
     nextAutomationAction:
       "autopilot should surface GitHub CLI as an available but gated operator console, then refuse issue/PR mutation or Copilot delegation unless an owner command explicitly unlocks that lane",
@@ -1040,8 +1040,8 @@ function missingFor(candidate: ExternalUpgradeCandidate): string[] {
   if (!candidate.distilledPattern) {
     missing.push("distilled_pattern");
   }
-  if (!candidate.firstDevProbe) {
-    missing.push("first_dev_probe");
+  if (!candidate.firstLocalProbe) {
+    missing.push("first_local_probe");
   }
   if (candidate.requiredReceipts.length === 0) {
     missing.push("required_receipts");
@@ -1058,7 +1058,7 @@ function missingFor(candidate: ExternalUpgradeCandidate): string[] {
 function candidateVerdicts(): CandidateVerdict[] {
   return CANDIDATES.map((candidate) => ({
     ...candidate,
-    status: "dev_architecture_integrated",
+    status: "local_architecture_integrated",
     runtimeAuthority: "not_granted",
     missing: missingFor(candidate),
     blockedDirectAdoption: true,
@@ -1085,8 +1085,8 @@ function blacktechMissingFor(mechanism: BlacktechMechanism): string[] {
   if (mechanism.doctrineTerms.length === 0) {
     missing.push("doctrine_terms");
   }
-  if (!mechanism.nextSafeDevProbe) {
-    missing.push("next_safe_dev_probe");
+  if (!mechanism.nextSafeLocalProbe) {
+    missing.push("next_safe_local_probe");
   }
   if (!mechanism.nextAutomationAction) {
     missing.push("next_automation_action");
@@ -1284,24 +1284,24 @@ export function buildExternalAgentUpgradeRadar() {
   const failed = checks.filter((check) => !check.ok);
   return {
     ok: failed.length === 0,
-    boundary: "dev_external_agent_upgrade_radar_only",
+    boundary: "local_external_agent_upgrade_radar_only",
     repoRoot,
     summary: {
       total: checks.length,
       failed: failed.length,
       registeredCandidateCount: candidates.length,
       architectureIntegratedCount: candidates.filter(
-        (candidate) => candidate.status === "dev_architecture_integrated",
+        (candidate) => candidate.status === "local_architecture_integrated",
       ).length,
       runtimeAuthorityGrantedCount: candidates.filter(
         (candidate) => candidate.runtimeAuthority !== "not_granted",
       ).length,
       blacktechMechanismCount: blacktechMechanisms.length,
-      blacktechReadyDevOnlyCount: blacktechMechanisms.filter(
-        (mechanism) => mechanism.currentStatus === "owner_wired_dev_only",
+      blacktechReadyLocalOnlyCount: blacktechMechanisms.filter(
+        (mechanism) => mechanism.currentStatus === "owner_wired_local_only",
       ).length,
-      blacktechPartialDevOnlyCount: blacktechMechanisms.filter(
-        (mechanism) => mechanism.currentStatus === "partially_wired_dev_only",
+      blacktechPartialLocalOnlyCount: blacktechMechanisms.filter(
+        (mechanism) => mechanism.currentStatus === "partially_wired_local_only",
       ).length,
       blacktechRuntimeAuthorityGrantedCount: blacktechMechanisms.filter(
         (mechanism) => mechanism.runtimeAuthority !== "not_granted",
@@ -1321,10 +1321,10 @@ export function buildExternalAgentUpgradeRadar() {
     checks,
     candidates,
     blacktechMechanisms,
-    nextDevProbes: candidates.map((candidate) => ({
+    nextLocalProbes: candidates.map((candidate) => ({
       id: candidate.id,
       ownerEntrypoint: candidate.ownerEntrypoint,
-      firstDevProbe: candidate.firstDevProbe,
+      firstLocalProbe: candidate.firstLocalProbe,
     })),
     nextBlacktechProbes: blacktechMechanisms
       .toSorted((a, b) => a.priority - b.priority)
@@ -1335,7 +1335,7 @@ export function buildExternalAgentUpgradeRadar() {
         automaticTrigger: mechanism.automaticTrigger,
         ownerGate: mechanism.ownerGate,
         autopilotSurface: mechanism.autopilotSurface,
-        nextSafeDevProbe: mechanism.nextSafeDevProbe,
+        nextSafeLocalProbe: mechanism.nextSafeLocalProbe,
         nextAutomationAction: mechanism.nextAutomationAction,
         blockedUntilIdle: mechanism.blockedUntilIdle,
       })),

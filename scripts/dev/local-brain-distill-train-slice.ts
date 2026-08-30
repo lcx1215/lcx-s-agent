@@ -304,7 +304,7 @@ function finishTeacherQualitySummary(
       (left, right) => right.count - left.count || left.signature.localeCompare(right.signature),
     );
   return {
-    boundary: "dev_teacher_distillation_review_quality_summary_only",
+    boundary: "local_teacher_distillation_review_quality_summary_only",
     sourceKind: REVIEW_SOURCE_KIND,
     scope,
     total: acc.total,
@@ -553,12 +553,12 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     sourceKinds: counts.sourceKinds,
     writtenSourceKinds,
     teacherReviewQuality: {
-      boundary: "dev_teacher_distillation_review_quality_summary_only",
+      boundary: "local_teacher_distillation_review_quality_summary_only",
       sourceTrain: finishTeacherQualitySummary(counts.teacherQuality, "source_train"),
       writtenSlice: finishTeacherQualitySummary(writtenTeacherQuality, "written_slice"),
     },
     sampleTrust: {
-      boundary: "dev_local_brain_sample_trust_summary_only",
+      boundary: "local_brain_sample_trust_summary_only",
       sourceTrustTiers: SOURCE_KIND_TRUST_TIERS,
       sourceTrustTierCounts: counts.trustTiers,
       writtenTrustTierCounts: writtenTrustTiers,

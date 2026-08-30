@@ -25,8 +25,8 @@ async function runRadar() {
       architectureIntegratedCount: number;
       runtimeAuthorityGrantedCount: number;
       blacktechMechanismCount: number;
-      blacktechReadyDevOnlyCount: number;
-      blacktechPartialDevOnlyCount: number;
+      blacktechReadyLocalOnlyCount: number;
+      blacktechPartialLocalOnlyCount: number;
       blacktechRuntimeAuthorityGrantedCount: number;
       blacktechAutopilotRoutedCount: number;
       perfectIntegrationClaim: boolean;
@@ -57,7 +57,7 @@ async function runRadar() {
       ownerGate: string;
       autopilotSurface: string;
       currentStatus: string;
-      nextSafeDevProbe: string;
+      nextSafeLocalProbe: string;
       nextAutomationAction: string;
       blockedUntilIdle?: string;
       requiredProofChain: string[];
@@ -73,7 +73,7 @@ async function runRadar() {
       automaticTrigger: string;
       ownerGate: string;
       autopilotSurface: string;
-      nextSafeDevProbe: string;
+      nextSafeLocalProbe: string;
       nextAutomationAction: string;
       blockedUntilIdle?: string;
     }>;
@@ -90,7 +90,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_external_agent_upgrade_radar_only",
+        boundary: "local_external_agent_upgrade_radar_only",
         architectureFit: "fully_integrated_into_existing_lcx_owner_stack",
         liveTouched: false,
         providerConfigTouched: false,
@@ -104,8 +104,8 @@ describe("lcx-external-agent-upgrade-radar", () => {
         architectureIntegratedCount: 13,
         runtimeAuthorityGrantedCount: 0,
         blacktechMechanismCount: 7,
-        blacktechReadyDevOnlyCount: 2,
-        blacktechPartialDevOnlyCount: 5,
+        blacktechReadyLocalOnlyCount: 2,
+        blacktechPartialLocalOnlyCount: 5,
         blacktechRuntimeAuthorityGrantedCount: 0,
         blacktechAutopilotRoutedCount: 7,
         perfectIntegrationClaim: false,
@@ -385,7 +385,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
 
     expect(strategyAudit).toEqual(
       expect.objectContaining({
-        firstDevProbe: expect.stringContaining("failure log"),
+        firstLocalProbe: expect.stringContaining("failure log"),
       }),
     );
     expect(strategyAudit?.requiredFilters).toEqual(

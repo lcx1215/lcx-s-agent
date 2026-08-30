@@ -40,7 +40,7 @@ describe("local-brain-promotion-audit", () => {
 
     expect(audit).toEqual(
       expect.objectContaining({
-        boundary: "dev_local_brain_promotion_audit_only",
+        boundary: "local_brain_promotion_audit_only",
         lane: "promotion_audit",
         promotionDecision: "safe",
         latestPassingAdapter: adapterPath,

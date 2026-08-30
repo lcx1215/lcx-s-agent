@@ -1315,7 +1315,7 @@ checks.push(
 const failures = actionableFailures(checks);
 const result = {
   ok: failures.length === 0,
-  boundary: "dev_observability_only",
+  boundary: "local_observability_only",
   deep: options.deep,
   live: options.live,
   brainPlan: options.brainPlan,

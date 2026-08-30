@@ -58,7 +58,7 @@ describe("lcx-system-memory-sedimentation-gate", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_system_memory_sedimentation_gate_only",
+        boundary: "local_system_memory_sedimentation_gate_only",
         recallReady: true,
         recallClaimReady: true,
         freshEnoughForRecallClaim: true,

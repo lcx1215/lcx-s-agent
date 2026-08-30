@@ -28,7 +28,7 @@ function usage(): never {
       "",
       "Plans one module-learning run through the existing source -> capability -> retrieval/apply -> eval/training absorption chain.",
       "Default is dry-run under ~/.openclaw/workspace. Use --write to create memory/module-learning-pipeline-plan-receipts/<date>/*.json.",
-      "This is dev/local only and does not fetch remote content or touch live/provider/protected-memory state.",
+      "This is local only and does not fetch remote content or touch live/provider/protected-memory state.",
     ].join("\n"),
   );
 }

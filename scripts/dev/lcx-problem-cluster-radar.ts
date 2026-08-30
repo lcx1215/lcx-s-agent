@@ -39,7 +39,7 @@ type ProblemCluster = {
   sourceOwners: string[];
   signals: ProblemSignal[];
   nextAction: string;
-  boundary: "dev_problem_cluster_radar_only";
+  boundary: "local_problem_cluster_radar_only";
 };
 
 type RadarInputs = {
@@ -195,7 +195,7 @@ function problemCluster(params: {
     sourceOwners: [...new Set(params.sourceOwners)].toSorted(),
     signals: params.signals,
     nextAction: params.nextAction,
-    boundary: "dev_problem_cluster_radar_only",
+    boundary: "local_problem_cluster_radar_only",
   };
 }
 
@@ -1154,7 +1154,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
   const watchClusters = clusters.filter((cluster) => cluster.severity === "P3");
   return {
     ok: true,
-    boundary: "dev_problem_cluster_radar_only",
+    boundary: "local_problem_cluster_radar_only",
     checkedAt: new Date().toISOString(),
     summary: {
       clusters: clusters.length,

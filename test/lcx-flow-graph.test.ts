@@ -93,7 +93,7 @@ describe("LCX flow graph exam", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_flow_graph_only",
+        boundary: "local_flow_graph_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -171,9 +171,9 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
-          id: "dev_to_external_channel_lark_waterflow",
+          id: "local_to_external_channel_lark_waterflow",
           requiredFilters: expect.arrayContaining([
-            "dev_ready_not_user_visible_observed",
+            "local_ready_not_user_visible_observed",
             "external_channel_probe_required",
             "real_lark_inbound_required",
           ]),
@@ -190,7 +190,7 @@ describe("LCX flow graph exam", () => {
             "skillopt_best_skill_required",
             "skillopt_context_not_weight_absorption",
             "skillopt_external_channel_proof_required",
-            "dev_ready_not_user_visible_observed",
+            "local_ready_not_user_visible_observed",
             "external_channel_probe_required",
             "real_lark_inbound_required",
           ]),
@@ -515,14 +515,14 @@ describe("LCX flow graph exam", () => {
         expect.objectContaining({
           path: "src/commands/capabilities/lark-loop-diagnose.ts",
           familyIds: expect.arrayContaining([
-            "dev_live_evidence_entrypoints",
+            "local_live_evidence_entrypoints",
             "lark_visible_reply_audit_entrypoints",
           ]),
         }),
         expect.objectContaining({
           path: "src/commands/capabilities.lark-loop-diagnose.test.ts",
           familyIds: expect.arrayContaining([
-            "dev_live_evidence_entrypoints",
+            "local_live_evidence_entrypoints",
             "lark_visible_reply_audit_entrypoints",
           ]),
         }),
@@ -538,7 +538,7 @@ describe("LCX flow graph exam", () => {
           failureSignals: expect.arrayContaining([
             "missing_or_skipped_filter:retrieval_apply_eval_review_required",
           ]),
-          boundary: "dev_flow_graph_only",
+          boundary: "local_flow_graph_only",
         }),
         expect.objectContaining({
           scenarioId: "training_failure_feedback_waterflow",

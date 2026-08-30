@@ -274,7 +274,7 @@ function teacherReviewQualitySummary(examples: DistillExample[]): Record<string,
       (left, right) => right.count - left.count || left.signature.localeCompare(right.signature),
     );
   return {
-    boundary: "dev_teacher_distillation_review_quality_summary_only",
+    boundary: "local_teacher_distillation_review_quality_summary_only",
     sourceKind: "brain_distillation_review",
     total: teacherExamples.length,
     qualityTiers,
@@ -1226,7 +1226,7 @@ async function examplesFromFile(filePath: string, workspaceDir: string): Promise
       const example = exampleFromApplyReceipt(record, relativePath);
       return example ? [example] : [];
     }
-    if (record.boundary === "dev_module_learning_pipeline_plan") {
+    if (record.boundary === "local_module_learning_pipeline_plan") {
       const example = exampleFromModuleLearningPlanReceipt(record, relativePath);
       return example ? [example] : [];
     }
@@ -2257,13 +2257,13 @@ function buildSeedExamples(): DistillExample[] {
     {
       userAsk: "有一条 receipt 就能证明 live 修好了吗？",
       sourceSummary:
-        "dev/live boundary seed; receipts prove dev artifacts, not live-visible Lark behavior.",
+        "worktree/external-channel boundary seed; receipts prove local artifacts, not user-visible Lark behavior.",
       taskFamily: "receipt_not_live_visible_boundary",
       primaryModules: ["ops_audit", "lark_live_loop_debugger", "review_panel"],
       supportingModules: ["control_room_summary"],
       requiredTools: ["lark_loop_diagnose", "feishu_reply_flow_audit"],
       missingData: ["fresh_real_lark_inbound_and_outbound_seen", "live_runtime_restart_proof"],
-      riskBoundaries: [...BOUNDARIES, "dev_fixed_not_live_visible_fixed"],
+      riskBoundaries: [...BOUNDARIES, "local_fixed_not_live_visible_fixed"],
       nextStep: "require_fresh_lark_inbound_outbound_before_live_visible_claim",
     },
     {
@@ -2616,7 +2616,7 @@ async function main(): Promise<void> {
     },
     teacherReviewQuality: teacherReviewQualitySummary(examples),
     sampleTrust: {
-      boundary: "dev_local_brain_sample_trust_summary_only",
+      boundary: "local_brain_sample_trust_summary_only",
       sourceTrustTiers: SOURCE_KIND_TRUST_TIERS,
       sourceTrustTierCounts: trustTierCounts(examples),
       trainTrustTierCounts: trustTierCounts(splits.train),

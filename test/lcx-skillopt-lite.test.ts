@@ -86,7 +86,7 @@ describe("lcx-skillopt-lite CLI", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_skillopt_lite_only",
+        boundary: "local_skillopt_lite_only",
         updated: false,
         skillId: "single_stock_curve_technical_timing_preflight",
         activeProcessCount: 3,
@@ -201,7 +201,7 @@ describe("lcx-skillopt-lite CLI", () => {
     );
     expect(parsed.proofChain).toEqual(
       expect.objectContaining({
-        boundary: "dev_skillopt_proof_chain_only",
+        boundary: "local_skillopt_proof_chain_only",
       }),
     );
     expect(parsed.nextIdleCommand).toContain("--adapter '/adapters/candidate-r6'");
@@ -243,7 +243,7 @@ describe("lcx-skillopt-lite CLI", () => {
       [
         "# Lark External Channel Boundary Preflight",
         "",
-        "boundary: dev_skillopt_lite_only",
+        "boundary: local_skillopt_lite_only",
         "",
         "## Purpose",
         "Old external-channel proof text requires selected clean adapter and fresh real inbound/outbound evidence.",
@@ -278,7 +278,7 @@ describe("lcx-skillopt-lite CLI", () => {
     const bestSkill = await fs.readFile(path.join(skillRoot, "best_skill.md"), "utf8");
     expect(bestSkill).toContain("## Current Static Contract Terms");
     expect(bestSkill).toContain("lark_external_channel_binding");
-    expect(bestSkill).toContain("dev_ready_not_user_visible_observed");
+    expect(bestSkill).toContain("local_ready_not_user_visible_observed");
     expect(bestSkill).toContain("channel_probe_as_user_visible_observed");
     expect(bestSkill).toContain("dirty_candidate_external_channel_binding");
     expect(bestSkill).toContain("external_channel_source_drift_zero_after_selected_adapter");
@@ -302,7 +302,7 @@ describe("lcx-skillopt-lite CLI", () => {
     expect(instantPreflight).toEqual(
       expect.objectContaining({
         status: "ready_for_context_injection",
-        boundary: "dev_skillopt_preflight_only",
+        boundary: "local_skillopt_preflight_only",
         canUseImmediately: true,
         modelWeightAbsorbed: false,
         externalChannelApplied: false,

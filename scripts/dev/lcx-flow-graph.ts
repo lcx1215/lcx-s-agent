@@ -44,8 +44,8 @@ type FlowNodeId =
   | "skillopt_candidate_edit"
   | "skillopt_best_skill"
   | "skillopt_runtime_preflight"
-  | "dev_change"
-  | "dev_tests"
+  | "local_change"
+  | "local_tests"
   | "live_migration"
   | "build_restart_probe"
   | "external_channel_binding"
@@ -131,9 +131,9 @@ type FlowFilterId =
   | "parse_recovered_no_promotion"
   | "promotion_ready_required"
   | "step_timeout_visible"
-  | "dev_ready_not_live_user_seen"
+  | "local_ready_not_live_user_seen"
   | "live_runtime_probe_required"
-  | "dev_ready_not_user_visible_observed"
+  | "local_ready_not_user_visible_observed"
   | "external_channel_probe_required"
   | "real_lark_inbound_required"
   | "fresh_operator_state_required"
@@ -252,7 +252,7 @@ type FlowDiagnosticIndexEntry = {
   requiredFilters: FlowFilterId[];
   evidenceReceipts: string[];
   failureSignals: string[];
-  boundary: "dev_flow_graph_only";
+  boundary: "local_flow_graph_only";
 };
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -300,8 +300,8 @@ const NODE_IDS: FlowNodeId[] = [
   "skillopt_candidate_edit",
   "skillopt_best_skill",
   "skillopt_runtime_preflight",
-  "dev_change",
-  "dev_tests",
+  "local_change",
+  "local_tests",
   "live_migration",
   "build_restart_probe",
   "external_channel_binding",
@@ -388,9 +388,9 @@ const FILTER_IDS: FlowFilterId[] = [
   "parse_recovered_no_promotion",
   "promotion_ready_required",
   "step_timeout_visible",
-  "dev_ready_not_live_user_seen",
+  "local_ready_not_live_user_seen",
   "live_runtime_probe_required",
-  "dev_ready_not_user_visible_observed",
+  "local_ready_not_user_visible_observed",
   "external_channel_probe_required",
   "real_lark_inbound_required",
   "fresh_operator_state_required",
@@ -645,28 +645,28 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
-    id: "dev_to_external_channel_lark_waterflow",
-    family: "dev_ready_to_lark_user_visible_boundary",
+    id: "local_to_external_channel_lark_waterflow",
+    family: "local_ready_to_lark_user_visible_boundary",
     objective:
-      "Dev changes can reach the owner through Lark only after tests, external-channel binding, probe, and real Lark inbound proof; live runtime wording is legacy compatibility.",
-    start: "dev_change",
+      "Local changes can reach the owner through Lark only after tests, external-channel binding, probe, and real Lark inbound proof; live runtime wording is legacy compatibility.",
+    start: "local_change",
     end: "user_visible_observed",
     requiredNodes: [
-      "dev_change",
-      "dev_tests",
+      "local_change",
+      "local_tests",
       "external_channel_binding",
       "channel_restart_probe",
       "real_lark_inbound",
       "user_visible_observed",
     ],
     requiredFilters: [
-      "dev_ready_not_user_visible_observed",
+      "local_ready_not_user_visible_observed",
       "external_channel_probe_required",
       "real_lark_inbound_required",
     ],
     edges: [
-      ["dev_change", "dev_tests"],
-      ["dev_tests", "external_channel_binding"],
+      ["local_change", "local_tests"],
+      ["local_tests", "external_channel_binding"],
       ["external_channel_binding", "channel_restart_probe"],
       ["channel_restart_probe", "real_lark_inbound"],
       ["real_lark_inbound", "user_visible_observed"],
@@ -686,7 +686,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "skillopt_candidate_edit",
       "skillopt_best_skill",
       "skillopt_runtime_preflight",
-      "dev_tests",
+      "local_tests",
       "external_channel_binding",
       "channel_restart_probe",
       "real_lark_inbound",
@@ -698,7 +698,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "skillopt_best_skill_required",
       "skillopt_context_not_weight_absorption",
       "skillopt_external_channel_proof_required",
-      "dev_ready_not_user_visible_observed",
+      "local_ready_not_user_visible_observed",
       "external_channel_probe_required",
       "real_lark_inbound_required",
       "no_internal_runtime_details_visible",
@@ -708,8 +708,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["failure_curriculum", "skillopt_candidate_edit"],
       ["skillopt_candidate_edit", "skillopt_best_skill"],
       ["skillopt_best_skill", "skillopt_runtime_preflight"],
-      ["skillopt_runtime_preflight", "dev_tests"],
-      ["dev_tests", "external_channel_binding"],
+      ["skillopt_runtime_preflight", "local_tests"],
+      ["local_tests", "external_channel_binding"],
       ["external_channel_binding", "channel_restart_probe"],
       ["channel_restart_probe", "real_lark_inbound"],
       ["real_lark_inbound", "user_visible_observed"],
@@ -868,7 +868,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "no_internal_runtime_details_visible",
       "bounded_answer_review",
       "reply_flow_audit_required",
-      "dev_ready_not_user_visible_observed",
+      "local_ready_not_user_visible_observed",
     ],
     edges: [
       ["ingress_lark_feishu", "intent_classifier"],
@@ -1023,7 +1023,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "bounded_answer_review",
       "training_overlap_guard",
       "provider_evidence_required",
-      "dev_ready_not_user_visible_observed",
+      "local_ready_not_user_visible_observed",
       "external_channel_probe_required",
       "real_lark_inbound_required",
     ],
@@ -1269,10 +1269,10 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     family: "same_philosophy_engineering_merge",
     objective:
       "Same-class system engineering mechanisms must first search prior work, merge into an existing owner, and reject parallel paths unless the old owner is insufficient.",
-    start: "dev_change",
+    start: "local_change",
     end: "single_owner_contract",
     requiredNodes: [
-      "dev_change",
+      "local_change",
       "change_impact_plan",
       "prior_work_search",
       "similar_mechanism_merge",
@@ -1289,7 +1289,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "error_receipt_required",
     ],
     edges: [
-      ["dev_change", "change_impact_plan"],
+      ["local_change", "change_impact_plan"],
       ["change_impact_plan", "prior_work_search"],
       ["prior_work_search", "similar_mechanism_merge"],
       ["similar_mechanism_merge", "single_owner_contract"],
@@ -1427,8 +1427,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "training_plan",
       "schedule_gate",
       "repair_lock",
-      "dev_change",
-      "dev_tests",
+      "local_change",
+      "local_tests",
       "system_doctor",
       "operator_latest_receipt",
     ],
@@ -1442,9 +1442,9 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     edges: [
       ["training_plan", "schedule_gate"],
       ["schedule_gate", "repair_lock"],
-      ["repair_lock", "dev_change"],
-      ["dev_change", "dev_tests"],
-      ["dev_tests", "system_doctor"],
+      ["repair_lock", "local_change"],
+      ["local_change", "local_tests"],
+      ["local_tests", "system_doctor"],
       ["system_doctor", "operator_latest_receipt"],
     ],
     feedbackEdges: [["system_doctor", "training_plan"]],
@@ -1458,9 +1458,9 @@ const FLOW_SCENARIOS: FlowScenario[] = [
 
 const ILLEGAL_EDGES: Array<[string, string, string]> = [
   [
-    "dev_change",
+    "local_change",
     "user_visible_observed",
-    "dev changes must not skip external-channel binding and real Lark proof",
+    "local changes must not skip external-channel binding and real Lark proof",
   ],
   ["source_intake", "keep_downrank_discard", "stored or read source must not skip internalization"],
   ["hardened_eval", "adapter_resolver", "eval must pass through promotion gate"],
@@ -1475,9 +1475,9 @@ const ILLEGAL_EDGES: Array<[string, string, string]> = [
     "current finance data must pass normalized snapshot, causal map, review, and summary before visible reply",
   ],
   [
-    "dev_change",
+    "local_change",
     "flow_graph",
-    "small dev changes must pass change-impact and prior-work search first",
+    "small local changes must pass change-impact and prior-work search first",
   ],
   [
     "memory_recall",
@@ -1489,7 +1489,7 @@ const ILLEGAL_EDGES: Array<[string, string, string]> = [
     "local_skill_candidate",
     "external skills must pass license and reading scope",
   ],
-  ["training_plan", "dev_change", "automation repair must pass schedule gate and repair lock"],
+  ["training_plan", "local_change", "automation repair must pass schedule gate and repair lock"],
 ];
 
 const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
@@ -1520,7 +1520,7 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "artifact_inventory",
       "ownerCoverage",
       "garbageCandidates",
-      "dev_universe_index_only",
+      "local_universe_index_only",
     ],
     mergeFilters: [
       "inventory_only_no_delete",
@@ -1548,19 +1548,19 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     mergeFilters: ["stored_only_is_not_learning", "retrieval_apply_eval_review_required"],
   },
   {
-    id: "dev_live_evidence_cluster",
+    id: "local_live_evidence_cluster",
     philosophy:
-      "dev-ready, external-channel-bound, and user-visible-observed are one boundary model; old live terms are legacy aliases",
-    ownerScenario: "dev_to_external_channel_lark_waterflow",
+      "core-ready, external-channel-bound, and user-visible-observed are one boundary model; old live terms are legacy aliases",
+    ownerScenario: "local_to_external_channel_lark_waterflow",
     ownerNode: "external_channel_binding",
     sameClassTerms: [
-      "dev-ready",
+      "core-ready",
       "external-channel-bound",
       "user-visible-observed",
       "legacy-live-runtime-updated",
       "legacy-live-user-seen",
     ],
-    mergeFilters: ["dev_ready_not_user_visible_observed", "real_lark_inbound_required"],
+    mergeFilters: ["local_ready_not_user_visible_observed", "real_lark_inbound_required"],
   },
   {
     id: "commercial_answer_pipeline_cluster",
@@ -1880,8 +1880,8 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     ],
   },
   {
-    id: "dev_live_evidence_entrypoints",
-    ownerCluster: "dev_live_evidence_cluster",
+    id: "local_live_evidence_entrypoints",
+    ownerCluster: "local_live_evidence_cluster",
     ownerPath: "scripts/dev/lcx-external-channel-binding.ts",
     watchedPathTerms: ["lcx-promote-live", "live-promotion", "lark-loop-diagnose"],
     allowedPaths: [
@@ -1968,21 +1968,21 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
 const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
   {
     path: "scripts/dev/lcx-external-channel-binding.ts",
-    familyIds: ["architecture_supervision_entrypoints", "dev_live_evidence_entrypoints"],
+    familyIds: ["architecture_supervision_entrypoints", "local_live_evidence_entrypoints"],
     reason:
       "external-channel binding is both part of architecture supervision and the current owner for Lark channel proof.",
   },
   {
     path: "src/commands/capabilities/lark-loop-diagnose.ts",
-    familyIds: ["dev_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
+    familyIds: ["local_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
     reason:
-      "lark-loop-diagnose is the intentional bridge between visible reply audit and dev/live evidence.",
+      "lark-loop-diagnose is the intentional bridge between visible reply audit and worktree/external-channel evidence.",
   },
   {
     path: "src/commands/capabilities.lark-loop-diagnose.test.ts",
-    familyIds: ["dev_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
+    familyIds: ["local_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
     reason:
-      "the lark-loop-diagnose test is the shared proof surface for visible reply audit and dev/live evidence.",
+      "the lark-loop-diagnose test is the shared proof surface for visible reply audit and worktree/external-channel evidence.",
   },
   {
     path: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
@@ -2008,7 +2008,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   directed_daily_research_brief_waterflow: "scripts/dev/lcx-directed-daily-research-brief.ts",
   module_learning_internalization_waterflow: "scripts/dev/module-learning-pipeline-review.ts",
   training_failure_feedback_waterflow: "scripts/dev/local-brain-training-plan.ts",
-  dev_to_external_channel_lark_waterflow: "scripts/dev/lcx-external-channel-binding.ts",
+  local_to_external_channel_lark_waterflow: "scripts/dev/lcx-external-channel-binding.ts",
   skillopt_runtime_self_use_waterflow: "scripts/dev/lcx-skillopt-lite.ts",
   compressed_context_recovery_waterflow: "scripts/dev/lcx-context-recovery-exam.ts",
   universe_index_total_coverage_waterflow: "scripts/dev/lcx-universe-index.ts",
@@ -2035,7 +2035,7 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/dev/module-learning-pipeline-review.ts --json",
   training_failure_feedback_waterflow:
     "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-  dev_to_external_channel_lark_waterflow:
+  local_to_external_channel_lark_waterflow:
     "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
   skillopt_runtime_self_use_waterflow:
     "node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json",
@@ -2148,7 +2148,7 @@ const SURFACE_TERMS: Record<SurfaceGroup, string[]> = {
   workflow: ["FLOW_SCENARIOS", "requiredFilters", "feedbackEdges", "ILLEGAL_EDGES"],
   proof: ["flow_graph_exam", "missingRequiredFilters", "test/lcx-flow-graph.test.ts"],
   boundary: [
-    "dev_flow_graph_only",
+    "local_flow_graph_only",
     "liveTouched",
     "providerConfigTouched",
     "protectedMemoryTouched",
@@ -2401,7 +2401,7 @@ function buildFlowDiagnosticIndex(): FlowDiagnosticIndexEntry[] {
       ...scenario.receipts.map((receipt) => `missing_or_stale_receipt:${receipt}`),
       (scenario.feedbackEdges?.length ?? 0) > 0 ? "unbounded_or_unreviewed_feedback" : "",
     ].filter(Boolean),
-    boundary: "dev_flow_graph_only",
+    boundary: "local_flow_graph_only",
   }));
 }
 
@@ -2565,7 +2565,7 @@ async function main() {
   const failed = checks.filter((check) => !check.ok);
   const result = {
     ok: failed.length === 0,
-    boundary: "dev_flow_graph_only",
+    boundary: "local_flow_graph_only",
     checkedAt: new Date().toISOString(),
     summary: {
       passed: checks.length - failed.length,

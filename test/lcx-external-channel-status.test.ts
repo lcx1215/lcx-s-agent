@@ -27,7 +27,7 @@ describe("lcx-external-channel-status", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_external_channel_status_only",
+        boundary: "local_external_channel_status_only",
         owner: "lcx-external-channel-status",
         conceptStatus: "legacy_promote_live_status_wrapped_by_external_channel_status",
         liveTouched: false,
@@ -37,10 +37,10 @@ describe("lcx-external-channel-status", () => {
     );
     expect(payload.externalChannelStatus).toEqual(
       expect.objectContaining({
-        statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+        statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
         canonicalBindingOwner: "lcx-external-channel-binding",
         canonicalBindingStatus: expect.any(String),
-        nextHumanStep: expect.not.stringContaining("promote_dev_to_live"),
+        nextHumanStep: expect.not.stringContaining("promote_local_to_live"),
         userVisibleObserved: expect.any(Boolean),
       }),
     );
@@ -55,7 +55,7 @@ describe("lcx-external-channel-status", () => {
     if (ownerChildStatus.bindingStatusAvailable === true) {
       expect(payload.externalChannelBinding).toEqual(
         expect.objectContaining({
-          boundary: "dev_external_channel_binding_operator_only",
+          boundary: "local_external_channel_binding_operator_only",
         }),
       );
     } else {
@@ -76,22 +76,26 @@ describe("lcx-external-channel-status", () => {
     const externalChannelStatus = payload.externalChannelStatus as {
       externalChannelBound?: boolean;
     };
-    const devLiveDrift = payload.devLiveDrift as
-      | { devLiveDrift?: unknown; legacyDevLiveDrift?: unknown; liveNeedsPromotion?: unknown }
+    expect(payload).not.toHaveProperty("devLiveDrift");
+    expect(payload).not.toHaveProperty("legacyLegacyRepoLiveDrift");
+    const canonicalWorktreeDrift = payload.canonicalWorktreeDrift as
+      | {
+          repositoryDrift?: unknown;
+          liveNeedsPromotion?: unknown;
+        }
       | undefined;
     if (externalChannelStatus.externalChannelBound === true) {
-      expect(devLiveDrift).toEqual(
+      expect(canonicalWorktreeDrift).toEqual(
         expect.objectContaining({
-          devLiveDrift: "external_channel_bound_legacy_commit_diff_ignored",
+          repositoryDrift: "external_channel_bound_legacy_commit_diff_ignored",
           liveNeedsPromotion: false,
-          legacyDevLiveDrift: expect.any(String),
         }),
       );
     }
     expect(payload.legacyPromoteLiveStatus).toEqual(
       expect.objectContaining({
         owner: "lcx-promote-live",
-        boundary: "dev_external_channel_status_only",
+        boundary: "local_external_channel_status_only",
         devLiveDrift: expect.any(Object),
         visibleProof: expect.any(Object),
       }),
@@ -102,6 +106,6 @@ describe("lcx-external-channel-status", () => {
     const payload = await runStatus(["--status", "--json"]);
 
     expect(payload.owner).toBe("lcx-external-channel-status");
-    expect(payload.boundary).toBe("dev_external_channel_status_only");
+    expect(payload.boundary).toBe("local_external_channel_status_only");
   });
 });

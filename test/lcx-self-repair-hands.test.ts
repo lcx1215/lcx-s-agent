@@ -25,7 +25,7 @@ describe("LCX self-repair hands", () => {
       expect.objectContaining({
         ok: true,
         kind: "lcx-self-repair-hands",
-        boundary: "dev_self_repair_hands_only",
+        boundary: "local_self_repair_hands_only",
         status: "dry_run_ready",
         liveTouched: false,
         providerConfigTouched: false,
@@ -40,7 +40,7 @@ describe("LCX self-repair hands", () => {
     );
     expect(receipt.hands.patchCandidateBuilder.canWriteWithoutCodex).toBe(true);
     expect(receipt.hands.patchCandidateBuilder.candidate.boundary).toBe(
-      "dev_repo_patch_candidate_only_not_applied",
+      "local_repo_patch_candidate_only_not_applied",
     );
     expect(
       receipt.hands.patchCandidateBuilder.candidate.proposedPatchContract.canEditRepoSource,
@@ -92,10 +92,10 @@ describe("LCX self-repair hands", () => {
     const markdown = await fs.readFile(receipt.latestMarkdownPath, "utf8");
     const jsonl = await fs.readFile(receipt.jsonlPath, "utf8");
 
-    expect(correction).toContain("dev_self_repair_memory_correction_only");
-    expect(candidate.boundary).toBe("dev_training_candidate_only_not_absorbed");
+    expect(correction).toContain("local_self_repair_memory_correction_only");
+    expect(candidate.boundary).toBe("local_training_candidate_only_not_absorbed");
     expect(candidate.absorptionStatus).toBe("candidate_only_not_in_train_slice");
-    expect(patchCandidate.boundary).toBe("dev_repo_patch_candidate_only_not_applied");
+    expect(patchCandidate.boundary).toBe("local_repo_patch_candidate_only_not_applied");
     expect(patchCandidate.proposedPatchContract.ownerReviewRequired).toBe(true);
     expect(patchCandidate.proposedPatchContract.canCommit).toBe(false);
     expect(latest.status).toBe("write_completed");

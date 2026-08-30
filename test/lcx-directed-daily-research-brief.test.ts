@@ -28,7 +28,7 @@ describe("lcx-directed-daily-research-brief", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_directed_daily_research_brief_only",
+        boundary: "local_directed_daily_research_brief_only",
         productMode: "focused_daily_research_product_not_open_ended_chat",
         date: "2026-06-01",
         liveTouched: false,

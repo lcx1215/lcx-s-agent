@@ -70,7 +70,7 @@ describe("LCX universe index", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_universe_index_only",
+        boundary: "local_universe_index_only",
         latestStatePath:
           "/Users/liuchengxu/.openclaw/workspace/state/lcx-universe-index-latest.json",
         liveTouched: false,
@@ -116,7 +116,7 @@ describe("LCX universe index", () => {
       summary: { trackedFiles: number };
     };
 
-    expect(latest.boundary).toBe("dev_universe_index_only");
+    expect(latest.boundary).toBe("local_universe_index_only");
     expect(latest.summary.trackedFiles).toBe(payload.summary.trackedFiles);
   }, 120_000);
 });

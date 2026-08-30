@@ -161,7 +161,7 @@ async function main() {
   const classification = groupByRole(policies);
   const result = {
     ok: unknownFiles.length === 0,
-    boundary: "dev_ts_python_boundary_only",
+    boundary: "local_ts_python_boundary_only",
     checkedAt: new Date().toISOString(),
     ruleInPlainChinese:
       "以后 TS 管流程，Python 只做训练、MLX、数据计算这些发动机活；旧 Python 要么被 TS 包住，要么迁到 TS。",

@@ -264,7 +264,7 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       "review_panel",
     ],
     requiredRiskBoundaries: [
-      "dev_module_learning_only",
+      "local_module_learning_only",
       "stored_source_not_learned_capability",
       "retrieval_ready_not_application_ready",
       "application_ready_not_eval_absorbed",
@@ -317,7 +317,7 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       "control_room_summary",
     ],
     requiredRiskBoundaries: [
-      "dev_ready_not_user_visible_observed",
+      "local_ready_not_user_visible_observed",
       "single_clean_adapter_only",
       "no_parse_recovered_runtime",
       "fresh_real_lark_inbound_and_outbound_required",
@@ -343,14 +343,14 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
     ],
     triggerExamples: [
       "Lark 现在是不是已经连到最好的本地脑了？",
-      "dev-ready 和 user-visible-observed 有什么区别？",
+      "core-ready 和 user-visible-observed 有什么区别？",
       "不能把 parseRecovered candidate 接进 Lark 外部通道。",
     ],
     casePatterns: [
       /live_lark|live_runtime|external_channel|user_visible|lark|feishu|live_user_seen|parse_recovered|adapter_mismatch/u,
     ],
     triggerPatterns: [
-      /飞书|Lark|LiveLark|live|外部通道|可见|sidecar|adapter|LoRA|parseRecovered|dev-ready|live-visible|user-visible/iu,
+      /飞书|Lark|LiveLark|live|外部通道|可见|sidecar|adapter|LoRA|parseRecovered|core-ready|live-visible|user-visible/iu,
     ],
     capabilityRule:
       "Lark external-channel proof requires one selected clean adapter, zero channel drift, restarted/probed channel gateway, diagnose success, and fresh real inbound/outbound user-visible evidence.",
@@ -593,7 +593,7 @@ function renderSkillMarkdown(
   return [
     `# ${spec.title}`,
     "",
-    "boundary: dev_skillopt_lite_only",
+    "boundary: local_skillopt_lite_only",
     "status: bootstrap_best_skill_not_model_weight_absorbed",
     "",
     "## Purpose",
@@ -694,7 +694,7 @@ function buildCandidateEditLines(trainCases: string[]): string[] {
     )
   ) {
     lines.push(
-      "- dev proof, selected-clean adapter proof, external-channel binding, and user-visible-observed proof are separate; never bind dirty or parseRecovered candidates to the Lark external channel",
+      "- local proof, selected-clean adapter proof, external-channel binding, and user-visible-observed proof are separate; never bind dirty or parseRecovered candidates to the Lark external channel",
     );
   }
   lines.push(
@@ -823,7 +823,7 @@ function buildInstantPreflight(params: {
   if (!task) {
     return {
       status: "not_requested",
-      boundary: "dev_skillopt_preflight_only",
+      boundary: "local_skillopt_preflight_only",
       canUseImmediately: false,
       modelWeightAbsorbed: false,
       externalChannelApplied: false,
@@ -834,7 +834,7 @@ function buildInstantPreflight(params: {
   const effectiveSpecs = matchedSpecs.length > 0 ? matchedSpecs : params.specs;
   return {
     status: effectiveSpecs.length > 0 ? "ready_for_context_injection" : "no_matching_skill",
-    boundary: "dev_skillopt_preflight_only",
+    boundary: "local_skillopt_preflight_only",
     canUseImmediately: effectiveSpecs.length > 0,
     taskText: task,
     matchedSkillIds: effectiveSpecs.map((spec) => spec.id),
@@ -864,7 +864,7 @@ function buildProofChain(params: {
     params.receiptPath,
   );
   return {
-    boundary: "dev_skillopt_proof_chain_only",
+    boundary: "local_skillopt_proof_chain_only",
     immediateUse: {
       status: "ready_via_preflight_context_injection",
       proof: "matched best_skill.md can be injected before answer planning",
@@ -1010,7 +1010,7 @@ async function main() {
   });
   const details = {
     ok: allGateOk,
-    boundary: "dev_skillopt_lite_only",
+    boundary: "local_skillopt_lite_only",
     phase: options.phase,
     status: allGateOk
       ? options.phase === "candidate-edit"

@@ -36,7 +36,7 @@ describe("local-brain-training-plan", () => {
         },
       ]),
     ).toMatchObject({
-      boundary: "dev_active_guard_evolution_cooldown_only",
+      boundary: "local_active_guard_evolution_cooldown_only",
       activeGuardCount: 1,
       activeGuardHasEvolutionCooldown: false,
       guardsMissingCooldownFlag: 1,
@@ -92,7 +92,7 @@ describe("local-brain-training-plan", () => {
       });
 
       expect(plan).toMatchObject({
-        boundary: "dev_qwen_base_model_migration_plan_only",
+        boundary: "local_qwen_base_model_migration_plan_only",
         currentModel: "Qwen/Qwen3-0.6B",
         candidateModel: "Qwen/Qwen3-1.7B",
         candidateCached: true,
@@ -220,7 +220,7 @@ describe("local-brain-training-plan", () => {
       processCheck: false,
     });
 
-    expect(plan.boundary).toBe("dev_local_brain_training_plan_only");
+    expect(plan.boundary).toBe("local_brain_training_plan_only");
     expect(plan.latestEval).toMatchObject({
       passed: 61,
       total: 64,
@@ -232,7 +232,7 @@ describe("local-brain-training-plan", () => {
         expect.objectContaining({
           id: "output_contract_or_parser_failure",
           codexRepairEligible: true,
-          lane: "dev_acceptance",
+          lane: "local_acceptance",
         }),
         expect.objectContaining({
           id: "eval_not_promotion_ready",
@@ -389,7 +389,7 @@ describe("local-brain-training-plan", () => {
       promotionReady: false,
     });
     expect(plan.qwenCapabilityConsolidation).toMatchObject({
-      boundary: "dev_qwen_capability_consolidation_only",
+      boundary: "local_qwen_capability_consolidation_only",
       runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble",
       adapterLadderPolicy: "champion_challenger_harvest_into_next_single_adapter",
       capabilityIntegrationMode: "teacher_dataset_eval_promotion_into_one_clean_adapter",
@@ -402,7 +402,7 @@ describe("local-brain-training-plan", () => {
         { caseId: "plain_recent_stock_market_brief_preflight", count: 1 },
       ],
       monotonicIntelligenceGuard: {
-        boundary: "dev_qwen_monotonic_intelligence_guard_only",
+        boundary: "local_qwen_monotonic_intelligence_guard_only",
         guaranteeLevel: "runtime_monotonic_not_every_training_round",
         runtimeInvariant: "never_replace_clean_champion_with_dirty_or_parse_recovered_challenger",
         promotionInvariant: "new_runtime_requires_clean_full_hardened_eval_and_promotion_audit",
@@ -424,7 +424,7 @@ describe("local-brain-training-plan", () => {
       },
     });
     expect(plan.qwenCapabilityConsolidation.capabilityHarvest).toMatchObject({
-      boundary: "dev_blocked_challenger_harvest_only",
+      boundary: "local_blocked_challenger_harvest_only",
       harvestMode: "failed_or_parse_recovered_cases_to_teacher_curriculum",
       sourceBlockedAdapter: "/tmp/adapter-r8",
       harvestCaseIds: ["plain_recent_stock_market_brief_preflight"],
@@ -440,7 +440,7 @@ describe("local-brain-training-plan", () => {
         "feed_harvested_cases_to_failure_focus_teacher_then_run_targeted_eval_before_full_eval",
     });
     expect(plan.evolutionAccelerationQueue).toMatchObject({
-      boundary: "dev_evolution_acceleration_queue_only",
+      boundary: "local_evolution_acceleration_queue_only",
       objective: "shorten_safe_feedback_loop_without_overlapping_training",
       activeTrainingOrEval: false,
       canStartHeavyWorkNow: true,
@@ -651,11 +651,11 @@ describe("local-brain-training-plan", () => {
           module_learning_review_receipt: 1,
         },
         sampleTrust: {
-          boundary: "dev_local_brain_sample_trust_summary_only",
+          boundary: "local_brain_sample_trust_summary_only",
           teacherDistillationIsTrainingMaterialNotPromotionProof: true,
         },
         teacherReviewQuality: {
-          boundary: "dev_teacher_distillation_review_quality_summary_only",
+          boundary: "local_teacher_distillation_review_quality_summary_only",
           total: 10,
         },
       }),
@@ -673,11 +673,11 @@ describe("local-brain-training-plan", () => {
         },
         writtenSourceKinds: { brain_distillation_review: 4, curated_seed: 2 },
         sampleTrust: {
-          boundary: "dev_local_brain_sample_trust_summary_only",
+          boundary: "local_brain_sample_trust_summary_only",
           hardEvalProofSeparateFromTrainingSamples: true,
         },
         teacherReviewQuality: {
-          boundary: "dev_teacher_distillation_review_quality_summary_only",
+          boundary: "local_teacher_distillation_review_quality_summary_only",
           writtenSlice: { total: 4 },
         },
       }),
@@ -745,7 +745,7 @@ describe("local-brain-training-plan", () => {
       },
     });
     expect(plan.datasetRuntimeFreshness).toMatchObject({
-      boundary: "dev_dataset_runtime_freshness_only",
+      boundary: "local_dataset_runtime_freshness_only",
       trainSliceStaleAfterDatasetUpdate: true,
       datasetTrainCount: 22,
       trainSliceSourceTrainCount: 18,
@@ -819,7 +819,7 @@ describe("local-brain-training-plan", () => {
     });
 
     expect(plan.activeGuardAdapterTruth).toMatchObject({
-      boundary: "dev_active_guard_adapter_truth_only",
+      boundary: "local_active_guard_adapter_truth_only",
       guardCurrentAdapter: "/tmp/adapter-stale-r1",
       selectedCleanAdapter: "/tmp/adapter-clean-r2",
       latestPromotedAdapter: "/tmp/adapter-clean-r2",
@@ -889,7 +889,7 @@ describe("local-brain-training-plan", () => {
     });
 
     expect(plan.externalChannelBinding).toMatchObject({
-      boundary: "dev_external_channel_binding_plan_only",
+      boundary: "local_external_channel_binding_plan_only",
       channel: "lark",
       role: "owner_agent_communication_medium",
       objective: "lark_receives_current_best_verified_lcx_agent_answer",
@@ -914,10 +914,10 @@ describe("local-brain-training-plan", () => {
       legacyStatus: "ready_for_live_runtime_binding",
     });
     expect(plan.liveLarkBrainBinding).toMatchObject({
-      boundary: "dev_live_lark_brain_binding_plan_only",
+      boundary: "local_live_lark_brain_binding_plan_only",
       conceptStatus: "legacy_live_terms_external_channel_owner_current",
       externalChannel: {
-        boundary: "dev_external_channel_binding_plan_only",
+        boundary: "local_external_channel_binding_plan_only",
         channel: "lark",
         role: "owner_agent_communication_medium",
         objective: "lark_receives_current_best_verified_lcx_agent_answer",
@@ -1398,7 +1398,7 @@ describe("local-brain-training-plan", () => {
       workspaceDir,
       `memory/module-learning-pipeline-plan-receipts/${dateKey}/incomplete.json`,
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         moduleFamily: "finance_research",
         status: "retrieval_ready",
@@ -1473,7 +1473,7 @@ describe("local-brain-training-plan", () => {
       workspaceDir,
       `memory/module-learning-pipeline-plan-receipts/${dateKey}/bad.json`,
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "portfolio_risk_gates",
         status: "eval_absorbed",
         absorptionEvidence: {
@@ -1569,7 +1569,7 @@ describe("local-brain-training-plan", () => {
         }),
       });
       expect(plan.learningSedimentationBridge).toMatchObject({
-        boundary: "dev_learning_sedimentation_bridge_only",
+        boundary: "local_learning_sedimentation_bridge_only",
         candidateCount: 1,
         sourceApplyReceiptFiles: 1,
         notPromoted: true,

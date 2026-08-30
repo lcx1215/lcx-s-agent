@@ -66,7 +66,7 @@ describe("lcx-learning-sedimentation-map", () => {
     await seedJson(
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-14/m.json",
-      { boundary: "dev_module_learning_pipeline_plan", status: "application_ready" },
+      { boundary: "local_module_learning_pipeline_plan", status: "application_ready" },
     );
     await seedJson(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json", {
       counts: {
@@ -96,7 +96,7 @@ describe("lcx-learning-sedimentation-map", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_learning_sedimentation_map_only",
+        boundary: "local_learning_sedimentation_map_only",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -139,7 +139,7 @@ describe("lcx-learning-sedimentation-map", () => {
     await seedJson(
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-14/m.json",
-      { boundary: "dev_module_learning_pipeline_plan", status: "eval_absorbed" },
+      { boundary: "local_module_learning_pipeline_plan", status: "eval_absorbed" },
     );
     await seedJson(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json", {
       counts: {
@@ -171,7 +171,7 @@ describe("lcx-learning-sedimentation-map", () => {
     await seedJson(
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-14/m.json",
-      { boundary: "dev_module_learning_pipeline_plan", status: "eval_absorbed" },
+      { boundary: "local_module_learning_pipeline_plan", status: "eval_absorbed" },
     );
     await seedJson(workspaceDir, "memory/module-learning-pipeline-reviews/2026-05-14.json", {
       counts: {

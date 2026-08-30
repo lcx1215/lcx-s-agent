@@ -136,7 +136,7 @@ export async function buildGithubCliCapabilityInventory() {
 
   return {
     ok: ghVersion.ok,
-    boundary: "dev_github_cli_capability_inventory_only",
+    boundary: "local_github_cli_capability_inventory_only",
     checkedAt: new Date().toISOString(),
     gh: {
       available: ghVersion.ok,
@@ -159,7 +159,7 @@ export async function buildGithubCliCapabilityInventory() {
       "gh pr list --limit <n>",
     ],
     blockedRemoteWriteCommands: REMOTE_WRITE_BLOCKS,
-    nextSafeDevProbe:
+    nextSafeLocalProbe:
       "Use read-only gh issue/pr/repo inventory, then create a JSON wrapper contract before any remote write or agent delegation.",
     liveTouched: false,
     providerConfigTouched: false,

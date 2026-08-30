@@ -27,7 +27,7 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/dev/lcx-monotonic-data-ledger.ts [--json] [--write] [--no-process-check]",
       "",
-      "Builds a dev-only monotonic data ledger entry from local-brain training-plan,",
+      "Builds a local-only monotonic data ledger entry from local-brain training-plan,",
       "SkillOpt/autopilot snapshots, and promotion truth. With --write it appends",
       "one de-duplicated JSONL row and refreshes the latest state file.",
     ].join("\n"),
@@ -256,7 +256,7 @@ export function buildMonotonicDataLedgerSnapshot(params: {
 
   return {
     ok: true,
-    boundary: "dev_monotonic_data_ledger_only",
+    boundary: "local_monotonic_data_ledger_only",
     checkedAt: params.checkedAt,
     workspaceDir: params.workspaceDir,
     entryKey: ledgerEntryKey,

@@ -17,7 +17,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/module-learning-pipeline-review.ts [--date YYYY-MM-DD] [--target-module NAME] [--max-files N] [--workspace DIR] [--no-write] [--json]",
       "",
       "Default reads/writes under ~/.openclaw/workspace/memory/module-learning-pipeline-*.",
-      "Use --no-write for a dry run. This is dev/local review only and does not touch live/provider/protected-memory state.",
+      "Use --no-write for a dry run. This is local review only and does not touch live/provider/protected-memory state.",
     ].join("\n"),
   );
 }

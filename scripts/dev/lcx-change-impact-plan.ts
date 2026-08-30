@@ -74,6 +74,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-system-doctor\.ts$/u,
       /^scripts\/dev\/lcx-ts-python-boundary\.ts$/u,
       /^scripts\/dev\/lcx-universe-index\.ts$/u,
+      /^scripts\/generate-lcx-agent-progress-wave\.mjs$/u,
       /^package\.json$/u,
       /^test\/lcx-commercial-acceptance-harness\.test\.ts$/u,
       /^test\/lcx-external-agent-upgrade-radar\.test\.ts$/u,
@@ -196,9 +197,14 @@ const PATH_RULES: PathRule[] = [
     lane: "lark_feishu_visible_reply",
     patterns: [
       /^scripts\/dev\/lcx-commercial-answer-pipeline\.ts$/u,
+      /^scripts\/dev\/lcx-directed-daily-research-brief\.ts$/u,
+      /^scripts\/dev\/lcx-lark-short-intent-fuzzer\.ts$/u,
+      /^scripts\/dev\/lark-adversarial-workflow-smoke\.ts$/u,
       /^scripts\/dev\/lcx-visible-answer-quality-fuzzer\.ts$/u,
+      /^scripts\/dev\/agent-system-loop-smoke\.ts$/u,
       /^extensions\/feishu\//u,
       /^src\/auto-reply\/reply\/get-reply-run\.ts$/u,
+      /^src\/auto-reply\/reply\/commands-protocol-families\.ts$/u,
       /^src\/auto-reply\/reply\/skill-autocue\.ts$/u,
       /^src\/auto-reply\/reply\/skillopt-autocue\.ts$/u,
       /^src\/auto-reply\/reply\/skillopt-autocue\.test\.ts$/u,
@@ -220,6 +226,7 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/lcx-local-operator/u,
       /^scripts\/dev\/lcx-local-failure-trace\.ts$/u,
       /^scripts\/dev\/lcx-monotonic-data-ledger\.ts$/u,
+      /^scripts\/dev\/lcx-automation-repair-lock\.ts$/u,
       /^scripts\/dev\/codex-archive/u,
       /^ops\/local-automation/u,
     ],
@@ -279,7 +286,7 @@ const PATH_RULES: PathRule[] = [
   },
   {
     id: "live_or_provider_boundary",
-    lane: "dev_live_boundary",
+    lane: "local_live_boundary",
     patterns: [
       /^scripts\/dev\/lcx-external-channel-status\.ts$/u,
       /^test\/lcx-external-channel-status\.test\.ts$/u,
@@ -449,7 +456,7 @@ async function main() {
   };
   const result = {
     ok: strayGate.ok,
-    boundary: "dev_change_impact_plan_only",
+    boundary: "local_change_impact_plan_only",
     checkedAt: new Date().toISOString(),
     changedFiles,
     affectedLanes: [...new Set(impacts.map((impact) => impact.lane))],

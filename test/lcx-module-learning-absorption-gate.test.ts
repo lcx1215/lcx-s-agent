@@ -123,7 +123,7 @@ describe("lcx-module-learning-absorption-gate", () => {
     expect(parsed).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_module_learning_absorption_gate_only",
+        boundary: "local_module_learning_absorption_gate_only",
         absorptionReady: false,
         gateDecision: "hold_at_application_ready",
         notPromoted: true,
@@ -360,7 +360,7 @@ describe("lcx-module-learning-absorption-gate", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-14/options.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         status: "application_ready",
       },
@@ -414,7 +414,7 @@ describe("lcx-module-learning-absorption-gate", () => {
       workspaceDir,
       "memory/module-learning-pipeline-plan-receipts/2026-05-14/options.json",
       {
-        boundary: "dev_module_learning_pipeline_plan",
+        boundary: "local_module_learning_pipeline_plan",
         targetModule: "options_volatility",
         moduleFamily: "finance_research",
         status: "application_ready",

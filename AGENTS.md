@@ -46,7 +46,7 @@ provider-council evidence, finance data gateway, module-learning absorption,
 training samples, and daily research products should all be judged against this
 frontier-peer financial answer objective. Passing internal routing is not
 enough. A result is product-grade only when it would be acceptable as the
-owner's real finance assistant output, while keeping dev/external-channel/
+owner's real finance assistant output, while keeping core/external-channel/
 user-visible, source-vs-learned, and promotion-vs-runtime truth boundaries
 strict.
 
@@ -72,7 +72,7 @@ The `lcx-context-recovery-exam --handoff` command is the fast one-screen
 handoff for future windows. It is owned by the existing context-recovery exam,
 not a parallel memory lane. It must show dirty files, affected lanes,
 unmatched-file checks, fresh training-plan truth, module-learning blockers,
-flow-graph counts, and strict dev/external-channel/user-visible/protected-memory
+flow-graph counts, and strict core/external-channel/user-visible/protected-memory
 boundaries before a new agent starts modifying files.
 The training plan command is the shared coordinator for repeated training
 failures: it classifies whether the next step is continue training,
@@ -166,7 +166,7 @@ and JSON companion
 so heartbeat watchers and future coding windows do not need a parallel
 hand-built snapshot path. It is included in the local operator latest state as
 `governanceAutopilot`.
-It must stay `dev_governance_autopilot_only`: no external sender compatibility
+It must stay `local_governance_autopilot_only`: no external sender compatibility
 mutation, provider config, protected memory, repo mutation, external-channel
 apply, or overlapping training.
 
@@ -187,7 +187,7 @@ The check classifies every Python file as `保留`, `包装`, or `迁走`. `保�
 means Python is still doing engine work. `包装` means the Python file can
 survive only behind a named TS owner. `迁走` means the file is workflow control
 and should move to TS. New Python files are not acceptable until this check
-names one of those three choices. This is `dev_ts_python_boundary_only`: no
+names one of those three choices. This is `local_ts_python_boundary_only`: no
 external channel sender, provider config, protected memory, or training authority.
 
 If the task asks about external or newly added skills, use the runbook's skill inventory command:
@@ -203,7 +203,7 @@ Use the matching skill before acting:
 - `agent-brain-eval` for judging local-brain learning/internalization.
 - `finance-learning-researcher` for finance, ETF, quant, source-gated learning.
 - `lark-live-loop-debugger` and `lark-post-migration-probe` for Feishu/Lark proof.
-- `agent-runtime-drift-auditor` for dev/external-channel/runtime drift,
+- `agent-runtime-drift-auditor` for core/external-channel/runtime drift,
   including legacy live-sidecar compatibility checks.
 - `lcx-qwen-training-operator` for Qwen 24-hour training supervision, overlap prevention, launchd/operator checks, and promotion truth.
 - `lcx-workflow-waterflow-auditor` for god-view workflow, waterflow, head-tail, memory sedimentation, and macro/micro consistency checks.
@@ -241,7 +241,7 @@ provider config, protected-memory write, external channel sender, wallet, order,
 desktop-control, or training authority by naming the mechanism.
 Each mechanism must also carry an automatic workflow contract in
 `lcx-external-agent-upgrade-radar`: automatic trigger, owner gate, autopilot
-surface, next safe dev probe, next automation action, required proof chain, and
+surface, next safe local probe, next automation action, required proof chain, and
 forbidden authorities. `lcx-governance-autopilot` and context recovery must
 surface these contracts so future agents can use the mechanisms without the
 user remembering their names, while `lcx-problem-cluster-radar` must flag any
@@ -308,7 +308,7 @@ artifacts, and `garbageCandidates`.
 
 The universe index is not deletion authority. It is inventory and cleanup
 candidates only, with no delete/migration/live authority. It must report
-`dev_universe_index_only`, `liveTouched=false`, `providerConfigTouched=false`,
+`local_universe_index_only`, `liveTouched=false`, `providerConfigTouched=false`,
 and `protectedMemoryTouched=false`. Cleanup, live migration, provider changes,
 protected-memory edits, train-slice rebuilds, adapter promotion, and
 Lark-visible claims still require their existing owner gates and proof surfaces.
@@ -329,15 +329,22 @@ actual Codex/agent execution, canonical repo, local state, secrets, provider
 access, receipts, and audit logs must live on the supported-region control
 machine.
 
-Cloud migration must not resurrect the old `dev -> live` model. The forward
-cloud migration path is `local dev core -> cloud-runtime-ready ->
+Cloud migration must not resurrect a dual-repository model. The forward
+cloud migration path is `local LCX core -> cloud-runtime-ready ->
 external-channel-bound -> user-visible-observed`: one LCX Agent core moves to a
 supported-region runtime, then communication adapters such as Lark, WeChat, SMS,
 or Slack bind to that same selected clean answer path. Cloud runtime readiness
-means the same dev core, repo, `.openclaw` state, skills, receipts, selected
+means the same LCX core, repo, `.openclaw` state, skills, receipts, selected
 clean adapter policy, and governance owners are available on the cloud control
-machine. It is not a second brain, not a second repo truth, and not a
+machine. It is not a second brain, not a second repository authority, and not a
 `live-visible-fixed` claim.
+
+Local system/factory rule: the local machine has one LCX system and one
+factory/runtime, with one canonical Git repository and state root. Use linked
+Git worktrees for local isolation and parallel work. Feature branches belong to
+GitHub/GitLab collaboration, review, and release; they do not create a local
+runtime or repository authority. A worktree is an isolated checkout of the same
+repository, not a second repository or a second runtime truth source.
 
 The preferred v1 topology is:
 
@@ -345,7 +352,7 @@ The preferred v1 topology is:
 China phone / Lark / SSH command
   -> Tailscale or Cloudflare Access identity gate
   -> US VPS: lcx-cloud-control
-  -> /srv/lcx/lcx-s-openclaw as the only canonical dev repo
+  -> /srv/lcx/lcx-s-openclaw as the only canonical repo
   -> ~/.openclaw as the only canonical runtime state
   -> Codex / agent runner executes on the US machine
   -> receipts / outbox / owner summaries return to Lark
@@ -355,7 +362,8 @@ Keep this architecture boring and auditable:
 
 - `/srv/lcx/lcx-s-openclaw` is the future canonical repo path after migration.
   The current local checkout may prepare and verify the move, but future cloud
-  runtime truth should converge on one dev repo, not separate dev/live repos.
+  runtime truth should converge on one repository, with linked worktrees rather
+  than separate repositories.
 - `~/.openclaw` is the canonical runtime state root. Preserve receipts, logs,
   queues, selected-clean adapter proof, operator snapshots, and migration
   manifests there. Do not scatter new state roots across cloud machines.
@@ -367,19 +375,20 @@ Keep this architecture boring and auditable:
   owner and LCX Agent. It may use Lark/Feishu official APIs, SDKs, or
   open-source connector code, but that connector layer never becomes model
   authority, a second runtime truth source, or a brain. Lark does not make the
-  old live repo authoritative. If a temporary live service must stay online
+  legacy deployment checkout authoritative. If a temporary service must stay online
   during migration, treat it as a deployment artifact with a short read-only
   rollback window, not as a development or truth source.
 - Lark/Feishu is the owner-agent external communication channel, not a second
   live brain or second runtime truth source. The forward status words are
-  `dev-ready`, `external-channel-bound`, and `user-visible-observed`.
+  `core-ready`, `external-channel-bound`, and `user-visible-observed`.
   Historical `live-runtime-updated`, `live-user-seen`, and
   `live-visible-fixed` wording is now legacy compatibility only; when old
   owners still emit those fields, read them as `legacy-live-runtime-updated`,
   `legacy-live-user-seen`, and `legacy-live-visible-fixed`.
-- The old live repo and live sidecar drift must be retired, not maintained as a
-  parallel lane. A controlled one-time sync is allowed only to keep service
-  alive during cutover; it must not restore the live repo's status.
+- The legacy deployment checkout and live sidecar drift must be retired, not
+  maintained as a parallel repository lane. A controlled one-time sync is
+  allowed only to keep service alive during cutover; it must not restore a
+  second checkout's authority.
 - Canonical Lark channel truth belongs to
   `scripts/dev/lcx-external-channel-binding.ts`. It may prove
   `external-channel-bound` after a clean idle apply, connector build/restart,
@@ -435,7 +444,7 @@ before making claims or changes.
 - Classify every small fix into one current master lane before coding:
   Qwen training, MiniMax teacher, adapter promotion, Lark/Feishu visible reply,
   local automation, memory sedimentation, finance research capability, or
-  dev/external-channel/user-visible boundary. If a change cannot be attached to
+  core/external-channel/user-visible boundary. If a change cannot be attached to
   a master lane, do not make it unless the user explicitly asks for unrelated
   cleanup.
 - Every fix must leave a durable proof surface: focused test, smoke/eval,
@@ -447,13 +456,13 @@ before making claims or changes.
   impact plan, training truth, commercial acceptance, and external-channel binding
   stay visible without manual reminders. It also writes
   `lcx-context-recovery-handoff-latest.md` as a one-screen current-state
-  capsule for compressed or new coding windows; the capsule is dev-only and
+  capsule for compressed or new coding windows; the capsule is local-only and
   future agents must still rerun `local-brain-training-plan` before acting on
   volatile PID, eval, adapter, or external-channel binding truth. Codex should
   keep only one visible high-level automation, `LCX Agent Operator Digest`,
   which reads local state and reports concise blockers rather than opening one
   chat per lane.
-- Do not upgrade evidence across boundaries: `dev-fixed` is not
+- Do not upgrade evidence across boundaries: `core-verified` is not
   `user-visible-observed`, legacy `live-visible-fixed` is only a compatibility
   label, a receipt is not model-weight absorption, a stored source is not
   learned knowledge, and `parseRecovered` is not a fully clean promotion pass.
@@ -480,7 +489,7 @@ before making claims or changes.
   `node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json`. The
   check must fail if macro doctrine/prompt/runbook language and micro
   taxonomy/eval/teacher/module-learning schema stop supervising each other.
-  This rule is not limited to modules: dev/external-channel/user-visible
+  This rule is not limited to modules: core/external-channel/user-visible
   boundary, protected memory, Lark/Feishu visible reply, local automation,
   memory sedimentation, and finance capability changes must also have a head
   rule and a tail proof path.
@@ -490,7 +499,7 @@ before making claims or changes.
 LCX Agent must keep a durable god-view of its own architecture because future
 Codex or Claude Code sessions will not remember every workflow closure from
 chat context. The mind model is not a new brain, provider, memory layer, or
-trading authority. It is a dev-only architecture audit that checks whether each
+trading authority. It is a local-only architecture audit that checks whether each
 main lane still has four things at once: macro rule, workflow entrypoint, proof
 surface, and boundary flag.
 
@@ -511,12 +520,12 @@ surface, and boundary flag.
   must name the exact head/workflow/proof/boundary terms that would catch future
   drift. This includes small workflow details, visible content mistakes,
   temporary test-HOME drift, stale receipts, stored-only learning claims,
-  unverified market claims, and dev/external-channel/user-visible wording
+  unverified market claims, and core/external-channel/user-visible wording
   mistakes.
 - The problem cluster radar must sit above the governance stack as an
   aggregator, not a duplicate owner. It should report `problemClusters`,
   `actionableClusters`, `repairableSignals`, `ownerEntrypoint`, `sourceOwners`,
-  and `dev_problem_cluster_radar_only` so future Codex windows can see active
+  and `local_problem_cluster_radar_only` so future Codex windows can see active
   runtime, eval, module-learning, recovery, or dirty-worktree issue clusters
   without manually rediscovering them from raw logs. If a mixed cluster is
   blocked by an owner gate, the radar must still expose sub-signals whose owner
@@ -547,14 +556,14 @@ surface, and boundary flag.
   `lcx-local-operator-latest.json` is not valid compressed-context recovery
   evidence; the context recovery exam must fail stale operator state instead of
   letting future agents rely on old machine truth.
-- The mind model is dev_mind_model_only: it reports `liveTouched=false`,
+- The mind model is local_mind_model_only: it reports `liveTouched=false`,
   `providerConfigTouched=false`, and `protectedMemoryTouched=false`. It cannot
   prove `user-visible-observed`, legacy `live-visible-fixed`, or model-weight
   absorption.
 
 ## LCX Agent Flow Graph Doctrine
 
-LCX Agent must also keep a dev-only flow graph of its task waterflow. Think of
+LCX Agent must also keep a local-only flow graph of its task waterflow. Think of
 every user task as water entering a complex pipe system: it must be classified,
 filtered, routed through the right modules, leave receipts, and sometimes flow
 back through bounded feedback. The goal is not for every task to touch every
@@ -565,20 +574,20 @@ shortcuts.
 - Run the flow graph exam when a workflow change could alter task routing,
   filters, receipts, feedback loops, module learning, Lark/Feishu replies,
   Qwen/MiniMax training, local automation, or
-  dev/external-channel/user-visible proof:
+  core/external-channel/user-visible proof:
   `node --import tsx scripts/dev/lcx-flow-graph.ts --json`.
 - Every supported waterflow must name its start node, terminal node, required
   modules, required filters, receipts, and any bounded feedback edges.
 - The flow graph is also the fast diagnostic index for system problems. For
   every supported waterflow it must expose the scenario family, what it detects,
   one owner entrypoint, one fast check command, required filters, evidence
-  receipts, failure signals, and the `dev_flow_graph_only` boundary. This keeps
+  receipts, failure signals, and the `local_flow_graph_only` boundary. This keeps
   "waterflow" usable as an operator triage surface instead of only a static
   architecture map.
 - Waterflow coverage must keep expanding toward real task families instead of
   only the first six obvious paths. Current core families include visible
   finance research, module learning, training feedback,
-  dev/external-channel/user-visible proof,
+  core/external-channel/user-visible proof,
   compressed-context recovery, local automation digest, Lark visible language,
   provider council evidence, memory correction/downrank, same-philosophy
   engineering consolidation, external skill/agent distillation, automation
@@ -594,13 +603,13 @@ shortcuts.
   filters such as `same_philosophy_merge_required` and
   `single_owner_required`. Do not let head-tail, mind model, flow graph,
   context recovery, doctor, operator digest, learning internalization, or
-  dev/external-channel/user-visible proof become competing parallel systems.
-- Wrong-flow is a P2 class issue. Examples: dev proof jumps to
+  core/external-channel/user-visible proof become competing parallel systems.
+- Wrong-flow is a P2 class issue. Examples: local proof jumps to
   `user-visible-observed` or legacy `live-user-seen`, stored source jumps to
   learned capability, hardened eval skips the promotion gate, or a failed eval
   loops back into teacher/training without overlap guards and visible
   timeout/error receipts.
-- Flow graph checks are dev_flow_graph_only. They can prove architecture
+- Flow graph checks are local_flow_graph_only. They can prove architecture
   closure, but not `user-visible-observed`, legacy `live-user-seen`, provider
   success, protected-memory writes, or model-weight absorption.
 
@@ -623,7 +632,7 @@ owner and the other entrypoints must consume or reference that owner:
   runtime process truth.
 - System doctor owns one operator health report, not separate business logic for
   every lane.
-- Lark external-channel proof owns `user-visible-observed`; dev tests and
+- Lark external-channel proof owns `user-visible-observed`; local tests and
   channel probes must not upgrade themselves into that state.
 
 Commercial quality means clear product surfaces, one factual owner per volatile
@@ -631,7 +640,7 @@ state family, no duplicate hidden diagnostics, no false alarms during expected
 in-progress training, and no loss of the specialized entrypoints a real operator
 needs.
 
-Commercial answer quality has its own dev owner:
+Commercial answer quality has its own local owner:
 `scripts/dev/lcx-commercial-answer-pipeline.ts`. Use it when changing answer
 composition, Lark visible replies, model/Qwen review, source gating, or
 control-room summary wording. The terminal decision is always either
@@ -705,7 +714,7 @@ recoverable, auditable, and honest under real use.
 - Every durable claim must be downgradeable or falsifiable: stale memory can be
   downranked, weak eval can block promotion, source conflicts can stop a finance
   conclusion, and user-visible/external-channel proof can fail independently
-  from dev proof.
+  from local proof.
 - The agent should learn workflow patterns, not blindly absorb tools, providers,
   papers, prompts, or chat history as authority.
 - User-facing quality must stay boring and dependable: concise control-room
@@ -802,7 +811,7 @@ remembering which diagnostic to run.
   automatic trigger, owner gate, autopilot surface, or next automation action,
   the radar should surface a repairable cluster without waiting for the user to
   notice.
-- This doctrine is still dev governance. It cannot claim
+- This doctrine is still local governance. It cannot claim
   `user-visible-observed` or legacy `live-user-seen`, provider health,
   model-weight absorption, or protected-memory writes without the existing
   proof gates.
@@ -1027,7 +1036,7 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
   use a plain natural Lark probe plus reply-flow/answer-audit/outbound-result
   trace for real verification. A fixed acceptance phrase is only an optional
   receipt anchor, not the default diagnostic path.
-- Do not confuse `dev-ready` with `user-visible-observed`.
+- Do not confuse `core-ready` with `user-visible-observed`.
 - A change is only `user-visible-observed` after external-channel binding,
   build/restart/probe, and real-entry verification.
 - SkillOpt, eval preflight, channel probe, synthetic replay, and training
@@ -1037,11 +1046,11 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
 - No fake user-visible-observed: only fresh real Lark inbound plus a successful
   visible reply may set that state.
 - For human-facing status, prefer the simpler three-layer wording:
-  `dev-ready` means dev tests/smoke/synthetic or replay Lark checks passed;
+  `core-ready` means local tests/smoke/synthetic or replay Lark checks passed;
   `external-channel-bound` means the Lark channel sidecar has been migrated to
-  the verified dev git snapshot and restarted/probed; `user-visible-observed`
+  the verified canonical git snapshot and restarted/probed; `user-visible-observed`
   means a real
-  Lark/Feishu user entry produced the expected visible reply. Dev correctness
+  Lark/Feishu user entry produced the expected visible reply. Core correctness
   must not depend on the real Lark bot, because the external channel is a
   communication medium, not a second brain.
 - Keep degraded / partial / rescue states honest; never present degraded behavior as full success.
