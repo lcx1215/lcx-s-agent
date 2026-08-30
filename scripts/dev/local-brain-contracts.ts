@@ -120,7 +120,10 @@ function canonicalMissingData(entry: string): string {
   ) {
     return "position_weights_and_return_series";
   }
-  return entry.trim();
+  // Missing-data values are machine-readable contract identifiers. Normalize
+  // case and separators so model variants such as `US_equity_...` still match
+  // the canonical eval token instead of becoming a false contract failure.
+  return normalized || entry.trim();
 }
 
 function cleanRiskBoundaries(value: unknown): string[] {

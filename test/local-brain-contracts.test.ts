@@ -377,6 +377,30 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("canonicalizes case-variant Mag7 missing-data identifiers before eval", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {
+        missing_data: [
+          "US_equity_breadth_earnings_and_valuation_inputs",
+          "INDEX-CONSTITUENTS/WEIGHTS and TECHNICAL REGIME INPUTS",
+        ],
+      },
+      {
+        ask: "纳指和标普如果越来越集中在 Mag7，我持有 QQQ 和 NVDA 时，怎么拆指数权重、市场宽度、估值、组合暴露和反方论证？",
+        sourceSummary:
+          "index concentration and mega-cap exposure research loop for QQQ/NVDA portfolio.",
+      },
+    );
+
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "us_equity_breadth_earnings_and_valuation_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+      ]),
+    );
+    expect(plan.missing_data).not.toContain("US_equity_breadth_earnings_and_valuation_inputs");
+  });
+
   it("canonicalizes weak high-leverage crypto boundary variants", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {
