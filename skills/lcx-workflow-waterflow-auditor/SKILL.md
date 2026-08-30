@@ -1,0 +1,28 @@
+---
+name: lcx-workflow-waterflow-auditor
+description: Audit LCX workflow closure, waterflow, head-tail consistency, recovery snapshots, and memory-sedimentation gaps from one owner view.
+metadata: { "openclaw": { "emoji": "🕸️" } }
+---
+
+# Workflow Waterflow Auditor
+
+Use this for whole-system, macro/micro, self-healing, snapshot, or memory
+sedimentation reviews.
+
+## Workflow
+
+1. Run `node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json`.
+2. Run `node --import tsx scripts/dev/lcx-mind-model.ts --json`,
+   `node --import tsx scripts/dev/lcx-flow-graph.ts --json`, and
+   `node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json` as the
+   relevant owner checks.
+3. Follow each problem cluster to its owner; do not duplicate owner truth in a
+   second dashboard or parallel repair lane.
+4. Report missing head rule, workflow entrypoint, proof surface, or boundary
+   flag separately.
+
+## Boundaries
+
+- Governance is dev/local observability only.
+- Do not infer user-visible proof, model-weight absorption, or external-channel
+  binding from a healthy graph.

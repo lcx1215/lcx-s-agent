@@ -805,6 +805,11 @@ function qwenCapabilityConsolidationSnapshot(params: {
 }): QwenCapabilityConsolidationSnapshot {
   const latestVerdictByAdapter = new Map(
     latestAdapterVerdictSnapshots(params.events)
+      // Timeout snapshots are runtime blockers, not capability case verdicts.
+      // They may carry synthetic marker ids such as
+      // `stable_hardened_eval_idle_timeout`, which are not in the eval registry
+      // and must never become a targeted eval command's `--case-id`.
+      .filter((snapshot) => snapshot.event !== "step_timeout")
       .filter((snapshot): snapshot is EvalSnapshot & { adapterPath: string } =>
         Boolean(snapshot.adapterPath),
       )

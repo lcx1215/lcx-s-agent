@@ -550,8 +550,7 @@ Lark/Feishu boundary, and optional L5 evidence into one table-like verdict. It
 does not start training, does not run heavy MLX eval, does not touch provider
 config, and does not prove `user-visible-observed` or legacy
 `live-visible-fixed`. Use `--live` only when you intentionally want
-channel/Lark probe evidence, and still require fresh real inbound plus visible
-reply before claiming `user-visible-observed`. Use `--l5` for the heavier local
+channel/Lark probe evidence, and still require fresh real Lark inbound plus visible reply before claiming `user-visible-observed`. Use `--l5` for the heavier local
 L5 regression battery.
 
 The default system doctor includes doctrine-consistency and head-tail
@@ -593,6 +592,20 @@ The intended daily structure is:
 - Keep evidence labels strict: dev/local proof is not user-visible proof;
   source storage is not learning; system-level internalization is not Qwen
   weight absorption; `parseRecovered` is not a clean promotion pass.
+
+If only `lcx-local-operator-latest.json` is stale and the goal is to refresh
+local recovery evidence without invoking the normal supervisor, use the
+explicit observe-only mode:
+
+```bash
+LCX_LOCAL_OPERATOR_OBSERVE_ONLY=true \
+  /Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh
+```
+
+This mode skips cleanup, system-doctor/governance channel owners, daemon
+restart, and training restart; it runs only the local training-plan,
+mind-model, flow-graph, and context-recovery observations. The receipt remains
+`dev_local_observability_only` and is not a release or Lark-visible proof.
 
 ## Prior-Work Reuse Gate
 
@@ -1351,12 +1364,12 @@ Use these words precisely:
 - `promotion-ready`: hardened eval passed and the adapter is selected by latest-passing.
 - `external-channel-bound`: the Lark channel sidecar has been synced to the
   verified dev snapshot and restarted/probed.
-- `user-visible-observed`: only after external-channel binding plus a fresh real
-  Lark inbound and visible reply.
+- `user-visible-observed`: only after external-channel binding plus a fresh real Lark inbound plus visible reply.
 
-Do not call local training, synthetic replay, or a channel probe
-`user-visible-observed`. Old `live-visible-fixed` wording is legacy
-compatibility only.
+Do not call local training or synthetic replay `user-visible-observed`; a channel
+probe is transport evidence only. Old `live-visible-fixed` wording is a legacy
+compatibility label for the same boundary, not a shortcut around the fresh
+real Lark inbound plus visible reply proof.
 
 ## Do Not Do
 

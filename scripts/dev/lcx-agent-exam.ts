@@ -508,11 +508,21 @@ function buildWorkStatusBoundaryLane(sources?: CognitiveIntegritySources): ExamL
     "live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
     "started, running, completed, blocked, or unproven",
   ]);
-  const runbookOk = hasAll(sources.localBrainRunbook, [
+  const legacyRunbookOk = hasAll(sources.localBrainRunbook, [
     "live-visible-fixed",
     "fresh real Lark inbound plus visible reply",
     "Do not call local training or synthetic replay `live-visible-fixed`",
   ]);
+  // The runbook now uses user-visible-observed as the canonical state. Keep
+  // the legacy wording as a compatibility path while checking the same proof
+  // boundary, so a status-label migration cannot silently weaken the exam.
+  const canonicalRunbookOk =
+    /fresh\s+real\s+Lark\s+inbound\s+plus\s+visible\s+reply/iu.test(sources.localBrainRunbook) &&
+    /Do\s+not\s+call\s+local\s+training[,\s]+(?:or\s+)?synthetic\s+replay(?:[,\s]+or\s+a\s+channel\s+probe)?\s+`user-visible-observed`/iu.test(
+      sources.localBrainRunbook,
+    ) &&
+    /live-visible-fixed[\s\S]{0,160}legacy\s+compatibility/iu.test(sources.localBrainRunbook);
+  const runbookOk = legacyRunbookOk || canonicalRunbookOk;
   const status = larkOk && runbookOk ? "pass" : "fail";
   return {
     lane: "work_status_boundary_integrity",

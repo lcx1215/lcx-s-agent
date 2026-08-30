@@ -211,7 +211,7 @@ Use the matching skill before acting:
 - `lcx-commercial-answer-pipeline-operator` for commercial-grade answer adoption, short Lark intent expansion, bounded model/Qwen review, and failed-reason diagnostics.
 - `lcx-promotion-and-adapter-truth-operator` for selected-clean adapter, latest-promoted invalidation, parseRecovered promotion blocks, and active guard adapter mismatch.
 - `l5-regression-batterer` for L5 baseline pressure tests with realistic user/Lark prompts.
-- `l4-regression-batterer` only as a legacy compatibility alias that should forward to the L5 battery.
+- `l4-regression-batterer` only as a legacy compatibility alias that should forward to the L5 battery. Prefer the L5 skill.
 - `skill-harvester` for evaluating and isolating new external/local skills.
 - `cli-anything-harvester` for CLI-Anything, CLI-Hub, GUI/local software CLI wrapper evaluation, and safe agent-native software-control planning.
 
@@ -910,6 +910,8 @@ remembering which diagnostic to run.
 5. keep memory clean
 6. upgrade shared interfaces, evals, receipts, and modules when that is the cleanest way to prevent the failure family from recurring
 
+Repair the failure family with the smallest coherent system upgrade over a tiny symptom patch.
+
 ## System Improvement Authority
 
 - When the active goal is system improvement, do not treat "smallest patch" as the default target.
@@ -930,6 +932,7 @@ remembering which diagnostic to run.
 - Before creating a new module, protocol, eval, receipt, skill, CLI, prompt, doc concept, automation, or memory lane, first check whether this repo or the local Codex skills already contain a similar mechanism.
 - Use repo search and the skill inventory before acting. Start with targeted `rg` over `scripts/dev`, `src`, `extensions`, `test`, `ops`, `docs`, `README.md`, and `AGENTS.md`, plus `find /Users/liuchengxu/.codex/skills -maxdepth 2 -name SKILL.md | sort` when skills are relevant.
 - Prefer reusing, merging, or extending existing contracts, evals, receipts, runbooks, source registries, capability cards, retrieval/apply evidence, and skill-harvester paths over creating a parallel V2 path.
+- Reuse, merge, or extend an existing owner path before creating a parallel one.
 - If a new path is still necessary, state why the existing path is insufficient, which old files or receipts were checked, and how the new path reuses existing prerequisites.
 - Treat user examples as seeds for generic rules, but do not duplicate old engineering under new names.
 

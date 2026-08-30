@@ -467,6 +467,82 @@ describe("local-brain-training-plan", () => {
     expect(plan.overlappingHeavyEval).toBe(false);
   });
 
+  it("does not turn an eval timeout marker into a targeted case id", async () => {
+    const guardLogPath = await writeJsonl("lcx-training-plan-timeout-marker-", [
+      {
+        at: "2026-05-09T09:00:00.000Z",
+        event: "step_ok",
+        name: "candidate_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          summary: {
+            passed: 72,
+            total: 72,
+            passRate: 1,
+            failedCaseIds: [],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: true,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T10:00:00.000Z",
+        event: "step_non_passing",
+        name: "candidate_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r8",
+          summary: {
+            passed: 71,
+            total: 72,
+            passRate: 0.986,
+            failedCaseIds: ["index_concentration_mag7_portfolio_risk"],
+            parseErrorCaseIds: ["index_concentration_mag7_portfolio_risk"],
+            parseRecoveredCaseIds: ["short_lark_commodity_scope_01"],
+            promotionReady: false,
+          },
+        },
+      },
+      {
+        at: "2026-05-09T11:00:00.000Z",
+        event: "step_timeout",
+        name: "stable_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r2",
+          timeoutReason: "idle_timeout",
+          durationMs: 180000,
+          summary: {},
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-training-plan-timeout-marker-quota-", []);
+
+    const plan = await buildLocalBrainTrainingPlan({
+      guardLogPath,
+      quotaLogPath,
+      json: true,
+      processCheck: false,
+    });
+
+    expect(plan.latestEvalTimeout).toMatchObject({
+      name: "stable_hardened_eval",
+      timeoutReason: "idle_timeout",
+    });
+    expect(plan.qwenCapabilityConsolidation.capabilityHarvest).toMatchObject({
+      sourceBlockedAdapter: "/tmp/adapter-r8",
+      targetedEvalFirstCaseIds: [
+        "index_concentration_mag7_portfolio_risk",
+        "short_lark_commodity_scope_01",
+      ],
+    });
+    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
+      "--case-id index_concentration_mag7_portfolio_risk,short_lark_commodity_scope_01",
+    );
+    expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).not.toContain(
+      "stable_hardened_eval_idle_timeout",
+    );
+  });
+
   it("surfaces MiniMax quota completion as normal idle instead of provider failure", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       { at: "2026-05-09T10:00:00.000Z", event: "guard_start" },

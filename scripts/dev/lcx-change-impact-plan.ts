@@ -100,6 +100,19 @@ const PATH_RULES: PathRule[] = [
     headTailRequired: true,
   },
   {
+    id: "runtime_skill_package",
+    lane: "skill_runtime",
+    patterns: [/^skills\//u],
+    requiredChecks: ["skill-autocue-tests", "git-diff-check"],
+    commands: [
+      "pnpm vitest run src/auto-reply/reply/skill-autocue.test.ts src/agents/skills.test.ts",
+      "git diff --check",
+    ],
+    safetyNotes: [
+      "Runtime skills are local instructions only; do not grant provider, training, protected-memory, or external-sender authority.",
+    ],
+  },
+  {
     id: "ts_python_boundary",
     lane: "global_doctrine_and_runbook",
     patterns: [/\.pyi?$/u],
