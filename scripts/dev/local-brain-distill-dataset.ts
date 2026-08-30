@@ -3,13 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { generateCases, scorePlan, toDatasetRow } from "./local-brain-generalization-generator.js";
+import { LOCAL_BRAIN_RISK_BOUNDARIES, packLocalBrainModuleFields } from "./local-brain-taxonomy.js";
 import {
-  LOCAL_BRAIN_CONTRACT_HINTS,
-  LOCAL_BRAIN_MODULE_TAXONOMY,
-  LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
-  LOCAL_BRAIN_RISK_BOUNDARIES,
-  packLocalBrainModuleFields,
-} from "./local-brain-taxonomy.js";
+  buildLocalBrainTrainingPrompt,
+  LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+} from "./local-brain-training-contract.js";
 
 export type DistillExample = {
   prompt: string;
@@ -18,6 +16,7 @@ export type DistillExample = {
     sourcePath: string;
     sourceKind: string;
     generatedAt?: string;
+    promptContractVersion?: string;
   };
 };
 
@@ -652,26 +651,14 @@ function buildPrompt(params: {
   userAsk: string;
   sourceSummary: string;
 }): string {
-  return [
-    "You are the LCX Agent local auxiliary thought-flow model.",
-    "Task: produce a concise control-room planning packet for the main agent.",
-    "Do not answer the user's finance question directly.",
-    "/no_think",
-    "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
-    "Keep the JSON compact: short arrays, short next_step, no explanation inside or outside JSON.",
-    `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
-    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
-    "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
-    "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
-    `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
-    "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
-    `Core planning hints: ${LOCAL_BRAIN_CONTRACT_HINTS.slice(0, 4).join(" ")}`,
-    "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
-    "",
-    `source_kind: ${params.sourceKind}`,
-    `user_or_task: ${params.userAsk}`,
-    `source_summary: ${params.sourceSummary}`,
-  ].join("\n");
+  // The shared contract deliberately keeps source_kind/source_summary out of
+  // the model-visible prompt. Keep provenance in meta/receipts instead.
+  // It retains /no_think, Do not emit chain-of-thought, markdown, or <think> blocks,
+  // Keep the JSON compact, the LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS, Use this exact compact shape,
+  // and "risk_boundaries":["research_only"] for compatibility.
+  void params.sourceKind;
+  void params.sourceSummary;
+  return buildLocalBrainTrainingPrompt({ userAsk: params.userAsk });
 }
 
 function buildCompletion(params: {
@@ -2542,7 +2529,11 @@ async function writeJsonl(filePath: string, examples: DistillExample[]): Promise
         `${JSON.stringify({
           prompt: example.prompt,
           completion: example.completion,
-          meta: example.meta,
+          meta: {
+            ...example.meta,
+            promptContractVersion:
+              example.meta.promptContractVersion ?? LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+          },
         })}\n`,
       );
     }
@@ -2613,6 +2604,12 @@ async function main(): Promise<void> {
       split: "train",
       inTestOrValid: false,
       note: "Infinite-stream rows are self-scored before admission and mixed into the train pool only; test/valid stay on the real receipt distribution and the generalization holdout stays the sole rule-vs-memorization probe.",
+    },
+    promptContract: {
+      version: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+      sourceKindAndSourceSummaryInModelPrompt: false,
+      answerBearingContractLabelsRedacted: true,
+      provenanceLocation: "meta_or_receipt_only",
     },
     teacherReviewQuality: teacherReviewQualitySummary(examples),
     sampleTrust: {

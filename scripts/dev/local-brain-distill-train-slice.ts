@@ -3,6 +3,10 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
+import {
+  buildLocalBrainTrainingPrompt,
+  LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+} from "./local-brain-training-contract.js";
 
 type CliOptions = {
   dataDir: string;
@@ -107,8 +111,11 @@ function parseArgs(args: string[]): CliOptions {
     dataDir: DEFAULT_DATA_DIR,
     outDir: DEFAULT_OUT_DIR,
     maxReviewExamples: 1024,
-    curatedRepeat: 6,
-    nonReviewRepeat: 2,
+    // A repeated row with a different sourcePath is still the same training
+    // signal. Keep the default one pass; callers must opt into repetition
+    // explicitly for a bounded experiment.
+    curatedRepeat: 1,
+    nonReviewRepeat: 1,
     json: false,
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -428,12 +435,21 @@ function targetReviewIndexes(
 function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRecord {
   const sourcePath =
     typeof record.meta?.sourcePath === "string" ? record.meta.sourcePath : "unknown-source";
+  const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim();
+  const hasLegacySourceContext =
+    rawPrompt.includes("\nsource_kind:") || rawPrompt.includes("\nsource_summary:");
+  const prompt =
+    userAsk && hasLegacySourceContext ? buildLocalBrainTrainingPrompt({ userAsk }) : rawPrompt;
   return {
     ...record,
+    prompt,
     meta: {
       ...record.meta,
       sourcePath: `${sourcePath}#train-slice-${lane}-${repeat + 1}`,
       curriculumSlice: true,
+      promptContractVersion: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+      promptContractRewritten: Boolean(userAsk && hasLegacySourceContext),
     },
   };
 }
@@ -476,10 +492,27 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   const writtenSourceKinds: Record<string, number> = {};
   const writtenTrustTiers: Record<string, number> = {};
   const writtenTeacherQuality = createTeacherQualityAccumulator();
+  const writtenPairCounts = new Map<string, number>();
+  let promptContractRewritten = 0;
+  let promptContractLegacyUnrewritten = 0;
 
   function recordWrite(sourceKind: string): void {
     incrementCount(writtenSourceKinds, sourceKind);
     incrementCount(writtenTrustTiers, trustTierForSourceKind(sourceKind));
+  }
+
+  async function writeSliceRecord(record: JsonRecord, repeat: number, lane: string): Promise<void> {
+    const cloned = cloneForSlice(record, repeat, lane);
+    const prompt = typeof cloned.prompt === "string" ? cloned.prompt : "";
+    const completion = typeof cloned.completion === "string" ? cloned.completion : "";
+    await handle.write(`${JSON.stringify(cloned)}\n`);
+    if (cloned.meta?.promptContractRewritten === true) {
+      promptContractRewritten += 1;
+    } else if (prompt.includes("\nsource_summary:") || prompt.includes("\nsource_kind:")) {
+      promptContractLegacyUnrewritten += 1;
+    }
+    const pair = hashText(`${normalizedContent(prompt)}\n${normalizedContent(completion)}`);
+    writtenPairCounts.set(pair, (writtenPairCounts.get(pair) ?? 0) + 1);
   }
 
   try {
@@ -487,14 +520,14 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       const sourceKind = sourceKindOf(record);
       if (sourceKind === CURATED_SOURCE_KIND) {
         for (let repeat = 0; repeat < options.curatedRepeat; repeat += 1) {
-          await handle.write(`${JSON.stringify(cloneForSlice(record, repeat, "curated"))}\n`);
+          await writeSliceRecord(record, repeat, "curated");
           trainWritten += 1;
           curatedWritten += 1;
           recordWrite(sourceKind);
         }
       } else if (sourceKind === REVIEW_SOURCE_KIND) {
         if (selectedReviewIndexes.has(reviewIndex)) {
-          await handle.write(`${JSON.stringify(cloneForSlice(record, 0, "review"))}\n`);
+          await writeSliceRecord(record, 0, "review");
           trainWritten += 1;
           reviewSelected += 1;
           recordWrite(sourceKind);
@@ -506,7 +539,7 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
           ? options.nonReviewRepeat
           : 1;
         for (let repeat = 0; repeat < repeatCount; repeat += 1) {
-          await handle.write(`${JSON.stringify(cloneForSlice(record, repeat, "non-review"))}\n`);
+          await writeSliceRecord(record, repeat, "non-review");
           trainWritten += 1;
           nonReviewWritten += 1;
           recordWrite(sourceKind);
@@ -526,6 +559,10 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     path.join(options.dataDir, "test.jsonl"),
     path.join(options.outDir, "test.jsonl"),
   );
+  const duplicateRows = [...writtenPairCounts.values()].reduce(
+    (sum, count) => sum + (count > 1 ? count - 1 : 0),
+    0,
+  );
 
   const manifest = {
     ok: true,
@@ -533,10 +570,11 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     sourceDataDir: options.dataDir,
     outDir: options.outDir,
     policy: {
-      selection: "curated_first_non_review_repeated_teacher_quality_family_dedup_sample",
+      selection: "curated_first_non_review_teacher_quality_family_dedup_sample",
       maxReviewExamples: options.maxReviewExamples,
       curatedRepeat: options.curatedRepeat,
       nonReviewRepeat: options.nonReviewRepeat,
+      defaultExactRowRepeatDisabled: true,
     },
     counts: {
       sourceTrain: counts.sourceTrain,
@@ -549,6 +587,21 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       trainWritten,
       validCopied,
       testCopied,
+    },
+    repetition: {
+      boundary: "exact_prompt_completion_pair_repetition_only",
+      exactPairUnique: writtenPairCounts.size,
+      duplicateGroups: [...writtenPairCounts.values()].filter((count) => count > 1).length,
+      duplicateRows,
+      duplicateRate: trainWritten === 0 ? 0 : Number((duplicateRows / trainWritten).toFixed(4)),
+      note: "meta.sourcePath changes do not make a duplicated prompt/completion pair novel; use explicit repeat flags only for controlled ablations.",
+    },
+    promptContract: {
+      version: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+      sourceKindAndSourceSummaryInModelPrompt: promptContractLegacyUnrewritten === 0,
+      rowsRewrittenFromLegacyPrompt: promptContractRewritten,
+      legacyRowsStillContainingSourceContext: promptContractLegacyUnrewritten,
+      note: "Legacy rows with a user_or_task line are rebuilt through the shared contract; rows without recoverable user text remain visible for manual review rather than being guessed.",
     },
     sourceKinds: counts.sourceKinds,
     writtenSourceKinds,

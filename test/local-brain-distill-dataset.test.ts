@@ -367,6 +367,9 @@ describe("local brain distill dataset", () => {
     expect(completion.next_step).not.toMatch(/pull latest|ETF flow data|ETH market/i);
     expect(completion.next_step).toContain("timestamped source evidence");
     expect(reviewedExample.prompt.length + reviewedExample.completion.length).toBeLessThan(6_000);
+    expect(reviewedExample.prompt).not.toContain("source_summary:");
+    expect(reviewedExample.prompt).not.toContain("source_kind:");
+    expect(reviewedExample.prompt).toContain("prompt_contract_version:");
   });
 
   it("feeds module-learning plan and review receipts into Qwen training material without claiming absorption", async () => {

@@ -24,12 +24,8 @@
 // so a model's JSON plan can be graded against generated cases with the same
 // 7-condition contract used in production.
 
-import {
-  LOCAL_BRAIN_CONTRACT_HINTS,
-  LOCAL_BRAIN_MODULE_TAXONOMY,
-  LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
-  packLocalBrainModuleFields,
-} from "./local-brain-taxonomy.js";
+import { LOCAL_BRAIN_MODULE_TAXONOMY, packLocalBrainModuleFields } from "./local-brain-taxonomy.js";
+import { buildLocalBrainTrainingPrompt } from "./local-brain-training-contract.js";
 
 export type AssetClass =
   | "us_equity"
@@ -728,26 +724,10 @@ export type DatasetRow = {
 // Mirror of buildPrompt() in local-brain-distill-dataset.ts (kept in sync by
 // reusing the same shared taxonomy constants).
 function buildDatasetPrompt(userAsk: string, sourceSummary: string): string {
-  return [
-    "You are the LCX Agent local auxiliary thought-flow model.",
-    "Task: produce a concise control-room planning packet for the main agent.",
-    "Do not answer the user's finance question directly.",
-    "/no_think",
-    "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
-    "Keep the JSON compact: short arrays, short next_step, no explanation inside or outside JSON.",
-    `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
-    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
-    "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
-    "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
-    `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
-    "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
-    `Core planning hints: ${LOCAL_BRAIN_CONTRACT_HINTS.slice(0, 4).join(" ")}`,
-    "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
-    "",
-    "source_kind: generalization_generator",
-    `user_or_task: ${userAsk}`,
-    `source_summary: ${sourceSummary}`,
-  ].join("\n");
+  // sourceSummary is retained in the GeneratedCase type for receipts and
+  // debugging, but never crosses the model-visible prompt boundary.
+  void sourceSummary;
+  return buildLocalBrainTrainingPrompt({ userAsk });
 }
 
 // Build the target completion from the label, packed into the module-field caps

@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildPrompt,
+  buildTeacherUserPayload,
   buildTeacherSystemPrompt,
   extractJson,
   extractMiniMaxTeacherTextFromResponse,
@@ -37,6 +38,22 @@ describe("minimax brain teacher batch parsing", () => {
     expect(systemPrompt).toContain("Required JSON keys");
     expect(systemPrompt).not.toContain("user_message:");
     expect(systemPrompt).not.toContain("source_summary:");
+  });
+
+  it("withholds source summaries and answer-bearing labels from the teacher payload", () => {
+    const payload = buildTeacherUserPayload({
+      id: "short_lark_commodity_learning_intake",
+      userMessage:
+        "请修复 short_lark_commodity_learning_intake，并要求 primary_modules 包含 commodities_oil_gold。",
+      sourceSummary:
+        '{"candidateText":"answer-bearing plan","primaryModules":["commodities_oil_gold"]}',
+    });
+
+    expect(payload).toContain("source_provenance: withheld_from_model_prompt");
+    expect(payload).not.toContain("source_summary:");
+    expect(payload).not.toContain("answer-bearing plan");
+    expect(payload).not.toContain("short_lark_commodity_learning_intake");
+    expect(payload).not.toContain("commodities_oil_gold");
   });
 
   it("includes current real-market stress families in proactive Qwen teacher prompts", async () => {

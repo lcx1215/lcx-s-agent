@@ -9,10 +9,12 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
 type DistillLine = {
+  prompt?: string;
   completion: string;
   meta?: {
     sourceKind?: string;
     curriculumSlice?: boolean;
+    promptContractRewritten?: boolean;
   };
 };
 
@@ -100,6 +102,7 @@ describe("local brain distill train slice", () => {
         sourceTrain: { total: number; dedup: { uniqueContent: number } };
         writtenSlice: { total: number; dedup: { uniqueContent: number } };
       };
+      repetition: { duplicateRows: number; duplicateRate: number };
     };
     expect(manifest.counts).toMatchObject({
       trainWritten: 12,
@@ -119,6 +122,7 @@ describe("local brain distill train slice", () => {
     expect(manifest.teacherReviewQuality.sourceTrain.total).toBe(5);
     expect(manifest.teacherReviewQuality.writtenSlice.total).toBe(2);
     expect(manifest.teacherReviewQuality.writtenSlice.dedup.uniqueContent).toBe(2);
+    expect(manifest.repetition.duplicateRows).toBeGreaterThan(0);
 
     const trainExamples = await parseJsonl(path.join(outDir, "train.jsonl"));
     expect(trainExamples).toHaveLength(12);
@@ -179,5 +183,66 @@ describe("local brain distill train slice", () => {
     expect(
       trainExamples.filter((entry) => entry.meta?.sourceKind === "brain_distillation_review"),
     ).toHaveLength(1);
+  });
+
+  it("rewrites legacy source-bearing prompts through the shared contract", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-contract-slice-"));
+    const dataDir = path.join(fixtureRoot, "dataset");
+    const outDir = path.join(fixtureRoot, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    const legacy = {
+      prompt: [
+        "old static contract",
+        "",
+        "source_kind: brain_distillation_review",
+        "user_or_task: 研究 portfolio_risk_gates",
+        'source_summary: {"primaryModules":["portfolio_risk_gates"]}',
+      ].join("\n"),
+      completion: JSON.stringify({
+        task_family: "portfolio_risk",
+        primary_modules: ["portfolio_risk_gates"],
+        supporting_modules: [],
+        required_tools: ["review_panel"],
+        missing_data: [],
+        risk_boundaries: ["research_only"],
+        next_step: "route_to_review",
+        rejected_context: [],
+      }),
+      meta: { sourceKind: "brain_distillation_review", sourcePath: "legacy" },
+    };
+    await fs.writeFile(path.join(dataDir, "train.jsonl"), `${JSON.stringify(legacy)}\n`, "utf8");
+    await fs.writeFile(path.join(dataDir, "valid.jsonl"), line("curated_seed", "valid"), "utf8");
+    await fs.writeFile(path.join(dataDir, "test.jsonl"), line("curated_seed", "test"), "utf8");
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-train-slice.ts",
+        "--data",
+        dataDir,
+        "--out",
+        outDir,
+        "--max-review-examples",
+        "1",
+        "--json",
+      ],
+      { cwd: repoRoot, env: { ...process.env, HOME: fixtureRoot } },
+    );
+    const manifest = JSON.parse(stdout) as {
+      promptContract: {
+        sourceKindAndSourceSummaryInModelPrompt: boolean;
+        rowsRewrittenFromLegacyPrompt: number;
+      };
+    };
+    expect(manifest.promptContract).toMatchObject({
+      sourceKindAndSourceSummaryInModelPrompt: true,
+      rowsRewrittenFromLegacyPrompt: 1,
+    });
+    const rows = await parseJsonl(path.join(outDir, "train.jsonl"));
+    expect(rows[0]?.prompt).not.toContain("source_summary:");
+    expect(rows[0]?.prompt).toContain("user_or_task: 研究 <withheld_contract_id>");
+    expect(rows[0]?.meta?.promptContractRewritten).toBe(true);
   });
 });
