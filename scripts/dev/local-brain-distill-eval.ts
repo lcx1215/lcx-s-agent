@@ -121,6 +121,14 @@ const PARSE_STABILITY_COMPACT_EVAL_CASE_PREFIXES = [
   "core_thesis_catalyst_lifecycle",
   "research_artifact_qc_expansion",
 ] as const;
+const PARSE_STABILITY_COMPACT_EVAL_CASE_IDS = new Set([
+  "broad_finance_module_taxonomy_coverage",
+  "private_credit_nonbank_leverage_stress_waterflow",
+  "short_lark_commodity_scope_01",
+  "short_lark_commodity_scope_04",
+  "external_knowledge_expansion_04",
+  "adversarial_scenario_no_guess_02",
+]);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
@@ -128,6 +136,7 @@ let activeGenerateChild: ChildProcessWithoutNullStreams | undefined;
 function isParseStabilityCompactEvalCase(evalCase: EvalCase): boolean {
   return (
     TIMEOUT_PRONE_COMPACT_EVAL_CASE_IDS.has(evalCase.id) ||
+    PARSE_STABILITY_COMPACT_EVAL_CASE_IDS.has(evalCase.id) ||
     PARSE_STABILITY_COMPACT_EVAL_CASE_PREFIXES.some((prefix) =>
       evalCase.id.startsWith(`${prefix}_`),
     )
@@ -4183,8 +4192,11 @@ function outputContractHintsFor(evalCase: EvalCase): string[] {
   );
 }
 
-function maxTokensForEvalCase(evalCase: EvalCase, mode: "standard" | "timeout_retry"): string {
-  if (mode === "timeout_retry") {
+function maxTokensForEvalCase(
+  evalCase: EvalCase,
+  mode: "standard" | "timeout_retry" | "parse_retry",
+): string {
+  if (mode === "timeout_retry" || mode === "parse_retry") {
     return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
   }
   return isParseStabilityCompactEvalCase(evalCase)
@@ -4203,7 +4215,7 @@ function buildPromptSuffix(evalCase: EvalCase): string {
   return [
     `Output contract: ${outputContractHintsFor(evalCase).join(" ")}`,
     isParseStabilityCompactEvalCase(evalCase)
-      ? "Parse-stability compact eval: include only required ids, keep every value short, and close the JSON object without trailing text."
+      ? "Parse-stability compact eval: include only exact snake_case ids, never echo descriptions or parenthetical aliases, keep every value short, and close the JSON object without trailing text."
       : undefined,
     `Recommended module ids for this case: ${promptModuleIds.join(", ")}.`,
     requiredMissingData.length > 0
@@ -4226,7 +4238,7 @@ function buildPrompt(evalCase: EvalCase): string {
   return `${LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX}${buildPromptSuffix(evalCase)}`;
 }
 
-function buildTimeoutRetryPrompt(evalCase: EvalCase): string {
+function buildRetryPrompt(evalCase: EvalCase, mode: "timeout_retry" | "parse_retry"): string {
   const promptModuleIds = normalizeLocalBrainModuleList([
     ...evalCase.requiredModules,
     ...CORE_PROMPT_MODULES,
@@ -4235,7 +4247,7 @@ function buildTimeoutRetryPrompt(evalCase: EvalCase): string {
   const requiredRiskBoundaries = evalCase.requiredRiskBoundaries ?? [];
   return [
     "You are the LCX Agent local auxiliary thought-flow model.",
-    "Timeout retry compact mode: output one single-line JSON object only.",
+    `${mode === "parse_retry" ? "Parse" : "Timeout"} retry compact mode: output one single-line JSON object only.`,
     "/no_think",
     "No prose, no markdown, no <think>, no explanations, no nested objects.",
     'Exact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
@@ -4356,15 +4368,15 @@ async function ensurePromptCache(options: CliOptions, promptCacheFile: string): 
 async function runGenerate(
   options: CliOptions,
   evalCase: EvalCase,
-  mode: "standard" | "timeout_retry" = "standard",
+  mode: "standard" | "timeout_retry" | "parse_retry" = "standard",
 ): Promise<string> {
   const promptCacheFile = mode === "standard" ? promptCacheFileFor(options) : undefined;
   if (promptCacheFile) {
     await ensurePromptCache(options, promptCacheFile);
   }
   const prompt =
-    mode === "timeout_retry"
-      ? buildTimeoutRetryPrompt(evalCase)
+    mode === "timeout_retry" || mode === "parse_retry"
+      ? buildRetryPrompt(evalCase, mode)
       : promptCacheFile
         ? buildPromptSuffix(evalCase)
         : buildPrompt(evalCase);
@@ -4455,18 +4467,44 @@ async function runGenerate(
 async function runGenerateWithTimeoutRetry(
   options: CliOptions,
   evalCase: EvalCase,
-): Promise<{ rawOutput: string; parseRecovered: boolean; parseError?: string }> {
+): Promise<{
+  rawOutput: string;
+  parseRecovered: boolean;
+  parseError?: string;
+  retryKind?: "timeout_retry";
+  initialGenerationStatus?: "generation_error";
+  initialOutputChars?: number;
+  initialOutputSha256?: string;
+}> {
   try {
     return { rawOutput: await runGenerate(options, evalCase), parseRecovered: false };
   } catch (error) {
-    if (!options.hardened || !isEmptyTimeoutGenerateError(error)) {
+    const timeoutRetryEligible =
+      options.hardened &&
+      (isEmptyTimeoutGenerateError(error) ||
+        (isParseStabilityCompactEvalCase(evalCase) &&
+          error instanceof LocalBrainGenerateError &&
+          error.message.includes("timed out after")));
+    if (!timeoutRetryEligible) {
       throw error;
     }
-    return {
-      rawOutput: await runGenerate(options, evalCase, "timeout_retry"),
-      parseRecovered: true,
-      parseError: `${error.name}: ${error.message}`,
-    };
+    try {
+      return {
+        rawOutput: await runGenerate(options, evalCase, "timeout_retry"),
+        parseRecovered: true,
+        parseError: `${error.name}: ${error.message}`,
+        retryKind: "timeout_retry",
+        initialGenerationStatus: "generation_error",
+        initialOutputChars: error.rawOutput.length,
+        initialOutputSha256: error.rawOutput.length > 0 ? hashText(error.rawOutput) : undefined,
+      };
+    } catch (retryError) {
+      throw new LocalBrainGenerateError(
+        `${error.name}: ${error.message}; compact retry failed: ${retryError.name}: ${retryError.message}`,
+        rawOutputFromError(retryError) || rawOutputFromError(error) || "",
+        retryError instanceof LocalBrainGenerateError ? retryError.stderrOutput : "",
+      );
+    }
   }
 }
 
@@ -4745,6 +4783,71 @@ function asStringArray(value: unknown): string[] {
     : [];
 }
 
+function canonicalContractToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+}
+
+function includesCanonicalContractToken(values: string[], expected: string): boolean {
+  const canonicalExpected = canonicalContractToken(expected);
+  return values.some((value) => canonicalContractToken(value) === canonicalExpected);
+}
+
+const CONTRACT_ARRAY_FIELDS = [
+  "primary_modules",
+  "supporting_modules",
+  "required_tools",
+  "missing_data",
+  "risk_boundaries",
+  "rejected_context",
+] as const;
+const CONTRACT_MODULE_FIELDS = ["primary_modules", "supporting_modules", "required_tools"] as const;
+
+function contractArraySet(output: Record<string, unknown>, field: string): Set<string> {
+  return new Set(asStringArray(output[field]).map(canonicalContractToken).filter(Boolean));
+}
+
+function contractNormalizationDelta(
+  rawOutput: Record<string, unknown>,
+  normalizedOutput: Record<string, unknown>,
+): { applied: boolean; changedFields: string[] } {
+  const changedFields = CONTRACT_MODULE_FIELDS.filter((field) => {
+    const before = asStringArray(rawOutput[field]);
+    const after = asStringArray(normalizedOutput[field]);
+    return before.length !== after.length || before.some((value, index) => value !== after[index]);
+  });
+  return { applied: changedFields.length > 0, changedFields: [...changedFields] };
+}
+
+function hardeningDelta(
+  rawOutput: Record<string, unknown>,
+  hardenedOutput: Record<string, unknown>,
+): { applied: boolean; changedFields: string[] } {
+  const changedFields: string[] = [];
+  for (const field of CONTRACT_ARRAY_FIELDS) {
+    const before = contractArraySet(rawOutput, field);
+    const after = contractArraySet(hardenedOutput, field);
+    if (before.size !== after.size || [...before].some((value) => !after.has(value))) {
+      changedFields.push(field);
+    }
+  }
+  for (const field of ["task_family", "next_step"] as const) {
+    const before =
+      typeof rawOutput[field] === "string" ? canonicalContractToken(rawOutput[field]) : "";
+    const after =
+      typeof hardenedOutput[field] === "string"
+        ? canonicalContractToken(hardenedOutput[field])
+        : "";
+    if (before !== after) {
+      changedFields.push(field);
+    }
+  }
+  return { applied: changedFields.length > 0, changedFields };
+}
+
 function finalizeModuleFields(output: Record<string, unknown>): Record<string, unknown> {
   const packedModules = packLocalBrainModuleFields(
     asStringArray(output.primary_modules),
@@ -4788,16 +4891,19 @@ function evaluate(
   );
   const missingData = asStringArray(output.missing_data);
   const missingRequiredData = (evalCase.requiredMissingData ?? []).filter(
-    (entry) => !missingData.includes(entry),
+    (entry) => !includesCanonicalContractToken(missingData, entry),
   );
   const riskBoundaries = asStringArray(output.risk_boundaries);
   const missingRequiredRiskBoundaries = (evalCase.requiredRiskBoundaries ?? []).filter(
-    (entry) => !riskBoundaries.includes(entry),
+    (entry) => !includesCanonicalContractToken(riskBoundaries, entry),
   );
   const rejectedContext = asStringArray(output.rejected_context);
   const boundaryOk =
     riskBoundaries.includes("research_only") || riskBoundaries.includes("no_execution_authority");
-  const oldContextRejected = rejectedContext.includes("old_lark_conversation_history");
+  const oldContextRejected = includesCanonicalContractToken(
+    rejectedContext,
+    "old_lark_conversation_history",
+  );
   return {
     ok:
       missingKeys.length === 0 &&
@@ -4849,8 +4955,20 @@ function formatReceiptError(error: unknown): string {
 type EvalReceiptCaseInput = {
   id: string;
   acceptance: ReturnType<typeof evaluate>;
+  rawAcceptance?: ReturnType<typeof evaluate>;
+  modelContractReady?: boolean;
+  rawContractNormalizationApplied?: boolean;
+  rawContractNormalizationChangedFields?: string[];
+  hardeningApplied?: boolean;
+  hardeningChangedFields?: string[];
   parseRecovered?: boolean;
   parseError?: unknown;
+  parseErrorKind?: "initial_parse" | "generation_error" | "generation_timeout" | "retry_failure";
+  parseRetryUsed?: boolean;
+  generationRetryKind?: "timeout_retry" | "parse_retry";
+  initialGenerationStatus?: "not_run" | "valid_json" | "invalid_json" | "generation_error";
+  initialOutputChars?: number;
+  initialOutputSha256?: string;
 };
 
 function compactEvalReceiptCase(entry: EvalReceiptCaseInput) {
@@ -4870,8 +4988,20 @@ function compactEvalReceiptCase(entry: EvalReceiptCaseInput) {
     id: entry.id,
     status,
     acceptanceOk: entry.acceptance.ok,
+    rawAcceptanceOk: entry.rawAcceptance?.ok,
+    modelContractReady: entry.modelContractReady,
+    rawContractNormalizationApplied: entry.rawContractNormalizationApplied,
+    rawContractNormalizationChangedFields: entry.rawContractNormalizationChangedFields,
+    hardeningApplied: entry.hardeningApplied,
+    hardeningChangedFields: entry.hardeningChangedFields,
     parseRecovered: parseRecovered || undefined,
     parseError,
+    parseErrorKind: entry.parseErrorKind,
+    parseRetryUsed: entry.parseRetryUsed || undefined,
+    generationRetryKind: entry.generationRetryKind,
+    initialGenerationStatus: entry.initialGenerationStatus,
+    initialOutputChars: entry.initialOutputChars,
+    initialOutputSha256: entry.initialOutputSha256,
     diagnostics: {
       missingFinanceModules: entry.acceptance.missingFinanceModules,
       missingRequiredData: entry.acceptance.missingRequiredData,
@@ -4910,12 +5040,75 @@ for (const evalCase of evalCases) {
     process.stderr.write(`[local-brain-eval] start ${evalCase.id}\n`);
   }
   let rawOutput = "";
+  let parseRetryUsed = false;
+  let generationRetryKind: "timeout_retry" | "parse_retry" | undefined;
+  let parseErrorKind:
+    | "initial_parse"
+    | "generation_error"
+    | "generation_timeout"
+    | "retry_failure"
+    | undefined;
+  let initialGenerationStatus:
+    | "not_run"
+    | "valid_json"
+    | "invalid_json"
+    | "generation_error"
+    | undefined;
+  let initialOutputChars: number | undefined;
+  let initialOutputSha256: string | undefined;
   try {
     const generateResult = resolvedOptions.contractOnly
       ? { rawOutput: "", parseRecovered: false }
       : await runGenerateWithTimeoutRetry(resolvedOptions, evalCase);
     rawOutput = generateResult.rawOutput;
-    const rawParsed = resolvedOptions.contractOnly ? {} : extractJson(rawOutput);
+    generationRetryKind = generateResult.retryKind;
+    initialGenerationStatus = resolvedOptions.contractOnly
+      ? "not_run"
+      : generateResult.initialGenerationStatus;
+    initialOutputChars = generateResult.initialOutputChars;
+    initialOutputSha256 = generateResult.initialOutputSha256;
+    if (generateResult.parseError) {
+      parseErrorKind = "generation_timeout";
+    }
+    if (!resolvedOptions.contractOnly && !initialGenerationStatus) {
+      initialOutputChars = rawOutput.length;
+      initialOutputSha256 = rawOutput.length > 0 ? hashText(rawOutput) : undefined;
+    }
+    let rawParsed: Record<string, unknown>;
+    let parseRetryError: string | undefined;
+    if (resolvedOptions.contractOnly) {
+      rawParsed = {};
+    } else {
+      try {
+        rawParsed = extractJson(rawOutput);
+        initialGenerationStatus ??= "valid_json";
+      } catch (error) {
+        initialGenerationStatus ??= "invalid_json";
+        const canRetryParse =
+          options.hardened &&
+          !generateResult.parseRecovered &&
+          isParseStabilityCompactEvalCase(evalCase);
+        if (!canRetryParse) {
+          throw error;
+        }
+        parseRetryUsed = true;
+        generationRetryKind = "parse_retry";
+        parseErrorKind = "initial_parse";
+        parseRetryError = String(error);
+        try {
+          rawOutput = await runGenerate(resolvedOptions, evalCase, "parse_retry");
+          rawParsed = extractJson(rawOutput);
+        } catch (retryError) {
+          parseErrorKind = "retry_failure";
+          rawOutput = rawOutputFromError(retryError) || rawOutput;
+          throw new LocalBrainGenerateError(
+            `parse retry failed after ${formatProgressError(error)}: ${formatProgressError(retryError)}`,
+            rawOutput,
+            retryError instanceof LocalBrainGenerateError ? retryError.stderrOutput : "",
+          );
+        }
+      }
+    }
     const parsed = finalizeModuleFields(
       options.hardened
         ? hardenLocalBrainPlanForAsk(rawParsed, {
@@ -4924,13 +5117,49 @@ for (const evalCase of evalCases) {
           })
         : rawParsed,
     );
+    const rawContractParsed = finalizeModuleFields(rawParsed);
+    const rawAcceptance = resolvedOptions.contractOnly
+      ? undefined
+      : evaluate(rawContractParsed, evalCase);
+    const acceptance = evaluate(parsed, evalCase);
+    const normalizationDelta =
+      options.hardened && !resolvedOptions.contractOnly
+        ? contractNormalizationDelta(rawParsed, rawContractParsed)
+        : { applied: false, changedFields: [] };
+    const isParseRecovered = generateResult.parseRecovered || parseRetryUsed;
+    const delta =
+      options.hardened && !resolvedOptions.contractOnly
+        ? hardeningDelta(rawContractParsed, parsed)
+        : { applied: false, changedFields: [] };
     caseResults.push({
       id: evalCase.id,
       rawOutput,
       parsed,
-      acceptance: evaluate(parsed, evalCase),
-      ...(generateResult.parseRecovered ? { parseRecovered: true } : {}),
-      ...(generateResult.parseError ? { parseError: generateResult.parseError } : {}),
+      acceptance,
+      rawAcceptance,
+      modelContractReady:
+        !resolvedOptions.contractOnly &&
+        !isParseRecovered &&
+        rawAcceptance?.ok === true &&
+        !normalizationDelta.applied &&
+        !delta.applied,
+      rawContractNormalizationApplied:
+        options.hardened && !resolvedOptions.contractOnly ? normalizationDelta.applied : false,
+      rawContractNormalizationChangedFields:
+        options.hardened && !resolvedOptions.contractOnly ? normalizationDelta.changedFields : [],
+      hardeningApplied: options.hardened && !resolvedOptions.contractOnly ? delta.applied : false,
+      hardeningChangedFields:
+        options.hardened && !resolvedOptions.contractOnly ? delta.changedFields : [],
+      parseRetryUsed: parseRetryUsed || undefined,
+      parseErrorKind,
+      generationRetryKind,
+      initialGenerationStatus,
+      initialOutputChars,
+      initialOutputSha256,
+      ...(isParseRecovered ? { parseRecovered: true } : {}),
+      ...((generateResult.parseError ?? parseRetryError)
+        ? { parseError: generateResult.parseError ?? parseRetryError }
+        : {}),
     });
     if (options.progress) {
       process.stderr.write(
@@ -4939,21 +5168,58 @@ for (const evalCase of evalCases) {
     }
   } catch (error) {
     const parseError = String(error);
-    rawOutput = rawOutput || rawOutputFromError(error) || "";
+    const capturedErrorOutput = rawOutput || rawOutputFromError(error) || "";
+    initialGenerationStatus ??=
+      error instanceof LocalBrainGenerateError ? "generation_error" : "invalid_json";
+    if (initialOutputChars === undefined) {
+      initialOutputChars = capturedErrorOutput.length;
+      initialOutputSha256 =
+        capturedErrorOutput.length > 0 ? hashText(capturedErrorOutput) : undefined;
+    }
+    if (!parseErrorKind) {
+      parseErrorKind =
+        generationRetryKind ||
+        (error instanceof LocalBrainGenerateError && error.message.includes("compact retry failed"))
+          ? "retry_failure"
+          : error instanceof LocalBrainGenerateError && error.message.includes("timed out after")
+            ? "generation_timeout"
+            : error instanceof LocalBrainGenerateError
+              ? "generation_error"
+              : "initial_parse";
+    }
+    rawOutput = capturedErrorOutput;
     const recoveredRawParsed =
       options.hardened && !resolvedOptions.contractOnly ? recoverPartialJsonPlan(rawOutput) : null;
     if (recoveredRawParsed) {
+      const rawContractParsed = finalizeModuleFields(recoveredRawParsed);
       const parsed = finalizeModuleFields(
         hardenLocalBrainPlanForAsk(recoveredRawParsed, {
           ask: evalCase.userAsk,
           sourceSummary: evalCase.sourceSummary,
         }),
       );
+      const rawAcceptance = evaluate(rawContractParsed, evalCase);
+      const acceptance = evaluate(parsed, evalCase);
+      const normalizationDelta = contractNormalizationDelta(recoveredRawParsed, rawContractParsed);
+      const delta = hardeningDelta(rawContractParsed, parsed);
       caseResults.push({
         id: evalCase.id,
         rawOutput,
         parsed,
-        acceptance: evaluate(parsed, evalCase),
+        acceptance,
+        rawAcceptance,
+        modelContractReady: false,
+        rawContractNormalizationApplied: normalizationDelta.applied,
+        rawContractNormalizationChangedFields: normalizationDelta.changedFields,
+        hardeningApplied: options.hardened && !resolvedOptions.contractOnly ? delta.applied : false,
+        hardeningChangedFields:
+          options.hardened && !resolvedOptions.contractOnly ? delta.changedFields : [],
+        parseRetryUsed: parseRetryUsed || undefined,
+        parseErrorKind,
+        generationRetryKind,
+        initialGenerationStatus,
+        initialOutputChars,
+        initialOutputSha256,
         parseRecovered: true,
         parseError,
       });
@@ -4979,6 +5245,17 @@ for (const evalCase of evalCases) {
       parsed: null,
       diagnosticFallbackParsed: fallbackParsed,
       acceptance: parseFailureAcceptance(error),
+      modelContractReady: false,
+      rawContractNormalizationApplied: false,
+      rawContractNormalizationChangedFields: [],
+      hardeningApplied: false,
+      hardeningChangedFields: [],
+      parseRetryUsed: parseRetryUsed || undefined,
+      parseErrorKind,
+      generationRetryKind,
+      initialGenerationStatus,
+      initialOutputChars,
+      initialOutputSha256,
       parseError,
     });
     if (options.progress) {
@@ -4993,9 +5270,34 @@ const failedCases = caseResults.filter((entry) => !entry.acceptance.ok);
 const parseRecoveredCases = caseResults.filter(
   (entry) => "parseRecovered" in entry && entry.parseRecovered === true,
 );
+const rawContractCases = caseResults.filter((entry) => entry.rawAcceptance?.ok === true);
+const modelContractReadyCases = caseResults.filter((entry) => entry.modelContractReady);
+const rawContractNormalizationCases = caseResults.filter(
+  (entry) => entry.rawContractNormalizationApplied,
+);
+const hardeningAppliedCases = caseResults.filter((entry) => entry.hardeningApplied);
+const parseRetryCases = caseResults.filter((entry) => entry.parseRetryUsed);
+const timeoutRetryCases = caseResults.filter(
+  (entry) => entry.generationRetryKind === "timeout_retry",
+);
+const initialInvalidJsonCases = caseResults.filter(
+  (entry) => entry.initialGenerationStatus === "invalid_json",
+);
+const initialGenerationErrorCases = caseResults.filter(
+  (entry) => entry.initialGenerationStatus === "generation_error",
+);
+const strictModelProofRequired = !options.contractOnly && options.hardened;
+const modelContractFailureCaseIds = strictModelProofRequired
+  ? caseResults.filter((entry) => !entry.modelContractReady).map((entry) => entry.id)
+  : [];
+const promotionReady =
+  failedCases.length === 0 &&
+  parseRecoveredCases.length === 0 &&
+  modelContractFailureCaseIds.length === 0;
 const failedCaseDiagnostics = failedCases.map((entry) => ({
   id: entry.id,
   parseError: "parseError" in entry ? entry.parseError : undefined,
+  parseErrorKind: "parseErrorKind" in entry ? entry.parseErrorKind : undefined,
   missingFinanceModules: entry.acceptance.missingFinanceModules,
   missingRequiredData: entry.acceptance.missingRequiredData,
   missingRequiredRiskBoundaries: entry.acceptance.missingRequiredRiskBoundaries,
@@ -5013,6 +5315,12 @@ const result = {
   noAdapter: options.noAdapter,
   hardened: options.hardened,
   contractOnly: options.contractOnly,
+  evaluationMode: options.contractOnly
+    ? "contract_only"
+    : options.hardened
+      ? "assisted_hardened_challenger"
+      : "raw_contract",
+  learningClaim: "not_proven_by_contract_eval",
   hierarchy: {
     requestedCaseIds: options.caseIds,
     autoIncludedPrerequisiteCaseIds,
@@ -5030,9 +5338,19 @@ const result = {
       })
       .map((entry) => entry.id),
     parseRecoveredCaseIds: parseRecoveredCases.map((entry) => entry.id),
+    rawContractPassCount: rawContractCases.length,
+    modelContractReadyCaseIds: modelContractReadyCases.map((entry) => entry.id),
+    modelContractFailureCaseIds,
+    rawContractNormalizationCaseIds: rawContractNormalizationCases.map((entry) => entry.id),
+    hardeningAppliedCaseIds: hardeningAppliedCases.map((entry) => entry.id),
+    parseRetryCaseIds: parseRetryCases.map((entry) => entry.id),
+    timeoutRetryCaseIds: timeoutRetryCases.map((entry) => entry.id),
+    initialInvalidJsonCaseIds: initialInvalidJsonCases.map((entry) => entry.id),
+    initialGenerationErrorCaseIds: initialGenerationErrorCases.map((entry) => entry.id),
+    strictModelProofRequired,
     failedCaseDiagnostics,
     capabilitySuites: buildEvalCapabilitySuiteResults(caseResults),
-    promotionReady: failedCases.length === 0 && parseRecoveredCases.length === 0,
+    promotionReady,
   },
   evalRegistry: buildEvalRegistrySummary(),
   cases: options.summaryOnly ? undefined : caseResults,
@@ -5051,6 +5369,7 @@ if (options.receiptPath) {
         acceptanceOk: entry.acceptanceOk,
         parseRecovered: entry.parseRecovered,
         parseError: entry.parseError,
+        parseErrorKind: entry.parseErrorKind,
         ...entry.diagnostics,
       })),
   };
@@ -5065,6 +5384,8 @@ if (options.receiptPath) {
       hardened: options.hardened,
       contractOnly: options.contractOnly,
       timeoutMs: options.timeoutMs,
+      evaluationMode: result.evaluationMode,
+      learningClaim: result.learningClaim,
     },
     resolved: {
       adapterPath: resolvedOptions.adapterPath ?? null,
@@ -5078,6 +5399,15 @@ if (options.receiptPath) {
     evalRegistry: result.evalRegistry,
     proof: {
       subsetEval: true,
+      rawContractRequiredForPromotion: strictModelProofRequired,
+      modelContractReady: strictModelProofRequired && modelContractFailureCaseIds.length === 0,
+      rawContractNormalizationCaseIds: rawContractNormalizationCases.map((entry) => entry.id),
+      hardeningAppliedCaseIds: hardeningAppliedCases.map((entry) => entry.id),
+      parseRetryCaseIds: parseRetryCases.map((entry) => entry.id),
+      timeoutRetryCaseIds: timeoutRetryCases.map((entry) => entry.id),
+      initialInvalidJsonCaseIds: initialInvalidJsonCases.map((entry) => entry.id),
+      initialGenerationErrorCaseIds: initialGenerationErrorCases.map((entry) => entry.id),
+      learningClaim: "not_proven_by_contract_eval",
       promotionReady: result.summary.promotionReady,
       promotionProof: false,
       modelWeightAbsorbed: false,

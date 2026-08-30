@@ -832,7 +832,7 @@ describe("local-brain-distill-eval", () => {
     }
   });
 
-  it("uses compact parse-stability prompts for recovered 200-case eval families", () => {
+  it("uses compact parse-stability prompts for the six recovered cases and nearby families", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-parse-stability-"));
     const argLog = path.join(tempDir, "python-args.jsonl");
     const fakePython = path.join(tempDir, "python");
@@ -864,7 +864,7 @@ describe("local-brain-distill-eval", () => {
           "--python",
           fakePython,
           "--case-id",
-          "core_options_event_boundary_02,core_thesis_catalyst_lifecycle_06,research_artifact_qc_expansion_03",
+          "core_options_event_boundary_02,core_thesis_catalyst_lifecycle_06,research_artifact_qc_expansion_03,broad_finance_module_taxonomy_coverage,private_credit_nonbank_leverage_stress_waterflow,short_lark_commodity_scope_01,short_lark_commodity_scope_04,external_knowledge_expansion_04,adversarial_scenario_no_guess_02",
           "--summary-only",
           "--json",
         ],
@@ -887,7 +887,7 @@ describe("local-brain-distill-eval", () => {
         const prompt = args[args.indexOf("--prompt") + 1] ?? "";
         return prompt.includes("Parse-stability compact eval");
       });
-      expect(targetRecords.length).toBeGreaterThanOrEqual(3);
+      expect(targetRecords.length).toBeGreaterThanOrEqual(9);
       for (const args of targetRecords) {
         const prompt = args[args.indexOf("--prompt") + 1] ?? "";
         expect(args[args.indexOf("--max-tokens") + 1]).toBe("360");
@@ -895,6 +895,211 @@ describe("local-brain-distill-eval", () => {
         expect(prompt).toContain("missing_data <=");
         expect(prompt).toContain("risk_boundaries <=");
       }
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retries one malformed six-case output without upgrading it to model proof", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-parse-retry-"));
+    const fakePython = path.join(tempDir, "python");
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    const receiptPath = path.join(tempDir, "parse-retry-receipt.json");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        `const argLog = ${JSON.stringify(argLog)};`,
+        "fs.appendFileSync(argLog, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        "const promptIndex = process.argv.indexOf('--prompt');",
+        "const prompt = promptIndex >= 0 ? process.argv[promptIndex + 1] || '' : '';",
+        "const parseList = (label) => { const match = new RegExp(`${label}: ([^\\\\n.]+)`).exec(prompt); return match ? match[1].split(',').map((item) => item.trim()).filter(Boolean) : []; };",
+        "const modules = parseList('Recommended module ids for this case');",
+        "const missing = parseList('Required missing_data ids for this case');",
+        "const risk = ['research_only', ...parseList('Required risk_boundaries for this case').filter((item) => item !== 'research_only')];",
+        "if (prompt.includes('凭感觉软着陆概率多少？') && !prompt.includes('Parse retry compact mode')) {",
+        '  process.stdout.write(\'{"task_family":"scenario_probability_gate","primary_modules":["macro_rates_inflation"\');',
+        "  process.exit(0);",
+        "}",
+        "console.log(JSON.stringify({task_family:'parse_retry_contract',primary_modules:modules.slice(0,8),supporting_modules:modules.slice(8,14),required_tools:modules.slice(14,20),missing_data:missing,risk_boundaries:risk,next_step:'route_to_review',rejected_context:['old_lark_conversation_history']}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--hardened",
+          "--case-id",
+          "adversarial_scenario_no_guess_02",
+          "--summary-only",
+          "--json",
+          "--receipt",
+          receiptPath,
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            EVAL_FAKE_PYTHON_LOG: argLog,
+            LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0",
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        summary: {
+          parseErrorCaseIds: string[];
+          parseRecoveredCaseIds: string[];
+          parseRetryCaseIds: string[];
+          modelContractFailureCaseIds: string[];
+          promotionReady: boolean;
+        };
+        cases?: unknown;
+      };
+      expect(payload.cases).toBeUndefined();
+      expect(payload.summary).toMatchObject({
+        parseErrorCaseIds: [],
+        parseRecoveredCaseIds: ["adversarial_scenario_no_guess_02"],
+        parseRetryCaseIds: ["adversarial_scenario_no_guess_02"],
+        promotionReady: false,
+      });
+      expect(payload.summary.modelContractFailureCaseIds).toContain(
+        "adversarial_scenario_no_guess_02",
+      );
+
+      const records = readFileSync(argLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      const retryRecords = records.filter((args) => {
+        const promptIndex = args.indexOf("--prompt");
+        return (args[promptIndex + 1] ?? "").includes("Parse retry compact mode");
+      });
+      expect(retryRecords).toHaveLength(1);
+      const retryArgs = retryRecords[0] ?? [];
+      expect(retryArgs[retryArgs.indexOf("--max-tokens") + 1]).toBe("320");
+      const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as {
+        caseReceipts: Array<{
+          id: string;
+          initialGenerationStatus?: string;
+          initialOutputChars?: number;
+          initialOutputSha256?: string;
+          parseErrorKind?: string;
+        }>;
+      };
+      const targetReceipt = receipt.caseReceipts.find(
+        (entry) => entry.id === "adversarial_scenario_no_guess_02",
+      );
+      expect(targetReceipt).toMatchObject({
+        initialGenerationStatus: "invalid_json",
+        parseErrorKind: "initial_parse",
+      });
+      expect(targetReceipt?.initialOutputChars).toBeGreaterThan(0);
+      expect(targetReceipt?.initialOutputSha256).toMatch(/^[a-f0-9]{16}$/u);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps hardened acceptance separate from the raw model contract", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-hardening-delta-"));
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "console.log(JSON.stringify({",
+        "task_family: 'cross_market_finance_research_planning',",
+        "primary_modules: ['finance_framework_us_equity_market_structure_producer','global_index_regime','company_fundamentals_value','quant_math','portfolio_risk_gates','causal_map','review_panel'],",
+        "supporting_modules: [],",
+        "required_tools: [],",
+        "missing_data: ['fresh_market_data_snapshot'],",
+        "risk_boundaries: ['research_only'],",
+        "next_step: 'request_missing_inputs',",
+        "rejected_context: ['old_lark_conversation_history']",
+        "}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--hardened",
+          "--case-id",
+          "index_concentration_mag7_portfolio_risk",
+          "--json",
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: { ...process.env, LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0" },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        summary: {
+          failedCaseIds: string[];
+          rawContractPassCount: number;
+          modelContractReadyCaseIds: string[];
+          modelContractFailureCaseIds: string[];
+          rawContractNormalizationCaseIds: string[];
+          hardeningAppliedCaseIds: string[];
+          promotionReady: boolean;
+        };
+        cases: Array<{
+          id: string;
+          acceptance: { ok: boolean };
+          rawAcceptance?: { ok: boolean };
+          modelContractReady?: boolean;
+          hardeningApplied?: boolean;
+          hardeningChangedFields?: string[];
+        }>;
+      };
+      const targetCase = payload.cases.find(
+        (entry) => entry.id === "index_concentration_mag7_portfolio_risk",
+      );
+      expect(payload.summary.failedCaseIds).toEqual([]);
+      expect(payload.summary.rawContractPassCount).toBe(0);
+      expect(payload.summary.modelContractReadyCaseIds).not.toContain(
+        "index_concentration_mag7_portfolio_risk",
+      );
+      expect(payload.summary.modelContractFailureCaseIds).toContain(
+        "index_concentration_mag7_portfolio_risk",
+      );
+      expect(payload.summary.rawContractNormalizationCaseIds).toContain(
+        "index_concentration_mag7_portfolio_risk",
+      );
+      expect(payload.summary.hardeningAppliedCaseIds).toContain(
+        "index_concentration_mag7_portfolio_risk",
+      );
+      expect(payload.summary.promotionReady).toBe(false);
+      expect(targetCase?.acceptance.ok).toBe(true);
+      expect(targetCase?.rawAcceptance?.ok).toBe(false);
+      expect(targetCase?.modelContractReady).toBe(false);
+      expect(targetCase?.hardeningApplied).toBe(true);
+      expect(targetCase?.hardeningChangedFields).toEqual(
+        expect.arrayContaining(["missing_data", "risk_boundaries"]),
+      );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -1029,6 +1234,9 @@ describe("local-brain-distill-eval", () => {
         id: string;
         parseRecovered?: boolean;
         parseError?: string;
+        initialGenerationStatus?: string;
+        initialOutputChars?: number;
+        initialOutputSha256?: string;
         acceptance: { ok: boolean };
       }>;
     };
@@ -1044,6 +1252,9 @@ describe("local-brain-distill-eval", () => {
     expect(targetCase?.acceptance.ok).toBe(true);
     expect(targetCase?.parseRecovered).toBe(true);
     expect(targetCase?.parseError).toContain("timed out after 2500ms");
+    expect(targetCase?.initialGenerationStatus).toBe("generation_error");
+    expect(targetCase?.initialOutputChars).toBeGreaterThan(0);
+    expect(targetCase?.initialOutputSha256).toMatch(/^[a-f0-9]{16}$/u);
   });
 
   it("distinguishes a valid contract failure from a parse error and writes a compact receipt", () => {
@@ -1112,13 +1323,30 @@ describe("local-brain-distill-eval", () => {
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as {
       schemaVersion: string;
       boundary: string;
+      requested: { evaluationMode: string; learningClaim: string };
       summary: { parseErrorCaseIds: string[] };
-      caseReceipts: Array<{ id: string; status: string; acceptanceOk: boolean }>;
+      proof: { modelContractReady: boolean; promotionProof: boolean; learningClaim: string };
+      caseReceipts: Array<{
+        id: string;
+        status: string;
+        acceptanceOk: boolean;
+        rawAcceptanceOk?: boolean;
+        modelContractReady?: boolean;
+      }>;
     };
     expect(receipt).toMatchObject({
       schemaVersion: "lcx_local_brain_eval_receipt_v1",
       boundary: "dev_local_brain_eval_receipt_only",
+      requested: {
+        evaluationMode: "raw_contract",
+        learningClaim: "not_proven_by_contract_eval",
+      },
       summary: { parseErrorCaseIds: [] },
+      proof: {
+        modelContractReady: false,
+        promotionProof: false,
+        learningClaim: "not_proven_by_contract_eval",
+      },
     });
     expect(receipt.caseReceipts).toEqual(
       expect.arrayContaining([
@@ -1126,6 +1354,8 @@ describe("local-brain-distill-eval", () => {
           id: "index_concentration_mag7_portfolio_risk",
           status: "failed",
           acceptanceOk: false,
+          rawAcceptanceOk: false,
+          modelContractReady: false,
         }),
       ]),
     );
