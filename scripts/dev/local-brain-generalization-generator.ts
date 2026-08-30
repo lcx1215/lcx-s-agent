@@ -386,8 +386,25 @@ function hashUnit(text: string): number {
   return (hash >>> 0) / 4294967296;
 }
 
+export const GENERALIZATION_CASE_SCHEMA_VERSION = "lcx_generalization_case_v1";
+export const GENERALIZATION_GENERATOR_ID = "local-brain-generalization-harness";
+export const GENERALIZATION_GENERATOR_VERSION = "feature-signature-v1";
+
+export type GeneralizationCaseProvenance = {
+  schemaVersion: typeof GENERALIZATION_CASE_SCHEMA_VERSION;
+  generator: typeof GENERALIZATION_GENERATOR_ID;
+  generatorVersion: typeof GENERALIZATION_GENERATOR_VERSION;
+  split: "train" | "holdout";
+  seed: number;
+  holdoutFraction: number;
+};
+
+export function isFeatureSignatureHeldOut(signature: string, holdoutFraction: number): boolean {
+  return hashUnit(signature) < holdoutFraction;
+}
+
 export function isHeldOut(features: TaskFeatures, holdoutFraction: number): boolean {
-  return hashUnit(featureSignature(features)) < holdoutFraction;
+  return isFeatureSignatureHeldOut(featureSignature(features), holdoutFraction);
 }
 
 const ASSET_PHRASES: Record<AssetClass, string[]> = {

@@ -18,15 +18,21 @@
 //   node --import tsx scripts/dev/local-brain-generalization-harness.ts --emit-holdout-dataset 500 > gen-valid.jsonl
 // Add --with-prerequisites to interleave each hard case's simpler prerequisite.
 //
-// Each --emit-*/target JSONL row is {id, userAsk, target:{requiredModules,...}}.
+// Each --emit-*/target JSONL row is {id, userAsk, featureSignature, provenance,
+// target:{requiredModules,...}}. The provenance is required by the neutral
+// evaluator so a hand-written row cannot masquerade as a generated holdout.
 // Feed userAsk to Qwen, parse its JSON plan, then score with scorePlan().
 
 import {
+  GENERALIZATION_CASE_SCHEMA_VERSION,
+  GENERALIZATION_GENERATOR_ID,
+  GENERALIZATION_GENERATOR_VERSION,
   generateCases,
   generateCasesWithPrerequisites,
   oraclePlan,
   scorePlan,
   toDatasetRow,
+  type GeneralizationCaseProvenance,
   type GeneratedCase,
 } from "./local-brain-generalization-generator.js";
 
@@ -71,13 +77,14 @@ function parseArgs(argv: string[]): Options {
   return options;
 }
 
-function emit(cases: GeneratedCase[]): void {
+function emit(cases: GeneratedCase[], provenance: GeneralizationCaseProvenance): void {
   for (const c of cases) {
     process.stdout.write(
       `${JSON.stringify({
         id: c.id,
         userAsk: c.userAsk,
         featureSignature: c.featureSignature,
+        provenance,
         target: {
           requiredModules: c.requiredModules,
           forbiddenModules: c.forbiddenModules,
@@ -175,6 +182,14 @@ function main(): number {
         split: "train",
         holdoutFraction: options.holdoutFraction,
       }),
+      {
+        schemaVersion: GENERALIZATION_CASE_SCHEMA_VERSION,
+        generator: GENERALIZATION_GENERATOR_ID,
+        generatorVersion: GENERALIZATION_GENERATOR_VERSION,
+        split: "train",
+        seed: options.seed,
+        holdoutFraction: options.holdoutFraction,
+      },
     );
     return 0;
   }
@@ -185,6 +200,14 @@ function main(): number {
         split: "holdout",
         holdoutFraction: options.holdoutFraction,
       }),
+      {
+        schemaVersion: GENERALIZATION_CASE_SCHEMA_VERSION,
+        generator: GENERALIZATION_GENERATOR_ID,
+        generatorVersion: GENERALIZATION_GENERATOR_VERSION,
+        split: "holdout",
+        seed: options.seed,
+        holdoutFraction: options.holdoutFraction,
+      },
     );
     return 0;
   }

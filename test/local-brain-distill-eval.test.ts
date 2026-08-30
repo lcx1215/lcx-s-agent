@@ -900,6 +900,514 @@ describe("local-brain-distill-eval", () => {
     }
   });
 
+  it("runs a neutral blind raw-contract eval without oracle labels or promotion proof", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-blind-"));
+    const fakePython = path.join(tempDir, "python");
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    const receiptPath = path.join(tempDir, "blind-receipt.json");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        `const argLog = ${JSON.stringify(argLog)};`,
+        "fs.appendFileSync(argLog, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        "const prompt = process.argv[process.argv.indexOf('--prompt') + 1] || '';",
+        "if (prompt.includes('Recommended module ids for this case') || prompt.includes('Required missing_data ids for this case') || prompt.includes('Required risk_boundaries for this case') || prompt.includes('Relevant compact contract hints')) process.exit(23);",
+        "console.log(JSON.stringify({task_family:'portfolio_research_preflight',primary_modules:['macro_rates_inflation','credit_liquidity','etf_regime','company_fundamentals_value','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:[],risk_boundaries:['research_only'],next_step:'route_to_review',rejected_context:['old_lark_conversation_history']}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--blind",
+          "--case-id",
+          "portfolio_mixed_q_t_nvda",
+          "--summary-only",
+          "--json",
+          "--receipt",
+          receiptPath,
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: { ...process.env, LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0" },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        blind: boolean;
+        evaluationMode: string;
+        promptMode: string;
+        labelDisclosure: boolean;
+        responsePrefill: string | null;
+        modelSelfStartMode: string | null;
+        modelSelfStartedJson: boolean | null;
+        learningClaim: string;
+        summary: {
+          rawContractPassCount: number;
+          modelContractReadyCaseIds: string[];
+          modelContractFailureCaseIds: string[];
+          hardeningAppliedCaseIds: string[];
+          parseRetryCaseIds: string[];
+          strictModelProofRequired: boolean;
+          promotionReady: boolean;
+        };
+        cases?: unknown;
+      };
+      expect(payload).toMatchObject({
+        blind: true,
+        evaluationMode: "blind_raw_contract",
+        promptMode: "neutral",
+        labelDisclosure: false,
+        responsePrefill: "{",
+        modelSelfStartMode: "structural_prefill",
+        modelSelfStartedJson: false,
+        learningClaim: "not_proven_by_contract_eval",
+      });
+      expect(payload.cases).toBeUndefined();
+      expect(payload.summary).toMatchObject({
+        rawContractPassCount: 1,
+        modelContractReadyCaseIds: ["portfolio_mixed_q_t_nvda"],
+        modelContractFailureCaseIds: [],
+        hardeningAppliedCaseIds: [],
+        parseRetryCaseIds: [],
+        strictModelProofRequired: true,
+        promotionReady: false,
+      });
+
+      const records = readFileSync(argLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      expect(records).toHaveLength(1);
+      const prompt = records[0]?.[records[0]?.indexOf("--prompt") + 1] ?? "";
+      expect(prompt).toContain("Blind neutral raw-contract eval");
+      expect(prompt).toContain("Allowed module ids");
+      expect(prompt).not.toContain("source_summary:");
+      expect(prompt).not.toContain("Recommended module ids for this case");
+      expect(prompt).not.toContain("Required missing_data ids for this case");
+      expect(prompt).not.toContain("Required risk_boundaries for this case");
+      expect(prompt).not.toContain("Relevant compact contract hints");
+      expect(records[0]).toContain("--prefill-response");
+      expect(records[0]).toContain("{");
+
+      const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as {
+        requested: {
+          evaluationMode: string;
+          blind: boolean;
+          promptMode: string;
+          labelDisclosure: boolean;
+          responsePrefill: string | null;
+          modelSelfStartMode: string | null;
+          modelSelfStartedJson: boolean | null;
+        };
+        proof: {
+          blindRawContract: boolean;
+          promptMode: string;
+          labelDisclosure: boolean;
+          modelContractReady: boolean;
+          promotionReady: boolean;
+        };
+        caseReceipts: Array<{
+          id: string;
+          rawAcceptanceOk?: boolean;
+          modelContractReady?: boolean;
+          hardeningApplied?: boolean;
+          parseRecovered?: boolean;
+        }>;
+      };
+      expect(receipt.requested).toMatchObject({
+        evaluationMode: "blind_raw_contract",
+        blind: true,
+        promptMode: "neutral",
+        labelDisclosure: false,
+        responsePrefill: "{",
+        modelSelfStartMode: "structural_prefill",
+        modelSelfStartedJson: false,
+      });
+      expect(receipt.proof).toMatchObject({
+        blindRawContract: true,
+        promptMode: "neutral",
+        labelDisclosure: false,
+        modelContractReady: true,
+        promotionReady: false,
+      });
+      expect(receipt.caseReceipts).toEqual([
+        expect.objectContaining({
+          id: "portfolio_mixed_q_t_nvda",
+          rawAcceptanceOk: true,
+          modelContractReady: true,
+          hardeningApplied: false,
+        }),
+      ]);
+      expect(receipt.caseReceipts[0]).not.toHaveProperty("parseRecovered");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps blind malformed output as a parse failure without retry or recovery", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-blind-parse-"));
+    const fakePython = path.join(tempDir, "python");
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        `const argLog = ${JSON.stringify(argLog)};`,
+        "fs.appendFileSync(argLog, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        'process.stdout.write(\'{"task_family":"portfolio_research_preflight"\');',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--neutral",
+          "--no-response-prefill",
+          "--case-id",
+          "portfolio_mixed_q_t_nvda",
+          "--summary-only",
+          "--json",
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: { ...process.env, LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0" },
+        },
+      );
+
+      expect(result.status).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        evaluationMode: string;
+        responsePrefill: string | null;
+        modelSelfStartedJson: boolean | null;
+        summary: {
+          failedCaseIds: string[];
+          parseErrorCaseIds: string[];
+          parseRecoveredCaseIds: string[];
+          parseRetryCaseIds: string[];
+          promotionReady: boolean;
+        };
+      };
+      expect(payload).toMatchObject({
+        evaluationMode: "blind_raw_contract",
+        responsePrefill: null,
+        modelSelfStartMode: "unassisted",
+        modelSelfStartedJson: true,
+      });
+      expect(payload.summary).toMatchObject({
+        failedCaseIds: ["portfolio_mixed_q_t_nvda"],
+        parseErrorCaseIds: ["portfolio_mixed_q_t_nvda"],
+        parseRecoveredCaseIds: [],
+        parseRetryCaseIds: [],
+        promotionReady: false,
+      });
+      const records = readFileSync(argLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      expect(records).toHaveLength(1);
+      expect(records[0]?.some((arg) => arg === "--prompt")).toBe(true);
+      expect(records[0]?.some((arg) => arg === "--prefill-response")).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("scores generated held-out rows through a neutral prompt without label leakage", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-heldout-"));
+    const fakePython = path.join(tempDir, "python");
+    const caseFile = path.join(tempDir, "holdout.jsonl");
+    const argLog = path.join(tempDir, "python-args.jsonl");
+    const receiptPath = path.join(tempDir, "holdout-receipt.json");
+    writeFileSync(
+      caseFile,
+      `${JSON.stringify({
+        id: "gen_holdout_commodity_01",
+        userAsk: "我想研究原油，先说明缺什么输入，不要给交易信号。",
+        featureSignature:
+          "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|rt:0|fd:0|ev:1|tt:0|vm:0|at:0",
+        provenance: {
+          schemaVersion: "lcx_generalization_case_v1",
+          generator: "local-brain-generalization-harness",
+          generatorVersion: "feature-signature-v1",
+          split: "holdout",
+          seed: 20260830,
+          holdoutFraction: 0.2,
+        },
+        target: {
+          requiredModules: ["commodities_oil_gold", "portfolio_risk_gates"],
+          forbiddenModules: [],
+          minModuleMatches: 2,
+          requiredMissingData: ["commodity_curve_roll_yield_and_inventory_inputs"],
+          requiredRiskBoundaries: ["commodity_framework_not_trade_signal"],
+        },
+      })}\n`,
+      "utf8",
+    );
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        `const argLog = ${JSON.stringify(argLog)};`,
+        "const prompt = process.argv[process.argv.indexOf('--prompt') + 1] || '';",
+        "fs.appendFileSync(argLog, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        "if (prompt.includes('commodity_curve_roll_yield_and_inventory_inputs') || prompt.includes('ac:commodity') || prompt.includes('generated held-out case') || prompt.includes('source_summary:')) process.exit(23);",
+        "console.log(JSON.stringify({task_family:'commodity_research_preflight',primary_modules:['commodities_oil_gold','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:['commodity_curve_roll_yield_and_inventory_inputs'],risk_boundaries:['research_only','commodity_framework_not_trade_signal'],next_step:'request_missing_inputs',rejected_context:['old_lark_conversation_history']}));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--blind",
+          "--case-file",
+          caseFile,
+          "--summary-only",
+          "--json",
+          "--receipt",
+          receiptPath,
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: { ...process.env, LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0" },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        caseSource: string;
+        caseFile: string;
+        caseFileSha256: string;
+        caseFileBytes: number;
+        caseFileProvenance: {
+          schemaVersion: string;
+          generator: string;
+          generatorVersion: string;
+          split: string;
+          seed: number;
+          holdoutFraction: number;
+        };
+        promptMode: string;
+        labelDisclosure: boolean;
+        hierarchy: { requestedCaseIds: string[] };
+        summary: { rawContractPassCount: number; promotionReady: boolean };
+      };
+      expect(payload).toMatchObject({
+        caseSource: "generated_holdout_file",
+        caseFile,
+        caseFileSha256: expect.any(String),
+        caseFileBytes: expect.any(Number),
+        caseFileProvenance: {
+          schemaVersion: "lcx_generalization_case_v1",
+          generator: "local-brain-generalization-harness",
+          generatorVersion: "feature-signature-v1",
+          split: "holdout",
+          seed: 20260830,
+          holdoutFraction: 0.2,
+        },
+        promptMode: "neutral",
+        labelDisclosure: false,
+        hierarchy: { requestedCaseIds: ["gen_holdout_commodity_01"] },
+        summary: { rawContractPassCount: 1, promotionReady: false },
+      });
+      const args = JSON.parse(readFileSync(argLog, "utf8").trim()) as string[];
+      const prompt = args[args.indexOf("--prompt") + 1] ?? "";
+      expect(prompt).toContain("Blind neutral raw-contract eval");
+      expect(prompt).toContain("我想研究原油");
+      expect(prompt).not.toContain("commodity_curve_roll_yield_and_inventory_inputs");
+      expect(prompt).not.toContain("ac:commodity");
+      expect(prompt).not.toContain("source_summary:");
+
+      const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as {
+        requested: {
+          caseSource: string;
+          caseFile: string;
+          caseFileSha256: string;
+          caseFileBytes: number;
+          caseFileProvenance: { split: string; holdoutFraction: number };
+          labelDisclosure: boolean;
+        };
+        caseReceipts: Array<{
+          caseSource: string;
+          featureSignature: string;
+          modelContractReady: boolean;
+        }>;
+      };
+      expect(receipt.requested).toMatchObject({
+        caseSource: "generated_holdout_file",
+        caseFile,
+        caseFileSha256: expect.any(String),
+        caseFileBytes: expect.any(Number),
+        caseFileProvenance: { split: "holdout", holdoutFraction: 0.2 },
+        labelDisclosure: false,
+      });
+      expect(receipt.caseReceipts).toEqual([
+        expect.objectContaining({
+          caseSource: "generated_holdout_file",
+          featureSignature:
+            "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|rt:0|fd:0|ev:1|tt:0|vm:0|at:0",
+          modelContractReady: true,
+        }),
+      ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects generated case files without verifiable holdout provenance", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-provenance-"));
+    const caseFile = path.join(tempDir, "invalid-holdout.jsonl");
+    const baseCase = {
+      id: "gen_invalid_provenance_01",
+      userAsk: "研究原油，先列缺失数据，不要给交易建议。",
+      featureSignature: "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|rt:0|fd:0|ev:1|tt:0|vm:0|at:0",
+      target: {
+        requiredModules: ["commodities_oil_gold"],
+        forbiddenModules: [],
+        minModuleMatches: 1,
+        requiredMissingData: ["commodity_curve_roll_yield_and_inventory_inputs"],
+        requiredRiskBoundaries: ["research_only"],
+      },
+    };
+
+    try {
+      writeFileSync(caseFile, `${JSON.stringify(baseCase)}\n`, "utf8");
+      const missingProvenance = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--blind",
+          "--case-file",
+          caseFile,
+          "--summary-only",
+          "--json",
+        ],
+        { cwd: path.resolve(__dirname, ".."), encoding: "utf8" },
+      );
+      expect(missingProvenance.status).toBe(1);
+      expect(missingProvenance.stderr).toContain("featureSignature/provenance/target");
+
+      writeFileSync(
+        caseFile,
+        `${JSON.stringify({
+          ...baseCase,
+          provenance: {
+            schemaVersion: "lcx_generalization_case_v1",
+            generator: "local-brain-generalization-harness",
+            generatorVersion: "feature-signature-v1",
+            split: "train",
+            seed: 20260830,
+            holdoutFraction: 0.2,
+          },
+        })}\n`,
+        "utf8",
+      );
+      const trainLabeledAsHoldout = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--blind",
+          "--case-file",
+          caseFile,
+          "--summary-only",
+          "--json",
+        ],
+        { cwd: path.resolve(__dirname, ".."), encoding: "utf8" },
+      );
+      expect(trainLabeledAsHoldout.status).toBe(1);
+      expect(trainLabeledAsHoldout.stderr).toContain("invalid holdout provenance");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not extract a valid object hidden inside noisy blind output", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-envelope-"));
+    const fakePython = path.join(tempDir, "python");
+    writeFileSync(
+      fakePython,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write('prefix ' + JSON.stringify({task_family:'portfolio_research_preflight',primary_modules:['macro_rates_inflation','credit_liquidity','etf_regime','company_fundamentals_value','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:[],risk_boundaries:['research_only'],next_step:'route_to_review',rejected_context:['old_lark_conversation_history']}) + ' suffix');",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/dev/local-brain-distill-eval.ts",
+          "--no-adapter",
+          "--python",
+          fakePython,
+          "--blind",
+          "--no-response-prefill",
+          "--case-id",
+          "portfolio_mixed_q_t_nvda",
+          "--summary-only",
+          "--json",
+        ],
+        {
+          cwd: path.resolve(__dirname, ".."),
+          encoding: "utf8",
+          env: { ...process.env, LOCAL_BRAIN_EVAL_PROMPT_CACHE: "0" },
+        },
+      );
+
+      expect(result.status).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        summary: { parseErrorCaseIds: string[]; rawContractPassCount: number };
+      };
+      expect(payload.summary).toMatchObject({
+        parseErrorCaseIds: ["portfolio_mixed_q_t_nvda"],
+        rawContractPassCount: 0,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("retries one malformed six-case output without upgrading it to model proof", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lcx-local-brain-eval-parse-retry-"));
     const fakePython = path.join(tempDir, "python");

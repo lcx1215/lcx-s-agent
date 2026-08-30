@@ -1,13 +1,22 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.js";
 import { hardenLocalBrainPlanForAsk } from "./local-brain-contracts.js";
 import {
+  GENERALIZATION_CASE_SCHEMA_VERSION,
+  GENERALIZATION_GENERATOR_ID,
+  GENERALIZATION_GENERATOR_VERSION,
+  isFeatureSignatureHeldOut,
+  type GeneralizationCaseProvenance,
+} from "./local-brain-generalization-generator.js";
+import {
+  LOCAL_BRAIN_MODULE_TAXONOMY,
   LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
   LOCAL_BRAIN_REQUIRED_FINANCE_MODULES,
+  LOCAL_BRAIN_RISK_BOUNDARIES,
   normalizeLocalBrainModuleList,
   packLocalBrainModuleFields,
   selectLocalBrainContractHints,
@@ -21,7 +30,10 @@ type CliOptions = {
   json: boolean;
   noAdapter: boolean;
   hardened: boolean;
+  blind: boolean;
+  responsePrefill: boolean;
   contractOnly: boolean;
+  caseFile?: string;
   progress: boolean;
   summaryOnly: boolean;
   timeoutMs: number;
@@ -66,6 +78,8 @@ type EvalCase = {
   minModuleMatches: number;
   requiredMissingData?: string[];
   requiredRiskBoundaries?: string[];
+  featureSignature?: string;
+  caseSource?: "fixed_registry" | "generated_holdout_file";
 };
 
 const DEFAULT_PYTHON = path.join(
@@ -195,10 +209,15 @@ function usage(): never {
       "Usage: node --import tsx scripts/dev/local-brain-distill-eval.ts (--adapter PATH | --no-adapter) [--model MODEL] [--python BIN] [--json] [--summary-only] [--progress] [--timeout-ms N] [--case-id ID[,ID...]]",
       "       node --import tsx scripts/dev/local-brain-distill-eval.ts --adapter latest-passing [--model MODEL] [--json] [--summary-only]",
       "       node --import tsx scripts/dev/local-brain-distill-eval.ts --contract-only [--json] [--summary-only] [--case-id ID[,ID...]]",
+      "       add --blind (or --neutral) for a raw contract eval with no case-specific hints, hardening, or retry",
+      "       add --case-file JSONL with --blind to score generated cases without putting labels in prompts",
+      "       add --no-response-prefill to measure self-started JSON separately from structural prefill",
       "",
       "Runs one local inference acceptance check for the auxiliary thought-flow adapter.",
       "Use --adapter latest-passing to resolve the current adapter through minimax-brain-training-guard; this may fall back to the best-evidence training seed and reports that status separately.",
       "Use --contract-only for a fast hardened contract check that does not start MLX.",
+      "Use --blind/--neutral for a neutral raw contract check; it never reports promotion readiness.",
+      "Use --case-file only with --blind; rows must be generalization-harness JSONL and labels stay scorer-side.",
       "Use --receipt PATH to explicitly write a compact case-level receipt; it never proves promotion readiness.",
     ].join("\n"),
   );
@@ -223,6 +242,8 @@ function parseArgs(args: string[]): CliOptions {
     json: false,
     noAdapter: false,
     hardened: false,
+    blind: false,
+    responsePrefill: true,
     contractOnly: false,
     progress: false,
     summaryOnly: false,
@@ -240,6 +261,9 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--receipt") {
       options.receiptPath = path.resolve(readValue(args, index));
       index += 1;
+    } else if (arg === "--case-file") {
+      options.caseFile = path.resolve(readValue(args, index));
+      index += 1;
     } else if (arg === "--no-adapter") {
       options.noAdapter = true;
     } else if (arg === "--python") {
@@ -249,6 +273,10 @@ function parseArgs(args: string[]): CliOptions {
       options.json = true;
     } else if (arg === "--hardened") {
       options.hardened = true;
+    } else if (arg === "--blind" || arg === "--neutral") {
+      options.blind = true;
+    } else if (arg === "--no-response-prefill") {
+      options.responsePrefill = false;
     } else if (arg === "--contract-only") {
       options.contractOnly = true;
       options.hardened = true;
@@ -282,6 +310,15 @@ function parseArgs(args: string[]): CliOptions {
     usage();
   }
   if (!options.contractOnly && options.noAdapter && options.adapterPath) {
+    usage();
+  }
+  if (options.blind && (options.hardened || options.contractOnly)) {
+    usage();
+  }
+  if (options.caseFile && !options.blind) {
+    usage();
+  }
+  if (options.caseFile && options.caseIds.length > 0) {
     usage();
   }
   if (options.adapterPath && !isAdapterSelector(options.adapterPath)) {
@@ -3652,6 +3689,160 @@ if (DUPLICATE_EVAL_CASE_IDS.length > 0) {
 
 const EVAL_CASE_BY_ID = new Map(EVAL_CASES.map((evalCase) => [evalCase.id, evalCase]));
 
+type GeneratedCaseFileRead = {
+  cases: EvalCase[];
+  provenance: GeneralizationCaseProvenance;
+  fileSha256: string;
+  fileBytes: number;
+};
+
+function readGeneratedCaseFile(filePath: string): GeneratedCaseFileRead {
+  let raw: string;
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch (error) {
+    throw new Error(`unable to read generated case file ${filePath}: ${String(error)}`, {
+      cause: error,
+    });
+  }
+  const lines = raw.split(/\r?\n/u).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) {
+    throw new Error(`generated case file is empty: ${filePath}`);
+  }
+  if (lines.length > 1_000) {
+    throw new Error(`generated case file exceeds 1000 cases: ${filePath}`);
+  }
+  const seen = new Set<string>();
+  const cases: EvalCase[] = [];
+  let fileProvenance: GeneralizationCaseProvenance | undefined;
+  let fileProvenanceKey: string | undefined;
+  for (const [index, line] of lines.entries()) {
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch (error) {
+      throw new Error(`invalid generated case JSON at ${filePath}:${index + 1}: ${String(error)}`, {
+        cause: error,
+      });
+    }
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new Error(`generated case row must be an object at ${filePath}:${index + 1}`);
+    }
+    const record = row as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    const userAsk = typeof record.userAsk === "string" ? record.userAsk.trim() : "";
+    const signature =
+      typeof record.featureSignature === "string" ? record.featureSignature.trim() : undefined;
+    const rawProvenance =
+      record.provenance &&
+      typeof record.provenance === "object" &&
+      !Array.isArray(record.provenance)
+        ? (record.provenance as Record<string, unknown>)
+        : undefined;
+    const target =
+      record.target && typeof record.target === "object" && !Array.isArray(record.target)
+        ? (record.target as Record<string, unknown>)
+        : undefined;
+    if (!id || !userAsk || !signature || !target || !rawProvenance) {
+      throw new Error(
+        `generated case row missing id/userAsk/featureSignature/provenance/target at ${filePath}:${index + 1}`,
+      );
+    }
+    const provenance = {
+      schemaVersion: rawProvenance.schemaVersion,
+      generator: rawProvenance.generator,
+      generatorVersion: rawProvenance.generatorVersion,
+      split: rawProvenance.split,
+      seed: rawProvenance.seed,
+      holdoutFraction: rawProvenance.holdoutFraction,
+    };
+    if (
+      provenance.schemaVersion !== GENERALIZATION_CASE_SCHEMA_VERSION ||
+      provenance.generator !== GENERALIZATION_GENERATOR_ID ||
+      provenance.generatorVersion !== GENERALIZATION_GENERATOR_VERSION ||
+      provenance.split !== "holdout" ||
+      typeof provenance.seed !== "number" ||
+      !Number.isInteger(provenance.seed) ||
+      typeof provenance.holdoutFraction !== "number" ||
+      !Number.isFinite(provenance.holdoutFraction) ||
+      provenance.holdoutFraction <= 0 ||
+      provenance.holdoutFraction >= 1
+    ) {
+      throw new Error(
+        `generated case ${id || "<unknown>"} has invalid holdout provenance at ${filePath}:${index + 1}`,
+      );
+    }
+    const typedProvenance = provenance as GeneralizationCaseProvenance;
+    const provenanceKey = JSON.stringify(typedProvenance);
+    if (fileProvenanceKey && fileProvenanceKey !== provenanceKey) {
+      throw new Error(`generated case file mixes provenance metadata at ${filePath}:${index + 1}`);
+    }
+    fileProvenance ??= typedProvenance;
+    fileProvenanceKey ??= provenanceKey;
+    if (!isFeatureSignatureHeldOut(signature, typedProvenance.holdoutFraction)) {
+      throw new Error(
+        `generated case ${id || "<unknown>"} featureSignature is not in the declared holdout split at ${filePath}:${index + 1}`,
+      );
+    }
+    if (seen.has(id) || EVAL_CASE_BY_ID.has(id)) {
+      throw new Error(`duplicate or reserved generated case id ${id} at ${filePath}:${index + 1}`);
+    }
+    const stringArrayField = (field: string): string[] => {
+      const value = target[field];
+      if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry)) {
+        throw new Error(`generated case ${id} has invalid ${field} at ${filePath}:${index + 1}`);
+      }
+      return value.map((entry) => entry.trim()).filter(Boolean);
+    };
+    const requiredModules = stringArrayField("requiredModules");
+    const forbiddenModules = stringArrayField("forbiddenModules");
+    const requiredMissingData = stringArrayField("requiredMissingData");
+    const requiredRiskBoundaries = stringArrayField("requiredRiskBoundaries");
+    const minModuleMatches = target.minModuleMatches;
+    if (
+      typeof minModuleMatches !== "number" ||
+      !Number.isInteger(minModuleMatches) ||
+      minModuleMatches < 0 ||
+      minModuleMatches > requiredModules.length
+    ) {
+      throw new Error(
+        `generated case ${id} has invalid minModuleMatches at ${filePath}:${index + 1}`,
+      );
+    }
+    const unknownModules = [...requiredModules, ...forbiddenModules].filter(
+      (moduleId) => !LOCAL_BRAIN_MODULE_TAXONOMY.includes(moduleId),
+    );
+    if (unknownModules.length > 0) {
+      throw new Error(
+        `generated case ${id} references unknown module ids: ${[...new Set(unknownModules)].join(",")}`,
+      );
+    }
+    seen.add(id);
+    cases.push({
+      id,
+      userAsk,
+      // Generated labels remain scorer-side metadata. Blind prompts never use this summary.
+      sourceSummary: "generated held-out case; target labels remain outside the prompt",
+      requiredModules,
+      forbiddenModules,
+      minModuleMatches,
+      requiredMissingData,
+      requiredRiskBoundaries,
+      featureSignature: signature,
+      caseSource: "generated_holdout_file",
+    });
+  }
+  if (!fileProvenance) {
+    throw new Error(`generated case file has no provenance: ${filePath}`);
+  }
+  return {
+    cases,
+    provenance: fileProvenance,
+    fileSha256: createHash("sha256").update(raw, "utf8").digest("hex"),
+    fileBytes: Buffer.byteLength(raw, "utf8"),
+  };
+}
+
 const EVAL_EXPANSION_MILESTONES = [120, 160, 200] as const;
 const EVAL_REGISTRY_SUITES = [
   {
@@ -4194,7 +4385,7 @@ function outputContractHintsFor(evalCase: EvalCase): string[] {
 
 function maxTokensForEvalCase(
   evalCase: EvalCase,
-  mode: "standard" | "timeout_retry" | "parse_retry",
+  mode: "standard" | "blind" | "timeout_retry" | "parse_retry",
 ): string {
   if (mode === "timeout_retry" || mode === "parse_retry") {
     return LOCAL_BRAIN_EVAL_TIMEOUT_RETRY_MAX_TOKENS;
@@ -4202,6 +4393,13 @@ function maxTokensForEvalCase(
   return isParseStabilityCompactEvalCase(evalCase)
     ? LOCAL_BRAIN_EVAL_TIMEOUT_PRONE_MAX_TOKENS
     : LOCAL_BRAIN_EVAL_MAX_TOKENS;
+}
+
+function joinPrefilledResponse(rawOutput: string, prefill: string | undefined): string {
+  if (!prefill || rawOutput.trimStart().startsWith(prefill)) {
+    return rawOutput;
+  }
+  return `${prefill}${rawOutput}`;
 }
 
 function buildPromptSuffix(evalCase: EvalCase): string {
@@ -4236,6 +4434,23 @@ function buildPromptSuffix(evalCase: EvalCase): string {
 
 function buildPrompt(evalCase: EvalCase): string {
   return `${LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX}${buildPromptSuffix(evalCase)}`;
+}
+
+function buildBlindPrompt(evalCase: EvalCase): string {
+  return [
+    "You are the LCX Agent local auxiliary thought-flow model.",
+    "Blind neutral raw-contract eval: infer the contract from only the user/task.",
+    "/no_think",
+    "No prose, no markdown, no <think>, no explanations, no nested objects.",
+    '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    "Return one single-line JSON object only; close the final brace and do not echo an answer template.",
+    `Allowed module ids (choose only those justified by the task): ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
+    `Allowed risk_boundary ids (choose only those justified by the task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
+    "Infer missing_data ids yourself from the task; no case-specific checklist or expected id is provided.",
+    "Do not invent current or timestamped market data, execution approval, probabilities, or durable memory writes.",
+    "For scenario probabilities with missing samples, weights, returns, or macro inputs, do not guess; route to data-gated research preflight.",
+    `user_or_task: ${evalCase.userAsk}`,
+  ].join("\n");
 }
 
 function buildRetryPrompt(evalCase: EvalCase, mode: "timeout_retry" | "parse_retry"): string {
@@ -4368,7 +4583,7 @@ async function ensurePromptCache(options: CliOptions, promptCacheFile: string): 
 async function runGenerate(
   options: CliOptions,
   evalCase: EvalCase,
-  mode: "standard" | "timeout_retry" | "parse_retry" = "standard",
+  mode: "standard" | "blind" | "timeout_retry" | "parse_retry" = "standard",
 ): Promise<string> {
   const promptCacheFile = mode === "standard" ? promptCacheFileFor(options) : undefined;
   if (promptCacheFile) {
@@ -4377,10 +4592,15 @@ async function runGenerate(
   const prompt =
     mode === "timeout_retry" || mode === "parse_retry"
       ? buildRetryPrompt(evalCase, mode)
-      : promptCacheFile
-        ? buildPromptSuffix(evalCase)
-        : buildPrompt(evalCase);
+      : mode === "blind"
+        ? buildBlindPrompt(evalCase)
+        : promptCacheFile
+          ? buildPromptSuffix(evalCase)
+          : buildPrompt(evalCase);
   const maxTokens = maxTokensForEvalCase(evalCase, mode);
+  // This is only a decode aid for the opening delimiter. The receipt records
+  // it separately; a prefilled run is never a self-start proof.
+  const responsePrefill = mode === "blind" && options.responsePrefill ? "{" : undefined;
   return new Promise((resolve, reject) => {
     const args = [
       "-m",
@@ -4399,6 +4619,9 @@ async function runGenerate(
       "--chat-template-config",
       QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG,
     ];
+    if (responsePrefill) {
+      args.push("--prefill-response", responsePrefill);
+    }
     if (promptCacheFile) {
       args.push("--prompt-cache-file", promptCacheFile);
     }
@@ -4423,7 +4646,7 @@ async function runGenerate(
       if (error) {
         reject(error);
       } else {
-        resolve(value ?? "");
+        resolve(joinPrefilledResponse(value ?? "", responsePrefill));
       }
     }
     timeout = setTimeout(() => {
@@ -4477,7 +4700,10 @@ async function runGenerateWithTimeoutRetry(
   initialOutputSha256?: string;
 }> {
   try {
-    return { rawOutput: await runGenerate(options, evalCase), parseRecovered: false };
+    return {
+      rawOutput: await runGenerate(options, evalCase, options.blind ? "blind" : "standard"),
+      parseRecovered: false,
+    };
   } catch (error) {
     const timeoutRetryEligible =
       options.hardened &&
@@ -4678,6 +4904,22 @@ function extractJson(raw: string): Record<string, unknown> {
     searchFrom = start + 1;
   }
   throw new Error(`no JSON object found in model output: ${raw.slice(0, 240)}`);
+}
+
+function extractStrictJson(raw: string): Record<string, unknown> {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    throw new Error("blind raw output must be exactly one JSON object with no surrounding text");
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch (error) {
+    throw new Error(`blind raw output is not valid JSON: ${String(error)}`, { cause: error });
+  }
+  throw new Error("blind raw output JSON must be an object");
 }
 
 function parseJsonStringLiteral(value: string): string | undefined {
@@ -4954,6 +5196,8 @@ function formatReceiptError(error: unknown): string {
 
 type EvalReceiptCaseInput = {
   id: string;
+  featureSignature?: string;
+  caseSource?: "fixed_registry" | "generated_holdout_file";
   acceptance: ReturnType<typeof evaluate>;
   rawAcceptance?: ReturnType<typeof evaluate>;
   modelContractReady?: boolean;
@@ -4986,6 +5230,8 @@ function compactEvalReceiptCase(entry: EvalReceiptCaseInput) {
         : "failed";
   return {
     id: entry.id,
+    caseSource: entry.caseSource,
+    featureSignature: entry.featureSignature,
     status,
     acceptanceOk: entry.acceptance.ok,
     rawAcceptanceOk: entry.rawAcceptance?.ok,
@@ -5018,10 +5264,15 @@ const resolvedOptions: CliOptions = {
   ...options,
   adapterPath: adapterResolution.adapterPath,
 };
-const { evalCases, autoIncludedPrerequisiteCaseIds } = expandEvalCasesWithPrerequisites(
-  options.caseIds,
-);
-const unknownCaseIds = options.caseIds.filter((caseId) => !EVAL_CASE_BY_ID.has(caseId));
+const generatedCaseFile = options.caseFile ? readGeneratedCaseFile(options.caseFile) : undefined;
+const generatedEvalCases = generatedCaseFile?.cases;
+const requestedCaseIds = generatedEvalCases?.map((evalCase) => evalCase.id) ?? options.caseIds;
+const { evalCases, autoIncludedPrerequisiteCaseIds } = generatedEvalCases
+  ? { evalCases: generatedEvalCases, autoIncludedPrerequisiteCaseIds: [] }
+  : expandEvalCasesWithPrerequisites(options.caseIds);
+const unknownCaseIds = options.caseFile
+  ? []
+  : options.caseIds.filter((caseId) => !EVAL_CASE_BY_ID.has(caseId));
 if (unknownCaseIds.length > 0) {
   throw new Error(`unknown eval case id(s): ${unknownCaseIds.join(", ")}`);
 }
@@ -5080,7 +5331,7 @@ for (const evalCase of evalCases) {
       rawParsed = {};
     } else {
       try {
-        rawParsed = extractJson(rawOutput);
+        rawParsed = options.blind ? extractStrictJson(rawOutput) : extractJson(rawOutput);
         initialGenerationStatus ??= "valid_json";
       } catch (error) {
         initialGenerationStatus ??= "invalid_json";
@@ -5122,10 +5373,9 @@ for (const evalCase of evalCases) {
       ? undefined
       : evaluate(rawContractParsed, evalCase);
     const acceptance = evaluate(parsed, evalCase);
-    const normalizationDelta =
-      options.hardened && !resolvedOptions.contractOnly
-        ? contractNormalizationDelta(rawParsed, rawContractParsed)
-        : { applied: false, changedFields: [] };
+    const normalizationDelta = !resolvedOptions.contractOnly
+      ? contractNormalizationDelta(rawParsed, rawContractParsed)
+      : { applied: false, changedFields: [] };
     const isParseRecovered = generateResult.parseRecovered || parseRetryUsed;
     const delta =
       options.hardened && !resolvedOptions.contractOnly
@@ -5133,6 +5383,8 @@ for (const evalCase of evalCases) {
         : { applied: false, changedFields: [] };
     caseResults.push({
       id: evalCase.id,
+      featureSignature: evalCase.featureSignature,
+      caseSource: evalCase.caseSource ?? "fixed_registry",
       rawOutput,
       parsed,
       acceptance,
@@ -5143,10 +5395,12 @@ for (const evalCase of evalCases) {
         rawAcceptance?.ok === true &&
         !normalizationDelta.applied &&
         !delta.applied,
-      rawContractNormalizationApplied:
-        options.hardened && !resolvedOptions.contractOnly ? normalizationDelta.applied : false,
-      rawContractNormalizationChangedFields:
-        options.hardened && !resolvedOptions.contractOnly ? normalizationDelta.changedFields : [],
+      rawContractNormalizationApplied: !resolvedOptions.contractOnly
+        ? normalizationDelta.applied
+        : false,
+      rawContractNormalizationChangedFields: !resolvedOptions.contractOnly
+        ? normalizationDelta.changedFields
+        : [],
       hardeningApplied: options.hardened && !resolvedOptions.contractOnly ? delta.applied : false,
       hardeningChangedFields:
         options.hardened && !resolvedOptions.contractOnly ? delta.changedFields : [],
@@ -5204,6 +5458,8 @@ for (const evalCase of evalCases) {
       const delta = hardeningDelta(rawContractParsed, parsed);
       caseResults.push({
         id: evalCase.id,
+        featureSignature: evalCase.featureSignature,
+        caseSource: evalCase.caseSource ?? "fixed_registry",
         rawOutput,
         parsed,
         acceptance,
@@ -5241,6 +5497,8 @@ for (const evalCase of evalCases) {
       : null;
     caseResults.push({
       id: evalCase.id,
+      featureSignature: evalCase.featureSignature,
+      caseSource: evalCase.caseSource ?? "fixed_registry",
       rawOutput,
       parsed: null,
       diagnosticFallbackParsed: fallbackParsed,
@@ -5286,11 +5544,12 @@ const initialInvalidJsonCases = caseResults.filter(
 const initialGenerationErrorCases = caseResults.filter(
   (entry) => entry.initialGenerationStatus === "generation_error",
 );
-const strictModelProofRequired = !options.contractOnly && options.hardened;
+const strictModelProofRequired = !options.contractOnly && (options.hardened || options.blind);
 const modelContractFailureCaseIds = strictModelProofRequired
   ? caseResults.filter((entry) => !entry.modelContractReady).map((entry) => entry.id)
   : [];
 const promotionReady =
+  !options.blind &&
   failedCases.length === 0 &&
   parseRecoveredCases.length === 0 &&
   modelContractFailureCaseIds.length === 0;
@@ -5315,14 +5574,33 @@ const result = {
   noAdapter: options.noAdapter,
   hardened: options.hardened,
   contractOnly: options.contractOnly,
+  blind: options.blind,
+  promptMode: options.blind ? "neutral" : "assisted",
+  labelDisclosure: !options.blind,
+  responsePrefill: options.blind && options.responsePrefill ? "{" : null,
+  modelSelfStartMode: options.blind
+    ? options.responsePrefill
+      ? "structural_prefill"
+      : "unassisted"
+    : null,
+  // This is invocation configuration, not an outcome. Per-case initialGenerationStatus
+  // and strict raw parsing decide whether the model actually produced JSON.
+  modelSelfStartedJson: options.blind ? !options.responsePrefill : null,
+  caseSource: options.caseFile ? "generated_holdout_file" : "fixed_registry",
+  caseFile: options.caseFile ?? null,
+  caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
+  caseFileBytes: generatedCaseFile?.fileBytes ?? null,
+  caseFileProvenance: generatedCaseFile?.provenance ?? null,
   evaluationMode: options.contractOnly
     ? "contract_only"
-    : options.hardened
-      ? "assisted_hardened_challenger"
-      : "raw_contract",
+    : options.blind
+      ? "blind_raw_contract"
+      : options.hardened
+        ? "assisted_hardened_challenger"
+        : "raw_contract",
   learningClaim: "not_proven_by_contract_eval",
   hierarchy: {
-    requestedCaseIds: options.caseIds,
+    requestedCaseIds,
     autoIncludedPrerequisiteCaseIds,
     registeredPrerequisiteRuleCount: EVAL_CASE_PREREQUISITES.size,
   },
@@ -5380,8 +5658,19 @@ if (options.receiptPath) {
     requested: {
       model: options.model,
       adapter: options.adapterPath ?? null,
-      caseIds: options.caseIds,
+      caseIds: requestedCaseIds,
+      caseFile: options.caseFile ?? null,
+      caseSource: options.caseFile ? "generated_holdout_file" : "fixed_registry",
+      caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
+      caseFileBytes: generatedCaseFile?.fileBytes ?? null,
+      caseFileProvenance: generatedCaseFile?.provenance ?? null,
       hardened: options.hardened,
+      blind: options.blind,
+      promptMode: result.promptMode,
+      labelDisclosure: result.labelDisclosure,
+      responsePrefill: result.responsePrefill,
+      modelSelfStartMode: result.modelSelfStartMode,
+      modelSelfStartedJson: result.modelSelfStartedJson,
       contractOnly: options.contractOnly,
       timeoutMs: options.timeoutMs,
       evaluationMode: result.evaluationMode,
@@ -5399,6 +5688,15 @@ if (options.receiptPath) {
     evalRegistry: result.evalRegistry,
     proof: {
       subsetEval: true,
+      blindRawContract: options.blind,
+      generatedHoldoutProvenanceVerified: Boolean(generatedCaseFile),
+      caseFileSha256: generatedCaseFile?.fileSha256 ?? null,
+      caseFileProvenance: generatedCaseFile?.provenance ?? null,
+      promptMode: result.promptMode,
+      labelDisclosure: result.labelDisclosure,
+      responsePrefill: result.responsePrefill,
+      modelSelfStartMode: result.modelSelfStartMode,
+      modelSelfStartedJson: result.modelSelfStartedJson,
       rawContractRequiredForPromotion: strictModelProofRequired,
       modelContractReady: strictModelProofRequired && modelContractFailureCaseIds.length === 0,
       rawContractNormalizationCaseIds: rawContractNormalizationCases.map((entry) => entry.id),
