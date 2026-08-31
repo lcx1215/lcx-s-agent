@@ -12,7 +12,9 @@ describe("LCX farm web projection view", () => {
     );
 
     expect(source).toContain("readGlobalEvidenceProjection");
-    expect(source).toContain("summarizeGlobalEvidenceProjectionRead");
+    expect(source).toContain("readGlobalEvidenceProjectionForAdapter");
+    expect(source).toContain("globalEvidenceProjectionReader");
+    expect(source).toContain('adapterId: "farm-web-server"');
     expect(source).toContain('sourceOwner: "farm-web-server"');
     expect(source).toContain("globalEvidenceProjection,");
     expect(source).toContain("Projection status is display-only");

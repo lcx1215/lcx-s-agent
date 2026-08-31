@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
-  readGlobalEvidenceProjection,
+  readGlobalEvidenceProjectionForAdapter,
   type GlobalEvidenceProjectionRead,
 } from "../../src/shared/global-evidence-projection-read.ts";
 import {
@@ -43,6 +43,7 @@ type OwnerId =
   | "problemRadar"
   | "commercialAcceptance"
   | "changeImpact"
+  | "projectionReaderAudit"
   | "universeIndex"
   | "externalAgentUpgrade"
   | "liveFadeoutAudit"
@@ -149,6 +150,12 @@ const OWNER_COMMANDS: OwnerCommand[] = [
   {
     id: "changeImpact",
     script: "scripts/operator/lcx-change-impact-plan.ts",
+    args: ["--json"],
+    required: true,
+  },
+  {
+    id: "projectionReaderAudit",
+    script: "scripts/operator/lcx-projection-reader-audit.ts",
     args: ["--json"],
     required: true,
   },
@@ -349,6 +356,23 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       recommendedFastCommands: payload.recommendedFastCommands,
       deferredCommands: payload.deferredCommands,
       safetyNotes: payload.safetyNotes,
+    };
+  }
+
+  if (id === "projectionReaderAudit") {
+    const summary = recordValue(payload.summary);
+    return {
+      contract: payload.contract,
+      coverageStatus: summary?.coverageStatus,
+      readerContractReadyForAllAdapters: summary?.readerContractReadyForAllAdapters,
+      allKnownEntrypointsAudited: summary?.allKnownEntrypointsAudited,
+      bound: summary?.bound,
+      missingReaderContract: summary?.missingReaderContract,
+      missingEntrypoints: summary?.missingEntrypoints,
+      nextAction: payload.nextAction,
+      liveTouched: payload.liveTouched,
+      providerConfigTouched: payload.providerConfigTouched,
+      protectedMemoryTouched: payload.protectedMemoryTouched,
     };
   }
 
@@ -967,6 +991,7 @@ function buildContextRecoveryHandoff({
   providerCouncilAccelerationCompact,
   externalChannelBindingCompact,
   externalAgentUpgradeCompact,
+  projectionReaderAuditCompact,
   localFailureTrace,
 }: {
   receipt: HandoffReceipt;
@@ -980,6 +1005,7 @@ function buildContextRecoveryHandoff({
   providerCouncilAccelerationCompact: Record<string, unknown> | undefined;
   externalChannelBindingCompact: Record<string, unknown> | undefined;
   externalAgentUpgradeCompact: Record<string, unknown> | undefined;
+  projectionReaderAuditCompact: Record<string, unknown> | undefined;
   localFailureTrace: LocalFailureTraceReceipt;
 }) {
   const latestCandidateEval = recordValue(trainingCompact?.latestCandidateEval);
@@ -1124,6 +1150,15 @@ function buildContextRecoveryHandoff({
     `- nextSafeCommand: ${inlineValue(providerCouncilAccelerationCompact?.nextSafeCommand)}`,
     "- boundary: local_provider_council_acceleration_only; --write may call Kimi/MiniMax/DeepSeek once when gates are clean",
     "",
+    "## Projection Reader Audit",
+    `- contract: ${inlineValue(projectionReaderAuditCompact?.contract)}`,
+    `- coverageStatus: ${inlineValue(projectionReaderAuditCompact?.coverageStatus)}`,
+    `- bound: ${inlineValue(projectionReaderAuditCompact?.bound)}`,
+    `- missingReaderContract: ${inlineValue(projectionReaderAuditCompact?.missingReaderContract)}`,
+    `- readerContractReadyForAllAdapters: ${inlineValue(projectionReaderAuditCompact?.readerContractReadyForAllAdapters)}`,
+    `- nextAction: ${inlineValue(projectionReaderAuditCompact?.nextAction)}`,
+    "- boundary: local_projection_reader_audit_only; inventory does not grant sender or fact authority",
+    "",
     "## External Channel Status",
     `- statusModel: ${inlineValue(externalChannelStatusCompact?.statusModel)}`,
     `- externalChannelBound: ${inlineValue(externalChannelStatusCompact?.externalChannelBound)}`,
@@ -1204,11 +1239,12 @@ const releaseBlocked =
   stringArray(byOwner.problemRadar?.compact.actionableClusters).length > 0 ||
   stringArray(byOwner.problemRadar?.compact.blockedClusters).length > 0;
 const governanceCheckedAt = new Date().toISOString();
-const globalEvidenceProjection: GlobalEvidenceProjectionRead = readGlobalEvidenceProjection(
+const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
   byOwner.mindModel?.projection,
   governanceCheckedAt,
-  { sourceOwner: "mindModel" },
+  { adapterId: "governance-autopilot", sourceOwner: "mindModel" },
 );
+const globalEvidenceProjection: GlobalEvidenceProjectionRead = globalEvidenceProjectionReader.read;
 
 const receipt = {
   ok: requiredParseFailures.length === 0,
@@ -1231,6 +1267,12 @@ const receipt = {
   ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   globalEvidenceProjection,
+  globalEvidenceProjectionReader: {
+    contractVersion: globalEvidenceProjectionReader.contractVersion,
+    adapterId: globalEvidenceProjectionReader.adapterId,
+    readStatus: globalEvidenceProjectionReader.read.readStatus,
+    blocked: globalEvidenceProjectionReader.read.blocked,
+  },
   autoTriggeredOwnerCommands: OWNER_COMMANDS.map((command) => command.id),
   ownerCommands: owners.map((owner) => ({
     id: owner.id,
@@ -1291,6 +1333,10 @@ const receipt = {
     blockedGates: byOwner.commercialAcceptance?.compact.blockedGates ?? [],
     affectedLanes: byOwner.changeImpact?.compact.affectedLanes ?? [],
     unmatchedFiles: byOwner.changeImpact?.compact.unmatchedFiles ?? [],
+    projectionReaderCoverageStatus: byOwner.projectionReaderAudit?.compact.coverageStatus,
+    projectionReaderContractReadyForAllAdapters:
+      byOwner.projectionReaderAudit?.compact.readerContractReadyForAllAdapters,
+    projectionReaderMissingCount: byOwner.projectionReaderAudit?.compact.missingReaderContract,
     universeIndexDirtyFiles: byOwner.universeIndex?.compact.dirtyFiles,
     universeIndexUnmatchedChangedFiles: byOwner.universeIndex?.compact.unmatchedChangedFiles,
     universeIndexStaleRuntimeCandidates: byOwner.universeIndex?.compact.staleRuntimeCandidates,
@@ -1367,6 +1413,7 @@ const selfRepairLatestWritten = recordValue(selfRepairHandsCompact?.latestWritte
 const monotonicDataLedgerCompact = recordValue(receipt.owners.monotonicDataLedger);
 const universeIndexCompact = recordValue(receipt.owners.universeIndex);
 const externalAgentUpgradeCompact = recordValue(receipt.owners.externalAgentUpgrade);
+const projectionReaderAuditCompact = recordValue(receipt.owners.projectionReaderAudit);
 const externalChannelStatusCompact = recordValue(receipt.owners.externalChannelStatus);
 const providerCouncilAccelerationCompact = recordValue(receipt.owners.providerCouncilAcceleration);
 const externalChannelBindingCompact = recordValue(receipt.owners.externalChannelBinding);
@@ -1384,6 +1431,10 @@ const digestMaterial = {
   structuralOwnerFailures: receipt.summary.structuralOwnerFailures,
   blockedClusters: receipt.summary.blockedClusters,
   blockedGates: receipt.summary.blockedGates,
+  projectionReaderCoverageStatus: receipt.summary.projectionReaderCoverageStatus,
+  projectionReaderContractReadyForAllAdapters:
+    receipt.summary.projectionReaderContractReadyForAllAdapters,
+  projectionReaderMissingCount: receipt.summary.projectionReaderMissingCount,
   externalChannelBindingStatus: receipt.summary.externalChannelBindingStatus,
   externalChannelStatusModel: receipt.summary.externalChannelStatusModel,
   externalChannelBound: receipt.summary.externalChannelBound,
@@ -1578,6 +1629,7 @@ await fs.writeFile(
     providerCouncilAccelerationCompact,
     externalChannelBindingCompact,
     externalAgentUpgradeCompact,
+    projectionReaderAuditCompact,
     localFailureTrace,
   })}\n`,
 );

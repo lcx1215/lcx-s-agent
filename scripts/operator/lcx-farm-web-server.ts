@@ -3,10 +3,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  readGlobalEvidenceProjection,
-  summarizeGlobalEvidenceProjectionRead,
-} from "../../src/shared/global-evidence-projection-read.ts";
+import { readGlobalEvidenceProjectionForAdapter } from "../../src/shared/global-evidence-projection-read.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -111,11 +108,15 @@ function sshConfigStatus(): string {
 
 function loadSnapshot(): JsonObject {
   const autopilot = readJson(path.join(stateRoot, "lcx-governance-autopilot-latest.json"));
-  const globalEvidenceProjection = summarizeGlobalEvidenceProjectionRead(
-    readGlobalEvidenceProjection(autopilot.globalEvidenceProjection, new Date().toISOString(), {
+  const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
+    autopilot.globalEvidenceProjection,
+    new Date().toISOString(),
+    {
+      adapterId: "farm-web-server",
       sourceOwner: "farm-web-server",
-    }),
+    },
   );
+  const globalEvidenceProjection = globalEvidenceProjectionReader.view;
   const digest = readJson(path.join(stateRoot, "lcx-evolution-promotion-digest-latest.json"));
   const ownerBrief = readJson(path.join(stateRoot, "lcx-owner-brief-latest.json"));
   const ownerControlMap = readJson(path.join(stateRoot, "lcx-owner-control-map-latest.json"));
@@ -141,6 +142,12 @@ function loadSnapshot(): JsonObject {
   return {
     checkedAt: stringAt(digest, "checkedAt") ?? stringAt(autopilot, "checkedAt") ?? "not_available",
     globalEvidenceProjection,
+    globalEvidenceProjectionReader: {
+      contractVersion: globalEvidenceProjectionReader.contractVersion,
+      adapterId: globalEvidenceProjectionReader.adapterId,
+      readStatus: globalEvidenceProjectionReader.read.readStatus,
+      blocked: globalEvidenceProjectionReader.read.blocked,
+    },
     repoDirtyCount:
       numberAt(material, "repoDirtyCount") ?? numberAt(summary, "universeIndexDirtyFiles") ?? 0,
     activePidCounts,

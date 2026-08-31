@@ -18,6 +18,10 @@ import {
 } from "../../logging/diagnostic.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import {
+  readGlobalEvidenceProjectionForAdapter,
+  type GlobalEvidenceProjectionAdapterRead,
+} from "../../shared/global-evidence-projection-read.js";
 import { maybeApplyTtsToPayload, normalizeTtsAutoMode, resolveTtsConfig } from "../../tts/tts.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import { getReplyFromConfig } from "../reply.js";
@@ -99,14 +103,45 @@ export type DispatchFromConfigResult = {
   counts: Record<ReplyDispatchKind, number>;
 };
 
+export type GlobalEvidenceProjectionAnswerBoundaryInput = {
+  /** Projection candidate supplied by an upstream owner; it is never authored here. */
+  candidate?: unknown;
+  /** Consumer check time; defaults to the current time for a live boundary read. */
+  checkedAt?: string;
+  /** Optional source-owner label for attribution in the read receipt. */
+  sourceOwner?: string;
+  /** Optional bounded freshness override for tests or a named owner policy. */
+  maxAgeMs?: number;
+};
+
 export async function dispatchReplyFromConfig(params: {
   ctx: FinalizedMsgContext;
   cfg: OpenClawConfig;
   dispatcher: ReplyDispatcher;
   replyOptions?: Omit<GetReplyOptions, "onToolResult" | "onBlockReply">;
   replyResolver?: typeof getReplyFromConfig;
+  /**
+   * Read-only projection input at the neutral answer boundary. A missing or
+   * blocked read is reported to the caller but does not authorize, suppress,
+   * or rewrite the ordinary reply flow.
+   */
+  globalEvidenceProjectionInput?: GlobalEvidenceProjectionAnswerBoundaryInput;
+  onGlobalEvidenceProjectionRead?: (reader: GlobalEvidenceProjectionAdapterRead) => void;
 }): Promise<DispatchFromConfigResult> {
   const { ctx, cfg, dispatcher } = params;
+  const projectionInput = params.globalEvidenceProjectionInput;
+  const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
+    projectionInput?.candidate,
+    projectionInput?.checkedAt ?? new Date().toISOString(),
+    {
+      adapterId: "neutral-answer-boundary",
+      sourceOwner: projectionInput?.sourceOwner ?? "dispatch-from-config",
+      ...(projectionInput?.maxAgeMs !== undefined ? { maxAgeMs: projectionInput.maxAgeMs } : {}),
+    },
+  );
+  // Observation only: no projection state is authored here and blocked reads
+  // must not be upgraded into delivery, provider, training, or owner authority.
+  params.onGlobalEvidenceProjectionRead?.(globalEvidenceProjectionReader);
   const diagnosticsEnabled = isDiagnosticsEnabled(cfg);
   const channel = String(ctx.Surface ?? ctx.Provider ?? "unknown").toLowerCase();
   const chatId = ctx.To ?? ctx.From;

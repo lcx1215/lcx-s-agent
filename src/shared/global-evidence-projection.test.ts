@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION,
   readGlobalEvidenceProjection,
+  readGlobalEvidenceProjectionForAdapter,
   summarizeGlobalEvidenceProjectionRead,
 } from "./global-evidence-projection-read.js";
 import {
@@ -58,6 +60,7 @@ describe("Global Evidence Projection", () => {
 
     expect(projection).toMatchObject({
       contractVersion: GLOBAL_EVIDENCE_PROJECTION_VERSION,
+      ontologyVersion: "lcx_ontology_v1",
       mode: GLOBAL_EVIDENCE_PROJECTION_MODE,
       generatedAt: "2026-08-31T00:00:00.000Z",
       sourceOwners: ["mind-model"],
@@ -77,6 +80,7 @@ describe("Global Evidence Projection", () => {
         coverage: "complete",
         maturity: "structural",
         adaptability: "adapter_neutral",
+        role: "core_architecture",
         evidenceRefs: [
           "context_recovery:head",
           "context_recovery:workflow",
@@ -109,6 +113,18 @@ describe("Global Evidence Projection", () => {
     ).toEqual(
       expect.arrayContaining([expect.stringContaining("cannot leave structural maturity")]),
     );
+    expect(
+      validateGlobalEvidenceProjection({
+        ...projection,
+        capabilities: [{ ...projection.capabilities[0], role: "future" as never }],
+      }),
+    ).toEqual(expect.arrayContaining([expect.stringContaining("invalid role")]));
+    expect(
+      validateGlobalEvidenceProjection({
+        ...projection,
+        ontologyVersion: "future_ontology" as never,
+      }),
+    ).toEqual(expect.arrayContaining([expect.stringContaining("ontologyVersion")]));
   });
 
   it("keeps missing owner evidence actionable and rejects impossible delivery proof", () => {
@@ -371,6 +387,86 @@ describe("Global Evidence Projection", () => {
       blocked: true,
       reason: "projection_read_envelope_inconsistent",
       projection: null,
+    });
+  });
+
+  it("requires an opaque reader id without changing delivery proof", () => {
+    const projection = buildGlobalEvidenceProjection({
+      generatedAt: "2026-08-31T00:00:00.000Z",
+      sourceOwners: ["mind-model"],
+      lanes: [],
+      invariants: [],
+      delivery: {
+        adapterId: "opaque-delivery",
+        state: "bound",
+        evidenceRefs: ["binding"],
+        proof: {
+          owner: "delivery-owner",
+          receiptId: "binding",
+          checkedAt: "2026-08-31T00:00:00.000Z",
+          visibility: "binding",
+        },
+      },
+    });
+    const reader = readGlobalEvidenceProjectionForAdapter(projection, "2026-08-31T00:01:00.000Z", {
+      adapterId: "  future-medium  ",
+      sourceOwner: "future-medium-reader",
+    });
+
+    expect(reader).toMatchObject({
+      contractVersion: GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION,
+      adapterId: "future-medium",
+      read: {
+        sourceOwner: "future-medium-reader",
+        readStatus: "current",
+        blocked: false,
+      },
+      view: {
+        readStatus: "current",
+        blocked: false,
+        deliveryState: "bound",
+        adapterId: "opaque-delivery",
+      },
+    });
+    expect(reader.read.projection?.delivery.adapterId).toBe("opaque-delivery");
+    expect(() =>
+      readGlobalEvidenceProjectionForAdapter(projection, "2026-08-31T00:01:00.000Z", {
+        adapterId: "  ",
+      }),
+    ).toThrow("non-empty opaque string");
+    expect(() =>
+      readGlobalEvidenceProjectionForAdapter(projection, "2026-08-31T00:01:00.000Z"),
+    ).toThrow("non-empty opaque string");
+    expect(() =>
+      readGlobalEvidenceProjectionForAdapter(projection, "2026-08-31T00:01:00.000Z", {
+        adapterId: "future\nmedium",
+      }),
+    ).toThrow("must not contain line breaks");
+  });
+
+  it("keeps stale adapter reads blocked and payload-free in the view", () => {
+    const projection = buildGlobalEvidenceProjection({
+      generatedAt: "2026-08-31T00:00:00.000Z",
+      sourceOwners: ["mind-model"],
+      lanes: [],
+      invariants: [],
+    });
+    const reader = readGlobalEvidenceProjectionForAdapter(projection, "2026-08-31T00:05:01.000Z", {
+      adapterId: "future-medium",
+    });
+
+    expect(reader).toMatchObject({
+      adapterId: "future-medium",
+      read: { readStatus: "stale", blocked: true },
+      view: {
+        readStatus: "stale",
+        blocked: true,
+        capabilityCount: 0,
+        evidenceCount: 0,
+        actionCount: 0,
+        deliveryState: null,
+        adapterId: null,
+      },
     });
   });
 });

@@ -33,6 +33,12 @@ async function runAutopilot() {
     ownerControlMapLatestJsonPath: string;
     ownerControlMapLatestMarkdownPath: string;
     handoffLatestPath: string;
+    globalEvidenceProjectionReader: {
+      contractVersion: string;
+      adapterId: string;
+      readStatus: string;
+      blocked: boolean;
+    };
     autoTriggeredOwnerCommands: string[];
     ownerCommands: Array<{ id: string; parsed: boolean; command: string }>;
     triggerPolicy: {
@@ -72,6 +78,9 @@ async function runAutopilot() {
       latestEvolutionCooldown?: unknown;
       latestGuardEvent?: unknown;
       affectedLanes: string[];
+      projectionReaderCoverageStatus?: string;
+      projectionReaderContractReadyForAllAdapters?: boolean;
+      projectionReaderMissingCount?: number;
       selfRepairHandsAutoWriteTriggered?: boolean;
       selfRepairHandsAutoSignal?: unknown;
       selfRepairHandsOwnerWritePolicy?: {
@@ -83,6 +92,13 @@ async function runAutopilot() {
     };
     owners: {
       mindModel?: { summary?: unknown };
+      projectionReaderAudit?: {
+        coverageStatus?: string;
+        bound?: number;
+        missingReaderContract?: number;
+        readerContractReadyForAllAdapters?: boolean;
+        nextAction?: string;
+      };
       flowGraph?: { summary?: unknown };
       headTail?: { summary?: unknown };
       contextRecovery?: { compressedContextRecovered?: boolean };
@@ -218,6 +234,7 @@ describe("LCX governance autopilot", () => {
         "problemRadar",
         "commercialAcceptance",
         "changeImpact",
+        "projectionReaderAudit",
         "universeIndex",
         "externalAgentUpgrade",
         "liveFadeoutAudit",
@@ -237,6 +254,21 @@ describe("LCX governance autopilot", () => {
     expect(payload.summary.parsedOwners).toBe(payload.summary.ownerCount);
     expect(payload.ownerCommands.every((owner) => owner.parsed)).toBe(true);
     expect(payload.owners.mindModel?.summary).toBeTruthy();
+    expect(payload.owners.projectionReaderAudit).toEqual(
+      expect.objectContaining({
+        coverageStatus: "partial",
+        bound: 3,
+        missingReaderContract: 3,
+        readerContractReadyForAllAdapters: false,
+        nextAction: expect.stringContaining("neutral answer boundary"),
+      }),
+    );
+    expect(payload.globalEvidenceProjectionReader).toEqual({
+      contractVersion: "global_evidence_projection_reader_v1",
+      adapterId: "governance-autopilot",
+      readStatus: expect.any(String),
+      blocked: expect.any(Boolean),
+    });
     expect(payload.owners.flowGraph?.summary).toBeTruthy();
     expect(payload.owners.headTail?.summary).toBeTruthy();
     expect(Array.isArray(payload.owners.trainingPlan?.decisionIds)).toBe(true);
@@ -346,6 +378,9 @@ describe("LCX governance autopilot", () => {
         evolutionCooldownActive?: boolean;
         latestEvolutionCooldown?: unknown;
         latestGuardEvent?: unknown;
+        projectionReaderCoverageStatus?: string;
+        projectionReaderContractReadyForAllAdapters?: boolean;
+        projectionReaderMissingCount?: number;
         skillOptLiteStatus?: string;
         selfRepairHandsAutoWriteTriggered?: boolean;
         selfRepairHandsOwnerWritePolicy?: {
@@ -394,6 +429,15 @@ describe("LCX governance autopilot", () => {
       payload.summary.latestEvolutionCooldown,
     );
     expect(digest.material?.latestGuardEvent).toEqual(payload.summary.latestGuardEvent);
+    expect(digest.material?.projectionReaderCoverageStatus).toBe(
+      payload.summary.projectionReaderCoverageStatus,
+    );
+    expect(digest.material?.projectionReaderContractReadyForAllAdapters).toBe(
+      payload.summary.projectionReaderContractReadyForAllAdapters,
+    );
+    expect(digest.material?.projectionReaderMissingCount).toBe(
+      payload.summary.projectionReaderMissingCount,
+    );
     expect(digest.material?.skillOptLiteStatus).toBe(payload.owners.skillOptLite?.status);
     expect(digest.material?.selfRepairHandsAutoWriteTriggered).toBe(
       payload.summary.selfRepairHandsAutoWriteTriggered,
@@ -454,6 +498,8 @@ describe("LCX governance autopilot", () => {
     expect(handoff).toContain("local_universe_index_only");
     expect(handoff).toContain("local_skillopt_lite_only");
     expect(handoff).toContain("## Blacktech Upgrade Radar");
+    expect(handoff).toContain("## Projection Reader Audit");
+    expect(handoff).toContain("readerContractReadyForAllAdapters");
     expect(handoff).toContain("local_external_agent_upgrade_radar_only");
     expect(handoff).toContain("## Provider Council Acceleration");
     expect(handoff).toContain("local_provider_council_acceleration_only");
