@@ -64,8 +64,8 @@ sed -n '1,220p' ops/local-brain/README.md
 Recover current state in a compressed or new coding window:
 
 ```bash
-node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff
-node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
+node --import tsx scripts/operator/lcx-context-recovery-exam.ts --handoff
+node --import tsx scripts/operator/lcx-governance-autopilot.ts --json
 ```
 
 The governance autopilot writes the latest machine-readable and one-screen
@@ -88,16 +88,16 @@ memory, or recovery work, run the owner stack instead of relying on chat
 history:
 
 ```bash
-node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
-node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
-node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
-node --import tsx scripts/dev/local-brain-training-plan.ts --json
-node --import tsx scripts/dev/lcx-external-channel-binding.ts --json
-node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
-node --import tsx scripts/dev/lcx-mind-model.ts --json
-node --import tsx scripts/dev/lcx-flow-graph.ts --json
-node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json
-node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
+node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json
+node --import tsx scripts/operator/lcx-change-impact-plan.ts --json
+node --import tsx scripts/operator/local-brain-training-plan.ts --json
+node --import tsx scripts/operator/lcx-external-channel-binding.ts --json
+node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json
+node --import tsx scripts/operator/lcx-mind-model.ts --json
+node --import tsx scripts/operator/lcx-flow-graph.ts --json
+node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json
+node --import tsx scripts/operator/lcx-context-recovery-exam.ts --json
 ```
 
 `lcx-governance-autopilot.ts` runs that stack as a read-only coordinator. It
@@ -144,14 +144,14 @@ Forward status names are `core-ready`, `external-channel-bound`, and
 The approved Lark external-channel binding owner is:
 
 ```bash
-node --import tsx scripts/dev/lcx-external-channel-binding.ts --json
+node --import tsx scripts/operator/lcx-external-channel-binding.ts --json
 ```
 
 Only when it reports an idle `ready_for_apply` state should the bounded apply
 path be used:
 
 ```bash
-node --import tsx scripts/dev/lcx-external-channel-binding.ts --apply --json
+node --import tsx scripts/operator/lcx-external-channel-binding.ts --apply --json
 ```
 
 That binding owner is the canonical source for `external-channel-bound`.
@@ -169,7 +169,7 @@ evidence proves `user-visible-observed`.
 The system-wide fadeout audit is:
 
 ```bash
-node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
+node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json
 ```
 
 It verifies that major LCX owners, package aliases, docs, governance, doctor,
@@ -193,7 +193,7 @@ local LCX core
 `cloud-runtime-ready` means the cloud control machine has one canonical
 repository checkout, one canonical `~/.openclaw` state root, copied/synced operator skills,
 receipts, logs, selected-clean adapter proof, and governance owners. It does not
-mean live-visible-fixed, user-visible-observed, or model-weight absorption.
+mean external-channel delivery, user-visible-observed, or model-weight absorption.
 Local system/factory rule: the local machine has one LCX system and one factory/runtime,
 backed by one canonical repository and state root. Local isolation and parallel work
 use linked Git worktrees only; no second repository or deployment checkout is
@@ -210,7 +210,7 @@ external-channel sender authority, or a second source of truth.
 The live fadeout audit enforces this cloud boundary too:
 
 ```bash
-node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
+node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json
 ```
 
 ## Finance Research Discipline
@@ -276,7 +276,7 @@ corepack pnpm exec vitest run extensions/feishu/src/learning-council.test.ts
 | Path                     | Purpose                                                                                        |
 | ------------------------ | ---------------------------------------------------------------------------------------------- |
 | `extensions/feishu/src/` | Lark / Feishu control-room, routing, reply, language, and external-channel compatibility code. |
-| `scripts/dev/`           | Local-brain training, eval, governance, doctor, radar, and promotion tools.                    |
+| `scripts/operator/`      | Local-brain training, eval, governance, doctor, radar, and promotion tools.                    |
 | `src/agents/`            | Agent runtime, system prompt, tools, routing, and review surfaces.                             |
 | `src/auto-reply/`        | User-visible command replies, truth surfaces, and reply-flow evidence.                         |
 | `ops/local-brain/`       | Operator runbook for local-brain training, eval, guard, and recovery.                          |

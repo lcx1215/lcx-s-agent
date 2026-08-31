@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This file is the shortest useful truth-source for the current **development repo**.
+This file is the shortest useful truth-source for the current local LCX system and its canonical repository.
 
 It exists to stop drift between:
 
 - chat claims
-- live handoff narrative
-- development-repo reality
+- external-channel handoff narrative
+- canonical-repository reality
 
 Use this file together with:
 
@@ -16,19 +16,22 @@ Use this file together with:
 - `MEMORY.md`
 - `memory/current-research-line.md`
 - `memory/current_state.md`
-- `ops/live-handoff/2026-03-27-workspace-division.md`
-- `ops/live-handoff/2026-03-27-workspace-role-runbook.md`
+- `ops/external-channel-history/2026-03-27-workspace-division.md`
+- `ops/external-channel-history/2026-03-27-workspace-role-runbook.md`
 
-## Observed In This Dev Repo
+Entries with explicit historical dates preserve their original receipt wording
+for auditability; they are not current repository or runtime authority.
 
-- This repo is `lcx-s-openclaw`, the **development repo**.
+## Observed In The Local System
+
+- This canonical repository is `lcx-s-openclaw`; local parallel work uses linked Git worktrees.
 - The Feishu interface code being edited here lives under:
   - `extensions/feishu/src/*`
 - The shared-brain / artifact-contract skeleton being built here lives mainly under:
   - `src/hooks/bundled/*`
   - `src/agents/*`
   - `src/infra/*`
-- The following dev-brain structures now exist in-repo:
+- The following local-system brain structures now exist in-repo:
   - learning / correction hooks
   - frontier / method hooks
   - fundamental artifact-chain hooks
@@ -40,10 +43,10 @@ Use this file together with:
   - `src/hooks/bundled/lobster-brain-registry.ts`
 - There is now a shared MiniMax default-model seam at:
   - `src/agents/minimax-model-catalog.ts`
-- There are now explicit external-context / external-editor tools in the dev repo:
+- There are now explicit external-context / external-editor tools in the canonical repository:
   - `src/agents/tools/mcp-context-tool.ts`
   - `src/agents/tools/aider-tool.ts`
-- There is now also a bounded Lobster desktop workface-app tool in the dev repo:
+- There is now also a bounded Lobster desktop workface-app tool in the canonical repository:
   - `src/agents/tools/lobster-workface-app-tool.ts`
   - exposed as:
     - `lobster_workface_app`
@@ -52,7 +55,7 @@ Use this file together with:
     - if no `lobster-workface` artifact exists yet, it now builds an honest empty-state dashboard instead of leaving the desktop blank
     - can optionally present it through the existing Canvas shell
     - not a general app builder
-- There is now also a bounded local durable-memory card tool in the dev repo:
+- There is now also a bounded local durable-memory card tool in the canonical repository:
   - `src/agents/tools/local-memory-record-tool.ts`
   - exposed as:
     - `local_memory_record`
@@ -67,7 +70,7 @@ Use this file together with:
         so medium-term memory can steer future behavior instead of sitting as prose only
     - stays inside the existing `memory/*.md` recall surface
     - does not replace protected summaries or prove live persistence
-- There is now also a bounded structured work-receipt seam in the dev repo:
+- There is now also a bounded structured work-receipt seam in the canonical repository:
   - Feishu final replies now write `memory/feishu-work-receipts/*.md`
   - each receipt records:
     - requested action
@@ -91,7 +94,7 @@ Use this file together with:
     - this is bounded workflow evidence for debugging and repair
     - not raw hidden-thought logging
     - not a new memory architecture
-- There is now also a bounded external-model feedback seam in the dev repo:
+- There is now also a bounded external-model feedback seam in the canonical repository:
   - each `learning-council` run now distills:
     - `keep`
     - `discard`
@@ -115,7 +118,7 @@ Use this file together with:
     - reused later
     - downranked or failed
   - current boundary:
-    - dev-only lifecycle summary over explicit ledger state
+    - local-only lifecycle summary over explicit ledger state
     - not live proof
     - do not rebuild this seam unless a truth-preservation hole appears
   - current next priority:
@@ -125,9 +128,9 @@ Use this file together with:
       - same-day retained-state inspection plus single and bulk finance review actions through that runtime tool path
       - fail-closed missing-artifact behavior and Feishu group-policy denial boundaries
     - current boundary:
-      - runtime-equivalent validation in the dev repo only
+      - runtime-equivalent validation in the canonical repository only
       - not proof that the separate live Feishu repo/runtime is already migrated or enabled
-- There is now also a bounded macOS Lobster panel seam in the dev repo:
+- There is now also a bounded macOS Lobster panel seam in the canonical repository:
   - `apps/macos/Sources/OpenClaw/LobsterWorkfacePanel.swift`
   - `apps/macos/Sources/OpenClaw/MenuContentView.swift`
   - current boundary:
@@ -137,7 +140,7 @@ Use this file together with:
     - bootstraps from `memory/current-research-line.md` when no workface artifact is available
     - falls back to an honest empty/failure state only when neither workface nor current research line can drive the panel
     - still uses the existing Canvas shell rather than creating a standalone native `.app`
-- There is now also a read-only self-update worthiness preflight in the dev repo:
+- There is now also a read-only self-update worthiness preflight in the canonical repository:
   - `update.check`
   - wired through:
     - `src/gateway/server-methods/update.ts`
@@ -212,12 +215,12 @@ Use this file together with:
   - `ops/codex_handoff.md`
 - This means recent system-state narration has been too distributed across:
   - chat
-  - `ops/live-handoff/*.md`
+  - `ops/external-channel-history/*.md`
   - local uncommitted changes
 - The current cleanup direction is:
   - keep previous finance-domain work
   - keep the distillation chain serving both general meta-capability and the full finance research pipeline
-  - use `MEMORY.md` plus `memory/current-research-line.md` as the fast active read path before `ops/live-handoff/*`
+  - use `MEMORY.md` plus `memory/current-research-line.md` as the fast active read path before `ops/external-channel-history/*`
   - prefer matching local durable memory cards over arbitrary recent cards
   - use `memory/feishu-work-receipts/*.md` when debugging wording/routing/self-repair drift instead of replaying whole chats
   - prefer decision-convergence over fake-precise first answers
@@ -228,7 +231,7 @@ Use this file together with:
   - `lcx-s-openclaw`
 - The live Feishu runtime sidecar repo is:
   - `~/.openclaw/live-sidecars/lcx-s-openclaw`
-- The development repo contains the editable Feishu source:
+- The canonical repository contains the editable Feishu source:
   - `extensions/feishu/src/*`
 - But Feishu behavior is only changed in practice after an equivalent bounded patch is:
   1. ported into `~/.openclaw/live-sidecars/lcx-s-openclaw`
@@ -238,20 +241,20 @@ Use this file together with:
 
 ## Hard Boundary
 
-- `dev-fixed` is not `live-visible-fixed`
+- `core-verified` is not `user-visible-observed`
 - handoff text is not runtime proof
 - local tests/build are not Feishu live acceptance
 - this repo must not claim unattended runtime behavior without repo-grounded evidence
 
 ## Other-Live-Context Narrative
 
-`ops/live-handoff/*.md` is useful, but it must be read as:
+`ops/external-channel-history/*.md` is useful, but it must be read as:
 
 - handoff narrative
 - migration memory
 - claimed live status from another runtime context
 
-It is **not** automatic proof that this development repo itself contains:
+It is **not** automatic proof that this canonical repository itself contains:
 
 - the matching runtime artifacts
 - the matching receipts/logs
@@ -372,7 +375,7 @@ The following are repo-grounded and recently re-verified here:
       - `memory/unified-risk-view.md`
       - `MEMORY.md`
     - this is a bounded local rescue path, not external-memory promotion and not full semantic recall
-- operating / control artifact contracts are now registry-backed in the dev repo
+- operating / control artifact contracts are now registry-backed in the canonical repository
   - `src/hooks/bundled/lobster-brain-registry.ts`
   - `src/hooks/bundled/operating-weekly-review/handler.ts`
   - `src/hooks/bundled/memory-hygiene-weekly/handler.ts`
@@ -429,7 +432,7 @@ The following are repo-grounded and recently re-verified here:
   - `src/hooks/bundled/learning-review-weekly/handler.ts`
   - `src/hooks/bundled/operating-daily-workface/handler.ts`
   - verified by targeted Vitest + Oxlint
-- MCP context + aider capability now exists as bounded agent-facing tooling in the dev repo
+- MCP context + aider capability now exists as bounded agent-facing tooling in the canonical repository
   - `src/agents/tools/mcp-context-tool.ts`
   - `src/agents/tools/aider-tool.ts`
   - `src/agents/openclaw-tools.ts`
@@ -442,14 +445,14 @@ The following are repo-grounded and recently re-verified here:
     - `src/agents/openclaw-tools.mcp-aider-registration.test.ts`
     - `src/agents/system-prompt.test.ts`
     - `src/plugins/runtime/index.test.ts`
-- the dev repo prompt/doctrine now also carries an autoresearch-style eval-loop discipline:
+- the canonical-repository prompt/doctrine now also carries an autoresearch-style eval-loop discipline:
   - fixed-budget experiments
   - narrow writable scope
   - one explicit metric
   - keep/discard based on eval
   - experiment receipts
   - verified by targeted `src/agents/system-prompt.test.ts`
-- the dev repo prompt/doctrine now also makes CLI-first operation explicit:
+- the canonical-repository prompt/doctrine now also makes CLI-first operation explicit:
   - built-in read/grep/exec and local CLI stay primary
   - `mcp_context` is supplementary when CLI/local evidence is insufficient
 - OpenSpace is now scoped in-dev as an optional isolated skill-engine seam:
@@ -593,7 +596,7 @@ Before changing code again:
 2. read `memory/current-research-line.md`
 3. read `memory/current_state.md`
 4. read this file
-5. read `ops/dev-to-live-feishu-acceptance-runbook.md` before claiming any Feishu/live verification plan
+5. read `ops/external-channel-feishu-acceptance-runbook.md` before claiming any Feishu/external-channel verification plan
 6. separate:
    - observed
    - inferred
@@ -607,7 +610,7 @@ Do not add features first.
 Prefer this order:
 
 1. keep truth-source files current
-2. keep dev/live boundaries explicit
+2. keep core/external-channel boundaries explicit
 3. close verified holes in current hook / Feishu / control seams
 4. only then consider bounded live-port work
 

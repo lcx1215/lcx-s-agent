@@ -1,0 +1,2973 @@
+import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  buildLarkBrainDistillationCandidate,
+  LARK_BRAIN_DISTILLATION_REVIEW_DIR,
+  type LarkBrainDistillationCandidate,
+  type LarkBrainDistillationReviewArtifact,
+} from "../../extensions/feishu/src/lark-brain-distillation-candidates.js";
+import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
+import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
+import { loadConfig } from "../../src/config/config.js";
+import {
+  LOCAL_BRAIN_MODULE_TAXONOMY,
+  normalizeLocalBrainModuleList,
+  packLocalBrainModuleFields,
+} from "./local-brain-taxonomy.js";
+import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
+
+type CliOptions = {
+  workspaceDir: string;
+  write: boolean;
+  json: boolean;
+  mock: boolean;
+  model: string;
+  baseUrl: string;
+  apiKey?: string;
+  agentDir: string;
+  source: "openclaw-agent" | "direct-api";
+  openclawAgent: string;
+  timeoutSeconds: number;
+  limit: number;
+  allowPartialWrite: boolean;
+  retries: number;
+  includePayloadUnstablePrompts: boolean;
+  promptFile?: string;
+  concurrency: number;
+};
+
+type TeacherPrompt = {
+  id: string;
+  userMessage: string;
+  sourceSummary: string;
+};
+
+type TeacherPlan = {
+  task_family: string;
+  primary_modules: string[];
+  supporting_modules: string[];
+  required_tools: string[];
+  missing_data: string[];
+  risk_boundaries: string[];
+  next_step: string;
+  rejected_context: string[];
+};
+
+type DirectApiContentEntry = {
+  type?: string;
+  text?: string;
+  thinking?: string;
+  content?: unknown;
+};
+
+type DirectApiPayload = {
+  content?: unknown;
+  text?: unknown;
+  output_text?: unknown;
+  message?: { content?: unknown };
+  usage?: unknown;
+  choices?: Array<{
+    text?: unknown;
+    message?: { content?: unknown };
+    delta?: { content?: unknown };
+  }>;
+};
+
+type TeacherCallResult = {
+  text: string;
+  usage?: unknown;
+};
+
+const DEFAULT_WORKSPACE = path.join(process.env.HOME ?? ".", ".openclaw", "workspace");
+const DEFAULT_MODEL = process.env.MINIMAX_TEACHER_MODEL?.trim() || "MiniMax-M2.7";
+const DEFAULT_BASE_URL =
+  process.env.MINIMAX_ANTHROPIC_BASE_URL?.trim() || "https://api.minimax.io/anthropic";
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
+
+const MODULE_TAXONOMY = LOCAL_BRAIN_MODULE_TAXONOMY;
+
+const TEACHER_PROMPTS: TeacherPrompt[] = [
+  {
+    id: "broad_finance_module_taxonomy",
+    userMessage:
+      "以后我要看美股、A股、指数、ETF、加密币、原油、黄金、美元、期权波动率、事件风险、技术择时、公司基本面、组合风险和量化。先做完整金融模块地图，别把所有东西都塞进宏观/ETF/组合三个桶。",
+    sourceSummary:
+      "broad finance module taxonomy request; research-only; require dedicated modules and risk boundaries.",
+  },
+  {
+    id: "all_domain_finance_research_loop",
+    userMessage:
+      "训练本地 Qwen 教本地大脑做全领域金融研究：先把公司基本面和价值投资作为核心锚点，再连接美股、A股、指数、ETF、宏观利率、信用、美元/人民币流动性、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel；简单任务不能比复杂任务更差，research-only。",
+    sourceSummary:
+      "all-domain finance research loop requiring broad module coverage, simple-prerequisite monotonicity, evidence gates, review handoff, and no trade advice.",
+  },
+  {
+    id: "senior_trader_failure_focus_promotion_chain",
+    userMessage:
+      "把最近本地 Qwen 没过 promotion 的高级交易员失败族集中教一遍：当前行情新鲜度、公司财报证据、NVDA AI capex 二阶传导、市场宽度只能做 timing context、未验证宏观 claim、模型分歧、旧记忆降权、估值压缩、券商研报学习、错误复盘、情绪 vendor 冲突。要求全部走同一条 source -> finance_data_gateway -> data_provenance_quality -> capability -> retrieval/apply -> eval/training -> review 链；research-only，不给交易建议。",
+    sourceSummary:
+      "failure-focused senior-trader promotion repair curriculum tying current data, filings, valuation, memory, sentiment validation, and review gates into one reusable chain.",
+  },
+  {
+    id: "treasury_supply_term_premium_portfolio_risk",
+    userMessage:
+      "训练本地 Qwen 学会把美国财政赤字、Treasury refunding、美债供给和 term premium 接进已有利率/信用/美元/ETF/组合风险血管：先要拍卖和再融资日历、期限溢价、实际利率、收益率曲线、来源时间戳，再拆 TLT 久期、QQQ 估值、信用流动性、美元流动性、组合权重和反方证据；不能把国债供给 headline 当单独交易信号。",
+    sourceSummary:
+      "Treasury supply and term-premium curriculum for macro rates, credit, FX, ETF regime, quant math, finance data gateway, portfolio risk gates, and review.",
+  },
+  {
+    id: "private_credit_nonbank_leverage_stress_waterflow",
+    userMessage:
+      "训练本地 Qwen 学会把 private credit、NBFI、leveraged loans、半流动基金赎回、basis trade 和 forced deleveraging 接进信用/跨资产/ETF/组合风险血管：先要 borrower stress、估值、赎回压力、信用利差、资金流动性、HYG 或 ETF 敞口、组合权重和 risk limit；不能把信用 headline 写成确定传染，也不能给交易建议。",
+    sourceSummary:
+      "private credit and nonbank leverage curriculum requiring credit liquidity, cross-asset liquidity, ETF regime, data provenance, portfolio risk gates, and review.",
+  },
+  {
+    id: "ai_capex_power_grid_index_concentration_risk",
+    userMessage:
+      "训练本地 Qwen 学会把 AI capex、hyperscaler 预算、数据中心电力瓶颈、HBM/GPU 供应链和 QQQ 指数集中度接成一条研究水路：先要财报/指引/预算/电力/供应链/指数权重来源，再拆 NVDA 基本面、估值敏感性、事件催化、能源约束、组合重叠、反方证据和 review；不能把 AI 热度当 alpha。",
+    sourceSummary:
+      "AI capex power-grid and index-concentration curriculum requiring fundamentals, valuation QC, event lifecycle, commodity/energy constraints, index regime, portfolio risk, data gateway, and review.",
+  },
+  {
+    id: "energy_inflation_cross_asset_shock_risk",
+    userMessage:
+      "训练本地 Qwen 学会把霍尔木兹、OPEC、原油库存、SPR、能源价格、CPI/PCE 通胀、美元、TLT、QQQ 和股债相关性接成一条供给冲击水路：先要官方或一手来源、供需/库存/备用产能、通胀预期、利率、美元流动性、ETF regime 和组合权重；必须说明供给冲击下股债对冲可能失效，不给交易建议。",
+    sourceSummary:
+      "energy supply shock curriculum requiring commodity supply data, inflation transmission, FX liquidity, equity-bond correlation risk, ETF regime, portfolio risk gates, data provenance, and review.",
+  },
+  {
+    id: "value_investing_fundamental_core",
+    userMessage:
+      "以后价值投资很重要。训练本地大脑先做基本面和企业价值判断：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、反方证据和组合风险都要拆清楚；技术面只能后置做 timing context，不要给买卖建议。",
+    sourceSummary:
+      "fundamentals-first value-investing research loop requiring source evidence, business quality, valuation range, margin of safety, value-trap invalidation, and portfolio risk boundaries.",
+  },
+  {
+    id: "financial_modeling_valuation_qc",
+    userMessage:
+      "训练本地大脑做 DCF/comps/三表财务模型和估值敏感性 QC：每个数字必须有来源、字段口径和时间戳，模型假设要能审计，spreadsheet/表格要过 artifact QC；不能凭模型编目标价或给买卖建议。",
+    sourceSummary:
+      "financial modeling and valuation QC curriculum requiring source-gated filings, assumptions, sensitivity, data provenance, artifact review, and no trade advice.",
+  },
+  {
+    id: "thesis_catalyst_lifecycle",
+    userMessage:
+      "训练本地大脑把研究 thesis 做成生命周期：原始论点、催化剂日历、反方证据、失效条件、事件后复盘和 correction note 都要进入链条；不能把新闻热度当结论。",
+    sourceSummary:
+      "thesis and catalyst lifecycle curriculum requiring invalidation, event calendar, post-event correction, evidence, and no trade advice.",
+  },
+  {
+    id: "data_provenance_quality",
+    userMessage:
+      "训练本地大脑遇到价格、成交量、财报字段、ETF 权重、期权 IV 或情绪数据时，先做 data provenance quality gate：供应商、字段定义、时间戳、币种、复权、更新频率、异常值和可信优先级都要核对。",
+    sourceSummary:
+      "data provenance and quality curriculum requiring vendor, field-definition, timestamp, currency, adjustment, update cadence, outlier, and trust-priority checks.",
+  },
+  {
+    id: "research_artifact_qc",
+    userMessage:
+      "训练本地大脑生成研报、表格、估值模型或控制室总结前，必须做 research artifact QC：每个数字有出处，表格和结论一致，未验证标 unverified，外发前人工审阅。",
+    sourceSummary:
+      "research artifact QC curriculum for reports, tables, model outputs, visible summaries, citations, and number provenance.",
+  },
+  {
+    id: "multi_asset_macro_portfolio_risk",
+    userMessage:
+      "我持有 QQQ、TLT、NVDA，未来两周担心利率、AI capex、美元流动性，先拆内部模块，不要给交易建议。",
+    sourceSummary:
+      "portfolio risk planning; no current market data supplied; no execution authority.",
+  },
+  {
+    id: "portfolio_math_missing_inputs",
+    userMessage:
+      "我有 QQQ、TLT、NVDA 三个仓位，想算波动、相关性、回撤和利率敏感性，但我还没给权重和价格序列。先拆模块，不要靠模型胡算。",
+    sourceSummary: "quant math planning with missing weights and return series.",
+  },
+  {
+    id: "senior_trader_research_risk_packet",
+    userMessage:
+      "把本地 Qwen 强化成高级交易员式的研究脑：面对 QQQ、TLT、NVDA、BTC 或 A股指数，先做 research-only 风险包，拆仓位、风险预算、回撤、相关性、流动性、宏观、基本面、技术面、事件日历、期权 IV/skew/gamma、反方证据和数据缺口；不能给买卖点、止损价、目标价或下单语言。",
+    sourceSummary:
+      "senior-trader style risk packet curriculum requiring position/risk/liquidity/event/options inputs while preserving research-only and no execution authority.",
+  },
+  {
+    id: "event_gap_options_hedge_research_boundary",
+    userMessage:
+      "财报、FOMC 或 CPI 前，如果用户问能不能对冲 NVDA/QQQ 的隔夜跳空风险，训练本地大脑先拆 event risk、options IV/skew/gamma、流动性、仓位风险、失效条件和数据缺口；不要推荐具体期权合约、仓位比例或交易。",
+    sourceSummary:
+      "event-gap and options-hedge research preflight requiring IV/skew/gamma, liquidity, position risk, invalidation, and no contract recommendation.",
+  },
+  {
+    id: "trade_journal_post_mortem_learning",
+    userMessage:
+      "训练本地大脑做高级交易员式复盘：用户因为新闻追高亏损时，必须区分错误前提、证据不足、仓位过大、流动性误判、技术面误用、风险门缺失和事后诸葛亮偏差，沉淀成可复用规则；不要把复盘变成下一笔交易建议。",
+    sourceSummary:
+      "trade-journal post-mortem learning request requiring mistake-family classification, risk-control lesson, reusable rule, and no next-trade advice.",
+  },
+  {
+    id: "external_source_missing",
+    userMessage: "去学习这篇金融论文并沉淀成规则，但我还没给链接或本地文件。",
+    sourceSummary: "external learning request without URL or local path.",
+  },
+  {
+    id: "coverage_honesty",
+    userMessage:
+      "从 Google Scholar、SSRN 和 NBER 学一批前沿量化论文，但要标清实际读过哪些材料，不要说全覆盖。",
+    sourceSummary: "scholarly learning request that must not claim exhaustive coverage.",
+  },
+  {
+    id: "context_reset",
+    userMessage: "清除上下文，换个题，从头开始。",
+    sourceSummary: "fresh-start request; reject old Lark history.",
+  },
+  {
+    id: "ambiguous_repeat",
+    userMessage: "重新来一遍。",
+    sourceSummary: "ambiguous repeat without current subject.",
+  },
+  {
+    id: "lark_context_pollution",
+    userMessage: "它刚才又像串到旧任务了，先审计是不是 Lark 上下文污染，不要继续金融分析。",
+    sourceSummary: "ops audit request; not a finance research task.",
+  },
+  {
+    id: "single_company_portfolio_transmission",
+    userMessage:
+      "只研究 NVDA 基本面风险：AI capex、收入质量、估值、客户集中度、对科技仓的传导，不要给买卖建议。",
+    sourceSummary: "single-company fundamentals with portfolio transmission.",
+  },
+  {
+    id: "factor_timing_overfit_guard",
+    userMessage: "学一个因子择时策略，但不要给我回测神话，要说过拟合、样本外和失效条件。",
+    sourceSummary: "factor timing learning with overfit and out-of-sample discipline.",
+  },
+  {
+    id: "source_grounding_audit",
+    userMessage:
+      "你刚才纳斯达克那句话哪来的，给我 artifact、source 或 receipt，没有就标 unverified。",
+    sourceSummary: "claim grounding audit before visible answer.",
+  },
+  {
+    id: "local_math_then_review",
+    userMessage:
+      "如果本地数学模块算出来一个组合风险结论，再让三个大模型审阅，最后给我一个能看的回答。",
+    sourceSummary: "local calculation plus model review orchestration request.",
+  },
+  {
+    id: "human_brain_finance_decomposition",
+    userMessage:
+      "教本地大脑像正常人类分析师一样拆分复杂金融任务：先理解目标，再调本地记忆和已学规则，再按宏观、流动性、基本面、数学、风险门和审阅拆步骤，不要直接给交易建议。",
+    sourceSummary:
+      "teach local brain human-like complex finance task decomposition with memory activation and review handoff.",
+  },
+  {
+    id: "cross_market_us_a_index_crypto",
+    userMessage:
+      "未来我会同时看美股、A股、指数和加密币。请训练本地大脑做连贯分析：先动用本地记忆和已学规则，再拆宏观利率、美元/人民币流动性、美股市场结构、A股政策资金面、指数权重和趋势、加密币流动性和风险门；research-only，不要交易建议。",
+    sourceSummary:
+      "cross-market finance planning across US equities, China A-shares, global indices, crypto, FX/liquidity, quant checks, memory recall, and review handoff.",
+  },
+  {
+    id: "daily_learning_automation",
+    userMessage: "这些学习和复盘应该每次对话都自动发生，不要等我每天手动下命令。",
+    sourceSummary: "automation loop planning without external channel sender changes.",
+  },
+  {
+    id: "agent_skill_distillation_open_source",
+    userMessage:
+      "帮这个本地 agent 结构学习网上开源的 SKILL.md 工作流和本地已有 skills：先找候选、隔离审计、沉淀成可复用技能和本地大脑训练样本，不要改 provider config、external channel sender 或 protected memory。",
+    sourceSummary:
+      "agent-skill distillation request requiring source review, isolated local skill install, eval harness, and protected-memory guardrails.",
+  },
+  {
+    id: "anthropic_financial_agent_pattern_distillation",
+    userMessage:
+      "Anthropic 上传了几个金融 agent：market researcher、earnings reviewer、model builder、valuation reviewer、wealth management workflow。请训练本地大脑学习它们的架构哲学：workflow owner 负责端到端目标，orchestrator 拆任务，leaf worker 只做窄任务，handoff contract 约束交接，tool permission boundary 限制工具权限，untrusted-source 隔离外部资料，cite every number，artifact QC gate sequence，human signoff checkpoint，最后输出人话 control-room summary。不要改 provider config、external channel sender，不要假设我们有企业 MCP，不要变成交易执行。",
+    sourceSummary:
+      "Anthropic financial-services agent architecture learning request requiring pinned source review, reusable workflow-owner/orchestrator/leaf-worker distillation, handoff contract, tool-boundary map, QC sequence, visible summary, and research-only/no-live-change boundaries.",
+  },
+  {
+    id: "external_knowledge_internalization_protocol",
+    userMessage:
+      "未来本地大脑碰到论文和 GitHub/HuggingFace 开源项目，要怎么思考和内化？请给统一协议：source registry、实际阅读范围、license/write scope、安全和 prompt-injection 审计、复现或样本外验证、能力卡、retrieval receipt、apply validation、Qwen/local-brain eval 吸收、fresh adjacent task、keep/downrank/discard 决策都要有；不能直接说已经学会。",
+    sourceSummary:
+      "unified paper and open-source project internalization protocol requiring source, license, security, validation, capability, retrieval, application, eval absorption, and keep/downrank/discard decisions.",
+  },
+  {
+    id: "all_module_knowledge_internalization_chain",
+    userMessage:
+      "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 等模块也要走同一条网上学习内化链条：先确认目标模块和 prior-art，再做 source registry、实际阅读范围、模块专属能力规则、retrieval receipt、apply validation、Qwen/local-brain eval 或训练吸收、fresh adjacent task、module_learning_pipeline_review 状态、模块安全边界和 keep/downrank/discard；不能把“存了文件”或 plan receipt 说成“模块学会了”。",
+    sourceSummary:
+      "all-module internalization chain request requiring source registry, module-specific capability rule, retrieval/apply proof, eval absorption, fresh adjacent task, module-learning review status, and no storage-only or plan-only learning claim.",
+  },
+  {
+    id: "abstraction_transfer_repair_protocol",
+    userMessage:
+      "训练本地大脑具备人类抽象能力：我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。必须抽象成问题族，并留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof；还要证明简单前置题和相邻非同类题都能过。",
+    sourceSummary:
+      "abstraction-transfer repair protocol requiring original example, failure family, adjacent transfer case, shared contract, and regression proof.",
+  },
+  {
+    id: "finance_skill_curriculum_bridge",
+    userMessage:
+      "把可学的 agent skills 转成金融研究大脑课程：美股、A股、指数、加密币都能用，但只教任务拆解、证据审计、风险门和审阅流程，不教交易执行。",
+    sourceSummary:
+      "turn general agent skills into a research-only finance brain curriculum across US equities, A-shares, indices, and crypto.",
+  },
+  {
+    id: "paper_learning_internalization_absorption",
+    userMessage:
+      "学习 arxiv.org/abs/2601.17021 这篇组合管理论文，把 regret-guided allocation、sentiment filter 和 LLM hedging 沉淀成本地大脑可复用规则；必须确认 source artifact、capability card、retrieval receipt、apply validation，并判断是否需要加入 Qwen/local-brain eval。research-only，不要交易建议。",
+    sourceSummary:
+      "sourced arXiv portfolio-management paper learning request requiring source registry, actual reading scope, capability retention, retrieval/apply proof, training or eval absorption evidence, and overfit/sample-out boundaries.",
+  },
+  {
+    id: "current_market_data_freshness_boundary",
+    userMessage:
+      "今天 QQQ、TLT、NVDA 和美元流动性最新怎么看？我没有给实时行情源，先拆内部模块和数据缺口，不要装作已经拿到实时数据，也不要给交易建议。",
+    sourceSummary:
+      "fresh current-market request without supplied real-time source; mark current market claims unverified and require timestamped data.",
+  },
+  {
+    id: "factor_backtest_overfit_guard",
+    userMessage:
+      "我想学一个 ETF 因子择时策略，但不要回测神话。先拆成研究假设、过拟合检查、幸存者偏差、样本外验证、失效条件和风险门；research-only。",
+    sourceSummary:
+      "factor timing strategy learning request requiring overfit, survivor-bias, sample-out, invalidation, and no trade advice.",
+  },
+  {
+    id: "crypto_high_leverage_research_boundary",
+    userMessage:
+      "BTC 如果突破关键位置能不能 20x 开多？不要执行，训练本地大脑把这种加密币高杠杆请求降级成 research-only 风险分析，只能当风险偏好和流动性输入。",
+    sourceSummary:
+      "crypto high-leverage prompt that must reject execution and high leverage while preserving market-structure analysis.",
+  },
+  {
+    id: "sentiment_market_external_module_learning",
+    userMessage:
+      "如果我找到一个 GitHub 开源项目，专门分析新闻情绪和股市、指数、BTC 的关系，怎么把它加入现在的本地大脑模式？先做 source、license、验证集、样本外和 eval 设计，不要把情绪当独立 alpha。",
+    sourceSummary:
+      "external sentiment-market module learning request requiring source/license isolation, validation design, sample-out checks, and local-brain eval gate.",
+  },
+  {
+    id: "company_filing_missing_evidence_gate",
+    userMessage:
+      "分析 NVDA 最新财报和指引，但我没有给 10-Q、10-K、earnings release 或来源。先拆模块，明确缺哪些原始证据，不要编财报细节，不要给交易建议。",
+    sourceSummary:
+      "company fundamentals request missing filing or earnings source; require source registry and refuse unverified filing claims.",
+  },
+  {
+    id: "technical_timing_not_standalone_alpha",
+    userMessage:
+      "只看技术面能不能判断 QQQ 入场？训练本地大脑把技术面当 timing context，而不是独立 alpha：必须先要价格、成交量、breadth、宏观流动性和风险门，不要给买卖点。",
+    sourceSummary:
+      "technical timing prompt that must not promote chart patterns into standalone alpha or trade recommendation.",
+  },
+];
+
+function usage(): never {
+  throw new Error(
+    [
+      "Usage: node --import tsx scripts/operator/minimax-brain-teacher-batch.ts [--write] [--json] [--mock] [--limit N] [--agent-dir DIR] [--direct-api] [--prompt-file FILE] [--concurrency N]",
+      "",
+      "Uses MiniMax M2.7 as a teacher to produce reviewed brain-distillation samples.",
+      "Requires MINIMAX_API_KEY unless --mock is used.",
+    ].join("\n"),
+  );
+}
+
+function readValue(args: string[], index: number): string {
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    usage();
+  }
+  return value;
+}
+
+function readPositiveInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    usage();
+  }
+  return parsed;
+}
+
+function parseArgs(args: string[]): CliOptions {
+  const options: CliOptions = {
+    workspaceDir: DEFAULT_WORKSPACE,
+    write: false,
+    json: false,
+    mock: false,
+    model: DEFAULT_MODEL,
+    baseUrl: DEFAULT_BASE_URL,
+    apiKey: process.env.MINIMAX_API_KEY?.trim() || undefined,
+    agentDir: resolveOpenClawAgentDir(),
+    source: "openclaw-agent",
+    openclawAgent: "research-minimax",
+    timeoutSeconds: 600,
+    limit: TEACHER_PROMPTS.length,
+    allowPartialWrite: false,
+    retries: 1,
+    includePayloadUnstablePrompts: false,
+    concurrency: 1,
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--workspace") {
+      options.workspaceDir = readValue(args, index);
+      index += 1;
+    } else if (arg === "--agent-dir") {
+      options.agentDir = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--write") {
+      options.write = true;
+    } else if (arg === "--json") {
+      options.json = true;
+    } else if (arg === "--mock") {
+      options.mock = true;
+    } else if (arg === "--model") {
+      options.model = readValue(args, index);
+      index += 1;
+    } else if (arg === "--direct-api") {
+      options.source = "direct-api";
+    } else if (arg === "--openclaw-agent") {
+      options.openclawAgent = readValue(args, index);
+      index += 1;
+    } else if (arg === "--timeout") {
+      options.timeoutSeconds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--base-url") {
+      options.baseUrl = readValue(args, index).replace(/\/+$/u, "");
+      index += 1;
+    } else if (arg === "--limit") {
+      options.limit = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--allow-partial-write") {
+      options.allowPartialWrite = true;
+    } else if (arg === "--retries") {
+      options.retries = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (
+      arg === "--include-unstable-short-prompts" ||
+      arg === "--include-payload-unstable-prompts"
+    ) {
+      options.includePayloadUnstablePrompts = true;
+    } else if (arg === "--prompt-file") {
+      options.promptFile = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--concurrency") {
+      options.concurrency = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--help" || arg === "-h") {
+      usage();
+    } else {
+      usage();
+    }
+  }
+  options.workspaceDir = path.resolve(options.workspaceDir);
+  return options;
+}
+
+export function buildTeacherSystemPrompt(): string {
+  return [
+    "You are MiniMax M2.7 acting as LCX Agent's teacher for local brain distillation.",
+    "Return one strict JSON object and no prose.",
+    "Return compact machine-parseable JSON only: no markdown fences, no comments, no trailing commas, no ellipses, no placeholders.",
+    "Use double-quoted JSON strings and put a comma between every object property and every array item.",
+    "Keep task_family as concise snake_case, keep next_step under 160 characters, and never copy the full user prompt into JSON values.",
+    "Keep primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, and rejected_context to the smallest useful arrays; prefer 3-5 items per array and 10 total module ids across primary/supporting/required.",
+    "Do not copy or enumerate the full module taxonomy into the answer; choose only the few ids directly needed for this task.",
+    "Do not answer the finance question. Produce a planning packet for the local agent brain.",
+    "The local brain should behave like a careful human analyst: clarify the objective, recall local memory and learned rules, split the problem into causal finance layers, identify missing evidence, then hand hard reasoning to review models.",
+    "Use only these module ids:",
+    MODULE_TAXONOMY.join(", "),
+    "Required JSON keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
+    "Rules:",
+    "- research only; no execution authority",
+    "- missing source must include source_url_or_local_source_path",
+    "- missing portfolio math inputs must include position_weights_and_return_series",
+    "- ambiguous repeat must ask for current_subject_or_original_request and reject old_lark_conversation_history",
+    "- ops audit must not become finance analysis",
+    "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
+    "- fundamentals and value-investing asks must prioritize company_fundamentals_value before technical timing; require filing/source evidence, revenue quality, margin durability, free cash flow, ROIC, balance sheet, moat, management capital allocation, valuation range, margin of safety, value-trap risk, and thesis invalidation",
+    "- DCF, comps, three-statement, spreadsheet, or valuation-model asks must include financial_modeling_valuation_qc, data_provenance_quality, research_artifact_qc, source evidence, assumptions, sensitivity, and no_model_math_guessing",
+    "- thesis, catalyst, invalidation, event-calendar, post-event, or correction-note asks must include thesis_catalyst_lifecycle and red_team_invalidation_required",
+    "- current market, price, fundamental, macro, ETF, options, index-weight, vendor, or portfolio-risk numbers must include finance_data_gateway before Qwen or Lark uses them; require primary source, cross-check source, official or issuer reference when applicable, source timestamp, timezone, field definition, unit/currency, adjusted status, and conflict routing to data_provenance_quality",
+    "- vendor, field-definition, timestamp, currency, adjustment, data-source conflict, or sourced-number quality asks must include finance_data_gateway, data_provenance_quality, and source_registry",
+    "- report, spreadsheet, table, model-output, citation, or visible-summary artifact asks must include research_artifact_qc and cite_every_number_or_mark_unsourced",
+    "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
+    "- senior-trader promotion failure focus must connect current data freshness, filing evidence, NVDA capex second-order risk, breadth as timing context only, unverified macro claims, model disagreement, stale memory downrank, valuation compression, analyst report learning, post-mortems, sentiment vendor conflict, finance_data_gateway, data_provenance_quality, eval_harness_design, and review_panel",
+    "- cross-market finance must connect US equities, A-share policy/flow, index regime, crypto market structure, FX/currency liquidity, cross-asset liquidity, quant checks, and risk gates",
+    "- agent skill learning must include skill_pattern_distillation, agent_workflow_memory, source_registry, eval_harness_design, review_panel, no_protected_memory_write, no_provider_config_change, and no_external_channel_sender_change",
+    "- external financial agent frameworks such as Anthropic financial-services must be learned as reusable workflow architecture, not installed as live authority: require source repo or local clone path, source commit/version, license review, actual reading scope, workflow_owner_definition, leaf_worker_inventory, handoff_contract, tool_permission_boundary_map, untrusted-source isolation rule, citation/provenance rule, artifact QC gate sequence, human signoff checkpoint, visible_summary_contract, application validation, fresh adjacent application, and keep/downrank/discard decision",
+    "- before creating any new mechanism, check prior_art_search_terms_or_existing_artifact_paths and existing_contract_eval_skill_or_receipt_candidates, then choose reuse_extend_or_new_decision; prefer reuse or extension over a parallel V2 path",
+    "- papers and open-source project internalization must check prior related contracts/evals/skills/receipts first, classify source type, record actual_reading_scope, review license/write scope for code, run prompt-injection/security review, require replication or sample-out evidence, create capability_card_or_retrieval_receipt, run application_validation_receipt on a fresh adjacent task, add training_or_eval_absorption_evidence, run module_learning_pipeline_review, then keep, downrank, or discard",
+    "- all-module source learning must use module_learning_pipeline_plan and module_learning_pipeline_review; a plan receipt or stored source is not module absorption",
+    "- sourced paper learning must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, control_room_summary, actual_reading_scope, capability_card_or_retrieval_receipt, application_validation_receipt, training_or_eval_absorption_evidence, backtest_overfit_check_required, and sample_out_validation_required",
+    "- crypto work is research-only; include no_high_leverage_crypto and never imply execution approval",
+    "- next_step should describe a human-like sequence: clarify objective, recall memory, decompose finance layers, gather evidence, run review, then summarize",
+  ].join("\n");
+}
+
+function buildTeacherUserPayload(input: TeacherPrompt): string {
+  return [
+    "Produce the teacher JSON for this local-brain distillation input.",
+    "",
+    `user_message: ${input.userMessage}`,
+    `source_summary: ${input.sourceSummary}`,
+  ].join("\n");
+}
+
+export function buildPrompt(input: TeacherPrompt): string {
+  return [buildTeacherSystemPrompt(), buildTeacherUserPayload(input)].join("\n");
+}
+
+function isTeacherPrompt(value: unknown): value is TeacherPrompt {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Partial<Record<keyof TeacherPrompt, unknown>>;
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    typeof record.userMessage === "string" &&
+    record.userMessage.trim().length > 0 &&
+    typeof record.sourceSummary === "string" &&
+    record.sourceSummary.trim().length > 0
+  );
+}
+
+async function loadTeacherPrompts(options: CliOptions): Promise<TeacherPrompt[]> {
+  if (!options.promptFile) {
+    return TEACHER_PROMPTS;
+  }
+  const raw = await fs.readFile(options.promptFile, "utf8");
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`prompt file must contain a JSON array: ${options.promptFile}`);
+  }
+  const prompts = parsed.filter(isTeacherPrompt).map((prompt) => ({
+    id: prompt.id.trim(),
+    userMessage: prompt.userMessage.trim(),
+    sourceSummary: prompt.sourceSummary.trim(),
+  }));
+  if (prompts.length !== parsed.length || prompts.length === 0) {
+    throw new Error(`prompt file contains invalid teacher prompts: ${options.promptFile}`);
+  }
+  return prompts;
+}
+
+function runCommand(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: WORKTREE_CWD,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(`${command} ${args.join(" ")} exited ${code}\n${stderr}\n${stdout}`));
+      }
+    });
+  });
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> {
+  try {
+    return parseJsonObjectFromOutput(raw);
+  } catch {
+    throw new Error(`no JSON object found: ${raw.slice(0, 240)}`);
+  }
+}
+
+function readOpenClawAgentPayload(raw: string): string {
+  const payload = parseJsonObject(raw) as {
+    result?: { payloads?: Array<{ text?: string }> };
+  };
+  const text = payload.result?.payloads?.find((entry) => entry.text)?.text;
+  if (!text) {
+    throw new Error(`OpenClaw agent output missing payload text: ${raw.slice(0, 500)}`);
+  }
+  return text;
+}
+
+async function callMinimaxViaOpenClawAgent(
+  options: CliOptions,
+  input: TeacherPrompt,
+): Promise<TeacherCallResult> {
+  const sessionId = `minimax-teacher-${input.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const raw = await runCommand("node", [
+    "scripts/run-node.mjs",
+    "agent",
+    "--agent",
+    options.openclawAgent,
+    "--session-id",
+    sessionId,
+    "--model",
+    `minimax-portal/${options.model}`,
+    "--thinking",
+    "off",
+    "--message",
+    buildPrompt(input),
+    "--json",
+    "--timeout",
+    String(options.timeoutSeconds),
+  ]);
+  return { text: readOpenClawAgentPayload(raw) };
+}
+
+function collectStringLeaves(value: unknown, output: string[] = [], depth = 0): string[] {
+  if (depth > 5 || value == null) {
+    return output;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) {
+      output.push(trimmed);
+    }
+    return output;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectStringLeaves(entry, output, depth + 1);
+    }
+    return output;
+  }
+  if (typeof value === "object") {
+    for (const entry of Object.values(value as Record<string, unknown>)) {
+      collectStringLeaves(entry, output, depth + 1);
+    }
+  }
+  return output;
+}
+
+function containsTeacherJsonHint(value: string): boolean {
+  return (
+    value.includes("{") &&
+    /"?(task_family|primary_modules|required_tools|missing_data|risk_boundaries|next_step)"?\s*:/u.test(
+      value,
+    )
+  );
+}
+
+export function extractMiniMaxTeacherTextFromResponse(responseText: string): string {
+  const payload = JSON.parse(responseText) as DirectApiPayload;
+  const content = Array.isArray(payload.content)
+    ? (payload.content as DirectApiContentEntry[])
+    : [];
+  const preferredText = content
+    .map((entry) => entry.text?.trim())
+    .filter((entry): entry is string => Boolean(entry))
+    .join("\n")
+    .trim();
+  if (preferredText) {
+    return preferredText;
+  }
+
+  const choiceContent = (payload.choices ?? []).flatMap((choice) => [
+    choice.text,
+    choice.message?.content,
+    choice.delta?.content,
+  ]);
+  const responseShapeFallback = [
+    payload.text,
+    payload.output_text,
+    payload.message?.content,
+    ...choiceContent,
+  ]
+    .flatMap((entry) => collectStringLeaves(entry))
+    .filter(containsTeacherJsonHint)
+    .join("\n")
+    .trim();
+  if (responseShapeFallback) {
+    return responseShapeFallback;
+  }
+
+  const jsonBearingFallback = content
+    .flatMap((entry) => [
+      entry.thinking,
+      ...(Array.isArray(entry.content) ? collectStringLeaves(entry.content) : []),
+    ])
+    .filter((entry): entry is string => typeof entry === "string" && containsTeacherJsonHint(entry))
+    .join("\n")
+    .trim();
+  if (jsonBearingFallback) {
+    return jsonBearingFallback;
+  }
+
+  const allStrings = collectStringLeaves(content).join("\n").trim();
+  throw new Error(
+    `MiniMax teacher response missing text content: ${allStrings.slice(0, 500) || responseText.slice(0, 500)}`,
+  );
+}
+
+function extractMiniMaxTeacherUsageFromResponse(responseText: string): unknown {
+  try {
+    const payload = JSON.parse(responseText) as DirectApiPayload;
+    return payload.usage;
+  } catch {
+    return undefined;
+  }
+}
+
+async function callMinimaxDirectApi(
+  options: CliOptions,
+  input: TeacherPrompt,
+): Promise<TeacherCallResult> {
+  let apiKey = options.apiKey;
+  if (!apiKey) {
+    const cfg = loadConfig();
+    for (const provider of ["minimax", "minimax-portal"] as const) {
+      const resolved = await resolveApiKeyForProvider({
+        provider,
+        cfg,
+        agentDir: options.agentDir,
+      }).catch(() => ({ apiKey: undefined }));
+      if (resolved.apiKey) {
+        apiKey = resolved.apiKey;
+        break;
+      }
+    }
+  }
+  if (!apiKey) {
+    throw new Error(
+      `No MiniMax credential resolved for agentDir ${options.agentDir}. Checked minimax and minimax-portal. Use --mock for smoke.`,
+    );
+  }
+  const response = await fetch(`${options.baseUrl}/v1/messages`, {
+    method: "POST",
+    signal: AbortSignal.timeout(options.timeoutSeconds * 1000),
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: options.model,
+      max_tokens: 4096,
+      thinking: { type: "disabled" },
+      system: buildTeacherSystemPrompt(),
+      messages: [{ role: "user", content: buildTeacherUserPayload(input) }],
+    }),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`MiniMax teacher call failed ${response.status}: ${text.slice(0, 500)}`);
+  }
+  return {
+    text: extractMiniMaxTeacherTextFromResponse(text),
+    usage: extractMiniMaxTeacherUsageFromResponse(text),
+  };
+}
+
+async function callMinimaxTeacher(
+  options: CliOptions,
+  input: TeacherPrompt,
+): Promise<TeacherCallResult> {
+  return options.source === "openclaw-agent"
+    ? callMinimaxViaOpenClawAgent(options, input)
+    : callMinimaxDirectApi(options, input);
+}
+
+function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
+  const text = `${input.userMessage}\n${input.sourceSummary}`;
+  if (/重新来一遍/u.test(text)) {
+    return {
+      task_family: "ambiguous_repeat_without_current_subject",
+      primary_modules: ["control_room_summary"],
+      supporting_modules: ["ops_audit"],
+      required_tools: ["review_panel"],
+      missing_data: ["current_subject_or_original_request"],
+      risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
+      next_step: "ask_user_for_current_subject_before_reusing_prior_context",
+      rejected_context: ["old_lark_conversation_history"],
+    };
+  }
+  if (/上下文|污染|ops audit/u.test(text)) {
+    return {
+      task_family: "lark_context_pollution_audit",
+      primary_modules: ["ops_audit"],
+      supporting_modules: ["control_room_summary", "review_panel"],
+      required_tools: ["lark_loop_diagnose", "sessions_history", "review_panel"],
+      missing_data: ["fresh_lark_message_id_or_visible_reply_text"],
+      risk_boundaries: ["no_execution_authority", "evidence_required"],
+      next_step: "inspect_lark_session_store_and_candidate_replay_before_claiming_live_fixed",
+      rejected_context: ["old_lark_conversation_history"],
+    };
+  }
+  if (
+    /(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository).{0,80}(金融|financial|finance|equity research|investment banking|wealth management|market researcher|earnings reviewer|model builder|valuation reviewer).{0,80}(agent|agents|智能体|插件|plugins?|workflow|工作流)/iu.test(
+      text,
+    ) ||
+    /(金融|financial|finance).{0,40}(agent|agents|智能体|插件|plugins?|workflow|工作流).{0,80}(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository)/iu.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "external_financial_agent_pattern_distillation",
+      primary_modules: [
+        "finance_learning_memory",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: ["causal_map", "quant_math", "technical_timing"],
+      required_tools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "license_and_write_scope_review",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "source_repo_url_or_local_clone_path",
+        "source_commit_or_version",
+        "license_and_write_scope_review",
+        "actual_reading_scope",
+        "agent_pattern_inventory",
+        "workflow_owner_definition",
+        "leaf_worker_inventory",
+        "handoff_contract",
+        "orchestrator_leaf_tool_boundary_map",
+        "tool_permission_boundary_map",
+        "untrusted_source_isolation_rule",
+        "citation_and_provenance_rule",
+        "artifact_qc_gate_mapping",
+        "artifact_qc_gate_sequence",
+        "human_signoff_checkpoint",
+        "visible_summary_contract",
+        "application_validation_receipt",
+        "fresh_adjacent_application_task",
+        "keep_downrank_or_discard_decision",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_source",
+        "evaluate_before_installing",
+        "no_enterprise_mcp_assumption",
+        "no_provider_config_change",
+        "no_external_channel_sender_change",
+        "no_protected_memory_write",
+        "no_distribution_or_publication",
+        "cite_every_number_or_mark_unsourced",
+        "human_review_required_before_external_use",
+        "no_hidden_tool_authority",
+        "no_direct_external_agent_install",
+        "no_trade_advice",
+      ],
+      next_step:
+        "read_source_at_pinned_commit_then_distill_workflow_owner_leaf_workers_handoff_contract_tool_boundaries_untrusted_source_isolation_qc_sequence_human_signoff_and_visible_summary_before_claiming_helpful",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "install_enterprise_mcp_without_credentials",
+        "direct_install_external_agent_without_isolation",
+        "single_agent_chat_role_without_workflow_contract",
+        "copy_external_agent_as_trade_recommendation_engine",
+        "publication_or_distribution_without_review",
+        "model_internal_learning_claim_without_training_eval_evidence",
+      ],
+    };
+  }
+  if (
+    /skill|skills|skill\.md|agent skill|本地 agent|本地agent|金融agent|金融 agent|financial agent|agent plugins?|managed agents?|智能体插件|技能|工作流|harness|hermes/u.test(
+      text,
+    ) &&
+    !(
+      /(论文|paper|preprint|arxiv|ssrn|nber)/iu.test(text) &&
+      /(开源项目|github|repo|repository|hugging ?face|代码|code|skill|skills|open[- ]?source)/iu.test(
+        text,
+      )
+    )
+  ) {
+    return {
+      task_family: "agent_skill_pattern_distillation",
+      primary_modules: [
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "source_registry",
+        "review_panel",
+      ],
+      supporting_modules: [
+        "eval_harness_design",
+        "control_room_summary",
+        "finance_learning_memory",
+      ],
+      required_tools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "candidate_skill_source_or_local_skill_path",
+        "target_workflow_acceptance_metric",
+        "license_and_write_scope_review",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_skill",
+        "evaluate_before_installing",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_external_channel_sender_change",
+        "no_trading_execution_skill",
+      ],
+      next_step:
+        "collect_candidate_skill_sources_review_license_and_write_scope_then_distill_safe_workflow_into_local_skill_and_eval_case",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "cloud_skill_sharing_by_default",
+        "market_alpha_claim_without_source",
+      ],
+    };
+  }
+  if (
+    /(论文|paper|preprint|arxiv|ssrn|nber)/iu.test(text) &&
+    /(开源项目|github|repo|repository|hugging ?face|代码|code|skill|skills|open[- ]?source)/iu.test(
+      text,
+    ) &&
+    /(内化|吸收|学进去|学习|沉淀|变成能力|可复用|协议|怎么思考|internali[sz]e|absorb|distill|learn)/iu.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "external_knowledge_internalization_protocol",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "skill_pattern_distillation",
+        "agent_workflow_memory",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["causal_map", "portfolio_risk_gates", "quant_math"],
+      required_tools: [
+        "source_registry_lookup",
+        "finance_learning_pipeline_orchestrator",
+        "skill_harvester",
+        "license_and_write_scope_review",
+        "skill_isolation_review",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "prior_art_search_terms_or_existing_artifact_paths",
+        "existing_contract_eval_skill_or_receipt_candidates",
+        "reuse_extend_or_new_decision",
+        "source_url_or_local_source_path",
+        "actual_reading_scope",
+        "license_and_write_scope_review",
+        "prompt_injection_and_security_review",
+        "replication_or_sample_out_evidence",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "fresh_adjacent_application_task",
+        "keep_downrank_or_discard_decision",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_source",
+        "evaluate_before_installing",
+        "do_not_create_parallel_protocol_before_prior_art_check",
+        "prefer_reuse_over_duplicate_pipeline",
+        "no_model_internal_learning_claim_without_eval",
+        "no_protected_memory_write",
+        "no_provider_config_change",
+        "no_external_channel_sender_change",
+        "no_doctrine_mutation",
+        "sample_out_validation_required",
+        "no_trade_advice",
+      ],
+      next_step:
+        "check_prior_art_then_classify_source_reuse_or_extend_existing_path_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "new_parallel_protocol_without_prior_art_check",
+        "unverified_paper_summary",
+        "untrusted_external_skill",
+        "model_internal_learning_claim_without_training_eval_evidence",
+        "cloud_skill_sharing_by_default",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+  if (/arxiv|论文|paper|preprint|capability card|retrieval receipt|apply validation/u.test(text)) {
+    return {
+      task_family: "paper_learning_internalization_planning",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["etf_regime", "quant_math", "eval_harness_design"],
+      required_tools: [
+        "finance_learning_pipeline_orchestrator",
+        "finance_article_source_collection_preflight",
+        "finance_article_source_registry_record",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "review_panel",
+      ],
+      missing_data: [
+        "actual_reading_scope",
+        "source_artifact_path",
+        "capability_card_or_retrieval_receipt",
+        "application_validation_receipt",
+        "training_or_eval_absorption_evidence",
+        "replication_or_sample_out_evidence",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_trade_advice",
+        "no_doctrine_mutation",
+        "no_model_internal_learning_claim_without_eval",
+        "backtest_overfit_check_required",
+        "sample_out_validation_required",
+      ],
+      next_step:
+        "verify_source_registry_and_reading_scope_then_attach_capability_run_apply_validation_and_add_eval_or_training_absorption_case",
+      rejected_context: [
+        "unverified_paper_summary",
+        "paper_backtest_as_trade_rule",
+        "model_internal_learning_claim_without_training_eval_evidence",
+        "old_lark_conversation_history",
+      ],
+    };
+  }
+  if (
+    (/(今天|最新|实时|当前行情|当前市场|real[- ]?time|latest)/u.test(text) ||
+      /现在.{0,16}(怎么看|走势|涨跌|价格|行情|market|price)/u.test(text)) &&
+    !/没有给.*(10-Q|10-K|earnings|来源)|没有.*(10-Q|10-K|earnings release|来源)|没给.*财报|缺.*财报/u.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "current_market_data_research_preflight",
+      primary_modules: [
+        "source_registry",
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "etf_regime",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "source_registry_lookup",
+        "fresh_market_data_collection_preflight",
+        "artifact_memory_recall",
+        "review_panel",
+      ],
+      missing_data: [
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "memory_recall_scope_or_relevant_receipts",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_current_market_data",
+        "no_trade_advice",
+      ],
+      next_step:
+        "mark_current_market_claims_unverified_until_source_timestamp_and_fresh_data_snapshot_are_available_then_run_review",
+      rejected_context: ["unverified_current_market_claim", "old_lark_conversation_history"],
+    };
+  }
+  if (
+    /因子|factor|择时|timing|策略|strategy|signal|alpha|回测|backtest/u.test(text) &&
+    /过拟合|overfit|样本外|survivor|幸存者|回测神话|backtest/u.test(text) &&
+    !/情绪|sentiment|新闻情绪|舆情/u.test(text)
+  ) {
+    return {
+      task_family: "factor_timing_overfit_resistant_learning",
+      primary_modules: [
+        "quant_math",
+        "finance_learning_memory",
+        "source_registry",
+        "portfolio_risk_gates",
+        "review_panel",
+      ],
+      supporting_modules: ["causal_map", "etf_regime", "control_room_summary"],
+      required_tools: [
+        "finance_learning_pipeline_orchestrator",
+        "source_registry_lookup",
+        "quant_math",
+        "review_panel",
+      ],
+      missing_data: [
+        "strategy_source_or_research_note",
+        "sample_out_validation_plan",
+        "survivor_bias_and_lookahead_bias_check",
+        "walk_forward_or_cross_validation_evidence",
+        "failure_regime_and_invalidation_condition",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_trade_advice",
+        "backtest_overfit_check_required",
+        "sample_out_validation_required",
+        "survivor_bias_check_required",
+      ],
+      next_step:
+        "convert_strategy_into_hypothesis_with_bias_checks_sample_out_plan_failure_regime_and_review_before_any_reusable_rule",
+      rejected_context: ["old_lark_conversation_history", "backtest_as_profit_claim"],
+    };
+  }
+  if (/高杠杆|20x|50x|100x|leverage|开多|开空|下单|爆仓/u.test(text)) {
+    return {
+      task_family: "crypto_leverage_research_boundary",
+      primary_modules: [
+        "crypto_market_structure",
+        "cross_asset_liquidity",
+        "portfolio_risk_gates",
+        "review_panel",
+      ],
+      supporting_modules: ["finance_learning_memory", "source_registry", "control_room_summary"],
+      required_tools: [
+        "finance_learning_capability_apply",
+        "finance_framework_core_inspect",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "position_weights_and_risk_limits",
+        "liquidation_and_leverage_exposure_map",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_high_leverage_crypto",
+        "no_trade_advice",
+        "risk_gate_before_action_language",
+      ],
+      next_step:
+        "reject_execution_or_high_leverage_language_then_analyze_crypto_as_risk_sentiment_and_liquidity_input_only",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "execution_or_high_leverage_crypto_instruction",
+      ],
+    };
+  }
+  if (/情绪|sentiment|新闻情绪|舆情/u.test(text)) {
+    return {
+      task_family: "sentiment_market_module_learning_preflight",
+      primary_modules: [
+        "finance_learning_memory",
+        "source_registry",
+        "causal_map",
+        "quant_math",
+        "eval_harness_design",
+        "review_panel",
+      ],
+      supporting_modules: [
+        "us_equity_market_structure",
+        "global_index_regime",
+        "crypto_market_structure",
+        "portfolio_risk_gates",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "skill_harvester",
+        "source_registry_lookup",
+        "license_and_write_scope_review",
+        "finance_learning_capability_apply",
+        "local_brain_eval",
+        "review_panel",
+      ],
+      missing_data: [
+        "candidate_repo_url_or_local_source_path",
+        "license_and_write_scope_review",
+        "sentiment_data_source_and_timestamp_policy",
+        "validation_dataset_and_sample_out_plan",
+        "integration_acceptance_metric",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "untrusted_external_source",
+        "backtest_overfit_check_required",
+        "sample_out_validation_required",
+        "sentiment_signal_not_standalone_alpha",
+        "no_trade_advice",
+      ],
+      next_step:
+        "review_repo_license_data_sources_and_validation_plan_then_distill_sentiment_as_one_evidence_layer_with_eval_gate",
+      rejected_context: ["old_lark_conversation_history", "sentiment_as_standalone_trade_signal"],
+    };
+  }
+  if (
+    /没有给.*(10-Q|10-K|earnings|来源)|没有.*(10-Q|10-K|earnings release|来源)|没给.*财报|缺.*财报/u.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "company_filing_missing_evidence_preflight",
+      primary_modules: ["company_fundamentals_value", "source_registry", "portfolio_risk_gates"],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "finance_framework_company_fundamentals_value_producer",
+        "source_registry_lookup",
+        "review_panel",
+      ],
+      missing_data: [
+        "latest_10q_10k_or_earnings_release",
+        "guidance_revision_margin_revenue_and_valuation_inputs",
+        "source_timestamp_and_vendor",
+        "portfolio_exposure_context_if_relevant",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_filing_claims",
+        "no_trade_advice",
+      ],
+      next_step:
+        "request_or_collect_filing_source_before_stating_fundamental_claims_then_route_to_review_panel",
+      rejected_context: ["old_lark_conversation_history", "unverified_filing_summary"],
+    };
+  }
+  if (/技术面|technical|均线|rsi|macd|成交量|breadth|动量|momentum/u.test(text)) {
+    return {
+      task_family: "technical_timing_not_standalone_alpha",
+      primary_modules: [
+        "etf_regime",
+        "us_equity_market_structure",
+        "quant_math",
+        "portfolio_risk_gates",
+        "review_panel",
+      ],
+      supporting_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "causal_map",
+        "finance_learning_memory",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "finance_framework_etf_regime_producer",
+        "finance_learning_capability_apply",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "price_volume_breadth_and_technical_regime_inputs",
+        "macro_liquidity_context_inputs",
+        "position_weights_and_risk_limits",
+        "invalidation_condition_for_timing_signal",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "technical_timing_not_standalone_alpha",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step:
+        "use_technical_inputs_only_for_timing_context_after_macro_liquidity_and_risk_gate_review",
+      rejected_context: ["old_lark_conversation_history", "single_factor_technical_story"],
+    };
+  }
+  if (
+    /promotion|失败族|没过|未过|candidate|当前行情新鲜度|二阶传导|vendor 冲突|senior.trader|高级交易员/iu.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "senior_trader_failure_focus_promotion_chain",
+      primary_modules: [
+        "source_registry",
+        "finance_data_gateway",
+        "data_provenance_quality",
+        "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "macro_rates_inflation",
+        "credit_liquidity",
+      ],
+      supporting_modules: [
+        "us_equity_market_structure",
+        "etf_regime",
+        "technical_timing",
+        "quant_math",
+        "finance_learning_memory",
+        "causal_map",
+      ],
+      required_tools: [
+        "portfolio_risk_gates",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      missing_data: [
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "latest_company_fundamental_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "price_volume_breadth_and_technical_regime_inputs",
+        "memory_recall_scope_or_relevant_receipts",
+        "validation_dataset_and_sample_out_plan",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_unverified_current_market_data",
+        "no_unverified_filing_claims",
+        "technical_timing_not_standalone_alpha",
+        "do_not_promote_unverified_memory_claims",
+        "sentiment_signal_not_standalone_alpha",
+        "no_trade_advice",
+      ],
+      next_step:
+        "route_failure_family_through_source_gateway_capability_apply_eval_review_before_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "parallel_failure_pipeline",
+        "stored_source_as_learned_module",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+  if (
+    /全领域|全部金融|完整金融|金融研究.*(美股|A股|指数|ETF).*大宗商品.*期权|source registry.*review panel/u.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "all_domain_finance_research_loop",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "fx_dollar",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "etf_regime",
+        "company_fundamentals_value",
+        "financial_modeling_valuation_qc",
+        "thesis_catalyst_lifecycle",
+        "finance_data_gateway",
+        "data_provenance_quality",
+        "commodities_oil_gold",
+        "options_volatility",
+        "crypto_market_structure",
+        "technical_timing",
+        "event_driven",
+        "quant_math",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "eval_harness_design",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "finance_framework_core_inspect",
+        "quant_math",
+        "review_panel",
+      ],
+      missing_data: [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_market_data_snapshot",
+        "source_timestamp_and_vendor",
+        "data_field_definition_timestamp_and_vendor_quality_inputs",
+        "macro_rates_inflation_credit_fx_inputs",
+        "china_a_share_policy_liquidity_and_northbound_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "latest_company_fundamental_inputs",
+        "model_assumptions_sensitivity_and_audit_inputs",
+        "commodity_curve_roll_yield_and_inventory_inputs",
+        "options_iv_skew_gamma_and_event_calendar",
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "validation_dataset_and_sample_out_plan",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_model_math_guessing",
+        "no_unverified_current_market_data",
+        "cite_every_number_or_mark_unsourced",
+        "no_unverified_cross_market_claims",
+        "technical_timing_not_standalone_alpha",
+        "sentiment_signal_not_standalone_alpha",
+        "no_high_leverage_crypto",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ],
+      next_step:
+        "recall_memory_then_decompose_all_finance_layers_check_simple_prerequisites_collect_evidence_run_quant_risk_and_review",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "single_bucket_finance_routing",
+        "simple_prerequisite_skipped",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+  if (
+    /价值投资|基本面优先|value investing|intrinsic value|内在价值|安全边际|margin of safety|护城河|moat|自由现金流|roic|价值陷阱/iu.test(
+      text,
+    )
+  ) {
+    return {
+      task_family: "value_investing_fundamental_research_planning",
+      primary_modules: [
+        "company_fundamentals_value",
+        "source_registry",
+        "causal_map",
+        "portfolio_risk_gates",
+        "review_panel",
+        "control_room_summary",
+      ],
+      supporting_modules: ["finance_learning_memory", "macro_rates_inflation", "quant_math"],
+      required_tools: [
+        "finance_framework_company_fundamentals_value_producer",
+        "source_registry_lookup",
+        "finance_learning_capability_apply",
+        "review_panel",
+      ],
+      missing_data: [
+        "latest_10q_10k_or_earnings_release",
+        "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+        "moat_management_and_capital_allocation_evidence",
+        "valuation_range_and_margin_of_safety_inputs",
+        "value_trap_risks_and_thesis_invalidation_evidence",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "fundamentals_first_not_price_action_first",
+        "margin_of_safety_required",
+        "value_investing_not_trade_signal",
+        "no_unverified_filing_claims",
+        "no_trade_advice",
+      ],
+      next_step:
+        "read_source_filings_first_then_score_business_quality_cash_flow_roic_balance_sheet_moat_valuation_safety_margin_value_trap_and_invalidation",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "technical_timing_before_fundamentals",
+        "valuation_without_source_evidence",
+        "trade_recommendation_without_evidence",
+      ],
+    };
+  }
+  if (/美股|A股|a股|指数|加密|crypto|cross-market|跨市场/u.test(text)) {
+    return {
+      task_family: "cross_market_finance_research_planning",
+      primary_modules: [
+        "macro_rates_inflation",
+        "credit_liquidity",
+        "cross_asset_liquidity",
+        "fx_currency_liquidity",
+        "us_equity_market_structure",
+        "china_a_share_policy_flow",
+        "global_index_regime",
+        "crypto_market_structure",
+        "quant_math",
+        "portfolio_risk_gates",
+      ],
+      supporting_modules: [
+        "causal_map",
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ],
+      required_tools: [
+        "artifact_memory_recall",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "finance_framework_macro_rates_inflation_producer",
+        "finance_framework_credit_liquidity_producer",
+        "finance_framework_core_inspect",
+        "finance_framework_fx_dollar_producer",
+        "finance_learning_capability_apply",
+        "quant_math",
+        "finance_framework_portfolio_risk_gates_producer",
+        "review_panel",
+      ],
+      missing_data: [
+        "memory_recall_scope_or_relevant_receipts",
+        "fresh_market_data_snapshot",
+        "us_equity_breadth_earnings_and_valuation_inputs",
+        "china_a_share_policy_liquidity_and_northbound_inputs",
+        "index_constituents_weights_and_technical_regime_inputs",
+        "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+        "fx_dollar_yuan_and_global_liquidity_inputs",
+        "position_weights_and_return_series",
+        "portfolio_weights_and_risk_limits",
+      ],
+      risk_boundaries: [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "no_high_leverage_crypto",
+        "no_unverified_cross_market_claims",
+      ],
+      next_step:
+        "recall_local_finance_rules_then_build_cross_market_causal_map_collect_fresh_inputs_run_quant_and_review_before_control_room_summary",
+      rejected_context: [
+        "old_lark_conversation_history",
+        "execution_or_high_leverage_crypto_instruction",
+      ],
+    };
+  }
+  return {
+    task_family: input.id,
+    primary_modules: ["finance_learning_memory", "source_registry", "review_panel"],
+    supporting_modules: ["control_room_summary"],
+    required_tools: ["review_panel"],
+    missing_data: /没给|without|missing/u.test(text) ? ["source_url_or_local_source_path"] : [],
+    risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
+    next_step: "review_teacher_plan_before_dataset_promotion",
+    rejected_context: ["old_lark_conversation_history"],
+  };
+}
+
+function stripMarkdownJsonFence(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^```(?:json)?\s*/iu, "")
+    .replace(/\s*```$/u, "")
+    .trim();
+}
+
+function findBalancedJsonObject(raw: string): string | null {
+  const source = stripMarkdownJsonFence(raw);
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (start < 0) {
+      if (char === "{") {
+        start = index;
+        depth = 1;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, index + 1);
+      }
+    }
+  }
+  return null;
+}
+
+const TEACHER_PLAN_JSON_KEYS = [
+  "task_family",
+  "primary_modules",
+  "supporting_modules",
+  "required_tools",
+  "missing_data",
+  "risk_boundaries",
+  "next_step",
+  "rejected_context",
+] as const;
+const TEACHER_PLAN_JSON_KEY_PATTERN = TEACHER_PLAN_JSON_KEYS.join("|");
+
+function quoteKnownTeacherKey(keyWithColon: string): string {
+  return keyWithColon.replace(new RegExp(`^(${TEACHER_PLAN_JSON_KEY_PATTERN})\\s*:`, "u"), '"$1":');
+}
+
+function repairKnownUnquotedTeacherKeys(candidate: string): string {
+  return candidate.replace(
+    new RegExp(`([,{]\\s*)(${TEACHER_PLAN_JSON_KEY_PATTERN})\\s*:`, "gu"),
+    '$1"$2":',
+  );
+}
+
+function repairDuplicateCommas(candidate: string): string {
+  let repaired = "";
+  let inString = false;
+  let escaped = false;
+  let commaPending = false;
+
+  for (const char of candidate) {
+    if (escaped) {
+      repaired += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      repaired += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      repaired += char;
+      inString = !inString;
+      commaPending = false;
+      continue;
+    }
+    if (inString) {
+      repaired += char;
+      continue;
+    }
+    if (char === ",") {
+      if (!commaPending) {
+        repaired += char;
+      }
+      commaPending = true;
+      continue;
+    }
+    repaired += char;
+    if (!/\s/u.test(char)) {
+      commaPending = false;
+    }
+  }
+
+  return repaired;
+}
+
+function repairMissingCommas(candidate: string): string {
+  const keyPattern = `(?:"[A-Za-z0-9_$ -]+"|${TEACHER_PLAN_JSON_KEY_PATTERN})\\s*:`;
+  return candidate
+    .replace(new RegExp(`([}\\]"])\\s+(${keyPattern})`, "gu"), (_match, prefix, key) => {
+      return `${prefix},${quoteKnownTeacherKey(String(key))}`;
+    })
+    .replace(
+      new RegExp(`\\b(true|false|null|-?\\d+(?:\\.\\d+)?)\\s+(${keyPattern})`, "gu"),
+      (_match, prefix, key) => {
+        return `${prefix},${quoteKnownTeacherKey(String(key))}`;
+      },
+    )
+    .replace(/"\s+"/gu, '","');
+}
+
+function repairTeacherPlanJson(candidate: string): string {
+  return repairDuplicateCommas(repairKnownUnquotedTeacherKeys(repairMissingCommas(candidate)))
+    .replace(/\[\s*\.\.\.\s*\]/gu, "[]")
+    .replace(/,\s*([}\]])/gu, "$1");
+}
+
+function parseTeacherPlanCandidate(candidate: string): TeacherPlan {
+  const repaired = repairTeacherPlanJson(candidate);
+  return JSON.parse(repaired) as TeacherPlan;
+}
+
+export function extractJson(raw: string): TeacherPlan {
+  const balanced = findBalancedJsonObject(raw);
+  if (balanced) {
+    return parseTeacherPlanCandidate(balanced);
+  }
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    throw new Error(`MiniMax teacher output did not contain JSON: ${raw.slice(0, 240)}`);
+  }
+  return parseTeacherPlanCandidate(raw.slice(start, end + 1));
+}
+
+function asArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+const REQUIRED_RISK_BOUNDARIES = ["research_only", "no_execution_authority"] as const;
+const MAX_TEACHER_PRIMARY_MODULES = 8;
+const MAX_TEACHER_SUPPORTING_MODULES = 6;
+const MAX_TEACHER_REQUIRED_TOOLS = 6;
+const MAX_TEACHER_MISSING_DATA = 8;
+const MAX_TEACHER_RISK_BOUNDARIES = 6;
+const MAX_TEACHER_REJECTED_CONTEXT = 3;
+const MAX_TEACHER_NEXT_STEP_CHARS = 160;
+
+function cleanStringArray(value: unknown): string[] {
+  return [
+    ...new Set(
+      asArray(value)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function capStringArray(values: string[], maxItems: number): string[] {
+  return values.slice(0, maxItems);
+}
+
+function compactNextStep(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized.length <= MAX_TEACHER_NEXT_STEP_CHARS
+    ? normalized
+    : `${normalized.slice(0, MAX_TEACHER_NEXT_STEP_CHARS - 3)}...`;
+}
+
+const OVERCLAIMED_TOOL_PATTERN =
+  /api|feed|terminal|bloomberg|reuters|refinitiv|broker|scrap|yfinance|quandl|fred|fedwatch|cftc|finra|barra|riskmetrics|jupyter|notebook|pandas|numpy|sklearn|tensorflow|mlflow|weights|market_data|data_fetch|dashboard|parser|calculator|engine|generator|visualizer|monitor|http|www\.|\.com|internal/iu;
+
+function cleanRequiredToolArray(value: unknown): string[] {
+  return normalizeLocalBrainModuleList(
+    cleanStringArray(value).filter((entry) => !OVERCLAIMED_TOOL_PATTERN.test(entry)),
+  );
+}
+
+const OVERCLAIMED_NEXT_STEP_PATTERN =
+  /internet_search_engine|bloomberg|yahoo finance|fred|authenticated data feeds?|public data source|pull (?:latest|current|historical)|gather (?:latest|current|fresh)|fetch\b|retrieve .*data|obtain .*data|compute\b|time series regression|update finance_learning_memory|store in agent_workflow_memory|update source_registry|写入|沉淀到记忆|更新(?:finance_learning_memory|source_registry|causal_map)/iu;
+
+function nextStepOverclaims(nextStep: string): boolean {
+  return OVERCLAIMED_NEXT_STEP_PATTERN.test(nextStep);
+}
+
+function safeEvidenceFirstNextStep(reason: "source" | "quant" | "generic"): string {
+  if (reason === "source") {
+    return "Clarify the learning objective, check local memory for prior retained rules, require a source URL or local source path plus an actual reading receipt, then hand the source-gated plan to review_panel and summarize only verified reusable research rules.";
+  }
+  if (reason === "quant") {
+    return "Clarify the requested metrics, check local memory for prior templates, require position weights, return series or price history, a fresh market-data snapshot, and a review receipt, then summarize the research-only math plan without producing portfolio numbers.";
+  }
+  return "Clarify the objective, check local memory for prior retained rules, list missing source and data gaps, build the causal module checklist, hand the plan to review_panel, then summarize only verified research boundaries.";
+}
+
+function canonicalRiskBoundary(entry: string): string {
+  const normalized = entry
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (
+    normalized === "research_only_no_execution_authority" ||
+    normalized === "research_only_no_execution" ||
+    normalized === "research_only_no_trade_execution" ||
+    normalized === "research_only"
+  ) {
+    return "research_only";
+  }
+  if (
+    normalized === "no_execution_authority" ||
+    normalized === "no_live_trading_recommendations" ||
+    normalized === "no_live_trading_or_real_money_instructions" ||
+    normalized === "no_live_trading_commands" ||
+    normalized === "no_trade_execution" ||
+    normalized === "no_financial_advice"
+  ) {
+    return "no_execution_authority";
+  }
+  if (
+    normalized === "no_high_leverage_crypto_positions" ||
+    normalized === "no_high_leverage_crypto_position" ||
+    normalized === "no_high_leverage_crypto" ||
+    normalized.includes("no_high_leverage_crypto") ||
+    normalized === "no_high_leverage" ||
+    normalized === "no_leverage_on_crypto" ||
+    normalized === "no_crypto_leverage_recommendation" ||
+    normalized === "no_crypto_leverage" ||
+    normalized === "crypto_no_leverage" ||
+    normalized === "no_crypto_high_leverage" ||
+    normalized === "do_not_execute_crypto_leverage" ||
+    normalized === "no_crypto_leverage_trade_recommendation" ||
+    normalized === "no_crypto_high_leverage_trading"
+  ) {
+    return "no_high_leverage_crypto";
+  }
+  if (
+    // Backward compatibility for older teacher outputs; canonical output uses current-market wording.
+    normalized === "no_live_market_claims" ||
+    normalized === "no_live_market_claim" ||
+    normalized === "no_live_finance_advice" ||
+    normalized === "no_unverified_live_data" ||
+    normalized === "no_unverified_live_market_data_claims" ||
+    normalized === "no_unverified_current_market_claims" ||
+    normalized === "no_unverified_current_market_claim" ||
+    normalized === "no_unverified_current_market_data" ||
+    normalized === "no_unverified_current_market_data_claims"
+  ) {
+    return "no_unverified_current_market_data";
+  }
+  if (
+    normalized === "no_language_corpus_change" ||
+    normalized === "no_language_corpus_changes" ||
+    normalized === "no_language_corpus_modification" ||
+    normalized === "no_language_corpus_modify" ||
+    normalized === "no_formal_lark_routing_corpus" ||
+    normalized === "no_formal_lark_routing_corpus_change"
+  ) {
+    return "no_language_corpus_modification";
+  }
+  return normalized || entry.trim();
+}
+
+function canonicalMissingData(entry: string): string {
+  const normalized = entry
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (
+    normalized.includes("position_weights_and_return_series") ||
+    (/(^|_)position_weights?($|_)|current_position_weights|asset_position_weights|portfolio_weight/u.test(
+      normalized,
+    ) &&
+      /return_series|price_history|return_history|price_series/u.test(normalized))
+  ) {
+    return "position_weights_and_return_series";
+  }
+  return entry.trim();
+}
+
+const TEACHER_RISK_PRIORITY = [
+  "research_only",
+  "no_execution_authority",
+  "evidence_required",
+  "no_trade_advice",
+  "no_model_math_guessing",
+  "cite_every_number_or_mark_unsourced",
+  "no_unverified_cross_market_claims",
+  "no_high_leverage_crypto",
+  "risk_gate_before_action_language",
+  "no_unverified_current_market_data",
+  "fundamentals_first_not_price_action_first",
+  "margin_of_safety_required",
+  "value_investing_not_trade_signal",
+  "do_not_stop_at_original_example",
+  "no_one_off_phrase_patch",
+  "proof_required_before_claiming_transfer",
+  "no_protected_memory_write",
+  "no_provider_config_change",
+  "no_external_channel_sender_change",
+] as const;
+
+const TEACHER_MISSING_DATA_PRIORITY = [
+  "source_url_or_local_source_path",
+  "actual_reading_scope_receipt",
+  "source_repo_url_or_local_clone_path",
+  "source_commit_or_version",
+  "prior_art_search_terms_or_existing_artifact_paths",
+  "existing_contract_eval_skill_or_receipt_candidates",
+  "reuse_extend_or_new_decision",
+  "actual_reading_scope",
+  "license_and_write_scope_review",
+  "prompt_injection_and_security_review",
+  "agent_pattern_inventory",
+  "workflow_owner_definition",
+  "leaf_worker_inventory",
+  "handoff_contract",
+  "tool_permission_boundary_map",
+  "untrusted_source_isolation_rule",
+  "citation_and_provenance_rule",
+  "artifact_qc_gate_sequence",
+  "replication_or_sample_out_evidence",
+  "capability_card_or_retrieval_receipt",
+  "application_validation_receipt",
+  "training_or_eval_absorption_evidence",
+  "fresh_adjacent_application_task",
+  "module_learning_pipeline_review_status",
+  "keep_downrank_or_discard_decision",
+  "human_signoff_checkpoint",
+  "visible_summary_contract",
+  "position_weights_and_return_series",
+  "fresh_market_data_snapshot",
+] as const;
+
+function prioritizeRiskBoundaries(values: string[]): string[] {
+  const unique = [...new Set(values.map(canonicalRiskBoundary))];
+  return [
+    ...TEACHER_RISK_PRIORITY.filter((entry) => unique.includes(entry)),
+    ...unique.filter((entry) => !TEACHER_RISK_PRIORITY.includes(entry as never)),
+  ];
+}
+
+function prioritizeMissingData(values: string[]): string[] {
+  const normalized = values.map(canonicalMissingData);
+  const lowerValues = normalized.map((entry) => entry.toLowerCase());
+  const hasPositionWeights = lowerValues.some((entry) =>
+    /(^|_)position_weights?($|_)|current_position_weights|asset_position_weights|portfolio_weight/u.test(
+      entry,
+    ),
+  );
+  const hasReturnSeries = lowerValues.some((entry) =>
+    /return_series|price_history|return_history|price_series/u.test(entry),
+  );
+  const unique = [
+    ...new Set([
+      ...(hasPositionWeights && hasReturnSeries ? ["position_weights_and_return_series"] : []),
+      ...normalized,
+    ]),
+  ];
+  return [
+    ...TEACHER_MISSING_DATA_PRIORITY.filter((entry) => unique.includes(entry)),
+    ...unique.filter((entry) => !TEACHER_MISSING_DATA_PRIORITY.includes(entry as never)),
+  ];
+}
+
+export function normalizeTeacherPlan(plan: TeacherPlan): TeacherPlan {
+  const packedModules = packLocalBrainModuleFields(
+    cleanStringArray(plan.primary_modules),
+    cleanStringArray(plan.supporting_modules),
+    cleanRequiredToolArray(plan.required_tools),
+    {
+      primary: MAX_TEACHER_PRIMARY_MODULES,
+      supporting: MAX_TEACHER_SUPPORTING_MODULES,
+      requiredTools: MAX_TEACHER_REQUIRED_TOOLS,
+    },
+  );
+  const riskBoundaries = prioritizeRiskBoundaries(cleanStringArray(plan.risk_boundaries));
+  for (const boundary of REQUIRED_RISK_BOUNDARIES) {
+    if (!riskBoundaries.includes(boundary)) {
+      riskBoundaries.unshift(boundary);
+    }
+  }
+  const prioritizedRiskBoundaries = prioritizeRiskBoundaries([
+    ...REQUIRED_RISK_BOUNDARIES,
+    ...riskBoundaries,
+  ]);
+  return {
+    task_family:
+      typeof plan.task_family === "string" && plan.task_family.trim()
+        ? plan.task_family.trim()
+        : "teacher_plan_unclassified",
+    primary_modules: packedModules.primary_modules,
+    supporting_modules: packedModules.supporting_modules,
+    required_tools: packedModules.required_tools,
+    missing_data: capStringArray(
+      prioritizeMissingData(cleanStringArray(plan.missing_data)),
+      MAX_TEACHER_MISSING_DATA,
+    ),
+    risk_boundaries: capStringArray(prioritizedRiskBoundaries, MAX_TEACHER_RISK_BOUNDARIES),
+    next_step:
+      typeof plan.next_step === "string" && plan.next_step.trim()
+        ? compactNextStep(plan.next_step)
+        : "review_teacher_plan_before_dataset_promotion",
+    rejected_context: capStringArray(
+      cleanStringArray(plan.rejected_context),
+      MAX_TEACHER_REJECTED_CONTEXT,
+    ),
+  };
+}
+
+export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPlan): TeacherPlan {
+  const ask = `${input.id}\n${input.userMessage}\n${input.sourceSummary}`;
+  const primaryModules = [...plan.primary_modules];
+  const supportingModules = [...plan.supporting_modules];
+  const missingData = [...plan.missing_data];
+  const riskBoundaries = [...plan.risk_boundaries];
+  const rejectedContext = [...plan.rejected_context];
+  let taskFamily = plan.task_family;
+  let nextStep = plan.next_step;
+
+  const ensurePrimary = (modules: string[]) => {
+    for (const module of modules) {
+      if (!primaryModules.includes(module)) {
+        primaryModules.push(module);
+      }
+    }
+  };
+  const replacePrimary = (modules: string[]) => {
+    primaryModules.splice(0, primaryModules.length, ...modules);
+  };
+  const replaceSupporting = (modules: string[]) => {
+    supportingModules.splice(0, supportingModules.length, ...modules);
+  };
+  const replaceRequiredTools = (modules: string[]) => {
+    plan.required_tools.splice(0, plan.required_tools.length, ...modules);
+  };
+  const ensureMissing = (items: string[]) => {
+    for (const item of items) {
+      if (!missingData.includes(item)) {
+        missingData.push(item);
+      }
+    }
+  };
+  const ensureRisk = (items: string[]) => {
+    for (const item of items) {
+      const boundary = canonicalRiskBoundary(item);
+      if (!riskBoundaries.includes(boundary)) {
+        riskBoundaries.push(boundary);
+      }
+    }
+  };
+  const ensureRejected = (items: string[]) => {
+    for (const item of items) {
+      if (!rejectedContext.includes(item)) {
+        rejectedContext.push(item);
+      }
+    }
+  };
+
+  const isContextReset =
+    /context_reset|ambiguous_repeat|lark_context_pollution|重新来一遍|别串|旧任务|没说清楚|上下文污染|清除上下文/u.test(
+      ask,
+    );
+  const isEtfAsCompanyFundamentals =
+    /\b(GLD|QQQ|SPY|TLT|IEF|IWM|XLK|XLF|HYG|UUP)\b/iu.test(ask) &&
+    /收入质量|客户集中度|revenue quality|customer concentration|client concentration|13f holder|ev\/ebitda/iu.test(
+      ask,
+    );
+  const isQuantInputMissing =
+    /相关性|波动|回撤|收益率序列|仓位权重|权重|correlation|volatility|drawdown|return series|position weight/iu.test(
+      ask,
+    );
+  const isSourceGated =
+    /没有给 URL|没有给链接|没有给 10-Q|没有给 10-K|没有给实时行情源|缺少.{0,12}(source|来源|链接|url|filing)|missing.{0,12}(source|url|filing)|without.{0,12}(source|url|filing)|source_url_or_local_source_path|actual_reading_scope_receipt/iu.test(
+      ask,
+    );
+  const isAllDomainFinance =
+    /全领域|全部金融|完整金融|金融研究.*(美股|A股|指数|ETF).*大宗商品.*期权|source registry.*review panel/iu.test(
+      ask,
+    );
+  const isValueInvestingFundamental =
+    /价值投资|基本面优先|value investing|intrinsic value|内在价值|安全边际|margin of safety|护城河|moat|自由现金流|roic|价值陷阱/iu.test(
+      ask,
+    );
+  const isFinancialModelingValuationQc =
+    /(dcf|comps?|三表|财务模型|估值模型|敏感性|valuation model|financial model|model builder|audit[- ]?xls|spreadsheet).{0,80}(估值|valuation|假设|assumption|source|来源|qc|审计|核对)/iu.test(
+      ask,
+    ) ||
+    /(估值|valuation|假设|assumption|source|来源|qc|审计|核对).{0,80}(dcf|comps?|三表|财务模型|估值模型|敏感性|valuation model|financial model|model builder|audit[- ]?xls|spreadsheet)/iu.test(
+      ask,
+    );
+  const isThesisCatalystLifecycle =
+    /(thesis|投资论点|研究论点|催化|catalyst|失效|invalidation|post[- ]?event|事件后|correction note|反方证据).{0,80}(基本面|valuation|估值|event|事件|财报|portfolio|组合|风险|学习|沉淀)/iu.test(
+      ask,
+    ) ||
+    /(基本面|valuation|估值|event|事件|财报|portfolio|组合|风险|学习|沉淀).{0,80}(thesis|投资论点|研究论点|催化|catalyst|失效|invalidation|post[- ]?event|事件后|correction note|反方证据)/iu.test(
+      ask,
+    );
+  const isDataProvenanceQuality =
+    /provenance|vendor|供应商|字段定义|field definition|口径|时间戳|timestamp|币种|复权|adjusted|更新频率|source quality|数据质量|数据源.*质量/iu.test(
+      ask,
+    );
+  const isResearchArtifactQc =
+    /(artifact|产物|研报|报告|表格|spreadsheet|模型输出|model output|number provenance|数字来源|cite every number|citation|QC).{0,80}(金融|finance|market|估值|valuation|财报|source|来源|数字|number|模型|model|summary|总结)/iu.test(
+      ask,
+    ) ||
+    /(金融|finance|market|估值|valuation|财报|source|来源|数字|number|模型|model|summary|总结).{0,80}(artifact|产物|研报|报告|表格|spreadsheet|模型输出|model output|number provenance|数字来源|cite every number|citation|QC)/iu.test(
+      ask,
+    );
+  const isExternalFinancialAgentPattern =
+    /(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository).{0,80}(金融|financial|finance|equity research|investment banking|wealth management|market researcher|earnings reviewer|model builder|valuation reviewer).{0,80}(agent|agents|智能体|插件|plugins?|workflow|工作流)/iu.test(
+      ask,
+    ) ||
+    /(金融|financial|finance).{0,40}(agent|agents|智能体|插件|plugins?|workflow|工作流).{0,80}(anthropic|claude|github|开源|外部|上传|uploaded|repo|repository)/iu.test(
+      ask,
+    );
+  const isExternalKnowledgeInternalization =
+    /(论文|paper|preprint|arxiv|ssrn|nber)/iu.test(ask) &&
+    /(开源项目|github|repo|repository|hugging ?face|代码|code|skill|skills|open[- ]?source)/iu.test(
+      ask,
+    ) &&
+    /(内化|吸收|学进去|学习|沉淀|变成能力|可复用|协议|怎么思考|internali[sz]e|absorb|distill|learn)/iu.test(
+      ask,
+    );
+  const isAllModuleKnowledgeInternalization =
+    /(不止是因子|所有模块|全部模块|all[- ]?module|target module|目标模块).{0,120}(内化|吸收|学习|learn|internalization|source registry|retrieval receipt|apply validation)/iu.test(
+      ask,
+    ) || /(期权|指数|宏观|基本面|Lark|Feishu|记忆|ops|skill).{0,120}(同一条|内化链)/iu.test(ask);
+  const isAbstractionTransfer =
+    /(抽象能力|人类的抽象|抽象迁移|问题族|failure family|problem family|同类问题|同类接口|shared contract|共享契约|original example|regression proof|adjacent non-identical|相邻非同类)/iu.test(
+      ask,
+    );
+
+  if (isContextReset) {
+    replacePrimary(["ops_audit", "agent_workflow_memory", "control_room_summary"]);
+    replaceSupporting(["review_panel"]);
+    replaceRequiredTools([]);
+    ensureMissing(["current_subject_or_original_request"]);
+    ensureRejected(["old_lark_conversation_history", "unstated_finance_subject"]);
+    ensureRisk(["ops_audit_must_not_become_finance_analysis"]);
+    nextStep =
+      "Ask for the current subject or audit context pollution before doing any finance analysis.";
+  }
+
+  if (!isContextReset && isEtfAsCompanyFundamentals) {
+    replacePrimary([
+      "etf_regime",
+      "macro_rates_inflation",
+      "fx_currency_liquidity",
+      "cross_asset_liquidity",
+      "portfolio_risk_gates",
+      "source_registry",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    replaceSupporting([]);
+    replaceRequiredTools([]);
+    ensureMissing([
+      "fund_or_etf_prospectus_or_fact_sheet",
+      "fresh_market_data_snapshot",
+      "current_position_weights",
+    ]);
+    ensureRisk(["evidence_required", "no_unverified_current_market_data"]);
+    ensureRejected(["single_company_fundamental_labels_for_etf"]);
+    nextStep =
+      "Treat the ETF/fund as fund-structure research, require prospectus, holdings, fresh data and weights; do not infer company revenue quality.";
+  }
+
+  if (!isContextReset && isQuantInputMissing) {
+    ensurePrimary([
+      "quant_math",
+      "portfolio_risk_gates",
+      "source_registry",
+      "control_room_summary",
+    ]);
+    ensureMissing([
+      "position_weights_and_return_series",
+      "position_weights",
+      "return_series_or_price_history",
+      "fresh_market_data_snapshot",
+    ]);
+    ensureRisk(["no_model_fabricated_portfolio_math"]);
+  }
+
+  if (
+    !isContextReset &&
+    // Match older live-market phrasing as an alias, but harden to current-market output.
+    /持有|未来|一周|一个月|两周|利率|美元流动性|风险偏好|latest|最新|实时|current market|live market/iu.test(
+      ask,
+    )
+  ) {
+    ensurePrimary([
+      "macro_rates_inflation",
+      "fx_currency_liquidity",
+      "cross_asset_liquidity",
+      "portfolio_risk_gates",
+    ]);
+    ensureMissing(["fresh_market_data_snapshot", "current_position_weights"]);
+    ensureRisk(["no_unverified_current_market_data"]);
+  }
+
+  if (/language corpus|formal_lark_routing_corpus|语言语料|路由语料/iu.test(ask)) {
+    ensureRisk(["no_language_corpus_modification"]);
+  }
+
+  if (
+    // Match older live-market safety wording as an alias, but harden to current-market output.
+    /no live market claim|no live finance advice|unverified live data|current market data|timestamped market data|实时行情|实时数据|live market/iu.test(
+      ask,
+    )
+  ) {
+    ensureRisk(["no_unverified_current_market_data"]);
+  }
+
+  if (
+    !isContextReset &&
+    /美股|A股|指数和加密币|跨市场|crypto|BTC|ETH|stablecoin|加密币|稳定币/iu.test(ask)
+  ) {
+    ensurePrimary([
+      "us_equity_market_structure",
+      "china_a_share_policy_flow",
+      "global_index_regime",
+      "crypto_market_structure",
+      "fx_currency_liquidity",
+      "cross_asset_liquidity",
+      "portfolio_risk_gates",
+    ]);
+    ensureMissing([
+      "fresh_market_data_snapshot",
+      "cross_asset_liquidity_inputs",
+      "position_weights_and_return_series",
+    ]);
+    ensureRisk(["no_high_leverage_crypto", "no_unverified_cross_market_claims"]);
+  }
+
+  if (
+    !isContextReset &&
+    (primaryModules.includes("crypto_market_structure") ||
+      supportingModules.includes("crypto_market_structure") ||
+      /crypto|BTC|ETH|stablecoin|加密币|稳定币/iu.test(ask))
+  ) {
+    ensureRisk(["no_high_leverage_crypto"]);
+  }
+
+  if (isSourceGated) {
+    ensurePrimary(["source_registry", "review_panel"]);
+    ensureMissing(["source_url_or_local_source_path", "actual_reading_scope_receipt"]);
+    ensureRisk(["evidence_required"]);
+  }
+
+  if (!isContextReset && isAllDomainFinance) {
+    replacePrimary([
+      "macro_rates_inflation",
+      "credit_liquidity",
+      "fx_currency_liquidity",
+      "us_equity_market_structure",
+      "china_a_share_policy_flow",
+      "global_index_regime",
+      "etf_regime",
+      "company_fundamentals_value",
+      "commodities_oil_gold",
+      "options_volatility",
+      "crypto_market_structure",
+      "quant_math",
+      "portfolio_risk_gates",
+      "finance_learning_memory",
+      "source_registry",
+      "review_panel",
+      "financial_modeling_valuation_qc",
+      "thesis_catalyst_lifecycle",
+      "data_provenance_quality",
+      "research_artifact_qc",
+    ]);
+    replaceSupporting([]);
+    replaceRequiredTools([]);
+    ensureMissing([
+      "memory_recall_scope_or_relevant_receipts",
+      "fresh_market_data_snapshot",
+      "source_timestamp_and_vendor",
+      "macro_rates_inflation_credit_fx_inputs",
+      "china_a_share_policy_liquidity_and_northbound_inputs",
+      "index_constituents_weights_and_technical_regime_inputs",
+      "latest_company_fundamental_inputs",
+      "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+      "model_assumptions_sensitivity_and_audit_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "thesis_catalyst_calendar_and_invalidation_evidence",
+      "value_trap_risks_and_thesis_invalidation_evidence",
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "research_artifact_qc_and_number_provenance_checklist",
+      "commodity_curve_roll_yield_and_inventory_inputs",
+      "options_iv_skew_gamma_and_event_calendar",
+      "crypto_liquidity_volatility_custody_and_regulatory_inputs",
+      "validation_dataset_and_sample_out_plan",
+      "position_weights_and_return_series",
+      "portfolio_weights_and_risk_limits",
+    ]);
+    ensureRisk([
+      "no_model_math_guessing",
+      "no_unverified_current_market_data",
+      "no_unverified_cross_market_claims",
+      "technical_timing_not_standalone_alpha",
+      "sentiment_signal_not_standalone_alpha",
+      "no_high_leverage_crypto",
+      "risk_gate_before_action_language",
+      "no_trade_advice",
+    ]);
+    ensureRejected(["single_bucket_finance_routing", "simple_prerequisite_skipped"]);
+    nextStep =
+      "Recall memory, check simple prerequisites, decompose all finance layers, collect evidence gaps, then run quant risk and review.";
+  }
+
+  if (!isContextReset && isValueInvestingFundamental) {
+    ensurePrimary([
+      "company_fundamentals_value",
+      "financial_modeling_valuation_qc",
+      "thesis_catalyst_lifecycle",
+      "source_registry",
+      "data_provenance_quality",
+      "causal_map",
+      "portfolio_risk_gates",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of [
+      "finance_learning_memory",
+      "macro_rates_inflation",
+      "quant_math",
+      "research_artifact_qc",
+    ]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "latest_10q_10k_or_earnings_release",
+      "revenue_quality_margin_fcf_roic_and_balance_sheet_inputs",
+      "moat_management_and_capital_allocation_evidence",
+      "model_assumptions_sensitivity_and_audit_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "thesis_catalyst_calendar_and_invalidation_evidence",
+      "value_trap_risks_and_thesis_invalidation_evidence",
+      "research_artifact_qc_and_number_provenance_checklist",
+      "portfolio_weights_and_risk_limits",
+    ]);
+    ensureRisk([
+      "fundamentals_first_not_price_action_first",
+      "margin_of_safety_required",
+      "value_investing_not_trade_signal",
+      "no_unverified_filing_claims",
+      "no_trade_advice",
+    ]);
+    ensureRejected([
+      "technical_timing_before_fundamentals",
+      "valuation_without_source_evidence",
+      "trade_recommendation_without_evidence",
+    ]);
+    nextStep =
+      "Read source filings first, score business quality and cash flows, test valuation and margin of safety, then review risk.";
+  }
+
+  if (!isContextReset && isFinancialModelingValuationQc && !isExternalFinancialAgentPattern) {
+    taskFamily = "financial_modeling_valuation_qc";
+    ensurePrimary([
+      "financial_modeling_valuation_qc",
+      "company_fundamentals_value",
+      "data_provenance_quality",
+      "research_artifact_qc",
+      "source_registry",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of [
+      "thesis_catalyst_lifecycle",
+      "causal_map",
+      "portfolio_risk_gates",
+      "finance_learning_memory",
+    ]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "latest_10q_10k_or_earnings_release",
+      "model_assumptions_sensitivity_and_audit_inputs",
+      "valuation_range_and_margin_of_safety_inputs",
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "research_artifact_qc_and_number_provenance_checklist",
+    ]);
+    ensureRisk([
+      "no_model_math_guessing",
+      "no_unverified_filing_claims",
+      "cite_every_number_or_mark_unsourced",
+      "no_trade_advice",
+    ]);
+    ensureRejected([
+      "valuation_without_source_evidence",
+      "spreadsheet_number_without_provenance",
+      "trade_recommendation_without_evidence",
+    ]);
+    nextStep =
+      "Collect filing sources, audit assumptions and sensitivity, verify number provenance, then review the artifact.";
+  }
+
+  if (!isContextReset && isThesisCatalystLifecycle && !isExternalFinancialAgentPattern) {
+    taskFamily = "thesis_catalyst_lifecycle_review";
+    ensurePrimary([
+      "thesis_catalyst_lifecycle",
+      "event_driven",
+      "company_fundamentals_value",
+      "causal_map",
+      "portfolio_risk_gates",
+      "finance_learning_memory",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of ["source_registry", "data_provenance_quality", "research_artifact_qc"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "original_thesis_and_evidence_used",
+      "thesis_catalyst_calendar_and_invalidation_evidence",
+      "post_event_correction_note",
+    ]);
+    ensureRisk([
+      "red_team_invalidation_required",
+      "do_not_rewrite_past_mistakes",
+      "no_trade_advice",
+    ]);
+    ensureRejected(["thesis_without_invalidation", "news_heat_as_conclusion"]);
+    nextStep =
+      "Map thesis, catalysts, invalidation, event evidence, and post-event correction before durable memory.";
+  }
+
+  if (!isContextReset && isDataProvenanceQuality && !isExternalFinancialAgentPattern) {
+    taskFamily = "data_provenance_quality_gate";
+    ensurePrimary([
+      "data_provenance_quality",
+      "source_registry",
+      "research_artifact_qc",
+      "quant_math",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    ensureMissing([
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "source_timestamp_and_vendor",
+      "validation_dataset_and_sample_out_plan",
+    ]);
+    ensureRisk(["no_unverified_current_market_data", "evidence_required"]);
+    ensureRejected(["single_vendor_unverified_claim", "field_definition_missing"]);
+    nextStep =
+      "Compare vendors, field definitions, timestamps and update cadence before promoting sourced numbers.";
+  }
+
+  if (!isContextReset && isResearchArtifactQc && !isExternalFinancialAgentPattern) {
+    taskFamily = "research_artifact_qc_gate";
+    ensurePrimary([
+      "research_artifact_qc",
+      "data_provenance_quality",
+      "source_registry",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of [
+      "financial_modeling_valuation_qc",
+      "company_fundamentals_value",
+      "finance_learning_memory",
+    ]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "research_artifact_qc_and_number_provenance_checklist",
+      "source_timestamp_and_vendor",
+      "citation_and_provenance_rule",
+    ]);
+    ensureRisk([
+      "cite_every_number_or_mark_unsourced",
+      "human_review_required_before_external_use",
+    ]);
+    ensureRejected(["raw_artifact_without_qc", "number_without_provenance"]);
+    nextStep =
+      "Audit number provenance, table consistency, unverified labels, and human review before visible use.";
+  }
+
+  if (!isContextReset && isExternalFinancialAgentPattern) {
+    taskFamily = "external_financial_agent_pattern_distillation";
+    ensurePrimary([
+      "finance_learning_memory",
+      "skill_pattern_distillation",
+      "agent_workflow_memory",
+      "source_registry",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+      "company_fundamentals_value",
+      "financial_modeling_valuation_qc",
+      "research_artifact_qc",
+      "data_provenance_quality",
+      "thesis_catalyst_lifecycle",
+      "portfolio_risk_gates",
+    ]);
+    for (const module of ["causal_map", "quant_math", "technical_timing"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "source_repo_url_or_local_clone_path",
+      "source_commit_or_version",
+      "license_and_write_scope_review",
+      "actual_reading_scope",
+      "agent_pattern_inventory",
+      "workflow_owner_definition",
+      "leaf_worker_inventory",
+      "handoff_contract",
+      "orchestrator_leaf_tool_boundary_map",
+      "tool_permission_boundary_map",
+      "untrusted_source_isolation_rule",
+      "citation_and_provenance_rule",
+      "artifact_qc_gate_mapping",
+      "artifact_qc_gate_sequence",
+      "model_assumptions_sensitivity_and_audit_inputs",
+      "data_field_definition_timestamp_and_vendor_quality_inputs",
+      "research_artifact_qc_and_number_provenance_checklist",
+      "human_signoff_checkpoint",
+      "visible_summary_contract",
+      "application_validation_receipt",
+      "fresh_adjacent_application_task",
+      "keep_downrank_or_discard_decision",
+    ]);
+    ensureRisk([
+      "untrusted_external_source",
+      "evaluate_before_installing",
+      "no_enterprise_mcp_assumption",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "no_protected_memory_write",
+      "no_distribution_or_publication",
+      "human_review_required_before_external_use",
+      "no_hidden_tool_authority",
+      "no_direct_external_agent_install",
+      "no_trade_advice",
+    ]);
+    ensureRejected([
+      "install_enterprise_mcp_without_credentials",
+      "direct_install_external_agent_without_isolation",
+      "single_agent_chat_role_without_workflow_contract",
+      "copy_external_agent_as_trade_recommendation_engine",
+      "publication_or_distribution_without_review",
+      "model_internal_learning_claim_without_training_eval_evidence",
+    ]);
+    nextStep =
+      "Read the pinned external financial-agent source, distill workflow owner, leaf workers, handoff contracts, tool boundaries, QC sequence, human signoff, and visible summary, then prove one adjacent LCX research task before keeping the pattern.";
+  }
+
+  if (!isContextReset && isExternalKnowledgeInternalization) {
+    ensurePrimary([
+      "finance_learning_memory",
+      "source_registry",
+      "skill_pattern_distillation",
+      "agent_workflow_memory",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of ["causal_map", "portfolio_risk_gates", "quant_math"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "prior_art_search_terms_or_existing_artifact_paths",
+      "existing_contract_eval_skill_or_receipt_candidates",
+      "reuse_extend_or_new_decision",
+      "source_url_or_local_source_path",
+      "actual_reading_scope",
+      "license_and_write_scope_review",
+      "prompt_injection_and_security_review",
+      "replication_or_sample_out_evidence",
+      "capability_card_or_retrieval_receipt",
+      "application_validation_receipt",
+      "training_or_eval_absorption_evidence",
+      "fresh_adjacent_application_task",
+      "keep_downrank_or_discard_decision",
+    ]);
+    ensureRisk([
+      "untrusted_external_source",
+      "evaluate_before_installing",
+      "do_not_create_parallel_protocol_before_prior_art_check",
+      "prefer_reuse_over_duplicate_pipeline",
+      "no_model_internal_learning_claim_without_eval",
+      "no_protected_memory_write",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "no_doctrine_mutation",
+      "sample_out_validation_required",
+      "no_trade_advice",
+    ]);
+    ensureRejected([
+      "new_parallel_protocol_without_prior_art_check",
+      "unverified_paper_summary",
+      "untrusted_external_skill",
+      "model_internal_learning_claim_without_training_eval_evidence",
+      "cloud_skill_sharing_by_default",
+    ]);
+    nextStep =
+      "Check prior similar contracts/evals/skills/receipts, reuse or extend the existing path, verify license and safety, prove reading scope, validate application, add eval evidence, then keep or downrank.";
+  }
+
+  if (!isContextReset && isAllModuleKnowledgeInternalization) {
+    taskFamily = "all_module_knowledge_internalization_chain";
+    ensurePrimary([
+      "agent_workflow_memory",
+      "source_registry",
+      "finance_learning_memory",
+      "skill_pattern_distillation",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    ensureMissing([
+      "target_module_id_or_module_family",
+      "source_url_or_local_source_path",
+      "actual_reading_scope",
+      "source_registry_record",
+      "module_specific_capability_rule",
+      "capability_card_or_retrieval_receipt",
+      "application_validation_receipt",
+      "training_or_eval_absorption_evidence",
+      "fresh_adjacent_application_task",
+      "module_learning_pipeline_review_status",
+      "keep_downrank_or_discard_decision",
+    ]);
+    ensureRisk([
+      "no_model_internal_learning_claim_without_eval",
+      "no_module_learning_claim_from_storage_only",
+      "no_parallel_module_pipeline_without_prior_art_check",
+    ]);
+    ensureRejected([
+      "factor_only_internalization_rule",
+      "stored_source_as_learned_module",
+      "plan_receipt_as_module_absorption",
+      "module_claim_without_receipt_or_eval",
+    ]);
+    nextStep =
+      "Plan the target module learning chain, require retrieval/apply/eval evidence, review module-learning status, then keep or downrank.";
+  }
+
+  if (!isContextReset && isAbstractionTransfer) {
+    taskFamily = "abstraction_transfer_repair_protocol";
+    replacePrimary([
+      "agent_workflow_memory",
+      "eval_harness_design",
+      "review_panel",
+      "control_room_summary",
+    ]);
+    for (const module of ["finance_learning_memory", "source_registry"]) {
+      if (!supportingModules.includes(module) && !primaryModules.includes(module)) {
+        supportingModules.push(module);
+      }
+    }
+    ensureMissing([
+      "original_example",
+      "abstracted_failure_family",
+      "adjacent_non_identical_scenario",
+      "shared_contract",
+      "regression_proof",
+      "simple_prerequisite_case",
+    ]);
+    ensureRisk([
+      "do_not_stop_at_original_example",
+      "no_one_off_phrase_patch",
+      "proof_required_before_claiming_transfer",
+      "no_protected_memory_write",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+    ]);
+    ensureRejected([
+      "single_phrase_patch_without_transfer",
+      "current_example_only_success",
+      "unverified_generalization_claim",
+    ]);
+    nextStep =
+      "Record original example, abstracted failure family, adjacent non-identical scenario, shared contract, and regression proof.";
+  }
+
+  if (primaryModules.length === 0) {
+    ensurePrimary(["control_room_summary", "source_registry", "review_panel"]);
+  }
+  if (normalizeLocalBrainModuleList(plan.required_tools).length === 0) {
+    plan.required_tools.push("source_registry", "review_panel");
+  }
+  if (!isContextReset && nextStepOverclaims(nextStep)) {
+    ensureRejected(["unsupported_data_fetch_or_memory_write_instruction"]);
+    if (isSourceGated) {
+      nextStep = safeEvidenceFirstNextStep("source");
+    } else if (isQuantInputMissing) {
+      nextStep = safeEvidenceFirstNextStep("quant");
+    } else {
+      nextStep = safeEvidenceFirstNextStep("generic");
+    }
+  }
+
+  const packedModules = packLocalBrainModuleFields(
+    primaryModules,
+    supportingModules,
+    plan.required_tools,
+    {
+      primary: MAX_TEACHER_PRIMARY_MODULES,
+      supporting: MAX_TEACHER_SUPPORTING_MODULES,
+      requiredTools: MAX_TEACHER_REQUIRED_TOOLS,
+    },
+  );
+  return {
+    ...plan,
+    task_family: taskFamily,
+    primary_modules: packedModules.primary_modules,
+    supporting_modules: packedModules.supporting_modules,
+    required_tools: packedModules.required_tools,
+    missing_data: capStringArray(prioritizeMissingData(missingData), MAX_TEACHER_MISSING_DATA),
+    risk_boundaries: capStringArray(
+      prioritizeRiskBoundaries(riskBoundaries),
+      MAX_TEACHER_RISK_BOUNDARIES,
+    ),
+    next_step: compactNextStep(nextStep),
+    rejected_context: capStringArray(rejectedContext, MAX_TEACHER_REJECTED_CONTEXT),
+  };
+}
+
+function makeAcceptedCandidate(
+  input: TeacherPrompt,
+  plan: TeacherPlan,
+): LarkBrainDistillationCandidate {
+  const candidate = buildLarkBrainDistillationCandidate({
+    source: "teacher_review",
+    userMessage: input.userMessage,
+    payload: JSON.stringify({ teacher: "MiniMax-M2.7", sourceSummary: input.sourceSummary }),
+    createdAt: new Date().toISOString(),
+    review: {
+      accepted: true,
+      reviewer: "minimax_m2_7_teacher",
+      reason: `MiniMax M2.7 teacher plan for ${input.id}`,
+    },
+  });
+  return {
+    ...candidate,
+    id: `${candidate.id}-minimax-${input.id}`,
+    status: "accepted_brain_plan",
+    proposedTaskFamily: plan.task_family,
+    proposedPrimaryModules: asArray(plan.primary_modules),
+    proposedSupportingModules: asArray(plan.supporting_modules),
+    proposedRequiredTools: asArray(plan.required_tools),
+    proposedMissingData: asArray(plan.missing_data),
+    proposedRiskBoundaries: asArray(plan.risk_boundaries),
+    proposedNextStep: String(plan.next_step ?? "review_teacher_plan_before_dataset_promotion"),
+  };
+}
+
+const PROVIDER_PAYLOAD_UNSTABLE_PROMPTS = new Set([
+  "context_reset",
+  "ambiguous_repeat",
+  "lark_context_pollution",
+  "source_grounding_audit",
+  "local_math_then_review",
+  "daily_learning_automation",
+]);
+async function callTeacherWithFallback(
+  options: CliOptions,
+  directApiFallbackPromptIds: string[],
+  input: TeacherPrompt,
+): Promise<TeacherCallResult> {
+  try {
+    return await callMinimaxTeacher(options, input);
+  } catch (error) {
+    const message = String(error);
+    const canFallback =
+      options.source === "openclaw-agent" &&
+      !options.mock &&
+      Boolean(options.apiKey) &&
+      message.includes("OpenClaw agent output missing payload text");
+    if (!canFallback) {
+      throw error;
+    }
+    if (!directApiFallbackPromptIds.includes(input.id)) {
+      directApiFallbackPromptIds.push(input.id);
+    }
+    return callMinimaxDirectApi(options, input);
+  }
+}
+
+export function isProviderPayloadMissingFailure(failure: { error: string }): boolean {
+  return (
+    failure.error.includes("OpenClaw agent output missing payload text") ||
+    failure.error.includes("MiniMax teacher response missing text content")
+  );
+}
+
+async function main(): Promise<void> {
+  const options = parseArgs(process.argv.slice(2));
+  const configuredTeacherPrompts = await loadTeacherPrompts(options);
+  const teacherPromptPool = options.promptFile
+    ? configuredTeacherPrompts
+    : options.includePayloadUnstablePrompts
+      ? configuredTeacherPrompts
+      : configuredTeacherPrompts.filter(
+          (prompt) => !PROVIDER_PAYLOAD_UNSTABLE_PROMPTS.has(prompt.id),
+        );
+  const selectedPrompts = teacherPromptPool.slice(0, options.limit);
+  const acceptedCandidates: LarkBrainDistillationCandidate[] = [];
+  const failures: Array<{ id: string; error: string }> = [];
+  const directApiFallbackPromptIds: string[] = [];
+  const providerUsageReceipts: Array<{ id: string; usage: unknown }> = [];
+
+  async function processTeacherPrompt(prompt: TeacherPrompt): Promise<void> {
+    let lastError: unknown;
+    try {
+      for (let attempt = 0; attempt <= options.retries; attempt += 1) {
+        try {
+          const raw = options.mock
+            ? JSON.stringify(mockTeacherPlan(prompt))
+            : await callTeacherWithFallback(options, directApiFallbackPromptIds, prompt);
+          const teacherText = typeof raw === "string" ? raw : raw.text;
+          if (typeof raw !== "string" && raw.usage !== undefined) {
+            providerUsageReceipts.push({ id: prompt.id, usage: raw.usage });
+          }
+          acceptedCandidates.push(
+            makeAcceptedCandidate(
+              prompt,
+              hardenTeacherPlanForPrompt(prompt, normalizeTeacherPlan(extractJson(teacherText))),
+            ),
+          );
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (lastError) {
+        throw lastError;
+      }
+    } catch (error) {
+      failures.push({ id: prompt.id, error: String(error) });
+    }
+  }
+
+  async function runPromptPool(prompts: TeacherPrompt[]): Promise<void> {
+    let nextIndex = 0;
+    const workerCount = Math.min(options.concurrency, prompts.length);
+    async function worker(): Promise<void> {
+      while (nextIndex < prompts.length) {
+        const prompt = prompts[nextIndex];
+        nextIndex += 1;
+        await processTeacherPrompt(prompt);
+      }
+    }
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  }
+
+  await runPromptPool(selectedPrompts);
+
+  const reviewedAt = new Date().toISOString();
+  const providerSkippedFailures = failures.filter(isProviderPayloadMissingFailure);
+  const hardFailures = failures.filter((failure) => !isProviderPayloadMissingFailure(failure));
+  const review: LarkBrainDistillationReviewArtifact = {
+    schemaVersion: 1,
+    boundary: "brain_distillation_review",
+    reviewedAt,
+    noLanguageRoutingPromotion: true,
+    noExternalChannelSenderTouched: true,
+    noLiveSenderTouched: true,
+    sourceArtifacts: [`minimax_teacher_batch:${options.model}`],
+    acceptedCandidates,
+    rejectedCandidates: hardFailures.map((failure) => ({
+      id: `minimax-teacher-rejected-${failure.id}`,
+      source: "teacher_review",
+      reason: failure.error,
+    })),
+    counts: {
+      sourceArtifacts: selectedPrompts.length,
+      pendingCandidates: selectedPrompts.length,
+      accepted: acceptedCandidates.length,
+      rejected: hardFailures.length,
+      discarded: providerSkippedFailures.length,
+    },
+  };
+
+  let reviewPath: string | undefined;
+  let partialWriteRefused = false;
+  if (options.write) {
+    if (hardFailures.length > 0 && !options.allowPartialWrite) {
+      partialWriteRefused = true;
+    } else {
+      const dateKey = reviewedAt.slice(0, 10);
+      const reviewDir = path.join(
+        options.workspaceDir,
+        LARK_BRAIN_DISTILLATION_REVIEW_DIR,
+        dateKey,
+      );
+      await fs.mkdir(reviewDir, { recursive: true });
+      reviewPath = path.join(
+        reviewDir,
+        `minimax-teacher-batch-${reviewedAt.replace(/[:.]/gu, "-")}.json`,
+      );
+      await fs.writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`, "utf8");
+    }
+  }
+
+  const result = {
+    ok: hardFailures.length === 0 && acceptedCandidates.length > 0,
+    boundary: "brain_distillation_review",
+    mode: "additive_teacher_samples_only",
+    teacher: options.model,
+    source: options.mock ? "mock" : options.source,
+    openclawAgent: options.source === "openclaw-agent" ? options.openclawAgent : undefined,
+    directApiFallbackPromptIds,
+    providerSkippedPromptIds: providerSkippedFailures.map((failure) => failure.id),
+    baseUrl: options.baseUrl,
+    concurrency: options.concurrency,
+    mock: options.mock,
+    write: options.write,
+    workspaceDir: options.workspaceDir,
+    agentDir: options.agentDir,
+    reviewPath: reviewPath
+      ? path.relative(options.workspaceDir, reviewPath).split(path.sep).join("/")
+      : undefined,
+    partialWriteRefused,
+    acceptedCandidates: acceptedCandidates.length,
+    failures: hardFailures,
+    providerUsageReceipts,
+    liveTouched: false,
+    providerConfigTouched: false,
+    originalPipelineReplaced: false,
+    noLanguageRoutingPromotion: review.noLanguageRoutingPromotion,
+  };
+
+  process.stdout.write(
+    options.json
+      ? `${JSON.stringify(result, null, 2)}\n`
+      : `MiniMax teacher batch accepted=${acceptedCandidates.length} failed=${failures.length} write=${options.write}\n`,
+  );
+  process.exitCode = result.ok ? 0 : 1;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

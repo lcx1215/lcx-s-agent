@@ -1,6 +1,6 @@
 # Lobster L4 System Map
 
-This file is the shortest useful map of the current Lobster system in the dev repo.
+This file is the shortest useful map of the current Lobster system in the canonical repository.
 It exists to reduce future maintenance cost, stop duplicate seams from growing, and
 make it obvious where new work belongs.
 
@@ -126,9 +126,9 @@ Rule:
 - specialist surfaces only when the question genuinely belongs there
 - do not let new surfaces become hidden specialist silos
 
-## 4. What Counts As The L4 Brain In Dev
+## 4. What Counts As The L4 Brain In The Local System
 
-The dev-brain is not one file. It is the combination of:
+The local system brain is not one file or repository. It is the combination of:
 
 - `src/agents/system-prompt.ts`
 - durable learning hooks
