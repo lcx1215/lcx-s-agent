@@ -125,12 +125,19 @@ type LegacyRepoLiveDriftStatus = {
 };
 
 type OperatorStatus = {
+  /** @deprecated Boundary projection for historical status receipts. */
   statusModel: "core-ready -> live-runtime-updated -> live-user-seen";
+  /** @deprecated Boundary projection; use CanonicalOperatorStatus. */
   devReady: "not_checked_by_live_status";
+  /** @deprecated Boundary projection; use channelCommitMatched. */
   liveRuntimeCommitMatched: boolean;
+  /** @deprecated Boundary projection; use channelRestartCommandStatus. */
   liveRuntimeRestartCommandStatus: StepStatus | "not_run";
+  /** @deprecated Boundary projection; use channelProbePassed. */
   liveRuntimeProbePassed: boolean;
+  /** @deprecated Boundary projection; use externalChannelBound. */
   liveRuntimeUpdated: boolean;
+  /** @deprecated Boundary projection; use userVisibleObserved. */
   liveUserSeen: boolean;
   nextHumanStep:
     | "commit_or_clean_local_then_run_local_tests"
@@ -138,6 +145,16 @@ type OperatorStatus = {
     | "retry_live_restart_then_probe"
     | "send_real_lark_natural_probe"
     | "no_action_current_local_seen_in_live";
+};
+
+type CanonicalOperatorStatus = {
+  statusModel: "core-ready -> external-channel-bound -> user-visible-observed";
+  channelCommitMatched: boolean;
+  channelRestartCommandStatus: StepStatus | "not_run";
+  channelProbePassed: boolean;
+  externalChannelBound: boolean;
+  userVisibleObserved: boolean;
+  nextHumanStep: OperatorStatus["nextHumanStep"];
 };
 
 type ExternalChannelStatus = {
@@ -1066,61 +1083,82 @@ function summarizePromotionReceiptForOutput(
   };
 }
 
+function resolveCanonicalOperatorStatus(params: {
+  state: PromotionReceipt | null;
+  devLiveDrift: LegacyRepoLiveDriftStatus;
+  probe: CommandResult | null;
+  visibleProof: LiveVisibleProof | null;
+}): CanonicalOperatorStatus {
+  const devHasLocalChanges =
+    params.devLiveDrift.devLiveDrift === "current_local_dirty" ||
+    params.devLiveDrift.devLiveDrift === "current_local_has_untracked_files";
+  const channelCommitMatched = params.devLiveDrift.liveMatchesCurrentCanonical;
+  const channelRestartCommandStatus = params.state?.commands.restart?.status ?? "not_run";
+  const channelProbePassed =
+    params.probe?.status === "passed" || params.state?.commands.probe?.status === "passed";
+  const channelResponsive = channelProbePassed;
+  const externalChannelBound = channelCommitMatched && channelResponsive;
+  const userVisibleObserved =
+    externalChannelBound &&
+    (params.visibleProof?.status === "live_visible_fixed" ||
+      params.visibleProof?.status === "post_migration_reply_seen");
+  const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
+    ? "commit_or_clean_local_then_run_local_tests"
+    : !channelCommitMatched
+      ? "run_local_tests_then_promote_local_to_live"
+      : !channelResponsive
+        ? "retry_live_restart_then_probe"
+        : !userVisibleObserved
+          ? "send_real_lark_natural_probe"
+          : "no_action_current_local_seen_in_live";
+  return {
+    statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
+    channelCommitMatched,
+    channelRestartCommandStatus,
+    channelProbePassed,
+    externalChannelBound,
+    userVisibleObserved,
+    nextHumanStep,
+  };
+}
+
+function legacyOperatorStatus(canonical: CanonicalOperatorStatus): OperatorStatus {
+  return {
+    statusModel: "core-ready -> live-runtime-updated -> live-user-seen",
+    devReady: "not_checked_by_live_status",
+    liveRuntimeCommitMatched: canonical.channelCommitMatched,
+    liveRuntimeRestartCommandStatus: canonical.channelRestartCommandStatus,
+    liveRuntimeProbePassed: canonical.channelProbePassed,
+    liveRuntimeUpdated: canonical.externalChannelBound,
+    liveUserSeen: canonical.userVisibleObserved,
+    nextHumanStep: canonical.nextHumanStep,
+  };
+}
+
 export function resolveOperatorStatus(params: {
   state: PromotionReceipt | null;
   devLiveDrift: LegacyRepoLiveDriftStatus;
   probe: CommandResult | null;
   visibleProof: LiveVisibleProof | null;
 }): OperatorStatus {
-  const devHasLocalChanges =
-    params.devLiveDrift.devLiveDrift === "current_local_dirty" ||
-    params.devLiveDrift.devLiveDrift === "current_local_has_untracked_files";
-  const liveRuntimeCommitMatched = params.devLiveDrift.liveMatchesCurrentCanonical;
-  const liveRuntimeRestartCommandStatus = params.state?.commands.restart?.status ?? "not_run";
-  const liveRuntimeProbePassed =
-    params.probe?.status === "passed" || params.state?.commands.probe?.status === "passed";
-  const liveRuntimeResponsive = liveRuntimeProbePassed;
-  const liveRuntimeUpdated = liveRuntimeCommitMatched && liveRuntimeResponsive;
-  const liveUserSeen =
-    liveRuntimeUpdated &&
-    (params.visibleProof?.status === "live_visible_fixed" ||
-      params.visibleProof?.status === "post_migration_reply_seen");
-  const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
-    ? "commit_or_clean_local_then_run_local_tests"
-    : !liveRuntimeCommitMatched
-      ? "run_local_tests_then_promote_local_to_live"
-      : !liveRuntimeResponsive
-        ? "retry_live_restart_then_probe"
-        : !liveUserSeen
-          ? "send_real_lark_natural_probe"
-          : "no_action_current_local_seen_in_live";
-  return {
-    statusModel: "core-ready -> live-runtime-updated -> live-user-seen",
-    devReady: "not_checked_by_live_status",
-    liveRuntimeCommitMatched,
-    liveRuntimeRestartCommandStatus,
-    liveRuntimeProbePassed,
-    liveRuntimeUpdated,
-    liveUserSeen,
-    nextHumanStep,
-  };
+  return legacyOperatorStatus(resolveCanonicalOperatorStatus(params));
 }
 
 export function resolveExternalChannelStatus(
-  operatorStatus: OperatorStatus,
+  operatorStatus: CanonicalOperatorStatus,
 ): ExternalChannelStatus {
   return {
     statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
     channel: "lark",
     role: "owner_agent_communication_medium",
     objective: "lark_receives_current_best_verified_lcx_agent_answer",
-    channelCommitMatched: operatorStatus.liveRuntimeCommitMatched,
-    channelRestartCommandStatus: operatorStatus.liveRuntimeRestartCommandStatus,
-    channelProbePassed: operatorStatus.liveRuntimeProbePassed,
-    externalChannelBound: operatorStatus.liveRuntimeUpdated,
-    userVisibleObserved: operatorStatus.liveUserSeen,
-    legacyLiveRuntimeUpdated: operatorStatus.liveRuntimeUpdated,
-    legacyLiveUserSeen: operatorStatus.liveUserSeen,
+    channelCommitMatched: operatorStatus.channelCommitMatched,
+    channelRestartCommandStatus: operatorStatus.channelRestartCommandStatus,
+    channelProbePassed: operatorStatus.channelProbePassed,
+    externalChannelBound: operatorStatus.externalChannelBound,
+    userVisibleObserved: operatorStatus.userVisibleObserved,
+    legacyLiveRuntimeUpdated: operatorStatus.externalChannelBound,
+    legacyLiveUserSeen: operatorStatus.userVisibleObserved,
     nextHumanStep: operatorStatus.nextHumanStep,
     boundary: "local_external_channel_status_only",
   };
@@ -1194,13 +1232,14 @@ export function main(argv = process.argv.slice(2)): number {
           logPath: initialArgs.replyFlowLog,
         })
       : null;
-    const operatorStatus = resolveOperatorStatus({
+    const canonicalOperatorStatus = resolveCanonicalOperatorStatus({
       state,
       devLiveDrift,
       probe,
       visibleProof,
     });
-    const externalChannelStatus = resolveExternalChannelStatus(operatorStatus);
+    const operatorStatus = legacyOperatorStatus(canonicalOperatorStatus);
+    const externalChannelStatus = resolveExternalChannelStatus(canonicalOperatorStatus);
     process.stdout.write(
       initialArgs.json
         ? `${JSON.stringify(
