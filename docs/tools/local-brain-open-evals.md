@@ -10,13 +10,13 @@ Run the repo-native bridge first. It uses the same cases as the Promptfoo and
 Inspect configs and fails fast without requiring external packages:
 
 ```bash
-node --import tsx scripts/dev/local-brain-open-eval.ts --json
+node --import tsx scripts/operator/local-brain-open-eval.ts --json
 ```
 
 If a provider is slow or hangs, add a timeout so the run stays bounded:
 
 ```bash
-node --import tsx scripts/dev/local-brain-open-eval.ts --json --provider-timeout-ms 20000
+node --import tsx scripts/operator/local-brain-open-eval.ts --json --provider-timeout-ms 20000
 ```
 
 ## Promptfoo
@@ -36,7 +36,7 @@ this dev eval work.
 This eval calls:
 
 ```bash
-node --import tsx scripts/dev/local-brain-open-eval-provider.ts "<user ask>"
+node --import tsx scripts/operator/local-brain-open-eval-provider.ts "<user ask>"
 ```
 
 ## Inspect AI

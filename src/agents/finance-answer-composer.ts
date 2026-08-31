@@ -1,6 +1,6 @@
 // Track B: turn the finance answer path from "audit-only" into "compose -> audit".
 //
-// Today `scripts/dev/lcx-commercial-answer-pipeline.ts` only AUDITS a
+// Today `scripts/operator/lcx-commercial-answer-pipeline.ts` only AUDITS a
 // `candidateAnswer` that is passed in — nothing in the repo actually composes
 // one from a model + real data. The runtime reply path calls a model, but the
 // dev answer pipeline has no compose step, so its scenario suite hard-codes

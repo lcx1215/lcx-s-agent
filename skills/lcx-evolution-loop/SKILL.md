@@ -11,8 +11,8 @@ request.
 
 ## Workflow
 
-1. Start with `node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json`
-   and `node --import tsx scripts/dev/local-brain-training-plan.ts --json`.
+1. Start with `node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json`
+   and `node --import tsx scripts/operator/local-brain-training-plan.ts --json`.
 2. Select one owner lane and one failure family; reuse existing receipts,
    evals, modules, or SkillOpt SOPs before adding a path.
 3. Repair the shared contract, test an adjacent case, and run the matching

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSelfRepairHandsReceipt,
   writeSelfRepairHandsReceipt,
-} from "../scripts/dev/lcx-self-repair-hands.ts";
+} from "../scripts/operator/lcx-self-repair-hands.ts";
 
 describe("LCX self-repair hands", () => {
   it("builds a supervised dry-run for memory correction, training candidates, and patch candidates", () => {

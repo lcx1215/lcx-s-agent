@@ -42,7 +42,7 @@ describe("minimax quota brain saturator preview", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/minimax-quota-brain-saturator.ts",
+        "scripts/operator/minimax-quota-brain-saturator.ts",
         "--profile",
         "minimax-plus-brain",
         "--no-failure-focus",
@@ -88,7 +88,7 @@ describe("minimax quota brain saturator preview", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/minimax-quota-brain-saturator.ts",
+        "scripts/operator/minimax-quota-brain-saturator.ts",
         "--profile",
         "minimax-plus-brain",
         "--no-failure-focus",
@@ -151,7 +151,7 @@ describe("minimax quota brain saturator preview", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/minimax-quota-brain-saturator.ts",
+        "scripts/operator/minimax-quota-brain-saturator.ts",
         "--profile",
         "minimax-plus-brain",
         "--max-calls",

@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runInventory() {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-github-cli-capability-inventory.ts", "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-github-cli-capability-inventory.ts", "--json"],
     {
       cwd: repoRoot,
       env: process.env,

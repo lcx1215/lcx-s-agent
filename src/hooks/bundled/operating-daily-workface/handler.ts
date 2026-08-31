@@ -1550,7 +1550,7 @@ function renderWorkface(params: {
     readingGuideLines: [
       "- Active brain path: read memory/current-research-line.md first, then MEMORY.md, then memory/unified-risk-view.md when present, then the latest carryover and correction notes before drilling into older artifacts.",
       "- Keep one brain, not two: the distillation chain serves both Lobster's general agent meta-capability and the full finance research pipeline.",
-      "- Treat memory/local-memory/*.md as reusable durable cards; treat ops/live-handoff/*.md as drill-down or migration history, not as the first active brain to read.",
+      "- Treat memory/local-memory/*.md as reusable durable cards; treat ops/external-channel-history/*.md as drill-down or migration history, not as the first active brain to read.",
       "- If learning count is high but correction count is also high, Lobster is learning but not transferring cleanly enough yet.",
       "- If token use rises without stronger learning or correction quality, the system is burning context without enough improvement.",
       "- Use this artifact to supervise daily usefulness, not to reward activity theater.",

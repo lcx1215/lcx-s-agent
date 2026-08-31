@@ -70,7 +70,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",
@@ -152,7 +152,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",

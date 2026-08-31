@@ -11,7 +11,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runBrief(args: string[] = [], env: NodeJS.ProcessEnv = {}) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-directed-daily-research-brief.ts", ...args, "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-directed-daily-research-brief.ts", ...args, "--json"],
     {
       cwd: repoRoot,
       env: { ...process.env, ...env },

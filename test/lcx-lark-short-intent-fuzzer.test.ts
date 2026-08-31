@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runFuzzer(args: string[] = []) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-lark-short-intent-fuzzer.ts", ...args, "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-lark-short-intent-fuzzer.ts", ...args, "--json"],
     {
       cwd: repoRoot,
       env: process.env,

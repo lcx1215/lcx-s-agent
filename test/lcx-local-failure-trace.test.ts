@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildLocalFailureTraceReceipt,
   summarizeTraceForHandoff,
-} from "../scripts/dev/lcx-local-failure-trace.ts";
+} from "../scripts/operator/lcx-local-failure-trace.ts";
 
 describe("LCX local failure trace", () => {
   it("builds one compact failure card from existing owner evidence", () => {
@@ -35,14 +35,14 @@ describe("LCX local failure trace", () => {
       ownerCommands: [
         {
           id: "trainingPlan",
-          command: "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+          command: "node --import tsx scripts/operator/local-brain-training-plan.ts --json",
           parsed: true,
           ok: true,
           exitCode: 0,
         },
         {
           id: "providerCouncilAcceleration",
-          command: "node --import tsx scripts/dev/lcx-provider-council-acceleration.ts --json",
+          command: "node --import tsx scripts/operator/lcx-provider-council-acceleration.ts --json",
           parsed: true,
           ok: false,
           exitCode: 0,
@@ -91,14 +91,14 @@ describe("LCX local failure trace", () => {
         parsed: true,
         ok: true,
         exitCode: 0,
-        command: "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
+        command: "node --import tsx scripts/operator/local-brain-training-plan.ts --json",
       },
       {
         id: "providerCouncilAcceleration",
         parsed: true,
         ok: false,
         exitCode: 0,
-        command: "node --import tsx scripts/dev/lcx-provider-council-acceleration.ts --json",
+        command: "node --import tsx scripts/operator/lcx-provider-council-acceleration.ts --json",
       },
     ]);
     expect(receipt.artifacts.written).toContain(

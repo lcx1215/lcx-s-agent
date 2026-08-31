@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runPipeline(args: string[]) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-commercial-answer-pipeline.ts", ...args, "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-commercial-answer-pipeline.ts", ...args, "--json"],
     {
       cwd: repoRoot,
       env: process.env,

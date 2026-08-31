@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildExternalChannelBindingDecision } from "../scripts/dev/lcx-external-channel-binding.js";
+import { buildExternalChannelBindingDecision } from "../scripts/operator/lcx-external-channel-binding.js";
 
 describe("lcx-external-channel-binding", () => {
   const readyTrainingPlan = {

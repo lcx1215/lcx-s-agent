@@ -4,7 +4,7 @@ prompts:
   - "{{ask}}"
 
 providers:
-  - id: "exec: node --import tsx scripts/dev/local-brain-open-eval-provider.ts"
+  - id: "exec: node --import tsx scripts/operator/local-brain-open-eval-provider.ts"
     label: "lcx-local-brain-contract-provider"
 
 defaultTest:

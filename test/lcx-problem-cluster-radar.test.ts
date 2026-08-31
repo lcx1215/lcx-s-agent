@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildProblemClusterRadar,
   isIsoTimeSameOrAfter,
-} from "../scripts/dev/lcx-problem-cluster-radar.js";
+} from "../scripts/operator/lcx-problem-cluster-radar.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -137,14 +137,14 @@ describe("lcx-problem-cluster-radar", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "training_eval_runtime_cluster",
-          ownerEntrypoint: "scripts/dev/local-brain-training-plan.ts",
+          ownerEntrypoint: "scripts/operator/local-brain-training-plan.ts",
           severity: "P2",
           actionability: "repair_now",
           sourceOwners: ["local-brain-training-plan"],
         }),
         expect.objectContaining({
           id: "module_learning_absorption_cluster",
-          ownerEntrypoint: "scripts/dev/lcx-module-learning-absorption-gate.ts",
+          ownerEntrypoint: "scripts/operator/lcx-module-learning-absorption-gate.ts",
           severity: "P2",
           actionability: "blocked_by_owner_gate",
           blockingReasons: expect.arrayContaining([
@@ -681,7 +681,7 @@ describe("lcx-problem-cluster-radar", () => {
         expect.objectContaining({
           clusterId: "training_eval_runtime_cluster",
           signalId: "teacher_sample_quality_failure",
-          ownerEntrypoint: "scripts/dev/local-brain-training-plan.ts",
+          ownerEntrypoint: "scripts/operator/local-brain-training-plan.ts",
         }),
       ]),
     );
@@ -739,7 +739,7 @@ describe("lcx-problem-cluster-radar", () => {
           repairedAt: "2026-05-19T17:18:00.000Z",
           commit: "6a0091c73e",
           files: [
-            "scripts/dev/minimax-brain-teacher-batch.ts",
+            "scripts/operator/minimax-brain-teacher-batch.ts",
             "test/minimax-brain-teacher-batch.test.ts",
           ],
           reason: "newer teacher parser repair commit",
@@ -1041,7 +1041,7 @@ describe("lcx-problem-cluster-radar", () => {
       expect.objectContaining({
         family: "external_agent_upgrade_distillation",
         severity: "P1",
-        ownerEntrypoint: "scripts/dev/lcx-external-agent-upgrade-radar.ts",
+        ownerEntrypoint: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
       }),
     );
     expect(cluster?.signals.map((signal) => signal.id)).toEqual(
@@ -1090,7 +1090,7 @@ describe("lcx-problem-cluster-radar", () => {
   });
 
   it("is registered in durable architecture surfaces and can run against current owners", async () => {
-    const { stdout } = await runJsonScript("scripts/dev/lcx-problem-cluster-radar.ts");
+    const { stdout } = await runJsonScript("scripts/operator/lcx-problem-cluster-radar.ts");
     const payload = JSON.parse(stdout) as {
       ok: boolean;
       boundary: string;
@@ -1121,7 +1121,7 @@ describe("lcx-problem-cluster-radar", () => {
     expect(payload.clusters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          ownerEntrypoint: expect.stringContaining("scripts/dev/"),
+          ownerEntrypoint: expect.stringContaining("scripts/operator/"),
           sourceOwners: expect.any(Array),
         }),
       ]),

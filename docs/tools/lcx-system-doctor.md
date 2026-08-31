@@ -1,6 +1,6 @@
 # LCX System Doctor
 
-`scripts/dev/lcx-system-doctor.ts` is the CLI-first observability entrypoint for
+`scripts/operator/lcx-system-doctor.ts` is the CLI-first observability entrypoint for
 LCX Agent dev health. It is read-only by default and does not probe live Lark,
 restart daemons, change provider config, or write durable memory.
 
@@ -13,7 +13,7 @@ abstraction-transfer expectations.
 ## Fast Dev Check
 
 ```bash
-node --import tsx scripts/dev/lcx-system-doctor.ts --json
+node --import tsx scripts/operator/lcx-system-doctor.ts --json
 ```
 
 Default coverage:
@@ -32,7 +32,7 @@ The plain-text output also prints dirty-tree counts and skipped check names.
 ## Brain Planning Check
 
 ```bash
-node --import tsx scripts/dev/lcx-system-doctor.ts --json --brain-plan
+node --import tsx scripts/operator/lcx-system-doctor.ts --json --brain-plan
 ```
 
 Adds one MLX local-brain planning generation. This proves the selected local
@@ -41,7 +41,7 @@ adapter can produce a planning packet, but it still reports `liveTouched=false`.
 ## Deep Dev Check
 
 ```bash
-node --import tsx scripts/dev/lcx-system-doctor.ts --json --deep
+node --import tsx scripts/operator/lcx-system-doctor.ts --json --deep
 ```
 
 Adds:
@@ -54,7 +54,7 @@ Use this before promotion or commit readiness checks.
 ## Live Probe
 
 ```bash
-node --import tsx scripts/dev/lcx-system-doctor.ts --json --live
+node --import tsx scripts/operator/lcx-system-doctor.ts --json --live
 ```
 
 Adds live-facing checks:

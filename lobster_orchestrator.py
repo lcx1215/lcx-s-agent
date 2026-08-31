@@ -12,7 +12,7 @@ from scripts.lobster_paths import ROOT, load_state_json, save_state_json
 
 ENABLE_CYCLE_ENV = "OPENCLAW_SCHEDULER_ENABLE_CYCLE"
 CYCLE_COMMAND_ENV = "OPENCLAW_SCHEDULER_CYCLE_COMMAND"
-DEFAULT_CYCLE_COMMAND = "pnpm exec tsx scripts/dev/agent-system-loop-smoke.ts"
+DEFAULT_CYCLE_COMMAND = "pnpm exec tsx scripts/operator/agent-system-loop-smoke.ts"
 
 
 def utc_now_iso() -> str:
