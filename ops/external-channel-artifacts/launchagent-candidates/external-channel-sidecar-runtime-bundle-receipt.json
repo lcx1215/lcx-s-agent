@@ -3,7 +3,7 @@
   "generatedAt": "2026-05-02T17:23:21.393Z",
   "sourceRoot": "/Users/liuchengxu/Desktop/lcx-s-openclaw",
   "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
-  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
+  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/external-channel-sidecar-runtime-bundle-receipt.json",
   "writeMode": true,
   "readyForLaunchAgent": true,
   "blockedReasons": [],

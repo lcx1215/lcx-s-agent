@@ -4,7 +4,7 @@
   "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
   "legacyRoot": "/Users/liuchengxu/Desktop/openclaw",
   "outputDir": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates",
-  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/live-sidecar-install-dry-run-receipt.json",
+  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/external-channel-sidecar-install-dry-run-receipt.json",
   "noLiveLaunchAgentChange": true,
   "preflightReady": true,
   "blockedReasons": [],

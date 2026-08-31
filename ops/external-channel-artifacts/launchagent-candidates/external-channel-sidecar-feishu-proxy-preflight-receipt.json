@@ -3,7 +3,7 @@
   "generatedAt": "2026-05-02T17:19:51.339Z",
   "legacyRoot": "/Users/liuchengxu/Desktop/openclaw",
   "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
-  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/live-sidecar-feishu-proxy-preflight-receipt.json",
+  "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/external-channel-sidecar-feishu-proxy-preflight-receipt.json",
   "writeRuntime": true,
   "readyForLiveInstall": true,
   "blockedReasons": [],
