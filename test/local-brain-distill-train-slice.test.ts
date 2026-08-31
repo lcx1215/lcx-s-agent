@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { buildLocalBrainTrainingPrompt } from "../scripts/dev/local-brain-training-contract.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -232,6 +233,8 @@ describe("local brain distill train slice", () => {
     );
     const manifest = JSON.parse(stdout) as {
       promptContract: {
+        rewriteScope: string;
+        rowsRewritten: number;
         sourceKindAndSourceSummaryInModelPrompt: boolean;
         rowsRewrittenFromLegacyPrompt: number;
         validRowsRewrittenFromLegacyPrompt: number;
@@ -239,6 +242,8 @@ describe("local brain distill train slice", () => {
       };
     };
     expect(manifest.promptContract).toMatchObject({
+      rewriteScope: "all_rows_with_recoverable_user_or_task",
+      rowsRewritten: 1,
       sourceKindAndSourceSummaryInModelPrompt: true,
       rowsRewrittenFromLegacyPrompt: 1,
       validRowsRewrittenFromLegacyPrompt: 1,
@@ -253,5 +258,145 @@ describe("local brain distill train slice", () => {
       expect(splitRows[0]?.prompt).not.toContain("source_summary:");
       expect(splitRows[0]?.meta?.promptContractRewritten).toBe(true);
     }
+  });
+
+  it("rewrites v2 prompts that still carry a hyphenated acceptance label", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-contract-label-slice-"));
+    const dataDir = path.join(fixtureRoot, "dataset");
+    const outDir = path.join(fixtureRoot, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    const acceptanceLabel = "lark-live-visible-fixed-agent-architecture-20260514";
+    const cleanPrompt = buildLocalBrainTrainingPrompt({
+      userAsk: `live验收：请只回复 ${acceptanceLabel}，并说明这是重启后的真实链路。`,
+    });
+    const staleV2Prompt = cleanPrompt.replace("<withheld_contract_id>", acceptanceLabel);
+    const row = {
+      prompt: staleV2Prompt,
+      completion: JSON.stringify({
+        task_family: "ops_audit",
+        primary_modules: ["ops_audit"],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: ["research_only"],
+        next_step: "route_to_review",
+        rejected_context: [],
+      }),
+      meta: { sourceKind: "curated_seed", sourcePath: "stale-v2" },
+    };
+    await fs.writeFile(path.join(dataDir, "train.jsonl"), `${JSON.stringify(row)}\n`, "utf8");
+    await fs.writeFile(path.join(dataDir, "valid.jsonl"), `${JSON.stringify(row)}\n`, "utf8");
+    await fs.writeFile(path.join(dataDir, "test.jsonl"), `${JSON.stringify(row)}\n`, "utf8");
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-train-slice.ts",
+        "--data",
+        dataDir,
+        "--out",
+        outDir,
+        "--max-review-examples",
+        "1",
+        "--json",
+      ],
+      { cwd: repoRoot, env: { ...process.env, HOME: fixtureRoot } },
+    );
+    const manifest = JSON.parse(stdout) as {
+      promptContract: {
+        rewriteScope: string;
+        rowsRewritten: number;
+        rowsRewrittenFromLegacyPrompt: number;
+        validRowsRewrittenFromLegacyPrompt: number;
+        testRowsRewrittenFromLegacyPrompt: number;
+      };
+    };
+    expect(manifest.promptContract).toMatchObject({
+      rewriteScope: "all_rows_with_recoverable_user_or_task",
+      rowsRewritten: 1,
+      rowsRewrittenFromLegacyPrompt: 1,
+      validRowsRewrittenFromLegacyPrompt: 1,
+      testRowsRewrittenFromLegacyPrompt: 1,
+    });
+    for (const split of ["train", "valid", "test"]) {
+      const splitRows = await parseJsonl(path.join(outDir, `${split}.jsonl`));
+      expect(splitRows[0]?.prompt).not.toContain(acceptanceLabel);
+      expect(splitRows[0]?.prompt).toContain("<withheld_contract_id>");
+      expect(splitRows[0]?.meta?.promptContractRewritten).toBe(true);
+    }
+  });
+
+  it("deduplicates normalized source pairs before optional repeat ablations", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-source-dedup-slice-"));
+    const dataDir = path.join(fixtureRoot, "dataset");
+    const outDir = path.join(fixtureRoot, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    const duplicate = {
+      prompt: "prompt same",
+      completion: JSON.stringify({
+        task_family: "curated_seed",
+        primary_modules: ["review_panel"],
+        supporting_modules: [],
+        required_tools: [],
+        missing_data: [],
+        risk_boundaries: ["research_only"],
+        next_step: "route_to_review",
+        rejected_context: [],
+      }),
+      meta: { sourceKind: "curated_seed", sourcePath: "same-1" },
+    };
+    const duplicateWithWhitespace = {
+      ...duplicate,
+      prompt: "  prompt   same  ",
+      meta: { sourceKind: "curated_seed", sourcePath: "same-2" },
+    };
+    const unique = {
+      ...duplicate,
+      prompt: "prompt unique",
+      meta: { sourceKind: "curated_seed", sourcePath: "unique" },
+    };
+    await fs.writeFile(
+      path.join(dataDir, "train.jsonl"),
+      [duplicate, duplicateWithWhitespace, unique]
+        .map((row) => `${JSON.stringify(row)}\n`)
+        .join(""),
+      "utf8",
+    );
+    await fs.writeFile(path.join(dataDir, "valid.jsonl"), `${JSON.stringify(unique)}\n`, "utf8");
+    await fs.writeFile(path.join(dataDir, "test.jsonl"), `${JSON.stringify(unique)}\n`, "utf8");
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-train-slice.ts",
+        "--data",
+        dataDir,
+        "--out",
+        outDir,
+        "--json",
+      ],
+      { cwd: repoRoot, env: { ...process.env, HOME: fixtureRoot } },
+    );
+    const manifest = JSON.parse(stdout) as {
+      counts: { trainWritten: number };
+      repetition: { duplicateRows: number; duplicateRate: number };
+      dedup: {
+        sourceDuplicateRowsSkipped: number;
+        sourceDuplicateGroupsSkipped: number;
+        explicitRepeatFlagsRemainAvailable: boolean;
+      };
+    };
+    expect(manifest.counts.trainWritten).toBe(2);
+    expect(manifest.repetition).toMatchObject({ duplicateRows: 0, duplicateRate: 0 });
+    expect(manifest.dedup).toMatchObject({
+      sourceDuplicateRowsSkipped: 1,
+      sourceDuplicateGroupsSkipped: 1,
+      explicitRepeatFlagsRemainAvailable: false,
+    });
+    await expect(parseJsonl(path.join(outDir, "train.jsonl"))).resolves.toHaveLength(2);
   });
 });

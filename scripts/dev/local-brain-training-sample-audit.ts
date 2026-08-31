@@ -6,6 +6,7 @@ import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
   LOCAL_BRAIN_RISK_BOUNDARIES,
 } from "./local-brain-taxonomy.js";
+import { findAnswerBearingContractTokens } from "./local-brain-training-contract.js";
 
 export type TrainingSampleAuditRow = {
   prompt: string;
@@ -219,7 +220,10 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
   const structuredTrajectoryRows = new Set<number>();
   const promptContractFieldRows = new Set<number>();
   const userOrTaskContractFieldRows = new Set<number>();
+  const answerBearingPromptTokenRows = new Set<number>();
+  const answerBearingPromptTokenFields = new Map<string, number>();
   const leakExamples: Array<Record<string, unknown>> = [];
+  const answerBearingPromptTokenExamples: Array<Record<string, unknown>> = [];
 
   rows.forEach((row, index) => {
     const dynamic = dynamicPrompt(row.prompt);
@@ -236,6 +240,29 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
     }
     if (PROMPT_CONTRACT_FIELD_PATTERN.test(dynamic.userOrTask)) {
       userOrTaskContractFieldRows.add(index);
+    }
+    const answerBearingPromptTokens = [
+      ["userOrTask", dynamic.userOrTask],
+      ["sourceSummary", dynamic.sourceSummary],
+    ].flatMap(([field, value]) => {
+      const tokens = findAnswerBearingContractTokens(value);
+      if (tokens.length > 0) {
+        answerBearingPromptTokenFields.set(
+          field,
+          (answerBearingPromptTokenFields.get(field) ?? 0) + 1,
+        );
+      }
+      return tokens.map((token) => ({ field, token }));
+    });
+    if (answerBearingPromptTokens.length > 0) {
+      answerBearingPromptTokenRows.add(index);
+      if (answerBearingPromptTokenExamples.length < 8) {
+        answerBearingPromptTokenExamples.push({
+          row: index,
+          sourceKind: sourceKindOf(row, dynamic),
+          hits: answerBearingPromptTokens.slice(0, 8),
+        });
+      }
     }
     if (SOURCE_SUMMARY_OUTPUT_FIELD_PATTERN.test(dynamic.sourceSummary)) {
       sourceSummaryOutputFieldRows.add(index);
@@ -378,6 +405,15 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
       sourceSummaryContractIdRows: sourceSummaryContractIdRows.size,
       promptContractFieldRows: promptContractFieldRows.size,
       userOrTaskContractFieldRows: userOrTaskContractFieldRows.size,
+      answerBearingPromptTokenRows: answerBearingPromptTokenRows.size,
+      answerBearingPromptTokenRate:
+        rows.length === 0
+          ? 0
+          : Number((answerBearingPromptTokenRows.size / rows.length).toFixed(4)),
+      answerBearingPromptTokenFields: [...answerBearingPromptTokenFields.entries()].toSorted(
+        (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+      ),
+      answerBearingPromptTokenExamples,
       examples: leakExamples,
     },
     teacherNovelty: {
@@ -465,7 +501,7 @@ export async function auditTrainingSamples(
       validTest: overlap(splits.valid, splits.test),
     },
     recommendedActions: [
-      "remove source_summary and answer-bearing case labels from model-visible training prompts; keep provenance in meta or receipts",
+      "remove source_summary and answer-bearing case labels (including hyphenated acceptance tokens) from model-visible training prompts; keep provenance in meta or receipts",
       "disable exact-row oversampling by default and stratify teacher reviews without copying rows",
       "require teacher novelty and student-on-policy trajectory evidence before adding distillation rows",
       "keep no-prefill neutral and verified holdout outside the training dataset and promotion proof",
@@ -522,6 +558,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         `train_prompt_static_unique=${numberField(prompt, "staticUnique")}`,
         `train_duplicate_rate=${numberField(repetition, "duplicateRate")}`,
         `train_dynamic_contract_id_leak_rate=${numberField(leakage, "dynamicContractIdLeakRate")}`,
+        `train_answer_bearing_prompt_token_rate=${numberField(leakage, "answerBearingPromptTokenRate")}`,
         `teacher_rows=${numberField(teacherNovelty, "rows")}`,
         `teacher_structured_trajectory_rows=${numberField(teacherNovelty, "structuredTrajectoryRows")}`,
       ].join("\n") + "\n",

@@ -2,6 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  buildLocalBrainTrainingPrompt,
+  findAnswerBearingContractTokens,
+  redactTeacherContractLabels,
+} from "../scripts/dev/local-brain-training-contract.js";
 import { auditTrainingSamples } from "../scripts/dev/local-brain-training-sample-audit.js";
 
 const completion = JSON.stringify({
@@ -62,6 +67,7 @@ describe("local brain training sample audit", () => {
       sourceSummaryContractIdRows: 2,
       promptContractFieldRows: 0,
       userOrTaskContractFieldRows: 0,
+      answerBearingPromptTokenRows: 2,
     });
     expect(train.train.teacherNovelty).toMatchObject({
       rows: 2,
@@ -74,5 +80,51 @@ describe("local brain training sample audit", () => {
       rowsWithAnyTrajectoryEvidence: 1,
     });
     expect(report.splitOverlap).toMatchObject({ trainValid: 1, trainTest: 0 });
+  });
+
+  it("redacts and audits hyphenated acceptance labels", async () => {
+    const answerBearingLabel = "lark-live-visible-fixed-agent-architecture-20260514";
+    const userAsk = `live验收：请只回复 ${answerBearingLabel}，并说明这是重启后的真实链路。`;
+
+    expect(findAnswerBearingContractTokens(userAsk)).toEqual([answerBearingLabel]);
+    const redacted = redactTeacherContractLabels(userAsk);
+    expect(redacted).not.toContain(answerBearingLabel);
+    expect(redacted).toContain("live验收");
+
+    const prompt = buildLocalBrainTrainingPrompt({ userAsk });
+    const dynamicUserAsk = /^user_or_task:\s*([^\n]*)/mu.exec(prompt)?.[1] ?? "";
+    expect(findAnswerBearingContractTokens(dynamicUserAsk)).toEqual([]);
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-hyphen-label-"));
+    const dataDir = path.join(root, "dataset");
+    await fs.mkdir(dataDir, { recursive: true });
+    const row = {
+      prompt: oldPrompt(userAsk, "ordinary research receipt"),
+      completion,
+      meta: { sourceKind: "curated_seed" },
+    };
+    await fs.writeFile(path.join(dataDir, "train.jsonl"), `${JSON.stringify(row)}\n`);
+    await fs.writeFile(path.join(dataDir, "valid.jsonl"), `${JSON.stringify(row)}\n`);
+    await fs.writeFile(
+      path.join(dataDir, "test.jsonl"),
+      `${JSON.stringify({ ...row, prompt: oldPrompt("普通研究任务", "ordinary research receipt") })}\n`,
+    );
+
+    const report = await auditTrainingSamples({ dataDir });
+    const splits = report.splits as Record<string, Record<string, unknown>>;
+    expect(splits.train.leakage).toMatchObject({
+      answerBearingPromptTokenRows: 1,
+      answerBearingPromptTokenRate: 1,
+      answerBearingPromptTokenFields: [["userOrTask", 1]],
+    });
+    expect(
+      (splits.train.leakage as Record<string, unknown>).answerBearingPromptTokenExamples,
+    ).toEqual([
+      {
+        row: 0,
+        sourceKind: "curated_seed",
+        hits: [{ field: "userOrTask", token: answerBearingLabel }],
+      },
+    ]);
   });
 });

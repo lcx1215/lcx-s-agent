@@ -184,6 +184,10 @@ function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
+function normalizedPairSignature(prompt: string, completion: string): string {
+  return hashText(`${normalizedContent(prompt)}\n${normalizedContent(completion)}`);
+}
+
 function completionRecord(record: JsonRecord): Record<string, unknown> | undefined {
   if (typeof record.completion !== "string") {
     return undefined;
@@ -452,13 +456,21 @@ function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRe
 function normalizePromptContract(record: JsonRecord): { prompt: string; rewritten: boolean } {
   const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
   const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim();
-  const hasLegacySourceContext =
-    rawPrompt.includes("\nsource_kind:") || rawPrompt.includes("\nsource_summary:");
+  // Rebuild every prompt that exposes a user_or_task line, not only legacy
+  // source-bearing prompts.  A v2 prompt can still contain an answer-bearing
+  // label copied into that line by an older generator; the shared builder is
+  // the single place that must redact it.
+  const prompt = userAsk ? buildLocalBrainTrainingPrompt({ userAsk }) : rawPrompt;
   return {
-    prompt:
-      userAsk && hasLegacySourceContext ? buildLocalBrainTrainingPrompt({ userAsk }) : rawPrompt,
-    rewritten: Boolean(userAsk && hasLegacySourceContext),
+    prompt,
+    rewritten: prompt !== rawPrompt,
   };
+}
+
+function sourcePairSignature(record: JsonRecord): string {
+  const { prompt } = normalizePromptContract(record);
+  const completion = typeof record.completion === "string" ? record.completion : "";
+  return normalizedPairSignature(prompt, completion);
 }
 
 async function writeFileAtomic(filePath: string, content: string | Buffer): Promise<void> {
@@ -528,6 +540,9 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   const writtenPairCounts = new Map<string, number>();
   let promptContractRewritten = 0;
   let promptContractLegacyUnrewritten = 0;
+  const sourcePairKeys = new Set<string>();
+  const skippedSourcePairKeys = new Set<string>();
+  let sourceDuplicateRowsSkipped = 0;
 
   function recordWrite(sourceKind: string): void {
     incrementCount(writtenSourceKinds, sourceKind);
@@ -544,12 +559,19 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     } else if (prompt.includes("\nsource_summary:") || prompt.includes("\nsource_kind:")) {
       promptContractLegacyUnrewritten += 1;
     }
-    const pair = hashText(`${normalizedContent(prompt)}\n${normalizedContent(completion)}`);
+    const pair = normalizedPairSignature(prompt, completion);
     writtenPairCounts.set(pair, (writtenPairCounts.get(pair) ?? 0) + 1);
   }
 
   try {
     for await (const record of readJsonl(trainPath)) {
+      const sourcePair = sourcePairSignature(record);
+      if (sourcePairKeys.has(sourcePair)) {
+        sourceDuplicateRowsSkipped += 1;
+        skippedSourcePairKeys.add(sourcePair);
+        continue;
+      }
+      sourcePairKeys.add(sourcePair);
       const sourceKind = sourceKindOf(record);
       if (sourceKind === CURATED_SOURCE_KIND) {
         for (let repeat = 0; repeat < options.curatedRepeat; repeat += 1) {
@@ -629,16 +651,26 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       duplicateRate: trainWritten === 0 ? 0 : Number((duplicateRows / trainWritten).toFixed(4)),
       note: "meta.sourcePath changes do not make a duplicated prompt/completion pair novel; use explicit repeat flags only for controlled ablations.",
     },
+    dedup: {
+      method: "normalized_prompt_completion_sha256_16_before_explicit_repeats",
+      sourceDuplicateRowsSkipped,
+      sourceDuplicateGroupsSkipped: skippedSourcePairKeys.size,
+      explicitRepeatFlagsRemainAvailable: options.curatedRepeat > 1 || options.nonReviewRepeat > 1,
+    },
     promptContract: {
       version: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+      rewriteScope: "all_rows_with_recoverable_user_or_task",
       sourceKindAndSourceSummaryInModelPrompt: promptContractLegacyUnrewritten === 0,
+      rowsRewritten: promptContractRewritten,
       rowsRewrittenFromLegacyPrompt: promptContractRewritten,
       legacyRowsStillContainingSourceContext: promptContractLegacyUnrewritten,
+      validRowsRewritten: validPromptContract.rewritten,
       validRowsRewrittenFromLegacyPrompt: validPromptContract.rewritten,
       validLegacyRowsStillContainingSourceContext: validPromptContract.legacyUnrewritten,
+      testRowsRewritten: testPromptContract.rewritten,
       testRowsRewrittenFromLegacyPrompt: testPromptContract.rewritten,
       testLegacyRowsStillContainingSourceContext: testPromptContract.legacyUnrewritten,
-      note: "Legacy rows with a user_or_task line are rebuilt through the shared contract; rows without recoverable user text remain visible for manual review rather than being guessed.",
+      note: "Rows with a recoverable user_or_task line are rebuilt through the shared contract; rows without recoverable user text remain visible for manual review rather than being guessed. The *FromLegacyPrompt fields are compatibility aliases.",
     },
     sourceKinds: counts.sourceKinds,
     writtenSourceKinds,

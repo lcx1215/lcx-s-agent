@@ -37,27 +37,79 @@ const CONTRACT_LABELS = new Set<string>([
   ...OUTPUT_FIELD_NAMES,
 ]);
 
-const GENERIC_CONTRACT_ID_PATTERN = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b/gu;
+const ANSWER_BEARING_PREFIXES = new Set<string>([
+  "acceptance",
+  "case",
+  "eval",
+  "failure",
+  "focus",
+  "lark",
+  "live",
+  "minimax",
+  "om",
+  "receipt",
+  "reply",
+  "sync",
+]);
+const REDACTION_PLACEHOLDER_LABELS = new Set<string>([
+  "withheld_case_label",
+  "withheld_contract_id",
+]);
+
 const GENERIC_CONTRACT_ID_CHECK_PATTERN = /^\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b$/u;
+const CONTRACT_TOKEN_PATTERN = /\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\b/giu;
 const CASE_LABEL_PATTERN = /\b(?:case|eval|id)\s*[:=]\s*[a-z0-9][a-z0-9_-]*/giu;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-function isContractLikeIdentifier(value: string): boolean {
-  return CONTRACT_LABELS.has(value.toLowerCase()) || GENERIC_CONTRACT_ID_CHECK_PATTERN.test(value);
+function normalizeContractLabel(value: string): string {
+  return value.toLowerCase().replace(/-/gu, "_");
+}
+
+/**
+ * Return true for a token that can act as an answer-bearing contract label.
+ *
+ * Known taxonomy/output labels and legacy snake_case identifiers retain the
+ * previous behavior.  Hyphenated prose is only withheld when it is clearly a
+ * code-like token (an answer-bearing prefix or a digit-bearing multi-segment
+ * identifier), so ordinary terms such as "high-level" remain readable.
+ */
+export function isAnswerBearingContractToken(value: string): boolean {
+  const normalized = normalizeContractLabel(value);
+  if (REDACTION_PLACEHOLDER_LABELS.has(normalized)) {
+    return false;
+  }
+  if (CONTRACT_LABELS.has(normalized) || GENERIC_CONTRACT_ID_CHECK_PATTERN.test(value)) {
+    return true;
+  }
+  const segments = normalized.split("_");
+  return (
+    segments.length >= 2 && (/[0-9]/u.test(value) || ANSWER_BEARING_PREFIXES.has(segments[0] ?? ""))
+  );
+}
+
+/**
+ * Find unique answer-bearing contract tokens in a model-visible text field.
+ * This is shared by prompt redaction and the read-only dataset audit so the
+ * two surfaces cannot silently disagree about hyphenated acceptance codes.
+ */
+export function findAnswerBearingContractTokens(input: string): string[] {
+  const matches = input.match(CONTRACT_TOKEN_PATTERN) ?? [];
+  return [...new Set(matches.filter(isAnswerBearingContractToken))];
 }
 
 /**
  * Remove answer-bearing identifiers from a teacher/student input while
  * retaining ordinary Chinese/English task semantics.  This is intentionally
- * conservative about prose: only known contract labels, output fields, and
- * multi-segment snake_case identifiers are withheld.
+ * conservative about prose: only known contract labels, legacy
+ * multi-segment snake_case identifiers, and clearly code-like hyphenated
+ * acceptance labels are withheld.
  */
 export function redactTeacherContractLabels(input: string): string {
-  let redacted = input.replace(GENERIC_CONTRACT_ID_PATTERN, (value) =>
-    isContractLikeIdentifier(value) ? "<withheld_contract_id>" : value,
+  let redacted = input.replace(CONTRACT_TOKEN_PATTERN, (value) =>
+    isAnswerBearingContractToken(value) ? "<withheld_contract_id>" : value,
   );
   for (const label of [...CONTRACT_LABELS].toSorted((left, right) => right.length - left.length)) {
     redacted = redacted.replace(
