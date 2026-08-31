@@ -520,6 +520,11 @@ trading authority. It is a local-only architecture audit that checks whether eac
 main lane still has four things at once: macro rule, workflow entrypoint, proof
 surface, and boundary flag.
 
+Any model or training implementation lane is an optional observed implementation,
+not the substrate of the mind model. Its failure can block that capability, but it
+cannot redefine the mind model or authorize model training, promotion, provider
+configuration, or delivery.
+
 The mind model also emits a read-only `Global Evidence Projection` for Codex,
 LCX, local automation, and every message adapter. It is a shared projection,
 not a new owner, memory store, model, provider, training process, or sender.
@@ -537,6 +542,22 @@ Governance Autopilot republishes the validated projection as the read-only
 `readStatus` (`current`, `stale`, `missing`, or `invalid`) and treat
 `blocked=true` as non-actionable; a stale projection never authorizes a
 message adapter action and owner receipts remain authoritative.
+Every automation or communication adapter must enter through
+`readGlobalEvidenceProjectionForAdapter` with a non-empty opaque reader id.
+That reader id labels the consumer, not the delivery proof; the adapter must
+not author projection facts, delivery proof, or owner decisions.
+The current implementation proof covers the governance automation and the
+read-only farm dashboard; that is contract wiring, not proof that every
+future message adapter has consumed the projection.
+The neutral answer boundary is `src/auto-reply/reply/dispatch-from-config.ts`:
+it accepts an optional projection candidate and emits a reader receipt for the
+caller. This is transport-neutral observation only; it is not injected into a
+model prompt, and a blocked read does not rewrite or suppress the ordinary
+reply path. Message adapters still need their own bounded migration proof.
+Use `node --import tsx scripts/operator/lcx-projection-reader-audit.ts --json`
+to inventory known adapter entrypoints. Its `ok` field only means the listed
+entrypoints exist; `summary.readerContractReadyForAllAdapters` is the separate
+readiness gate.
 
 - Run the mind model when a change could affect more than one loop, when a
   future agent may only see one file, or when the user asks for macro/micro

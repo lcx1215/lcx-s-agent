@@ -30,7 +30,7 @@ async function runJsonScript(script: string) {
 
 describe("LCX mind model god-view architecture check", () => {
   it("passes current macro workflow closure surfaces", async () => {
-    const { stdout } = await runJsonScript("scripts/dev/lcx-mind-model.ts");
+    const { stdout } = await runJsonScript("scripts/operator/lcx-mind-model.ts");
     const payload = JSON.parse(stdout) as {
       ok: boolean;
       boundary: string;
@@ -39,6 +39,12 @@ describe("LCX mind model god-view architecture check", () => {
         total: number;
         laneTotal: number;
         invariantTotal: number;
+        roleCounts: {
+          coreArchitecture: number;
+          observedImplementation: number;
+        };
+        coreMasterLanes: string[];
+        observedImplementationLanes: string[];
         masterLanes: string[];
         invariantCategories: string[];
       };
@@ -50,12 +56,14 @@ describe("LCX mind model god-view architecture check", () => {
       protectedMemoryTouched: boolean;
       globalEvidenceProjection: {
         contractVersion: string;
+        ontologyVersion?: string;
         mode: string;
         capabilities: Array<{
           id: string;
           coverage: string;
           maturity: string;
           adaptability: string;
+          role?: string;
         }>;
         delivery: {
           adapterId: string | null;
@@ -69,6 +77,12 @@ describe("LCX mind model god-view architecture check", () => {
           protectedMemory: string;
         };
       };
+      ontologyAudit: {
+        ok: boolean;
+        ontologyVersion: string;
+        canonicalSource: string;
+        errors: string[];
+      };
     };
 
     expect(payload).toEqual(
@@ -81,13 +95,30 @@ describe("LCX mind model god-view architecture check", () => {
       }),
     );
     expect(payload.summary.failed).toBe(0);
+    expect(payload.ontologyAudit).toEqual(
+      expect.objectContaining({
+        ok: true,
+        ontologyVersion: "lcx_ontology_v1",
+        canonicalSource: "src/shared/lcx-ontology.ts",
+        errors: [],
+      }),
+    );
     expect(payload.summary.laneTotal).toBeGreaterThanOrEqual(9);
     expect(payload.summary.invariantTotal).toBeGreaterThanOrEqual(8);
     expect(payload.summary.total).toBe(payload.summary.laneTotal + payload.summary.invariantTotal);
+    expect(payload.summary.roleCounts).toEqual(
+      expect.objectContaining({
+        coreArchitecture: expect.any(Number),
+        observedImplementation: 1,
+      }),
+    );
+    expect(payload.summary.coreMasterLanes).not.toContain("qwen_training");
+    expect(payload.summary.observedImplementationLanes).toEqual(["qwen_training"]);
     expect(payload.missingSurfaceFiles).toEqual([]);
     expect(payload.globalEvidenceProjection).toEqual(
       expect.objectContaining({
         contractVersion: "global_evidence_projection_v1",
+        ontologyVersion: "lcx_ontology_v1",
         mode: "read_only_shadow",
         delivery: { adapterId: null, state: "unknown", evidenceRefs: [] },
         boundaries: {
@@ -114,6 +145,14 @@ describe("LCX mind model god-view architecture check", () => {
           maturity: "structural",
           adaptability: "adapter_neutral",
         }),
+        expect.objectContaining({
+          id: "local_brain_training",
+          role: "observed_implementation",
+        }),
+        expect.objectContaining({
+          id: "canonical_ontology_registry",
+          role: "core_architecture",
+        }),
       ]),
     );
     expect(payload.summary.masterLanes).toEqual(
@@ -130,7 +169,12 @@ describe("LCX mind model god-view architecture check", () => {
     expect(payload.lanes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "mind_model_self_supervision", ok: true }),
-        expect.objectContaining({ id: "local_brain_training", ok: true }),
+        expect.objectContaining({
+          id: "local_brain_training",
+          role: "observed_implementation",
+          ok: true,
+        }),
+        expect.objectContaining({ id: "canonical_ontology_registry", ok: true }),
         expect.objectContaining({ id: "module_learning_memory", ok: true }),
         expect.objectContaining({ id: "self_repair_hands", ok: true }),
         expect.objectContaining({ id: "lark_feishu_live_boundary", ok: true }),
@@ -189,8 +233,8 @@ describe("LCX mind model god-view architecture check", () => {
 
   it("is wired into the main doctor and head-tail gate", async () => {
     const [doctorSource, headTailSource, runbook, localOperator] = await Promise.all([
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-head-tail-consistency.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-head-tail-consistency.ts"), "utf8"),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
       fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
     ]);
@@ -198,15 +242,16 @@ describe("LCX mind model god-view architecture check", () => {
     expect(doctorSource).toContain('name: "mind-model-consistency"');
     expect(doctorSource).toContain('name: "flow-graph-exam"');
     expect(doctorSource).toContain('name: "context-recovery-exam"');
-    expect(doctorSource).toContain("scripts/dev/lcx-mind-model.ts");
-    expect(doctorSource).toContain("scripts/dev/lcx-flow-graph.ts");
-    expect(doctorSource).toContain("scripts/dev/lcx-governance-autopilot.ts");
-    expect(doctorSource).toContain("scripts/dev/lcx-context-recovery-exam.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-mind-model.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-flow-graph.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-governance-autopilot.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-context-recovery-exam.ts");
     expect(headTailSource).toContain("mind_model_boundary");
     expect(headTailSource).toContain("flow_graph_boundary");
     expect(headTailSource).toContain("MIND_MODEL_LANES");
     expect(headTailSource).toContain("compressedContextRecovered");
     expect(runbook).toContain("LCX Agent Mind Model");
+    expect(runbook).toContain("Canonical Ontology");
     expect(runbook).toContain("LCX Agent Flow Graph");
     expect(runbook).toContain("World-class agent architecture");
     expect(runbook).toContain("single factual owner");
@@ -218,13 +263,19 @@ describe("LCX mind model god-view architecture check", () => {
     expect(localOperator).toContain("context_recovery_file");
     expect(localOperator).toContain("mindModel");
     expect(localOperator).toContain("contextRecovery");
+    expect(localOperator).toContain("scripts/operator/lcx-system-doctor.ts");
+    expect(localOperator).toContain("scripts/operator/lcx-governance-autopilot.ts");
+    expect(localOperator).toContain("LCX_LOCAL_OPERATOR_SKIP_CLEANUP");
+    expect(localOperator).toContain("LCX_LOCAL_OPERATOR_SKIP_TRAINING_RESTART");
+    expect(localOperator).not.toContain("scripts/dev/");
+    expect(localOperator).not.toContain("dev_local_observability_only");
   });
 
   it("does not let a temporary HOME hide the real operator files", async () => {
     const testHome = path.join(repoRoot, ".tmp", "openclaw-test-home");
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/lcx-mind-model.ts", "--json"],
+      ["--import", "tsx", "scripts/operator/lcx-mind-model.ts", "--json"],
       {
         cwd: repoRoot,
         env: { ...process.env, HOME: testHome },
