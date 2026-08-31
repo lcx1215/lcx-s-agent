@@ -1964,8 +1964,9 @@ function buildDecisions(params: {
     });
   }
 
-  if (params.liveLarkBrainBinding) {
+  if (params.externalChannelBinding || params.liveLarkBrainBinding) {
     const externalChannelBinding = params.externalChannelBinding;
+    const legacyBinding = params.liveLarkBrainBinding;
     const externalChannelStatus = externalChannelBinding?.status;
     const externalChannelReadyForApply = externalChannelStatus === "ready_for_apply";
     const externalChannelBound =
@@ -1978,25 +1979,29 @@ function buildDecisions(params: {
           : "lark_external_channel_binding_deferred",
       lane: "external_channel",
       severity: externalChannelReadyForApply || externalChannelBound ? "info" : "P3",
-      action: externalChannelBinding?.action ?? params.liveLarkBrainBinding.action,
+      action:
+        externalChannelBinding?.action ??
+        legacyBinding?.action ??
+        "wait_for_training_plan_external_channel_ready",
       reason: [
-        `status=${externalChannelBinding?.status ?? params.liveLarkBrainBinding.status}`,
-        `conceptStatus=${params.liveLarkBrainBinding.conceptStatus}`,
+        `status=${externalChannelBinding?.status ?? legacyBinding?.status ?? "unknown"}`,
+        `conceptStatus=${legacyBinding?.conceptStatus ?? "canonical_external_channel_owner"}`,
         `selectedCleanAdapter=${
           externalChannelBinding?.selectedCleanAdapter ??
-          params.liveLarkBrainBinding.selectedCleanAdapter ??
+          legacyBinding?.selectedCleanAdapter ??
           "unknown"
         }`,
         `externalChannelMissingProof=${
           (
             externalChannelBinding?.missingProof ??
-            params.liveLarkBrainBinding.externalChannelMissingProof
+            legacyBinding?.externalChannelMissingProof ??
+            []
           ).join(",") || "none"
         }`,
       ].join("; "),
       codexRepairEligible: false,
       nextCommand: externalChannelReadyForApply
-        ? params.liveLarkBrainBinding.statusCommand
+        ? (externalChannelBinding?.statusCommand ?? legacyBinding?.statusCommand)
         : undefined,
     });
   }
@@ -2221,7 +2226,6 @@ function buildEvolutionAccelerationQueue(params: {
   };
   decisions: TrainingDecision[];
   qwenCapabilityConsolidation: QwenCapabilityConsolidationSnapshot;
-  liveLarkBrainBinding: LegacyLiveLarkBrainBindingSnapshot;
   externalChannelBinding: ExternalChannelBindingPlanSnapshot;
   datasetRuntimeFreshness: DatasetRuntimeFreshnessSnapshot;
   moduleLearningReview: ModuleLearningReviewSnapshot;
@@ -2302,7 +2306,7 @@ function buildEvolutionAccelerationQueue(params: {
     command:
       params.externalChannelBinding.status === "channel_runtime_probe_ok_user_visible_pending"
         ? "node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe"
-        : params.liveLarkBrainBinding.statusCommand,
+        : params.externalChannelBinding.statusCommand,
     blockedByDecisionIds:
       params.externalChannelBinding.status === "ready_for_apply"
         ? []
@@ -2671,7 +2675,6 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestQuotaStatus,
     qwenBaseModelMigration,
     activeGuardAdapterTruth,
-    liveLarkBrainBinding,
     externalChannelBinding,
     moduleLearningReview,
     learningSedimentationBridge,
@@ -2684,7 +2687,6 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     activeHeavyEvalCounts: activeHeavyEval.counts,
     decisions,
     qwenCapabilityConsolidation,
-    liveLarkBrainBinding,
     externalChannelBinding,
     datasetRuntimeFreshness,
     moduleLearningReview,
