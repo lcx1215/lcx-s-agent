@@ -225,19 +225,19 @@ for auditability; they are not current repository or runtime authority.
   - use `memory/feishu-work-receipts/*.md` when debugging wording/routing/self-repair drift instead of replaying whole chats
   - prefer decision-convergence over fake-precise first answers
 
-## Development Repo vs Feishu / Live Runtime Repo
+## Canonical Repository and External-Channel Runtime
 
-- Development work should start in:
+- All local work starts in the single canonical repository:
   - `lcx-s-openclaw`
-- The live Feishu runtime sidecar repo is:
-  - `~/.openclaw/live-sidecars/lcx-s-openclaw`
+- The external-channel runtime is a deployment checkout of that same source at:
+  - `~/.openclaw/external-channel-runtime/lcx-s-openclaw`
 - The canonical repository contains the editable Feishu source:
   - `extensions/feishu/src/*`
-- But Feishu behavior is only changed in practice after an equivalent bounded patch is:
-  1. ported into `~/.openclaw/live-sidecars/lcx-s-openclaw`
-  2. built there
-  3. restarted there
-  4. verified through probe + real Feishu acceptance
+- Feishu behavior changes are applied through the bounded four-stage migration:
+  1. copy to the neutral runtime and verify hashes
+  2. prefer the neutral path with a read-only legacy fallback during cutover
+  3. restart in an idle window and run runtime/probe/visibility checks
+  4. archive the legacy runtime only after zero reads and zero new writes
 
 ## Hard Boundary
 

@@ -23,7 +23,7 @@ This document is intentionally narrow:
 - local isolation:
   - linked Git worktrees only
 - optional external-channel deployment artifact:
-  - `~/.openclaw/live-sidecars/lcx-s-openclaw`
+  - `~/.openclaw/external-channel-runtime/lcx-s-openclaw`
 
 `core-verified` becomes `user-visible-observed` only after:
 
@@ -48,7 +48,7 @@ Do not bind an external channel while the canonical-repository seam is ambiguous
 
 ## Step 2: Confirm The External-Channel Seam Exists
 
-In `~/.openclaw/live-sidecars/lcx-s-openclaw`, confirm the deployment artifact
+In `~/.openclaw/external-channel-runtime/lcx-s-openclaw`, confirm the deployment artifact
 references the equivalent canonical seam before binding it.
 
 Current observed external-channel acceptance scripts include:
@@ -66,7 +66,7 @@ bounded external-channel binding plan first.
 
 ## Step 3: Bind Only The Bounded External-Channel Equivalent
 
-In `~/.openclaw/live-sidecars/lcx-s-openclaw`:
+In `~/.openclaw/external-channel-runtime/lcx-s-openclaw`:
 
 1. inspect `git status --short`
 2. bind only the equivalent seam from the canonical repository
@@ -87,7 +87,7 @@ Examples already present in the deployment artifact:
 
 ## Step 5: Build And Restart The Channel
 
-In `~/.openclaw/live-sidecars/lcx-s-openclaw`:
+In `~/.openclaw/external-channel-runtime/lcx-s-openclaw`:
 
 1. run `corepack pnpm build`
 2. restart the external-channel runtime by the current operator-owned path

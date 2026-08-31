@@ -42,10 +42,17 @@ const EXTERNAL_CHANNEL_BINDING_TIMEOUT_MS = resolvePositiveTimeout(
   process.env.EXTERNAL_CHANNEL_BINDING_TIMEOUT_MS,
   110_000,
 );
-const LIVE_SIDECAR_REPO =
-  process.env.LCX_LIVE_SIDECAR ??
-  path.join(LCX_USER_HOME, ".openclaw", "live-sidecars", "lcx-s-openclaw");
-const LIVE_SIDECAR_DIST_ENTRY = path.join(LIVE_SIDECAR_REPO, "dist", "index.js");
+const EXTERNAL_CHANNEL_RUNTIME_REPO =
+  process.env.LCX_EXTERNAL_CHANNEL_RUNTIME ??
+  path.join(LCX_USER_HOME, ".openclaw", "external-channel-runtime", "lcx-s-openclaw");
+const EXTERNAL_CHANNEL_RUNTIME_DIST_ENTRY = path.join(
+  EXTERNAL_CHANNEL_RUNTIME_REPO,
+  "dist",
+  "index.js",
+);
+// Kept as a source-compatible symbol for existing doctor assertions; it now
+// points exclusively at the canonical external-channel runtime.
+const LIVE_SIDECAR_DIST_ENTRY = EXTERNAL_CHANNEL_RUNTIME_DIST_ENTRY;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
 
@@ -927,8 +934,8 @@ async function liveOpenClawInvocation(args: string[]): Promise<{
     return {
       command: process.execPath,
       args: [LIVE_SIDECAR_DIST_ENTRY, ...args],
-      cwd: LIVE_SIDECAR_REPO,
       source: "live-sidecar-dist",
+      cwd: EXTERNAL_CHANNEL_RUNTIME_REPO,
     };
   }
   return {

@@ -199,10 +199,10 @@ describe("findExtraGatewayServices (darwin)", () => {
     <key>ProgramArguments</key>
     <array>
       <string>/opt/homebrew/bin/python3</string>
-      <string>/Users/example/.openclaw/live-sidecars/lcx-s-openclaw/feishu_event_proxy.py</string>
+      <string>/Users/example/.openclaw/external-channel-runtime/lcx-s-openclaw/feishu_event_proxy.py</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/example/.openclaw/live-sidecars/lcx-s-openclaw</string>
+    <string>/Users/example/.openclaw/external-channel-runtime/lcx-s-openclaw</string>
   </dict>
 </plist>`,
       "utf8",

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-const DEFAULT_SIDECAR_ROOT = "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw";
+const DEFAULT_SIDECAR_ROOT = "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw";
 const DEFAULT_SNAPSHOT_PATH =
   "/Users/liuchengxu/.openclaw/workspace/state/lcx-external-channel-binding-latest.json";
 const SYNC_DOCTOR =

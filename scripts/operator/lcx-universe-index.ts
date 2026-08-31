@@ -16,7 +16,12 @@ const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
 const STALE_ARTIFACT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const LARGE_ARTIFACT_BYTES = 50 * 1024 * 1024;
-const LIVE_SIDECAR_ROOT = path.join(LCX_USER_HOME, ".openclaw", "live-sidecars", "lcx-s-openclaw");
+const EXTERNAL_CHANNEL_RUNTIME_ROOT = path.join(
+  LCX_USER_HOME,
+  ".openclaw",
+  "external-channel-runtime",
+  "lcx-s-openclaw",
+);
 
 type ArtifactFile = {
   path: string;
@@ -293,7 +298,7 @@ async function main() {
     walkArtifacts(DEFAULT_WORKSPACE_LOG_DIR, nowMs),
     walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "memory"), nowMs),
     walkArtifacts(path.join(DEFAULT_WORKSPACE_DIR, "tmp"), nowMs),
-    walkArtifacts(LIVE_SIDECAR_ROOT, nowMs),
+    walkArtifacts(EXTERNAL_CHANNEL_RUNTIME_ROOT, nowMs),
     readJson(path.join(DEFAULT_WORKSPACE_DIR, "state", "lcx-governance-autopilot-latest.json")),
     readJson(path.join(DEFAULT_WORKSPACE_DIR, "state", "lcx-local-operator-latest.json")),
   ]);

@@ -144,7 +144,7 @@ function isKnownOpenClawCompanionLaunchdService(label: string, contents: string)
       "ai.openclaw.lobster.scheduler",
     ].includes(lowerLabel)
   ) {
-    return lowerContents.includes("/.openclaw/live-sidecars/");
+    return lowerContents.includes("/.openclaw/external-channel-runtime/");
   }
   if (lowerLabel === "com.openclaw.cloudflared") {
     return (

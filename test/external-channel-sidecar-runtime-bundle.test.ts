@@ -82,7 +82,7 @@ describe("live sidecar runtime bundle", () => {
 
   it("uses the shared non-Desktop default runtime root", () => {
     expect(DEFAULT_RUNTIME_BUNDLE_ROOT).toBe(
-      "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
+      "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw",
     );
     expect(DEFAULT_RUNTIME_BUNDLE_ROOT).not.toContain("/Desktop/");
   });
