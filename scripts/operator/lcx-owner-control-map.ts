@@ -156,7 +156,7 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
       ? summary.externalChannelBindingStatus
       : typeof externalChannelBinding.status === "string"
         ? externalChannelBinding.status
-        : summary.liveLarkBrainBindingStatus;
+        : undefined;
   const providerBlocks = stringArray(providerCouncil.hardBlocks);
   const items: ControlItem[] = [];
 
