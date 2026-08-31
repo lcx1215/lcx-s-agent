@@ -1,33 +1,24 @@
-export const FINANCE_DATA_PROVIDER_ROLES = [
-  "primary_market_data",
-  "cross_check_market_data",
-  "official_or_issuer_reference",
-] as const;
+import {
+  LCX_ONTOLOGY_FINANCE_DATA_DELAY_STATUSES,
+  LCX_ONTOLOGY_FINANCE_DATA_PROVIDER_ROLES,
+  LCX_ONTOLOGY_FINANCE_DATA_QUALITY_STATUSES,
+  LCX_ONTOLOGY_FINANCE_DATA_SOURCE_FAMILIES,
+  type LcxOntologyFinanceDataDelayStatus,
+  type LcxOntologyFinanceDataProviderRole,
+  type LcxOntologyFinanceDataQualityStatus,
+  type LcxOntologyFinanceDataSourceFamily,
+} from "../shared/lcx-ontology.js";
 
-export const FINANCE_DATA_SOURCE_FAMILIES = [
-  "market_data_api",
-  "fundamentals_api",
-  "official_filing",
-  "official_macro_data",
-  "etf_issuer",
-  "manual_snapshot",
-  "local_research_artifact",
-] as const;
+/** Compatibility exports; the canonical values live in the shared ontology. */
+export const FINANCE_DATA_PROVIDER_ROLES = LCX_ONTOLOGY_FINANCE_DATA_PROVIDER_ROLES;
+export const FINANCE_DATA_SOURCE_FAMILIES = LCX_ONTOLOGY_FINANCE_DATA_SOURCE_FAMILIES;
+export const FINANCE_DATA_DELAY_STATUSES = LCX_ONTOLOGY_FINANCE_DATA_DELAY_STATUSES;
+export const FINANCE_DATA_QUALITY_STATUSES = LCX_ONTOLOGY_FINANCE_DATA_QUALITY_STATUSES;
 
-export const FINANCE_DATA_DELAY_STATUSES = [
-  "realtime",
-  "delayed",
-  "end_of_day",
-  "official_lagged",
-  "manual_or_unknown",
-] as const;
-
-export const FINANCE_DATA_QUALITY_STATUSES = ["ready", "needs_review", "blocked"] as const;
-
-export type FinanceDataProviderRole = (typeof FINANCE_DATA_PROVIDER_ROLES)[number];
-export type FinanceDataSourceFamily = (typeof FINANCE_DATA_SOURCE_FAMILIES)[number];
-export type FinanceDataDelayStatus = (typeof FINANCE_DATA_DELAY_STATUSES)[number];
-export type FinanceDataQualityStatus = (typeof FINANCE_DATA_QUALITY_STATUSES)[number];
+export type FinanceDataProviderRole = LcxOntologyFinanceDataProviderRole;
+export type FinanceDataSourceFamily = LcxOntologyFinanceDataSourceFamily;
+export type FinanceDataDelayStatus = LcxOntologyFinanceDataDelayStatus;
+export type FinanceDataQualityStatus = LcxOntologyFinanceDataQualityStatus;
 
 export type FinanceDataGatewayFieldInput = {
   name: string;

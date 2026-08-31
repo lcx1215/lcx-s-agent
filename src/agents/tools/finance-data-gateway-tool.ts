@@ -2,10 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
+  LCX_ONTOLOGY_FINANCE_DATA_DELAY_STATUSES,
+  LCX_ONTOLOGY_FINANCE_DATA_PROVIDER_ROLES,
+  LCX_ONTOLOGY_FINANCE_DATA_SOURCE_FAMILIES,
+} from "../../shared/lcx-ontology.js";
+import {
   buildFinanceDataGatewaySnapshot,
-  FINANCE_DATA_DELAY_STATUSES,
-  FINANCE_DATA_PROVIDER_ROLES,
-  FINANCE_DATA_SOURCE_FAMILIES,
   type FinanceDataGatewayInput,
 } from "../finance-data-gateway.js";
 import { stringEnum } from "../schema/typebox.js";
@@ -26,11 +28,11 @@ const FinanceDataGatewayFieldSchema = Type.Object({
 
 const FinanceDataGatewayObservationSchema = Type.Object({
   providerName: Type.String(),
-  providerRole: stringEnum(FINANCE_DATA_PROVIDER_ROLES),
-  sourceFamily: stringEnum(FINANCE_DATA_SOURCE_FAMILIES),
+  providerRole: stringEnum(LCX_ONTOLOGY_FINANCE_DATA_PROVIDER_ROLES),
+  sourceFamily: stringEnum(LCX_ONTOLOGY_FINANCE_DATA_SOURCE_FAMILIES),
   observedAt: Type.String(),
   timezone: Type.String(),
-  delayStatus: stringEnum(FINANCE_DATA_DELAY_STATUSES),
+  delayStatus: stringEnum(LCX_ONTOLOGY_FINANCE_DATA_DELAY_STATUSES),
   fields: Type.Array(FinanceDataGatewayFieldSchema),
 });
 

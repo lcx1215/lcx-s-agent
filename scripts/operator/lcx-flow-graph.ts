@@ -1,208 +1,30 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  LCX_ONTOLOGY_WORKFLOW_FILTER_IDS,
+  LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS,
+  LCX_ONTOLOGY_WORKFLOW_NODE_IDS,
+  LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS,
+} from "../../src/shared/lcx-ontology.js";
+import type {
+  LcxOntologySurfaceId,
+  LcxOntologyWorkflowFamilyId,
+  LcxOntologyWorkflowFilterId,
+  LcxOntologyWorkflowNodeId,
+  LcxOntologyWorkflowScenarioId,
+} from "../../src/shared/lcx-ontology.js";
 
-type FlowNodeId =
-  | "ingress_lark_feishu"
-  | "intent_classifier"
-  | "local_brain_planner"
-  | "finance_research_modules"
-  | "finance_data_gateway"
-  | "focused_research_universe"
-  | "directed_daily_research_brief"
-  | "daily_research_packet"
-  | "candidate_watchlist"
-  | "primary_market_data_provider"
-  | "cross_check_market_data_provider"
-  | "official_reference_data_provider"
-  | "normalized_data_snapshot"
-  | "data_provenance_quality_review"
-  | "source_registry"
-  | "finance_learning_memory"
-  | "causal_map"
-  | "review_panel"
-  | "control_room_summary"
-  | "visible_reply"
-  | "source_intake"
-  | "actual_reading_scope"
-  | "capability_card"
-  | "retrieval_receipt"
-  | "apply_validation"
-  | "local_brain_eval_absorption"
-  | "module_learning_absorption_gate"
-  | "module_learning_review"
-  | "keep_downrank_discard"
-  | "teacher_quota"
-  | "brain_distillation_review"
-  | "dataset_builder"
-  | "qwen_training"
-  | "evolution_cooldown"
-  | "hardened_eval"
-  | "promotion_gate"
-  | "adapter_resolver"
-  | "failure_curriculum"
-  | "skillopt_candidate_edit"
-  | "skillopt_best_skill"
-  | "skillopt_runtime_preflight"
-  | "local_change"
-  | "local_tests"
-  | "live_migration"
-  | "build_restart_probe"
-  | "external_channel_binding"
-  | "channel_restart_probe"
-  | "real_lark_inbound"
-  | "live_user_seen"
-  | "user_visible_observed"
-  | "new_codex_window"
-  | "fixed_evidence_recovery"
-  | "operator_latest_state"
-  | "universe_index"
-  | "repo_inventory"
-  | "artifact_inventory"
-  | "owner_coverage_map"
-  | "cleanup_candidate_review"
-  | "mind_model"
-  | "flow_graph"
-  | "training_plan"
-  | "change_impact_plan"
-  | "local_operator_loop"
-  | "governance_autopilot"
-  | "local_failure_trace"
-  | "automation_cleanup"
-  | "system_doctor"
-  | "operator_latest_receipt"
-  | "operator_digest"
-  | "language_router"
-  | "display_text_normalizer"
-  | "answer_audit_budget"
-  | "visible_answer_adoption_gate"
-  | "model_candidate_answer"
-  | "local_contract_audit"
-  | "reply_flow_audit"
-  | "readability_review"
-  | "provider_evidence"
-  | "model_council"
-  | "minimax_agent_draft"
-  | "provider_boundary"
-  | "source_conflict_review"
-  | "memory_recall"
-  | "system_memory_sedimentation_gate"
-  | "memory_write_gate"
-  | "correction_note"
-  | "stale_memory_downrank"
-  | "self_repair_hands"
-  | "self_repair_memory_cleaner"
-  | "self_repair_training_case_builder"
-  | "training_eval_candidate_packet"
-  | "self_repair_latest_receipt"
-  | "prior_work_search"
-  | "similar_mechanism_merge"
-  | "single_owner_contract"
-  | "parallel_path_reject"
-  | "external_agent_source"
-  | "prediction_market_source"
-  | "resolution_criteria_review"
-  | "market_microstructure_review"
-  | "strategy_experiment_audit"
-  | "external_upgrade_radar"
-  | "blacktech_mechanism_map"
-  | "license_scope_review"
-  | "workflow_distillation"
-  | "local_skill_candidate"
-  | "trajectory_or_trace_receipt"
-  | "security_permission_review"
-  | "acceptance_eval"
-  | "commercial_acceptance_harness"
-  | "schedule_gate"
-  | "repair_lock";
+type FlowNodeId = LcxOntologyWorkflowNodeId;
+type FlowFilterId = LcxOntologyWorkflowFilterId;
+type FlowScenarioId = LcxOntologyWorkflowScenarioId;
+type FlowFamilyId = LcxOntologyWorkflowFamilyId;
 
-type FlowFilterId =
-  | "source_evidence_gate"
-  | "no_trade_advice"
-  | "research_only_boundary"
-  | "no_unverified_current_market_data"
-  | "stored_only_is_not_learning"
-  | "protected_memory_guard"
-  | "language_corpus_separation"
-  | "retrieval_apply_eval_review_required"
-  | "per_receipt_absorption_evidence_required"
-  | "training_overlap_guard"
-  | "work_then_evolve_cooldown_required"
-  | "parse_recovered_no_promotion"
-  | "promotion_ready_required"
-  | "step_timeout_visible"
-  | "local_ready_not_live_user_seen"
-  | "live_runtime_probe_required"
-  | "local_ready_not_user_visible_observed"
-  | "external_channel_probe_required"
-  | "real_lark_inbound_required"
-  | "fresh_operator_state_required"
-  | "single_digest_only"
-  | "error_receipt_required"
-  | "visible_text_no_internal_labels"
-  | "no_internal_runtime_details_visible"
-  | "bounded_answer_review"
-  | "candidate_answer_not_final_authority"
-  | "qwen_challenger_not_final_authority"
-  | "qwen_challenge_patch_only"
-  | "terminal_decision_required"
-  | "model_rewrite_budget_required"
-  | "no_raw_json_visible_reply"
-  | "reply_flow_audit_required"
-  | "provider_evidence_required"
-  | "minimax_agent_draft_not_final_authority"
-  | "minimax_agent_output_requires_lcx_gate"
-  | "minimax_agent_runtime_claim_requires_receipt"
-  | "no_provider_config_change"
-  | "no_external_channel_sender_change"
-  | "source_conflict_visible"
-  | "fresh_timestamp_required"
-  | "field_definition_required"
-  | "three_source_reconciliation_required"
-  | "conflicted_data_blocks_conclusion"
-  | "memory_write_freshness_gate"
-  | "self_repair_write_allowlist_required"
-  | "explicit_self_repair_write_flag_required"
-  | "training_candidate_not_absorbed"
-  | "system_memory_not_module_learning"
-  | "correction_note_required"
-  | "prior_work_reuse_required"
-  | "same_philosophy_merge_required"
-  | "single_owner_required"
-  | "license_scope_required"
-  | "untrusted_source_isolation"
-  | "blacktech_is_pattern_intake_only"
-  | "runtime_authority_not_granted"
-  | "model_weight_absorption_not_claimed"
-  | "live_proof_required"
-  | "tool_permission_audit_required"
-  | "human_signoff_checkpoint"
-  | "no_wallet_or_order_execution"
-  | "market_microstructure_warning_required"
-  | "paper_only_backtest_required"
-  | "sample_out_validation_required"
-  | "thin_liquidity_downrank_required"
-  | "ambiguous_resolution_blocks_conclusion"
-  | "fees_slippage_and_sample_out_required"
-  | "commercial_error_budget_required"
-  | "product_canary_suite_required"
-  | "automation_schedule_gate"
-  | "repair_lock_required"
-  | "skillopt_best_skill_required"
-  | "skillopt_context_not_weight_absorption"
-  | "skillopt_external_channel_proof_required"
-  | "inventory_only_no_delete"
-  | "owner_coverage_required"
-  | "artifact_staleness_visible"
-  | "focused_daily_product_required"
-  | "daily_research_packet_required"
-  | "candidate_watchlist_not_trade_recommendation";
-
-type SurfaceGroup = "head" | "workflow" | "proof" | "boundary";
+type SurfaceGroup = LcxOntologySurfaceId;
 
 type FlowScenario = {
-  id: string;
-  family: string;
+  id: FlowScenarioId;
+  family: FlowFamilyId;
   objective: string;
   start: FlowNodeId;
   end: FlowNodeId;
@@ -258,203 +80,10 @@ type FlowDiagnosticIndexEntry = {
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
 
-const NODE_IDS: FlowNodeId[] = [
-  "ingress_lark_feishu",
-  "intent_classifier",
-  "local_brain_planner",
-  "finance_research_modules",
-  "finance_data_gateway",
-  "focused_research_universe",
-  "directed_daily_research_brief",
-  "daily_research_packet",
-  "candidate_watchlist",
-  "primary_market_data_provider",
-  "cross_check_market_data_provider",
-  "official_reference_data_provider",
-  "normalized_data_snapshot",
-  "data_provenance_quality_review",
-  "source_registry",
-  "finance_learning_memory",
-  "causal_map",
-  "review_panel",
-  "control_room_summary",
-  "visible_reply",
-  "source_intake",
-  "actual_reading_scope",
-  "capability_card",
-  "retrieval_receipt",
-  "apply_validation",
-  "local_brain_eval_absorption",
-  "module_learning_absorption_gate",
-  "module_learning_review",
-  "keep_downrank_discard",
-  "teacher_quota",
-  "brain_distillation_review",
-  "dataset_builder",
-  "qwen_training",
-  "evolution_cooldown",
-  "hardened_eval",
-  "promotion_gate",
-  "adapter_resolver",
-  "failure_curriculum",
-  "skillopt_candidate_edit",
-  "skillopt_best_skill",
-  "skillopt_runtime_preflight",
-  "local_change",
-  "local_tests",
-  "live_migration",
-  "build_restart_probe",
-  "external_channel_binding",
-  "channel_restart_probe",
-  "real_lark_inbound",
-  "live_user_seen",
-  "user_visible_observed",
-  "new_codex_window",
-  "fixed_evidence_recovery",
-  "operator_latest_state",
-  "universe_index",
-  "repo_inventory",
-  "artifact_inventory",
-  "owner_coverage_map",
-  "cleanup_candidate_review",
-  "mind_model",
-  "flow_graph",
-  "training_plan",
-  "change_impact_plan",
-  "local_operator_loop",
-  "governance_autopilot",
-  "local_failure_trace",
-  "automation_cleanup",
-  "system_doctor",
-  "operator_latest_receipt",
-  "operator_digest",
-  "language_router",
-  "display_text_normalizer",
-  "answer_audit_budget",
-  "visible_answer_adoption_gate",
-  "model_candidate_answer",
-  "local_contract_audit",
-  "reply_flow_audit",
-  "readability_review",
-  "provider_evidence",
-  "model_council",
-  "minimax_agent_draft",
-  "provider_boundary",
-  "source_conflict_review",
-  "memory_recall",
-  "system_memory_sedimentation_gate",
-  "memory_write_gate",
-  "correction_note",
-  "stale_memory_downrank",
-  "self_repair_hands",
-  "self_repair_memory_cleaner",
-  "self_repair_training_case_builder",
-  "training_eval_candidate_packet",
-  "self_repair_latest_receipt",
-  "prior_work_search",
-  "similar_mechanism_merge",
-  "single_owner_contract",
-  "parallel_path_reject",
-  "external_agent_source",
-  "prediction_market_source",
-  "resolution_criteria_review",
-  "market_microstructure_review",
-  "strategy_experiment_audit",
-  "external_upgrade_radar",
-  "blacktech_mechanism_map",
-  "license_scope_review",
-  "workflow_distillation",
-  "local_skill_candidate",
-  "trajectory_or_trace_receipt",
-  "security_permission_review",
-  "acceptance_eval",
-  "commercial_acceptance_harness",
-  "schedule_gate",
-  "repair_lock",
-];
-
-const FILTER_IDS: FlowFilterId[] = [
-  "source_evidence_gate",
-  "no_trade_advice",
-  "research_only_boundary",
-  "no_unverified_current_market_data",
-  "stored_only_is_not_learning",
-  "protected_memory_guard",
-  "language_corpus_separation",
-  "retrieval_apply_eval_review_required",
-  "per_receipt_absorption_evidence_required",
-  "training_overlap_guard",
-  "work_then_evolve_cooldown_required",
-  "parse_recovered_no_promotion",
-  "promotion_ready_required",
-  "step_timeout_visible",
-  "local_ready_not_live_user_seen",
-  "live_runtime_probe_required",
-  "local_ready_not_user_visible_observed",
-  "external_channel_probe_required",
-  "real_lark_inbound_required",
-  "fresh_operator_state_required",
-  "single_digest_only",
-  "error_receipt_required",
-  "visible_text_no_internal_labels",
-  "no_internal_runtime_details_visible",
-  "bounded_answer_review",
-  "candidate_answer_not_final_authority",
-  "qwen_challenger_not_final_authority",
-  "qwen_challenge_patch_only",
-  "terminal_decision_required",
-  "model_rewrite_budget_required",
-  "no_raw_json_visible_reply",
-  "reply_flow_audit_required",
-  "provider_evidence_required",
-  "minimax_agent_draft_not_final_authority",
-  "minimax_agent_output_requires_lcx_gate",
-  "minimax_agent_runtime_claim_requires_receipt",
-  "no_provider_config_change",
-  "no_external_channel_sender_change",
-  "source_conflict_visible",
-  "fresh_timestamp_required",
-  "field_definition_required",
-  "three_source_reconciliation_required",
-  "conflicted_data_blocks_conclusion",
-  "memory_write_freshness_gate",
-  "self_repair_write_allowlist_required",
-  "explicit_self_repair_write_flag_required",
-  "training_candidate_not_absorbed",
-  "system_memory_not_module_learning",
-  "correction_note_required",
-  "prior_work_reuse_required",
-  "same_philosophy_merge_required",
-  "single_owner_required",
-  "license_scope_required",
-  "untrusted_source_isolation",
-  "blacktech_is_pattern_intake_only",
-  "runtime_authority_not_granted",
-  "model_weight_absorption_not_claimed",
-  "live_proof_required",
-  "tool_permission_audit_required",
-  "human_signoff_checkpoint",
-  "no_wallet_or_order_execution",
-  "market_microstructure_warning_required",
-  "paper_only_backtest_required",
-  "sample_out_validation_required",
-  "thin_liquidity_downrank_required",
-  "ambiguous_resolution_blocks_conclusion",
-  "fees_slippage_and_sample_out_required",
-  "commercial_error_budget_required",
-  "product_canary_suite_required",
-  "automation_schedule_gate",
-  "repair_lock_required",
-  "skillopt_best_skill_required",
-  "skillopt_context_not_weight_absorption",
-  "skillopt_external_channel_proof_required",
-  "inventory_only_no_delete",
-  "owner_coverage_required",
-  "artifact_staleness_visible",
-  "focused_daily_product_required",
-  "daily_research_packet_required",
-  "candidate_watchlist_not_trade_recommendation",
-];
+const NODE_IDS: FlowNodeId[] = [...LCX_ONTOLOGY_WORKFLOW_NODE_IDS];
+const FILTER_IDS: FlowFilterId[] = [...LCX_ONTOLOGY_WORKFLOW_FILTER_IDS];
+const SCENARIO_IDS: FlowScenarioId[] = [...LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS];
+const FAMILY_IDS: FlowFamilyId[] = [...LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS];
 
 const FLOW_SCENARIOS: FlowScenario[] = [
   {
@@ -2285,6 +1914,14 @@ function surfaceTermCheck(surfaceTexts: Record<SurfaceGroup, string>): FlowCheck
 
 function graphIntegrityCheck(): FlowCheck {
   const nodeSet = new Set(NODE_IDS);
+  const scenarioSet = new Set(SCENARIO_IDS);
+  const familySet = new Set(FAMILY_IDS);
+  const unknownScenarios = FLOW_SCENARIOS.filter((scenario) => !scenarioSet.has(scenario.id)).map(
+    (scenario) => scenario.id,
+  );
+  const unknownFamilies = FLOW_SCENARIOS.filter((scenario) => !familySet.has(scenario.family)).map(
+    (scenario) => `${scenario.id}:${scenario.family}`,
+  );
   const missingNodes = FLOW_SCENARIOS.flatMap((scenario) =>
     [...scenario.requiredNodes, scenario.start, scenario.end]
       .filter((node) => !nodeSet.has(node))
@@ -2300,10 +1937,21 @@ function graphIntegrityCheck(): FlowCheck {
   ).map((scenario) => scenario.id);
   return {
     id: "flow_graph_integrity",
-    ok: missingNodes.length === 0 && invalidEdges.length === 0 && disconnected.length === 0,
+    ok:
+      unknownScenarios.length === 0 &&
+      unknownFamilies.length === 0 &&
+      missingNodes.length === 0 &&
+      invalidEdges.length === 0 &&
+      disconnected.length === 0,
     summary:
       "each waterflow must have known nodes, valid edges, and a path from intake to terminal node",
-    evidence: { missingNodes, invalidEdges, disconnected },
+    evidence: {
+      unknownScenarios,
+      unknownFamilies,
+      missingNodes,
+      invalidEdges,
+      disconnected,
+    },
   };
 }
 

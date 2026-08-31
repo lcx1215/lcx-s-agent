@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { canonicalizeLcxOntologyValue } from "../../../src/shared/lcx-ontology.js";
 import {
   normalizeLarkApiReplyForDistillation,
   type LarkApiReplyDistillationSample,
@@ -186,21 +187,21 @@ function inferRequiredTools(modules: readonly string[]): string[] {
 }
 
 function inferTaskFamily(text: string, modules: readonly string[]): string {
+  let inferred: string;
   if (modules.includes("source_registry")) {
-    return /google scholar|ssrn|nber|arxiv|论文|paper|working paper/iu.test(text)
+    inferred = /google scholar|ssrn|nber|arxiv|论文|paper|working paper/iu.test(text)
       ? "external_scholarly_learning_planning"
       : "external_source_learning_planning";
+  } else if (modules.includes("quant_math") && modules.includes("portfolio_risk_gates")) {
+    inferred = "quant_math_portfolio_risk_planning";
+  } else if (modules.includes("company_fundamentals_value")) {
+    inferred = "fundamental_research_planning";
+  } else if (modules.length > 0) {
+    inferred = "finance_research_planning";
+  } else {
+    inferred = "control_room_planning";
   }
-  if (modules.includes("quant_math") && modules.includes("portfolio_risk_gates")) {
-    return "quant_math_portfolio_risk_planning";
-  }
-  if (modules.includes("company_fundamentals_value")) {
-    return "fundamental_research_planning";
-  }
-  if (modules.length > 0) {
-    return "finance_research_planning";
-  }
-  return "control_room_planning";
+  return canonicalizeLcxOntologyValue("taskFamily", inferred) ?? "unknown";
 }
 
 function inferNextStep(params: {

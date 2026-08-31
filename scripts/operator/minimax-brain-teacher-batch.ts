@@ -11,6 +11,7 @@ import {
 import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
 import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
 import { loadConfig } from "../../src/config/config.js";
+import { canonicalizeLcxOntologyValue } from "../../src/shared/lcx-ontology.js";
 import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
   normalizeLocalBrainModuleList,
@@ -2773,7 +2774,7 @@ function makeAcceptedCandidate(
     ...candidate,
     id: `${candidate.id}-minimax-${input.id}`,
     status: "accepted_brain_plan",
-    proposedTaskFamily: plan.task_family,
+    proposedTaskFamily: canonicalizeLcxOntologyValue("taskFamily", plan.task_family) ?? "unknown",
     proposedPrimaryModules: asArray(plan.primary_modules),
     proposedSupportingModules: asArray(plan.supporting_modules),
     proposedRequiredTools: asArray(plan.required_tools),

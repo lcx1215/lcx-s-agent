@@ -1,4 +1,9 @@
 import {
+  LCX_ONTOLOGY_CONTRACT_BOUNDARY_IDS,
+  LCX_ONTOLOGY_CONTRACT_FIELD_IDS,
+  canonicalizeLcxOntologyValue,
+} from "../../src/shared/lcx-ontology.js";
+import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
   normalizeLocalBrainModuleList,
   packLocalBrainModuleFields,
@@ -12,35 +17,8 @@ export type LocalBrainContractInput = {
 const MODULE_IDS = LOCAL_BRAIN_MODULE_TAXONOMY;
 
 const MODULE_ID_SET = new Set<string>(MODULE_IDS);
-const CONTRACT_FIELD_TOKENS = [
-  "research_only",
-  "no_execution_authority",
-  "evidence_required",
-  "no_model_math_guessing",
-  "no_unverified_current_market_data",
-  "no_trade_advice",
-  "missing_data",
-  "risk_boundaries",
-  "next_step",
-  "rejected_context",
-  "required_tools",
-] as const;
-const CONTRACT_BOUNDARY_TOKENS = [
-  "do_not_promote_unverified_memory_claims",
-  "no_high_leverage_crypto",
-  "no_external_channel_sender_change",
-  "no_model_math_guessing",
-  "no_unverified_current_market_data",
-  "no_unverified_current_market_data_claims",
-  "no_protected_memory_write",
-  "no_provider_config_change",
-  "no_trade_advice",
-  "no_unverified_live_data",
-  "no_unverified_live_data_claims",
-  "research_only",
-  "risk_gate_before_action_language",
-  "technical_timing_not_standalone_alpha",
-] as const;
+const CONTRACT_FIELD_TOKENS = LCX_ONTOLOGY_CONTRACT_FIELD_IDS;
+const CONTRACT_BOUNDARY_TOKENS = LCX_ONTOLOGY_CONTRACT_BOUNDARY_IDS;
 
 function arrayValue(value: unknown): string[] {
   return Array.isArray(value)
@@ -174,6 +152,17 @@ function cleanRejectedContext(value: unknown): string[] {
   return arrayValue(value).filter((entry) => !blocked.has(entry));
 }
 
+function cleanTaskFamily(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+  return canonicalizeLcxOntologyValue("taskFamily", normalized) ?? "unknown";
+}
+
 function basePlan(plan: Record<string, unknown>): Record<string, unknown> {
   const packedModules = packLocalBrainModuleFields(
     cleanModuleList(plan.primary_modules),
@@ -182,6 +171,9 @@ function basePlan(plan: Record<string, unknown>): Record<string, unknown> {
   );
   return {
     ...plan,
+    ...(typeof plan.task_family === "string"
+      ? { task_family: cleanTaskFamily(plan.task_family) }
+      : {}),
     primary_modules: packedModules.primary_modules,
     supporting_modules: packedModules.supporting_modules,
     required_tools: packedModules.required_tools,

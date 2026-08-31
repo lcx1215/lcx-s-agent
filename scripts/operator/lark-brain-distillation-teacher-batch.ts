@@ -6,6 +6,7 @@ import {
   type LarkBrainDistillationCandidate,
   type LarkBrainDistillationReviewArtifact,
 } from "../../extensions/feishu/src/lark-brain-distillation-candidates.js";
+import { canonicalizeLcxOntologyValue } from "../../src/shared/lcx-ontology.js";
 
 type CliOptions = {
   workspaceDir: string;
@@ -313,7 +314,7 @@ function makeAcceptedCandidate(input: TeacherCase, index: number): LarkBrainDist
     ...candidate,
     id: `${candidate.id}-teacher-${String(index + 1).padStart(2, "0")}`,
     status: "accepted_brain_plan",
-    proposedTaskFamily: input.taskFamily,
+    proposedTaskFamily: canonicalizeLcxOntologyValue("taskFamily", input.taskFamily) ?? "unknown",
     proposedPrimaryModules: input.primaryModules,
     proposedSupportingModules: input.supportingModules,
     proposedRequiredTools: input.requiredTools,

@@ -21,6 +21,36 @@ master lane, and returns `recommendedFastCommands`. Use it before routine edits
 to keep small work fast. It is local only and reports `liveTouched=false`,
 `providerConfigTouched=false`, and `protectedMemoryTouched=false`.
 
+## Canonical Ontology
+
+LCX Agent uses src/shared/lcx-ontology.ts as the single semantic registry.
+It owns entity types, relations, modules, finance data/source/evidence
+vocabularies, learning targets, task families, workflow nodes and filters,
+evidence states, learning states, delivery milestones, and safety boundaries.
+Taxonomy, contracts, learning tools, finance framework/data gateway, flow graph,
+and evidence projection must import or validate against this registry; consumers
+must not introduce a parallel vocabulary.
+Relation types also carry subject/object entity-type contracts; a relation
+without a registered contract is invalid. `unknown` and
+`partial_json_object` are non-canonical task-family outcomes for sentinel or
+parser reporting only, never semantic task meaning.
+The registry is extended in place by default. A physical move requires a
+versioned explicit migration, and parallel registries are forbidden.
+
+Lark/Feishu-specific identifiers in the registry are classified as adapter
+implementation labels, not as core facts; old live/dev-shaped labels are
+compatibility labels only. New semantic objects should use neutral adapter,
+delivery, evidence, and boundary vocabulary.
+
+Run the read-only ontology owner before changing cross-layer semantics:
+
+    node --import tsx scripts/operator/lcx-ontology.ts --json
+
+The owner checks registry uniqueness, alias targets, contract task-family
+coverage, and integration anchors. It reports local_ontology_registry_only and
+never changes providers, training, protected memory, or external-channel
+sender state.
+
 Run the heavier checkpoint after the focused checks, or immediately when the
 planner reports elevated risk:
 
@@ -84,6 +114,22 @@ Governance Autopilot republishes the validated object at the top-level
 `current`, `stale`, `missing`, or `invalid`; consumers must block adapter
 actions whenever `blocked=true`, and continue to treat owner receipts as the
 source of truth.
+Every automation or communication adapter must enter through
+`readGlobalEvidenceProjectionForAdapter` with a non-empty opaque reader id.
+That reader id labels the consumer, not the delivery proof; the adapter must
+not author projection facts, delivery proof, or owner decisions.
+The current implementation proof covers the governance automation and the
+read-only farm dashboard; that is contract wiring, not proof that every
+future message adapter has consumed the projection.
+The neutral answer boundary is `src/auto-reply/reply/dispatch-from-config.ts`:
+it accepts an optional projection candidate and emits a reader receipt for the
+caller. This is transport-neutral observation only; it is not injected into a
+model prompt, and a blocked read does not rewrite or suppress the ordinary
+reply path. Message adapters still need their own bounded migration proof.
+Use `node --import tsx scripts/operator/lcx-projection-reader-audit.ts --json`
+to inventory known adapter entrypoints. Its `ok` field only means the listed
+entrypoints exist; `summary.readerContractReadyForAllAdapters` is the separate
+readiness gate.
 
 The LCX Agent Flow Graph is the waterflow exam. It verifies that each task
 family has a start node, terminal node, required modules, filter valve list,
@@ -624,6 +670,21 @@ This mode skips cleanup, system-doctor/governance channel owners, daemon
 restart, and training restart; it runs only the local training-plan,
 mind-model, flow-graph, and context-recovery observations. The receipt remains
 `local_observability_only` and is not a release or Lark-visible proof.
+
+If the goal is to refresh the complete local operator receipt while still
+forbidding cleanup and training restart, use the explicit guards below. This
+runs the current `scripts/operator/*` owners, then a subsequent standalone
+doctor can consume the refreshed operator state:
+
+```bash
+LCX_LOCAL_OPERATOR_SKIP_CLEANUP=true \
+LCX_LOCAL_OPERATOR_SKIP_TRAINING_RESTART=true \
+  /Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh
+```
+
+The receipt records both guards. They are local observability controls only;
+they do not prove external-channel binding, user-visible observation, model
+training, or promotion.
 
 ## Prior-Work Reuse Gate
 

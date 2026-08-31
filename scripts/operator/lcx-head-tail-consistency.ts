@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MODULE_LEARNING_TARGETS } from "../../src/agents/tools/module-learning-pipeline-plan-tool.ts";
+import { LCX_ONTOLOGY_EXTERNAL_LEARNING_TARGET_IDS } from "../../src/shared/lcx-ontology.ts";
 import { LOCAL_BRAIN_MODULE_TAXONOMY } from "./local-brain-taxonomy.ts";
 
 type HeadTailCheck = {
@@ -89,10 +90,7 @@ const MODULE_LEARNING_TARGET_EXEMPTIONS: Record<string, string> = {
     "control_room_summary is the visible-output substrate checked through prompt/eval surfaces",
 } as const;
 
-const MODULE_LEARNING_TARGETS_WITHOUT_TAXONOMY = new Set([
-  "factor_research",
-  "lark_feishu_workflow",
-]);
+const MODULE_LEARNING_TARGETS_WITHOUT_TAXONOMY = new Set(LCX_ONTOLOGY_EXTERNAL_LEARNING_TARGET_IDS);
 
 const CRITICAL_MODULE_CONTRACTS: CriticalModuleContract[] = [
   {

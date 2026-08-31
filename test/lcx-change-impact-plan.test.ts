@@ -452,4 +452,43 @@ describe("lcx-change-impact-plan", () => {
       ]),
     );
   });
+
+  it("routes ontology and current operator-support changes to their existing owners", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "scripts/operator/lcx-ontology.ts",
+      "src/shared/lcx-ontology.ts",
+      "src/shared/global-evidence-projection-read.ts",
+      "src/hooks/bundled/lobster-brain-registry.ts",
+      "scripts/operator/lcx-projection-reader-audit.ts",
+      "src/daemon/inspect.ts",
+      "docs/help/testing.md",
+      "docs/tools/lcx-system-doctor.md",
+      "evals/local-brain/promptfoo.yaml",
+      "src/agents/finance-answer-composer.ts",
+      "src/agents/finance-live-market-source.ts",
+      "src/hooks/bundled/operating-loop/handler.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual([
+      "global_doctrine_and_runbook",
+      "qwen_training_or_local_brain",
+      "agent_workflow_memory",
+      "local_automation",
+      "local_live_boundary",
+    ]);
+  });
+
+  it("routes the external sidecar runtime bundle to the live-boundary owner", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "scripts/operator/external-channel-sidecar-runtime-bundle.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["local_live_boundary"]);
+  });
 });

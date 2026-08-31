@@ -2,12 +2,20 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildGlobalEvidenceProjection } from "../../src/shared/global-evidence-projection.ts";
+import type {
+  LcxOntologyCapabilityRole,
+  LcxOntologySurfaceId,
+} from "../../src/shared/lcx-ontology.ts";
+import { buildOntologyAudit } from "./lcx-ontology.ts";
 
-type MindModelSurfaceGroup = "head" | "workflow" | "proof" | "boundary";
+type MindModelSurfaceGroup = LcxOntologySurfaceId;
+type MindModelLaneRole = LcxOntologyCapabilityRole;
 
 type MindModelLane = {
   id: string;
   masterLane: string;
+  /** Optional implementation lanes are visible to the god-view, not its substrate. */
+  role?: MindModelLaneRole;
   objective: string;
   headTerms: string[];
   workflowTerms: string[];
@@ -27,6 +35,7 @@ type MindModelInvariant = {
 type LaneVerdict = {
   id: string;
   masterLane: string;
+  role: MindModelLaneRole;
   ok: boolean;
   severity: "info" | "P2";
   objective: string;
@@ -69,7 +78,10 @@ const HEAD_SURFACES = [
 ] as const;
 
 const WORKFLOW_SURFACES = [
+  "src/shared/lcx-ontology.ts",
   "src/shared/global-evidence-projection.ts",
+  "src/shared/global-evidence-projection-read.ts",
+  "scripts/operator/lcx-ontology.ts",
   "scripts/operator/lcx-mind-model.ts",
   "scripts/operator/lcx-flow-graph.ts",
   "scripts/operator/lcx-governance-autopilot.ts",
@@ -79,6 +91,8 @@ const WORKFLOW_SURFACES = [
   "scripts/operator/lcx-local-paths.ts",
   "scripts/operator/lcx-context-recovery-exam.ts",
   "scripts/operator/lcx-head-tail-consistency.ts",
+  "scripts/operator/lcx-farm-web-server.ts",
+  "scripts/operator/lcx-projection-reader-audit.ts",
   "scripts/operator/lcx-problem-cluster-radar.ts",
   "scripts/operator/lcx-commercial-acceptance-harness.ts",
   "scripts/operator/lcx-commercial-answer-pipeline.ts",
@@ -112,7 +126,10 @@ const WORKFLOW_SURFACES = [
 
 const PROOF_SURFACES = [
   ...WORKFLOW_SURFACES,
+  "test/lcx-ontology.test.ts",
   "src/shared/global-evidence-projection.test.ts",
+  "test/lcx-farm-web-server.test.ts",
+  "test/lcx-projection-reader-audit.test.ts",
   "test/lcx-context-recovery-exam.test.ts",
   "test/lcx-flow-graph.test.ts",
   "test/lcx-governance-autopilot.test.ts",
@@ -149,10 +166,14 @@ const BOUNDARY_SURFACES = [
   "README.md",
   "ops/local-brain/README.md",
   "src/agents/system-prompt.ts",
+  "src/shared/lcx-ontology.ts",
+  "src/shared/global-evidence-projection-read.ts",
+  "scripts/operator/lcx-ontology.ts",
   "scripts/operator/lcx-external-channel-compat.ts",
   "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   "scripts/operator/lcx-flow-graph.ts",
   "scripts/operator/lcx-governance-autopilot.ts",
+  "scripts/operator/lcx-farm-web-server.ts",
   "scripts/operator/lcx-universe-index.ts",
   "scripts/operator/lcx-skillopt-lite.ts",
   "scripts/operator/lcx-commercial-acceptance-harness.ts",
@@ -212,8 +233,9 @@ const MIND_MODEL_LANES: MindModelLane[] = [
   {
     id: "local_brain_training",
     masterLane: "qwen_training",
+    role: "observed_implementation",
     objective:
-      "Keep Qwen training, MiniMax teacher, eval, and adapter promotion observable as one loop.",
+      "Observe optional model and training implementations as one bounded loop; their status does not define the mind model.",
     headTerms: ["Qwen training", "MiniMax teacher", "adapter promotion"],
     workflowTerms: [
       "minimax-brain-training-guard",
@@ -462,6 +484,73 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "Run lcx-mind-model when a future edit risks forgetting adjacent workflows or proof surfaces.",
   },
   {
+    id: "canonical_ontology_registry",
+    masterLane: "global_doctrine_and_runbook",
+    objective:
+      "Keep entities, relations, modules, workflows, evidence, delivery, and boundaries on one canonical semantic registry without creating a second owner.",
+    headTerms: [
+      "Canonical Ontology",
+      "single semantic registry",
+      "must not introduce a parallel vocabulary",
+      "adapter implementation labels",
+    ],
+    workflowTerms: [
+      "lcx-ontology",
+      "LCX_ONTOLOGY_REGISTRY",
+      "validateLcxOntologyRegistry",
+      "LCX_ONTOLOGY_ADAPTER_IMPLEMENTATION_IDS",
+    ],
+    proofTerms: [
+      "test/lcx-ontology.test.ts",
+      "local_ontology_registry_only",
+      "integrationSurfaces",
+      "identifierClasses",
+    ],
+    boundaryTerms: [
+      "local_ontology_registry_only",
+      "forbiddenCanonicalTokens",
+      "liveTouched",
+      "providerConfigTouched",
+      "protectedMemoryTouched",
+    ],
+    nextAction:
+      "Run the ontology audit before changing cross-layer semantics; extend the registry instead of adding a parallel vocabulary.",
+  },
+  {
+    id: "global_evidence_projection_readers",
+    masterLane: "global_doctrine_and_runbook",
+    objective:
+      "Require automation and communication adapters to read the shared projection through one opaque reader contract without becoming a fact owner.",
+    headTerms: [
+      "Global Evidence Projection",
+      "readGlobalEvidenceProjectionForAdapter",
+      "opaque reader id",
+    ],
+    workflowTerms: [
+      "GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION",
+      "readGlobalEvidenceProjectionForAdapter",
+      "globalEvidenceProjectionReader",
+      "lcx-projection-reader-audit",
+      "readerContractReadyForAllAdapters",
+      "globalEvidenceProjectionInput",
+      "neutral-answer-boundary",
+    ],
+    proofTerms: [
+      "src/shared/global-evidence-projection.test.ts",
+      "test/lcx-farm-web-server.test.ts",
+      "test/lcx-projection-reader-audit.test.ts",
+      "GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION",
+      "onGlobalEvidenceProjectionRead",
+    ],
+    boundaryTerms: [
+      "projection_only",
+      "reader id labels the consumer, not the delivery proof",
+      "not author projection facts",
+    ],
+    nextAction:
+      "Pass projection input through the neutral answer boundary first, then migrate message adapters one at a time and add bounded read proof to the owner audit.",
+  },
+  {
     id: "flow_graph_waterflow_supervision",
     masterLane: "global_doctrine_and_runbook",
     objective:
@@ -643,6 +732,29 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Never run heavy eval and doctor in ways that hide overlap; keep overlap as a hard visible failure.",
+  },
+  {
+    id: "mind_model_observes_implementations_without_owning_them",
+    category: "boundary",
+    objective:
+      "The mind model may observe optional implementation lanes, but it never becomes a model, trainer, provider, or delivery owner.",
+    termsBySurface: {
+      head: [
+        "optional observed implementation",
+        "not the substrate of the mind model",
+        "not a new brain",
+      ],
+      workflow: ["lcx-mind-model", "globalEvidenceProjection", "local-brain-training-plan"],
+      proof: ["test/lcx-mind-model.test.ts", "projection_only", "observed_implementation"],
+      boundary: [
+        "local_mind_model_only",
+        "providerConfigTouched",
+        "training",
+        "protectedMemoryTouched",
+      ],
+    },
+    nextAction:
+      "Keep model and training lanes optional and evidence-observed; never route mind-model work into model evaluation or promotion.",
   },
   {
     id: "local_live_status_words_stay_separate",
@@ -1006,6 +1118,7 @@ function laneVerdict(params: {
   return {
     id: params.lane.id,
     masterLane: params.lane.masterLane,
+    role: params.lane.role ?? "core_architecture",
     ok: missing.length === 0,
     severity: missing.length === 0 ? "info" : "P2",
     objective: params.lane.objective,
@@ -1045,6 +1158,7 @@ async function main() {
     joinedSurfaceText(PROOF_SURFACES),
     joinedSurfaceText(BOUNDARY_SURFACES),
   ]);
+  const ontologyAudit = await buildOntologyAudit();
   const missingFiles = await missingSurfaceFiles([
     ...HEAD_SURFACES,
     ...WORKFLOW_SURFACES,
@@ -1082,8 +1196,15 @@ async function main() {
   });
   const failed = lanes.filter((lane) => !lane.ok);
   const failedInvariants = invariants.filter((invariant) => !invariant.ok);
+  const ontologyAuditFailure = ontologyAudit.ok
+    ? []
+    : [`canonical_ontology_registry: ${ontologyAudit.errors.join("; ") || "audit failed"}`];
   const result = {
-    ok: failed.length === 0 && failedInvariants.length === 0 && missingFiles.length === 0,
+    ok:
+      failed.length === 0 &&
+      failedInvariants.length === 0 &&
+      missingFiles.length === 0 &&
+      ontologyAudit.ok,
     boundary: "local_mind_model_only",
     checkedAt: new Date().toISOString(),
     summary: {
@@ -1092,6 +1213,23 @@ async function main() {
       total: lanes.length + invariants.length,
       laneTotal: lanes.length,
       invariantTotal: invariants.length,
+      roleCounts: {
+        coreArchitecture: lanes.filter((lane) => lane.role === "core_architecture").length,
+        observedImplementation: lanes.filter((lane) => lane.role === "observed_implementation")
+          .length,
+      },
+      coreMasterLanes: [
+        ...new Set(
+          lanes.filter((lane) => lane.role === "core_architecture").map((lane) => lane.masterLane),
+        ),
+      ].toSorted(),
+      observedImplementationLanes: [
+        ...new Set(
+          lanes
+            .filter((lane) => lane.role === "observed_implementation")
+            .map((lane) => lane.masterLane),
+        ),
+      ].toSorted(),
       masterLanes: [...new Set(lanes.map((lane) => lane.masterLane))].toSorted(),
       invariantCategories: [
         ...new Set(invariants.map((invariant) => invariant.category)),
@@ -1099,6 +1237,7 @@ async function main() {
     },
     lanes,
     invariants,
+    ontologyAudit,
     globalEvidenceProjection,
     missingSurfaceFiles: missingFiles,
     actionableFailures: [
@@ -1111,6 +1250,7 @@ async function main() {
         (invariant) =>
           `${invariant.id}: missing ${invariant.missing.map((entry) => `${entry.surface}:${entry.term}`).join(", ")}`,
       ),
+      ...ontologyAuditFailure,
     ],
     surfaceFiles: {
       head: [...HEAD_SURFACES],

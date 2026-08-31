@@ -2,37 +2,30 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
+import {
+  LCX_ONTOLOGY_LEARNING_DECISIONS,
+  LCX_ONTOLOGY_LEARNING_EVIDENCE_STATUSES,
+  LCX_ONTOLOGY_LEARNING_TARGET_IDS,
+  LCX_ONTOLOGY_SOURCE_EVIDENCE_CLASSES,
+  LCX_ONTOLOGY_SOURCE_RELIABILITY_GRADES,
+  LCX_ONTOLOGY_WEAK_EVIDENCE_POLICIES,
+} from "../../shared/lcx-ontology.js";
+import type {
+  LcxOntologyLearningEvidenceStatus,
+  LcxOntologyModuleFamilyId,
+} from "../../shared/lcx-ontology.js";
 import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringArrayParam, readStringParam, ToolInputError } from "./common.js";
 
-export const MODULE_LEARNING_TARGETS = [
-  "factor_research",
-  "options_volatility",
-  "global_index_regime",
-  "macro_rates_inflation",
-  "company_fundamentals_value",
-  "financial_modeling_valuation_qc",
-  "thesis_catalyst_lifecycle",
-  "data_provenance_quality",
-  "research_artifact_qc",
-  "technical_timing",
-  "commodities_oil_gold",
-  "fx_currency_liquidity",
-  "event_driven",
-  "portfolio_risk_gates",
-  "lark_feishu_workflow",
-  "agent_workflow_memory",
-  "ops_audit",
-  "skill_pattern_distillation",
-] as const;
+export const MODULE_LEARNING_TARGETS = LCX_ONTOLOGY_LEARNING_TARGET_IDS;
 
 type ModuleLearningTarget = (typeof MODULE_LEARNING_TARGETS)[number];
 
 type ModuleLearningSchema = {
   targetModule: ModuleLearningTarget;
-  moduleFamily: "finance_research" | "agent_workflow" | "ops_runtime" | "skill_runtime";
+  moduleFamily: LcxOntologyModuleFamilyId;
   requiredInputs: string[];
   evidenceFamilies: string[];
   moduleSpecificCapabilityRule: string;
@@ -46,31 +39,15 @@ type ModuleLearningSchema = {
   };
 };
 
-export const MODULE_LEARNING_DECISIONS = ["keep", "downrank", "discard", "not_decided"] as const;
-export const MODULE_LEARNING_SOURCE_EVIDENCE_CLASSES = [
-  "hard",
-  "medium",
-  "weak_alternative_source",
-] as const;
-export const MODULE_LEARNING_SOURCE_RELIABILITY_GRADES = ["a", "b", "c", "d"] as const;
-export const MODULE_LEARNING_WEAK_EVIDENCE_POLICIES = [
-  "hypothesis_only",
-  "downrank_until_followthrough",
-] as const;
+export const MODULE_LEARNING_DECISIONS = LCX_ONTOLOGY_LEARNING_DECISIONS;
+export const MODULE_LEARNING_SOURCE_EVIDENCE_CLASSES = LCX_ONTOLOGY_SOURCE_EVIDENCE_CLASSES;
+export const MODULE_LEARNING_SOURCE_RELIABILITY_GRADES = LCX_ONTOLOGY_SOURCE_RELIABILITY_GRADES;
+export const MODULE_LEARNING_WEAK_EVIDENCE_POLICIES = LCX_ONTOLOGY_WEAK_EVIDENCE_POLICIES;
 
-type ModuleLearningEvidenceStatus =
-  | "missing_evidence"
-  | "stored_only"
-  | "retrieval_ready"
-  | "application_ready"
-  | "eval_absorbed";
+type ModuleLearningEvidenceStatus = LcxOntologyLearningEvidenceStatus;
 
 export const MODULE_LEARNING_EVIDENCE_STATUSES: ModuleLearningEvidenceStatus[] = [
-  "missing_evidence",
-  "stored_only",
-  "retrieval_ready",
-  "application_ready",
-  "eval_absorbed",
+  ...LCX_ONTOLOGY_LEARNING_EVIDENCE_STATUSES,
 ];
 
 const ModuleLearningPipelinePlanSchema = Type.Object({

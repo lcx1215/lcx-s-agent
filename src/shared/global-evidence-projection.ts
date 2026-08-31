@@ -6,18 +6,40 @@
  * automation, and delivery adapters one small shape for reading them.
  */
 
+import {
+  LCX_ONTOLOGY_CAPABILITY_ROLES,
+  LCX_ONTOLOGY_VERSION,
+  LCX_ONTOLOGY_SURFACE_IDS,
+  isLcxOntologyValue,
+} from "./lcx-ontology.js";
+import type {
+  LcxOntologyActionKind,
+  LcxOntologyActionStatus,
+  LcxOntologyAdaptability,
+  LcxOntologyBoundaryStatus,
+  LcxOntologyCapabilityCoverage,
+  LcxOntologyCapabilityMaturity,
+  LcxOntologyCapabilityRole,
+  LcxOntologyDeliveryProofVisibility,
+  LcxOntologyDeliveryState,
+  LcxOntologyEvidenceKind,
+  LcxOntologyEvidenceStatus,
+  LcxOntologySurfaceId,
+} from "./lcx-ontology.js";
+
 export const GLOBAL_EVIDENCE_PROJECTION_VERSION = "global_evidence_projection_v1" as const;
 export const GLOBAL_EVIDENCE_PROJECTION_MODE = "read_only_shadow" as const;
-export type GlobalProjectionSurface = "head" | "workflow" | "proof" | "boundary";
-export type GlobalProjectionEvidenceKind = GlobalProjectionSurface | "invariant";
-export type GlobalProjectionEvidenceStatus = "present" | "missing";
-export type GlobalProjectionCoverage = "complete" | "partial" | "missing";
-export type GlobalProjectionMaturity = "structural" | "operational" | "observed";
-export type GlobalProjectionAdaptability = "adapter_neutral" | "adapter_ready" | "adapter_bound";
-export type GlobalProjectionActionKind = "observe" | "repair" | "wait";
-export type GlobalProjectionActionStatus = "recommended" | "blocked";
-export type GlobalProjectionDeliveryState = "unknown" | "bound" | "observed";
-export type GlobalProjectionBoundaryStatus = "unknown" | "not_touched_by_projection" | "touched";
+export type GlobalProjectionSurface = LcxOntologySurfaceId;
+export type GlobalProjectionEvidenceKind = LcxOntologyEvidenceKind;
+export type GlobalProjectionEvidenceStatus = LcxOntologyEvidenceStatus;
+export type GlobalProjectionCoverage = LcxOntologyCapabilityCoverage;
+export type GlobalProjectionMaturity = LcxOntologyCapabilityMaturity;
+export type GlobalProjectionAdaptability = LcxOntologyAdaptability;
+export type GlobalProjectionCapabilityRole = LcxOntologyCapabilityRole;
+export type GlobalProjectionActionKind = LcxOntologyActionKind;
+export type GlobalProjectionActionStatus = LcxOntologyActionStatus;
+export type GlobalProjectionDeliveryState = LcxOntologyDeliveryState;
+export type GlobalProjectionBoundaryStatus = LcxOntologyBoundaryStatus;
 export type GlobalProjectionMissingItem = {
   surface: GlobalProjectionSurface;
   term: string;
@@ -25,6 +47,8 @@ export type GlobalProjectionMissingItem = {
 export type GlobalProjectionLaneInput = {
   id: string;
   masterLane: string;
+  /** Optional implementation lanes are observed, not mind-model authority. */
+  role?: GlobalProjectionCapabilityRole;
   objective: string;
   ok: boolean;
   missing: readonly GlobalProjectionMissingItem[];
@@ -48,7 +72,7 @@ export type GlobalProjectionDeliveryProof = {
   owner: string;
   receiptId: string;
   checkedAt: string;
-  visibility: "binding" | "user_visible";
+  visibility: LcxOntologyDeliveryProofVisibility;
 };
 export type GlobalProjectionDelivery = {
   /** Opaque adapter identity; null means no delivery proof is attached. */
@@ -79,6 +103,8 @@ export type GlobalProjectionBoundaries = {
 export type GlobalProjectionCapability = {
   id: string;
   domain: string;
+  /** Optional for backward-compatible reads of older v1 receipts. */
+  role?: GlobalProjectionCapabilityRole;
   objective: string;
   coverage: GlobalProjectionCoverage;
   maturity: GlobalProjectionMaturity;
@@ -103,6 +129,8 @@ export type GlobalProjectionAction = {
 };
 export type GlobalEvidenceProjection = {
   contractVersion: typeof GLOBAL_EVIDENCE_PROJECTION_VERSION;
+  /** Semantic vocabulary used by this projection; optional for older v1 receipts. */
+  ontologyVersion?: typeof LCX_ONTOLOGY_VERSION;
   mode: typeof GLOBAL_EVIDENCE_PROJECTION_MODE;
   generatedAt: string;
   sourceOwners: string[];
@@ -120,7 +148,8 @@ export type BuildGlobalEvidenceProjectionParams = {
   delivery?: GlobalProjectionDeliveryInput;
   boundaries?: Partial<GlobalProjectionBoundaries>;
 };
-const SURFACES: readonly GlobalProjectionSurface[] = ["head", "workflow", "proof", "boundary"];
+const SURFACES: readonly GlobalProjectionSurface[] = LCX_ONTOLOGY_SURFACE_IDS;
+const CAPABILITY_ROLES: readonly GlobalProjectionCapabilityRole[] = LCX_ONTOLOGY_CAPABILITY_ROLES;
 const LEGACY_ID_ALIASES: Record<string, string> = {
   lark_feishu_live_boundary: "external_delivery_boundary",
   lark_feishu_boundary: "external_delivery_boundary",
@@ -179,6 +208,9 @@ function assertOwnerInputConsistency(params: {
   invariants: readonly GlobalProjectionInvariantInput[];
 }): void {
   for (const lane of params.lanes) {
+    if (lane.role !== undefined && !CAPABILITY_ROLES.includes(lane.role)) {
+      throw new Error(`lane ${lane.id} has an invalid capability role`);
+    }
     if (lane.ok !== (lane.missing.length === 0)) {
       throw new Error(`lane ${lane.id} has inconsistent ok and missing evidence`);
     }
@@ -216,7 +248,7 @@ function normalizeDelivery(input?: GlobalProjectionDeliveryInput): GlobalProject
   const adapterId = typeof input?.adapterId === "string" ? input.adapterId.trim() || null : null;
   const evidenceRefs = uniqueStrings(input?.evidenceRefs ?? []);
   const proof = input && "proof" in input ? input.proof : undefined;
-  if (!["unknown", "bound", "observed"].includes(state as string)) {
+  if (!isLcxOntologyValue("deliveryState", state)) {
     throw new Error(`unknown delivery state: ${String(state)}`);
   }
   if (state === "unknown" && (adapterId !== null || evidenceRefs.length > 0 || proof)) {
@@ -262,6 +294,12 @@ export function validateGlobalEvidenceProjection(projection: GlobalEvidenceProje
   if (projection.contractVersion !== GLOBAL_EVIDENCE_PROJECTION_VERSION) {
     errors.push("contractVersion must match GLOBAL_EVIDENCE_PROJECTION_VERSION");
   }
+  if (
+    projection.ontologyVersion !== undefined &&
+    projection.ontologyVersion !== LCX_ONTOLOGY_VERSION
+  ) {
+    errors.push("ontologyVersion must match LCX_ONTOLOGY_VERSION");
+  }
   if (projection.mode !== GLOBAL_EVIDENCE_PROJECTION_MODE) {
     errors.push("mode must be read_only_shadow");
   }
@@ -284,7 +322,7 @@ export function validateGlobalEvidenceProjection(projection: GlobalEvidenceProje
   ) {
     errors.push("boundaries statuses must be known values");
   }
-  if (!["unknown", "bound", "observed"].includes(projection.delivery.state as string)) {
+  if (!isLcxOntologyValue("deliveryState", projection.delivery.state)) {
     errors.push("delivery.state must be unknown, bound, or observed");
   } else if (projection.delivery.state === "unknown") {
     if (
@@ -324,6 +362,9 @@ export function validateGlobalEvidenceProjection(projection: GlobalEvidenceProje
     errors.push("actions must have unique ids");
   }
   for (const capability of projection.capabilities) {
+    if (capability.role !== undefined && !CAPABILITY_ROLES.includes(capability.role)) {
+      errors.push(`capability ${capability.id} has an invalid role`);
+    }
     if (capability.maturity !== "structural") {
       errors.push(`capability ${capability.id} cannot leave structural maturity in v1 shadow mode`);
     }
@@ -339,10 +380,10 @@ export function validateGlobalEvidenceProjection(projection: GlobalEvidenceProje
     }
   }
   for (const evidence of projection.evidence) {
-    if (!["head", "workflow", "proof", "boundary", "invariant"].includes(evidence.kind as string)) {
+    if (!isLcxOntologyValue("evidenceKind", evidence.kind)) {
       errors.push(`evidence ${evidence.id} has an invalid kind`);
     }
-    if (!["present", "missing"].includes(evidence.status as string)) {
+    if (!isLcxOntologyValue("evidenceStatus", evidence.status)) {
       errors.push(`evidence ${evidence.id} has an invalid status`);
     }
     if (evidence.sourceRefs.length === 0) {
@@ -362,10 +403,10 @@ export function validateGlobalEvidenceProjection(projection: GlobalEvidenceProje
     }
   }
   for (const action of projection.actions) {
-    if (!["observe", "repair", "wait"].includes(action.kind as string)) {
+    if (!isLcxOntologyValue("actionKind", action.kind)) {
       errors.push(`action ${action.id} has an invalid kind`);
     }
-    if (!["recommended", "blocked"].includes(action.status as string)) {
+    if (!isLcxOntologyValue("actionStatus", action.status)) {
       errors.push(`action ${action.id} has an invalid status`);
     }
     for (const evidenceRef of action.evidenceRefs) {
@@ -417,6 +458,7 @@ export function buildGlobalEvidenceProjection(
     return {
       id,
       domain: neutralizeIdentifier(lane.masterLane),
+      role: lane.role ?? "core_architecture",
       objective: neutralizeText(lane.objective),
       coverage: coverageFor(lane),
       maturity: "structural",
@@ -476,6 +518,7 @@ export function buildGlobalEvidenceProjection(
 
   const projection: GlobalEvidenceProjection = {
     contractVersion: GLOBAL_EVIDENCE_PROJECTION_VERSION,
+    ontologyVersion: LCX_ONTOLOGY_VERSION,
     mode: GLOBAL_EVIDENCE_PROJECTION_MODE,
     generatedAt,
     sourceOwners,

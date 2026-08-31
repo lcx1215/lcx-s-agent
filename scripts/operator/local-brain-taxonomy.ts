@@ -1,36 +1,11 @@
-export const LOCAL_BRAIN_MODULE_TAXONOMY = [
-  "macro_rates_inflation",
-  "credit_liquidity",
-  "cross_asset_liquidity",
-  "fx_currency_liquidity",
-  "etf_regime",
-  "global_index_regime",
-  "us_equity_market_structure",
-  "china_a_share_policy_flow",
-  "crypto_market_structure",
-  "technical_timing",
-  "options_volatility",
-  "commodities_oil_gold",
-  "fx_dollar",
-  "event_driven",
-  "company_fundamentals_value",
-  "financial_modeling_valuation_qc",
-  "thesis_catalyst_lifecycle",
-  "finance_data_gateway",
-  "data_provenance_quality",
-  "research_artifact_qc",
-  "quant_math",
-  "portfolio_risk_gates",
-  "causal_map",
-  "finance_learning_memory",
-  "source_registry",
-  "skill_pattern_distillation",
-  "agent_workflow_memory",
-  "eval_harness_design",
-  "review_panel",
-  "control_room_summary",
-  "ops_audit",
-] as const;
+import {
+  LCX_ONTOLOGY_CORE_RISK_BOUNDARY_IDS,
+  LCX_ONTOLOGY_MODULE_ALIASES,
+  LCX_ONTOLOGY_MODULE_IDS,
+  LCX_ONTOLOGY_REQUIRED_FINANCE_MODULE_IDS,
+} from "../../src/shared/lcx-ontology.js";
+
+export const LOCAL_BRAIN_MODULE_TAXONOMY = LCX_ONTOLOGY_MODULE_IDS;
 
 export type LocalBrainModuleId = (typeof LOCAL_BRAIN_MODULE_TAXONOMY)[number];
 
@@ -48,24 +23,7 @@ const DEFAULT_MODULE_FIELD_CAPS: LocalBrainModuleFieldCaps = {
   requiredTools: 6,
 };
 
-const LEGACY_TOOL_TO_MODULE: Record<string, LocalBrainModuleId> = {
-  artifact_memory_recall: "finance_learning_memory",
-  capability_card_or_retrieval_receipt: "source_registry",
-  doctrine_consistency_doctor: "agent_workflow_memory",
-  finance_article_source_collection_preflight: "source_registry",
-  finance_article_source_registry_record: "source_registry",
-  finance_data_gateway_snapshot: "finance_data_gateway",
-  finance_framework_core_inspect: "source_registry",
-  finance_learning_capability_apply: "finance_learning_memory",
-  l5_regression_batterer: "eval_harness_design",
-  lark_loop_diagnose: "ops_audit",
-  local_brain_eval: "eval_harness_design",
-  local_memory_retrieval: "finance_learning_memory",
-  review_tier: "review_panel",
-  sessions_history: "agent_workflow_memory",
-  source_registry_lookup: "source_registry",
-  source_registry_query: "source_registry",
-};
+const LEGACY_TOOL_TO_MODULE = LCX_ONTOLOGY_MODULE_ALIASES;
 
 export function normalizeLocalBrainModuleId(value: string): LocalBrainModuleId | undefined {
   const normalized = value
@@ -132,23 +90,9 @@ export function packLocalBrainModuleFields(
   };
 }
 
-export const LOCAL_BRAIN_REQUIRED_FINANCE_MODULES = [
-  "macro_rates_inflation",
-  "credit_liquidity",
-  "etf_regime",
-  "company_fundamentals_value",
-  "portfolio_risk_gates",
-] as const satisfies readonly LocalBrainModuleId[];
+export const LOCAL_BRAIN_REQUIRED_FINANCE_MODULES = LCX_ONTOLOGY_REQUIRED_FINANCE_MODULE_IDS;
 
-export const LOCAL_BRAIN_RISK_BOUNDARIES = [
-  "research_only",
-  "no_execution_authority",
-  "evidence_required",
-  "no_model_math_guessing",
-  "risk_gate_before_action_language",
-  "no_high_leverage_crypto",
-  "no_unverified_cross_market_claims",
-] as const;
+export const LOCAL_BRAIN_RISK_BOUNDARIES = LCX_ONTOLOGY_CORE_RISK_BOUNDARY_IDS;
 
 export const LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS = [
   "Output one single-line JSON object only; no pretty printing, markdown, or prose outside JSON.",

@@ -8,6 +8,8 @@ import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
 } from "../../src/agents/finance-brain-orchestration.js";
+import { LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS } from "../../src/shared/lcx-ontology.js";
+import type { LcxOntologyAnswerPipelineFilterId } from "../../src/shared/lcx-ontology.js";
 
 type CliOptions = {
   ask?: string;
@@ -399,48 +401,9 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
   },
 ];
 
-const COMMERCIAL_ANSWER_PIPELINE_FILTERS = [
-  "answer_audit",
-  "bounded_answer_review",
-  "candidate_answer_not_final_authority",
-  "provider_council_evidence_required",
-  "provider_outputs_not_faked",
-  "minimax_agent_draft_not_final_authority",
-  "minimax_agent_output_requires_lcx_gate",
-  "minimax_agent_runtime_claim_requires_receipt",
-  "qwen_challenger_not_final_authority",
-  "qwen_challenge_patch_only",
-  "terminal_decision_required",
-  "post_council_gate_replacement_returns_failed_reason",
-  "explicit_visible_contract_must_be_answered_directly",
-  "vague_conservative_nonanswer_rejected",
-  "single_entry_single_exit_visible_answer_required",
-  "single_entry_single_exit_internal_labels_hidden",
-  "positive_visible_answer_acceptance_required",
-  "direct_answer_not_overconservative_required",
-  "all_visible_answers_require_decision_value",
-  "single_stock_loss_reply_requires_concrete_risk_triage",
-  "visible_answer_quality_fuzzer_required",
-  "short_lark_intent_expansion_required",
-  "system_status_requires_owner_evidence",
-  "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
-  "model_rewrite_budget_required",
-  "no_raw_json_visible_reply",
-  "no_internal_runtime_details_visible",
-  "source_evidence_gate",
-  "stored_only_is_not_learning",
-  "retrieval_apply_eval_review_required",
-  "async_task_receipt_required_for_deferred_work",
-  "real_lark_short_canary_suite_required",
-  "short_intent_family_fuzzer_required",
-  "unknown_short_intent_clean_failure_required",
-  "no_unverified_current_market_data",
-  "finance_data_gateway_snapshot_required_for_numbers",
-  "finance_data_conflicts_route_to_provenance_review",
-  "no_trade_advice",
-] as const;
+const COMMERCIAL_ANSWER_PIPELINE_FILTERS = LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS;
 
-type CommercialAnswerPipelineFilter = (typeof COMMERCIAL_ANSWER_PIPELINE_FILTERS)[number];
+type CommercialAnswerPipelineFilter = LcxOntologyAnswerPipelineFilterId;
 
 type MacroProductContractId =
   | "visible_answer_value"

@@ -1,3 +1,34 @@
+import {
+  LCX_ONTOLOGY_FINANCE_ALLOWED_ACTION_AUTHORITIES,
+  LCX_ONTOLOGY_FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS,
+  LCX_ONTOLOGY_FINANCE_ARTICLE_SOURCE_TYPES,
+  LCX_ONTOLOGY_FINANCE_CONFIDENCE_OR_CONVICTION_LEVELS,
+  LCX_ONTOLOGY_FINANCE_EVIDENCE_CATEGORIES,
+  LCX_ONTOLOGY_FINANCE_FRAMEWORK_CORE_DOMAIN_IDS,
+  LCX_ONTOLOGY_FINANCE_LEARNING_CAPABILITY_TAGS,
+  LCX_ONTOLOGY_FINANCE_LEARNING_CAPABILITY_TYPES,
+  LCX_ONTOLOGY_FINANCE_LEARNING_COLLECTION_METHODS,
+  LCX_ONTOLOGY_FINANCE_LEARNING_EVIDENCE_LEVELS,
+  LCX_ONTOLOGY_FINANCE_LEARNING_SOURCE_TYPES,
+  LCX_ONTOLOGY_SOURCE_EVIDENCE_CLASSES,
+  LCX_ONTOLOGY_SOURCE_RELIABILITY_GRADES,
+  LCX_ONTOLOGY_WEAK_EVIDENCE_POLICIES,
+  type LcxOntologyFinanceAllowedActionAuthority,
+  type LcxOntologyFinanceArticleSourceCollectionMethod,
+  type LcxOntologyFinanceArticleSourceType,
+  type LcxOntologyFinanceConfidenceOrConvictionLevel,
+  type LcxOntologyFinanceEvidenceCategory,
+  type LcxOntologyFinanceFrameworkCoreDomainId,
+  type LcxOntologyFinanceLearningCapabilityTag,
+  type LcxOntologyFinanceLearningCapabilityType,
+  type LcxOntologyFinanceLearningCollectionMethod,
+  type LcxOntologyFinanceLearningEvidenceLevel,
+  type LcxOntologyFinanceLearningSourceType,
+  type LcxOntologySourceEvidenceClass,
+  type LcxOntologySourceReliabilityGrade,
+  type LcxOntologyWeakEvidencePolicy,
+} from "../../shared/lcx-ontology.js";
+
 type LearningRecallArtifactSpec = {
   noteName: string;
   promptOrder: number;
@@ -711,164 +742,40 @@ export type FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact = {
 export type ParsedFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact =
   FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact;
 
-export const FINANCE_FRAMEWORK_CORE_DOMAINS = [
-  "macro_rates_inflation",
-  "etf_regime",
-  "options_volatility",
-  "company_fundamentals_value",
-  "commodities_oil_gold",
-  "fx_dollar",
-  "credit_liquidity",
-  "event_driven",
-  "portfolio_risk_gates",
-  "causal_map",
-] as const;
+/** Compatibility exports; canonical finance semantics live in the ontology. */
+export const FINANCE_FRAMEWORK_CORE_DOMAINS = LCX_ONTOLOGY_FINANCE_FRAMEWORK_CORE_DOMAIN_IDS;
+export const FINANCE_FRAMEWORK_ALLOWED_ACTION_AUTHORITIES =
+  LCX_ONTOLOGY_FINANCE_ALLOWED_ACTION_AUTHORITIES;
+export const FINANCE_FRAMEWORK_CONFIDENCE_OR_CONVICTION_LEVELS =
+  LCX_ONTOLOGY_FINANCE_CONFIDENCE_OR_CONVICTION_LEVELS;
+export const FINANCE_LEARNING_CAPABILITY_TYPES = LCX_ONTOLOGY_FINANCE_LEARNING_CAPABILITY_TYPES;
+export const FINANCE_LEARNING_CAPABILITY_TAGS = LCX_ONTOLOGY_FINANCE_LEARNING_CAPABILITY_TAGS;
+export const FINANCE_LEARNING_SOURCE_TYPES = LCX_ONTOLOGY_FINANCE_LEARNING_SOURCE_TYPES;
+export const FINANCE_LEARNING_COLLECTION_METHODS = LCX_ONTOLOGY_FINANCE_LEARNING_COLLECTION_METHODS;
+export const FINANCE_LEARNING_EVIDENCE_LEVELS = LCX_ONTOLOGY_FINANCE_LEARNING_EVIDENCE_LEVELS;
+export const FINANCE_ARTICLE_SOURCE_TYPES = LCX_ONTOLOGY_FINANCE_ARTICLE_SOURCE_TYPES;
+export const FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS =
+  LCX_ONTOLOGY_FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS;
+export const FINANCE_ARTICLE_SOURCE_EVIDENCE_CLASSES = LCX_ONTOLOGY_SOURCE_EVIDENCE_CLASSES;
+export const FINANCE_ARTICLE_SOURCE_RELIABILITY_GRADES = LCX_ONTOLOGY_SOURCE_RELIABILITY_GRADES;
+export const FINANCE_ARTICLE_SOURCE_WEAK_EVIDENCE_LEARNING_POLICIES =
+  LCX_ONTOLOGY_WEAK_EVIDENCE_POLICIES;
+export const FINANCE_EVIDENCE_CATEGORIES = LCX_ONTOLOGY_FINANCE_EVIDENCE_CATEGORIES;
 
-export const FINANCE_FRAMEWORK_ALLOWED_ACTION_AUTHORITIES = [
-  "research_only",
-  "watch_only",
-  "candidate_for_review",
-  "no_action",
-] as const;
-
-export const FINANCE_FRAMEWORK_CONFIDENCE_OR_CONVICTION_LEVELS = [
-  "low",
-  "medium",
-  "high",
-  "mixed",
-] as const;
-
-export type FinanceFrameworkCoreDomain = (typeof FINANCE_FRAMEWORK_CORE_DOMAINS)[number];
-export type FinanceFrameworkAllowedActionAuthority =
-  (typeof FINANCE_FRAMEWORK_ALLOWED_ACTION_AUTHORITIES)[number];
-export type FinanceFrameworkConfidenceOrConviction =
-  (typeof FINANCE_FRAMEWORK_CONFIDENCE_OR_CONVICTION_LEVELS)[number];
-
-export const FINANCE_LEARNING_CAPABILITY_TYPES = [
-  "analysis_method",
-  "research_framework",
-  "data_collection_method",
-  "indicator_method",
-  "risk_method",
-  "causal_mapping_method",
-] as const;
-
-export const FINANCE_LEARNING_CAPABILITY_TAGS = [
-  "sentiment_analysis",
-  "factor_research",
-  "tactical_timing",
-  "leverage_research",
-  "alternative_data_ingestion",
-  "fundamentals_research",
-  "event_catalyst_mapping",
-  "volatility_research",
-  "risk_gate_design",
-  "causal_mapping",
-] as const;
-
-export const FINANCE_LEARNING_SOURCE_TYPES = [
-  "wechat_public_account_article",
-  "public_web_article",
-  "licensed_research_excerpt",
-  "manual_learning_note",
-  "internal_research_note",
-] as const;
-
-export const FINANCE_LEARNING_COLLECTION_METHODS = [
-  "manual_review",
-  "public_article_capture",
-  "public_wechat_capture",
-  "licensed_excerpt_capture",
-  "internal_note_capture",
-] as const;
-
-export const FINANCE_LEARNING_EVIDENCE_LEVELS = [
-  "hypothesis",
-  "anecdotal",
-  "case_study",
-  "replicated",
-  "mixed",
-] as const;
-
-export const FINANCE_ARTICLE_SOURCE_TYPES = [
-  "wechat_public_account_source",
-  "public_web_source",
-  "official_reference_source",
-  "official_data_source",
-  "market_data_snapshot_source",
-  "vendor_data_source",
-  "academic_preprint_source",
-  "github_repository_source",
-  "rss_public_feed_source",
-  "licensed_research_source",
-  "internal_research_source",
-  "manual_article_source",
-  "management_interview_source",
-  "investor_blog_source",
-  "podcast_source",
-  "social_sentiment_source",
-  "viral_event_source",
-] as const;
-
-export const FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS = [
-  "manual_paste",
-  "local_file",
-  "user_provided_url",
-  "rss_or_public_feed_if_available",
-  "browser_assisted_manual_collection",
-] as const;
-
-export const FINANCE_ARTICLE_SOURCE_EVIDENCE_CLASSES = [
-  "hard",
-  "medium",
-  "weak_alternative_source",
-] as const;
-
-export const FINANCE_ARTICLE_SOURCE_RELIABILITY_GRADES = ["a", "b", "c", "d"] as const;
-
-export const FINANCE_ARTICLE_SOURCE_WEAK_EVIDENCE_LEARNING_POLICIES = [
-  "hypothesis_only",
-  "downrank_until_followthrough",
-] as const;
-
-export type FinanceLearningCapabilityType = (typeof FINANCE_LEARNING_CAPABILITY_TYPES)[number];
-export type FinanceLearningCapabilityTag = (typeof FINANCE_LEARNING_CAPABILITY_TAGS)[number];
-export type FinanceLearningSourceType = (typeof FINANCE_LEARNING_SOURCE_TYPES)[number];
-export type FinanceLearningCollectionMethod = (typeof FINANCE_LEARNING_COLLECTION_METHODS)[number];
-export type FinanceLearningEvidenceLevel = (typeof FINANCE_LEARNING_EVIDENCE_LEVELS)[number];
-export type FinanceArticleSourceType = (typeof FINANCE_ARTICLE_SOURCE_TYPES)[number];
-export type FinanceArticleSourceCollectionMethod =
-  (typeof FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS)[number];
-export type FinanceArticleSourceEvidenceClass =
-  (typeof FINANCE_ARTICLE_SOURCE_EVIDENCE_CLASSES)[number];
-export type FinanceArticleSourceReliabilityGrade =
-  (typeof FINANCE_ARTICLE_SOURCE_RELIABILITY_GRADES)[number];
-export type FinanceArticleSourceWeakEvidenceLearningPolicy =
-  (typeof FINANCE_ARTICLE_SOURCE_WEAK_EVIDENCE_LEARNING_POLICIES)[number];
-
-export const FINANCE_EVIDENCE_CATEGORIES = [
-  "equity_market_evidence",
-  "etf_regime_evidence",
-  "macro_rates_evidence",
-  "inflation_evidence",
-  "liquidity_evidence",
-  "credit_evidence",
-  "options_volatility_evidence",
-  "fundamentals_evidence",
-  "valuation_evidence",
-  "commodity_evidence",
-  "fx_dollar_evidence",
-  "event_catalyst_evidence",
-  "portfolio_risk_evidence",
-  "causal_chain_evidence",
-  "alternative_data_evidence",
-  "sentiment_evidence",
-  "backtest_or_empirical_evidence",
-  "implementation_evidence",
-  "compliance_evidence",
-] as const;
-
-export type FinanceEvidenceCategory = (typeof FINANCE_EVIDENCE_CATEGORIES)[number];
+export type FinanceFrameworkCoreDomain = LcxOntologyFinanceFrameworkCoreDomainId;
+export type FinanceFrameworkAllowedActionAuthority = LcxOntologyFinanceAllowedActionAuthority;
+export type FinanceFrameworkConfidenceOrConviction = LcxOntologyFinanceConfidenceOrConvictionLevel;
+export type FinanceLearningCapabilityType = LcxOntologyFinanceLearningCapabilityType;
+export type FinanceLearningCapabilityTag = LcxOntologyFinanceLearningCapabilityTag;
+export type FinanceLearningSourceType = LcxOntologyFinanceLearningSourceType;
+export type FinanceLearningCollectionMethod = LcxOntologyFinanceLearningCollectionMethod;
+export type FinanceLearningEvidenceLevel = LcxOntologyFinanceLearningEvidenceLevel;
+export type FinanceArticleSourceType = LcxOntologyFinanceArticleSourceType;
+export type FinanceArticleSourceCollectionMethod = LcxOntologyFinanceArticleSourceCollectionMethod;
+export type FinanceArticleSourceEvidenceClass = LcxOntologySourceEvidenceClass;
+export type FinanceArticleSourceReliabilityGrade = LcxOntologySourceReliabilityGrade;
+export type FinanceArticleSourceWeakEvidenceLearningPolicy = LcxOntologyWeakEvidencePolicy;
+export type FinanceEvidenceCategory = LcxOntologyFinanceEvidenceCategory;
 
 export type FinanceLearningCapabilityCandidateArtifact = {
   updatedAt: string;

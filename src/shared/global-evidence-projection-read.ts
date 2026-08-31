@@ -2,9 +2,15 @@ import {
   validateGlobalEvidenceProjection,
   type GlobalEvidenceProjection,
 } from "./global-evidence-projection.ts";
+import {
+  LCX_ONTOLOGY_PROJECTION_READ_STATUSES,
+  type LcxOntologyProjectionReadStatus,
+} from "./lcx-ontology.ts";
 
 export const GLOBAL_EVIDENCE_PROJECTION_MAX_AGE_MS = 5 * 60 * 1000;
-export type GlobalEvidenceProjectionReadStatus = "current" | "stale" | "missing" | "invalid";
+export const GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION =
+  "global_evidence_projection_reader_v1" as const;
+export type GlobalEvidenceProjectionReadStatus = LcxOntologyProjectionReadStatus;
 
 export type GlobalEvidenceProjectionRead = {
   sourceOwner: string;
@@ -28,6 +34,27 @@ export type GlobalEvidenceProjectionView = {
   actionCount: number;
   deliveryState: GlobalEvidenceProjection["delivery"]["state"] | null;
   adapterId: string | null;
+};
+
+/**
+ * A consumer-bound read receipt for the shared projection.
+ *
+ * `adapterId` identifies the reader only. It is deliberately kept outside
+ * `view.adapterId`, which is the opaque adapter recorded by the projection's
+ * independent delivery proof. A reader can observe a projection but cannot
+ * use this contract to author facts, delivery proof, or owner decisions.
+ */
+export type GlobalEvidenceProjectionAdapterRead = {
+  contractVersion: typeof GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION;
+  adapterId: string;
+  read: GlobalEvidenceProjectionRead;
+  view: GlobalEvidenceProjectionView;
+};
+
+export type GlobalEvidenceProjectionAdapterReadOptions = {
+  adapterId: string;
+  sourceOwner?: string;
+  maxAgeMs?: number;
 };
 
 /**
@@ -55,6 +82,17 @@ export function summarizeGlobalEvidenceProjectionRead(
   };
 }
 
+function requireOpaqueAdapterId(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("projection reader adapterId must be a non-empty opaque string");
+  }
+  const adapterId = value.trim();
+  if (/[\r\n]/u.test(adapterId)) {
+    throw new Error("projection reader adapterId must not contain line breaks");
+  }
+  return adapterId;
+}
+
 function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
 }
@@ -66,12 +104,9 @@ type ProjectionReadEnvelope = {
   projection?: unknown;
 };
 
-const READ_STATUSES: ReadonlySet<GlobalEvidenceProjectionReadStatus> = new Set([
-  "current",
-  "stale",
-  "missing",
-  "invalid",
-]);
+const READ_STATUSES: ReadonlySet<GlobalEvidenceProjectionReadStatus> = new Set(
+  LCX_ONTOLOGY_PROJECTION_READ_STATUSES,
+);
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -211,4 +246,30 @@ export function readGlobalEvidenceProjection(
     };
   }
   return read;
+}
+
+/**
+ * Read the projection at an adapter/entry boundary.
+ *
+ * This is the only adapter-facing wrapper: it requires an opaque consumer id,
+ * preserves the normal current/stale/missing/invalid gate, and exposes a safe
+ * summary alongside the underlying read receipt. The consumer id never
+ * changes projection facts or the delivery proof's adapter id.
+ */
+export function readGlobalEvidenceProjectionForAdapter(
+  candidate: unknown,
+  checkedAt: string,
+  options?: GlobalEvidenceProjectionAdapterReadOptions,
+): GlobalEvidenceProjectionAdapterRead {
+  const adapterId = requireOpaqueAdapterId(options?.adapterId);
+  const read = readGlobalEvidenceProjection(candidate, checkedAt, {
+    sourceOwner: options?.sourceOwner,
+    maxAgeMs: options?.maxAgeMs,
+  });
+  return {
+    contractVersion: GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION,
+    adapterId,
+    read,
+    view: summarizeGlobalEvidenceProjectionRead(read),
+  };
 }
