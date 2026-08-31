@@ -134,10 +134,7 @@ function loadSnapshot(): JsonObject {
     Object.keys(providerDailyUseFromDigest).length > 0
       ? providerDailyUseFromDigest
       : objectAt(providerCouncilOwner, "dailyUse");
-  const externalChannelMissingProof =
-    stringArrayAt(material, "externalChannelMissingProof").length > 0
-      ? stringArrayAt(material, "externalChannelMissingProof")
-      : stringArrayAt(material, "liveBindingMissingProof");
+  const externalChannelMissingProof = stringArrayAt(material, "externalChannelMissingProof");
   const parseRecovered = stringArrayAt(candidate, "parseRecoveredCaseIds");
   const controlItems = Array.isArray(ownerControlMap.items) ? ownerControlMap.items : [];
 
@@ -153,16 +150,8 @@ function loadSnapshot(): JsonObject {
     promotionReady: Boolean(candidate.promotionReady),
     failedCaseIds: stringArrayAt(candidate, "failedCaseIds"),
     parseRecoveredCaseIds: parseRecovered,
-    externalChannelStatus:
-      stringAt(material, "externalChannelBindingStatus") ??
-      stringAt(material, "liveLarkBrainBindingStatus") ??
-      "unknown",
-    liveStatus:
-      stringAt(material, "externalChannelBindingStatus") ??
-      stringAt(material, "liveLarkBrainBindingStatus") ??
-      "unknown",
+    externalChannelStatus: stringAt(material, "externalChannelBindingStatus") ?? "unknown",
     externalChannelMissingProof,
-    liveMissingProof: externalChannelMissingProof,
     skillOptStatus:
       stringAt(material, "skillOptLiteStatus") ??
       stringAt(summary, "skillOptLiteStatus") ??

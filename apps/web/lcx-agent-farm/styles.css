@@ -245,7 +245,7 @@ h2 {
 }
 
 .sync-pill,
-.live-dot {
+.status-dot {
   border: 1px solid rgb(84 219 125 / 35%);
   border-radius: 999px;
   padding: 7px 10px;

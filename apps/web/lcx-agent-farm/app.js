@@ -220,7 +220,7 @@ function renderFailure(snapshot) {
 function renderArena(snapshot) {
   const dailyUse = snapshot.providerDailyUse ?? {};
   const rows = [
-    ["本地干净模型", snapshot.promotionReady ? "可守擂" : "守擂中", "只读辅助", "不直接 live"],
+    ["本地干净模型", snapshot.promotionReady ? "可守擂" : "守擂中", "只读辅助", "不直接交付"],
     ["候选模型", array(snapshot.parseRecoveredCaseIds).length ? "未通过" : "待验收", "需要小考", "不能晋级"],
     ["MiniMax Agent", "强老师", "可产训练材料", "要过滤网"],
     [

@@ -1450,7 +1450,6 @@ const digestMaterial = {
   providerCouncilAccelerationDailyUse: providerCouncilAccelerationCompact?.dailyUse,
   providerCouncilAccelerationNextSafeCommand: providerCouncilAccelerationCompact?.nextSafeCommand,
   externalChannelMissingProof: externalChannelBindingCompact?.missingProof ?? [],
-  liveBindingMissingProof: externalChannelBindingCompact?.missingProof ?? [],
   mindModelFailed: recordValue(mindModelCompact?.summary)?.failed,
   flowGraphFailed: recordValue(flowGraphCompact?.summary)?.failed,
   headTailFailed: recordValue(headTailCompact?.summary)?.failed,

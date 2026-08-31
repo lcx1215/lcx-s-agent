@@ -35,7 +35,7 @@ struct LCXAgentControlRoomView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("LCX Agent Farm")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
-                Text("把智能体当成一座农场：总管排班、温室训练、工坊打磨技能、渔港等 live proof。只读展示 owner snapshot，不启动训练，不触碰 live/provider/protected memory。")
+                Text("把智能体当成一座农场：总管排班、温室训练、工坊打磨技能、外部通道等待可验证交付。只读展示 owner snapshot，不启动训练，不触碰外部通道、provider 或受保护记忆。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -97,9 +97,9 @@ struct LCXAgentControlRoomView: View {
                 self.proofPanel(
                     title: "缺的出港单",
                     image: "paperplane",
-                    lines: self.store.snapshot.liveBindingMissingProof.isEmpty
+                    lines: self.store.snapshot.externalChannelMissingProof.isEmpty
                         ? ["No missing proof reported."]
-                        : self.store.snapshot.liveBindingMissingProof)
+                        : self.store.snapshot.externalChannelMissingProof)
                 self.proofPanel(
                     title: "Handoff",
                     image: "tray.full",
@@ -396,7 +396,7 @@ struct LCXAgentControlRoomView_Previews: PreviewProvider {
                     "repoDirtyCount": 35,
                     "activeHeavy": true,
                     "activePidCounts": ["guard": 1, "eval": 1, "mlx": 1],
-                    "liveLarkBrainBindingStatus": "deferred_active_training_or_eval",
+                    "externalChannelBindingStatus": "deferred_active_training_or_eval",
                     "skillOptLiteStatus": "candidate_edit_static_accepted_pending_eval",
                     "providerCouncilAccelerationStatus": "ready_plan",
                     "providerCouncilAccelerationAction": "dry_run_plan_only",
