@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runPlanArgs(args: string[]) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-change-impact-plan.ts", "--json", ...args],
+    ["--import", "tsx", "scripts/operator/lcx-change-impact-plan.ts", "--json", ...args],
     {
       cwd: repoRoot,
       env: process.env,
@@ -46,7 +46,7 @@ async function runPlan(changedFile: string) {
 
 describe("lcx-change-impact-plan", () => {
   it("does not recommend heavy local-brain eval tests as fast commands while training may be active", async () => {
-    const payload = await runPlan("scripts/dev/lcx-context-recovery-exam.ts");
+    const payload = await runPlan("scripts/operator/lcx-context-recovery-exam.ts");
 
     expect(payload.ok).toBe(true);
     expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook"]);
@@ -70,7 +70,7 @@ describe("lcx-change-impact-plan", () => {
   });
 
   it("classifies flow graph changes as architecture supervision, not Qwen training work", async () => {
-    const payload = await runPlan("scripts/dev/lcx-flow-graph.ts");
+    const payload = await runPlan("scripts/operator/lcx-flow-graph.ts");
 
     expect(payload.ok).toBe(true);
     expect(payload.strayGate.ok).toBe(true);
@@ -80,7 +80,7 @@ describe("lcx-change-impact-plan", () => {
         expect.objectContaining({
           id: "architecture_supervision_stack",
           lane: "global_doctrine_and_runbook",
-          matchedFiles: ["scripts/dev/lcx-flow-graph.ts"],
+          matchedFiles: ["scripts/operator/lcx-flow-graph.ts"],
         }),
       ]),
     );
@@ -108,6 +108,32 @@ describe("lcx-change-impact-plan", () => {
     expect(payload.strayGate.nextAction).toContain("add an owner rule");
   });
 
+  it("routes explicitly retired logs and audit receipts through cleanup", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      ".tmp/mixprobe-train.log",
+      "docs/lcx-capability-review-20260702.md",
+      "ops/dev-full-loop-acceptance/2026-05-06T114336Z.md",
+      "ops/paper-learning-audit/2026-05-06T172709Z-paper-learning-internalization-audit.md",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["repository_cleanup"]);
+    expect(payload.impacts).toEqual([
+      expect.objectContaining({
+        id: "retired_artifact_cleanup",
+        lane: "repository_cleanup",
+        matchedFiles: [
+          ".tmp/mixprobe-train.log",
+          "docs/lcx-capability-review-20260702.md",
+          "ops/dev-full-loop-acceptance/2026-05-06T114336Z.md",
+          "ops/paper-learning-audit/2026-05-06T172709Z-paper-learning-internalization-audit.md",
+        ],
+      }),
+    ]);
+  });
+
   it("routes Python changes through the TS/Python boundary check", async () => {
     const payload = await runPlanArgs([
       "--files",
@@ -125,7 +151,7 @@ describe("lcx-change-impact-plan", () => {
           lane: "global_doctrine_and_runbook",
           matchedFiles: ["lobster_orchestrator.py", "scripts/branch_freshness.py"],
           requiredChecks: ["ts-python-boundary"],
-          commands: ["node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json"],
+          commands: ["node --import tsx scripts/operator/lcx-ts-python-boundary.ts --json"],
         }),
       ]),
     );
@@ -134,8 +160,8 @@ describe("lcx-change-impact-plan", () => {
   it("classifies the external agent upgrade radar as architecture supervision", async () => {
     const payload = await runPlanArgs([
       "--files",
-      "scripts/dev/lcx-external-agent-upgrade-radar.ts",
-      "scripts/dev/lcx-github-cli-capability-inventory.ts",
+      "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+      "scripts/operator/lcx-github-cli-capability-inventory.ts",
       "test/lcx-github-cli-capability-inventory.test.ts",
     ]);
 
@@ -147,8 +173,8 @@ describe("lcx-change-impact-plan", () => {
           id: "architecture_supervision_stack",
           lane: "global_doctrine_and_runbook",
           matchedFiles: [
-            "scripts/dev/lcx-external-agent-upgrade-radar.ts",
-            "scripts/dev/lcx-github-cli-capability-inventory.ts",
+            "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+            "scripts/operator/lcx-github-cli-capability-inventory.ts",
             "test/lcx-github-cli-capability-inventory.test.ts",
           ],
         }),
@@ -159,8 +185,8 @@ describe("lcx-change-impact-plan", () => {
   it("classifies SkillOpt-lite SOP training as architecture supervision", async () => {
     const payload = await runPlanArgs([
       "--files",
-      "scripts/dev/lcx-skillopt-lite.ts",
-      "scripts/dev/lcx-provider-council-acceleration.ts",
+      "scripts/operator/lcx-skillopt-lite.ts",
+      "scripts/operator/lcx-provider-council-acceleration.ts",
       "test/lcx-skillopt-lite.test.ts",
       "test/lcx-provider-council-acceleration.test.ts",
     ]);
@@ -174,8 +200,8 @@ describe("lcx-change-impact-plan", () => {
           id: "architecture_supervision_stack",
           lane: "global_doctrine_and_runbook",
           matchedFiles: [
-            "scripts/dev/lcx-provider-council-acceleration.ts",
-            "scripts/dev/lcx-skillopt-lite.ts",
+            "scripts/operator/lcx-provider-council-acceleration.ts",
+            "scripts/operator/lcx-skillopt-lite.ts",
             "test/lcx-provider-council-acceleration.test.ts",
             "test/lcx-skillopt-lite.test.ts",
           ],
@@ -190,7 +216,7 @@ describe("lcx-change-impact-plan", () => {
   it("classifies the universe index as the global architecture inventory owner", async () => {
     const payload = await runPlanArgs([
       "--files",
-      "scripts/dev/lcx-universe-index.ts",
+      "scripts/operator/lcx-universe-index.ts",
       "test/lcx-universe-index.test.ts",
     ]);
 
@@ -202,7 +228,10 @@ describe("lcx-change-impact-plan", () => {
         expect.objectContaining({
           id: "architecture_supervision_stack",
           lane: "global_doctrine_and_runbook",
-          matchedFiles: ["scripts/dev/lcx-universe-index.ts", "test/lcx-universe-index.test.ts"],
+          matchedFiles: [
+            "scripts/operator/lcx-universe-index.ts",
+            "test/lcx-universe-index.test.ts",
+          ],
           commands: expect.arrayContaining([
             expect.stringContaining("test/lcx-universe-index.test.ts"),
           ]),
@@ -214,7 +243,7 @@ describe("lcx-change-impact-plan", () => {
   it("classifies the live fadeout audit as architecture supervision", async () => {
     const payload = await runPlanArgs([
       "--files",
-      "scripts/dev/lcx-live-fadeout-audit.ts",
+      "scripts/operator/lcx-live-fadeout-audit.ts",
       "test/lcx-live-fadeout-audit.test.ts",
     ]);
 
@@ -227,7 +256,7 @@ describe("lcx-change-impact-plan", () => {
           id: "architecture_supervision_stack",
           lane: "global_doctrine_and_runbook",
           matchedFiles: [
-            "scripts/dev/lcx-live-fadeout-audit.ts",
+            "scripts/operator/lcx-live-fadeout-audit.ts",
             "test/lcx-live-fadeout-audit.test.ts",
           ],
           commands: expect.arrayContaining([
@@ -241,14 +270,14 @@ describe("lcx-change-impact-plan", () => {
   it("treats --files as a batch file flag and routes external-channel work to the local boundary", async () => {
     const payload = await runPlanArgs([
       "--files",
-      "scripts/dev/lcx-promote-live.ts",
-      "test/lcx-promote-live-status.test.ts",
+      "scripts/operator/lcx-external-channel-compat.ts",
+      "test/lcx-external-channel-compat-status.test.ts",
     ]);
 
     expect(payload.ok).toBe(true);
     expect(payload.changedFiles).toEqual([
-      "scripts/dev/lcx-promote-live.ts",
-      "test/lcx-promote-live-status.test.ts",
+      "scripts/operator/lcx-external-channel-compat.ts",
+      "test/lcx-external-channel-compat-status.test.ts",
     ]);
     expect(payload.changedFiles).not.toContain("--files");
     expect(payload.unmatchedFiles).toEqual([]);
@@ -258,16 +287,19 @@ describe("lcx-change-impact-plan", () => {
         expect.objectContaining({
           id: "live_or_provider_boundary",
           lane: "local_live_boundary",
-          matchedFiles: ["scripts/dev/lcx-promote-live.ts", "test/lcx-promote-live-status.test.ts"],
+          matchedFiles: [
+            "scripts/operator/lcx-external-channel-compat.ts",
+            "test/lcx-external-channel-compat-status.test.ts",
+          ],
           commands: expect.arrayContaining([
-            "pnpm vitest run test/lcx-promote-live-status.test.ts",
-            "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
+            "pnpm vitest run test/lcx-external-channel-compat-status.test.ts",
+            "node --import tsx scripts/operator/lcx-system-doctor.ts --json",
           ]),
         }),
         expect.objectContaining({
           id: "test_file_changed",
           lane: "test_surface",
-          matchedFiles: ["test/lcx-promote-live-status.test.ts"],
+          matchedFiles: ["test/lcx-external-channel-compat-status.test.ts"],
         }),
       ]),
     );
@@ -310,8 +342,8 @@ describe("lcx-change-impact-plan", () => {
   it("routes commercial visible answer quality owners to the Lark visible reply lane", async () => {
     const payload = await runPlanArgs([
       "--files",
-      "scripts/dev/lcx-commercial-answer-pipeline.ts",
-      "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
+      "scripts/operator/lcx-commercial-answer-pipeline.ts",
+      "scripts/operator/lcx-visible-answer-quality-fuzzer.ts",
       "test/lcx-visible-answer-quality-fuzzer.test.ts",
     ]);
 
@@ -324,8 +356,8 @@ describe("lcx-change-impact-plan", () => {
           id: "lark_feishu_visible_surface",
           lane: "lark_feishu_visible_reply",
           matchedFiles: [
-            "scripts/dev/lcx-commercial-answer-pipeline.ts",
-            "scripts/dev/lcx-visible-answer-quality-fuzzer.ts",
+            "scripts/operator/lcx-commercial-answer-pipeline.ts",
+            "scripts/operator/lcx-visible-answer-quality-fuzzer.ts",
           ],
           commands: expect.arrayContaining([
             "pnpm vitest run src/auto-reply/reply/skill-autocue.test.ts src/auto-reply/reply/skillopt-autocue.test.ts",
@@ -344,9 +376,9 @@ describe("lcx-change-impact-plan", () => {
     const payload = await runPlanArgs([
       "--files",
       "apps/web/lcx-agent-farm/index.html",
-      "scripts/dev/lcx-farm-web-server.ts",
-      "scripts/dev/lcx-owner-control-map.ts",
-      "scripts/dev/lcx-real-cost-ledger.ts",
+      "scripts/operator/lcx-farm-web-server.ts",
+      "scripts/operator/lcx-owner-control-map.ts",
+      "scripts/operator/lcx-real-cost-ledger.ts",
       "test/lcx-owner-control-map.test.ts",
       "test/lcx-real-cost-ledger.test.ts",
       "tmp-lcx-owner-dashboard.png",
@@ -362,9 +394,9 @@ describe("lcx-change-impact-plan", () => {
           lane: "local_automation",
           matchedFiles: [
             "apps/web/lcx-agent-farm/index.html",
-            "scripts/dev/lcx-farm-web-server.ts",
-            "scripts/dev/lcx-owner-control-map.ts",
-            "scripts/dev/lcx-real-cost-ledger.ts",
+            "scripts/operator/lcx-farm-web-server.ts",
+            "scripts/operator/lcx-owner-control-map.ts",
+            "scripts/operator/lcx-real-cost-ledger.ts",
             "test/lcx-owner-control-map.test.ts",
             "test/lcx-real-cost-ledger.test.ts",
             "tmp-lcx-owner-dashboard.png",
@@ -382,7 +414,6 @@ describe("lcx-change-impact-plan", () => {
       "--files",
       "apps/macos/Sources/OpenClaw/LCXAgentControlRoom.swift",
       "apps/macos/Sources/OpenClaw/LCXAgentControlRoomView.swift",
-      "apps/macos/StandaloneLCXAgentFarm/App.swift",
       "apps/macos/Tests/OpenClawIPCTests/LCXAgentControlRoomTests.swift",
     ]);
 

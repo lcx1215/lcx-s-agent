@@ -310,7 +310,6 @@ const PATH_RULES: PathRule[] = [
       /^apps\/macos\/Sources\/OpenClaw\/LCXAgentControlRoom\.swift$/u,
       /^apps\/macos\/Sources\/OpenClaw\/LCXAgentControlRoomView\.swift$/u,
       /^apps\/macos\/Sources\/OpenClaw\/MenuContentView\.swift$/u,
-      /^apps\/macos\/StandaloneLCXAgentFarm\//u,
       /^apps\/macos\/Tests\/OpenClawIPCTests\/LCXAgentControlRoomTests\.swift$/u,
     ],
     requiredChecks: ["macos-control-room-build-or-test"],
