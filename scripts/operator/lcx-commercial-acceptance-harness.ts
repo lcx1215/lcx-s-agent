@@ -40,10 +40,6 @@ type HarnessInputs = {
   flowGraph?: OwnerSnapshot;
   mindModel?: OwnerSnapshot;
   externalChannelStatus?: OwnerSnapshot;
-  /** Legacy compatibility alias; use externalChannelStatus for current owner input. */
-  liveStatus?: OwnerSnapshot;
-  /** Legacy compatibility alias; use externalChannelBindingStatus for current owner input. */
-  liveBindingStatus?: OwnerSnapshot;
   externalChannelBindingStatus?: OwnerSnapshot;
   trainingPlan?: OwnerSnapshot;
   systemDoctor?: OwnerSnapshot;
@@ -987,10 +983,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     directedDailyResearchBriefGate(inputs.directedDailyResearchBrief),
     architectureGate(inputs.flowGraph, inputs.mindModel),
     radarGate(inputs.problemRadar),
-    externalChannelStatusGate(
-      inputs.externalChannelStatus ?? inputs.liveStatus,
-      inputs.externalChannelBindingStatus ?? inputs.liveBindingStatus,
-    ),
+    externalChannelStatusGate(inputs.externalChannelStatus, inputs.externalChannelBindingStatus),
     trainingGuardGate(inputs.trainingPlan),
     providerCouncilGate(inputs.systemDoctor),
     providerCouncilAccelerationGate(inputs.providerCouncilAcceleration),
@@ -1297,7 +1290,6 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     flowGraph,
     mindModel,
     externalChannelStatus,
-    liveStatus: externalChannelStatus,
     externalChannelBindingStatus,
     trainingPlan,
     systemDoctor,

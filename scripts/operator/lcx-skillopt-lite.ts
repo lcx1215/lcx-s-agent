@@ -37,8 +37,6 @@ type LatestAutopilotTruth = {
   parseRecoveredCaseIds: string[];
   activeProcessCount: number;
   externalChannelBindingStatus?: string;
-  /** Legacy compatibility alias while old governance snapshots are still readable. */
-  liveBindingStatus?: string;
 };
 
 const SKILL_SPECS: Record<string, SkillSpec> = {
@@ -501,8 +499,6 @@ function extractLatestAutopilotTruth(
     parseRecoveredCaseIds: stringArray(latestCandidateEval.parseRecoveredCaseIds),
     activeProcessCount,
     externalChannelBindingStatus:
-      typeof externalChannelBinding.status === "string" ? externalChannelBinding.status : undefined,
-    liveBindingStatus:
       typeof externalChannelBinding.status === "string" ? externalChannelBinding.status : undefined,
   };
 }

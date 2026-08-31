@@ -384,7 +384,6 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
         legacyLiveUserSeen: decision.liveUserSeen,
       },
       trainingPlanStatus: externalChannelBinding.status ?? liveBinding.status,
-      legacyTrainingPlanStatus: liveBinding.status,
       liveSidecarDriftBefore: payload.liveSidecarDriftBefore,
       nextCommand: payload.nextCommand,
       liveTouched: payload.liveTouched,

@@ -1428,7 +1428,6 @@ async function main() {
         changeImpact: handoffChangeImpact,
         trainingPlan: compactTrainingPlan(currentTrainingPlan.payload),
         externalChannelStatus,
-        liveStatus: externalChannelStatus,
         moduleAbsorption,
         learningSedimentation,
         selfRepairHands,
@@ -1447,7 +1446,6 @@ async function main() {
           moduleAbsorption: handoffSources?.[1].error,
           learningSedimentation: handoffSources?.[2].error,
           externalChannelStatus: handoffSources?.[3].error,
-          liveStatus: handoffSources?.[3].error,
         },
       }
     : undefined;
