@@ -154,7 +154,7 @@ export const LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS = [
   "Output one single-line JSON object only; no pretty printing, markdown, or prose outside JSON.",
   "Hard output budget: primary_modules <= 8, supporting_modules <= 6, required_tools <= 6, missing_data <= 8, risk_boundaries <= 6, rejected_context <= 3.",
   "Do not copy or enumerate the full module taxonomy; choose only the few module ids directly needed for this task.",
-  "Every array item must be a compact snake_case id from the allowed vocabulary; prefer fewer ids over long prose, invented ids, or an unclosed JSON object.",
+  "Every array item must be a compact snake_case id: use the canonical shared vocabulary where applicable; task-specific safety ids are allowed only when directly demanded by the natural-language task; never copy provenance/case labels, invent ids, or leave JSON unclosed.",
   "If the task is complex, compress by selecting only the highest-signal module ids; never explain the module map inside JSON values.",
 ] as const;
 
@@ -178,6 +178,7 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "All module learning uses the same internalization chain, not only factor modules: every target module needs source registry, actual reading scope, module-specific capability rule, retrieval receipt, application validation, local-brain eval or training absorption evidence, fresh adjacent task, module_learning_pipeline_review status, safety boundary, and keep/downrank/discard decision before anyone claims the module learned it.",
   "Advanced trader research chains must not stop at broad fundamentals: DCF/comps/modeling asks use financial_modeling_valuation_qc, thesis/catalyst/invalidation asks use thesis_catalyst_lifecycle, vendor/field/timestamp conflicts use data_provenance_quality, and reports/spreadsheets/tables/narrative artifacts use research_artifact_qc before a visible control-room summary.",
   "Prediction-market and Polymarket sources are research-only weak evidence: require market id or URL, real market metadata packet, resolution criteria, resolution ambiguity review, close date/timezone, orderbook/liquidity timestamp, thin-liquidity downrank thresholds, market microstructure warning, paper-only strategy audit, sample-out validation, slippage/fee assumptions, counterevidence, paper-strategy failure log, no wallet connection, no order placement, no copy trading, no forecast authority, and no latency arbitrage.",
+  "Market-facing commodity, A-share, and technical tasks pair their dedicated module with portfolio_risk_gates, review_panel, and data/provenance gates; commodity analysis is research-only and never a trade signal.",
 ] as const;
 
 const BASE_CONTRACT_HINT_INDEXES = [0, 1, 2, 3, 4, 5] as const;
@@ -192,7 +193,7 @@ const CONTRACT_HINT_SELECTORS: Array<{
       /短|口语|看不懂|lark|feishu|飞书|最近股市|持仓|拿|买|卖|大宗商品|plain|recent stock|buy|hold|position sizing|visible reply/iu,
   },
   {
-    indexes: [8, 9, 10, 11, 17],
+    indexes: [8, 9, 10, 11, 12, 17, 19],
     pattern:
       /美股|a股|指数|加密|期权|大宗|商品|黄金|原油|美元|外汇|事件|技术|跨市场|估值|DCF|comps|模型|财务模型|研报|口径|字段|时间戳|催化|失效|crypto|option|commodity|gold|oil|dollar|fx|event|technical|cross-market|valuation|modeling|thesis|catalyst|provenance|timestamp|artifact|spreadsheet|report/iu,
   },

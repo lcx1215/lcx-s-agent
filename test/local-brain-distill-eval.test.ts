@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { GENERALIZATION_GENERATOR_VERSION } from "../scripts/dev/local-brain-generalization-generator.js";
 
 describe("local-brain-distill-eval", () => {
   it("supports current adapter resolution instead of requiring static adapter paths", async () => {
@@ -1147,11 +1148,11 @@ describe("local-brain-distill-eval", () => {
         id: "gen_holdout_commodity_01",
         userAsk: "我想研究原油，先说明缺什么输入，不要给交易信号。",
         featureSignature:
-          "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|rt:0|fd:0|ev:1|tt:0|vm:0|at:0",
+          "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|oc:0|rt:0|fd:0|ev:1|tt:1|vm:0|at:0",
         provenance: {
           schemaVersion: "lcx_generalization_case_v1",
           generator: "local-brain-generalization-harness",
-          generatorVersion: "feature-signature-v1",
+          generatorVersion: GENERALIZATION_GENERATOR_VERSION,
           split: "holdout",
           seed: 20260830,
           holdoutFraction: 0.2,
@@ -1232,7 +1233,7 @@ describe("local-brain-distill-eval", () => {
         caseFileProvenance: {
           schemaVersion: "lcx_generalization_case_v1",
           generator: "local-brain-generalization-harness",
-          generatorVersion: "feature-signature-v1",
+          generatorVersion: GENERALIZATION_GENERATOR_VERSION,
           split: "holdout",
           seed: 20260830,
           holdoutFraction: 0.2,
@@ -1277,7 +1278,7 @@ describe("local-brain-distill-eval", () => {
         expect.objectContaining({
           caseSource: "generated_holdout_file",
           featureSignature:
-            "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|rt:0|fd:0|ev:1|tt:0|vm:0|at:0",
+            "ac:commodity|ds:1|lr:0|ss:0|tw:0|pc:0|xm:0|oc:0|rt:0|fd:0|ev:1|tt:1|vm:0|at:0",
           modelContractReady: true,
         }),
       ]);
@@ -1329,7 +1330,7 @@ describe("local-brain-distill-eval", () => {
           provenance: {
             schemaVersion: "lcx_generalization_case_v1",
             generator: "local-brain-generalization-harness",
-            generatorVersion: "feature-signature-v1",
+            generatorVersion: GENERALIZATION_GENERATOR_VERSION,
             split: "train",
             seed: 20260830,
             holdoutFraction: 0.2,

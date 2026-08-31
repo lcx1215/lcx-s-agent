@@ -4,8 +4,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import {
+  assessLocalBrainSemanticContract,
   buildLocalBrainTrainingPrompt,
   LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+  redactTeacherContractLabels,
 } from "./local-brain-training-contract.js";
 
 type CliOptions = {
@@ -78,6 +80,7 @@ const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
   lark_language_handoff_receipt: "workflow_receipt",
   module_learning_plan_receipt: "plan_only_receipt",
   module_learning_review_receipt: "review_only_receipt",
+  generalization_generator: "synthetic_rule_generated",
 };
 
 function usage(): never {
@@ -221,6 +224,21 @@ function qualityTierForTeacherReview(record: JsonRecord): string {
   }
   if (requiredTools.length === 0 && supportingModules.length === 0) {
     return "weak_tooling";
+  }
+  const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim();
+  if (!userAsk) {
+    return "semantic_unknown";
+  }
+  const semantic = assessLocalBrainSemanticContract(
+    redactTeacherContractLabels(userAsk),
+    completion,
+  );
+  if (semantic.alignment === "mismatch") {
+    return "semantic_mismatch";
+  }
+  if (semantic.alignment === "unknown") {
+    return "semantic_unknown";
   }
   return "contract_complete_high_signal";
 }
@@ -383,10 +401,18 @@ function targetReviewIndexes(
   reviewCandidates: ReviewCandidate[],
   maxReviewExamples: number,
 ): Set<number> {
+  // A shape-valid row with an obvious task-to-contract mismatch is useful for
+  // audit statistics, but it must not be admitted to the bounded teacher
+  // curriculum.  Keep the source row available for later repair instead of
+  // teaching the student a contradictory route.
+  const eligibleReviewCandidates = reviewCandidates.filter(
+    (candidate) =>
+      candidate.qualityTier !== "semantic_mismatch" && candidate.qualityTier !== "semantic_unknown",
+  );
   const selectedIndexes = new Set<number>();
   const selectedSignatures = new Set<string>();
   const familyQueues = new Map<string, ReviewCandidate[]>();
-  const candidates = reviewCandidates.toSorted((left, right) => {
+  const candidates = eligibleReviewCandidates.toSorted((left, right) => {
     const qualityOrder =
       Number(right.qualityTier === "contract_complete_high_signal") -
       Number(left.qualityTier === "contract_complete_high_signal");
@@ -425,41 +451,73 @@ function targetReviewIndexes(
       break;
     }
   }
-  if (selectedIndexes.size < Math.min(reviewCandidates.length, maxReviewExamples)) {
-    for (const candidate of reviewCandidates) {
+  if (selectedIndexes.size < Math.min(eligibleReviewCandidates.length, maxReviewExamples)) {
+    for (const candidate of eligibleReviewCandidates) {
       if (selectedIndexes.size >= maxReviewExamples) {
         break;
       }
+      if (selectedSignatures.has(candidate.signature)) {
+        continue;
+      }
       selectedIndexes.add(candidate.index);
+      selectedSignatures.add(candidate.signature);
     }
   }
   return selectedIndexes;
 }
 
-function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRecord {
+type PromptContractRejectionReason =
+  | "legacy_source_context_without_user_or_task"
+  | "empty_user_or_task";
+
+type PromptContractNormalization = {
+  prompt: string;
+  rewritten: boolean;
+  rejectReason?: PromptContractRejectionReason;
+};
+
+function hasLegacySourceContext(prompt: string): boolean {
+  return /^(?:source_summary|source_kind):|\r?\n(?:source_summary|source_kind):/mu.test(prompt);
+}
+
+function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRecord | undefined {
   const sourcePath =
     typeof record.meta?.sourcePath === "string" ? record.meta.sourcePath : "unknown-source";
-  const { prompt, rewritten } = normalizePromptContract(record);
+  const normalized = normalizePromptContract(record);
+  if (normalized.rejectReason) {
+    return undefined;
+  }
   return {
     ...record,
-    prompt,
+    prompt: normalized.prompt,
     meta: {
       ...record.meta,
       sourcePath: `${sourcePath}#train-slice-${lane}-${repeat + 1}`,
       curriculumSlice: true,
       promptContractVersion: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
-      promptContractRewritten: rewritten,
+      promptContractRewritten: normalized.rewritten,
     },
   };
 }
 
-function normalizePromptContract(record: JsonRecord): { prompt: string; rewritten: boolean } {
+function normalizePromptContract(record: JsonRecord): PromptContractNormalization {
   const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
-  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim();
+  const userOrTaskMatch = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt);
+  const userAsk = userOrTaskMatch?.[1]?.trim();
   // Rebuild every prompt that exposes a user_or_task line, not only legacy
   // source-bearing prompts.  A v2 prompt can still contain an answer-bearing
   // label copied into that line by an older generator; the shared builder is
   // the single place that must redact it.
+  if (userOrTaskMatch && !userAsk) {
+    return { prompt: rawPrompt, rewritten: false, rejectReason: "empty_user_or_task" };
+  }
+  if (!userAsk && hasLegacySourceContext(rawPrompt)) {
+    return {
+      prompt: rawPrompt,
+      rewritten: false,
+      rejectReason: "legacy_source_context_without_user_or_task",
+    };
+  }
   const prompt = userAsk ? buildLocalBrainTrainingPrompt({ userAsk }) : rawPrompt;
   return {
     prompt,
@@ -486,19 +544,33 @@ async function writeFileAtomic(filePath: string, content: string | Buffer): Prom
 async function rewritePromptContractFile(
   sourcePath: string,
   outPath: string,
-): Promise<{ rows: number; rewritten: number; legacyUnrewritten: number }> {
+): Promise<{
+  rows: number;
+  written: number;
+  rewritten: number;
+  legacyUnrewritten: number;
+  rejected: number;
+  rejectionReasons: Record<string, number>;
+}> {
   const lines: string[] = [];
   let rows = 0;
+  let written = 0;
   let rewritten = 0;
   let legacyUnrewritten = 0;
+  let rejected = 0;
+  const rejectionReasons: Record<string, number> = {};
   for await (const record of readJsonl(sourcePath)) {
     const normalized = normalizePromptContract(record);
+    if (normalized.rejectReason) {
+      rejected += 1;
+      incrementCount(rejectionReasons, normalized.rejectReason);
+      rows += 1;
+      continue;
+    }
     const prompt = normalized.prompt;
-    const hasLegacySourceContext =
-      prompt.includes("\nsource_summary:") || prompt.includes("\nsource_kind:");
     if (normalized.rewritten) {
       rewritten += 1;
-    } else if (hasLegacySourceContext) {
+    } else if (hasLegacySourceContext(prompt)) {
       legacyUnrewritten += 1;
     }
     lines.push(
@@ -513,9 +585,10 @@ async function rewritePromptContractFile(
       }),
     );
     rows += 1;
+    written += 1;
   }
   await writeFileAtomic(outPath, lines.length > 0 ? `${lines.join("\n")}\n` : "");
-  return { rows, rewritten, legacyUnrewritten };
+  return { rows, written, rewritten, legacyUnrewritten, rejected, rejectionReasons };
 }
 
 async function buildTrainSlice(options: CliOptions): Promise<Record<string, unknown>> {
@@ -540,6 +613,8 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   const writtenPairCounts = new Map<string, number>();
   let promptContractRewritten = 0;
   let promptContractLegacyUnrewritten = 0;
+  let promptContractRejected = 0;
+  const promptContractRejectionReasons: Record<string, number> = {};
   const sourcePairKeys = new Set<string>();
   const skippedSourcePairKeys = new Set<string>();
   let sourceDuplicateRowsSkipped = 0;
@@ -549,44 +624,73 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     incrementCount(writtenTrustTiers, trustTierForSourceKind(sourceKind));
   }
 
-  async function writeSliceRecord(record: JsonRecord, repeat: number, lane: string): Promise<void> {
+  async function writeSliceRecord(
+    record: JsonRecord,
+    repeat: number,
+    lane: string,
+  ): Promise<boolean> {
     const cloned = cloneForSlice(record, repeat, lane);
+    if (!cloned) {
+      const normalized = normalizePromptContract(record);
+      const reason = normalized.rejectReason ?? "unknown";
+      promptContractRejected += 1;
+      incrementCount(promptContractRejectionReasons, reason);
+      return false;
+    }
     const prompt = typeof cloned.prompt === "string" ? cloned.prompt : "";
     const completion = typeof cloned.completion === "string" ? cloned.completion : "";
     await handle.write(`${JSON.stringify(cloned)}\n`);
     if (cloned.meta?.promptContractRewritten === true) {
       promptContractRewritten += 1;
-    } else if (prompt.includes("\nsource_summary:") || prompt.includes("\nsource_kind:")) {
+    } else if (hasLegacySourceContext(prompt)) {
       promptContractLegacyUnrewritten += 1;
     }
     const pair = normalizedPairSignature(prompt, completion);
     writtenPairCounts.set(pair, (writtenPairCounts.get(pair) ?? 0) + 1);
+    return true;
   }
 
   try {
     for await (const record of readJsonl(trainPath)) {
+      const sourceKind = sourceKindOf(record);
+      const normalized = normalizePromptContract(record);
+      if (normalized.rejectReason) {
+        promptContractRejected += 1;
+        incrementCount(promptContractRejectionReasons, normalized.rejectReason);
+        if (sourceKind === REVIEW_SOURCE_KIND) {
+          reviewIndex += 1;
+        }
+        continue;
+      }
       const sourcePair = sourcePairSignature(record);
       if (sourcePairKeys.has(sourcePair)) {
         sourceDuplicateRowsSkipped += 1;
         skippedSourcePairKeys.add(sourcePair);
+        if (sourceKind === REVIEW_SOURCE_KIND) {
+          reviewIndex += 1;
+        }
         continue;
       }
       sourcePairKeys.add(sourcePair);
-      const sourceKind = sourceKindOf(record);
       if (sourceKind === CURATED_SOURCE_KIND) {
         for (let repeat = 0; repeat < options.curatedRepeat; repeat += 1) {
-          await writeSliceRecord(record, repeat, "curated");
+          const written = await writeSliceRecord(record, repeat, "curated");
+          if (!written) {
+            continue;
+          }
           trainWritten += 1;
           curatedWritten += 1;
           recordWrite(sourceKind);
         }
       } else if (sourceKind === REVIEW_SOURCE_KIND) {
         if (selectedReviewIndexes.has(reviewIndex)) {
-          await writeSliceRecord(record, 0, "review");
-          trainWritten += 1;
-          reviewSelected += 1;
-          recordWrite(sourceKind);
-          recordTeacherQuality(writtenTeacherQuality, record);
+          const written = await writeSliceRecord(record, 0, "review");
+          if (written) {
+            trainWritten += 1;
+            reviewSelected += 1;
+            recordWrite(sourceKind);
+            recordTeacherQuality(writtenTeacherQuality, record);
+          }
         }
         reviewIndex += 1;
       } else {
@@ -594,7 +698,10 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
           ? options.nonReviewRepeat
           : 1;
         for (let repeat = 0; repeat < repeatCount; repeat += 1) {
-          await writeSliceRecord(record, repeat, "non-review");
+          const written = await writeSliceRecord(record, repeat, "non-review");
+          if (!written) {
+            continue;
+          }
           trainWritten += 1;
           nonReviewWritten += 1;
           recordWrite(sourceKind);
@@ -640,8 +747,8 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       curatedWritten,
       nonReviewWritten,
       trainWritten,
-      validCopied: validPromptContract.rows,
-      testCopied: testPromptContract.rows,
+      validCopied: validPromptContract.written,
+      testCopied: testPromptContract.written,
     },
     repetition: {
       boundary: "exact_prompt_completion_pair_repetition_only",
@@ -660,17 +767,24 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     promptContract: {
       version: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
       rewriteScope: "all_rows_with_recoverable_user_or_task",
-      sourceKindAndSourceSummaryInModelPrompt: promptContractLegacyUnrewritten === 0,
+      sourceKindAndSourceSummaryInModelPrompt: promptContractLegacyUnrewritten > 0,
+      sourceContextLeakFree: promptContractLegacyUnrewritten === 0,
       rowsRewritten: promptContractRewritten,
       rowsRewrittenFromLegacyPrompt: promptContractRewritten,
       legacyRowsStillContainingSourceContext: promptContractLegacyUnrewritten,
       validRowsRewritten: validPromptContract.rewritten,
       validRowsRewrittenFromLegacyPrompt: validPromptContract.rewritten,
       validLegacyRowsStillContainingSourceContext: validPromptContract.legacyUnrewritten,
+      validRowsRejected: validPromptContract.rejected,
+      validRejectionReasons: validPromptContract.rejectionReasons,
       testRowsRewritten: testPromptContract.rewritten,
       testRowsRewrittenFromLegacyPrompt: testPromptContract.rewritten,
       testLegacyRowsStillContainingSourceContext: testPromptContract.legacyUnrewritten,
-      note: "Rows with a recoverable user_or_task line are rebuilt through the shared contract; rows without recoverable user text remain visible for manual review rather than being guessed. The *FromLegacyPrompt fields are compatibility aliases.",
+      testRowsRejected: testPromptContract.rejected,
+      testRejectionReasons: testPromptContract.rejectionReasons,
+      rowsRejected: promptContractRejected,
+      rejectionReasons: promptContractRejectionReasons,
+      note: "Rows with a recoverable user_or_task line are rebuilt through the shared contract. Rows that expose source provenance without recoverable user text are rejected instead of being copied into the model-visible slice.",
     },
     sourceKinds: counts.sourceKinds,
     writtenSourceKinds,

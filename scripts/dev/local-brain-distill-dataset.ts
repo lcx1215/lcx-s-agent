@@ -5,8 +5,10 @@ import { pathToFileURL } from "node:url";
 import { generateCases, scorePlan, toDatasetRow } from "./local-brain-generalization-generator.js";
 import { LOCAL_BRAIN_RISK_BOUNDARIES, packLocalBrainModuleFields } from "./local-brain-taxonomy.js";
 import {
+  assessLocalBrainSemanticContract,
   buildLocalBrainTrainingPrompt,
   LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+  redactTeacherContractLabels,
 } from "./local-brain-training-contract.js";
 
 export type DistillExample = {
@@ -202,6 +204,20 @@ function qualityTierForTeacherReview(example: DistillExample): string {
   }
   if (requiredTools.length === 0 && supportingModules.length === 0) {
     return "weak_tooling";
+  }
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(example.prompt)?.[1]?.trim();
+  if (!userAsk) {
+    return "semantic_unknown";
+  }
+  const semantic = assessLocalBrainSemanticContract(
+    redactTeacherContractLabels(userAsk),
+    completion,
+  );
+  if (semantic.alignment === "mismatch") {
+    return "semantic_mismatch";
+  }
+  if (semantic.alignment === "unknown") {
+    return "semantic_unknown";
   }
   return "contract_complete_high_signal";
 }
@@ -2603,7 +2619,7 @@ async function main(): Promise<void> {
       holdoutFraction: options.generatedHoldoutFraction,
       split: "train",
       inTestOrValid: false,
-      note: "Infinite-stream rows are self-scored before admission and mixed into the train pool only; test/valid stay on the real receipt distribution and the generalization holdout stays the sole rule-vs-memorization probe.",
+      note: "Generated rows vary feature combinations, are self-scored and pair-deduped before admission, and enter the train pool only; test/valid stay on the real receipt distribution and the generalization holdout remains the sole rule-vs-memorization probe.",
     },
     promptContract: {
       version: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,

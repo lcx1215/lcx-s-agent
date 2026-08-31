@@ -101,7 +101,7 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
     caseId: "short_lark_commodity_learning_intake",
     priority: 120,
     userMessage:
-      "用户只说“学习大宗商品”。训练本地大脑先把短请求扩成通用学习回路：确认对象范围，调本地记忆，拆原油、黄金、工业金属、农产品、美元、通胀、库存、期限结构、ETF/期货工具和风险门；最后只给人类可读总结，不甩 JSON。",
+      "用户只说“学习大宗商品”。训练本地大脑先把短请求扩成通用学习回路：确认对象范围，调本地记忆，拆原油、黄金、工业金属、农产品、美元、通胀、库存、期限结构、ETF/期货工具和风险门；保持 research-only，不输出交易建议；teacher 最终只输出紧凑、闭合的 planning JSON，visible 层再把它转成人类可读总结。",
     sourceSummary:
       "targeted repair for short commodity learning intake; simple prompt must route into general commodity curriculum instead of shallow prose.",
   },

@@ -4,6 +4,8 @@ import {
   deriveLabel,
   generateCases,
   generateCasesWithPrerequisites,
+  generateCase,
+  isPackableGeneratedLabel,
   isHeldOut,
   makeRng,
   oraclePlan,
@@ -132,6 +134,85 @@ describe("reproducibility", () => {
     const a = generateCases(20, { seed: 42 });
     const b = generateCases(20, { seed: 42 });
     expect(a.map((c) => c.userAsk)).toEqual(b.map((c) => c.userAsk));
+  });
+
+  it("same seed produces identical case ids and signatures", () => {
+    const a = generateCases(40, { seed: 43 });
+    const b = generateCases(40, { seed: 43 });
+    expect(a.map((c) => c.id)).toEqual(b.map((c) => c.id));
+    expect(a.map((c) => c.featureSignature)).toEqual(b.map((c) => c.featureSignature));
+  });
+
+  it("renders the data state instead of hiding a label-relevant axis", () => {
+    const supplied = generateCase(
+      baseFeatures({ assetClasses: ["us_equity"], dataSupplied: true }),
+      makeRng(1),
+    );
+    const missing = generateCase(
+      baseFeatures({ assetClasses: ["us_equity"], dataSupplied: false }),
+      makeRng(1),
+    );
+    expect(supplied.userAsk).toContain("带时间戳");
+    expect(missing.userAsk).toContain("暂未提供");
+    expect(supplied.requiredModules).toContain("finance_data_gateway");
+    expect(missing.requiredMissingData).toContain("fresh_market_data_snapshot");
+    expect(supplied.requiredMissingData).not.toContain("fresh_market_data_snapshot");
+  });
+});
+
+describe("bounded synthetic contracts", () => {
+  it("rejects an unrepresentable label instead of silently truncating it", () => {
+    const features = baseFeatures({
+      assetClasses: ["us_equity", "crypto", "options"],
+      learningRequest: true,
+      sourceSupplied: true,
+      tradeWording: true,
+      portfolioContext: true,
+      crossMarket: true,
+      redTeam: true,
+      technicalTiming: true,
+      valuationModeling: true,
+      abstractionTransfer: true,
+    });
+    expect(isPackableGeneratedLabel(deriveLabel(features))).toBe(false);
+    expect(() => generateCase(features, makeRng(9))).toThrow(/exceeds bounded contract/u);
+  });
+
+  it("rejects over-cap arrays in the reference scorer", () => {
+    const [target] = generateCases(1, { seed: 91 });
+    const plan = oraclePlan(target);
+    const verdict = scorePlan(
+      {
+        ...plan,
+        risk_boundaries: [
+          ...(plan.risk_boundaries as string[]),
+          "extra_boundary",
+          "second_extra",
+          "third_extra",
+          "fourth_extra",
+        ],
+      },
+      target,
+    );
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reasons).toContain("invalid_array:risk_boundaries_cap_6");
+  });
+});
+
+describe("prerequisite split isolation", () => {
+  it("keeps prerequisite pairs on the same train or holdout side", () => {
+    const train = generateCasesWithPrerequisites(500, {
+      seed: 17,
+      split: "train",
+      holdoutFraction: 0.25,
+    });
+    const holdout = generateCasesWithPrerequisites(300, {
+      seed: 17,
+      split: "holdout",
+      holdoutFraction: 0.25,
+    });
+    expect(train.every((c) => !isHeldOut(c.features, 0.25))).toBe(true);
+    expect(holdout.every((c) => isHeldOut(c.features, 0.25))).toBe(true);
   });
 });
 

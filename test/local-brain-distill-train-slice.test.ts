@@ -28,15 +28,29 @@ async function parseJsonl(filePath: string): Promise<DistillLine[]> {
 }
 
 function line(sourceKind: string, sourcePath: string): string {
+  const teacherReview = sourceKind === "brain_distillation_review";
+  const sampleNumber = /([0-9]+)$/u.exec(sourcePath)?.[1] ?? "1";
   return `${JSON.stringify({
-    prompt: `prompt ${sourcePath}`,
+    prompt: teacherReview
+      ? buildLocalBrainTrainingPrompt({
+          userAsk: `研究组合风险，暂未提供带时间戳数据，样本序号 ${sampleNumber}`,
+        })
+      : `prompt ${sourcePath}`,
     completion: JSON.stringify({
       task_family: sourceKind,
-      primary_modules: ["review_panel"],
-      supporting_modules: ["control_room_summary"],
-      required_tools: ["review_panel"],
-      missing_data: [],
-      risk_boundaries: ["research_only"],
+      primary_modules: teacherReview
+        ? ["portfolio_risk_gates", "review_panel", "finance_data_gateway"]
+        : ["review_panel"],
+      supporting_modules: teacherReview
+        ? ["data_provenance_quality", "control_room_summary"]
+        : ["control_room_summary"],
+      required_tools: teacherReview ? ["source_registry"] : ["review_panel"],
+      missing_data: teacherReview
+        ? ["position_weights_and_return_series", "fresh_market_data_snapshot"]
+        : [],
+      risk_boundaries: teacherReview
+        ? ["research_only", "no_unverified_current_market_data"]
+        : ["research_only"],
       next_step: "route_to_review",
       rejected_context: [],
     }),
@@ -196,16 +210,16 @@ describe("local brain distill train slice", () => {
         "old static contract",
         "",
         "source_kind: brain_distillation_review",
-        "user_or_task: 研究 portfolio_risk_gates",
+        "user_or_task: 研究组合风险和当前数据缺口（portfolio_risk_gates）",
         'source_summary: {"primaryModules":["portfolio_risk_gates"]}',
       ].join("\n"),
       completion: JSON.stringify({
         task_family: "portfolio_risk",
-        primary_modules: ["portfolio_risk_gates"],
-        supporting_modules: [],
-        required_tools: ["review_panel"],
-        missing_data: [],
-        risk_boundaries: ["research_only"],
+        primary_modules: ["portfolio_risk_gates", "review_panel", "finance_data_gateway"],
+        supporting_modules: ["data_provenance_quality"],
+        required_tools: ["source_registry"],
+        missing_data: ["position_weights_and_return_series", "fresh_market_data_snapshot"],
+        risk_boundaries: ["research_only", "no_unverified_current_market_data"],
         next_step: "route_to_review",
         rejected_context: [],
       }),
@@ -244,14 +258,16 @@ describe("local brain distill train slice", () => {
     expect(manifest.promptContract).toMatchObject({
       rewriteScope: "all_rows_with_recoverable_user_or_task",
       rowsRewritten: 1,
-      sourceKindAndSourceSummaryInModelPrompt: true,
+      sourceKindAndSourceSummaryInModelPrompt: false,
       rowsRewrittenFromLegacyPrompt: 1,
       validRowsRewrittenFromLegacyPrompt: 1,
       testRowsRewrittenFromLegacyPrompt: 1,
     });
     const rows = await parseJsonl(path.join(outDir, "train.jsonl"));
     expect(rows[0]?.prompt).not.toContain("source_summary:");
-    expect(rows[0]?.prompt).toContain("user_or_task: 研究 <withheld_contract_id>");
+    expect(rows[0]?.prompt).toContain(
+      "user_or_task: 研究组合风险和当前数据缺口（<withheld_contract_id>）",
+    );
     expect(rows[0]?.meta?.promptContractRewritten).toBe(true);
     for (const split of ["valid", "test"]) {
       const splitRows = await parseJsonl(path.join(outDir, `${split}.jsonl`));
@@ -398,5 +414,75 @@ describe("local brain distill train slice", () => {
       explicitRepeatFlagsRemainAvailable: false,
     });
     await expect(parseJsonl(path.join(outDir, "train.jsonl"))).resolves.toHaveLength(2);
+  });
+
+  it("rejects provenance-only rows that cannot recover a natural user task", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-contract-reject-slice-"));
+    const dataDir = path.join(fixtureRoot, "dataset");
+    const outDir = path.join(fixtureRoot, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    const unrecoverable = {
+      prompt: [
+        "old static contract",
+        "",
+        "source_kind: brain_distillation_review",
+        'source_summary: {"primaryModules":["portfolio_risk_gates"]}',
+      ].join("\n"),
+      completion: JSON.stringify({
+        task_family: "portfolio_risk",
+        primary_modules: ["portfolio_risk_gates"],
+        supporting_modules: [],
+        required_tools: ["review_panel"],
+        missing_data: [],
+        risk_boundaries: ["research_only"],
+        next_step: "route_to_review",
+        rejected_context: [],
+      }),
+      meta: { sourceKind: "brain_distillation_review", sourcePath: "unrecoverable" },
+    };
+    for (const split of ["train", "valid", "test"]) {
+      await fs.writeFile(
+        path.join(dataDir, `${split}.jsonl`),
+        `${JSON.stringify(unrecoverable)}\n`,
+      );
+    }
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/dev/local-brain-distill-train-slice.ts",
+        "--data",
+        dataDir,
+        "--out",
+        outDir,
+        "--max-review-examples",
+        "1",
+        "--json",
+      ],
+      { cwd: repoRoot, env: { ...process.env, HOME: fixtureRoot } },
+    );
+    const manifest = JSON.parse(stdout) as {
+      counts: { trainWritten: number; validCopied: number; testCopied: number };
+      promptContract: {
+        rowsRejected: number;
+        validRowsRejected: number;
+        testRowsRejected: number;
+        sourceContextLeakFree: boolean;
+        rejectionReasons: Record<string, number>;
+      };
+    };
+    expect(manifest.counts).toMatchObject({ trainWritten: 0, validCopied: 0, testCopied: 0 });
+    expect(manifest.promptContract).toMatchObject({
+      rowsRejected: 1,
+      validRowsRejected: 1,
+      testRowsRejected: 1,
+      sourceContextLeakFree: true,
+      rejectionReasons: { legacy_source_context_without_user_or_task: 1 },
+    });
+    await expect(parseJsonl(path.join(outDir, "train.jsonl"))).resolves.toHaveLength(0);
+    await expect(parseJsonl(path.join(outDir, "valid.jsonl"))).resolves.toHaveLength(0);
+    await expect(parseJsonl(path.join(outDir, "test.jsonl"))).resolves.toHaveLength(0);
   });
 });

@@ -6,7 +6,11 @@ import {
   LOCAL_BRAIN_MODULE_TAXONOMY,
   LOCAL_BRAIN_RISK_BOUNDARIES,
 } from "./local-brain-taxonomy.js";
-import { findAnswerBearingContractTokens } from "./local-brain-training-contract.js";
+import {
+  assessLocalBrainSemanticContract,
+  findAnswerBearingContractTokens,
+  redactTeacherContractLabels,
+} from "./local-brain-training-contract.js";
 
 export type TrainingSampleAuditRow = {
   prompt: string;
@@ -224,6 +228,11 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
   const answerBearingPromptTokenFields = new Map<string, number>();
   const leakExamples: Array<Record<string, unknown>> = [];
   const answerBearingPromptTokenExamples: Array<Record<string, unknown>> = [];
+  const semanticAlignedRows = new Set<number>();
+  const semanticMismatchRows = new Set<number>();
+  const semanticUnknownRows = new Set<number>();
+  const semanticReasonCounts = new Map<string, number>();
+  const semanticMismatchExamples: Array<Record<string, unknown>> = [];
 
   rows.forEach((row, index) => {
     const dynamic = dynamicPrompt(row.prompt);
@@ -320,6 +329,33 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
         hits: hits.slice(0, 8),
       });
     }
+    if (completion && dynamic.userOrTask) {
+      const semantic = assessLocalBrainSemanticContract(
+        redactTeacherContractLabels(dynamic.userOrTask),
+        completion,
+      );
+      if (semantic.alignment === "aligned") {
+        semanticAlignedRows.add(index);
+      } else if (semantic.alignment === "mismatch") {
+        semanticMismatchRows.add(index);
+        for (const reason of semantic.reasonCodes) {
+          semanticReasonCounts.set(reason, (semanticReasonCounts.get(reason) ?? 0) + 1);
+        }
+        if (semanticMismatchExamples.length < 8) {
+          semanticMismatchExamples.push({
+            row: index,
+            sourceKind: sourceKindOf(row, dynamic),
+            missingModules: semantic.missingModules.slice(0, 8),
+            missingData: semantic.missingData.slice(0, 8),
+            missingRiskBoundaries: semantic.missingRiskBoundaries.slice(0, 8),
+          });
+        }
+      } else {
+        semanticUnknownRows.add(index);
+      }
+    } else {
+      semanticUnknownRows.add(index);
+    }
   });
 
   const teacherIndexes = rows
@@ -339,6 +375,19 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
   );
 
   const duplicateRows = pairCounts.reduce((sum, [, count]) => sum + (count > 1 ? count - 1 : 0), 0);
+  const modelVisibleLeakRows = new Set([
+    ...outputValueLeakRows,
+    ...sourceSummaryOutputFieldRows,
+    ...sourceSummaryContractIdRows,
+    ...promptContractFieldRows,
+    ...answerBearingPromptTokenRows,
+  ]).size;
+  const curriculumReady =
+    completions.every((completion) => Boolean(completion)) &&
+    modelVisibleLeakRows === 0 &&
+    duplicateRows === 0 &&
+    semanticMismatchRows.size === 0 &&
+    semanticUnknownRows.size === 0;
   const fullCaps = {
     primaryModules: rows.filter((_, index) => {
       const value = completions[index]?.primary_modules;
@@ -370,6 +419,15 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
     split,
     rows: rows.length,
     invalidCompletions: completions.filter((completion) => !completion).length,
+    curriculumReady,
+    curriculumGate: {
+      boundary: "dev_local_brain_curriculum_readiness_only",
+      modelVisibleLeakRows,
+      duplicateRows,
+      semanticMismatchRows: semanticMismatchRows.size,
+      semanticUnknownRows: semanticUnknownRows.size,
+      note: "A false gate blocks training-slice use; it is not model-learning or promotion proof.",
+    },
     prompt: {
       exactUnique: new Set(promptExactHashes).size,
       staticUnique: new Set(promptStaticHashes).size,
@@ -415,6 +473,19 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
       ),
       answerBearingPromptTokenExamples,
       examples: leakExamples,
+    },
+    semanticContract: {
+      boundary: "shared_task_semantics_audit_only",
+      alignedRows: semanticAlignedRows.size,
+      mismatchRows: semanticMismatchRows.size,
+      unknownRows: semanticUnknownRows.size,
+      alignmentRate:
+        rows.length === 0 ? 0 : Number((semanticAlignedRows.size / rows.length).toFixed(4)),
+      mismatchReasonCounts: [...semanticReasonCounts.entries()].toSorted(
+        (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+      ),
+      examples: semanticMismatchExamples,
+      note: "Semantic mismatch is a curriculum-quality signal, not model-learning or promotion proof.",
     },
     teacherNovelty: {
       rows: teacherIndexes.length,
@@ -490,6 +561,11 @@ export async function auditTrainingSamples(
   }
   const report: Record<string, unknown> = {
     ok: true,
+    curriculumReady: false,
+    curriculumGate: {
+      boundary: "dev_local_brain_curriculum_readiness_only",
+      note: "The top-level gate is finalized from all train/valid/test split audits below.",
+    },
     boundary: "dev_local_brain_training_sample_audit_only",
     dataDir: options.dataDir,
     splits: Object.fromEntries(
@@ -533,6 +609,17 @@ export async function auditTrainingSamples(
       };
     }
   }
+  const splitAudits = report.splits as Record<string, Record<string, unknown>>;
+  report.curriculumReady = splitNames.every(
+    (split) => splitAudits[split]?.curriculumReady === true,
+  );
+  report.curriculumGate = {
+    boundary: "dev_local_brain_curriculum_readiness_only",
+    splitCurriculumReady: Object.fromEntries(
+      splitNames.map((split) => [split, splitAudits[split]?.curriculumReady === true]),
+    ),
+    note: "Only a true gate across every split permits a downstream training-slice decision; no learning or promotion claim follows.",
+  };
   return report;
 }
 

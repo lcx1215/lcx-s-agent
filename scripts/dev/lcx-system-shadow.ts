@@ -454,7 +454,7 @@ export function buildNeutralPrompt(userAsk: string): string {
     '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
     "Return one single-line JSON object only; close the final brace and do not echo an answer template.",
     `Allowed module ids (choose only those justified by the task): ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
-    `Allowed risk_boundary ids (choose only those justified by the task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
+    `Canonical shared risk_boundary ids (use these when applicable; task-specific ids only when directly demanded by the natural-language task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
     "Infer missing_data ids yourself from the task; no case-specific checklist or expected id is provided.",
     "Do not invent current or timestamped market data, execution approval, probabilities, or durable memory writes.",
     "For scenario probabilities with missing samples, weights, returns, or macro inputs, do not guess; route to data-gated research preflight.",
