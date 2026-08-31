@@ -132,13 +132,14 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/dev\/minimax-provider-quota-saturator\.ts$/u,
       /^scripts\/dev\/minimax-quota-brain-saturator\.ts$/u,
       /^scripts\/dev\/finance-data-gateway-smoke\.ts$/u,
+      /^scripts\/dev\/lcx-system-shadow\.ts$/u,
       /^test\/fixtures\/local-brain-open-eval-provider\.ts$/u,
     ],
     requiredChecks: ["head-tail-consistency", "targeted-local-brain-tests"],
     commands: [
       "node --import tsx scripts/dev/lcx-head-tail-consistency.ts --json",
       "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-      "pnpm vitest run test/local-brain-contracts.test.ts test/local-brain-training-plan.test.ts",
+      "pnpm vitest run test/local-brain-contracts.test.ts test/local-brain-training-plan.test.ts test/lcx-system-shadow.test.ts",
     ],
     deferredCommands: ["pnpm vitest run test/local-brain-distill-eval.test.ts"],
     safetyNotes: [

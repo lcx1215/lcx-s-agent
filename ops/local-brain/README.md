@@ -1225,6 +1225,41 @@ node --import tsx scripts/dev/local-brain-distill-eval.ts \
 The eval result reports `adapterSelectionStatus`. Treat
 `best_effort_training_seed` as a dev training seed, not as promotion-ready.
 
+### Bounded Raw System Shadow
+
+Use the separate dev-only shadow owner when comparing raw model candidates or
+sampling stability. It accepts explicit `N`, `temperature`, and `seed`, writes
+every raw output to its receipt, and scores the JSON contract independently. It
+does not retry, harden, backfill fields, disclose target labels, promote an
+adapter, change providers, touch protected memory, or bind Lark.
+
+Start with two representative fixed failures and one generated neutral holdout
+row. Generate the holdout metadata separately; its target labels remain
+scorer-side and never enter the model prompt:
+
+```bash
+node --import tsx scripts/dev/local-brain-generalization-harness.ts \
+  --emit-holdout 1 --seed 20260831 --holdout-fraction 0.2 \
+  > /tmp/lcx-neutral-holdout-20260831.jsonl
+
+node --import tsx scripts/dev/lcx-system-shadow.ts \
+  --model Qwen/Qwen3-0.6B \
+  --adapter /absolute/path/to/explicit/adapter \
+  --case-id index_concentration_mag7_portfolio_risk,short_lark_commodity_scope_01 \
+  --case-file /tmp/lcx-neutral-holdout-20260831.jsonl \
+  --n 1 --temperature 0 --seed 1 \
+  --receipt /tmp/lcx-system-shadow-qwen-2plus1-20260831.json \
+  --summary-only --json
+```
+
+When `--case-file` is combined with `--case-id`, the named fixed cases and all
+validated holdout rows are evaluated together.
+
+Use `--no-adapter` for a base-model challenger. Do not pass
+`latest-passing`/`current` as an adapter selector. A raw pass is a
+system-level candidate only; it is not evidence of model-weight absorption or
+promotion readiness. Expand to six cases only after this receipt is reviewed.
+
 Promotion is acceptable only when:
 
 ```text

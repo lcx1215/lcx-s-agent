@@ -93,6 +93,26 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
+  it("routes the bounded raw system shadow through the local-brain owner", async () => {
+    const payload = await runPlan("scripts/dev/lcx-system-shadow.ts");
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["qwen_training_or_local_brain"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "local_brain_micro_surface",
+          lane: "qwen_training_or_local_brain",
+          matchedFiles: ["scripts/dev/lcx-system-shadow.ts"],
+          commands: expect.arrayContaining([
+            "pnpm vitest run test/local-brain-contracts.test.ts test/local-brain-training-plan.test.ts test/lcx-system-shadow.test.ts",
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("fails the stray gate when a changed file has no owner lane", async () => {
     const payload = await runPlan("tmp/unknown-stray-output.txt");
 
