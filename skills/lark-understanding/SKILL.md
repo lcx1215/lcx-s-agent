@@ -1,6 +1,6 @@
 ---
 name: lark-understanding
-description: Improve Feishu/Lark control-room language understanding by adding semantic-family routing, real utterance corpora, regression tests, and dev-vs-live truth boundaries instead of one-off phrase patches.
+description: Improve Feishu/Lark control-room language understanding by adding semantic-family routing, real utterance corpora, regression tests, and core-vs-external-channel truth boundaries instead of one-off phrase patches.
 metadata: { "openclaw": { "emoji": "🧭" } }
 ---
 
@@ -8,7 +8,7 @@ metadata: { "openclaw": { "emoji": "🧭" } }
 
 Use this skill when improving how Lobster understands natural-language requests in the Feishu/Lark control room.
 
-The goal is not to make the bot sound smarter. The goal is to reliably classify a real user utterance into the right semantic family, decide the right work surface or truth surface, and keep the reply honest about what is dev-fixed versus live-visible-fixed.
+The goal is not to make the bot sound smarter. The goal is to reliably classify a real user utterance into the right semantic family, decide the right work surface or truth surface, and keep the reply honest about what is core-verified versus user-visible-observed.
 
 ## Core Rule
 
@@ -35,7 +35,7 @@ Every change should answer four questions:
 3. Add or refine matcher logic only after the family boundary is clear.
 4. Add regression coverage in `extensions/feishu/src/real-utterances-regression.test.ts`.
 5. If the family is a truth-surface question, add content coverage in `src/auto-reply/reply/commands-protocol-info.test.ts`.
-6. State the fixed Feishu/Lark acceptance phrase for live verification.
+6. State the fixed Feishu/Lark acceptance phrase for external-channel verification.
 
 ## Use Semantic Routing When Regex Slows Down
 
@@ -60,8 +60,8 @@ Do not import a large orchestration framework just to classify Lark language. Fi
 
 ## Required Boundaries
 
-- Do not claim a live Lark behavior is fixed until build, restart, probe, and a real Lark entry are verified.
-- Do not turn a dev truth surface into a fake live proof.
+- Do not claim an external-channel behavior is user-visible-observed until build, restart, probe, and a real channel entry are verified.
+- Do not turn a local core truth surface into fake external-channel proof.
 - Do not create a new command when an existing status, context, help, protocol, or surface route can answer the request.
 - Do not promote speculative finance or market claims into durable memory from a language-routing change.
 - Do not touch protected summaries such as `memory/current-research-line.md` or `memory/unified-risk-view.md` for this skill.
@@ -74,4 +74,4 @@ After a patch, report:
 - representative utterances covered
 - target surface or protocol family
 - tests run
-- live acceptance phrase still needed
+- external-channel acceptance phrase still needed

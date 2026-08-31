@@ -134,12 +134,12 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
   {
     skillName: "lark-post-migration-probe",
     reason:
-      "the request asks for post-migration Lark/Feishu live proof or live-user-seen validation",
+      "the request asks for post-migration external-channel proof or user-visible-observed validation",
     patterns: [
       /lark.{0,16}(迁移|probe|验收|live)/i,
       /feishu.{0,16}(迁移|probe|验收|live)/i,
       /飞书.{0,16}(迁移|探针|验收|真实)/,
-      /live-user-seen/i,
+      /user-visible-observed/i,
       /真实.{0,8}(发消息|收消息|验证|验收)/,
     ],
   },

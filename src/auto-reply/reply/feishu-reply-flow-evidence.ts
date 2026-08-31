@@ -239,7 +239,7 @@ async function summarizeJsonlReplyFlowEvidence(
       outboundFields.length > 0
         ? `Latest outbound_result: ${outboundFields.join(", ")}`
         : "Latest outbound_result: unavailable",
-      "Boundary: this proves only the recorded reply delivery layer. It is not proof of source migration, build, restart, live probe, or full live-visible-fixed state.",
+      "Boundary: this proves only the recorded reply delivery layer. It is not proof of source migration, build, restart, channel probe, or full user-visible-observed state.",
     ].join("\n"),
   };
 }
@@ -289,7 +289,7 @@ async function summarizeGatewayDispatchEvidence(
       preview,
       "Latest gateway dispatch status: queuedFinal=true, replies=1",
       "Reply-path status evidence: gateway_dispatch_completed_without_delivery_result",
-      "Boundary: this is weaker than feishu-reply-flow outbound_result evidence. Pair it with the visible Lark/Feishu reply or a channel probe before calling live-visible-fixed.",
+      "Boundary: this is weaker than feishu-reply-flow outbound_result evidence. Pair it with the visible channel reply or a channel probe before calling user-visible-observed.",
     ].join("\n"),
   };
 }

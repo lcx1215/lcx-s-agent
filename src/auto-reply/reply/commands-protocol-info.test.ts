@@ -340,7 +340,7 @@ describe("commands-protocol-info", () => {
         cfg,
       });
       expect(learningCapabilityStateReply?.text).toContain("🧪 Learning capability state");
-      expect(learningCapabilityStateReply?.text).toContain("Dev truth");
+      expect(learningCapabilityStateReply?.text).toContain("Core truth");
       expect(learningCapabilityStateReply?.text).toContain("learning_command routing");
       expect(learningCapabilityStateReply?.text).toContain(
         "finance_learning_pipeline_orchestrator",
@@ -350,8 +350,8 @@ describe("commands-protocol-info", () => {
         "retrievalFirstLearning.learningInternalizationStatus",
       );
       expect(learningCapabilityStateReply?.text).toContain("application_ready");
-      expect(learningCapabilityStateReply?.text).toContain("not live-visible-fixed by itself");
-      expect(learningCapabilityStateReply?.text).toContain("Required live proof");
+      expect(learningCapabilityStateReply?.text).toContain("not user-visible-observed by itself");
+      expect(learningCapabilityStateReply?.text).toContain("Required external-channel proof");
 
       const limitationsReply = buildProtocolInfoReply({
         text: "你现在还不能做什么",

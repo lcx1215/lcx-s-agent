@@ -1,6 +1,6 @@
 ---
 name: lark-routing-evals
-description: Build and run Feishu/Lark utterance routing regression evals. Use when improving Lark control-room understanding, adding semantic families, validating matcher changes, or checking that real user phrases route to the right surface without dev/live truth drift.
+description: Build and run Feishu/Lark utterance routing regression evals. Use when improving Lark control-room understanding, adding semantic families, validating matcher changes, or checking that real user phrases route to the right surface without core/external-channel truth drift.
 metadata: { "openclaw": { "emoji": "✅" } }
 ---
 
@@ -51,7 +51,7 @@ Keep the corpus small and high-signal first. Add breadth only after the family b
 
 ## Guardrails
 
-- Do not count a dev regression pass as live Lark proof.
+- Do not count a core regression pass as external-channel or user-visible proof.
 - Do not add a family without near-miss coverage when the route touches finance, memory, learning, or operations.
 - Do not let a generic "help" route swallow specific truth-surface or learning-command requests.
 - Do not create huge eval files before the classification contract is clear.

@@ -182,7 +182,7 @@ function renderPromptInjection(params: {
   );
   return [
     "[SkillOpt-lite runtime preflight - deterministic]",
-    "Boundary: local_skillopt_preflight_only. This is an internal planning cue, not model-weight absorption, not live-user-seen proof, and not permission to touch provider config, protected memory, external channel sender, or trading authority.",
+    "Boundary: local_skillopt_preflight_only. This is an internal planning cue, not model-weight absorption, not user-visible-observed proof, and not permission to touch provider config, protected memory, external channel sender, or trading authority.",
     "",
     ...blocks,
   ].join("\n\n");

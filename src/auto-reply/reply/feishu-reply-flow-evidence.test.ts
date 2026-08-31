@@ -84,7 +84,7 @@ describe("summarizeRecentFeishuReplyFlowEvidence", () => {
     expect(summary).toContain("usedFallbackCreate=false");
     expect(summary).toContain("deliveryMessageId=om_123");
     expect(summary).toContain(
-      "Boundary: this proves only the recorded reply delivery layer. It is not proof of source migration, build, restart, live probe, or full live-visible-fixed state.",
+      "Boundary: this proves only the recorded reply delivery layer. It is not proof of source migration, build, restart, channel probe, or full user-visible-observed state.",
     );
   });
 

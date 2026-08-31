@@ -95,7 +95,7 @@ function defaultWorkRoleRegistry(at = nowIso()): FeishuWorkRoleRegistry {
       "xiaozhao",
       "小赵",
       "运维员",
-      "检查任务状态、失败原因、Lark 回复、队列、日志和 dev/live 边界。",
+      "检查任务状态、失败原因、Lark 回复、队列、日志和 core/external-channel 边界。",
     ],
   ] as const;
   return {

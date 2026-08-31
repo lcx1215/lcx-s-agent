@@ -1319,9 +1319,9 @@ describe("buildFeishuAgentBody", () => {
     expect(body).toContain("[System: Evidence-shape guard detected.");
     expect(body).toContain("[System: Result-shape guard detected.");
     expect(body).toContain("Operator permission to control the computer");
-    expect(body).toContain("source patch, build, restart, live probe");
+    expect(body).toContain("source patch, build, restart, channel probe");
     expect(body).toContain("target chat/thread when known");
-    expect(body).toContain("dev/live boundary");
+    expect(body).toContain("core/external-channel boundary");
   });
 
   it("adds source-coverage guard without losing external learning framing", () => {
@@ -1496,7 +1496,7 @@ describe("buildFeishuAgentBody", () => {
 
     expect(body).toContain("[System: Capability-claim guard detected.");
     expect(body).toContain("[System: Classify-work guard detected.");
-    expect(body).toContain("label it unverified, unavailable, or dev-only");
+    expect(body).toContain("label it unverified, unavailable, or local-only");
   });
 
   it("adds capability-claim guard for dev-to-live handoff prompts", () => {
@@ -1511,8 +1511,8 @@ describe("buildFeishuAgentBody", () => {
     });
 
     expect(body).toContain("[System: Capability-claim guard detected.");
-    expect(body).toContain("For dev-to-live handoff requests");
-    expect(body).toContain("source patch, build, restart, live probe");
+    expect(body).toContain("For local-to-external-channel handoff requests");
+    expect(body).toContain("source patch, build, restart, channel probe");
     expect(body).toContain("visible Lark/Feishu reply evidence");
   });
 
@@ -1530,7 +1530,7 @@ describe("buildFeishuAgentBody", () => {
     expect(body).toContain(
       "If an acceptance phrase or equivalent semantic acceptance condition is required",
     );
-    expect(body).toContain("define it before judging the live probe");
+    expect(body).toContain("define it before judging the channel probe");
     expect(body).toContain("whether the visible reply matched it");
   });
 
@@ -1735,11 +1735,11 @@ describe("buildFeishuAgentBody", () => {
     });
 
     expect(body).toContain("[System: Evidence-shape guard detected.");
-    expect(body).toContain("For live probe receipts");
+    expect(body).toContain("For external-channel probe receipts");
     expect(body).toContain("tested phrase, target chat/thread when known");
     expect(body).toContain("visible reply or missing reply");
     expect(body).toContain("whether the reply matches the tested phrase, timestamp");
-    expect(body).toContain("pass/fail judgment, dev/live boundary");
+    expect(body).toContain("pass/fail judgment, core/external-channel boundary");
     expect(body).toContain("[System: Result-shape guard detected.");
   });
 
@@ -7713,7 +7713,7 @@ describe("learning council routing", () => {
     expect(composerCtx?.BodyForAgent).toContain("Before the visible reply, apply the review_tier");
     expect(composerCtx?.BodyForAgent).toContain("learningInternalizationStatus=application_ready");
     expect(baseDispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringContaining("金融能力学习流水线已完成 dev 验收"),
+      text: expect.stringContaining("金融能力学习流水线已完成 core-verified 本地核心验收"),
     });
     const replyText = ((
       baseDispatcher.sendFinalReply.mock.calls as unknown as Array<[{ text: string }]>
@@ -7799,7 +7799,7 @@ describe("learning council routing", () => {
       "utf-8",
     );
     expect(surfaceLineText).toContain("msg-finance-pipeline-live");
-    expect(surfaceLineText).toContain("金融能力学习流水线已完成 dev 验收");
+    expect(surfaceLineText).toContain("金融能力学习流水线已完成 core-verified 本地核心验收");
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
@@ -8865,7 +8865,7 @@ describe("learning council routing", () => {
     expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
     expect(baseDispatcher.sendFinalReply).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("金融能力学习流水线已完成 dev 验收"),
+        text: expect.stringContaining("金融能力学习流水线已完成 core-verified 本地核心验收"),
       }),
     );
     await fs.rm(tempDir, { recursive: true, force: true });

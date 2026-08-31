@@ -66,8 +66,8 @@ export type LarkRoutingGuardMatcher =
   | "apiReplyArtifact";
 
 export type LarkRoutingTruthBoundary =
-  | "dev_only"
-  | "live_required"
+  | "core_only"
+  | "external_channel_required"
   | "evidence_required"
   | "research_only";
 
@@ -320,7 +320,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     canonicalUtterances: readonly string[];
     nearMisses: readonly string[];
     fallback: "deterministic_first_then_unknown";
-    liveAcceptancePhrase?: string;
+    acceptancePhrase?: string;
   }
 > = {
   control_room_aggregate: {
@@ -334,7 +334,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["给我一个技术面总览", "这句话哪来的，给我出处"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "现在整体怎么样，先给我一个总览",
+    acceptancePhrase: "现在整体怎么样，先给我一个总览",
   },
   technical_timing: {
     target: "technical_daily",
@@ -346,7 +346,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["MSFT 这次财报我最该盯什么", "给我一个知识维护总览"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "QQQ 现在还能拿吗",
+    acceptancePhrase: "QQQ 现在还能拿吗",
   },
   fundamental_research: {
     target: "fundamental_research",
@@ -359,7 +359,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["QQQ 现在还能拿吗", "现在网络搜索可以用吗"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "MSFT 这次财报我最该盯什么",
+    acceptancePhrase: "MSFT 这次财报我最该盯什么",
   },
   learning_external_source: {
     target: "learning_command",
@@ -374,7 +374,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["最近学的 openclaw 更新到底有没有内化", "刚才那个结论有来源吗"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "去 Google 上学最近 agent 记忆怎么做，只留下会改你以后做法的三条",
+    acceptancePhrase: "去 Google 上学最近 agent 记忆怎么做，只留下会改你以后做法的三条",
   },
   market_capability_learning_intake: {
     target: "learning_command",
@@ -395,7 +395,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "最近学的智能体更新到底有没有变成可复用规则",
     ],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "学习一套很好的量化因子择时策略",
+    acceptancePhrase: "学习一套很好的量化因子择时策略",
   },
   learning_capability_maintenance: {
     target: "learning_command",
@@ -410,7 +410,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "最近学的智能体更新到底有没有变成可复用规则",
     ],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "把之前的学习管线接到 Lark 命令上，语言接口也继续加强",
+    acceptancePhrase: "把之前的学习管线接到 Lark 命令上，语言接口也继续加强",
   },
   knowledge_internalization_audit: {
     target: "knowledge_maintenance",
@@ -422,7 +422,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["去github上学习开源的值得你学的，并把值得内化的内化", "QQQ 现在还能拿吗"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "最近学的 openclaw 更新到底有没有内化",
+    acceptancePhrase: "最近学的 openclaw 更新到底有没有内化",
   },
   ops_source_grounding: {
     target: "ops_audit",
@@ -437,7 +437,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["给我一个基本面总览", "去 Google 上学最近 agent 记忆怎么做"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "你这句话哪来的，给我出处",
+    acceptancePhrase: "你这句话哪来的，给我出处",
   },
   protocol_truth_surface: {
     target: "protocol_truth_surface",
@@ -449,7 +449,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["把已有的 ETF 学习能力和 pipeline 梳理加固一下", "给我一个审计总览"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "finance learning pipeline 是 dev 还是 live",
+    acceptancePhrase: "finance learning pipeline 是 dev 还是 live",
   },
   live_scheduling_queue: {
     target: "control_room",
@@ -460,7 +460,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["QQQ 现在还能拿吗", "你这句话哪来的，给我出处"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "这些任务别并行，先分类，再排队，告诉我 done、queued 和 next step",
+    acceptancePhrase: "这些任务别并行，先分类，再排队，告诉我 done、queued 和 next step",
   },
   live_permission_receipt: {
     target: "control_room",
@@ -471,7 +471,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["把已有的 ETF 学习能力和 pipeline 梳理加固一下", "给我一个基本面总览"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "接 live 前先定义验收短语，按固定回执格式列出测试语句",
+    acceptancePhrase: "接 live 前先定义验收短语，按固定回执格式列出测试语句",
   },
   live_probe_failure: {
     target: "control_room",
@@ -482,7 +482,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["现在整体怎么样，先给我一个总览", "哪些工具是真的能用"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase:
+    acceptancePhrase:
       "无回复、超时、旧回复、错 chat、错线程或不对应测试语句，按 blocked / proof / next step 报",
   },
   live_stop_boundary: {
@@ -494,7 +494,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["去 Google 上学最近 agent 记忆怎么做", "现在是哪个模型在回我"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "撤回授权，别接 live，也别再 probe",
+    acceptancePhrase: "撤回授权，别接 live，也别再 probe",
   },
   external_source_coverage_honesty: {
     target: "learning_command",
@@ -521,7 +521,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "刚才那个结论有来源吗",
     ],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "别把看了几个来源说成完整覆盖",
+    acceptancePhrase: "别把看了几个来源说成完整覆盖",
   },
   trading_execution_order: {
     target: "control_room",
@@ -532,7 +532,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["QQQ 现在还能拿吗", "stop-limit 和 stop order 有什么区别"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "买 100 股 AAPL 市价单，收盘前必须成交。",
+    acceptancePhrase: "买 100 股 AAPL 市价单，收盘前必须成交。",
   },
   trading_order_type_education: {
     target: "technical_daily",
@@ -543,7 +543,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["卖出一半 QQQ，用市价单立刻执行。", "你这句话哪来的，给我出处"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "stop-limit 和 stop order 有什么区别",
+    acceptancePhrase: "stop-limit 和 stop order 有什么区别",
   },
   position_risk_adjustment: {
     target: "technical_daily",
@@ -559,7 +559,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["买 100 股 AAPL 市价单，收盘前必须成交。", "给我一个基本面总览"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "把 QQQ 仓位减半，但先检查风险，不要真的下单。",
+    acceptancePhrase: "把 QQQ 仓位减半，但先检查风险，不要真的下单。",
   },
   bracket_exit_plan: {
     target: "technical_daily",
@@ -570,7 +570,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["去 Google 上学最近 agent 记忆怎么做", "现在是哪个模型在回我"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "bracket order，止盈和止损腿分别应该怎么理解",
+    acceptancePhrase: "bracket order，止盈和止损腿分别应该怎么理解",
   },
   trading_execution_boundary: {
     target: "control_room",
@@ -581,7 +581,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["MSFT 这次财报我最该盯什么", "最近学的 openclaw 更新到底有没有内化"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "不是授权你下单；任何买卖都必须标 research-only",
+    acceptancePhrase: "不是授权你下单；任何买卖都必须标 research-only",
   },
   work_role_management: {
     target: "control_room",
@@ -593,7 +593,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
     ],
     nearMisses: ["用三个模型一起学这篇文章", "现在整体怎么样，先给我一个总览"],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "新增一个机器人小陈，负责看宏观和利率。",
+    acceptancePhrase: "新增一个机器人小陈，负责看宏观和利率。",
   },
   api_reply_distillation: {
     target: "learning_command",
@@ -607,7 +607,7 @@ export const LARK_ROUTING_FAMILY_CONTRACTS: Record<
       "你到底有没有搜索能力",
     ],
     fallback: "deterministic_first_then_unknown",
-    liveAcceptancePhrase: "每次对话都产出一个可蒸馏样本",
+    acceptancePhrase: "每次对话都产出一个可蒸馏样本",
   },
 };
 
@@ -621,7 +621,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
     notes: "Broad top-university/frontier paper wording implies source coverage risk.",
   },
   {
@@ -630,7 +630,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-003",
@@ -638,7 +638,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-004",
@@ -646,7 +646,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-005",
@@ -654,7 +654,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-006",
@@ -662,7 +662,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-007",
@@ -670,7 +670,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-008",
@@ -678,7 +678,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-009",
@@ -686,7 +686,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-010",
@@ -695,7 +695,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-011",
@@ -703,7 +703,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-language-batch-012",
@@ -711,7 +711,7 @@ export const LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH: readonly LarkRoutingCorpusCase
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
 ] as const;
 
@@ -786,21 +786,21 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     utterance: "去 Google 上学最近 agent 记忆怎么做，只留下会改你以后做法的三条",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "learning-external-002",
     utterance: "网上搜一下最近金融智能体文章，别复述文章，只说哪些值得内化",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "learning-external-003",
     utterance: "查一下 arxiv 上 agent workflow 的新文章，筛出以后会复用的规则",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "learning-external-004",
@@ -816,21 +816,21 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     utterance: "从 Google Scholar 和公开课程里找金融研究工作流做法，只沉淀可复用规则",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "learning-external-006",
     utterance: "读几篇 SSRN working paper 和大学课程材料，提炼能改你以后判断的规则",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "finance-learning-pipeline-001",
     utterance: "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略",
     family: "market_capability_learning_intake",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
     notes:
       "Language route only: backend still needs safe source intake before finance_learning_pipeline_orchestrator can produce capability cards.",
   },
@@ -839,7 +839,7 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     utterance: "去学一套 ETF 风控和仓位管理方法，最后要变成可检索能力",
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
     notes:
       "No local/manual source is supplied; default to external-source learning with coverage honesty before any reviewed capability intake.",
   },
@@ -848,14 +848,14 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     utterance: "把这篇本地金融文章学成能力卡，走 source intake、extract、attach 和 review",
     family: "market_capability_learning_intake",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "finance-learning-pipeline-004",
     utterance: "学习股市分析知识",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
     notes:
       "Language route only: a simple broad stock-market learning ask should first collect web/source evidence and coverage limits.",
   },
@@ -864,56 +864,56 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     utterance: "学习美股分析知识",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "finance-learning-pipeline-006",
     utterance: "学一下 A 股指数分析框架",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "finance-learning-pipeline-007",
     utterance: "学习加密币市场结构知识",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "finance-learning-pipeline-008",
     utterance: "补强 ETF 风控知识",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "finance-learning-pipeline-009",
     utterance: "学习期权波动率分析框架",
     family: "learning_external_source",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "learning-maintenance-001",
     utterance: "之前内部做了很多的金融学习，你应该把它们维护好并加强",
     family: "learning_capability_maintenance",
     expectedSurface: "learning_command",
-    truthBoundary: "dev_only",
+    truthBoundary: "core_only",
   },
   {
     id: "learning-maintenance-002",
     utterance: "把已有的 ETF 学习能力和 pipeline 梳理加固一下",
     family: "learning_capability_maintenance",
     expectedSurface: "learning_command",
-    truthBoundary: "dev_only",
+    truthBoundary: "core_only",
   },
   {
     id: "learning-maintenance-003",
     utterance: "把之前的学习管线接到 Lark 命令上，语言接口也继续加强",
     family: "learning_capability_maintenance",
     expectedSurface: "learning_command",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "knowledge-audit-001",
@@ -990,14 +990,14 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     utterance: "哪些内部学习能力真的接上了",
     family: "protocol_truth_surface",
     expectedProtocolKind: "learning_capability_state",
-    truthBoundary: "dev_only",
+    truthBoundary: "core_only",
   },
   {
     id: "protocol-truth-003",
     utterance: "finance learning pipeline 是 dev 还是 live",
     family: "protocol_truth_surface",
     expectedProtocolKind: "learning_capability_state",
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-scheduling-001",
@@ -1040,14 +1040,14 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
       "evidenceShape",
       "resultShape",
     ],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-permission-002",
     utterance: "我允许你做 Lark 真实测试，但别把这个当成部署授权，先给验收短语和可见回复回执。",
     family: "live_permission_receipt",
     expectedGuardMatchers: ["executionAuthority", "evidenceShape"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-permission-003",
@@ -1055,7 +1055,7 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
       "接 live 前先按固定格式列测试语句、同一个 chat/thread、可见回复、是否命中和 dev/live 边界，这不是授权 build/restart/deploy。",
     family: "live_permission_receipt",
     expectedGuardMatchers: ["capabilityClaim", "evidenceShape", "resultShape"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-failure-001",
@@ -1063,14 +1063,14 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
       "Lark 探针发出后如果无回复、超时、旧回复、错 chat、错线程或不对应测试语句，按 blocked / proof / next step 报，不要把 only sent 或任意可见回复说成 pass。",
     family: "live_probe_failure",
     expectedGuardMatchers: ["failureReport", "progressStatus", "evidenceShape"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-failure-002",
     utterance: "如果 Lark 没回复或者回到错线程，按 blocked 报，不要说 pass。",
     family: "live_probe_failure",
     expectedGuardMatchers: ["failureReport"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-failure-003",
@@ -1078,7 +1078,7 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
       "只发出测试消息不算 completed，别把 started 说成 completed，要有对应测试语句的可见回复和 proof。",
     family: "live_probe_failure",
     expectedGuardMatchers: ["evidenceShape", "completionProof"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-stop-001",
@@ -1086,21 +1086,21 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
       "撤回授权，别接 live，也别再 probe，只保留 dev patch 和本地测试；之前允许操控电脑不能继承到下一轮 restart 或 deploy。",
     family: "live_stop_boundary",
     expectedGuardMatchers: ["executionAuthority", "outOfScope"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-stop-002",
     utterance: "先停，不要接 live，不要 probe，不要 restart，只保留本地 dev patch。",
     family: "live_stop_boundary",
     expectedGuardMatchers: ["outOfScope"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "live-stop-003",
     utterance: "撤销刚才的 live 授权，下一轮不能继承部署或重启权限。",
     family: "live_stop_boundary",
     expectedGuardMatchers: ["executionAuthority"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-coverage-001",
@@ -1109,7 +1109,7 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-coverage-002",
@@ -1118,7 +1118,7 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "external-coverage-003",
@@ -1126,7 +1126,7 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     family: "external_source_coverage_honesty",
     expectedSurface: "learning_command",
     expectedGuardMatchers: ["sourceCoverage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   ...LARK_EXTERNAL_SOURCE_LANGUAGE_BATCH,
   {
@@ -1134,21 +1134,21 @@ export const LARK_ROUTING_CORPUS: readonly LarkRoutingCorpusCase[] = [
     utterance: "买 100 股 AAPL 市价单，收盘前必须成交。",
     family: "trading_execution_order",
     expectedGuardMatchers: ["tradingLanguage"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "trading-execution-002",
     utterance: "卖出一半 QQQ，用市价单立刻执行。",
     family: "trading_execution_order",
     expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "trading-execution-003",
     utterance: "开盘直接买入 SPY，不要再问我。",
     family: "trading_execution_order",
     expectedGuardMatchers: ["tradingLanguage", "highStakesRisk"],
-    truthBoundary: "live_required",
+    truthBoundary: "external_channel_required",
   },
   {
     id: "trading-order-education-001",

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildAgentExamReport } from "../scripts/dev/lcx-agent-exam.js";
+import { buildAgentExamReport } from "../scripts/operator/lcx-agent-exam.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -25,7 +25,7 @@ const cognitiveSources = {
   moduleLearningReviewTool:
     "weakModuleLearning exactMissingProof nextProofOwner proofGapSummary boundaryViolation languageCorpusUntouched protectedMemoryUntouched providerConfigTouched: false",
   larkSurfaces:
-    "core-verified means local implementation or tests only; live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started, running, completed, blocked, or unproven",
+    "core-verified means local implementation or tests only; user-visible-observed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started, running, completed, blocked, or unproven",
   localBrainRunbook:
     "live-visible-fixed; fresh real Lark inbound plus visible reply; Do not call local training or synthetic replay `live-visible-fixed`; A stored source, summary, or dataset row is not enough; stored_only; application_ready; eval_absorbed; Do not claim Qwen model-internal learning without retained artifacts and eval evidence; bounded feedback; answer audit; model answer is candidate; Qwen is challenger; terminal decision; Commercial-grade convergence does not mean deleting useful entrypoints; Converge duplicated authority instead; single factual owner",
   answerAuditSurfaces:
@@ -98,7 +98,7 @@ describe("lcx-agent-exam", () => {
     expect(report.lanes.find((lane) => lane.lane === "live_visible_boundary")).toEqual(
       expect.objectContaining({
         status: "pass",
-        boundary: "local_fixed_not_live_fixed",
+        boundary: "core_verified_not_user_visible_observed",
       }),
     );
     expect(report.lanes.find((lane) => lane.lane === "lark_feishu_visible_loop")).toEqual(
@@ -614,7 +614,7 @@ describe("lcx-agent-exam", () => {
     expect(report.lanes.find((lane) => lane.lane === "live_visible_boundary")).toEqual(
       expect.objectContaining({
         status: "warn",
-        boundary: "probe_fixed_not_live_visible_fixed",
+        boundary: "probe_evidence_not_user_visible_observed",
         issue: expect.stringContaining("channel probe 不是真实用户可见回复证据"),
       }),
     );
@@ -622,7 +622,7 @@ describe("lcx-agent-exam", () => {
       expect.objectContaining({
         status: "warn",
         evidence: expect.arrayContaining([
-          "live-visible-fixed=false unless fresh inbound plus matching reply is present",
+          "user-visible-observed=false unless fresh inbound plus matching reply is present",
         ]),
       }),
     );
@@ -690,10 +690,13 @@ describe("lcx-agent-exam", () => {
   });
 
   it("runs module-learning review against the local OpenClaw workspace", async () => {
-    const source = await fs.readFile(path.join(repoRoot, "scripts/dev/lcx-agent-exam.ts"), "utf8");
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-agent-exam.ts"),
+      "utf8",
+    );
 
     expect(source).toContain("DEFAULT_WORKSPACE_DIR");
-    expect(source).toContain("scripts/dev/module-learning-pipeline-review.ts");
+    expect(source).toContain("scripts/operator/module-learning-pipeline-review.ts");
     expect(source).toContain("--workspace");
   });
 });

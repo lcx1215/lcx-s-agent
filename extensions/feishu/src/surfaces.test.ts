@@ -812,7 +812,7 @@ describe("buildFeishuSurfaceNotice", () => {
       "If the work intent is ambiguous, default to the smallest useful mode that keeps progress visible",
     );
     expect(notice).toContain(
-      "Feishu/Lark status boundary: before claiming live-visible-fixed, dev-fixed, started, running, completed, blocked, or unproven",
+      "Feishu/Lark status boundary: before claiming user-visible-observed, core-verified, started, running, completed, blocked, or unproven",
     );
     expect(notice).toContain(
       "Treat questions like 现在在干什么, 修到哪了, 还剩多少, 是不是 live 了, 现在能用了吗, and what remains as status-readback requests.",
@@ -825,9 +825,9 @@ describe("buildFeishuSurfaceNotice", () => {
     );
     expect(notice).toContain("Say which layer is present and which layer is still missing.");
     expect(notice).toContain("use current evidence instead of chat memory alone");
-    expect(notice).toContain("dev-fixed means local implementation or tests");
+    expect(notice).toContain("core-verified means local implementation or tests");
     expect(notice).toContain(
-      "live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
+      "user-visible-observed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
     );
     expect(notice).toContain("say unproven or unknown and name the next check");
     expect(notice).toContain("Configured target chat for this surface = oc-tech");
@@ -859,7 +859,7 @@ describe("buildFeishuSurfaceNotice", () => {
 
     expect(notice).toContain("Feishu operating surface target = control_room");
     expect(notice).toContain(
-      "Feishu/Lark status boundary: before claiming live-visible-fixed, dev-fixed, started, running, completed, blocked, or unproven",
+      "Feishu/Lark status boundary: before claiming user-visible-observed, core-verified, started, running, completed, blocked, or unproven",
     );
     expect(notice).toContain(
       "you may directly create or update low-risk artifacts such as HOOK notes, correction notes, weekly reviews, learning summaries",
@@ -1961,9 +1961,9 @@ describe("buildFeishuControlRoomOrchestrationNotice", () => {
     expect(notice).toContain("technical_daily, fundamental_research");
     expect(notice).toContain("Control-room grounding contract");
     expect(notice).toContain("current-research-line and protected summaries first");
-    expect(notice).toContain("dev-fixed means local implementation or tests only");
+    expect(notice).toContain("core-verified means local implementation or tests only");
     expect(notice).toContain(
-      "live-visible-fixed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
+      "user-visible-observed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
     );
     expect(notice).toContain("started/running/completed/blocked/unproven");
     expect(notice).toContain("say unproven or unknown");

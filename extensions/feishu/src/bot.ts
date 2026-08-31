@@ -2030,7 +2030,7 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
           "研究输出只给筛选、证据缺口、风险边界和下一步检查清单，不给交易执行。",
         ];
   return [
-    "这次学习可以进入研究使用（金融能力学习流水线已完成 dev 验收），但仍按 research-only 边界处理。",
+    "这次学习可以进入研究使用（金融能力学习流水线已完成 core-verified 本地核心验收），但仍按 research-only 边界处理。",
     "",
     `结论: learningInternalizationStatus=${conclusionStatus}; failedReason=${failedReason}.`,
     "可复用规则:",
@@ -2042,7 +2042,7 @@ function renderFeishuFinanceLearningPipelineReply(details: Record<string, unknow
     "- 如果本地数学可算，就用 quant_math；不能让模型口算替代。",
     "",
     "Proof:",
-    "- 金融能力学习流水线已完成 dev 验收",
+    "- 金融能力学习流水线已完成 core-verified 本地核心验收",
     ...(usableAnswerLines.length > 0
       ? ["- usable answer lines:", ...usableAnswerLines.slice(0, 6).map((line) => `  - ${line}`)]
       : []),
@@ -4575,7 +4575,7 @@ async function waitForFeishuDispatcherAndPublishes(params: {
         impact:
           "the primary Feishu reply may have landed, but one secondary publish target did not receive its artifact",
         suggestedScope:
-          "treat this as partial delivery: preserve the primary reply, inspect the secondary target, and do not call the classified publish fully live-visible-fixed until the target publish is verified",
+          "treat this as partial delivery: preserve the primary reply, inspect the secondary target, and do not call the classified publish user-visible-observed until the target publish is verified",
       });
     }
   }
@@ -5236,7 +5236,7 @@ function buildFeishuScopeNotices(content: string): string[] {
     ),
     createFeishuScopeNoticeRule(
       looksLikeCapabilityClaimScopeAsk(content),
-      "[System: Capability-claim guard detected. Separate current real capability, design target, local/dev-fixed change, live-visible-fixed state, configuration or credential gaps, and stale prior evidence. For dev-to-live handoff requests, separate source patch, build, restart, live probe, and visible Lark/Feishu reply evidence. If an acceptance phrase or equivalent semantic acceptance condition is required, define it before judging the live probe, then report whether the visible reply matched it. Do not say a tool, provider, automation, memory path, routing path, or Lark/Feishu integration is working now unless current proof supports it. Name the proof, probe, receipt, or acceptance phrase; otherwise label it unverified, unavailable, or dev-only.]",
+      "[System: Capability-claim guard detected. Separate current real capability, design target, local core-verified change, user-visible-observed state, configuration or credential gaps, and stale prior evidence. For local-to-external-channel handoff requests, separate source patch, build, restart, channel probe, and visible Lark/Feishu reply evidence. If an acceptance phrase or equivalent semantic acceptance condition is required, define it before judging the channel probe, then report whether the visible reply matched it. Do not say a tool, provider, automation, memory path, routing path, or Lark/Feishu integration is working now unless current proof supports it. Name the proof, probe, receipt, or acceptance phrase; otherwise label it unverified, unavailable, or local-only.]",
     ),
     createFeishuScopeNoticeRule(
       looksLikeClarificationBoundaryScopeAsk(content),
@@ -5260,7 +5260,7 @@ function buildFeishuScopeNotices(content: string): string[] {
     ),
     createFeishuScopeNoticeRule(
       looksLikeEvidenceShapeScopeAsk(content),
-      "[System: Evidence-shape guard detected. Use a fixed evidence shape when making claims: claim, source or receipt, verification status, inference boundary, and missing-evidence gap. For live probe receipts, include tested phrase, target chat/thread when known, acceptance phrase or semantic acceptance condition when defined, visible reply or missing reply, whether the reply matches the tested phrase, timestamp, and acceptance condition, core semantic slots required for equivalence, matched slots, missing slots, pass/fail judgment, dev/live boundary, and next action. If required slots are missing, do not mark the probe as pass. Separate verified facts, inferred claims, stale evidence, and unknowns. Do not invent citations or collapse missing proof into confidence language.]",
+      "[System: Evidence-shape guard detected. Use a fixed evidence shape when making claims: claim, source or receipt, verification status, inference boundary, and missing-evidence gap. For external-channel probe receipts, include tested phrase, target chat/thread when known, acceptance phrase or semantic acceptance condition when defined, visible reply or missing reply, whether the reply matches the tested phrase, timestamp, and acceptance condition, core semantic slots required for equivalence, matched slots, missing slots, pass/fail judgment, core/external-channel boundary, and next action. If required slots are missing, do not mark the probe as pass. Separate verified facts, inferred claims, stale evidence, and unknowns. Do not invent citations or collapse missing proof into confidence language.]",
     ),
     createFeishuScopeNoticeRule(
       looksLikeFailureReportScopeAsk(content),
