@@ -194,7 +194,6 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
     const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
     const legacyRepositoryDrift = recordValue(legacy.devLiveDrift);
-    const { devLiveDrift: _legacyDevLiveDrift, ...legacyWithoutDrift } = legacy;
     const bindingStatus = binding?.status ?? "unavailable";
     const bindingProvedChannelBound =
       bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
@@ -225,7 +224,6 @@ export async function runExternalChannelStatus(options: CliOptions) {
       canonicalBindingOwner: "lcx-external-channel-binding",
     };
     return {
-      ...legacyWithoutDrift,
       ok: bindingPayload.ok !== false,
       boundary: "local_external_channel_status_only",
       owner: "lcx-external-channel-status",
