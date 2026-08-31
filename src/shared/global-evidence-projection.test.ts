@@ -326,4 +326,51 @@ describe("Global Evidence Projection", () => {
       adapterId: null,
     });
   });
+
+  it("unwraps and preserves the upstream read envelope", () => {
+    const projection = buildGlobalEvidenceProjection({
+      generatedAt: "2026-08-31T00:00:00.000Z",
+      sourceOwners: ["mind-model"],
+      lanes: [],
+      invariants: [],
+    });
+    const currentEnvelope = readGlobalEvidenceProjection(projection, "2026-08-31T00:01:00.000Z", {
+      sourceOwner: "governance",
+    });
+    expect(
+      readGlobalEvidenceProjection(currentEnvelope, "2026-08-31T00:02:00.000Z", {
+        sourceOwner: "farm-web-server",
+      }),
+    ).toMatchObject({
+      sourceOwner: "farm-web-server",
+      readStatus: "current",
+      blocked: false,
+      reason: "projection_current",
+    });
+
+    const staleEnvelope = readGlobalEvidenceProjection(projection, "2026-08-31T00:06:00.000Z", {
+      sourceOwner: "governance",
+    });
+    expect(
+      readGlobalEvidenceProjection(staleEnvelope, "2026-08-31T00:06:30.000Z", {
+        sourceOwner: "farm-web-server",
+      }),
+    ).toMatchObject({
+      readStatus: "stale",
+      blocked: true,
+      reason: "upstream_projection_stale",
+    });
+
+    expect(
+      readGlobalEvidenceProjection(
+        { ...currentEnvelope, blocked: true },
+        "2026-08-31T00:02:00.000Z",
+      ),
+    ).toMatchObject({
+      readStatus: "invalid",
+      blocked: true,
+      reason: "projection_read_envelope_inconsistent",
+      projection: null,
+    });
+  });
 });

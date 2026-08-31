@@ -59,14 +59,46 @@ function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
 }
 
-export function readGlobalEvidenceProjection(
+type ProjectionReadEnvelope = {
+  readStatus?: unknown;
+  blocked?: unknown;
+  reason?: unknown;
+  projection?: unknown;
+};
+
+const READ_STATUSES: ReadonlySet<GlobalEvidenceProjectionReadStatus> = new Set([
+  "current",
+  "stale",
+  "missing",
+  "invalid",
+]);
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function asReadEnvelope(value: unknown): ProjectionReadEnvelope | undefined {
+  const record = asRecord(value);
+  if (!record || !("readStatus" in record || "blocked" in record)) {
+    return undefined;
+  }
+  return record;
+}
+
+function asReadStatus(value: unknown): GlobalEvidenceProjectionReadStatus | undefined {
+  return typeof value === "string" && READ_STATUSES.has(value as GlobalEvidenceProjectionReadStatus)
+    ? (value as GlobalEvidenceProjectionReadStatus)
+    : undefined;
+}
+
+function readProjectionPayload(
   candidate: unknown,
   checkedAt: string,
-  options: { sourceOwner?: string; maxAgeMs?: number } = {},
+  base: { sourceOwner: string; maxAgeSeconds: number },
+  maxAgeMs: number,
 ): GlobalEvidenceProjectionRead {
-  const sourceOwner = options.sourceOwner?.trim() || "unknown-owner";
-  const maxAgeMs = options.maxAgeMs ?? GLOBAL_EVIDENCE_PROJECTION_MAX_AGE_MS;
-  const base = { sourceOwner, maxAgeSeconds: maxAgeMs / 1000 };
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
     return {
       ...base,
@@ -125,4 +157,58 @@ export function readGlobalEvidenceProjection(
     reason: "projection_current",
     projection,
   };
+}
+
+export function readGlobalEvidenceProjection(
+  candidate: unknown,
+  checkedAt: string,
+  options: { sourceOwner?: string; maxAgeMs?: number } = {},
+): GlobalEvidenceProjectionRead {
+  const sourceOwner = options.sourceOwner?.trim() || "unknown-owner";
+  const maxAgeMs = options.maxAgeMs ?? GLOBAL_EVIDENCE_PROJECTION_MAX_AGE_MS;
+  const base = { sourceOwner, maxAgeSeconds: maxAgeMs / 1000 };
+  const envelope = asReadEnvelope(candidate);
+  const read = readProjectionPayload(
+    envelope ? envelope.projection : candidate,
+    checkedAt,
+    base,
+    maxAgeMs,
+  );
+  if (!envelope) {
+    return read;
+  }
+
+  const envelopeStatus = asReadStatus(envelope.readStatus);
+  if (!envelopeStatus || typeof envelope.blocked !== "boolean") {
+    return {
+      ...read,
+      readStatus: "invalid",
+      blocked: true,
+      reason: "projection_read_envelope_invalid",
+      projection: null,
+    };
+  }
+  const statusIsCurrent = envelopeStatus === "current";
+  if (statusIsCurrent === envelope.blocked) {
+    return {
+      ...read,
+      readStatus: "invalid",
+      blocked: true,
+      reason: "projection_read_envelope_inconsistent",
+      projection: null,
+    };
+  }
+  if (!statusIsCurrent) {
+    const upstreamReason =
+      typeof envelope.reason === "string" && envelope.reason.trim().length > 0
+        ? envelope.reason.trim()
+        : "projection_not_current";
+    return {
+      ...read,
+      readStatus: envelopeStatus,
+      blocked: true,
+      reason: `upstream_${upstreamReason}`,
+    };
+  }
+  return read;
 }
