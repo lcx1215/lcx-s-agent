@@ -259,8 +259,6 @@ export async function buildLcxLiveFadeoutAudit() {
     bindingOwner,
     statusOwner,
     promoteLive,
-    promoteLiveCompatibility,
-    legacyBindingCompatibility,
     commercialAcceptance,
     trainingPlan,
     governanceAutopilot,
@@ -279,8 +277,6 @@ export async function buildLcxLiveFadeoutAudit() {
     readText("scripts/operator/lcx-external-channel-binding.ts"),
     readText("scripts/operator/lcx-external-channel-status.ts"),
     readText("scripts/operator/lcx-external-channel-compat.ts"),
-    readText("scripts/operator/lcx-promote-live.ts"),
-    readText("scripts/operator/lcx-live-lark-brain-binding.ts"),
     readText("scripts/operator/lcx-commercial-acceptance-harness.ts"),
     readText("scripts/operator/local-brain-training-plan.ts"),
     readText("scripts/operator/lcx-governance-autopilot.ts"),
@@ -409,22 +405,6 @@ export async function buildLcxLiveFadeoutAudit() {
       text: promoteLive,
     }),
     checkTerms({
-      id: "legacy_promote_live_wrapper_forwards_to_neutral_entrypoint",
-      owner: "scripts/operator/lcx-promote-live.ts",
-      file: "scripts/operator/lcx-promote-live.ts",
-      requiredTerms: ["Compatibility entrypoint", "lcx-external-channel-compat.ts"],
-      summary: "old promote-live callers must have an explicit removable wrapper",
-      text: promoteLiveCompatibility,
-    }),
-    checkTerms({
-      id: "legacy_lark_binding_wrapper_forwards_to_neutral_entrypoint",
-      owner: "scripts/operator/lcx-live-lark-brain-binding.ts",
-      file: "scripts/operator/lcx-live-lark-brain-binding.ts",
-      requiredTerms: ["Compatibility entrypoint", "lcx-external-channel-legacy-binding.ts"],
-      summary: "old Lark binding callers must have an explicit removable wrapper",
-      text: legacyBindingCompatibility,
-    }),
-    checkTerms({
       id: "external_channel_status_wrapper_is_canonical_readonly",
       owner: "scripts/operator/lcx-external-channel-status.ts",
       file: "scripts/operator/lcx-external-channel-status.ts",
@@ -537,25 +517,30 @@ export async function buildLcxLiveFadeoutAudit() {
           "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json" &&
         scripts["lcx:external-channel:status-probe"] ===
           "node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe" &&
-        scripts["lcx:live"] === "pnpm lcx:external-channel" &&
-        scripts["lcx:live:status"] === "pnpm lcx:external-channel:status" &&
-        scripts["lcx:live:status:probe"] === "pnpm lcx:external-channel:status-probe" &&
         scripts["lcx:external-channel:compat"] ===
           "node --import tsx scripts/operator/lcx-external-channel-compat.ts" &&
-        scripts["lcx:promote-live"] === "node --import tsx scripts/operator/lcx-promote-live.ts",
-      summary: "package-level LCX operator aliases should route through external-channel first",
+        !scripts["lcx:external-channel:legacy-status-probe"] &&
+        !scripts["lcx:live"] &&
+        !scripts["lcx:live:status"] &&
+        !scripts["lcx:live:status:probe"] &&
+        !scripts["lcx:promote-live"],
+      summary:
+        "package-level LCX operator aliases should expose only neutral external-channel commands",
       owner: "package.json",
       evidence: {
         "lcx:external-channel": scripts["lcx:external-channel"],
         "lcx:external-channel:status": scripts["lcx:external-channel:status"],
         "lcx:external-channel:status-probe": scripts["lcx:external-channel:status-probe"],
-        "lcx:live": scripts["lcx:live"],
-        "lcx:live:status": scripts["lcx:live:status"],
-        "lcx:live:status:probe": scripts["lcx:live:status:probe"],
         "lcx:external-channel:compat": scripts["lcx:external-channel:compat"],
-        "lcx:promote-live": scripts["lcx:promote-live"],
+        removedLegacyAliases: [
+          "lcx:external-channel:legacy-status-probe",
+          "lcx:live",
+          "lcx:live:status",
+          "lcx:live:status:probe",
+          "lcx:promote-live",
+        ].filter((name) => scripts[name]),
       },
-      nextAction: "add external-channel scripts and make old lcx:live aliases forward to them",
+      nextAction: "remove old live/promote-live aliases and use external-channel commands",
     },
   ];
 

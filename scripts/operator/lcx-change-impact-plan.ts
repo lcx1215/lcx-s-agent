@@ -107,7 +107,6 @@ const PATH_RULES: PathRule[] = [
       /^scripts\/operator\/lcx-head-tail-consistency\.ts$/u,
       /^scripts\/operator\/lcx-live-fadeout-audit\.ts$/u,
       /^scripts\/operator\/lcx-external-channel-binding\.ts$/u,
-      /^scripts\/operator\/lcx-external-channel-legacy-binding\.ts$/u,
       /^scripts\/operator\/lcx-mind-model\.ts$/u,
       /^scripts\/operator\/lcx-problem-cluster-radar\.ts$/u,
       /^scripts\/operator\/lcx-provider-council-acceleration\.ts$/u,

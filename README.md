@@ -159,8 +159,9 @@ That binding owner is the canonical source for `external-channel-bound`.
 planner field; `liveLarkBrainBinding` remains only a legacy compatibility alias
 while older owners migrate.
 `lcx-external-channel-status.ts` is now the canonical read-only external-channel
-status wrapper; `lcx-promote-live.ts` remains the legacy promotion/drift
-compatibility surface underneath it. The status wrapper must not override a
+status wrapper; its legacy promotion/drift evidence is read from the neutral
+`lcx-external-channel-compat.ts` owner. The old promote-live aliases and
+forwarding wrappers have been removed. The status wrapper must not override a
 clean `lcx-external-channel-binding.ts` apply result. Commercial acceptance may
 treat the channel as bound while still blocking release on
 `post_migration_lark_canary_missing` until fresh real inbound/outbound Lark

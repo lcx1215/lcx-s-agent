@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runStatus(args: string[]) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-external-channel-status.ts", ...args],
+    ["--import", "tsx", "scripts/operator/lcx-external-channel-status.ts", ...args],
     {
       cwd: repoRoot,
       env: process.env,
@@ -69,8 +69,8 @@ describe("lcx-external-channel-status", () => {
     expect(payload.visibleProof).toEqual(
       expect.objectContaining({
         replyFlowProbeCommand:
-          "node --import tsx scripts/dev/lcx-external-channel-status.ts --json --with-probe",
-        legacyReplyFlowProbeCommand: expect.stringContaining("lcx-promote-live.ts"),
+          "node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe",
+        legacyReplyFlowProbeCommand: expect.stringContaining("lcx-external-channel-compat.ts"),
       }),
     );
     const externalChannelStatus = payload.externalChannelStatus as {
@@ -94,18 +94,11 @@ describe("lcx-external-channel-status", () => {
     }
     expect(payload.legacyPromoteLiveStatus).toEqual(
       expect.objectContaining({
-        owner: "lcx-promote-live",
+        owner: "lcx-external-channel-compat",
         boundary: "local_external_channel_status_only",
         devLiveDrift: expect.any(Object),
         visibleProof: expect.any(Object),
       }),
     );
-  });
-
-  it("accepts the old --status flag as a compatibility no-op", async () => {
-    const payload = await runStatus(["--status", "--json"]);
-
-    expect(payload.owner).toBe("lcx-external-channel-status");
-    expect(payload.boundary).toBe("local_external_channel_status_only");
   });
 });

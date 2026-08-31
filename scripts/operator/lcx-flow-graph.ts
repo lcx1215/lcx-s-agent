@@ -1883,10 +1883,9 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     id: "local_live_evidence_entrypoints",
     ownerCluster: "local_live_evidence_cluster",
     ownerPath: "scripts/operator/lcx-external-channel-binding.ts",
-    watchedPathTerms: ["lcx-promote-live", "live-promotion", "lark-loop-diagnose"],
+    watchedPathTerms: ["lcx-external-channel-compat", "live-promotion", "lark-loop-diagnose"],
     allowedPaths: [
       "scripts/operator/lcx-external-channel-binding.ts",
-      "scripts/operator/lcx-external-channel-legacy-binding.ts",
       "scripts/operator/lcx-external-channel-compat.ts",
       "src/commands/capabilities.lark-loop-diagnose.test.ts",
       "src/commands/capabilities/lark-loop-diagnose.ts",

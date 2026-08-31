@@ -297,7 +297,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "legacy-live-runtime-updated",
       "legacy-live-user-seen",
     ],
-    workflowTerms: ["lcx-promote-live", "lark-loop-diagnose", "channels status"],
+    workflowTerms: ["lcx-external-channel-compat", "lark-loop-diagnose", "channels status"],
     proofTerms: ["naturalProbeMessage", "userVisibleObserved", "freshInboundCount"],
     boundaryTerms: [
       "user-visible-observed",
@@ -318,7 +318,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "lcx-commercial-acceptance-harness",
       "lcx-commercial-answer-pipeline",
       "lcx-problem-cluster-radar",
-      "lcx-promote-live",
+      "lcx-external-channel-compat",
     ],
     proofTerms: [
       "commercial_acceptance_harness",

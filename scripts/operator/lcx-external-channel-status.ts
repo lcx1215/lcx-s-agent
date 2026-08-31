@@ -88,8 +88,8 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/operator/lcx-external-channel-status.ts [--json] [--with-probe]",
       "",
-      "Read-only external-channel status wrapper. It preserves the legacy promote-live",
-      "status surface as compatibility evidence without making old live wording the owner.",
+      "Read-only external-channel status wrapper. It reads compatibility evidence from",
+      "lcx-external-channel-compat.ts without making old live wording the owner.",
     ].join("\n"),
   );
 }
@@ -101,8 +101,6 @@ export function parseExternalChannelStatusArgs(args: string[]): CliOptions {
       options.json = true;
     } else if (arg === "--with-probe") {
       options.withProbe = true;
-    } else if (arg === "--status") {
-      // Compatibility with old lcx-promote-live status invocations.
     } else if (arg === "--help" || arg === "-h") {
       usage();
     } else {
@@ -256,7 +254,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
       }),
       visibleProof,
       legacyPromoteLiveStatus: {
-        owner: "lcx-promote-live",
+        owner: "lcx-external-channel-compat",
         boundary: legacy.boundary ?? "local_external_channel_status_only",
         status: legacy.status,
         liveStatus: legacy.liveStatus,

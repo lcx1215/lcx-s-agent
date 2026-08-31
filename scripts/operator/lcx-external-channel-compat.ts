@@ -409,7 +409,7 @@ function prepareSourceSnapshot(args: Args): {
     return { args, cleanup: () => {}, sourceSnapshot, snapshotError: null };
   }
 
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-promote-live-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lcx-external-channel-compat-"));
   const result = spawnSync(
     "git",
     ["-C", args.sourceRoot, "worktree", "add", "--detach", tempRoot, "HEAD"],

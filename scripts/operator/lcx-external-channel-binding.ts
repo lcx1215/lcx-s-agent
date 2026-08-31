@@ -73,7 +73,7 @@ type ExternalChannelBindingSummary = {
   missingProof: string[];
   userVisibleObserved: boolean;
   legacyLiveCompatibility: {
-    legacyScript: "lcx-external-channel-legacy-binding";
+    legacyScript: "lcx-external-channel-binding";
     legacyDecisionStatus: BindingDecision["status"];
     legacyLiveUserSeen: boolean;
   };
@@ -414,7 +414,7 @@ function buildExternalChannelBindingSummary(
     missingProof: decision.missingProof.map(externalProofName),
     userVisibleObserved: decision.liveUserSeen,
     legacyLiveCompatibility: {
-      legacyScript: "lcx-external-channel-legacy-binding",
+      legacyScript: "lcx-external-channel-binding",
       legacyDecisionStatus: decision.status,
       legacyLiveUserSeen: decision.liveUserSeen,
     },
