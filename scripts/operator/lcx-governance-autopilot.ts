@@ -1475,7 +1475,6 @@ const evolutionPromotionDigest = {
     triggerPolicy: receipt.triggerPolicy,
   },
   externalChannelBinding: externalChannelBindingCompact,
-  legacyLiveLarkBrainBinding: externalChannelBindingCompact,
   material: digestMaterial,
   quietReason:
     activePids.eval.length > 0 || activePids.mlx.length > 0
