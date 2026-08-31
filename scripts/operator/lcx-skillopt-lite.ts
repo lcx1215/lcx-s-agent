@@ -827,7 +827,6 @@ function buildInstantPreflight(params: {
       canUseImmediately: false,
       modelWeightAbsorbed: false,
       externalChannelApplied: false,
-      liveLarkApplied: false,
     };
   }
   const matchedSpecs = params.specs.filter((spec) => matchesAny(spec.triggerPatterns, task));
@@ -846,7 +845,6 @@ function buildInstantPreflight(params: {
     ].join("\n"),
     modelWeightAbsorbed: false,
     externalChannelApplied: false,
-    liveLarkApplied: false,
   };
 }
 
@@ -870,7 +868,6 @@ function buildProofChain(params: {
       proof: "matched best_skill.md can be injected before answer planning",
       modelWeightAbsorbed: false,
       externalChannelApplied: false,
-      liveLarkApplied: false,
     },
     targetedEval: {
       status:
@@ -916,7 +913,6 @@ function buildProofChain(params: {
         "lark_external_channel_diagnose_ok_after_restart",
         "fresh_real_lark_inbound_and_outbound_user_visible_observed",
       ],
-      legacyAlias: "liveLarkBinding",
     },
     liveTouched: false,
     providerConfigTouched: false,
@@ -1081,7 +1077,6 @@ async function main() {
     proofChain,
     absorptionPlan: proofChain.modelWeightAbsorption,
     externalChannelProofPlan: proofChain.externalChannelBinding,
-    liveLarkProofPlan: proofChain.externalChannelBinding,
     nextIdleAction: "run_targeted_eval_then_accept_or_reject_skill_edit",
     nextIdleCommand: proofChain.targetedEval.command,
     liveTouched: false,

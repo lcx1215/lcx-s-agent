@@ -260,7 +260,6 @@ type HandoffReceipt = {
     externalChannelStatusModel?: unknown;
     externalChannelBound?: unknown;
     userVisibleObserved?: unknown;
-    legacyLiveLarkBrainBindingStatus?: unknown;
   };
   liveTouched: boolean;
   providerConfigTouched: boolean;
@@ -514,8 +513,7 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       instantPreflight: payload.instantPreflight,
       proofChain: payload.proofChain,
       absorptionPlan: payload.absorptionPlan,
-      externalChannelProofPlan: payload.externalChannelProofPlan ?? payload.liveLarkProofPlan,
-      liveLarkProofPlan: payload.liveLarkProofPlan,
+      externalChannelProofPlan: payload.externalChannelProofPlan,
       nextIdleAction: payload.nextIdleAction,
       nextIdleCommand: payload.nextIdleCommand,
       liveTouched: payload.liveTouched,
@@ -1054,7 +1052,6 @@ function buildContextRecoveryHandoff({
     `- instantPreflightStatus: ${inlineValue(recordValue(skillOptCompact?.instantPreflight)?.status)}`,
     `- modelAbsorptionStatus: ${inlineValue(recordValue(skillOptCompact?.absorptionPlan)?.status)}`,
     `- externalChannelProofStatus: ${inlineValue(recordValue(skillOptCompact?.externalChannelProofPlan)?.status)}`,
-    `- legacyLiveLarkProofStatus: ${inlineValue(recordValue(skillOptCompact?.liveLarkProofPlan)?.status)}`,
     "- boundary: local_skillopt_lite_only; immediate preflight is SOP context, not model-weight absorption or user-visible proof",
     "",
     "## Self-Repair Hands",
@@ -1316,7 +1313,6 @@ const receipt = {
       byOwner.externalChannelBinding?.compact.externalChannelStatus ??
       byOwner.trainingPlan?.compact.externalChannelBinding?.status ??
       byOwner.externalChannelBinding?.compact.status,
-    legacyLiveLarkBrainBindingStatus: byOwner.externalChannelBinding?.compact.status,
     skillOptLiteStatus: byOwner.skillOptLite?.compact.status,
     skillOptLiteNextIdleAction: byOwner.skillOptLite?.compact.nextIdleAction,
     selfRepairHandsAutoWriteTriggered: selfRepairAutoWriteRun !== undefined,
@@ -1396,7 +1392,6 @@ const digestMaterial = {
   globalEvidenceProjectionBlocked: globalEvidenceProjection.blocked,
   globalEvidenceProjectionGeneratedAt: globalEvidenceProjection.generatedAt,
   globalEvidenceProjectionReason: globalEvidenceProjection.reason,
-  legacyLiveLarkBrainBindingStatus: receipt.summary.legacyLiveLarkBrainBindingStatus,
   fastestSafeNextAction: receipt.summary.fastestSafeNextAction,
   evolutionCooldownActive: trainingCompact?.evolutionCooldownActive,
   latestEvolutionCooldown: trainingCompact?.latestEvolutionCooldown,

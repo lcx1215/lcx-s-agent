@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-skillopt-lite.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-skillopt-lite.ts");
 
 async function seedAutopilot(workspaceDir: string) {
   const statePath = path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");
@@ -306,7 +306,6 @@ describe("lcx-skillopt-lite CLI", () => {
         canUseImmediately: true,
         modelWeightAbsorbed: false,
         externalChannelApplied: false,
-        liveLarkApplied: false,
       }),
     );
     expect(instantPreflight.matchedSkillIds).toEqual(
@@ -318,6 +317,5 @@ describe("lcx-skillopt-lite CLI", () => {
         status: "blocked_by_active_training_or_eval",
       }),
     );
-    expect(parsed.liveLarkProofPlan).toEqual(parsed.externalChannelProofPlan);
   });
 });
