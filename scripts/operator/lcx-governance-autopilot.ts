@@ -4,6 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  readGlobalEvidenceProjection,
+  type GlobalEvidenceProjectionRead,
+} from "../../src/shared/global-evidence-projection-read.ts";
+import {
   buildLocalFailureTraceReceipt,
   summarizeTraceForHandoff,
   type LocalFailureTraceReceipt,
@@ -70,6 +74,7 @@ type OwnerRun = {
   boundary: string | undefined;
   summary: unknown;
   compact: Record<string, unknown>;
+  projection?: unknown;
   error?: string;
 };
 
@@ -718,6 +723,7 @@ async function runOwner(command: OwnerCommand): Promise<OwnerRun> {
       boundary: typeof payload.boundary === "string" ? payload.boundary : undefined,
       summary: payload.summary,
       compact: compactOwner(command.id, payload),
+      projection: payload.globalEvidenceProjection,
     };
   } catch (error) {
     const details = error as {
@@ -737,6 +743,7 @@ async function runOwner(command: OwnerCommand): Promise<OwnerRun> {
         boundary: typeof payload.boundary === "string" ? payload.boundary : undefined,
         summary: payload.summary,
         compact: compactOwner(command.id, payload),
+        projection: payload.globalEvidenceProjection,
         error: details.stderr?.trim() || details.message,
       };
     } catch {
@@ -1150,6 +1157,13 @@ function buildContextRecoveryHandoff({
     `- headTailFailed: ${inlineValue(digestMaterial.headTailFailed)}`,
     `- contextRecoveryOk: ${inlineValue(digestMaterial.contextRecoveryOk)}`,
     "",
+    "## Global Evidence Projection",
+    `- readStatus: ${inlineValue(digestMaterial.globalEvidenceProjectionReadStatus)}`,
+    `- blocked: ${inlineValue(digestMaterial.globalEvidenceProjectionBlocked)}`,
+    `- generatedAt: ${inlineValue(digestMaterial.globalEvidenceProjectionGeneratedAt)}`,
+    `- reason: ${inlineValue(digestMaterial.globalEvidenceProjectionReason)}`,
+    "- stale, missing, or invalid projection blocks adapter actions; owner receipts remain authoritative",
+    "",
     "## Next Safe Action",
     activePids.eval.length > 0 || activePids.mlx.length > 0
       ? `- non-empty wait: ${inlineValue(activeNonIdleProgress?.reason)}`
@@ -1192,10 +1206,17 @@ const releaseBlocked =
   byOwner.commercialAcceptance?.compact.readyForCommercialRelease === false ||
   stringArray(byOwner.problemRadar?.compact.actionableClusters).length > 0 ||
   stringArray(byOwner.problemRadar?.compact.blockedClusters).length > 0;
+const governanceCheckedAt = new Date().toISOString();
+const globalEvidenceProjection: GlobalEvidenceProjectionRead = readGlobalEvidenceProjection(
+  byOwner.mindModel?.projection,
+  governanceCheckedAt,
+  { sourceOwner: "mindModel" },
+);
+
 const receipt = {
   ok: requiredParseFailures.length === 0,
   boundary: "local_governance_autopilot_only",
-  checkedAt: new Date().toISOString(),
+  checkedAt: governanceCheckedAt,
   workspaceDir: DEFAULT_WORKSPACE_DIR,
   latestStatePath: GOVERNANCE_AUTOPILOT_LATEST_PATH,
   universeIndexLatestPath: UNIVERSE_INDEX_LATEST_PATH,
@@ -1212,6 +1233,7 @@ const receipt = {
   ownerControlMapLatestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+  globalEvidenceProjection,
   autoTriggeredOwnerCommands: OWNER_COMMANDS.map((command) => command.id),
   ownerCommands: owners.map((owner) => ({
     id: owner.id,
@@ -1370,6 +1392,10 @@ const digestMaterial = {
   externalChannelStatusModel: receipt.summary.externalChannelStatusModel,
   externalChannelBound: receipt.summary.externalChannelBound,
   userVisibleObserved: receipt.summary.userVisibleObserved,
+  globalEvidenceProjectionReadStatus: globalEvidenceProjection.readStatus,
+  globalEvidenceProjectionBlocked: globalEvidenceProjection.blocked,
+  globalEvidenceProjectionGeneratedAt: globalEvidenceProjection.generatedAt,
+  globalEvidenceProjectionReason: globalEvidenceProjection.reason,
   legacyLiveLarkBrainBindingStatus: receipt.summary.legacyLiveLarkBrainBindingStatus,
   fastestSafeNextAction: receipt.summary.fastestSafeNextAction,
   evolutionCooldownActive: trainingCompact?.evolutionCooldownActive,

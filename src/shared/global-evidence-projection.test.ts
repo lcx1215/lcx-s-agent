@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readGlobalEvidenceProjection } from "./global-evidence-projection-read.js";
 import {
   buildGlobalEvidenceProjection,
   GLOBAL_EVIDENCE_PROJECTION_MODE,
@@ -258,5 +259,34 @@ describe("Global Evidence Projection", () => {
     });
     expect(projection.mode).toBe("read_only_shadow");
     expect(projection.delivery.adapterId).toBe("lark-v2");
+  });
+
+  it("blocks stale, missing, and invalid consumer reads", () => {
+    const projection = buildGlobalEvidenceProjection({
+      generatedAt: "2026-08-31T00:00:00.000Z",
+      sourceOwners: ["mind-model"],
+      lanes: [],
+      invariants: [],
+    });
+    expect(
+      readGlobalEvidenceProjection(projection, "2026-08-31T00:04:59.000Z", {
+        sourceOwner: "governance",
+      }),
+    ).toMatchObject({ readStatus: "current", blocked: false, sourceOwner: "governance" });
+    expect(readGlobalEvidenceProjection(projection, "2026-08-31T00:05:01.000Z")).toMatchObject({
+      readStatus: "stale",
+      blocked: true,
+      reason: "projection_stale",
+    });
+    expect(readGlobalEvidenceProjection(undefined, "2026-08-31T00:00:00.000Z")).toMatchObject({
+      readStatus: "missing",
+      blocked: true,
+    });
+    expect(
+      readGlobalEvidenceProjection(
+        { ...projection, mode: "future" } as never,
+        "2026-08-31T00:00:00.000Z",
+      ),
+    ).toMatchObject({ readStatus: "invalid", blocked: true, projection: null });
   });
 });
