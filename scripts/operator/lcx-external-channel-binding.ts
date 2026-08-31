@@ -42,6 +42,8 @@ type BindingDecision = {
   missingProof: string[];
   heavyActive: boolean;
   activeProcessSummary: Array<{ pid?: number; role?: string; elapsed?: string }>;
+  userVisibleObserved: boolean;
+  /** @deprecated Boundary projection for historical binding receipts. */
   liveUserSeen: boolean;
   liveTouched: boolean;
   providerConfigTouched: false;
@@ -243,6 +245,7 @@ export function buildExternalChannelBindingDecision(params: {
       missingProof: ["training_plan_lark_external_channel_binding"],
       heavyActive,
       activeProcessSummary: active,
+      userVisibleObserved: false,
       liveUserSeen: false,
       liveTouched: params.liveTouched,
       providerConfigTouched: false,
@@ -258,6 +261,7 @@ export function buildExternalChannelBindingDecision(params: {
       missingProof,
       heavyActive,
       activeProcessSummary: active,
+      userVisibleObserved: false,
       liveUserSeen: false,
       liveTouched: params.liveTouched,
       providerConfigTouched: false,
@@ -277,6 +281,7 @@ export function buildExternalChannelBindingDecision(params: {
         missingProof: missingAfterRuntimeAndUserVisibleProof,
         heavyActive,
         activeProcessSummary: active,
+        userVisibleObserved: true,
         liveUserSeen: true,
         liveTouched: params.liveTouched,
         providerConfigTouched: false,
@@ -290,6 +295,7 @@ export function buildExternalChannelBindingDecision(params: {
       missingProof,
       heavyActive,
       activeProcessSummary: active,
+      userVisibleObserved: false,
       liveUserSeen: false,
       liveTouched: params.liveTouched,
       providerConfigTouched: false,
@@ -305,6 +311,7 @@ export function buildExternalChannelBindingDecision(params: {
       missingProof,
       heavyActive,
       activeProcessSummary: active,
+      userVisibleObserved: false,
       liveUserSeen: false,
       liveTouched: params.liveTouched,
       providerConfigTouched: false,
@@ -320,6 +327,7 @@ export function buildExternalChannelBindingDecision(params: {
       missingProof,
       heavyActive,
       activeProcessSummary: active,
+      userVisibleObserved: false,
       liveUserSeen: false,
       liveTouched: params.liveTouched,
       providerConfigTouched: false,
@@ -349,6 +357,7 @@ export function buildExternalChannelBindingDecision(params: {
         }),
     heavyActive,
     activeProcessSummary: active,
+    userVisibleObserved,
     liveUserSeen: userVisibleObserved,
     liveTouched: params.liveTouched,
     providerConfigTouched: false,
@@ -412,11 +421,11 @@ function buildExternalChannelBindingSummary(
     status: statusMap[decision.status],
     action: actionMap[decision.action],
     missingProof: decision.missingProof.map(externalProofName),
-    userVisibleObserved: decision.liveUserSeen,
+    userVisibleObserved: decision.userVisibleObserved,
     legacyLiveCompatibility: {
       legacyScript: "lcx-external-channel-binding",
       legacyDecisionStatus: decision.status,
-      legacyLiveUserSeen: decision.liveUserSeen,
+      legacyLiveUserSeen: decision.userVisibleObserved,
     },
   };
 }
