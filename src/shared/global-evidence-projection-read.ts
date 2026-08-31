@@ -16,6 +16,45 @@ export type GlobalEvidenceProjectionRead = {
   projection: GlobalEvidenceProjection | null;
 };
 
+export type GlobalEvidenceProjectionView = {
+  sourceOwner: string;
+  readStatus: GlobalEvidenceProjectionReadStatus;
+  blocked: boolean;
+  generatedAt: string | null;
+  maxAgeSeconds: number;
+  reason: string;
+  capabilityCount: number;
+  evidenceCount: number;
+  actionCount: number;
+  deliveryState: GlobalEvidenceProjection["delivery"]["state"] | null;
+  adapterId: string | null;
+};
+
+/**
+ * Reduce a projection read to a safe, read-only display shape.
+ *
+ * Blocked reads intentionally hide projection payload details so stale or
+ * invalid evidence cannot be mistaken for actionable current state.
+ */
+export function summarizeGlobalEvidenceProjectionRead(
+  read: GlobalEvidenceProjectionRead,
+): GlobalEvidenceProjectionView {
+  const projection = read.blocked ? null : read.projection;
+  return {
+    sourceOwner: read.sourceOwner,
+    readStatus: read.readStatus,
+    blocked: read.blocked,
+    generatedAt: read.generatedAt,
+    maxAgeSeconds: read.maxAgeSeconds,
+    reason: read.reason,
+    capabilityCount: projection?.capabilities.length ?? 0,
+    evidenceCount: projection?.evidence.length ?? 0,
+    actionCount: projection?.actions.length ?? 0,
+    deliveryState: projection?.delivery.state ?? null,
+    adapterId: projection?.delivery.adapterId ?? null,
+  };
+}
+
 function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
 }

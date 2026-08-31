@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readGlobalEvidenceProjection } from "./global-evidence-projection-read.js";
+import {
+  readGlobalEvidenceProjection,
+  summarizeGlobalEvidenceProjectionRead,
+} from "./global-evidence-projection-read.js";
 import {
   buildGlobalEvidenceProjection,
   GLOBAL_EVIDENCE_PROJECTION_MODE,
@@ -288,5 +291,39 @@ describe("Global Evidence Projection", () => {
         "2026-08-31T00:00:00.000Z",
       ),
     ).toMatchObject({ readStatus: "invalid", blocked: true, projection: null });
+  });
+
+  it("hides blocked payload details from read-only views", () => {
+    const projection = buildGlobalEvidenceProjection({
+      generatedAt: "2026-08-31T00:00:00.000Z",
+      sourceOwners: ["mind-model"],
+      lanes: [],
+      invariants: [],
+    });
+    const current = summarizeGlobalEvidenceProjectionRead(
+      readGlobalEvidenceProjection(projection, "2026-08-31T00:04:59.000Z"),
+    );
+    expect(current).toMatchObject({
+      readStatus: "current",
+      blocked: false,
+      capabilityCount: 0,
+      evidenceCount: 0,
+      actionCount: 1,
+      deliveryState: "unknown",
+      adapterId: null,
+    });
+
+    const stale = summarizeGlobalEvidenceProjectionRead(
+      readGlobalEvidenceProjection(projection, "2026-08-31T00:05:01.000Z"),
+    );
+    expect(stale).toMatchObject({
+      readStatus: "stale",
+      blocked: true,
+      capabilityCount: 0,
+      evidenceCount: 0,
+      actionCount: 0,
+      deliveryState: null,
+      adapterId: null,
+    });
   });
 });

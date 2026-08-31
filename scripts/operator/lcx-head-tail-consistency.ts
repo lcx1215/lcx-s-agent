@@ -45,6 +45,7 @@ const TAIL_SURFACE_FILES = [
   "scripts/operator/lcx-mind-model.ts",
   "src/shared/global-evidence-projection.ts",
   "src/shared/global-evidence-projection-read.ts",
+  "scripts/operator/lcx-farm-web-server.ts",
   "scripts/operator/lcx-flow-graph.ts",
   "scripts/operator/lcx-context-recovery-exam.ts",
   "scripts/operator/lcx-self-repair-hands.ts",
