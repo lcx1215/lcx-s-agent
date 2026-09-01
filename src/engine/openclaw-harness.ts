@@ -1,9 +1,9 @@
 import type { LcxEngineHost, LcxEngineHostContext } from "./types.js";
 
 /**
- * Stable LCX-side identity for the v2026.8.x OpenClaw AgentHarness seam.
- * This is deliberately explicit-only until a version-specific plugin adapter
- * has proved the complete OpenClaw attempt contract and rollback path.
+ * Stable LCX-side identity for the OpenClaw AgentHarness seam.
+ * This remains explicit-only until a version-specific adapter proves the
+ * complete attempt contract, repeated behavior, and rollback path.
  */
 export const LCX_OPENCLAW_AGENT_HARNESS_ID = "lcx-engine" as const;
 export const LCX_OPENCLAW_AGENT_HARNESS_LABEL = "LCX Engine" as const;
@@ -22,9 +22,9 @@ export type LcxOpenClawHarnessSupport =
   | { supported: false; reason?: string; fallbackRuntime?: "openclaw" };
 
 /**
- * Internal bridge shape for the latest OpenClaw harness. The current fork does
- * not ship the v2026.8.1 AgentHarness SDK, so the actual plugin adapter must
- * translate OpenClaw's version-owned AttemptParams into this context.
+ * Internal bridge shape for an OpenClaw harness. The beta host owns its
+ * version-specific AttemptParams, so an eventual native harness adapter must
+ * translate that type into this LCX context.
  */
 export type LcxOpenClawHarnessBoundary<HostResult> = {
   id: typeof LCX_OPENCLAW_AGENT_HARNESS_ID;
@@ -55,7 +55,7 @@ function defaultSupport(context: LcxOpenClawHarnessSupportContext): LcxOpenClawH
 }
 
 /**
- * Creates the LCX-side object that a future v2026.8.x plugin registration can
+ * Creates the LCX-side object that a version-specific plugin registration can
  * wrap. It does not register itself, change runtime selection, or contact an
  * external channel.
  */
