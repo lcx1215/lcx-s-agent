@@ -193,8 +193,11 @@ jobs:
                 });
                 isMember = membership?.data?.state === "active";
               } catch (error) {
-                if (error?.status !== 404) {
+                if (error?.status !== 404 && error?.status !== 403) {
                   throw error;
+                }
+                if (error?.status === 403) {
+                  core.warning(`Skipping maintainer membership check for ${normalized}; treating as not a maintainer.`);
                 }
               }
               maintainerCache.set(normalized, isMember);

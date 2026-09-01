@@ -45,6 +45,7 @@ type LatestCouncil = {
 };
 
 type ActivePidSummary = {
+  available: boolean;
   guard: string[];
   eval: string[];
   mlx: string[];
@@ -200,23 +201,28 @@ async function gitStatusLines(): Promise<string[]> {
 }
 
 async function activePidSummary(options: CliOptions): Promise<ActivePidSummary> {
-  const stdout = options.pidFixture
-    ? await fs.readFile(options.pidFixture, "utf8")
-    : process.platform === "win32"
-      ? (
-          await execFileAsync(
-            "powershell.exe",
-            [
-              "-NoLogo",
-              "-NoProfile",
-              "-NonInteractive",
-              "-Command",
-              '$ErrorActionPreference = "Stop"; Get-CimInstance Win32_Process | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }',
-            ],
-            { maxBuffer: EXEC_MAX_BUFFER },
-          )
-        ).stdout
-      : (await execFileAsync("ps", ["-axo", "pid,etime,command"])).stdout;
+  let stdout = "";
+  try {
+    stdout = options.pidFixture
+      ? await fs.readFile(options.pidFixture, "utf8")
+      : process.platform === "win32"
+        ? (
+            await execFileAsync(
+              "powershell.exe",
+              [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                'Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }',
+              ],
+              { maxBuffer: EXEC_MAX_BUFFER },
+            )
+          ).stdout
+        : (await execFileAsync("ps", ["-axo", "pid,etime,command"])).stdout;
+  } catch {
+    return { available: false, guard: [], eval: [], mlx: [], teacher: [], quota: [] };
+  }
   const lines = stdout
     .trim()
     .split("\n")
@@ -231,6 +237,7 @@ async function activePidSummary(options: CliOptions): Promise<ActivePidSummary> 
       );
     });
   return {
+    available: true,
     guard: lines.filter((line) =>
       line.includes("scripts/operator/minimax-brain-training-guard.ts"),
     ),
@@ -246,7 +253,13 @@ async function activePidSummary(options: CliOptions): Promise<ActivePidSummary> 
 }
 
 function activePidCounts(summary: ActivePidSummary): Record<string, number> {
-  return Object.fromEntries(Object.entries(summary).map(([key, value]) => [key, value.length]));
+  return {
+    guard: summary.guard.length,
+    eval: summary.eval.length,
+    mlx: summary.mlx.length,
+    teacher: summary.teacher.length,
+    quota: summary.quota.length,
+  };
 }
 
 async function listRecentCouncilFiles(workspaceDir: string): Promise<string[]> {
@@ -549,7 +562,8 @@ async function main() {
   const trainingTruth = extractTrainingTruth(snapshot);
   const gitClean = gitLines.length <= 1;
   const activeCounts = activePidCounts(activePids);
-  const activeEvalOrMlx = activePids.eval.length > 0 || activePids.mlx.length > 0;
+  const activeEvalOrMlx =
+    !activePids.available || activePids.eval.length > 0 || activePids.mlx.length > 0;
   const freshCompleteCouncil = councilFreshAndComplete(council, options.maxFreshMinutes);
   const prompt = buildFocusPrompt({ options, trainingTruth, latestCouncil: council });
   const hardBlocks = [
@@ -599,6 +613,7 @@ async function main() {
     gitClean,
     gitStatus: gitLines,
     activePidCounts: activeCounts,
+    activeProcessSnapshotAvailable: activePids.available,
     activeEvalOrMlx,
     latestCouncil: council,
     freshCompleteCouncil,

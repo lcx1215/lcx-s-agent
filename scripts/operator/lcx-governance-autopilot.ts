@@ -246,6 +246,7 @@ const OWNER_COMMANDS: OwnerCommand[] = [
 ];
 
 type ActivePidSummary = {
+  available: boolean;
   guard: string[];
   eval: string[];
   mlx: string[];
@@ -909,22 +910,31 @@ async function gitStatusShortBranch() {
 }
 
 async function activePidSummary(): Promise<ActivePidSummary> {
-  const { stdout } =
-    process.platform === "win32"
-      ? await execFileAsync(
-          "powershell.exe",
-          [
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            '$ErrorActionPreference = "Stop"; Get-CimInstance Win32_Process | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }',
-          ],
-          { maxBuffer: EXEC_MAX_BUFFER },
-        )
-      : await execFileAsync("ps", ["-axo", "pid,etime,command"], {
-          maxBuffer: EXEC_MAX_BUFFER,
-        });
+  let stdout = "";
+  try {
+    stdout =
+      process.platform === "win32"
+        ? (
+            await execFileAsync(
+              "powershell.exe",
+              [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                'Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }',
+              ],
+              { maxBuffer: EXEC_MAX_BUFFER },
+            )
+          ).stdout
+        : (
+            await execFileAsync("ps", ["-axo", "pid,etime,command"], {
+              maxBuffer: EXEC_MAX_BUFFER,
+            })
+          ).stdout;
+  } catch {
+    return { available: false, guard: [], eval: [], mlx: [], teacher: [], quota: [] };
+  }
   const lines = stdout
     .trim()
     .split("\n")
@@ -939,6 +949,7 @@ async function activePidSummary(): Promise<ActivePidSummary> {
       );
     });
   return {
+    available: true,
     guard: lines.filter((line) =>
       line.includes("scripts/operator/minimax-brain-training-guard.ts"),
     ),
@@ -954,7 +965,13 @@ async function activePidSummary(): Promise<ActivePidSummary> {
 }
 
 function activePidCounts(summary: ActivePidSummary) {
-  return Object.fromEntries(Object.entries(summary).map(([key, value]) => [key, value.length]));
+  return {
+    guard: summary.guard.length,
+    eval: summary.eval.length,
+    mlx: summary.mlx.length,
+    teacher: summary.teacher.length,
+    quota: summary.quota.length,
+  };
 }
 
 function truncateLine(value: string, maxLength = 220) {
@@ -986,10 +1003,20 @@ function markdownList(value: unknown): string {
 }
 
 function activePidHandoffLines(activePids: ActivePidSummary): string[] {
-  return Object.entries(activePids).map(([kind, lines]) => {
-    const first = lines[0] ? `; first=${truncateLine(lines[0], 160)}` : "";
-    return `- ${kind}: ${lines.length}${first}`;
-  });
+  const entries = [
+    ["guard", activePids.guard],
+    ["eval", activePids.eval],
+    ["mlx", activePids.mlx],
+    ["teacher", activePids.teacher],
+    ["quota", activePids.quota],
+  ] as const;
+  return [
+    `- processSnapshotAvailable: ${activePids.available}`,
+    ...entries.map(([kind, lines]) => {
+      const first = lines[0] ? `; first=${truncateLine(lines[0], 160)}` : "";
+      return `- ${kind}: ${lines.length}${first}`;
+    }),
+  ];
 }
 
 function buildContextRecoveryHandoff({
