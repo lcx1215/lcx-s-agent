@@ -250,4 +250,65 @@ describe("local brain training sample audit", () => {
       },
     ]);
   });
+
+  it("aggregates requested slice readiness into the top-level curriculum gate", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-training-slice-gate-"));
+    const dataDir = path.join(root, "dataset");
+    const sliceDir = path.join(root, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.mkdir(sliceDir, { recursive: true });
+    const prompt = buildLocalBrainTrainingPrompt({
+      userAsk: "研究组合风险，暂未提供带时间戳数据",
+    });
+    const admittedCompletion = JSON.stringify({
+      task_family: "portfolio_risk",
+      primary_modules: ["portfolio_risk_gates", "review_panel", "finance_data_gateway"],
+      supporting_modules: ["data_provenance_quality"],
+      required_tools: ["source_registry"],
+      missing_data: ["position_weights_and_return_series", "fresh_market_data_snapshot"],
+      risk_boundaries: ["research_only", "no_unverified_current_market_data"],
+      next_step: "route_to_review",
+      rejected_context: ["old_lark_conversation_history"],
+    });
+    const invalidCompletion = JSON.stringify({
+      task_family: "portfolio_risk",
+      primary_modules: [],
+      supporting_modules: [],
+      required_tools: [],
+      missing_data: [],
+      risk_boundaries: [],
+      next_step: "route_to_review",
+      rejected_context: [],
+    });
+    for (const split of ["train", "valid", "test"]) {
+      await fs.writeFile(
+        path.join(dataDir, `${split}.jsonl`),
+        `${JSON.stringify({ prompt, completion: admittedCompletion, meta: { sourceKind: "curated_seed" } })}\n`,
+      );
+    }
+    for (const split of ["train", "valid"]) {
+      await fs.writeFile(
+        path.join(sliceDir, `${split}.jsonl`),
+        `${JSON.stringify({ prompt, completion: admittedCompletion, meta: { sourceKind: "curated_seed" } })}\n`,
+      );
+    }
+    await fs.writeFile(
+      path.join(sliceDir, "test.jsonl"),
+      `${JSON.stringify({ prompt, completion: invalidCompletion, meta: { sourceKind: "curated_seed" } })}\n`,
+    );
+
+    const report = await auditTrainingSamples({ dataDir, sliceDir });
+    const gate = report.curriculumGate as Record<string, unknown>;
+    const slice = report.slice as Record<string, unknown>;
+    expect(report.curriculumReady).toBe(false);
+    expect(gate).toMatchObject({
+      splitCurriculumReady: { train: true, valid: true, test: true },
+      sliceCurriculumReady: false,
+      aggregateCurriculumReady: false,
+    });
+    expect(slice.curriculumReady).toBe(false);
+    expect(slice.curriculumGate).toMatchObject({
+      splitCurriculumReady: { train: true, valid: true, test: false },
+    });
+  });
 });

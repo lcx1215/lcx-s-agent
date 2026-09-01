@@ -581,7 +581,7 @@ export async function auditTrainingSamples(
     curriculumReady: false,
     curriculumGate: {
       boundary: "dev_local_brain_curriculum_readiness_only",
-      note: "The top-level gate is finalized from all train/valid/test split audits below.",
+      note: "The top-level gate is finalized from all base splits and, when present, all requested slice splits below.",
     },
     boundary: "dev_local_brain_training_sample_audit_only",
     dataDir: options.dataDir,
@@ -617,25 +617,42 @@ export async function auditTrainingSamples(
       for (const split of splitNames) {
         sliceSplits[split] = await readJsonl(path.join(options.sliceDir, `${split}.jsonl`));
       }
+      const sliceAudits = Object.fromEntries(
+        splitNames.map((split) => [split, splitAudit(sliceSplits[split], `slice_${split}`)]),
+      );
+      const sliceSplitCurriculumReady = Object.fromEntries(
+        splitNames.map((split) => [split, sliceAudits[split]?.curriculumReady === true]),
+      );
+      const sliceCurriculumReady = splitNames.every((split) => sliceSplitCurriculumReady[split]);
       report.slice = {
         dataDir: options.sliceDir,
-        splits: Object.fromEntries(
-          splitNames.map((split) => [split, splitAudit(sliceSplits[split], `slice_${split}`)]),
-        ),
+        curriculumReady: sliceCurriculumReady,
+        curriculumGate: {
+          boundary: "dev_local_brain_curriculum_readiness_only",
+          splitCurriculumReady: sliceSplitCurriculumReady,
+          note: "The slice gate is true only when every requested slice split is ready.",
+        },
+        splits: sliceAudits,
         sourceTrainOverlap: overlap(splits.train, sliceSplits.train),
       };
     }
   }
   const splitAudits = report.splits as Record<string, Record<string, unknown>>;
-  report.curriculumReady = splitNames.every(
+  const baseCurriculumReady = splitNames.every(
     (split) => splitAudits[split]?.curriculumReady === true,
   );
+  const sliceReport = report.slice as Record<string, unknown> | undefined;
+  const sliceCurriculumReady = sliceReport ? sliceReport.curriculumReady === true : undefined;
+  report.curriculumReady =
+    baseCurriculumReady && (sliceCurriculumReady === undefined || sliceCurriculumReady);
   report.curriculumGate = {
     boundary: "dev_local_brain_curriculum_readiness_only",
     splitCurriculumReady: Object.fromEntries(
       splitNames.map((split) => [split, splitAudits[split]?.curriculumReady === true]),
     ),
-    note: "Only a true gate across every split permits a downstream training-slice decision; no learning or promotion claim follows.",
+    ...(sliceCurriculumReady === undefined ? {} : { sliceCurriculumReady }),
+    aggregateCurriculumReady: report.curriculumReady,
+    note: "Only a true gate across every base split and every requested slice split permits a downstream training-slice decision; no learning or promotion claim follows.",
   };
   return report;
 }

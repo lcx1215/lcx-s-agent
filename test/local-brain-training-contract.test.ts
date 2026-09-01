@@ -4,6 +4,7 @@ import {
   oraclePlan,
 } from "../scripts/operator/local-brain-generalization-generator.js";
 import {
+  assessLocalBrainSemanticContract,
   evaluateLocalBrainCurriculumGate,
   redactTeacherContractLabels,
 } from "../scripts/operator/local-brain-training-contract.js";
@@ -111,5 +112,85 @@ describe("shared local-brain curriculum gate", () => {
     const gate = evaluateLocalBrainCurriculumGate("研究组合风险", null as never);
     expect(gate.admitted).toBe(false);
     expect(gate.shapeErrors).toEqual(["completion_invalid_object"]);
+  });
+
+  it("treats English missing-data wording as missing even when it mentions timestamps", () => {
+    const gate = evaluateLocalBrainCurriculumGate("Research NVDA, no timestamped data", {
+      task_family: "finance_research_planning",
+      primary_modules: [
+        "us_equity_market_structure",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "review_panel",
+        "finance_data_gateway",
+        "data_provenance_quality",
+      ],
+      supporting_modules: ["source_registry"],
+      required_tools: [],
+      missing_data: ["latest_company_fundamental_inputs"],
+      risk_boundaries: ["research_only"],
+      next_step: "route_to_review",
+      rejected_context: ["old_lark_conversation_history"],
+    });
+
+    expect(gate.admitted).toBe(false);
+    expect(gate.reasonCodes).toEqual(
+      expect.arrayContaining([
+        "semantic:missing_data:fresh_market_data_snapshot",
+        "semantic:missing_risk_boundary:no_unverified_current_market_data",
+      ]),
+    );
+  });
+
+  it.each([
+    "研究 NVDA，不要交易信号",
+    "研究 NVDA，不需要仓位比例",
+    "Research NVDA, do not give trade advice",
+  ])("does not turn a negated action phrase into a positive trade request: %s", (userAsk) => {
+    const assessment = assessLocalBrainSemanticContract(userAsk, {
+      primary_modules: [
+        "us_equity_market_structure",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "review_panel",
+        "finance_data_gateway",
+        "data_provenance_quality",
+      ],
+      supporting_modules: ["source_registry"],
+      required_tools: [],
+      missing_data: ["latest_company_fundamental_inputs", "fresh_market_data_snapshot"],
+      risk_boundaries: ["research_only", "no_unverified_current_market_data"],
+      next_step: "route_to_review",
+      rejected_context: ["old_lark_conversation_history"],
+    });
+
+    expect(assessment.expectedRiskBoundaries).not.toEqual(
+      expect.arrayContaining([
+        "no_execution_authority",
+        "risk_gate_before_action_language",
+        "no_trade_advice",
+      ]),
+    );
+  });
+
+  it("rejects unknown modules and positive execution risk values at the shared boundary", () => {
+    const gate = evaluateLocalBrainCurriculumGate("研究组合风险", {
+      task_family: "portfolio_risk",
+      primary_modules: ["portfolio_risk_gates", "unknown_module"],
+      supporting_modules: ["review_panel"],
+      required_tools: [],
+      missing_data: ["position_weights_and_return_series"],
+      risk_boundaries: ["research_only", "allow_trade_execution"],
+      next_step: "route_to_review",
+      rejected_context: ["old_lark_conversation_history"],
+    });
+
+    expect(gate.admitted).toBe(false);
+    expect(gate.shapeErrors).toEqual(
+      expect.arrayContaining([
+        "unknown_module:unknown_module",
+        "unsafe_risk_boundary:allow_trade_execution",
+      ]),
+    );
   });
 });

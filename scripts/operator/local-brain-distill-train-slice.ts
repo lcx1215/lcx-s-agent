@@ -469,6 +469,10 @@ type PromptContractNormalization = {
   rejectReason?: PromptContractRejectionReason;
 };
 
+type CurriculumNormalization = PromptContractNormalization & {
+  gate: ReturnType<typeof evaluateLocalBrainCurriculumGate>;
+};
+
 function hasLegacySourceContext(prompt: string): boolean {
   return /^(?:source_summary|source_kind):|\r?\n(?:source_summary|source_kind):/mu.test(prompt);
 }
@@ -518,6 +522,16 @@ function normalizePromptContract(record: JsonRecord): PromptContractNormalizatio
   };
 }
 
+function normalizeAndGateCurriculum(record: JsonRecord): CurriculumNormalization {
+  const normalized = normalizePromptContract(record);
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(normalized.prompt)?.[1]?.trim() ?? "";
+  const completion = completionRecord(record) ?? {};
+  return {
+    ...normalized,
+    gate: evaluateLocalBrainCurriculumGate(userAsk, completion),
+  };
+}
+
 function sourcePairSignature(record: JsonRecord): string {
   const { prompt } = normalizePromptContract(record);
   const completion = typeof record.completion === "string" ? record.completion : "";
@@ -544,6 +558,8 @@ async function rewritePromptContractFile(
   legacyUnrewritten: number;
   rejected: number;
   rejectionReasons: Record<string, number>;
+  curriculumQuarantined: number;
+  curriculumQuarantineReasons: Record<string, number>;
 }> {
   const lines: string[] = [];
   let rows = 0;
@@ -552,12 +568,21 @@ async function rewritePromptContractFile(
   let legacyUnrewritten = 0;
   let rejected = 0;
   const rejectionReasons: Record<string, number> = {};
+  let curriculumQuarantined = 0;
+  const curriculumQuarantineReasons: Record<string, number> = {};
   for await (const record of readJsonl(sourcePath)) {
-    const normalized = normalizePromptContract(record);
+    const normalized = normalizeAndGateCurriculum(record);
+    rows += 1;
     if (normalized.rejectReason) {
       rejected += 1;
       incrementCount(rejectionReasons, normalized.rejectReason);
-      rows += 1;
+      continue;
+    }
+    if (!normalized.gate.admitted) {
+      curriculumQuarantined += 1;
+      for (const reason of normalized.gate.reasonCodes) {
+        incrementCount(curriculumQuarantineReasons, reason);
+      }
       continue;
     }
     const prompt = normalized.prompt;
@@ -577,11 +602,19 @@ async function rewritePromptContractFile(
         },
       }),
     );
-    rows += 1;
     written += 1;
   }
   await writeFileAtomic(outPath, lines.length > 0 ? `${lines.join("\n")}\n` : "");
-  return { rows, written, rewritten, legacyUnrewritten, rejected, rejectionReasons };
+  return {
+    rows,
+    written,
+    rewritten,
+    legacyUnrewritten,
+    rejected,
+    rejectionReasons,
+    curriculumQuarantined,
+    curriculumQuarantineReasons,
+  };
 }
 
 async function buildTrainSlice(options: CliOptions): Promise<Record<string, unknown>> {
@@ -610,6 +643,8 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   let promptContractLegacyUnrewritten = 0;
   let promptContractRejected = 0;
   const promptContractRejectionReasons: Record<string, number> = {};
+  let curriculumQuarantined = 0;
+  const curriculumQuarantineReasons: Record<string, number> = {};
   const sourcePairKeys = new Set<string>();
   const skippedSourcePairKeys = new Set<string>();
   let sourceDuplicateRowsSkipped = 0;
@@ -648,10 +683,20 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   try {
     for await (const record of readJsonl(trainPath)) {
       const sourceKind = sourceKindOf(record);
-      const normalized = normalizePromptContract(record);
+      const normalized = normalizeAndGateCurriculum(record);
       if (normalized.rejectReason) {
         promptContractRejected += 1;
         incrementCount(promptContractRejectionReasons, normalized.rejectReason);
+        if (sourceKind === REVIEW_SOURCE_KIND) {
+          reviewIndex += 1;
+        }
+        continue;
+      }
+      if (!normalized.gate.admitted) {
+        curriculumQuarantined += 1;
+        for (const reason of normalized.gate.reasonCodes) {
+          incrementCount(curriculumQuarantineReasons, reason);
+        }
         if (sourceKind === REVIEW_SOURCE_KIND) {
           reviewIndex += 1;
         }
@@ -756,6 +801,9 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       trainWritten,
       validCopied: validPromptContract.written,
       testCopied: testPromptContract.written,
+      curriculumQuarantined,
+      validCurriculumQuarantined: validPromptContract.curriculumQuarantined,
+      testCurriculumQuarantined: testPromptContract.curriculumQuarantined,
     },
     repetition: {
       boundary: "exact_prompt_completion_pair_repetition_only",
@@ -791,6 +839,10 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       testRejectionReasons: testPromptContract.rejectionReasons,
       rowsRejected: promptContractRejected,
       rejectionReasons: promptContractRejectionReasons,
+      curriculumQuarantined,
+      curriculumQuarantineReasons,
+      validCurriculumQuarantineReasons: validPromptContract.curriculumQuarantineReasons,
+      testCurriculumQuarantineReasons: testPromptContract.curriculumQuarantineReasons,
       note: "Rows with a recoverable user_or_task line are rebuilt through the shared contract. Rows that expose source provenance without recoverable user text are rejected instead of being copied into the model-visible slice.",
     },
     sourceKinds: counts.sourceKinds,
@@ -810,7 +862,7 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       ).length,
       selectedRowsRechecked: reviewSelected + reviewQuarantined,
       recheckQuarantineReasons: reviewQuarantineReasons,
-      enforcement: "only_shared_gate_admitted_teacher_rows_enter_the_slice",
+      enforcement: "only_shared_gate_admitted_rows_enter_the_slice",
     },
     sampleTrust: {
       boundary: "dev_local_brain_sample_trust_summary_only",

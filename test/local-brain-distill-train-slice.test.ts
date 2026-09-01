@@ -28,31 +28,23 @@ async function parseJsonl(filePath: string): Promise<DistillLine[]> {
 }
 
 function line(sourceKind: string, sourcePath: string): string {
-  const teacherReview = sourceKind === "brain_distillation_review";
-  const sampleNumber = /([0-9]+)$/u.exec(sourcePath)?.[1] ?? "1";
+  const sampleNumber = Array.from(sourcePath).reduce(
+    (sum, character) => sum + (character.codePointAt(0) ?? 0),
+    0,
+  );
   return `${JSON.stringify({
-    prompt: teacherReview
-      ? buildLocalBrainTrainingPrompt({
-          userAsk: `研究组合风险，暂未提供带时间戳数据，样本序号 ${sampleNumber}`,
-        })
-      : `prompt ${sourcePath}`,
+    prompt: buildLocalBrainTrainingPrompt({
+      userAsk: `研究组合风险，暂未提供带时间戳数据，样本批次 ${sampleNumber}`,
+    }),
     completion: JSON.stringify({
       task_family: sourceKind,
-      primary_modules: teacherReview
-        ? ["portfolio_risk_gates", "review_panel", "finance_data_gateway"]
-        : ["review_panel"],
-      supporting_modules: teacherReview
-        ? ["data_provenance_quality", "control_room_summary"]
-        : ["control_room_summary"],
-      required_tools: teacherReview ? ["source_registry"] : ["review_panel"],
-      missing_data: teacherReview
-        ? ["position_weights_and_return_series", "fresh_market_data_snapshot"]
-        : [],
-      risk_boundaries: teacherReview
-        ? ["research_only", "no_unverified_current_market_data"]
-        : ["research_only"],
+      primary_modules: ["portfolio_risk_gates", "review_panel", "finance_data_gateway"],
+      supporting_modules: ["data_provenance_quality", "control_room_summary"],
+      required_tools: ["source_registry"],
+      missing_data: ["position_weights_and_return_series", "fresh_market_data_snapshot"],
+      risk_boundaries: ["research_only", "no_unverified_current_market_data"],
       next_step: "route_to_review",
-      rejected_context: teacherReview ? ["old_lark_conversation_history"] : [],
+      rejected_context: ["old_lark_conversation_history"],
     }),
     meta: { sourceKind, sourcePath },
   })}\n`;
@@ -283,20 +275,20 @@ describe("local brain distill train slice", () => {
     await fs.mkdir(dataDir, { recursive: true });
     const acceptanceLabel = "lark-live-visible-fixed-agent-architecture-20260514";
     const cleanPrompt = buildLocalBrainTrainingPrompt({
-      userAsk: `live验收：请只回复 ${acceptanceLabel}，并说明这是重启后的真实链路。`,
+      userAsk: `研究组合风险，暂未提供带时间戳数据；live验收请只回复 ${acceptanceLabel}，并说明这是重启后的真实链路。`,
     });
     const staleV2Prompt = cleanPrompt.replace("<withheld_contract_id>", acceptanceLabel);
     const row = {
       prompt: staleV2Prompt,
       completion: JSON.stringify({
-        task_family: "ops_audit",
-        primary_modules: ["ops_audit"],
-        supporting_modules: [],
-        required_tools: [],
-        missing_data: [],
-        risk_boundaries: ["research_only"],
+        task_family: "portfolio_risk",
+        primary_modules: ["portfolio_risk_gates", "review_panel", "finance_data_gateway"],
+        supporting_modules: ["data_provenance_quality"],
+        required_tools: ["source_registry"],
+        missing_data: ["position_weights_and_return_series", "fresh_market_data_snapshot"],
+        risk_boundaries: ["research_only", "no_unverified_current_market_data"],
         next_step: "route_to_review",
-        rejected_context: [],
+        rejected_context: ["old_lark_conversation_history"],
       }),
       meta: { sourceKind: "curated_seed", sourcePath: "stale-v2" },
     };
@@ -349,28 +341,34 @@ describe("local brain distill train slice", () => {
     const dataDir = path.join(fixtureRoot, "dataset");
     const outDir = path.join(fixtureRoot, "slice");
     await fs.mkdir(dataDir, { recursive: true });
+    const sharedPrompt = buildLocalBrainTrainingPrompt({
+      userAsk: "研究组合风险，暂未提供带时间戳数据",
+    });
+    const validCompletion = JSON.stringify({
+      task_family: "portfolio_risk",
+      primary_modules: ["portfolio_risk_gates", "review_panel", "finance_data_gateway"],
+      supporting_modules: ["data_provenance_quality"],
+      required_tools: ["source_registry"],
+      missing_data: ["position_weights_and_return_series", "fresh_market_data_snapshot"],
+      risk_boundaries: ["research_only", "no_unverified_current_market_data"],
+      next_step: "route_to_review",
+      rejected_context: ["old_lark_conversation_history"],
+    });
     const duplicate = {
-      prompt: "prompt same",
-      completion: JSON.stringify({
-        task_family: "curated_seed",
-        primary_modules: ["review_panel"],
-        supporting_modules: [],
-        required_tools: [],
-        missing_data: [],
-        risk_boundaries: ["research_only"],
-        next_step: "route_to_review",
-        rejected_context: [],
-      }),
+      prompt: sharedPrompt,
+      completion: validCompletion,
       meta: { sourceKind: "curated_seed", sourcePath: "same-1" },
     };
     const duplicateWithWhitespace = {
       ...duplicate,
-      prompt: "  prompt   same  ",
+      prompt: `  ${sharedPrompt}  `,
       meta: { sourceKind: "curated_seed", sourcePath: "same-2" },
     };
     const unique = {
       ...duplicate,
-      prompt: "prompt unique",
+      prompt: buildLocalBrainTrainingPrompt({
+        userAsk: "研究组合风险，暂未提供带时间戳数据，另一个自然语言样本",
+      }),
       meta: { sourceKind: "curated_seed", sourcePath: "unique" },
     };
     await fs.writeFile(

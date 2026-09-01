@@ -17,6 +17,7 @@ import {
   type PlanOutput,
   type TaskFeatures,
 } from "./local-brain-generalization-generator.js";
+import { evaluateLocalBrainCurriculumGate } from "./local-brain-training-contract.js";
 
 // Build a TaskFeatures with all flags off, overriding only what a test cares
 // about. Keeps tests robust as new feature axes are added to the generator.
@@ -161,6 +162,14 @@ describe("reproducibility", () => {
 });
 
 describe("bounded synthetic contracts", () => {
+  it("fails closed when the reference scorer receives a non-object plan", () => {
+    const [target] = generateCases(1, { seed: 90 });
+    expect(scorePlan(null as never, target)).toEqual({
+      ok: false,
+      reasons: ["invalid_output_object"],
+    });
+  });
+
   it("rejects an unrepresentable label instead of silently truncating it", () => {
     const features = baseFeatures({
       assetClasses: ["us_equity", "crypto", "options"],
@@ -287,6 +296,21 @@ describe("infinite training-stream dataset rows", () => {
     // Completion must be a single compact JSON line (no newlines).
     expect(row.completion.includes("\n")).toBe(false);
     expect(row.meta.source).toBe("generalization_generator");
+  });
+
+  it("keeps generated rows admissible under the shared curriculum gate", () => {
+    const failures: Array<{ id: string; reasons: string[] }> = [];
+    for (const target of generateCases(300, { seed: 20260901, split: "all" })) {
+      const row = toDatasetRow(target);
+      const completion = JSON.parse(row.completion) as Parameters<
+        typeof evaluateLocalBrainCurriculumGate
+      >[1];
+      const gate = evaluateLocalBrainCurriculumGate(target.userAsk, completion);
+      if (!gate.admitted) {
+        failures.push({ id: target.id, reasons: gate.reasonCodes });
+      }
+    }
+    expect(failures).toEqual([]);
   });
 
   it("train/holdout dataset rows stay disjoint by feature signature", () => {

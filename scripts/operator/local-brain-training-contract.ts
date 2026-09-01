@@ -300,7 +300,10 @@ export function assessLocalBrainSemanticContract(
       lower,
     );
   const tradeProhibition =
-    /(?:不要|不建议|不提供|不输出|禁止|避免|别|无需|不需要).{0,12}(?:交易建议|买卖点|下单|买入|卖出|加仓|减仓|trade advice|trade signal|buy|sell|order)/iu.test(
+    /(?:不要|不建议|不提供|不输出|禁止|避免|别|无需|不需要|do not|don't|no|without|never|avoid|not).{0,16}(?:交易建议|交易信号|买卖点|下单|买入|卖出|加仓|减仓|仓位比例|trade advice|trade signal|buy|sell|order|position size)/iu.test(
+      lower,
+    ) ||
+    /(?:交易建议|交易信号|买卖点|下单|买入|卖出|加仓|减仓|仓位比例|trade advice|trade signal|buy|sell|order|position size).{0,16}(?:不要|不需要|无需|禁止|avoid|not needed|not required|not requested)/iu.test(
       lower,
     );
   const actionQuestion =
@@ -314,7 +317,13 @@ export function assessLocalBrainSemanticContract(
   const tradeWording = actionQuestion || (actionTerm && !tradeProhibition);
   const redTeam = /反方|反证|失效|证伪|red[- ]?team|invalidation|counter[- ]?thesis/iu.test(lower);
   const dataMissing =
-    /(?:没有|未提供|暂未|暂无|缺少|缺|待补).{0,16}(?:数据|输入|快照|时间戳|data|snapshot)/iu.test(
+    /(?:没有|未提供|暂未|暂无|缺少|缺|待补).{0,24}(?:带时间戳|时间戳|数据|输入|快照|价格|行情|报价|data|inputs?|snapshot|price|quote)/iu.test(
+      lower,
+    ) ||
+    /(?:no|without|missing|lack(?:ing)?|unavailable|not provided|not supplied|not available|not yet).{0,24}(?:timestamped|timestamp|data|inputs?|snapshot|price|quote)/iu.test(
+      lower,
+    ) ||
+    /(?:timestamped|timestamp|data|inputs?|snapshot|price|quote).{0,24}(?:missing|unavailable|not provided|not supplied|not available|absent)/iu.test(
       lower,
     );
   const dataSupplied =
@@ -486,6 +495,39 @@ const LOCAL_BRAIN_ALLOWED_COMPLETION_KEYS = new Set<string>([
   ...LOCAL_BRAIN_COMPLETION_SCALAR_FIELDS,
 ]);
 
+const LOCAL_BRAIN_MODULE_ID_SET = new Set<string>(LOCAL_BRAIN_MODULE_TAXONOMY);
+
+// Unknown task-specific safety ids may remain in receipts, but a completion
+// that positively grants execution authority must never enter the shared
+// curriculum. Keep this deny-list narrow so legitimate negative boundaries
+// remain available to task-conditioned rows.
+const UNSAFE_POSITIVE_RISK_BOUNDARY_TOKENS = new Set([
+  "allow_trade_execution",
+  "approve_trade_execution",
+  "execute_trade",
+  "order_placement",
+  "place_order",
+  "trade_execution",
+  "buy_signal_allowed",
+  "sell_signal_allowed",
+  "position_sizing_allowed",
+]);
+
+function isUnsafePositiveRiskBoundary(value: string): boolean {
+  const token = semanticToken(value);
+  if (UNSAFE_POSITIVE_RISK_BOUNDARY_TOKENS.has(token)) {
+    return true;
+  }
+  // Do not reject clearly negative boundaries such as
+  // no_execution_authority or trade_execution_prohibited.
+  if (/(?:^|_)(?:no|not|without|avoid|prohibit|prohibited|forbid|forbidden)(?:_|$)/u.test(token)) {
+    return false;
+  }
+  return /(?:^|_)(?:allow|approve|enable|permit|execute|place_order|order_placement|sizing_allowed)(?:_|$)/u.test(
+    token,
+  );
+}
+
 // These fields are provenance, answer, or evaluator labels.  They belong in
 // receipt/meta only; admitting them into a completion would teach the student
 // to copy the target rather than infer a contract from the task.
@@ -525,6 +567,24 @@ function curriculumShapeErrors(completion: LocalBrainCompletion): string[] {
     }
     if (value.some((entry) => typeof entry !== "string" || entry.trim().length === 0)) {
       errors.push(`array_contains_non_string:${field}`);
+    }
+    if (
+      field === "primary_modules" ||
+      field === "supporting_modules" ||
+      field === "required_tools"
+    ) {
+      for (const entry of value) {
+        if (typeof entry === "string" && !LOCAL_BRAIN_MODULE_ID_SET.has(semanticToken(entry))) {
+          errors.push(`unknown_module:${semanticToken(entry)}`);
+        }
+      }
+    }
+    if (field === "risk_boundaries") {
+      for (const entry of value) {
+        if (typeof entry === "string" && isUnsafePositiveRiskBoundary(entry)) {
+          errors.push(`unsafe_risk_boundary:${semanticToken(entry)}`);
+        }
+      }
     }
   }
   for (const field of LOCAL_BRAIN_COMPLETION_SCALAR_FIELDS) {
