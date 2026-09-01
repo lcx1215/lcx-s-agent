@@ -32,4 +32,17 @@ describe("external account configuration", () => {
       allowFrom: ["user-1"],
     });
   });
+
+  it("accepts credentials supplied only by a named account", () => {
+    expect(() =>
+      ExternalConfigSchema.parse({
+        accounts: {
+          primary: {
+            inboundToken: "account-inbound-token",
+            outboundUrl: "https://receiver.example/messages",
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
 });

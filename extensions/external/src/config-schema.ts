@@ -72,7 +72,12 @@ export const ExternalConfigSchema = ExternalAccountSchemaBase.extend({
   defaultAccount: z.string().optional(),
   accounts: z.record(z.string(), ExternalAccountSchema.optional()).optional(),
 }).superRefine((value, ctx) => {
-  validateExternalAccount(value, ctx, "channels.external");
+  // Account-only configurations intentionally leave the top-level account
+  // empty. Its defaults are still useful to the resolver, but must not make
+  // validation require a duplicate top-level credential.
+  if (!value.accounts || Object.keys(value.accounts).length === 0) {
+    validateExternalAccount(value, ctx, "channels.external");
+  }
 });
 
 export const ExternalChannelConfigSchema = buildChannelConfigSchema(ExternalConfigSchema);

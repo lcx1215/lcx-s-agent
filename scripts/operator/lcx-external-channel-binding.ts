@@ -392,7 +392,10 @@ export const buildLiveExternalBrainBindingDecision = buildExternalChannelBinding
 
 function externalProofName(name: string): string {
   return name
-    .replace("training_plan_live_external_brain_binding", "training_plan_external_message_channel_binding")
+    .replace(
+      "training_plan_live_external_brain_binding",
+      "training_plan_external_message_channel_binding",
+    )
     .replace(
       "live_sidecar_source_drift_zero_after_selected_adapter",
       "external_channel_source_drift_zero_after_selected_adapter",
@@ -430,7 +433,8 @@ function buildExternalChannelBindingSummary(
     wait_for_training_plan_live_binding_ready: "wait_for_training_plan_external_channel_ready",
     run_apply_when_operator_allows_live_runtime_restart:
       "run_apply_when_operator_allows_external_channel_restart",
-    keep_waiting_for_real_external_user_seen_proof: "keep_waiting_for_real_external_user_visible_proof",
+    keep_waiting_for_real_external_user_seen_proof:
+      "keep_waiting_for_real_external_user_visible_proof",
     no_action_external_channel_user_visible_observed: "none_external_channel_user_visible_observed",
     debug_live_runtime_probe_before_claiming_bound:
       "debug_external_channel_probe_before_claiming_user_visible",
@@ -528,9 +532,19 @@ async function readUserVisibleObserved(): Promise<boolean> {
   try {
     const payload = JSON.parse(result.stdout) as JsonRecord;
     const proof = recordValue(payload.visibleProof);
+    const status = stringValue(proof?.status);
+    const currentStatus =
+      status === "user_visible_observed" || status === "post_migration_reply_seen";
+    const legacyStatus = status === "live_visible_fixed";
+    const correlatedPairCount = proof?.correlatedReplyPairCount;
+    const correlationVerified =
+      typeof correlatedPairCount === "number" ? correlatedPairCount > 0 : legacyStatus;
+    const acceptanceVerified =
+      status === "post_migration_reply_seen" || booleanValue(proof?.acceptanceMatched) === true;
     return (
-      stringValue(proof?.status) === "live_visible_fixed" &&
-      booleanValue(proof?.acceptanceMatched) === true &&
+      (currentStatus || legacyStatus) &&
+      correlationVerified &&
+      acceptanceVerified &&
       typeof proof?.freshInboundCount === "number" &&
       proof.freshInboundCount > 0 &&
       typeof proof?.freshOutboundResultCount === "number" &&

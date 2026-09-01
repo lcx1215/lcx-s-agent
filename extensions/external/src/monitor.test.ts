@@ -1,7 +1,10 @@
 import type { ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { createExternalWebhookRequestHandler } from "./monitor.js";
+import {
+  createExternalWebhookRequestHandler,
+  resolveExternalCommandAuthorization,
+} from "./monitor.js";
 import type { ExternalWebhookTarget } from "./monitor.js";
 import type { ResolvedExternalAccount } from "./types.js";
 
@@ -77,11 +80,22 @@ function response(): TestResponse {
   };
 }
 
+function replayGuard(result = true) {
+  return {
+    shouldProcessMessage: vi.fn(async () => result),
+  };
+}
+
 describe("external webhook", () => {
   it("authenticates, normalizes, and acknowledges a standard message", async () => {
     const processMessage = vi.fn(async () => {});
+    const dedupe = replayGuard();
     const targetsByPath = new Map([[account.webhookPath, [target()]]]);
-    const handler = createExternalWebhookRequestHandler({ targetsByPath, processMessage });
+    const handler = createExternalWebhookRequestHandler({
+      targetsByPath,
+      processMessage,
+      replayGuard: dedupe,
+    });
     const res = response();
 
     await handler(
@@ -105,17 +119,102 @@ describe("external webhook", () => {
       }),
       expect.anything(),
     );
+    expect(dedupe.shouldProcessMessage).toHaveBeenCalledWith({
+      accountId: "default",
+      messageId: "message-1",
+    });
   });
 
   it("rejects an invalid token before reading the body", async () => {
     const processMessage = vi.fn(async () => {});
+    const dedupe = replayGuard();
     const targetsByPath = new Map([[account.webhookPath, [target()]]]);
-    const handler = createExternalWebhookRequestHandler({ targetsByPath, processMessage });
+    const handler = createExternalWebhookRequestHandler({
+      targetsByPath,
+      processMessage,
+      replayGuard: dedupe,
+    });
     const res = response();
 
     await handler(request({ text: "hello" }, "wrong-token"), res as unknown as ServerResponse);
 
     expect(res.statusCode).toBe(401);
     expect(processMessage).not.toHaveBeenCalled();
+    expect(dedupe.shouldProcessMessage).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges a replayed message without dispatching it again", async () => {
+    const processMessage = vi.fn(async () => {});
+    const dedupe = replayGuard(false);
+    const targetsByPath = new Map([[account.webhookPath, [target()]]]);
+    const handler = createExternalWebhookRequestHandler({
+      targetsByPath,
+      processMessage,
+      replayGuard: dedupe,
+    });
+    const res = response();
+
+    await handler(
+      request({
+        id: "message-replayed",
+        text: "hello again",
+        senderId: "user-1",
+        conversationId: "conversation-1",
+      }),
+      res as unknown as ServerResponse,
+    );
+
+    expect(res.statusCode).toBe(202);
+    expect(JSON.parse(res.body)).toEqual({
+      ok: true,
+      messageId: "message-replayed",
+      duplicate: true,
+    });
+    expect(processMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("external command authorization", () => {
+  function commandRuntime() {
+    return {
+      text: { hasControlCommand: vi.fn(() => true) },
+      commands: {
+        shouldHandleTextCommands: vi.fn(() => true),
+      },
+      pairing: { readAllowFromStore: vi.fn(async () => []) },
+    } as never;
+  }
+
+  it("uses the effective DM allowlist for control-command authorization", async () => {
+    const runtime = commandRuntime();
+    const allowed = await resolveExternalCommandAuthorization({
+      message: {
+        messageId: "message-1",
+        text: "/status",
+        senderId: "user-1",
+        conversationId: "conversation-1",
+        chatType: "direct",
+        timestamp: Date.now(),
+      },
+      account,
+      config: { commands: { useAccessGroups: true } } as never,
+      channelRuntime: runtime,
+    });
+    const denied = await resolveExternalCommandAuthorization({
+      message: {
+        messageId: "message-2",
+        text: "/status",
+        senderId: "untrusted-user",
+        conversationId: "conversation-1",
+        chatType: "direct",
+        timestamp: Date.now(),
+      },
+      account,
+      config: { commands: { useAccessGroups: true } } as never,
+      channelRuntime: runtime,
+    });
+
+    expect(allowed).toBe(true);
+    expect(denied).toBe(false);
   });
 });

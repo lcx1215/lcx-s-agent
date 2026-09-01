@@ -3,8 +3,10 @@ import {
   beginWebhookRequestPipelineOrReject,
   createReplyPrefixOptions,
   createWebhookInFlightLimiter,
+  isNormalizedSenderAllowed,
   readJsonWebhookBodyOrReject,
   registerWebhookTargetWithPluginRoute,
+  resolveDmGroupAccessWithCommandGate,
   resolveInboundRouteEnvelopeBuilderWithRuntime,
   resolveWebhookTargetWithAuthOrRejectSync,
   resolveWebhookTargets,
@@ -14,6 +16,7 @@ import {
   type OpenClawConfig,
 } from "openclaw/plugin-sdk";
 import { normalizeExternalInboundMessage } from "./protocol.js";
+import { createExternalReplayGuard, type ExternalReplayGuard } from "./replay-guard.js";
 import { isExternalInboundMessageAllowed, isExternalWebhookAuthorized } from "./security.js";
 import { sendExternalMessage } from "./send.js";
 import type { ExternalInboundMessage, ResolvedExternalAccount } from "./types.js";
@@ -39,6 +42,11 @@ type ProcessExternalMessage = (
 
 const webhookTargets = new Map<string, ExternalWebhookTarget[]>();
 const webhookInFlightLimiter = createWebhookInFlightLimiter();
+const externalWebhookReplayGuard = createExternalReplayGuard({
+  onDiskError: (error) => {
+    console.warn(`[external] replay dedupe disk error: ${String(error)}`);
+  },
+});
 
 function sendJson(res: ServerResponse, statusCode: number, body: Record<string, unknown>): void {
   if (res.headersSent) {
@@ -75,9 +83,11 @@ export function createExternalWebhookRequestHandler(params: {
   targetsByPath: Map<string, ExternalWebhookTarget[]>;
   webhookInFlightLimiter?: ReturnType<typeof createWebhookInFlightLimiter>;
   processMessage?: ProcessExternalMessage;
+  replayGuard?: ExternalReplayGuard;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
   const limiter = params.webhookInFlightLimiter ?? createWebhookInFlightLimiter();
   const processMessage = params.processMessage ?? processExternalMessage;
+  const replayGuard = params.replayGuard ?? externalWebhookReplayGuard;
 
   return async (req, res) => {
     const resolved = resolveWebhookTargets(req, params.targetsByPath);
@@ -131,6 +141,17 @@ export function createExternalWebhookRequestHandler(params: {
       }
 
       const message = parsed.value;
+      const shouldProcess = await replayGuard.shouldProcessMessage({
+        accountId: target.account.accountId,
+        messageId: message.messageId,
+      });
+      if (!shouldProcess) {
+        target.log?.info?.(
+          `[${target.account.accountId}] duplicate external webhook ignored messageId=${message.messageId}`,
+        );
+        sendJson(res, 202, { ok: true, messageId: message.messageId, duplicate: true });
+        return true;
+      }
       target.statusSink?.({ lastInboundAt: Date.now() });
       void processMessage(message, target).catch((error: unknown) => {
         target.runtime.error(
@@ -165,6 +186,46 @@ function conversationLabelFor(message: ExternalInboundMessage): string {
   );
 }
 
+export async function resolveExternalCommandAuthorization(params: {
+  message: ExternalInboundMessage;
+  account: ResolvedExternalAccount;
+  config: OpenClawConfig;
+  channelRuntime: ExternalChannelRuntime;
+}): Promise<boolean> {
+  const { message, account, config, channelRuntime } = params;
+  const isGroup = message.chatType !== "direct";
+  const groupConfig = isGroup
+    ? (account.groups[message.conversationId] ?? account.groups["*"])
+    : undefined;
+  const storeAllowFrom = await channelRuntime.pairing
+    .readAllowFromStore({
+      channel: "external",
+      accountId: account.accountId,
+    })
+    .catch(() => []);
+  const allowTextCommands = channelRuntime.commands.shouldHandleTextCommands({
+    cfg: config,
+    surface: "external",
+  });
+  const hasControlCommand = channelRuntime.text.hasControlCommand(message.text, config);
+  const access = resolveDmGroupAccessWithCommandGate({
+    isGroup,
+    dmPolicy: account.dmPolicy,
+    groupPolicy: account.groupPolicy,
+    allowFrom: account.allowFrom.map(String),
+    groupAllowFrom: (groupConfig?.allowFrom ?? account.groupAllowFrom).map(String),
+    storeAllowFrom,
+    isSenderAllowed: (allowFrom) =>
+      isNormalizedSenderAllowed({ senderId: message.senderId, allowFrom }),
+    command: {
+      useAccessGroups: config.commands?.useAccessGroups !== false,
+      allowTextCommands,
+      hasControlCommand,
+    },
+  });
+  return access.commandAuthorized;
+}
+
 export async function processExternalMessage(
   message: ExternalInboundMessage,
   target: ExternalWebhookTarget,
@@ -192,6 +253,12 @@ export async function processExternalMessage(
     timestamp: message.timestamp,
     body: message.text,
   });
+  const commandAuthorized = await resolveExternalCommandAuthorization({
+    message,
+    account: target.account,
+    config: target.config,
+    channelRuntime: core,
+  });
   const context = core.reply.finalizeInboundContext({
     Body: body,
     BodyForAgent: message.text,
@@ -207,7 +274,7 @@ export async function processExternalMessage(
     SenderId: message.senderId,
     SenderUsername: message.senderUsername,
     WasMentioned: message.wasMentioned,
-    CommandAuthorized: false,
+    CommandAuthorized: commandAuthorized,
     Provider: "external",
     Surface: "external",
     MessageSid: message.messageId,

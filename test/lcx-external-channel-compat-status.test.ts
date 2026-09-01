@@ -466,7 +466,55 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveVisibleStatus=post_migration_reply_seen");
     expect(stdout).toContain("freshInboundCount=1");
     expect(stdout).toContain("freshOutboundResultCount=1");
+    expect(stdout).toContain("correlatedReplyPairCount=1");
     expect(stdout).toContain("acceptanceMatched=false");
+  });
+
+  it("does not infer visible delivery from unrelated fresh inbound and outbound records", () => {
+    const sourceRoot = tempDir("promote-live-unrelated-reply-flow-source");
+    const targetRoot = tempDir("promote-live-unrelated-reply-flow-target");
+    const replyFlowLog = path.join(
+      tempDir("promote-live-unrelated-reply-flow"),
+      "external-message-flow.jsonl",
+    );
+    git(sourceRoot, ["init", "--quiet"]);
+    git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
+    git(sourceRoot, ["config", "user.name", "LCX Test"]);
+    fs.writeFileSync(path.join(sourceRoot, "a.txt"), "one\n", "utf8");
+    git(sourceRoot, ["add", "a.txt"]);
+    git(sourceRoot, ["commit", "--quiet", "-m", "one"]);
+    const currentCommit = git(sourceRoot, ["rev-parse", "HEAD"]);
+    writePromotionState(targetRoot, currentCommit, {
+      restartStatus: "passed",
+      probeStatus: "passed",
+    });
+
+    appendReplyFlowRecord(replyFlowLog, {
+      kind: "external_reply_flow",
+      stage: "inbound",
+      recordedAt: "2099-01-01T00:01:00.000Z",
+      messageId: "inbound-unrelated",
+      chatId: "oc_inbound_chat",
+      textPreview: "用户的自然问题",
+    });
+    appendReplyFlowRecord(replyFlowLog, {
+      kind: "external_reply_flow",
+      stage: "outbound_result",
+      recordedAt: "2099-01-01T00:02:00.000Z",
+      messageId: "outbound-unrelated",
+      chatId: "oc_other_chat",
+      deliveryStatus: "success",
+      textPreview: "另一个会话的回复",
+    });
+
+    const stdout = runStatus(sourceRoot, targetRoot, ["--reply-flow-log", replyFlowLog]);
+
+    expect(stdout).toContain("liveVisibleStatus=waiting_for_real_external");
+    expect(stdout).toContain("externalChannelBound=true");
+    expect(stdout).toContain("userVisibleObserved=false");
+    expect(stdout).toContain("freshInboundCount=1");
+    expect(stdout).toContain("freshOutboundResultCount=1");
+    expect(stdout).toContain("correlatedReplyPairCount=0");
   });
 
   it("does not call dirty dev work live-runtime-updated", () => {

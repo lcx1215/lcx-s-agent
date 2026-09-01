@@ -793,6 +793,58 @@ function resolveTlonSession(
   };
 }
 
+function resolveExternalSession(
+  params: ResolveOutboundSessionRouteParams,
+): OutboundSessionRoute | null {
+  let trimmed = stripProviderPrefix(params.target, "external").trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const lower = trimmed.toLowerCase();
+  const explicitKind =
+    lower.startsWith("group:") || lower.startsWith("room:")
+      ? "group"
+      : lower.startsWith("channel:")
+        ? "channel"
+        : lower.startsWith("dm:") || lower.startsWith("user:") || lower.startsWith("direct:")
+          ? "direct"
+          : undefined;
+  const resolvedKind =
+    params.resolvedTarget?.kind === "user"
+      ? "direct"
+      : params.resolvedTarget?.kind === "group"
+        ? "group"
+        : params.resolvedTarget?.kind === "channel"
+          ? "channel"
+          : undefined;
+  const peerKind = explicitKind ?? resolvedKind ?? "direct";
+  const peerId = stripKindPrefix(trimmed);
+  if (!peerId) {
+    return null;
+  }
+
+  const peer: RoutePeer = { kind: peerKind, id: peerId };
+  const baseSessionKey = buildBaseSessionKey({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    channel: "external",
+    accountId: params.accountId,
+    peer,
+  });
+  const threadId = normalizeThreadId(params.replyToId ?? params.threadId);
+  const threadKeys = resolveThreadSessionKeys({ baseSessionKey, threadId });
+  return {
+    sessionKey: threadKeys.sessionKey,
+    baseSessionKey,
+    peer,
+    chatType: peerKind,
+    from: peerKind === "direct" ? `external:${peerId}` : `external:${peerKind}:${peerId}`,
+    to: peerId,
+    threadId,
+  };
+}
+
 function resolveFallbackSession(
   params: ResolveOutboundSessionRouteParams,
 ): OutboundSessionRoute | null {
@@ -851,6 +903,7 @@ const OUTBOUND_SESSION_RESOLVERS: Partial<Record<ChannelId, OutboundSessionResol
   zalouser: resolveZalouserSession,
   nostr: resolveNostrSession,
   tlon: resolveTlonSession,
+  external: resolveExternalSession,
 };
 
 export async function resolveOutboundSessionRoute(

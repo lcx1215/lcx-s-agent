@@ -74,7 +74,7 @@ describe("host watchdog clean-root entrypoint", () => {
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout);
     expect(payload.mode).toBe("dry_run_no_alert");
-    expect(payload.boundary.noExternalSend).toBe(true);
+    expect(payload.boundary.noExternalChannelSend).toBe(true);
     expect(payload.boundary.noCodexEscalation).toBe(true);
     expect(payload.boundary.noRemoteFetch).toBe(true);
     expect(payload.boundary.noTradingExecution).toBe(true);
@@ -126,7 +126,7 @@ describe("host watchdog clean-root entrypoint", () => {
     expect(result.status).toBe(0);
     expect(fs.existsSync(receiptPath)).toBe(true);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
-    expect(receipt.boundary.noExternalSend).toBe(true);
+    expect(receipt.boundary.noExternalChannelSend).toBe(true);
     expect(receipt.scheduler_cycle.status).toBe("fresh");
     expect(receipt.runtime_freshness.status).toBe("fresh");
     fs.rmSync(receiptPath, { force: true });
@@ -195,8 +195,8 @@ describe("host watchdog clean-root entrypoint", () => {
     const result = runPython(["scripts/lobster_host_watchdog.py", "--dry-run", "--json"]);
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout);
-    expect(payload.external_proxy.label).toBe("ai.openclaw.external.proxy");
-    expect(typeof payload.external_proxy.status).toBe("string");
+    expect(payload.external_channel_proxy.label).toBe("ai.openclaw.external.proxy");
+    expect(typeof payload.external_channel_proxy.status).toBe("string");
     cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
   });
 

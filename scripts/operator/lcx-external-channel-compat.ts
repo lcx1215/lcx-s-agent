@@ -73,6 +73,7 @@ type LiveVisibleProof = {
   replyFlowProbeCommand: string;
   freshInboundCount: number;
   freshOutboundResultCount: number;
+  correlatedReplyPairCount: number;
   acceptanceMatched: boolean;
   latestInbound: ReplyFlowSummary | null;
   latestOutboundResult: ReplyFlowSummary | null;
@@ -83,6 +84,7 @@ type ReplyFlowSummary = {
   messageId: string | null;
   correlationId: string | null;
   chatId: string | null;
+  conversationId: string | null;
   textPreview: string | null;
   deliveryStatus: string | null;
 };
@@ -709,12 +711,95 @@ function makeReplyFlowProbeCommand(): string {
   return "node --import tsx scripts/operator/lcx-external-channel-compat.ts --status --with-probe";
 }
 
+const REPLY_FLOW_MESSAGE_ID_KEYS = ["messageId", "message_id"] as const;
+const REPLY_FLOW_CORRELATION_ID_KEYS = ["correlationId", "correlation_id"] as const;
+const REPLY_FLOW_CONVERSATION_ID_KEYS = [
+  "chatId",
+  "chat_id",
+  "conversationId",
+  "conversation_id",
+  "roomId",
+  "room_id",
+  "channelId",
+  "channel_id",
+] as const;
+const REPLY_FLOW_CHAT_CORRELATION_WINDOW_MS = 15 * 60 * 1000;
+
+function readReplyFlowIdentifier(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" || typeof value === "number") {
+      const trimmed = String(value).trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+  }
+  return null;
+}
+
+function replyFlowIdentifiers(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): Set<string> {
+  const identifiers = new Set<string>();
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== "string" && typeof value !== "number") {
+      continue;
+    }
+    const trimmed = String(value).trim().toLowerCase();
+    if (trimmed) {
+      identifiers.add(trimmed);
+    }
+  }
+  return identifiers;
+}
+
+function hasSharedReplyFlowIdentifier(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const leftIds = replyFlowIdentifiers(left, keys);
+  const rightIds = replyFlowIdentifiers(right, keys);
+  return Array.from(leftIds).some((value) => rightIds.has(value));
+}
+
+function isCorrelatedReplyFlowPair(
+  inbound: Record<string, unknown> & { recordedAtMs: number },
+  outbound: Record<string, unknown> & { recordedAtMs: number },
+): boolean {
+  if (outbound.recordedAtMs < inbound.recordedAtMs) {
+    return false;
+  }
+  if (
+    hasSharedReplyFlowIdentifier(inbound, outbound, REPLY_FLOW_MESSAGE_ID_KEYS) ||
+    hasSharedReplyFlowIdentifier(inbound, outbound, REPLY_FLOW_CORRELATION_ID_KEYS)
+  ) {
+    return true;
+  }
+  const sameConversation = hasSharedReplyFlowIdentifier(
+    inbound,
+    outbound,
+    REPLY_FLOW_CONVERSATION_ID_KEYS,
+  );
+  return (
+    sameConversation &&
+    outbound.recordedAtMs - inbound.recordedAtMs <= REPLY_FLOW_CHAT_CORRELATION_WINDOW_MS
+  );
+}
+
 function summarizeReplyFlowRecord(record: Record<string, unknown>): ReplyFlowSummary {
   return {
     recordedAt: typeof record.recordedAt === "string" ? record.recordedAt : null,
-    messageId: typeof record.messageId === "string" ? record.messageId : null,
-    correlationId: typeof record.correlationId === "string" ? record.correlationId : null,
-    chatId: typeof record.chatId === "string" ? record.chatId : null,
+    messageId: readReplyFlowIdentifier(record, REPLY_FLOW_MESSAGE_ID_KEYS),
+    correlationId: readReplyFlowIdentifier(record, REPLY_FLOW_CORRELATION_ID_KEYS),
+    chatId: readReplyFlowIdentifier(record, ["chatId", "chat_id"]),
+    conversationId: readReplyFlowIdentifier(record, ["conversationId", "conversation_id"]),
     textPreview:
       typeof record.textPreview === "string"
         ? normalizeExternalChannelText(record.textPreview)
@@ -746,6 +831,7 @@ function readLiveVisibleProof(params: {
       replyFlowProbeCommand,
       freshInboundCount: 0,
       freshOutboundResultCount: 0,
+      correlatedReplyPairCount: 0,
       acceptanceMatched: false,
       latestInbound: null,
       latestOutboundResult: null,
@@ -774,40 +860,32 @@ function readLiveVisibleProof(params: {
     });
   const inbound = records.filter((record) => record.stage === "inbound");
   const outboundResult = records.filter((record) => record.stage === "outbound_result");
-  const failedOutbound = outboundResult.filter((record) => record.deliveryStatus !== "success");
-  const acceptanceInboundKeys = new Set(
-    inbound
-      .filter(
-        (record) =>
-          typeof record.textPreview === "string" &&
-          record.textPreview.includes(params.acceptancePhrase),
-      )
-      .flatMap((record) =>
-        [record.correlationId, record.messageId].filter(
-          (value): value is string => typeof value === "string" && value.length > 0,
-        ),
-      ),
+  const correlatedPairs = inbound.flatMap((inboundRecord) =>
+    outboundResult
+      .filter((outboundRecord) => isCorrelatedReplyFlowPair(inboundRecord, outboundRecord))
+      .map((outboundRecord) => ({ inbound: inboundRecord, outbound: outboundRecord })),
   );
-  const acceptanceMatched = outboundResult.some((record) => {
-    if (record.deliveryStatus !== "success") {
-      return false;
-    }
-    const textPreview = typeof record.textPreview === "string" ? record.textPreview : "";
-    if (textPreview.includes(params.acceptancePhrase)) {
-      return true;
-    }
-    return [record.correlationId, record.messageId].some(
-      (value) => typeof value === "string" && acceptanceInboundKeys.has(value),
+  const successfulPairs = correlatedPairs.filter(
+    ({ outbound }) => outbound.deliveryStatus === "success",
+  );
+  const acceptanceMatched = successfulPairs.some(({ inbound: inboundRecord, outbound }) => {
+    const inboundText =
+      typeof inboundRecord.textPreview === "string" ? inboundRecord.textPreview : "";
+    const outboundText = typeof outbound.textPreview === "string" ? outbound.textPreview : "";
+    return (
+      inboundText.includes(params.acceptancePhrase) ||
+      outboundText.includes(params.acceptancePhrase)
     );
   });
-  const latestInbound = inbound.at(-1);
-  const latestOutboundResult = outboundResult.at(-1);
+  const latestPair = correlatedPairs.at(-1);
+  const latestInbound = latestPair?.inbound;
+  const latestOutboundResult = latestPair?.outbound;
   const status =
     acceptanceMatched && latestInbound
       ? "user_visible_observed"
-      : failedOutbound.length > 0 && outboundResult.length > 0
+      : latestOutboundResult && latestOutboundResult.deliveryStatus !== "success"
         ? "reply_failed"
-        : latestInbound && latestOutboundResult
+        : latestPair
           ? "post_migration_reply_seen"
           : "waiting_for_real_external";
   return {
@@ -821,6 +899,7 @@ function readLiveVisibleProof(params: {
     replyFlowProbeCommand,
     freshInboundCount: inbound.length,
     freshOutboundResultCount: outboundResult.length,
+    correlatedReplyPairCount: correlatedPairs.length,
     acceptanceMatched,
     latestInbound: latestInbound ? summarizeReplyFlowRecord(latestInbound) : null,
     latestOutboundResult: latestOutboundResult
@@ -899,6 +978,7 @@ function buildReceipt(params: {
           replyFlowProbeCommand: makeReplyFlowProbeCommand(),
           freshInboundCount: 0,
           freshOutboundResultCount: 0,
+          correlatedReplyPairCount: 0,
           acceptanceMatched: false,
           latestInbound: null,
           latestOutboundResult: null,
@@ -1039,6 +1119,7 @@ function renderStatus(params: {
     lines.push(`replyFlowProbeCommand=${params.visibleProof.replyFlowProbeCommand}`);
     lines.push(`freshInboundCount=${params.visibleProof.freshInboundCount}`);
     lines.push(`freshOutboundResultCount=${params.visibleProof.freshOutboundResultCount}`);
+    lines.push(`correlatedReplyPairCount=${params.visibleProof.correlatedReplyPairCount}`);
     lines.push(`acceptanceMatched=${params.visibleProof.acceptanceMatched}`);
     if (params.visibleProof.latestInbound?.recordedAt) {
       lines.push(`latestInboundAt=${params.visibleProof.latestInbound.recordedAt}`);

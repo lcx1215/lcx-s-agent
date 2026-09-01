@@ -465,7 +465,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="Emit the full JSON snapshot")
     parser.add_argument("--dry-run", action="store_true", help="Force no-alert compatibility mode")
     parser.add_argument("--skip-launchd", action="store_true", help="Skip launchctl read during tests")
-    parser.add_argument("--skip-external-channel-proxy", action="store_true", help="Skip external channel proxy inspection")
+    parser.add_argument(
+        "--skip-external-channel-proxy",
+        "--skip-external-proxy",
+        dest="skip_external_channel_proxy",
+        action="store_true",
+        help="Skip external channel proxy inspection",
+    )
     parser.add_argument("--write-receipt", action="store_true", help="Write host_watchdog_state.json")
     return parser
 

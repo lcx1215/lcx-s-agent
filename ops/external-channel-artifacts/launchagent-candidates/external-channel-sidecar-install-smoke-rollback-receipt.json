@@ -17,5 +17,5 @@
     "hostWatchdogWorkingDirectory": "/Users/liuchengxu/Desktop/openclaw"
   },
   "liveFixed": false,
-  "nextSafePatch": "Generate a non-Desktop runtime bundle under ~/.openclaw/live-sidecars and point LaunchAgents at that bundle instead of directly at Desktop checkouts."
+  "nextSafePatch": "Generate a non-Desktop runtime bundle under ~/.openclaw/external-channel-runtime and point LaunchAgents at that bundle instead of directly at Desktop checkouts."
 }

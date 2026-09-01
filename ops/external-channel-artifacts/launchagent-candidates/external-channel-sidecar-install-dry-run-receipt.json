@@ -1,50 +1,50 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-27T22:12:53.898Z",
-  "targetRoot": "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
+  "generatedAt": "2026-09-01T09:31:53.496Z",
+  "targetRoot": "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw",
   "legacyRoot": "/Users/liuchengxu/Desktop/openclaw",
   "outputDir": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates",
   "receiptPath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/external-channel-sidecar-install-dry-run-receipt.json",
   "noLiveLaunchAgentChange": true,
-  "preflightReady": true,
-  "blockedReasons": [],
+  "preflightReady": false,
+  "blockedReasons": [
+    "scheduler_root_drift_gate: scheduler LaunchAgent no longer points at the audited legacy root; legacy scheduler dependency missing: daily_learning_runner.py, scripts/lobster_paths.py, lobster_orchestrator.py",
+    "host_watchdog_root_drift_gate: host watchdog LaunchAgent no longer points at the audited legacy root; legacy host watchdog dependency missing: scripts/lobster_host_watchdog.py, scripts/branch_freshness.py, scripts/lobster_paths.py"
+  ],
   "actions": [
     {
       "sidecar": "scheduler",
       "label": "ai.openclaw.lobster.scheduler",
       "sourceCandidatePath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/ai.openclaw.lobster.scheduler.smoke.plist",
       "targetPlistPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist",
-      "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T22-12-53-898Z",
-      "sourceCandidateSha256": "2d0052ff5233922e35de1fe7ef9cf5bcf1a803a7e536544d5de3478ca05cab6f",
-      "currentPlistSha256": "611fd100cce53a552000b89f31474b77830be68053da0fc2a613143eae4f2c5e",
-      "expectedTargetSha256AfterCopy": "2d0052ff5233922e35de1fe7ef9cf5bcf1a803a7e536544d5de3478ca05cab6f",
+      "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-09-01T09-31-53-496Z",
+      "sourceCandidateSha256": "ca78118e5c25436c85365ad0831e365c2bc2046ed873768744a98d0ef4074074",
+      "currentPlistSha256": "056ba6c145d331eb09aa2a297b72b9499f1bdcbef8e6dd7ee302ae8a14229afe",
+      "expectedTargetSha256AfterCopy": "ca78118e5c25436c85365ad0831e365c2bc2046ed873768744a98d0ef4074074",
       "currentDiffSummary": {
         "changed": true,
-        "removedLineCount": 35,
-        "addedLineCount": 35,
+        "removedLineCount": 6,
+        "addedLineCount": 3,
         "preview": [
-          "-     <key>Label</key>",
-          "-     <string>ai.openclaw.lobster.scheduler</string>",
-          "-     <key>ProgramArguments</key>",
-          "-     <array>",
-          "-       <string>/usr/bin/python3</string>",
-          "-       <string>/Users/liuchengxu/Desktop/openclaw/daily_learning_runner.py</string>",
-          "+ <dict>",
-          "+   <key>Label</key>",
-          "+   <string>ai.openclaw.lobster.scheduler</string>",
-          "+   <key>ProgramArguments</key>",
-          "+   <array>",
-          "+     <string>/usr/bin/python3</string>"
+          "-   <string>/Users/liuchengxu/.openclaw/logs/lobster_scheduler.cycle.out.log</string>",
+          "-   <string>/Users/liuchengxu/.openclaw/logs/lobster_scheduler.cycle.err.log</string>",
+          "-     <key>OPENCLAW_SCHEDULER_ENABLE_CYCLE</key>",
+          "-     <string>1</string>",
+          "-     <key>OPENCLAW_SCHEDULER_CYCLE_COMMAND</key>",
+          "-     <string>pnpm exec tsx scripts/operator/agent-system-loop-smoke.ts</string>",
+          "+     <string>--dry-run</string>",
+          "+   <string>/Users/liuchengxu/.openclaw/logs/lobster_scheduler.smoke.out.log</string>",
+          "+   <string>/Users/liuchengxu/.openclaw/logs/lobster_scheduler.smoke.err.log</string>"
         ]
       },
       "wouldRun": [
-        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T22-12-53-898Z\"",
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-09-01T09-31-53-496Z\"",
         "cp \"/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/ai.openclaw.lobster.scheduler.smoke.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
         "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" || true",
         "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\""
       ],
       "rollbackCommands": [
-        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-04-27T22-12-53-898Z\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist.backup-2026-09-01T09-31-53-496Z\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\"",
         "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\" || true",
         "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist\""
       ]
@@ -54,37 +54,24 @@
       "label": "ai.openclaw.lobster.host_watchdog",
       "sourceCandidatePath": "/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/ai.openclaw.lobster.host_watchdog.smoke.plist",
       "targetPlistPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist",
-      "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T22-12-53-898Z",
-      "sourceCandidateSha256": "9869435cc41f5ce004252640deca0cf053d6b4229de829ea996aaf705a68cb23",
-      "currentPlistSha256": "4e52d3b7c86fa7c5c5a2f651b1e43bf601e50ac17c655a84cf9cf19861ed1f48",
-      "expectedTargetSha256AfterCopy": "9869435cc41f5ce004252640deca0cf053d6b4229de829ea996aaf705a68cb23",
+      "backupPath": "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-09-01T09-31-53-496Z",
+      "sourceCandidateSha256": "09e7e83e8a635ad84178c4d2e38cf0998de816f7a76abcd522b081714757752e",
+      "currentPlistSha256": "09e7e83e8a635ad84178c4d2e38cf0998de816f7a76abcd522b081714757752e",
+      "expectedTargetSha256AfterCopy": "09e7e83e8a635ad84178c4d2e38cf0998de816f7a76abcd522b081714757752e",
       "currentDiffSummary": {
-        "changed": true,
-        "removedLineCount": 30,
-        "addedLineCount": 32,
-        "preview": [
-          "-     <key>Label</key>",
-          "-     <string>ai.openclaw.lobster.host_watchdog</string>",
-          "-     <key>ProgramArguments</key>",
-          "-     <array>",
-          "-       <string>/usr/bin/python3</string>",
-          "-       <string>/Users/liuchengxu/Desktop/openclaw/scripts/lobster_host_watchdog.py</string>",
-          "+ <dict>",
-          "+   <key>Label</key>",
-          "+   <string>ai.openclaw.lobster.host_watchdog</string>",
-          "+   <key>ProgramArguments</key>",
-          "+   <array>",
-          "+     <string>/usr/bin/python3</string>"
-        ]
+        "changed": false,
+        "removedLineCount": 0,
+        "addedLineCount": 0,
+        "preview": []
       },
       "wouldRun": [
-        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T22-12-53-898Z\"",
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-09-01T09-31-53-496Z\"",
         "cp \"/Users/liuchengxu/Desktop/lcx-s-openclaw/ops/external-channel-artifacts/launchagent-candidates/ai.openclaw.lobster.host_watchdog.smoke.plist\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\"",
         "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" || true",
         "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\""
       ],
       "rollbackCommands": [
-        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-04-27T22-12-53-898Z\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\"",
+        "cp \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist.backup-2026-09-01T09-31-53-496Z\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\"",
         "launchctl bootout \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\" || true",
         "launchctl bootstrap \"gui/$(id -u)\" \"/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist\""
       ]
