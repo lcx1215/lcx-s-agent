@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -61,9 +60,15 @@ export function resolveExternalChannelTruth(params: {
   binding: Record<string, unknown> | undefined;
   legacyExternalChannelStatus: Record<string, unknown> | undefined;
   visibleProof: Record<string, unknown> | undefined;
+  /** Set when the canonical binding owner was invoked this run. */
+  bindingOwnerAvailable?: boolean;
 }): { externalChannelBound: boolean; userVisibleObserved: boolean; bindingStatus: unknown } {
   const bindingStatus = params.binding?.status ?? "unavailable";
-  const bindingAvailable = params.binding !== undefined;
+  const bindingOwnerInvoked = params.bindingOwnerAvailable !== undefined;
+  const bindingAvailable = params.bindingOwnerAvailable ?? params.binding !== undefined;
+  // Once the canonical owner was invoked, its unavailable result is authoritative.
+  // Do not fall back to legacy evidence after an owner timeout/failure.
+  const bindingAuthoritative = bindingOwnerInvoked || params.binding !== undefined;
   const bindingProvedChannelBound =
     bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
     bindingStatus === "channel_runtime_probe_ok_user_visible_observed";
@@ -79,10 +84,14 @@ export function resolveExternalChannelTruth(params: {
     params.visibleProof?.acceptanceMatched === true;
 
   return {
-    externalChannelBound: bindingAvailable ? bindingProvedChannelBound : legacyExternalChannelBound,
+    externalChannelBound: bindingAuthoritative
+      ? bindingAvailable && bindingProvedChannelBound
+      : legacyExternalChannelBound,
     userVisibleObserved: bindingAvailable
       ? bindingUserVisibleObserved
-      : legacyUserVisibleObserved || compatibilityVisibleProofObserved,
+      : bindingAuthoritative
+        ? false
+        : legacyUserVisibleObserved || compatibilityVisibleProofObserved,
     bindingStatus,
   };
 }
@@ -167,13 +176,16 @@ function parseOptionalJsonObject(stdout: string): Record<string, unknown> {
   }
 }
 
-async function readLatestBindingSnapshot(): Promise<Record<string, unknown>> {
-  try {
-    const text = await fs.readFile(BINDING_LATEST_PATH, "utf8");
-    return parseOptionalJsonObject(text);
-  } catch {
-    return {};
+export function selectBindingOwnerPayload(params: {
+  commandSucceeded: boolean;
+  payload: Record<string, unknown>;
+}): { payload: Record<string, unknown>; source: "command" | "unavailable" } {
+  // The latest binding file is a write-side receipt and may be stale. It is
+  // intentionally never used as a fallback for a failed or malformed owner run.
+  if (!params.commandSucceeded || Object.keys(params.payload).length === 0) {
+    return { payload: {}, source: "unavailable" };
   }
+  return { payload: params.payload, source: "command" };
 }
 
 export async function runExternalChannelStatus(options: CliOptions) {
@@ -216,11 +228,14 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const bindingOutput = settledCommandText(bindingResult);
     const legacy = parseOptionalJsonObject(legacyOutput.stdout);
     const liveBindingPayload = parseOptionalJsonObject(bindingOutput.stdout);
-    const latestBindingSnapshot =
-      Object.keys(liveBindingPayload).length > 0 ? {} : await readLatestBindingSnapshot();
-    const bindingPayload =
-      Object.keys(liveBindingPayload).length > 0 ? liveBindingPayload : latestBindingSnapshot;
+    const selectedBindingPayload = selectBindingOwnerPayload({
+      commandSucceeded: bindingResult.status === "fulfilled",
+      payload: liveBindingPayload,
+    });
+    const bindingPayload = selectedBindingPayload.payload;
     const binding = recordValue(bindingPayload.externalChannelBinding);
+    const bindingOwnerAvailable =
+      selectedBindingPayload.source === "command" && binding !== undefined;
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
     const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
     const legacyRepositoryDrift = recordValue(legacy.devLiveDrift);
@@ -229,6 +244,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
         binding,
         legacyExternalChannelStatus,
         visibleProof,
+        bindingOwnerAvailable,
       });
     const externalChannelStatus = {
       ...legacyExternalChannelStatus,
@@ -245,7 +261,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
       canonicalBindingOwner: "lcx-external-channel-binding",
     };
     return {
-      ok: bindingPayload.ok !== false,
+      ok: bindingOwnerAvailable && bindingPayload.ok !== false,
       boundary: "local_external_channel_status_only",
       owner: "lcx-external-channel-status",
       command,
@@ -256,16 +272,17 @@ export async function runExternalChannelStatus(options: CliOptions) {
       ownerChildStatus: {
         timeoutMs: OWNER_CHILD_TIMEOUT_MS,
         legacyStatusAvailable: Object.keys(legacy).length > 0,
-        bindingStatusAvailable: Object.keys(bindingPayload).length > 0,
-        bindingStatusSource:
-          Object.keys(liveBindingPayload).length > 0
-            ? "command"
-            : Object.keys(latestBindingSnapshot).length > 0
-              ? "latest_snapshot"
-              : "unavailable",
+        bindingStatusAvailable: bindingOwnerAvailable,
+        bindingStatusSource: selectedBindingPayload.source,
         bindingLatestPath: BINDING_LATEST_PATH,
         legacyError: legacyOutput.error,
-        bindingError: bindingOutput.error,
+        bindingError:
+          bindingOutput.error ??
+          (bindingResult.status === "fulfilled" && selectedBindingPayload.source === "unavailable"
+            ? bindingOutput.stdout.trim()
+              ? "binding owner returned empty or non-JSON output"
+              : "binding owner returned no JSON output"
+            : undefined),
       },
       canonicalWorktreeDrift: externalChannelDriftStatus({
         legacyRepositoryDrift,

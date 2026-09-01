@@ -2,7 +2,10 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { resolveExternalChannelTruth } from "../scripts/operator/lcx-external-channel-status.js";
+import {
+  resolveExternalChannelTruth,
+  selectBindingOwnerPayload,
+} from "../scripts/operator/lcx-external-channel-status.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -45,6 +48,41 @@ describe("lcx-external-channel-status", () => {
     });
   });
 
+  it("fails closed when the canonical binding owner is unavailable", () => {
+    expect(
+      resolveExternalChannelTruth({
+        binding: undefined,
+        bindingOwnerAvailable: false,
+        legacyExternalChannelStatus: {
+          externalChannelBound: true,
+          userVisibleObserved: true,
+        },
+        visibleProof: {
+          status: "user_visible_observed",
+          acceptanceMatched: true,
+        },
+      }),
+    ).toEqual({
+      externalChannelBound: false,
+      userVisibleObserved: false,
+      bindingStatus: "unavailable",
+    });
+  });
+
+  it("never substitutes a stale latest snapshot after owner failure", () => {
+    expect(
+      selectBindingOwnerPayload({
+        commandSucceeded: false,
+        payload: {
+          externalChannelBinding: {
+            status: "channel_runtime_probe_ok_user_visible_observed",
+            userVisibleObserved: true,
+          },
+        },
+      }),
+    ).toEqual({ payload: {}, source: "unavailable" });
+  });
+
   it("wraps legacy promote-live status as a read-only external-channel owner", async () => {
     const payload = await runStatus(["--json"]);
 
@@ -71,7 +109,7 @@ describe("lcx-external-channel-status", () => {
     expect(payload.ownerChildStatus).toEqual(
       expect.objectContaining({
         bindingStatusAvailable: expect.any(Boolean),
-        bindingStatusSource: expect.stringMatching(/^(command|latest_snapshot|unavailable)$/u),
+        bindingStatusSource: expect.stringMatching(/^(command|unavailable)$/u),
         bindingLatestPath: expect.stringContaining("lcx-external-channel-binding-latest.json"),
       }),
     );
