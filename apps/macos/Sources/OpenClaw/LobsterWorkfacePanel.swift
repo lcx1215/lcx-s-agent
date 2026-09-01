@@ -529,7 +529,9 @@ enum LobsterWorkfacePanel {
                 <div class="eyebrow">Lobster Panel</div>
                 <h1>\(self.escapeHTML(title))</h1>
                 <p class="hero-copy">
-                  Stable in-app workface panel generated from \(self.escapeHTML(sourceLabel)). This stays bounded to Lobster's daily research artifact instead of pretending to be a general app builder.
+                  Stable in-app workface panel generated from \(self
+            .escapeHTML(
+                sourceLabel)). This stays bounded to Lobster's daily research artifact instead of pretending to be a general app builder.
                 </p>
                 <div class="hero-actions">
                   <a class="action-link" href="openclaw://lobster-panel">Refresh Panel</a>
@@ -730,7 +732,8 @@ enum LobsterWorkfacePanel {
                 <h1>\(self.escapeHTML(title))</h1>
                 <div class="status-pill">\(self.escapeHTML(statusLine))</div>
                 <p class="hero-copy">
-                  No daily workface artifact is available yet, so this panel is bootstrapping from \(self.escapeHTML(sourceLabel)) instead of leaving you with an empty shell.
+                  No daily workface artifact is available yet, so this panel is bootstrapping from \(self
+            .escapeHTML(sourceLabel)) instead of leaving you with an empty shell.
                 </p>
                 <div class="hero-actions">
                   <a class="action-link" href="openclaw://lobster-panel">Refresh Panel</a>
@@ -742,7 +745,10 @@ enum LobsterWorkfacePanel {
                 \(self.renderMetricCard(label: "Current Focus", value: parsed.currentFocus, tone: "accent"))
                 \(self.renderMetricCard(label: "Freshness", value: parsed.freshness, tone: "accent"))
                 \(self.renderMetricCard(label: "Primary Anchor", value: parsed.primaryAnchor, tone: "accent"))
-                \(self.renderMetricCard(label: "Protected Anchors", value: "\(presentAnchors) present / \(missingAnchors) missing", tone: "accent"))
+                \(self.renderMetricCard(
+                    label: "Protected Anchors",
+                    value: "\(presentAnchors) present / \(missingAnchors) missing",
+                    tone: "accent"))
               </section>
 
               <section class="section-grid" style="margin-top: 20px;">
