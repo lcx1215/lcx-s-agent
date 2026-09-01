@@ -51,14 +51,18 @@ function externalChannelNextHumanStep(params: {
 }
 
 function externalChannelVisibleProof(legacyVisibleProof: Record<string, unknown> | undefined) {
-  if (!legacyVisibleProof) {
-    return undefined;
-  }
+  const canonicalReplyFlowProbeCommand =
+    "node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe";
+  const legacyReplyFlowProbeCommand =
+    typeof legacyVisibleProof?.replyFlowProbeCommand === "string"
+      ? legacyVisibleProof.replyFlowProbeCommand
+      : "node --import tsx scripts/operator/lcx-external-channel-compat.ts --status --json --with-probe";
   return {
     ...legacyVisibleProof,
-    replyFlowProbeCommand:
-      "node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe",
-    legacyReplyFlowProbeCommand: legacyVisibleProof.replyFlowProbeCommand,
+    status: legacyVisibleProof?.status ?? "unavailable",
+    acceptanceMatched: legacyVisibleProof?.acceptanceMatched === true,
+    replyFlowProbeCommand: canonicalReplyFlowProbeCommand,
+    legacyReplyFlowProbeCommand,
   };
 }
 
