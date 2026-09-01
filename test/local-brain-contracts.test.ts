@@ -377,6 +377,19 @@ describe("hardenLocalBrainPlanForAsk", () => {
     );
   });
 
+  it("keeps AI capex supply-chain asks gated by company-to-portfolio exposure data", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "AI capex 如果从 hyperscaler 预算传导到 NVDA、半导体设备和电力链，本地大脑要怎么拆基本面、因果链、数据源、组合风险和审阅？",
+      },
+    );
+
+    expect(plan.task_family).toBe("ai_capex_power_grid_index_concentration_risk");
+    expect(plan.missing_data).toContain("company_to_portfolio_exposure_map");
+    expect(plan.risk_boundaries).toContain("index_concentration_requires_weights_evidence");
+  });
+
   it("canonicalizes case-variant Mag7 missing-data identifiers before eval", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {

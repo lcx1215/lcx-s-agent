@@ -3926,6 +3926,7 @@ export function hardenLocalBrainPlanForAsk(
         "latest_company_fundamental_inputs",
         "model_assumptions_sensitivity_and_audit_inputs",
         "portfolio_weights_and_risk_limits",
+        "company_to_portfolio_exposure_map",
         "thesis_catalyst_calendar_and_invalidation_evidence",
       ]),
       risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
