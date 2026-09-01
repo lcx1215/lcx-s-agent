@@ -1,8 +1,9 @@
 import os from "node:os";
 import path from "node:path";
 
-export const LCX_USER_HOME = process.env.LCX_USER_HOME?.trim() || os.homedir();
-export const DEFAULT_LEGACY_ROOT = path.join(LCX_USER_HOME, "Desktop", "openclaw");
+// Resolve the owner's real home independently of a temporary HOME used by
+// isolated checks; callers can still override it explicitly for a sandbox.
+export const LCX_USER_HOME = process.env.LCX_USER_HOME?.trim() || os.userInfo().homedir;
 export const DEFAULT_LAUNCH_AGENTS_DIR = path.join(LCX_USER_HOME, "Library", "LaunchAgents");
 export const DEFAULT_OPENCLAW_LOG_DIR = path.join(LCX_USER_HOME, ".openclaw", "logs");
 export const DEFAULT_LAUNCH_AGENT_PATH = [

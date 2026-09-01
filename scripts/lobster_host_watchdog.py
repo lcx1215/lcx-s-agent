@@ -157,12 +157,11 @@ def probe_external_channel_proxy_health(timeout_seconds: float = 3.0) -> dict[st
 def build_external_channel_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
     launchd = inspect_launchagent(EXTERNAL_CHANNEL_PROXY_LABEL, skip_launchd=skip_launchd)
     err_tail = read_tail(EXTERNAL_CHANNEL_PROXY_ERR_LOG)
-    desktop_root = "/Users/liuchengxu/Desktop/openclaw"
-    runtime_root = "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw"
+    runtime_root = Path.home() / ".openclaw" / "external-channel-runtime" / "lcx-s-openclaw"
     args_text = "\n".join(str(item) for item in launchd.get("program_arguments", []))
     working_directory = str(launchd.get("working_directory") or "")
-    points_at_desktop = desktop_root in args_text or working_directory == desktop_root
-    points_at_runtime = runtime_root in args_text or working_directory == runtime_root
+    points_at_runtime = str(runtime_root) in args_text or working_directory == str(runtime_root)
+    root_drift = bool(launchd.get("known") and launchd.get("running") and not points_at_runtime)
     error_markers = [
         marker
         for marker in [
@@ -184,14 +183,14 @@ def build_external_channel_proxy_snapshot(skip_launchd: bool = False) -> dict[st
         status = "not_running"
     elif error_markers and not stale_error_markers:
         status = "log_errors"
-    elif points_at_desktop:
+    elif root_drift:
         status = "root_drift"
     return {
         "status": status,
         "label": EXTERNAL_CHANNEL_PROXY_LABEL,
         "launchd": launchd,
-        "points_at_desktop": points_at_desktop,
         "points_at_runtime": points_at_runtime,
+        "root_drift": root_drift,
         "error_markers": error_markers,
         "stale_error_markers": stale_error_markers,
         "health": health,

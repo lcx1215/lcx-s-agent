@@ -1,5 +1,9 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { LCX_USER_HOME } from "./lcx-local-paths.ts";
+
+const CODEX_SKILLS_ROOT = path.join(LCX_USER_HOME, ".codex", "skills");
+const skillEntrypoint = (name: string): string => path.join(CODEX_SKILLS_ROOT, name, "SKILL.md");
 
 type CandidateId =
   | "skillopt_v2_autoskill_coach"
@@ -384,7 +388,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "agent security controls for tool poisoning, prompt injection, privilege escalation, authentication, policy enforcement, and audit logging",
     adoptionMode: "secure_tool_permission_probe",
     existingOwner: "skill harvester, CLI-Anything harvester, and security threat model",
-    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+    ownerEntrypoint: skillEntrypoint("security-threat-model"),
     ownerUseTrigger:
       "When a future task asks to add tools, MCP servers, CLI wrappers, desktop control, external skills, or agent permissions, run security ownership/threat-model checks before granting authority.",
     autocueTerms: [
@@ -470,7 +474,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "make computer or GUI workflows controllable through either visual computer-use agents or generated CLI wrappers",
     adoptionMode: "computer_use_cli_probe",
     existingOwner: "skill harvester and CLI-Anything harvester",
-    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+    ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
     ownerUseTrigger:
       "When a future task asks for Agent S, CLI-Anything, CLI-Hub, or desktop software CLI wrappers, use cli-anything-harvester before any wrapper is trusted.",
     autocueTerms: ["Agent S", "CLI-Anything", "CLI-Hub", "desktop control"],
@@ -508,7 +512,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     adoptionMode: "github_cli_agentic_workflow_probe",
     existingOwner:
       "GitHub CLI wrapper planning, CLI-Anything harvester, and secure tool permission layer",
-    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+    ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
     ownerUseTrigger:
       "When a future task asks where GitHub CLI lives, asks to use gh, Copilot CLI, gh-aw, GitHub MCP, gh extensions, PR agents, issue agents, or GitHub agent workflow automation, first classify the command as read-only discovery, local-only wrapper, remote write, or agent delegation before any execution.",
     autocueTerms: [
@@ -950,7 +954,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     priority: 6,
     label: "Secure tool and skill permission layer",
     sourceCandidates: ["secure_tool_skill_permission_layer", "computer_use_cli_bridge"],
-    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+    ownerEntrypoint: skillEntrypoint("security-threat-model"),
     automaticTrigger:
       "When a task proposes a CLI wrapper, MCP server, external skill, browser/desktop bridge, credentialed tool, or install, route through skill-harvester plus security threat-model gates first.",
     ownerGate:
@@ -995,7 +999,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     priority: 7,
     label: "GitHub CLI agentic control plane",
     sourceCandidates: ["github_cli_agentic_workflow_control"],
-    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+    ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
     automaticTrigger:
       "When GitHub CLI, gh extension, GitHub MCP, gh-aw, Copilot CLI, issue agent, PR agent, or remote repo automation wording appears, external upgrade radar routes it to CLI-Anything plus security review before any write-capable command.",
     ownerGate:

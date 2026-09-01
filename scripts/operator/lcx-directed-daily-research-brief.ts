@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
 
 type CliOptions = {
   json: boolean;
@@ -16,8 +17,6 @@ type ResearchTask = {
   output: string;
   invalidation: string[];
 };
-
-const DEFAULT_WORKSPACE_DIR = "/Users/liuchengxu/.openclaw/workspace";
 
 const INDEX_OPTION_UNIVERSE = ["SPX", "NDX", "QQQ", "SPY", "IWM", "VIX", "VVIX", "TLT"] as const;
 

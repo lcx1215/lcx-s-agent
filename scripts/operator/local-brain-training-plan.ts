@@ -464,8 +464,11 @@ const extractAdapterFromCommand = (command: string): string | undefined => {
 };
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_EXTERNAL_CHANNEL_BINDING_SNAPSHOT_PATH =
-  "/Users/liuchengxu/.openclaw/workspace/state/lcx-external-channel-binding-latest.json";
+const DEFAULT_EXTERNAL_CHANNEL_BINDING_SNAPSHOT_PATH = path.join(
+  DEFAULT_WORKSPACE_DIR,
+  "state",
+  "lcx-external-channel-binding-latest.json",
+);
 const QWEN_MIGRATION_CURRENT_MODEL = "Qwen/Qwen3-0.6B" as const;
 const QWEN_MIGRATION_CANDIDATE_MODEL = "Qwen/Qwen3-1.7B" as const;
 const MIN_QWEN_1_7B_SMOKE_MEMORY_BYTES = 8 * 1024 * 1024 * 1024;

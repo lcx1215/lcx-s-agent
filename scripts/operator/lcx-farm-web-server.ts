@@ -1,16 +1,16 @@
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readGlobalEvidenceProjectionForAdapter } from "../../src/shared/global-evidence-projection-read.ts";
+import { DEFAULT_WORKSPACE_DIR, LCX_USER_HOME } from "./lcx-local-paths.ts";
 
 type JsonObject = Record<string, unknown>;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
 const staticRoot = path.join(repoRoot, "apps/web/lcx-agent-farm");
-const stateRoot = path.join(os.homedir(), ".openclaw/workspace/state");
+const stateRoot = path.join(DEFAULT_WORKSPACE_DIR, "state");
 
 function argValue(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);
@@ -98,7 +98,7 @@ function lastPath(value: string | undefined): string {
 }
 
 function sshConfigStatus(): string {
-  const sshConfig = path.join(os.homedir(), ".ssh/config");
+  const sshConfig = path.join(LCX_USER_HOME, ".ssh/config");
   if (!fs.existsSync(sshConfig)) {
     return "missing_ssh_config";
   }

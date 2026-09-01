@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
+import { DEFAULT_WORKSPACE_DIR, LCX_USER_HOME } from "./lcx-local-paths.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -1294,8 +1294,14 @@ export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
   const l5Battery = options.l5
     ? await runCommand({
         name: "l5-regression-batterer",
-        command:
-          "/Users/liuchengxu/.codex/skills/l5-regression-batterer/scripts/l5-regression-batterer.sh",
+        command: path.join(
+          LCX_USER_HOME,
+          ".codex",
+          "skills",
+          "l5-regression-batterer",
+          "scripts",
+          "l5-regression-batterer.sh",
+        ),
         args: ["--local"],
         timeoutMs: Math.max(options.timeoutMs, 120_000),
       })

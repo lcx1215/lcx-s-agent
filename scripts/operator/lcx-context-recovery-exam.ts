@@ -1379,7 +1379,7 @@ async function main() {
       "node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json",
       "node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json",
       "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
-      "test -f /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json && sed -n '1,220p' /Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json",
+      `test -f ${LOCAL_OPERATOR_LATEST_PATH} && sed -n '1,220p' ${LOCAL_OPERATOR_LATEST_PATH}`,
     ],
     checks,
     actionableFailures: failed.map((check) => `${check.id}: ${check.summary}`),
