@@ -1,164 +1,88 @@
-<!-- Owns contribution workflow expectations for OpenClaw and the Lobster fork. -->
+# Contributing
 
-# Contributing to OpenClaw
+This is an evolving Agent project. Contributions may improve the current
+implementation or explore a replacement runtime, orchestration style, Skill,
+plugin, connector, or evaluation path. The repository contract is intentionally
+implementation-neutral; read [AGENTS.md](AGENTS.md) and [README.md](README.md)
+before choosing a technical direction.
 
-Welcome to the lobster tank! 🦞
+## Start with the current source
 
-## Quick Links
+Before editing:
 
-- **GitHub:** https://github.com/openclaw/openclaw
-- **Vision:** [`VISION.md`](VISION.md)
-- **Discord:** https://discord.gg/qkhbAGHRBT
-- **X/Twitter:** [@steipete](https://x.com/steipete) / [@openclaw](https://x.com/openclaw)
+1. inspect `git status --short --branch` and the current worktree ownership;
+2. read the nearest runbook, manifest, lockfile, and relevant tests;
+3. identify the smallest seam that can answer the next question;
+4. preserve unrelated staged, unstaged, untracked, and durable evidence.
 
-## Maintainers
+Do not copy commands, paths, model/provider choices, or architecture assumptions
+from an old issue or inherited document without checking the current source.
 
-- **Peter Steinberger** - Benevolent Dictator
-  - GitHub: [@steipete](https://github.com/steipete) · X: [@steipete](https://x.com/steipete)
+## Change in small slices
 
-- **Shadow** - Discord subsystem, Discord admin, Clawhub, all community moderation
-  - GitHub: [@thewilloftheshadow](https://github.com/thewilloftheshadow) · X: [@4shad0wed](https://x.com/4shad0wed)
+Prefer:
 
-- **Vignesh** - Memory (QMD), formal modeling, TUI, IRC, and Lobster
-  - GitHub: [@vignesh07](https://github.com/vignesh07) · X: [@\_vgnsh](https://x.com/_vgnsh)
+- a focused change with one clear owner;
+- a small adapter or compatibility seam when replacing an implementation;
+- a shadow or experiment path when the new behavior is not yet trusted;
+- a regression or contract test for a failure that actually occurred;
+- a short receipt describing what was observed and what remains unknown.
 
-- **Jos** - Telegram, API, Nix mode
-  - GitHub: [@joshp123](https://github.com/joshp123) · X: [@jjpcodes](https://x.com/jjpcodes)
+Do not design the entire future Agent before running the first safe experiment.
+Let real output and failure determine the next change. Promote a pattern to a
+shared rule only after it repeats or a concrete failure shows that it helps.
 
-- **Ayaan Zaidi** - Telegram subsystem, iOS app
-  - GitHub: [@obviyus](https://github.com/obviyus) · X: [@0bviyus](https://x.com/0bviyus)
+## New Agent systems and external code
 
-- **Tyler Yust** - Agents/subagents, cron, BlueBubbles, macOS app
-  - GitHub: [@tyler6204](https://github.com/tyler6204) · X: [@tyleryust](https://x.com/tyleryust)
+External repositories are implementation inputs, not authority. Before adopting
+code from another project, inspect the exact revision, license, provenance,
+dependencies, install scripts, permissions, network and credential behavior,
+data handling, tests, and rollback path. Keep vendor-specific assumptions at
+the edge. Do not copy secrets or execute unknown lifecycle scripts merely to
+make a demo work.
 
-- **Mariano Belinky** - iOS app, Security
-  - GitHub: [@mbelinky](https://github.com/mbelinky) · X: [@belimad](https://x.com/belimad)
+A new Agent or Multi-Agent system may replace the current path when its useful
+slice is locally observable, its failure modes are understood enough for the
+scope, and it has a clear disable/rollback route. Do not create a silent second
+repository, runtime, brain, or answer authority.
 
-- **Nimrod Gutman** - iOS app, macOS app and crustacean features
-  - GitHub: [@ngutman](https://github.com/ngutman) · X: [@theguti](https://x.com/theguti)
+## Skills, plugins, and connectors
 
-- **Vincent Koc** - Agents, Telemetry, Hooks, Security
-  - GitHub: [@vincentkoc](https://github.com/vincentkoc) · X: [@vincent_koc](https://x.com/vincent_koc)
+Use a Skill only when the task matches its scope. Verify its current source,
+frontmatter, referenced files, owner paths, permissions, and side effects.
+Compatibility copies, caches, and generated bundles are not automatically the
+source of truth. Do not batch-rewrite or install a large Skill set just to make
+the inventory uniform.
 
-- **Val Alexander** - UI/UX, Docs, and Agent DevX
-  - GitHub: [@BunsDev](https://github.com/BunsDev) · X: [@BunsDev](https://x.com/BunsDev)
+## Verification
 
-- **Seb Slight** - Docs, Agent Reliability, Runtime Hardening
-  - GitHub: [@sebslight](https://github.com/sebslight) · X: [@sebslig](https://x.com/sebslig)
+Discover the package manager and checks from the current manifest and lockfile.
+Run the least-cost check that can falsify the current hypothesis, then deepen
+for risky or surprising results. Depending on the change, this may be a focused
+unit/contract test, type check, lint/format check, integration check, or smoke
+test. Report unavailable checks honestly.
 
-- **Christoph Nakazawa** - JS Infra
-  - GitHub: [@cpojer](https://github.com/cpojer) · X: [@cnakazawa](https://x.com/cnakazawa)
+For user-visible, external-channel, deployment, security, finance, or other
+high-stakes changes, keep local verification separate from real-world
+observation. Do not claim that a local replay, receipt, successful parse, or
+passing demo proves the external outcome.
 
-- **Gustavo Madeira Santana** - Multi-agents, CLI, web UI
-  - GitHub: [@gumadeiras](https://github.com/gumadeiras) · X: [@gumadeiras](https://x.com/gumadeiras)
+## Git and pull requests
 
-- **Onur Solmaz** - Agents, dev workflows, ACP integrations, MS Teams
-  - GitHub: [@onutc](https://github.com/onutc), [@osolmaz](https://github.com/osolmaz) · X: [@onusoz](https://x.com/onusoz)
+- Stage and commit only files owned by the current contribution.
+- Keep commit, push, pull/rebase, PR creation, review, merge, release, and
+  deployment as separate states.
+- Do not use blanket staging or destructive cleanup in a shared worktree.
+- Do not remove branches, worktrees, or files without exact scope and explicit
+  authorization.
+- Explain the actual change and verification in the PR; do not claim checks,
+  review, or deployment that did not happen.
+- If AI assistance was used, describe it and state the real testing level.
 
-- **Josh Avant** - Core, CLI, Gateway, Security, Agents
-  - GitHub: [@joshavant](https://github.com/joshavant) · X: [@joshavant](https://x.com/joshavant)
+## Security
 
-- **Jonathan Taylor** - ACP subsystem, Gateway features/bugs, Gog/Mog/Sog CLI's, SEDMAT
-  - Github [@visionik](https://github.com/visionik) · X: [@visionik](https://x.com/visionik)
-- **Josh Lehman** - Compaction, Tlon/Urbit subsystem
-  - Github [@jalehman](https://github.com/jalehman) · X: [@jlehman\_](https://x.com/jlehman_)
-
-## How to Contribute
-
-1. **Bugs & small fixes** → Open a PR!
-2. **New features / architecture** → Start a [GitHub Discussion](https://github.com/openclaw/openclaw/discussions) or ask in Discord first
-3. **Questions** → Discord [#help](https://discord.com/channels/1456350064065904867/1459642797895319552) / [#users-helping-users](https://discord.com/channels/1456350064065904867/1459007081603403828)
-
-## Before You PR
-
-- Test locally with your OpenClaw instance
-- Run tests: `pnpm build && pnpm check && pnpm test`
-- Ensure CI checks pass
-- Keep PRs focused (one thing per PR; do not mix unrelated concerns)
-- Describe what & why
-- **Include screenshots** — one showing the problem/before, one showing the fix/after (for UI or visual changes)
-
-## Control UI Decorators
-
-The Control UI uses Lit with **legacy** decorators (current Rollup parsing does not support
-`accessor` fields required for standard decorators). When adding reactive fields, keep the
-legacy style:
-
-```ts
-@state() foo = "bar";
-@property({ type: Number }) count = 0;
-```
-
-The root `tsconfig.json` is configured for legacy decorators (`experimentalDecorators: true`)
-with `useDefineForClassFields: false`. Avoid flipping these unless you are also updating the UI
-build tooling to support standard decorators.
-
-## AI/Vibe-Coded PRs Welcome! 🤖
-
-Built with Codex, Claude, or other AI tools? **Awesome - just mark it!**
-
-Please include in your PR:
-
-- [ ] Mark as AI-assisted in the PR title or description
-- [ ] Note the degree of testing (untested / lightly tested / fully tested)
-- [ ] Include prompts or session logs if possible (super helpful!)
-- [ ] Confirm you understand what the code does
-
-AI PRs are first-class citizens here. We just want transparency so reviewers know what to look for.
-
-## Current Focus & Roadmap 🗺
-
-We are currently prioritizing:
-
-- **Stability**: Fixing edge cases in channel connections (WhatsApp/Telegram).
-- **UX**: Improving the onboarding wizard and error messages.
-- **Skills**: For skill contributions, head to [ClawHub](https://clawhub.ai/) — the community hub for OpenClaw skills.
-- **Performance**: Optimizing token usage and compaction logic.
-
-Check the [GitHub Issues](https://github.com/openclaw/openclaw/issues) for "good first issue" labels!
-
-## Maintainers
-
-We're selectively expanding the maintainer team.
-If you're an experienced contributor who wants to help shape OpenClaw's direction — whether through code, docs, or community — we'd like to hear from you.
-
-Being a maintainer is a responsibility, not an honorary title. We expect active, consistent involvement — triaging issues, reviewing PRs, and helping move the project forward.
-
-Still interested? Email contributing@openclaw.ai with:
-
-- Links to your PRs on OpenClaw (if you don't have any, start there first)
-- Links to open source projects you maintain or actively contribute to
-- Your GitHub, Discord, and X/Twitter handles
-- A brief intro: background, experience, and areas of interest
-- Languages you speak and where you're based
-- How much time you can realistically commit
-
-We welcome people across all skill sets — engineering, documentation, community management, and more.
-We review every human-only-written application carefully and add maintainers slowly and deliberately.
-Please allow a few weeks for a response.
-
-## Report a Vulnerability
-
-We take security reports seriously. Report vulnerabilities directly to the repository where the issue lives:
-
-- **Core CLI and gateway** — [openclaw/openclaw](https://github.com/openclaw/openclaw)
-- **macOS desktop app** — [openclaw/openclaw](https://github.com/openclaw/openclaw) (apps/macos)
-- **iOS app** — [openclaw/openclaw](https://github.com/openclaw/openclaw) (apps/ios)
-- **Android app** — [openclaw/openclaw](https://github.com/openclaw/openclaw) (apps/android)
-- **ClawHub** — [openclaw/clawhub](https://github.com/openclaw/clawhub)
-- **Trust and threat model** — [openclaw/trust](https://github.com/openclaw/trust)
-
-For issues that don't fit a specific repo, or if you're unsure, email **security@openclaw.ai** and we'll route it.
-
-### Required in Reports
-
-1. **Title**
-2. **Severity Assessment**
-3. **Impact**
-4. **Affected Component**
-5. **Technical Reproduction**
-6. **Demonstrated Impact**
-7. **Environment**
-8. **Remediation Advice**
-
-Reports without reproduction steps, demonstrated impact, and remediation advice will be deprioritized. Given the volume of AI-generated scanner findings, we must ensure we're receiving vetted reports from researchers who understand the issues.
+Report security issues privately through the current process in
+[SECURITY.md](SECURITY.md). Do not publish credentials, private data, exploit
+details, or live configuration in issues, pull requests, fixtures, logs, or
+screenshots. Changes that affect trust boundaries, authentication, permissions,
+execution, or external messaging need focused security review.
