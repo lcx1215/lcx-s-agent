@@ -16,17 +16,25 @@ Use this file together with:
 - `MEMORY.md`
 - `memory/current-research-line.md`
 - `memory/current_state.md`
-- `ops/external-channel-history/2026-03-27-workspace-division.md`
-- `ops/external-channel-history/2026-03-27-workspace-role-runbook.md`
+- `ops/external-channel-acceptance-runbook.md`
+- `ops/external-channel-history/2026-04-02-learning-council-runtime-contract-and-feishu-runbook.md`
 
 Entries with explicit historical dates preserve their original receipt wording
 for auditability; they are not current repository or runtime authority.
+The former `2026-03-27-workspace-division.md` and
+`2026-03-27-workspace-role-runbook.md` references are retained as a historical
+compatibility/migration gap only; those files are not present at this PR head.
 
 ## Observed In The Local System
 
 - This canonical repository is `lcx-s-openclaw`; local parallel work uses linked Git worktrees.
-- The Feishu interface code being edited here lives under:
-  - `extensions/feishu/src/*`
+- The current vendor-neutral external-channel interface lives under:
+  - `extensions/external/src/channel.ts` (channel registration and dispatch)
+  - `extensions/external/src/monitor.ts` (webhook ingress and authorization)
+  - `extensions/external/src/send.ts` (HTTP JSON outbound delivery)
+- The former Feishu-specific source root `extensions/feishu/src/*` was removed
+  before this PR head. Dated Feishu source references below are historical
+  compatibility evidence, not current implementation pointers.
 - The shared-brain / artifact-contract skeleton being built here lives mainly under:
   - `src/hooks/bundled/*`
   - `src/agents/*`
@@ -37,7 +45,7 @@ for auditability; they are not current repository or runtime authority.
   - fundamental artifact-chain hooks
   - operating / control hooks
   - anomaly / artifact-error guardrails
-  - Feishu learning-council seam
+  - provider learning-council seam (`src/agents/provider-learning-council.ts`)
   - MiniMax default-model registry seam
 - There is now a registry-backed dev artifact contract at:
   - `src/hooks/bundled/lobster-brain-registry.ts`
@@ -231,13 +239,15 @@ for auditability; they are not current repository or runtime authority.
   - `lcx-s-openclaw`
 - The external-channel runtime is a deployment checkout of that same source at:
   - `~/.openclaw/external-channel-runtime/lcx-s-openclaw`
-- The canonical repository contains the editable Feishu source:
-  - `extensions/feishu/src/*`
-- Feishu behavior changes are applied through the bounded four-stage migration:
-  1. copy to the neutral runtime and verify hashes
-  2. prefer the neutral path with a read-only legacy fallback during cutover
-  3. restart in an idle window and run runtime/probe/visibility checks
-  4. archive the legacy runtime only after zero reads and zero new writes
+- The canonical repository's current external-channel entrypoints are:
+  - `extensions/external/src/channel.ts`
+  - `extensions/external/src/monitor.ts`
+  - `extensions/external/src/send.ts`
+- The Feishu-specific implementation is not present at this PR head. Feishu
+  compatibility and any target-software migration remain an explicit gap; the
+  neutral adapter must not be described as Feishu restoration.
+- Use `ops/external-channel-acceptance-runbook.md` for the current
+  vendor-neutral local verification and explicitly authorized binding path.
 
 ## Hard Boundary
 
@@ -271,22 +281,32 @@ Treat this repo as:
 
 ## Recent Repo-Grounded Verified Work
 
-The following are repo-grounded and recently re-verified here:
+The following dated entries preserve historical, repo-grounded evidence from
+before the neutral-adapter migration. Former Feishu source/test locators are
+marked as deleted historical paths; current central replacements or the
+remaining neutral transport entry are named only where they are actually
+present. None of these entries proves current Feishu support.
 
-- Feishu learning-council default-model alignment
-  - `extensions/feishu/src/learning-council.ts`
-  - `extensions/feishu/src/learning-council.test.ts`
-  - verified by:
+- Feishu learning-council default-model alignment (historical compatibility record)
+  - deleted historical source locator: `extensions/feishu/src/learning-council.ts`
+  - current central council entry: `src/agents/provider-learning-council.ts`
+  - deleted historical test locator: `extensions/feishu/src/learning-council.test.ts`
+  - historical verification evidence:
     - `extensions/feishu/src/learning-council.test.ts`
     - `extensions/feishu/src/bot.test.ts`
     - `extensions/feishu/src/feishu-command-handler.test.ts`
-    - `pnpm build`
-- Feishu learning-council now also hardens high-value self-improvement learning into a compact distillation pack
-  - `extensions/feishu/src/learning-council.ts`
-  - `extensions/feishu/src/learning-council.test.ts`
-  - verified by:
+  - no feature-equivalent council implementation exists under `extensions/external`; its current transport entry is `extensions/external/src/channel.ts`
+  - `pnpm build`
+- Feishu learning-council now also hardens high-value self-improvement learning into a compact distillation pack (historical compatibility record)
+  - deleted historical source/test locators:
+    - `extensions/feishu/src/learning-council.ts`
     - `extensions/feishu/src/learning-council.test.ts`
-    - `pnpm build`
+  - current central council entry: `src/agents/provider-learning-council.ts`
+  - historical verification evidence:
+    - `extensions/feishu/src/learning-council.test.ts`
+  - current neutral transport entry (not feature-equivalent): `extensions/external/src/channel.ts`
+  - compatibility/migration gap: no current `extensions/external` learning-council or Feishu-visible distillation surface
+  - `pnpm build`
   - current truth boundary:
     - Kimi now asks for distilled keepers + replay triggers
     - DeepSeek now asks for distillation-ready rules + replay triggers
@@ -295,14 +315,15 @@ The following are repo-grounded and recently re-verified here:
     - the bounded learning-council memory note now persists and parses those distilled fields
     - `src/hooks/bundled/learning-review-weekly/handler.ts` now prefers those parsed keep/discard/rehearsal/eval cues when promoting council notes into weekly learning memory
     - this is prompt/artifact hardening, not model training, and not proof of live runtime behavior
-- Feishu `learning_command` now also has a bounded process-local repeated-learning timebox seam
-  - `extensions/feishu/src/learning-timebox.ts`
-  - integrated via:
-    - `extensions/feishu/src/bot.ts`
-  - verified by:
+- Feishu `learning_command` now also has a bounded process-local repeated-learning timebox seam (historical Feishu-only seam; compatibility/migration gap)
+  - deleted historical source locator: `extensions/feishu/src/learning-timebox.ts`
+  - deleted historical integration locator: `extensions/feishu/src/bot.ts`
+  - historical verification evidence:
     - `extensions/feishu/src/learning-timebox.test.ts`
     - `extensions/feishu/src/bot.test.ts`
-    - `pnpm build`
+  - current neutral transport entry (not feature-equivalent): `extensions/external/src/channel.ts`
+  - no current `extensions/external` command/timebox equivalent
+  - `pnpm build`
   - current truth boundary:
     - one immediate audited learning pass still happens first
     - but same-chat duplicate timebox requests are now intercepted before they can trigger a second immediate learning pass
@@ -312,12 +333,14 @@ The following are repo-grounded and recently re-verified here:
     - background repeated learning is process-bound only
     - session state/receipts are workspace artifacts, not proof of restart persistence
     - same-chat duplicate timeboxes are rejected instead of running in parallel
-- Feishu startup now also reconciles stale process-bound learning timeboxes
-  - `extensions/feishu/src/monitor.ts`
-  - verified by:
+- Feishu startup now also reconciles stale process-bound learning timeboxes (historical Feishu-only seam; compatibility/migration gap)
+  - deleted historical source locator: `extensions/feishu/src/monitor.ts`
+  - current external webhook lifecycle entry (not feature-equivalent): `extensions/external/src/monitor.ts`
+  - historical verification evidence:
     - `extensions/feishu/src/learning-timebox.test.ts`
     - `extensions/feishu/src/monitor.startup.test.ts`
-    - `pnpm build`
+  - no current `extensions/external` startup/timebox recovery equivalent
+  - `pnpm build`
   - current truth boundary:
     - startup now scans all configured agent workspaces, not only the default agent workspace
     - if a leftover `running` session is still before `deadlineAt`, startup now restores it into the in-process scheduler
@@ -416,14 +439,18 @@ The following are repo-grounded and recently re-verified here:
   - verified by targeted Vitest + Oxlint + parser smoke checks
 - learning-council memory notes now share one writer/reader contract across Feishu and current dev-side consumers
   - `src/hooks/bundled/lobster-brain-registry.ts`
-  - `extensions/feishu/src/learning-council.ts`
+  - current central writer: `src/agents/provider-learning-council.ts`
+  - deleted historical Feishu writer locator: `extensions/feishu/src/learning-council.ts`
+  - `extensions/external` has no feature-equivalent Feishu memory-note writer
   - `src/hooks/bundled/memory-hygiene-weekly/handler.ts`
   - `src/hooks/bundled/operating-daily-workface/handler.ts`
   - `src/hooks/bundled/learning-review-weekly/handler.ts`
   - verified by targeted Vitest + Oxlint + parser smoke checks
 - learning-council runtime JSON artifacts now also share one writer/reader contract across Feishu and operating-daily-workface
   - `src/hooks/bundled/lobster-brain-registry.ts`
-  - `extensions/feishu/src/learning-council.ts`
+  - current central writer: `src/agents/provider-learning-council.ts`
+  - deleted historical Feishu writer locator: `extensions/feishu/src/learning-council.ts`
+  - `extensions/external` has no feature-equivalent Feishu runtime-artifact writer
   - `src/hooks/bundled/operating-daily-workface/handler.ts`
   - verified by targeted Vitest + Oxlint + parser smoke checks
 - learning-review notes now also share one writer/reader contract across:
@@ -471,25 +498,33 @@ The following are repo-grounded and recently re-verified here:
   - `src/hooks/bundled/frontier-research/handler.ts`
   - `src/hooks/bundled/frontier-research-weekly/handler.ts`
   - verified by targeted Vitest + Oxlint
-- Feishu probe-result health interpretation now also shares one helper-backed contract across:
-  - `extensions/feishu/src/probe.ts`
-  - `extensions/feishu/src/monitor.startup.ts`
-  - `extensions/feishu/src/onboarding.ts`
-  - verified by targeted Vitest + Oxlint for:
+- Feishu probe-result health interpretation now also shares one helper-backed contract across (historical Feishu-only seam; compatibility/migration gap):
+  - deleted historical source locators:
+    - `extensions/feishu/src/probe.ts`
+    - `extensions/feishu/src/monitor.startup.ts`
+    - `extensions/feishu/src/onboarding.ts`
+  - current neutral webhook/authorization lifecycle entry (not feature-equivalent): `extensions/external/src/monitor.ts`
+  - historical verification evidence:
     - `extensions/feishu/src/probe.test.ts`
     - `extensions/feishu/src/monitor.startup.test.ts`
     - `extensions/feishu/src/onboarding.test.ts`
+  - no current `extensions/external` probe/onboarding equivalent
     - `src/commands/channels/status.test.ts`
 - Feishu learning-council memory-note date anchoring now also uses the shared ISO date-key helper
-  - `extensions/feishu/src/learning-council.ts`
-  - `extensions/feishu/src/learning-council.test.ts`
+  - current central source: `src/agents/provider-learning-council.ts`
+  - deleted historical source/test locators:
+    - `extensions/feishu/src/learning-council.ts`
+    - `extensions/feishu/src/learning-council.test.ts`
+  - `extensions/external` has no feature-equivalent council date-anchoring surface
   - verified by targeted Vitest + Oxlint
 - portfolio-answer-scorecard and knowledge-validation-weekly artifacts now also share one renderer/parser contract across:
   - `src/hooks/bundled/lobster-brain-registry.ts`
   - `src/hooks/bundled/operating-weekly-review/handler.ts`
   - `src/hooks/bundled/knowledge-validation-weekly/handler.ts`
   - `src/hooks/bundled/operating-daily-workface/handler.ts`
-  - `extensions/feishu/src/bot.ts`
+  - deleted historical Feishu integration locator: `extensions/feishu/src/bot.ts`
+  - current neutral inbound entry (not feature-equivalent): `extensions/external/src/channel.ts`
+  - Feishu control-room parity remains a compatibility/migration gap
   - verified by targeted Vitest + Oxlint + parser/renderer smoke checks
 - correction-note content now also shares one renderer/parser contract across:
   - `src/hooks/bundled/lobster-brain-registry.ts`
@@ -501,13 +536,17 @@ The following are repo-grounded and recently re-verified here:
 - lobster-workface artifact now also shares one filename/render/parse contract across:
   - `src/hooks/bundled/lobster-brain-registry.ts`
   - `src/hooks/bundled/operating-daily-workface/handler.ts`
-  - `extensions/feishu/src/bot.ts`
+  - deleted historical Feishu integration locator: `extensions/feishu/src/bot.ts`
+  - current neutral inbound entry (not feature-equivalent): `extensions/external/src/channel.ts`
+  - Feishu workface parity remains a compatibility/migration gap
   - `src/hooks/bundled/memory-hygiene-weekly/handler.ts`
   - verified by targeted Vitest + Oxlint + parser/renderer smoke checks
 - control-room summaries for lobster-workface, portfolio-answer-scorecard, and
   knowledge-validation-weekly now also share one builder contract across:
   - `src/hooks/bundled/lobster-brain-registry.ts`
-  - `extensions/feishu/src/bot.ts`
+  - deleted historical Feishu integration locator: `extensions/feishu/src/bot.ts`
+  - current neutral inbound entry (not feature-equivalent): `extensions/external/src/channel.ts`
+  - Feishu control-room builder parity remains a compatibility/migration gap
   - verified by targeted Feishu bot Vitest + Oxlint
 - repair-ticket and Codex-escalation artifacts now also expose shared derived date keys across current control-family readers
   - `src/hooks/bundled/lobster-brain-registry.ts`
@@ -527,7 +566,9 @@ The following are repo-grounded and recently re-verified here:
     - `src/hooks/bundled/operating-loop/handler.test.ts`
 - Feishu surface-memory artifacts now also share one renderer/parser contract across:
   - `src/hooks/bundled/lobster-brain-registry.ts`
-  - `extensions/feishu/src/bot.ts`
+  - deleted historical Feishu integration locator: `extensions/feishu/src/bot.ts`
+  - current neutral inbound entry (not feature-equivalent): `extensions/external/src/channel.ts`
+  - Feishu surface-memory parity remains a compatibility/migration gap
   - `src/hooks/bundled/operating-daily-workface/handler.ts`
   - covering:
     - surface line artifacts
@@ -596,7 +637,7 @@ Before changing code again:
 2. read `memory/current-research-line.md`
 3. read `memory/current_state.md`
 4. read this file
-5. read `ops/external-channel-feishu-acceptance-runbook.md` before claiming any Feishu/external-channel verification plan
+5. read `ops/external-channel-acceptance-runbook.md` before claiming any external-channel verification plan; the deleted Feishu-specific runbook remains a historical compatibility/migration gap
 6. separate:
    - observed
    - inferred
@@ -616,7 +657,8 @@ Prefer this order:
 
 ## Newly Closed Control-Room Hole
 
-- broad control-room aggregate asks were still at risk of inheriting a specialist state lane in `extensions/feishu/src/bot.ts`
+- broad control-room aggregate asks were still at risk of inheriting a specialist state lane in the deleted Feishu integration (`extensions/feishu/src/bot.ts`, historical locator)
+- current neutral inbound entry: `extensions/external/src/channel.ts`; equivalent Feishu control-room routing remains a compatibility/migration gap
 - the bounded fix now pins only `includeDailyWorkface=true` control-room aggregates back to `control_room` for:
   - session scoping
   - feishu surface-memory ledger writes
