@@ -90,6 +90,13 @@ are present. finance_learning_memory stores evidence and learned rules only
 after the source-to-application chain is proven; stored text is not learned
 capability and no output is a trade instruction.
 
+Local-brain curriculum has its own neutral prompt contract: source provenance,
+case identifiers, and teacher summaries stay in receipts/meta rather than the
+model-visible prompt. Dataset and train-slice rows pass the shared shape and
+task-semantic gate; quarantined rows remain evidence and do not become training
+inputs. This gate proves sample hygiene only, never weight absorption,
+promotion, external-channel binding, or user-visible success.
+
 ## Governance Stack Autopilot
 
 The read-only governance stack keeps the owner checks visible without making a

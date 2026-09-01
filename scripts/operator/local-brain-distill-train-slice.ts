@@ -3,6 +3,11 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
+import {
+  buildLocalBrainTrainingPrompt,
+  evaluateLocalBrainCurriculumGate,
+  LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+} from "./local-brain-training-contract.js";
 
 type CliOptions = {
   dataDir: string;
@@ -19,6 +24,8 @@ type JsonRecord = {
   meta?: {
     sourceKind?: unknown;
     sourcePath?: unknown;
+    promptContractVersion?: unknown;
+    promptContractRewritten?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -47,6 +54,7 @@ type ReviewCandidate = {
   signature: string;
   qualityTier: string;
   failureFamily: string;
+  curriculumAdmitted: boolean;
 };
 
 const DEFAULT_DATA_DIR = path.join(
@@ -177,6 +185,10 @@ function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
+function normalizedPairSignature(prompt: string, completion: string): string {
+  return hashText(`${normalizedContent(prompt)}\n${normalizedContent(completion)}`);
+}
+
 function completionRecord(record: JsonRecord): Record<string, unknown> | undefined {
   if (typeof record.completion !== "string") {
     return undefined;
@@ -281,11 +293,15 @@ function teacherReviewSignature(record: JsonRecord): string {
 }
 
 function reviewCandidateForRecord(index: number, record: JsonRecord): ReviewCandidate {
+  const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim() ?? "";
+  const gate = evaluateLocalBrainCurriculumGate(userAsk, completionRecord(record) ?? {});
   return {
     index,
     signature: teacherReviewSignature(record),
     qualityTier: qualityTierForTeacherReview(record),
     failureFamily: failureFamilyForTeacherReview(record),
+    curriculumAdmitted: gate.admitted,
   };
 }
 
@@ -372,10 +388,13 @@ function targetReviewIndexes(
   reviewCandidates: ReviewCandidate[],
   maxReviewExamples: number,
 ): Set<number> {
+  const eligibleReviewCandidates = reviewCandidates.filter(
+    (candidate) => candidate.curriculumAdmitted,
+  );
   const selectedIndexes = new Set<number>();
   const selectedSignatures = new Set<string>();
   const familyQueues = new Map<string, ReviewCandidate[]>();
-  const candidates = reviewCandidates.toSorted((left, right) => {
+  const candidates = eligibleReviewCandidates.toSorted((left, right) => {
     const qualityOrder =
       Number(right.qualityTier === "contract_complete_high_signal") -
       Number(left.qualityTier === "contract_complete_high_signal");
@@ -414,26 +433,89 @@ function targetReviewIndexes(
       break;
     }
   }
-  if (selectedIndexes.size < Math.min(reviewCandidates.length, maxReviewExamples)) {
-    for (const candidate of reviewCandidates) {
+  if (selectedIndexes.size < Math.min(eligibleReviewCandidates.length, maxReviewExamples)) {
+    for (const candidate of eligibleReviewCandidates) {
       if (selectedIndexes.size >= maxReviewExamples) {
         break;
       }
+      if (selectedSignatures.has(candidate.signature)) {
+        continue;
+      }
       selectedIndexes.add(candidate.index);
+      selectedSignatures.add(candidate.signature);
     }
   }
   return selectedIndexes;
 }
 
-function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRecord {
+type PromptContractRejectionReason =
+  | "legacy_source_context_without_user_or_task"
+  | "empty_user_or_task";
+
+type PromptContractNormalization = {
+  prompt: string;
+  rewritten: boolean;
+  rejectReason?: PromptContractRejectionReason;
+};
+
+type CurriculumNormalization = PromptContractNormalization & {
+  gate: ReturnType<typeof evaluateLocalBrainCurriculumGate>;
+};
+
+function hasLegacySourceContext(prompt: string): boolean {
+  return /^(?:source_summary|source_kind):|\r?\n(?:source_summary|source_kind):/mu.test(prompt);
+}
+
+function normalizePromptContract(record: JsonRecord): PromptContractNormalization {
+  const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
+  const userOrTaskMatch = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt);
+  const userAsk = userOrTaskMatch?.[1]?.trim();
+  if (userOrTaskMatch && !userAsk) {
+    return { prompt: rawPrompt, rewritten: false, rejectReason: "empty_user_or_task" };
+  }
+  if (!userAsk && hasLegacySourceContext(rawPrompt)) {
+    return {
+      prompt: rawPrompt,
+      rewritten: false,
+      rejectReason: "legacy_source_context_without_user_or_task",
+    };
+  }
+  const prompt = userAsk ? buildLocalBrainTrainingPrompt({ userAsk }) : rawPrompt;
+  return { prompt, rewritten: prompt !== rawPrompt };
+}
+
+function normalizeAndGateCurriculum(record: JsonRecord): CurriculumNormalization {
+  const normalized = normalizePromptContract(record);
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(normalized.prompt)?.[1]?.trim() ?? "";
+  const completion = completionRecord(record) ?? {};
+  return {
+    ...normalized,
+    gate: evaluateLocalBrainCurriculumGate(userAsk, completion),
+  };
+}
+
+function sourcePairSignature(record: JsonRecord): string {
+  const normalized = normalizePromptContract(record);
+  const completion = typeof record.completion === "string" ? record.completion : "";
+  return normalizedPairSignature(normalized.prompt, completion);
+}
+
+function cloneForSlice(record: JsonRecord, repeat: number, lane: string): JsonRecord | undefined {
   const sourcePath =
     typeof record.meta?.sourcePath === "string" ? record.meta.sourcePath : "unknown-source";
+  const normalized = normalizePromptContract(record);
+  if (normalized.rejectReason) {
+    return undefined;
+  }
   return {
     ...record,
+    prompt: normalized.prompt,
     meta: {
       ...record.meta,
       sourcePath: `${sourcePath}#train-slice-${lane}-${repeat + 1}`,
       curriculumSlice: true,
+      promptContractVersion: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+      promptContractRewritten: normalized.rewritten,
     },
   };
 }
@@ -448,13 +530,72 @@ async function writeFileAtomic(filePath: string, content: string | Buffer): Prom
   await fs.rename(tempPath, filePath);
 }
 
-async function copyFileAtomic(sourcePath: string, outPath: string): Promise<number> {
-  const content = await fs.readFile(sourcePath);
-  await writeFileAtomic(outPath, content);
-  return content
-    .toString("utf8")
-    .split(/\r?\n/u)
-    .filter((line) => line.trim()).length;
+async function rewritePromptContractFile(
+  sourcePath: string,
+  outPath: string,
+): Promise<{
+  rows: number;
+  written: number;
+  rewritten: number;
+  legacyUnrewritten: number;
+  rejected: number;
+  rejectionReasons: Record<string, number>;
+  curriculumQuarantined: number;
+  curriculumQuarantineReasons: Record<string, number>;
+}> {
+  const lines: string[] = [];
+  let rows = 0;
+  let written = 0;
+  let rewritten = 0;
+  let legacyUnrewritten = 0;
+  let rejected = 0;
+  const rejectionReasons: Record<string, number> = {};
+  let curriculumQuarantined = 0;
+  const curriculumQuarantineReasons: Record<string, number> = {};
+  for await (const record of readJsonl(sourcePath)) {
+    const normalized = normalizeAndGateCurriculum(record);
+    rows += 1;
+    if (normalized.rejectReason) {
+      rejected += 1;
+      incrementCount(rejectionReasons, normalized.rejectReason);
+      continue;
+    }
+    if (!normalized.gate.admitted) {
+      curriculumQuarantined += 1;
+      for (const reason of normalized.gate.reasonCodes) {
+        incrementCount(curriculumQuarantineReasons, reason);
+      }
+      continue;
+    }
+    if (normalized.rewritten) {
+      rewritten += 1;
+    } else if (hasLegacySourceContext(normalized.prompt)) {
+      legacyUnrewritten += 1;
+    }
+    lines.push(
+      JSON.stringify({
+        ...record,
+        prompt: normalized.prompt,
+        meta: {
+          ...record.meta,
+          promptContractVersion: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+          promptContractRewritten: normalized.rewritten,
+        },
+      }),
+    );
+    written += 1;
+  }
+  await writeFileAtomic(outPath, lines.length > 0 ? `${lines.join("\n")}\n` : "");
+  return {
+    rows,
+    written,
+    rewritten,
+    legacyUnrewritten,
+    rejected,
+    rejectionReasons,
+    curriculumQuarantined,
+    curriculumQuarantineReasons,
+  };
 }
 
 async function buildTrainSlice(options: CliOptions): Promise<Record<string, unknown>> {
@@ -471,34 +612,117 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   let trainWritten = 0;
   let reviewIndex = 0;
   let reviewSelected = 0;
+  let reviewQuarantined = 0;
+  const reviewQuarantineReasons: Record<string, number> = {};
   let curatedWritten = 0;
   let nonReviewWritten = 0;
   const writtenSourceKinds: Record<string, number> = {};
   const writtenTrustTiers: Record<string, number> = {};
   const writtenTeacherQuality = createTeacherQualityAccumulator();
+  const writtenPairCounts = new Map<string, number>();
+  let promptContractRewritten = 0;
+  let promptContractLegacyUnrewritten = 0;
+  let promptContractRejected = 0;
+  const promptContractRejectionReasons: Record<string, number> = {};
+  let curriculumQuarantined = 0;
+  const curriculumQuarantineReasons: Record<string, number> = {};
+  const sourcePairKeys = new Set<string>();
+  const skippedSourcePairKeys = new Set<string>();
+  let sourceDuplicateRowsSkipped = 0;
 
   function recordWrite(sourceKind: string): void {
     incrementCount(writtenSourceKinds, sourceKind);
     incrementCount(writtenTrustTiers, trustTierForSourceKind(sourceKind));
   }
 
+  async function writeSliceRecord(
+    record: JsonRecord,
+    repeat: number,
+    lane: string,
+  ): Promise<boolean> {
+    const cloned = cloneForSlice(record, repeat, lane);
+    if (!cloned) {
+      const normalized = normalizePromptContract(record);
+      const reason = normalized.rejectReason ?? "unknown";
+      promptContractRejected += 1;
+      incrementCount(promptContractRejectionReasons, reason);
+      return false;
+    }
+    const prompt = typeof cloned.prompt === "string" ? cloned.prompt : "";
+    const completion = typeof cloned.completion === "string" ? cloned.completion : "";
+    await handle.write(`${JSON.stringify(cloned)}\n`);
+    if (cloned.meta?.promptContractRewritten === true) {
+      promptContractRewritten += 1;
+    } else if (hasLegacySourceContext(prompt)) {
+      promptContractLegacyUnrewritten += 1;
+    }
+    const pair = normalizedPairSignature(prompt, completion);
+    writtenPairCounts.set(pair, (writtenPairCounts.get(pair) ?? 0) + 1);
+    return true;
+  }
+
   try {
     for await (const record of readJsonl(trainPath)) {
       const sourceKind = sourceKindOf(record);
+      const normalized = normalizeAndGateCurriculum(record);
+      if (normalized.rejectReason) {
+        promptContractRejected += 1;
+        incrementCount(promptContractRejectionReasons, normalized.rejectReason);
+        if (sourceKind === REVIEW_SOURCE_KIND) {
+          reviewIndex += 1;
+        }
+        continue;
+      }
+      if (!normalized.gate.admitted) {
+        curriculumQuarantined += 1;
+        for (const reason of normalized.gate.reasonCodes) {
+          incrementCount(curriculumQuarantineReasons, reason);
+        }
+        if (sourceKind === REVIEW_SOURCE_KIND) {
+          reviewIndex += 1;
+        }
+        continue;
+      }
+      const sourcePair = sourcePairSignature(record);
+      if (sourcePairKeys.has(sourcePair)) {
+        sourceDuplicateRowsSkipped += 1;
+        skippedSourcePairKeys.add(sourcePair);
+        if (sourceKind === REVIEW_SOURCE_KIND) {
+          reviewIndex += 1;
+        }
+        continue;
+      }
+      sourcePairKeys.add(sourcePair);
       if (sourceKind === CURATED_SOURCE_KIND) {
         for (let repeat = 0; repeat < options.curatedRepeat; repeat += 1) {
-          await handle.write(`${JSON.stringify(cloneForSlice(record, repeat, "curated"))}\n`);
+          const written = await writeSliceRecord(record, repeat, "curated");
+          if (!written) {
+            continue;
+          }
           trainWritten += 1;
           curatedWritten += 1;
           recordWrite(sourceKind);
         }
       } else if (sourceKind === REVIEW_SOURCE_KIND) {
         if (selectedReviewIndexes.has(reviewIndex)) {
-          await handle.write(`${JSON.stringify(cloneForSlice(record, 0, "review"))}\n`);
-          trainWritten += 1;
-          reviewSelected += 1;
-          recordWrite(sourceKind);
-          recordTeacherQuality(writtenTeacherQuality, record);
+          const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
+          const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim() ?? "";
+          const gate = evaluateLocalBrainCurriculumGate(userAsk, completionRecord(record) ?? {});
+          if (!gate.admitted) {
+            reviewQuarantined += 1;
+            for (const reason of gate.reasonCodes) {
+              incrementCount(reviewQuarantineReasons, reason);
+            }
+            reviewIndex += 1;
+            continue;
+          }
+          const written = await writeSliceRecord(record, 0, "review");
+          if (written) {
+            trainWritten += 1;
+            reviewSelected += 1;
+            recordWrite(sourceKind);
+            recordTeacherQuality(writtenTeacherQuality, record);
+          }
         }
         reviewIndex += 1;
       } else {
@@ -506,7 +730,10 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
           ? options.nonReviewRepeat
           : 1;
         for (let repeat = 0; repeat < repeatCount; repeat += 1) {
-          await handle.write(`${JSON.stringify(cloneForSlice(record, repeat, "non-review"))}\n`);
+          const written = await writeSliceRecord(record, repeat, "non-review");
+          if (!written) {
+            continue;
+          }
           trainWritten += 1;
           nonReviewWritten += 1;
           recordWrite(sourceKind);
@@ -518,13 +745,17 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   }
   await fs.rename(tempTrainOut, trainOut);
 
-  const validCopied = await copyFileAtomic(
+  const validPromptContract = await rewritePromptContractFile(
     path.join(options.dataDir, "valid.jsonl"),
     path.join(options.outDir, "valid.jsonl"),
   );
-  const testCopied = await copyFileAtomic(
+  const testPromptContract = await rewritePromptContractFile(
     path.join(options.dataDir, "test.jsonl"),
     path.join(options.outDir, "test.jsonl"),
+  );
+  const duplicateRows = [...writtenPairCounts.values()].reduce(
+    (sum, count) => sum + (count > 1 ? count - 1 : 0),
+    0,
   );
 
   const manifest = {
@@ -544,11 +775,67 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       nonReviewSeen: counts.nonReviewSeen,
       reviewSeen: counts.reviewSeen,
       reviewSelected,
+      reviewQuarantined,
       curatedWritten,
       nonReviewWritten,
       trainWritten,
-      validCopied,
-      testCopied,
+      validCopied: validPromptContract.written,
+      testCopied: testPromptContract.written,
+      curriculumQuarantined,
+      validCurriculumQuarantined: validPromptContract.curriculumQuarantined,
+      testCurriculumQuarantined: testPromptContract.curriculumQuarantined,
+    },
+    repetition: {
+      boundary: "exact_prompt_completion_pair_repetition_only",
+      exactPairUnique: writtenPairCounts.size,
+      duplicateGroups: [...writtenPairCounts.values()].filter((count) => count > 1).length,
+      duplicateRows,
+      duplicateRate: trainWritten === 0 ? 0 : Number((duplicateRows / trainWritten).toFixed(4)),
+      note: "meta.sourcePath changes do not make a duplicated prompt/completion pair novel; explicit repeat flags remain available for controlled ablations.",
+    },
+    dedup: {
+      method: "normalized_prompt_completion_sha256_16_before_explicit_repeats",
+      sourceDuplicateRowsSkipped,
+      sourceDuplicateGroupsSkipped: skippedSourcePairKeys.size,
+      explicitRepeatFlagsRemainAvailable: options.curatedRepeat > 1 || options.nonReviewRepeat > 1,
+    },
+    promptContract: {
+      version: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+      rewriteScope: "all_rows_with_recoverable_user_or_task",
+      sourceKindAndSourceSummaryInModelPrompt: promptContractLegacyUnrewritten > 0,
+      sourceContextLeakFree: promptContractLegacyUnrewritten === 0,
+      rowsRewritten: promptContractRewritten,
+      rowsRewrittenFromLegacyPrompt: promptContractRewritten,
+      legacyRowsStillContainingSourceContext: promptContractLegacyUnrewritten,
+      validRowsRewritten: validPromptContract.rewritten,
+      validRowsRewrittenFromLegacyPrompt: validPromptContract.rewritten,
+      validLegacyRowsStillContainingSourceContext: validPromptContract.legacyUnrewritten,
+      validRowsRejected: validPromptContract.rejected,
+      validRejectionReasons: validPromptContract.rejectionReasons,
+      testRowsRewritten: testPromptContract.rewritten,
+      testRowsRewrittenFromLegacyPrompt: testPromptContract.rewritten,
+      testLegacyRowsStillContainingSourceContext: testPromptContract.legacyUnrewritten,
+      testRowsRejected: testPromptContract.rejected,
+      testRejectionReasons: testPromptContract.rejectionReasons,
+      rowsRejected: promptContractRejected,
+      rejectionReasons: promptContractRejectionReasons,
+      curriculumQuarantined,
+      curriculumQuarantineReasons,
+      validCurriculumQuarantineReasons: validPromptContract.curriculumQuarantineReasons,
+      testCurriculumQuarantineReasons: testPromptContract.curriculumQuarantineReasons,
+      note: "Rows with a recoverable user_or_task line are rebuilt through the shared contract. Rows that expose source provenance without recoverable user text are rejected instead of being copied into the model-visible slice.",
+    },
+    curriculumGate: {
+      boundary: "local_auxiliary_curriculum_admission_only",
+      eligibleReviewCandidates: counts.reviewCandidates.filter(
+        (candidate) => candidate.curriculumAdmitted,
+      ).length,
+      quarantinedReviewCandidates: counts.reviewCandidates.filter(
+        (candidate) => !candidate.curriculumAdmitted,
+      ).length,
+      selectedRowsRechecked: reviewSelected + reviewQuarantined,
+      recheckQuarantineReasons: reviewQuarantineReasons,
+      enforcement: "only_shared_gate_admitted_rows_enter_the_slice",
     },
     sourceKinds: counts.sourceKinds,
     writtenSourceKinds,

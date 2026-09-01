@@ -558,6 +558,19 @@ explicit alternate workspace. The plan must surface
 `module_learning_incomplete_evidence` when module-learning receipts are
 reviewable but not `eval_absorbed`.
 
+Before an idle training or train-slice decision, audit the actual JSONL rows:
+
+```bash
+node --import tsx scripts/operator/local-brain-training-sample-audit.ts --json
+```
+
+This read-only audit is the sample-level proof surface for prompt-contract
+leaks, answer-bearing labels, duplicate prompt/completion pairs, semantic
+alignment, and teacher novelty/trajectory coverage. A true
+`curriculumReady` result only permits the dataset/slice to enter the next
+owner decision; it is not model-weight absorption, adapter promotion,
+external-channel binding, or user-visible proof.
+
 For learning sedimentation specifically, run:
 
 ```bash

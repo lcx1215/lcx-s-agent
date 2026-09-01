@@ -82,7 +82,7 @@ describe("LCX system doctor train slice observability", () => {
     expect(doctorSource).toContain("selectedCleanAdapter");
     expect(doctorSource).not.toContain('"--resolve-current-adapter"');
     expect(doctorSource).not.toContain('command.includes("--resolve-current-adapter")');
-    expect(trainingPlanSource).toContain('!line.includes("--resolve-current-adapter")');
+    expect(trainingPlanSource).toContain('command.includes("--resolve-current-adapter")');
   });
 
   it("bounds live Lark probes so a stuck channel check cannot look successful", async () => {

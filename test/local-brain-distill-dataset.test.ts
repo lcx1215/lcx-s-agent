@@ -38,13 +38,18 @@ describe("local brain distill dataset", () => {
       path.join(repoRoot, "scripts/operator/local-brain-distill-dataset.ts"),
       "utf8",
     );
+    const contractSource = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/local-brain-training-contract.ts"),
+      "utf8",
+    );
 
-    expect(source).toContain("/no_think");
-    expect(source).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
-    expect(source).toContain("Keep the JSON compact");
-    expect(source).toContain("LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS");
-    expect(source).toContain("Use this exact compact shape");
-    expect(source).toContain('risk_boundaries":["research_only"]');
+    expect(source).toContain("buildLocalBrainTrainingPrompt");
+    expect(contractSource).toContain("/no_think");
+    expect(contractSource).toContain("Do not emit chain-of-thought, markdown, or <think> blocks");
+    expect(contractSource).toContain("Keep the JSON compact");
+    expect(contractSource).toContain("LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS");
+    expect(contractSource).toContain("Use this exact compact shape");
+    expect(contractSource).toContain('risk_boundaries":["research_only"]');
   });
 
   it("includes current real-market stress families as high-weight Qwen curated seeds", async () => {

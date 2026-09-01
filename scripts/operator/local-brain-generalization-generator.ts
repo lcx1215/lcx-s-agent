@@ -24,12 +24,8 @@
 // so a model's JSON plan can be graded against generated cases with the same
 // 7-condition contract used in production.
 
-import {
-  LOCAL_BRAIN_CONTRACT_HINTS,
-  LOCAL_BRAIN_MODULE_TAXONOMY,
-  LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS,
-  packLocalBrainModuleFields,
-} from "./local-brain-taxonomy.js";
+import { LOCAL_BRAIN_MODULE_TAXONOMY, packLocalBrainModuleFields } from "./local-brain-taxonomy.js";
+import { buildLocalBrainTrainingPrompt } from "./local-brain-training-contract.js";
 
 export type AssetClass =
   | "us_equity"
@@ -96,7 +92,7 @@ const ASSET_CLASS_MODULES: Record<AssetClass, string[]> = {
   index: ["global_index_regime"],
   etf: ["etf_regime"],
   crypto: ["crypto_market_structure"],
-  commodity: ["commodities_oil_gold"],
+  commodity: ["commodities_oil_gold", "macro_rates_inflation"],
   fx: ["fx_currency_liquidity"],
   options: ["options_volatility"],
   bond_duration: ["macro_rates_inflation", "credit_liquidity"],
@@ -108,15 +104,28 @@ const ASSET_CLASS_MISSING_DATA: Partial<Record<AssetClass, string[]>> = {
   commodity: ["commodity_curve_roll_yield_and_inventory_inputs"],
   options: ["options_iv_skew_gamma_and_event_calendar"],
   a_share: ["china_a_share_policy_liquidity_and_northbound_inputs"],
+  index: ["index_constituents_weights_and_breadth_inputs"],
+  etf: ["etf_holdings_flows_and_tracking_inputs"],
+  fx: ["fx_rate_dollar_liquidity_and_policy_inputs"],
+  bond_duration: ["rates_curve_credit_spread_and_liquidity_inputs"],
 };
 
-type DerivedLabel = {
+export type DerivedLabel = {
   requiredModules: string[];
   forbiddenModules: string[];
   requiredMissingData: string[];
   requiredRiskBoundaries: string[];
   minModuleMatches: number;
 };
+
+export const GENERALIZATION_CONTRACT_ARRAY_CAPS = {
+  primary_modules: 8,
+  supporting_modules: 6,
+  required_tools: 6,
+  missing_data: 8,
+  risk_boundaries: 6,
+  rejected_context: 3,
+} as const;
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].toSorted();
@@ -143,12 +152,15 @@ export function deriveLabel(features: TaskFeatures): DerivedLabel {
     modules.push("portfolio_risk_gates", "review_panel", "control_room_summary");
   }
 
-  // (c) Fresh numbers must pass the data gateway + provenance; if no source was
-  //     supplied, the plan must name the missing snapshot rather than invent it.
-  if (features.assetClasses.length > 0 && !features.dataSupplied) {
+  // (c) Every market-facing plan passes the data gateway + provenance. If no
+  // fresh source was supplied, the plan also names the missing snapshot rather
+  // than inventing it. The data-state phrase is rendered into the user ask.
+  if (features.assetClasses.length > 0) {
     modules.push("finance_data_gateway", "data_provenance_quality", "source_registry");
-    missingData.push("fresh_market_data_snapshot", "source_timestamp_and_vendor");
-    riskBoundaries.push("no_unverified_current_market_data");
+    if (!features.dataSupplied) {
+      missingData.push("fresh_market_data_snapshot", "source_timestamp_and_vendor");
+      riskBoundaries.push("no_unverified_current_market_data");
+    }
   }
 
   // (d) Portfolio context needs quant math + weights/return series.
@@ -159,7 +171,15 @@ export function deriveLabel(features: TaskFeatures): DerivedLabel {
 
   // (e) Trade wording must be converted to research-only preflight with a gate.
   if (features.tradeWording) {
-    riskBoundaries.push("risk_gate_before_action_language", "no_trade_advice");
+    riskBoundaries.push(
+      "no_execution_authority",
+      "risk_gate_before_action_language",
+      "no_trade_advice",
+    );
+  }
+
+  if (features.assetClasses.includes("commodity")) {
+    riskBoundaries.push("commodity_framework_not_trade_signal");
   }
 
   // (f) Cross-market tasks add cross-asset liquidity + FX and a no-cross-claim
@@ -366,6 +386,7 @@ export function featureSignature(features: TaskFeatures): string {
     `tw:${Number(features.tradeWording)}`,
     `pc:${Number(features.portfolioContext)}`,
     `xm:${Number(features.crossMarket)}`,
+    `oc:${Number(features.oldContextPollution)}`,
     `rt:${Number(features.redTeam)}`,
     `fd:${Number(features.fundamentalsDeep)}`,
     `ev:${Number(features.eventRisk)}`,
@@ -388,7 +409,7 @@ function hashUnit(text: string): number {
 
 export const GENERALIZATION_CASE_SCHEMA_VERSION = "lcx_generalization_case_v1";
 export const GENERALIZATION_GENERATOR_ID = "local-brain-generalization-harness";
-export const GENERALIZATION_GENERATOR_VERSION = "feature-signature-v1";
+export const GENERALIZATION_GENERATOR_VERSION = "feature-signature-v2-bounded-contract";
 
 export type GeneralizationCaseProvenance = {
   schemaVersion: typeof GENERALIZATION_CASE_SCHEMA_VERSION;
@@ -408,15 +429,15 @@ export function isHeldOut(features: TaskFeatures, holdoutFraction: number): bool
 }
 
 const ASSET_PHRASES: Record<AssetClass, string[]> = {
-  us_equity: ["美股科技股", "NVDA", "US tech names", "QQQ 成分股"],
-  a_share: ["A股", "China A-shares", "沪深300"],
+  us_equity: ["美股科技股", "NVDA", "US tech names", "美国单一股票"],
+  a_share: ["A股", "China A-shares", "沪深个股"],
   index: ["纳指", "标普500", "global indices"],
-  etf: ["QQQ", "TLT", "一篮子 ETF"],
+  etf: ["QQQ", "一篮子 ETF", "ETF 宽基"],
   crypto: ["BTC", "加密币", "ETH 流动性"],
   commodity: ["原油", "黄金", "大宗商品"],
   fx: ["美元", "美元/人民币", "the dollar"],
   options: ["期权 IV", "options skew", "隐含波动率"],
-  bond_duration: ["长端利率", "TLT 久期", "Treasury yields"],
+  bond_duration: ["长端利率", "美债久期", "Treasury yields"],
 };
 
 // Render a natural-language ask that varies in surface form while keeping the
@@ -443,13 +464,17 @@ function renderAsk(features: TaskFeatures, rng: () => number): string {
       ? pick(rng, ["arxiv.org/abs/2601.17021 这篇论文", "这个 GitHub 开源项目", "我给的这份研报"])
       : pick(rng, ["一个我听说的宏观策略", "某篇金融论文", "一个开源项目"]);
     parts.push(`帮本地大脑学习并内化${what}`);
-    if (!features.sourceSupplied) {
-      parts.push(pick(rng, ["（我还没给链接或本地文件）", "，但我还没提供来源", "，来源待补"]));
-    }
+    parts.push(
+      features.sourceSupplied
+        ? pick(rng, ["（来源已提供）", "，来源已附上", "，按已给来源核对"])
+        : pick(rng, ["（我还没给链接或本地文件）", "，但我还没提供来源", "，来源待补"]),
+    );
   }
   if (assets.length > 0) {
     const verb = features.tradeWording
-      ? pick(rng, ["要不要买入", "该不该加仓", "现在能不能上仓位"])
+      ? features.portfolioContext
+        ? pick(rng, ["该不该加仓", "是否减仓", "组合要不要调整仓位"])
+        : pick(rng, ["要不要买入", "是否值得买入", "现在能不能买入"])
       : pick(rng, ["怎么研究", "如何拆解风险", "怎么分析"]);
     const holding = features.portfolioContext
       ? pick(rng, ["我持有", "组合里有", "我仓位包含"])
@@ -485,19 +510,36 @@ function renderAsk(features: TaskFeatures, rng: () => number): string {
       pick(rng, ["，research-only，不要交易建议", "，只做研究不要下单", "，不要给买卖点"]),
     );
   }
+  // `dataSupplied` is a label-relevant axis. Make it visible in natural
+  // language so identical surface asks never receive contradictory labels.
+  parts.push(features.dataSupplied ? "，已有带时间戳输入" : "，暂未提供带时间戳数据");
   const ask = parts.join("").trim();
   return ask || "重新来一遍。";
 }
 
-let caseCounter = 0;
+export function isPackableGeneratedLabel(label: DerivedLabel): boolean {
+  return (
+    label.requiredModules.length <= 20 &&
+    label.requiredMissingData.length <= GENERALIZATION_CONTRACT_ARRAY_CAPS.missing_data &&
+    label.requiredRiskBoundaries.length <= GENERALIZATION_CONTRACT_ARRAY_CAPS.risk_boundaries
+  );
+}
 
 // Produce one fully-labeled generated case from a feature vector.
-export function generateCase(features: TaskFeatures, rng: () => number): GeneratedCase {
+export function generateCase(
+  features: TaskFeatures,
+  rng: () => number,
+  ordinal = 1,
+): GeneratedCase {
   const label = deriveLabel(features);
+  if (!isPackableGeneratedLabel(label)) {
+    throw new Error(
+      `generated label exceeds bounded contract for ${featureSignature(features)}: missing=${label.requiredMissingData.length}, risk=${label.requiredRiskBoundaries.length}, modules=${label.requiredModules.length}`,
+    );
+  }
   const signature = featureSignature(features);
-  caseCounter += 1;
   return {
-    id: `gen_${caseCounter}_${hashUnit(signature).toFixed(6).slice(2)}`,
+    id: `gen_${ordinal}_${hashUnit(signature).toFixed(6).slice(2)}`,
     userAsk: renderAsk(features, rng),
     sourceSummary: `generated case for feature signature ${signature}`,
     features,
@@ -564,6 +606,7 @@ export function generateCases(
   const split = options.split ?? "all";
   const holdoutFraction = options.holdoutFraction ?? 0.2;
   const cases: GeneratedCase[] = [];
+  let ordinal = 0;
   let guard = 0;
   while (cases.length < count && guard < count * 50) {
     guard += 1;
@@ -574,7 +617,12 @@ export function generateCases(
     if (split === "holdout" && !isHeldOut(features, holdoutFraction)) {
       continue;
     }
-    cases.push(generateCase(features, rng));
+    const label = deriveLabel(features);
+    if (!isPackableGeneratedLabel(label)) {
+      continue;
+    }
+    ordinal += 1;
+    cases.push(generateCase(features, rng, ordinal));
   }
   return cases;
 }
@@ -591,6 +639,7 @@ export function generateCasesWithPrerequisites(
   const split = options.split ?? "all";
   const holdoutFraction = options.holdoutFraction ?? 0.2;
   const out: GeneratedCase[] = [];
+  let ordinal = 0;
   let guard = 0;
   while (out.length < count && guard < count * 50) {
     guard += 1;
@@ -601,10 +650,21 @@ export function generateCasesWithPrerequisites(
     if (split === "holdout" && !isHeldOut(features, holdoutFraction)) {
       continue;
     }
-    out.push(generateCase(features, rng));
+    const label = deriveLabel(features);
+    if (!isPackableGeneratedLabel(label)) {
+      continue;
+    }
+    ordinal += 1;
+    out.push(generateCase(features, rng, ordinal));
     const prereq = prerequisiteFeatures(features);
-    if (prereq && out.length < count) {
-      out.push(generateCase(prereq, rng));
+    if (
+      prereq &&
+      out.length < count &&
+      isHeldOut(prereq, holdoutFraction) === isHeldOut(features, holdoutFraction) &&
+      isPackableGeneratedLabel(deriveLabel(prereq))
+    ) {
+      ordinal += 1;
+      out.push(generateCase(prereq, rng, ordinal));
     }
   }
   return out;
@@ -640,6 +700,14 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
+function hasInvalidContractArray(value: unknown, cap: number): boolean {
+  return (
+    !Array.isArray(value) ||
+    value.length > cap ||
+    value.some((entry) => typeof entry !== "string" || entry.trim().length === 0)
+  );
+}
+
 export function scorePlan(
   output: PlanOutput,
   target: GeneratedCase,
@@ -650,6 +718,35 @@ export function scorePlan(
   );
   if (missingKeys.length > 0) {
     reasons.push(`missing_keys:${missingKeys.join(",")}`);
+  }
+  const boundedArrays: Array<[keyof PlanOutput, number]> = [
+    ["primary_modules", GENERALIZATION_CONTRACT_ARRAY_CAPS.primary_modules],
+    ["supporting_modules", GENERALIZATION_CONTRACT_ARRAY_CAPS.supporting_modules],
+    ["required_tools", GENERALIZATION_CONTRACT_ARRAY_CAPS.required_tools],
+    ["missing_data", GENERALIZATION_CONTRACT_ARRAY_CAPS.missing_data],
+    ["risk_boundaries", GENERALIZATION_CONTRACT_ARRAY_CAPS.risk_boundaries],
+    ["rejected_context", GENERALIZATION_CONTRACT_ARRAY_CAPS.rejected_context],
+  ];
+  for (const [key, cap] of boundedArrays) {
+    if (
+      Object.prototype.hasOwnProperty.call(output, key) &&
+      hasInvalidContractArray(output[key], cap)
+    ) {
+      reasons.push(`invalid_array:${String(key)}_cap_${cap}`);
+    }
+  }
+  for (const [key, maxChars] of [
+    ["task_family", 120],
+    ["next_step", 220],
+  ] as const) {
+    if (
+      Object.prototype.hasOwnProperty.call(output, key) &&
+      (typeof output[key] !== "string" ||
+        output[key].trim().length === 0 ||
+        output[key].length > maxChars)
+    ) {
+      reasons.push(`invalid_scalar:${key}`);
+    }
   }
   const modules = new Set([
     ...asStringArray(output.primary_modules),
@@ -688,13 +785,19 @@ export function scorePlan(
 // the label (which is itself a pure function of features). Used to prove the
 // generated cases are internally satisfiable, and as the ceiling for scoring.
 export function oraclePlan(target: GeneratedCase): PlanOutput {
+  const primaryModules = target.requiredModules.slice(0, 8);
+  const supportingModules = target.requiredModules.slice(8, 14);
+  const requiredTools = target.requiredModules.slice(14, 20);
+  if (supportingModules.length === 0 && requiredTools.length === 0 && primaryModules.length > 1) {
+    supportingModules.push(primaryModules.pop()!);
+  }
   return {
     task_family: "generated_router_task",
-    primary_modules: target.requiredModules.slice(0, 8),
-    supporting_modules: target.requiredModules.slice(8, 14),
-    required_tools: target.requiredModules.slice(14, 20),
+    primary_modules: primaryModules,
+    supporting_modules: supportingModules,
+    required_tools: requiredTools,
     missing_data: target.requiredMissingData,
-    risk_boundaries: [...new Set([...target.requiredRiskBoundaries, "research_only"])],
+    risk_boundaries: target.requiredRiskBoundaries,
     next_step: "route_to_modules",
     rejected_context: ["old_lark_conversation_history"],
   };
@@ -725,29 +828,11 @@ export type DatasetRow = {
   };
 };
 
-// Mirror of buildPrompt() in local-brain-distill-dataset.ts (kept in sync by
-// reusing the same shared taxonomy constants).
+// Reuse the same prompt contract as the receipt-backed dataset. Generator
+// provenance stays in meta and the case summary never enters the model prompt.
 function buildDatasetPrompt(userAsk: string, sourceSummary: string): string {
-  return [
-    "You are the LCX Agent local auxiliary thought-flow model.",
-    "Task: produce a concise control-room planning packet for the main agent.",
-    "Do not answer the user's finance question directly.",
-    "/no_think",
-    "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
-    "Keep the JSON compact: short arrays, short next_step, no explanation inside or outside JSON.",
-    `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
-    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
-    "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
-    "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
-    `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
-    "For finance tasks, choose concrete module ids from the allowed list instead of generic finance labels.",
-    `Core planning hints: ${LOCAL_BRAIN_CONTRACT_HINTS.slice(0, 4).join(" ")}`,
-    "Return only JSON with keys: task_family, primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, next_step, rejected_context.",
-    "",
-    "source_kind: generalization_generator",
-    `user_or_task: ${userAsk}`,
-    `source_summary: ${sourceSummary}`,
-  ].join("\n");
+  void sourceSummary;
+  return buildLocalBrainTrainingPrompt({ userAsk });
 }
 
 // Build the target completion from the label, packed into the module-field caps
@@ -756,6 +841,13 @@ function buildDatasetPrompt(userAsk: string, sourceSummary: string): string {
 // model toward an answer the production scorer would reject.
 function buildDatasetCompletion(target: GeneratedCase): string {
   const packed = packLocalBrainModuleFields(target.requiredModules, [], []);
+  if (
+    packed.supporting_modules.length === 0 &&
+    packed.required_tools.length === 0 &&
+    packed.primary_modules.length > 1
+  ) {
+    packed.supporting_modules = [packed.primary_modules.pop()!];
+  }
   const plan = {
     task_family: "finance_research_planning",
     primary_modules: packed.primary_modules,
