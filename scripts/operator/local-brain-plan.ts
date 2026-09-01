@@ -162,7 +162,10 @@ function runGenerate(options: CliOptions): Promise<string> {
         "--chat-template-config",
         QWEN_NO_THINK_CHAT_TEMPLATE_CONFIG,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(options.pythonBin),
+      },
     );
     let stdout = "";
     let stderr = "";

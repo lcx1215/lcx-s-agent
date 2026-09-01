@@ -200,9 +200,22 @@ async function gitStatusLines(): Promise<string[]> {
 }
 
 async function activePidSummary(options: CliOptions): Promise<ActivePidSummary> {
-  const stdout =
-    options.pidFixture !== undefined
-      ? await fs.readFile(options.pidFixture, "utf8")
+  const stdout = options.pidFixture
+    ? await fs.readFile(options.pidFixture, "utf8")
+    : process.platform === "win32"
+      ? (
+          await execFileAsync(
+            "powershell.exe",
+            [
+              "-NoLogo",
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              '$ErrorActionPreference = "Stop"; Get-CimInstance Win32_Process | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }',
+            ],
+            { maxBuffer: EXEC_MAX_BUFFER },
+          )
+        ).stdout
       : (await execFileAsync("ps", ["-axo", "pid,etime,command"])).stdout;
   const lines = stdout
     .trim()

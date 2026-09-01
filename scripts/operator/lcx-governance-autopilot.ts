@@ -909,9 +909,22 @@ async function gitStatusShortBranch() {
 }
 
 async function activePidSummary(): Promise<ActivePidSummary> {
-  const { stdout } = await execFileAsync("ps", ["-axo", "pid,etime,command"], {
-    maxBuffer: EXEC_MAX_BUFFER,
-  });
+  const { stdout } =
+    process.platform === "win32"
+      ? await execFileAsync(
+          "powershell.exe",
+          [
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            '$ErrorActionPreference = "Stop"; Get-CimInstance Win32_Process | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }',
+          ],
+          { maxBuffer: EXEC_MAX_BUFFER },
+        )
+      : await execFileAsync("ps", ["-axo", "pid,etime,command"], {
+          maxBuffer: EXEC_MAX_BUFFER,
+        });
   const lines = stdout
     .trim()
     .split("\n")
