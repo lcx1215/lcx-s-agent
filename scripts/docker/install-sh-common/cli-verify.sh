@@ -31,11 +31,12 @@ verify_installed_cli() {
   fi
 
   if [[ -n "$cmd_path" ]]; then
-    installed_version="$("$cmd_path" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+    installed_version="$("$cmd_path" --version 2>/dev/null || true)"
   else
-    installed_version="$(node "$entry_path" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+    installed_version="$(node "$entry_path" --version 2>/dev/null || true)"
   fi
 
+  installed_version="$(printf '%s\n' "$installed_version" | head -n 1 | tr -d '\r')"
   installed_version="$(extract_openclaw_semver "$installed_version")"
 
   echo "cli=$cli_name installed=$installed_version expected=$expected_version"
