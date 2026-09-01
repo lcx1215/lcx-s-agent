@@ -48,7 +48,7 @@ exact change kind, scope, before/after identifiers, affected vocabularies,
 compatibility mode, rollback posture, and required proofs.
 
 External Message Channel-specific identifiers in the registry are classified as adapter
-implementation labels, not as core facts; old live/dev-shaped labels are
+implementation labels, not as core facts; old live/development-shaped labels are
 compatibility labels only. New semantic objects should use neutral adapter,
 delivery, evidence, and boundary vocabulary.
 
@@ -442,7 +442,7 @@ blueprint lane.
    sidecar compatibility as allowed legacy/platform uses.
 
    Cloud migration uses the same owner boundary. Do not migrate the old
-   `dev -> live` split to the cloud. The migration target is one LCX Agent core:
+   old dual-repository split to the cloud. The migration target is one LCX Agent core:
    `local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed`.
    `cloud-runtime-ready` means a supported-region control machine has the
    canonical repo, canonical `~/.openclaw` state, operator skills, receipts,
@@ -549,7 +549,7 @@ enter Codex auto-repair mode through the repo repair lock. Use this plan before
 creating a new training script, eval lane, automation prompt, or one-off fix.
 It is local only and must not be used to claim `user-visible-observed`.
 When `lcx-problem-cluster-radar` reports `pendingVerificationSignals`, treat it
-as dev repaired but not owner-verified: do not patch the same lane again until
+as locally repaired but not owner-verified: do not patch the same lane again until
 the owning training, teacher, eval, or promotion command reruns and clears or
 reopens the signal.
 It reads module-learning receipts from `~/.openclaw/workspace` by default, not
@@ -757,7 +757,7 @@ The radar also tracks six prioritized blacktech mechanisms:
 
 These mechanisms are owner slots, not granted authority. SkillOpt v2 still
 needs targeted eval, regression eval, train-slice, clean promotion, and
-user-visible proof before model-weight or channel claims. Runtime batteries are dev
+user-visible proof before model-weight or channel claims. Runtime batteries are local
 canaries until real external message channel proof. Trajectory and trace receipts are local
 observability, not a runtime RL server or eBPF/TLS interception. Secure tool
 permissioning blocks untrusted tools until allowlist, least privilege,
@@ -1308,7 +1308,7 @@ node --import tsx scripts/operator/local-brain-distill-eval.ts \
 ```
 
 The eval result reports `adapterSelectionStatus`. Treat
-`best_effort_training_seed` as a dev training seed, not as promotion-ready.
+`best_effort_training_seed` as a local training seed, not as promotion-ready.
 
 Promotion is acceptable only when:
 
@@ -1331,7 +1331,7 @@ Expected boundary:
 local_brain_promotion_audit_only
 ```
 
-Treat `promotionDecision=safe` as dev promotion-audit evidence only. It does not
+Treat `promotionDecision=safe` as local promotion-audit evidence only. It does not
 promote an adapter by itself and it is not user-visible proof.
 
 ### Capability Hierarchy Gate
@@ -1376,7 +1376,7 @@ node --import tsx scripts/operator/local-brain-distill-eval.ts \
   --json
 ```
 
-`200/200 promotionReady=true` under `--contract-only` means the dev routing and
+`200/200 promotionReady=true` under `--contract-only` means the local routing and
 output contract closed for those cases. It is not `user-visible-observed` proof
 and not model-weight absorption proof.
 
@@ -1448,7 +1448,7 @@ Use these words precisely:
 - `training-active`: guard or teacher/eval process is currently running.
 - `promotion-ready`: hardened eval passed and the adapter is selected by latest-passing.
 - `external-channel-bound`: the external channel sidecar has been synced to the
-  verified dev snapshot and restarted/probed.
+  verified canonical local-core snapshot and restarted/probed.
 - `user-visible-observed`: only after external-channel binding plus a fresh real external message channel inbound plus visible reply.
 
 Do not call local training or synthetic replay `user-visible-observed`; a channel

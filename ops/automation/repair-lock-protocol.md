@@ -3,7 +3,7 @@
 This protocol is for Codex automations that run in `AUTO_REPAIR_MODE`.
 
 Automations may always inspect logs, read artifacts, and report findings. Before editing files,
-creating dev receipts, running formatters that write, or starting any repair patch, the automation
+creating local receipts, running formatters that write, or starting any repair patch, the automation
 must acquire the repo-local repair lock:
 
 ```bash

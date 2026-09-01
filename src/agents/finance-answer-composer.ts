@@ -3,7 +3,7 @@
 // Today `scripts/operator/lcx-commercial-answer-pipeline.ts` only AUDITS a
 // `candidateAnswer` that is passed in — nothing in the repo actually composes
 // one from a model + real data. The runtime reply path calls a model, but the
-// dev answer pipeline has no compose step, so its scenario suite hard-codes
+// the legacy answer pipeline had no compose step, so its scenario suite hard-codes
 // answers.
 //
 // This module adds a testable composer that:

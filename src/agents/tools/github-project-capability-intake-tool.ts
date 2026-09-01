@@ -163,7 +163,7 @@ function existingEmbryosForFamily(family: GitHubCapabilityFamily): ExistingEmbry
     case "eval_trace":
       return [
         {
-          surface: "dev full-system smoke",
+          surface: "local full-system smoke",
           path: "scripts/operator/agent-system-loop-smoke.ts",
           fit: "partial",
         },

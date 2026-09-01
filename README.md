@@ -28,7 +28,7 @@ LCX Agent combines five layers:
 | Governance   | Doctor, radar, mind model, flow graph, head-tail, and recovery checks.   |
 
 The system is designed to answer a practical question every day: what can the
-agent safely understand, research, remember, and improve without confusing dev
+agent safely understand, research, remember, and improve without confusing local core
 proof, external-channel binding, and real user-visible proof?
 
 The product rule is intentionally plain: 用户入口简单, internal roles can be

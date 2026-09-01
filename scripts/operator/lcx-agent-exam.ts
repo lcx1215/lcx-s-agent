@@ -198,7 +198,7 @@ function buildSystemDoctorLane(doctorCommand: CommandResult): ExamLane {
     ],
     issue:
       doctor.ok === true && failed === 0
-        ? "基础 doctor 没发现当前 dev 观测面失败。"
+        ? "基础 doctor 没发现当前本地观测面失败。"
         : "基础 doctor 有失败项，其他线路结论必须降级。",
     nextAction:
       doctor.ok === true && failed === 0
@@ -281,7 +281,7 @@ function buildPromotionLane(auditCommand: CommandResult): ExamLane {
     ],
     issue:
       decision === "safe"
-        ? "当前 dev 证据支持选择 latest-passing adapter；这不是 live 证明，也不是强行 promotion。"
+        ? "当前本地证据支持选择 latest-passing adapter；这不是外部通道证明，也不是强行 promotion。"
         : decision === "hold"
           ? "当前训练种子可用于续训，但最新 hardened eval 没放行 strict promotion；这是正确暂停，不是 resolver 崩坏。"
           : "当前 adapter 选择不能安全升级，原因在 realBugsFound 里。",

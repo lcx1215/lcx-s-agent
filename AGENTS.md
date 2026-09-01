@@ -821,7 +821,7 @@ remembering which diagnostic to run.
   the failure family, acquire repair ownership when required, patch the shared
   contract, run targeted proof, refresh the relevant snapshot, and leave a
   receipt or commit.
-- Self-repair hands are allowed only as dev-scoped maintenance hands:
+- Self-repair hands are allowed only as local-scoped maintenance hands:
   `lcx-self-repair-hands` may write memory correction/downrank notes and
   training/eval candidate packets, plus repo patch candidate plans, under
   allowed workspace state, log, and memory/self-repair paths. These packets are
@@ -1098,7 +1098,7 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
   build/restart/probe, and real-entry verification.
 - SkillOpt, eval preflight, channel probe, synthetic replay, and training
   receipts are not user-visible-observed proof. Keep this as explicit
-  user-visible-observed proof language so future agents do not upgrade a dev
+  user-visible-observed proof language so future agents do not upgrade a local
   helper into the owner-visible channel result.
 - No fake user-visible-observed: only fresh real external-channel inbound plus a successful
   visible reply may set that state.

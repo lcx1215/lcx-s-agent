@@ -553,7 +553,7 @@ function isProcessAlive(pid: number): boolean {
 }
 
 function isGuardRuntimeCommand(command: string): boolean {
-  return /^(?:\S*\/)?node\s+--import(?:=tsx|\s+tsx)\s+scripts\/dev\/minimax-brain-training-guard\.ts(?:\s|$)/u.test(
+  return /^(?:\S*\/)?node\s+--import(?:=tsx|\s+tsx)\s+scripts\/operator\/minimax-brain-training-guard\.ts(?:\s|$)/u.test(
     command.trim(),
   );
 }

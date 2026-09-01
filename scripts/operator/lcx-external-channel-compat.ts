@@ -1011,7 +1011,7 @@ function buildReceipt(params: {
       "Only mark user-visible-observed after fresh real external message inbound and outbound evidence; the exact anchor is optional and legacy live-visible-fixed wording is compatibility only.",
     ],
     boundary: [
-      "Copies a git-tracked dev snapshot into the External transport connector sidecar so it can route to LCX Agent.",
+      "Copies a git-tracked local-core snapshot into the External transport connector sidecar so it can route to LCX Agent.",
       "If the source working tree is dirty, defaults to a temporary clean HEAD snapshot instead of copying dirty WIP.",
       "Excludes protected memory, dist, apps, node_modules, and ops/external-channel-artifacts receipts from source copying.",
       "Does not modify provider config, external-channel sender credentials, protected memory, or trading/execution authority.",
