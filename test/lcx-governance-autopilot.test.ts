@@ -279,7 +279,7 @@ describe("LCX governance autopilot", () => {
     expect(payload.owners.providerCouncilAcceleration?.action).toEqual(expect.any(String));
     expect(payload.owners.externalChannelStatus).toEqual(
       expect.objectContaining({
-        statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+        statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
         externalChannelBound: expect.any(Boolean),
         userVisibleObserved: expect.any(Boolean),
       }),
@@ -463,7 +463,7 @@ describe("LCX governance autopilot", () => {
     expect(handoff).toContain("## Provider Council Acceleration");
     expect(handoff).toContain("dev_provider_council_acceleration_only");
     expect(handoff).toContain("## External Channel Status");
-    expect(handoff).toContain("dev_external_channel_status_only");
+    expect(handoff).toContain("local_external_channel_status_only");
     expect(handoff).toContain("liveTouched: false");
     expect(handoff).toContain("providerConfigTouched: false");
     expect(handoff).toContain("protectedMemoryTouched: false");

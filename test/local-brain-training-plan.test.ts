@@ -889,7 +889,7 @@ describe("local-brain-training-plan", () => {
     });
 
     expect(plan.externalChannelBinding).toMatchObject({
-      boundary: "dev_external_channel_binding_plan_only",
+      boundary: "local_external_channel_binding_plan_only",
       channel: "lark",
       role: "owner_agent_communication_medium",
       objective: "lark_receives_current_best_verified_lcx_agent_answer",
@@ -917,7 +917,7 @@ describe("local-brain-training-plan", () => {
       boundary: "dev_live_lark_brain_binding_plan_only",
       conceptStatus: "legacy_live_terms_external_channel_owner_current",
       externalChannel: {
-        boundary: "dev_external_channel_binding_plan_only",
+        boundary: "local_external_channel_binding_plan_only",
         channel: "lark",
         role: "owner_agent_communication_medium",
         objective: "lark_receives_current_best_verified_lcx_agent_answer",

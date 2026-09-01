@@ -367,11 +367,11 @@ blueprint lane.
    upstream live tests, historical `ops/external-channel-history` receipts, and temporary
    sidecar compatibility as allowed legacy/platform uses.
 
-   Cloud migration uses the same owner boundary. Do not migrate the old
-   `dev -> live` split to the cloud. The migration target is one LCX Agent core:
+   Cloud migration uses the same owner boundary. Do not recreate a split system
+   in the cloud. The migration target is one LCX Agent core:
    `local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed`.
    `cloud-runtime-ready` means a supported-region control machine has the
-   canonical dev repo, canonical `~/.openclaw` state, operator skills, receipts,
+   canonical repository, canonical `~/.openclaw` state, operator skills, receipts,
    selected-clean adapter proof, and governance owners. It is not a second live
    brain, not a second runtime truth source, and not `user-visible-observed`.
    Future Lark, WeChat, SMS, Slack, or other connectors bind as external
@@ -980,7 +980,7 @@ Use them like this:
 - `finance-learning-researcher`: finance, ETF, quant, factor timing, source-gated learning.
 - `lark-live-loop-debugger`: Feishu/Lark live message, reply flow, routing, and visible reply diagnosis.
 - `lark-post-migration-probe`: prove post-migration real Lark inbound plus visible reply.
-- `agent-runtime-drift-auditor`: compare dev repo, live sidecar, daemon/runtime, and receipts for drift.
+- `agent-runtime-drift-auditor`: compare the canonical repository, external-channel sidecar, daemon/runtime, and receipts for drift.
 - `lcx-qwen-training-operator`: check Qwen 24-hour training/eval/backoff/restart supervision without creating overlap.
 - `lcx-workflow-waterflow-auditor`: check god-view workflow closure, waterflow routing, head-tail consistency, and memory sedimentation gaps.
 - `lcx-module-learning-absorption-operator`: check online/source learning and module absorption without confusing stored-only, application-ready, and eval-absorbed states.

@@ -339,7 +339,7 @@ describe("lcx-problem-cluster-radar", () => {
           selectedCleanAdapter: "/tmp/adapter-clean-r2",
         },
         externalChannelBinding: {
-          boundary: "dev_external_channel_binding_plan_only",
+          boundary: "local_external_channel_binding_plan_only",
           selectedCleanAdapter: "/tmp/adapter-clean-r2",
           status: "deferred_active_training_or_eval",
           action: "wait_for_current_eval_then_bind_external_channel_to_selected_clean_adapter",

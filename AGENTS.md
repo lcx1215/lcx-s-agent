@@ -379,7 +379,7 @@ Keep this architecture boring and auditable:
   `legacy-live-user-seen`, and `legacy-live-visible-fixed`.
 - The old deployment checkout and live sidecar drift must be retired, not maintained as a
   parallel lane. A controlled one-time sync is allowed only to keep service
-  alive during cutover; it must not restore the live repo's status.
+  alive during cutover; it must not restore the legacy deployment status.
 - Canonical Lark channel truth belongs to
   `scripts/operator/lcx-external-channel-binding.ts`. It may prove
   `external-channel-bound` after a clean idle apply, connector build/restart,

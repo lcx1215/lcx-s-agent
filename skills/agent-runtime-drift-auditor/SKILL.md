@@ -1,6 +1,6 @@
 ---
 name: agent-runtime-drift-auditor
-description: Compare the dev repo, runtime/sidecar, daemon, skills, and receipts for drift while preserving the single selected answer path.
+description: Compare the canonical repository, runtime sidecar, daemon, skills, and receipts for drift while preserving the single selected answer path.
 metadata: { "openclaw": { "emoji": "🧩" } }
 ---
 
