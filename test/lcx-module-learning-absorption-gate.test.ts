@@ -32,24 +32,6 @@ function runCli(args: string[], workspaceDir: string) {
   );
 }
 
-function runReviewCli(args: string[], workspaceDir: string) {
-  return spawnSync(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      path.join(repoRoot, "scripts/operator/module-learning-pipeline-review.ts"),
-      "--workspace",
-      workspaceDir,
-      ...args,
-    ],
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-    },
-  );
-}
-
 function cleanEvalSummary() {
   return {
     at: "2026-05-14T15:00:00.000Z",
@@ -407,7 +389,7 @@ describe("lcx-module-learning-absorption-gate", () => {
     );
   });
 
-  it("can write evidence and superseding eval-absorbed plan receipts when the gate is clean", async () => {
+  it("does not synthesize absorption evidence from a global clean eval", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-absorption-gate-"));
     const evalSummaryPath = await seedJson(workspaceDir, "eval-summary.json", cleanEvalSummary());
     await seedJson(
@@ -481,34 +463,13 @@ describe("lcx-module-learning-absorption-gate", () => {
     const writeParsed = JSON.parse(writeResult.stdout) as Record<string, unknown>;
     expect(writeParsed).toEqual(
       expect.objectContaining({
-        absorptionReady: true,
-        gateDecision: "ready_for_eval_absorbed_review",
-        preWriteGateDecision: "hold_at_application_ready",
-        postWriteReviewRefreshed: true,
+        absorptionReady: false,
+        gateDecision: "hold_at_application_ready",
+        preWriteGateDecision: null,
+        postWriteReviewRefreshed: false,
+        writeSkippedReason: "gate_not_write_available",
       }),
     );
-    expect(writeParsed.writtenAbsorptionReceipts).toEqual([
-      expect.objectContaining({
-        targetModule: "options_volatility",
-        status: "eval_absorbed",
-      }),
-    ]);
-
-    const reviewResult = runReviewCli(
-      ["--date", "2026-05-14", "--no-write", "--json"],
-      workspaceDir,
-    );
-    expect(reviewResult.status).toBe(0);
-    const reviewParsed = JSON.parse(reviewResult.stdout) as Record<string, unknown>;
-    expect(reviewParsed).toEqual(
-      expect.objectContaining({
-        counts: expect.objectContaining({
-          receiptFiles: 1,
-          rawReceiptFiles: 2,
-          evalAbsorbed: 1,
-          weakModuleLearning: 0,
-        }),
-      }),
-    );
+    expect(writeParsed.writtenAbsorptionReceipts).toEqual([]);
   });
 });

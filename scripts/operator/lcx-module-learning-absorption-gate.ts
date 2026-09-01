@@ -302,29 +302,6 @@ async function countPlanReceiptFiles(params: {
   }
 }
 
-function adjacentTaskForModule(targetModule: string): string {
-  const tasks: Record<string, string> = {
-    portfolio_risk_gates:
-      "Apply this portfolio risk lesson to a fresh QQQ/TLT/NVDA-style risk question and refuse sizing without weights, limits, and return-series evidence.",
-    event_driven:
-      "Apply this event-driven lesson to a fresh earnings, policy, or ETF catalyst triage and separate catalyst evidence from trade advice.",
-    technical_timing:
-      "Apply this timing lesson to a fresh ETF or large-cap timing question and keep technicals as timing context, not standalone alpha.",
-    options_volatility:
-      "Apply this options-volatility lesson to a fresh event gap-risk question and return research-only IV/skew/liquidity framing, not a contract recommendation.",
-    factor_research:
-      "Apply this factor lesson to a fresh ETF or index research task and require formula, lag, costs, and sample-out evidence before reuse.",
-    macro_rates_inflation:
-      "Apply this macro lesson to a fresh rates/liquidity portfolio question and separate timestamped data gaps from reusable regime logic.",
-    global_index_regime:
-      "Apply this index-regime lesson to a fresh index concentration or breadth question and name missing methodology or constituent evidence.",
-  };
-  return (
-    tasks[targetModule] ??
-    `Apply this ${targetModule} lesson to a fresh adjacent research-only task with source, risk boundary, and review evidence.`
-  );
-}
-
 function evidenceReceiptPath(params: {
   dateKey: string;
   targetModule: string;
@@ -401,6 +378,14 @@ function buildGate(params: {
       nextProofOwner: stringValue(row.nextProofOwner) ?? "unknown",
     }))
     .filter((entry) => entry.missingEvidence.length > 0);
+  const syntheticEvidenceMissing = missingEvidenceByReceipt.some((entry) =>
+    entry.missingEvidence.some(
+      (field) =>
+        field === "training_or_eval_absorption_evidence" ||
+        field === "fresh_adjacent_application_task" ||
+        field === "keep_downrank_or_discard_decision",
+    ),
+  );
   const boundaryViolations = numberValue(counts.boundaryViolations);
   const globalEvalClean =
     Boolean(params.latestEval?.promotionReady) &&
@@ -535,7 +520,8 @@ function buildGate(params: {
       boundaryViolations > 0 ||
       rows.length === 0 ||
       claimableRows.length === 0 ||
-      missingEvidenceByReceipt.length === 0
+      missingEvidenceByReceipt.length === 0 ||
+      syntheticEvidenceMissing
         ? false
         : missingEvidenceByReceipt.every((entry) =>
             entry.missingEvidence.every((field) => REQUIRED_EVIDENCE_FIELDS.has(field)),
@@ -569,13 +555,23 @@ async function writeAbsorbedPlanReceipts(params: {
   for (const [index, row] of eligibleRows.entries()) {
     const targetModule = stringValue(row.targetModule) ?? "unknown";
     const receiptPath = stringValue(row.receiptPath) ?? "unknown";
+    const absorptionEvidenceSource = stringValue(row.trainingOrEvalAbsorptionEvidencePath);
+    const adjacentApplicationTask = stringValue(row.freshAdjacentApplicationTask);
+    const keepDownrankDiscardDecision = stringValue(row.keepDownrankDiscardDecision);
+    if (
+      !absorptionEvidenceSource ||
+      !adjacentApplicationTask ||
+      !keepDownrankDiscardDecision ||
+      keepDownrankDiscardDecision === "not_decided"
+    ) {
+      continue;
+    }
     const evidencePath = evidenceReceiptPath({
       dateKey: params.dateKey,
       targetModule,
       receiptPath,
     });
-    const freshAdjacentApplicationTask =
-      stringValue(row.freshAdjacentApplicationTask) ?? adjacentTaskForModule(targetModule);
+    const freshAdjacentApplicationTask = adjacentApplicationTask;
     await writeJson({
       workspaceDir: params.workspaceDir,
       relativePath: evidencePath,
@@ -589,7 +585,7 @@ async function writeAbsorbedPlanReceipts(params: {
         latestEval: params.gate.latestEval,
         requiredCaseIds: params.gate.requiredCaseIds,
         freshAdjacentApplicationTask,
-        keepDownrankDiscardDecision: params.absorptionDecision,
+        keepDownrankDiscardDecision,
         claimBoundary:
           "This proves core eval absorption evidence for module-learning review; it does not prove user-visible-observed or protected-memory update.",
         liveTouched: false,
@@ -619,7 +615,7 @@ async function writeAbsorbedPlanReceipts(params: {
       applicationValidationReceiptPath: stringValue(row.applicationValidationReceiptPath),
       trainingOrEvalAbsorptionEvidencePath: evidencePath,
       freshAdjacentApplicationTask,
-      keepDownrankDiscardDecision: params.absorptionDecision,
+      keepDownrankDiscardDecision,
       supersedesReceiptPath: receiptPath,
       writeReceipt: true,
     });
