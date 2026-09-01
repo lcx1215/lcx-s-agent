@@ -567,4 +567,15 @@ describe("LCX governance autopilot", () => {
     expect(runbook).toContain("lcx-owner-brief-latest.md");
     expect(runbook).toContain("lcx-owner-control-map-latest.md");
   });
+
+  it("uses a platform-compatible active process snapshot", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('"powershell.exe"');
+    expect(source).toContain("Get-CimInstance Win32_Process");
+    expect(source).toContain('execFileAsync("ps", ["-axo", "pid,etime,command"]');
+  });
 });
