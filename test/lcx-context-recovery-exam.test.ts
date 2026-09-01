@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { boundaryMatches } from "../scripts/operator/lcx-context-recovery-exam.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -55,6 +56,30 @@ async function runJsonScriptWithArgs(script: string, args: string[]) {
 }
 
 describe("LCX compressed context recovery exam", () => {
+  it("accepts neutral local and legacy dev boundary labels during migration", () => {
+    expect(
+      boundaryMatches(
+        "local_observability_only",
+        "local_observability_only",
+        "dev_local_observability_only",
+      ),
+    ).toBe(true);
+    expect(
+      boundaryMatches(
+        "dev_local_observability_only",
+        "local_observability_only",
+        "dev_local_observability_only",
+      ),
+    ).toBe(true);
+    expect(
+      boundaryMatches(
+        "live_visible_fixed",
+        "local_observability_only",
+        "dev_local_observability_only",
+      ),
+    ).toBe(false);
+  });
+
   it("proves a new coding window can recover from durable evidence", async () => {
     const { stdout } = await runJsonScript("scripts/operator/lcx-context-recovery-exam.ts");
     const payload = JSON.parse(stdout) as {
