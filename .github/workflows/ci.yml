@@ -481,6 +481,9 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           LCX_USER_HOME: ${{ runner.temp }}/lcx-user-home
+          # A single worker can leave the full macOS suite running until the job timeout.
+          # Two workers preserve the bounded macOS profile while completing the same suite.
+          OPENCLAW_TEST_WORKERS: 2
         run: pnpm test
 
       # --- Xcode/Swift setup ---
