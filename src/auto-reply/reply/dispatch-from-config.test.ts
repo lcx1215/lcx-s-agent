@@ -236,6 +236,41 @@ describe("dispatchReplyFromConfig", () => {
       mode: "final",
     });
   });
+
+  it("keeps a blocked projection read observational and still delivers the reply", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+    const reads: Array<{ adapterId: string; readStatus: string; blocked: boolean }> = [];
+    const ctx = buildTestCtx({
+      Surface: "Telegram",
+      Provider: "telegram",
+      Body: "hello",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: async () => ({ text: "reply" }) satisfies ReplyPayload,
+      globalEvidenceProjectionInput: {
+        candidate: null,
+        adapterId: "telegram-ingress",
+      },
+      onGlobalEvidenceProjectionRead: (reader) => {
+        reads.push({
+          adapterId: reader.adapterId,
+          readStatus: reader.read.readStatus,
+          blocked: reader.read.blocked,
+        });
+      },
+    });
+
+    expect(reads).toEqual([
+      { adapterId: "telegram-ingress", readStatus: "missing", blocked: true },
+    ]);
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "reply" });
+  });
+
   it("does not route when Provider matches OriginatingChannel (even if Surface is missing)", async () => {
     setNoAbort();
     mocks.routeReply.mockClear();

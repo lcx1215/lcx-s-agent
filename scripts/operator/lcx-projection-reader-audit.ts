@@ -10,6 +10,7 @@ type ProjectionReaderEntry = {
   id: string;
   path: string;
   role: "automation_reader" | "read_only_dashboard" | "answer_boundary" | "message_adapter_entry";
+  binding?: "direct" | "delegated_to_neutral_answer_boundary";
 };
 
 const PROJECTION_READER_ENTRIES: readonly ProjectionReaderEntry[] = [
@@ -27,28 +28,99 @@ const PROJECTION_READER_ENTRIES: readonly ProjectionReaderEntry[] = [
     id: "neutral_answer_boundary",
     path: "src/auto-reply/reply/dispatch-from-config.ts",
     role: "answer_boundary",
-  },
-  {
-    id: "feishu_bot_ingress",
-    path: "extensions/feishu/src/bot.ts",
-    role: "message_adapter_entry",
-  },
-  {
-    id: "feishu_reply_dispatcher",
-    path: "extensions/feishu/src/reply-dispatcher.ts",
-    role: "message_adapter_entry",
-  },
-  {
-    id: "feishu_transport_sender",
-    path: "extensions/feishu/src/send.ts",
-    role: "message_adapter_entry",
+    binding: "direct",
   },
 ] as const;
+
+const COMMON_ANSWER_BOUNDARY = "src/auto-reply/reply/dispatch-from-config.ts";
+const COMMON_ROUTER_FILES = new Set([
+  "src/auto-reply/dispatch.ts",
+  "src/auto-reply/reply/dispatch-from-config.ts",
+  "src/auto-reply/reply/provider-dispatcher.ts",
+]);
+
+function isTestFile(filePath: string): boolean {
+  return /(?:\.test|\.spec)\.ts$/u.test(filePath);
+}
+
+async function listTypeScriptFiles(root: string): Promise<string[]> {
+  const result: string[] = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) {
+      continue;
+    }
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") {
+        continue;
+      }
+      const absolutePath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(absolutePath);
+      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        result.push(absolutePath);
+      }
+    }
+  }
+  return result;
+}
+
+function usesCommonAnswerBoundary(source: string): boolean {
+  return (
+    /\bdispatchInboundMessage(?:WithBufferedDispatcher|WithDispatcher)?\s*\(/u.test(source) ||
+    /(?:^|\.)dispatchReplyFromConfig\s*\(/u.test(source)
+  );
+}
+
+function relativeRepoPath(absolutePath: string): string {
+  return path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/");
+}
+
+async function discoverMessageAdapterEntries(): Promise<ProjectionReaderEntry[]> {
+  const candidates = (
+    await Promise.all(
+      ["src", "extensions"].map((root) => listTypeScriptFiles(path.join(REPO_ROOT, root))),
+    )
+  ).flat();
+  const entries: ProjectionReaderEntry[] = [];
+  for (const absolutePath of candidates) {
+    const relativePath = relativeRepoPath(absolutePath);
+    if (COMMON_ROUTER_FILES.has(relativePath) || isTestFile(relativePath)) {
+      continue;
+    }
+    let source: string;
+    try {
+      source = await fs.readFile(absolutePath, "utf8");
+    } catch {
+      continue;
+    }
+    if (!usesCommonAnswerBoundary(source)) {
+      continue;
+    }
+    entries.push({
+      id: `message_adapter:${relativePath.replace(/\.ts$/u, "").replaceAll("/", ":")}`,
+      path: relativePath,
+      role: "message_adapter_entry",
+      binding: "delegated_to_neutral_answer_boundary",
+    });
+  }
+  return entries.toSorted((left, right) => left.path.localeCompare(right.path));
+}
 
 type ProjectionReaderAuditEntry = ProjectionReaderEntry & {
   exists: boolean;
   usesReaderContract: boolean;
+  passesAdapterProjectionInput: boolean;
+  delegatedToAnswerBoundary: boolean;
   readerIds: string[];
+  readerIdStrategy: "literal" | "message_context_surface_or_provider";
   status: "bound" | "missing_reader_contract" | "missing_entrypoint";
 };
 
@@ -62,30 +134,67 @@ function readerIdsFromSource(source: string): string[] {
   ];
 }
 
-async function auditEntry(entry: ProjectionReaderEntry): Promise<ProjectionReaderAuditEntry> {
+async function auditEntry(
+  entry: ProjectionReaderEntry,
+  answerBoundaryReady: boolean,
+): Promise<ProjectionReaderAuditEntry> {
   try {
     const source = await fs.readFile(path.join(REPO_ROOT, entry.path), "utf8");
     const usesReaderContract = source.includes(READER_CONTRACT);
+    const passesAdapterProjectionInput =
+      /\bglobalEvidenceProjectionInput\s*:\s*\{[^}]*\badapterId\s*:/su.test(source);
+    const delegatedToAnswerBoundary =
+      entry.binding === "delegated_to_neutral_answer_boundary" && answerBoundaryReady;
+    const readerIdStrategy =
+      usesReaderContract || passesAdapterProjectionInput
+        ? "literal"
+        : "message_context_surface_or_provider";
     return {
       ...entry,
       exists: true,
       usesReaderContract,
-      readerIds: usesReaderContract ? readerIdsFromSource(source) : [],
-      status: usesReaderContract ? "bound" : "missing_reader_contract",
+      passesAdapterProjectionInput,
+      delegatedToAnswerBoundary,
+      readerIds:
+        usesReaderContract || passesAdapterProjectionInput ? readerIdsFromSource(source) : [],
+      readerIdStrategy,
+      status:
+        usesReaderContract || passesAdapterProjectionInput || delegatedToAnswerBoundary
+          ? "bound"
+          : "missing_reader_contract",
     };
   } catch {
     return {
       ...entry,
       exists: false,
       usesReaderContract: false,
+      passesAdapterProjectionInput: false,
+      delegatedToAnswerBoundary: false,
       readerIds: [],
+      readerIdStrategy: "message_context_surface_or_provider",
       status: "missing_entrypoint",
     };
   }
 }
 
 async function main(): Promise<void> {
-  const entries = await Promise.all(PROJECTION_READER_ENTRIES.map(auditEntry));
+  const discoveredMessageAdapters = await discoverMessageAdapterEntries();
+  const knownEntries = [
+    ...PROJECTION_READER_ENTRIES,
+    ...discoveredMessageAdapters.filter(
+      (candidate) => !PROJECTION_READER_ENTRIES.some((entry) => entry.path === candidate.path),
+    ),
+  ];
+  const answerBoundarySource = await fs.readFile(
+    path.join(REPO_ROOT, COMMON_ANSWER_BOUNDARY),
+    "utf8",
+  );
+  const answerBoundaryReady =
+    answerBoundarySource.includes(READER_CONTRACT) &&
+    answerBoundarySource.includes("readCanonicalGlobalEvidenceProjectionCandidate");
+  const entries = await Promise.all(
+    knownEntries.map((entry) => auditEntry(entry, answerBoundaryReady)),
+  );
   const bound = entries.filter((entry) => entry.status === "bound");
   const missingReaderContract = entries.filter(
     (entry) => entry.status === "missing_reader_contract",
@@ -116,6 +225,8 @@ async function main(): Promise<void> {
         boundMessageAdapters.length === messageAdapters.length ? "complete" : "missing",
       allKnownEntrypointsAudited: missingEntrypoints.length === 0,
       readerContractReadyForAllAdapters: missingReaderContract.length === 0,
+      answerBoundaryReady,
+      discoveredMessageAdapterTotal: discoveredMessageAdapters.length,
     },
     missingReaderContract: missingReaderContract.map((entry) => ({
       id: entry.id,
@@ -126,8 +237,8 @@ async function main(): Promise<void> {
     })),
     nextAction:
       missingReaderContract.length > 0
-        ? "Pass a validated projection candidate through the neutral answer boundary, then migrate message adapters one at a time and rerun this audit."
-        : "Keep the reader contract mandatory for every new adapter entrypoint.",
+        ? "Route each missing communication adapter through the neutral answer boundary and rerun this audit."
+        : "Keep every communication adapter on the neutral answer boundary; derive reader identity from surface/provider and keep transport senders fact-blind.",
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,

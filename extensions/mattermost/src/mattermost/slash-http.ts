@@ -646,6 +646,7 @@ async function handleSlashCommandAsync(params: {
         ctx: ctxPayload,
         cfg,
         dispatcher,
+        globalEvidenceProjectionInput: { adapterId: "mattermost-slash" },
         replyOptions: {
           ...replyOptions,
           disableBlockStreaming:

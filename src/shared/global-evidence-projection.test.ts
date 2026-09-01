@@ -3,8 +3,10 @@ import {
   GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION,
   readGlobalEvidenceProjection,
   readGlobalEvidenceProjectionForAdapter,
+  resolveGlobalEvidenceProjectionAdapterId,
   summarizeGlobalEvidenceProjectionRead,
 } from "./global-evidence-projection-read.js";
+import { readCanonicalGlobalEvidenceProjectionCandidate } from "./global-evidence-projection-source.js";
 import {
   buildGlobalEvidenceProjection,
   GLOBAL_EVIDENCE_PROJECTION_MODE,
@@ -468,5 +470,40 @@ describe("Global Evidence Projection", () => {
         adapterId: null,
       },
     });
+  });
+
+  it("derives adapter-neutral reader ids from message context", () => {
+    expect(
+      resolveGlobalEvidenceProjectionAdapterId({ surface: "Feishu / Lark", provider: "telegram" }),
+    ).toBe("message-adapter:feishu-lark");
+    expect(
+      resolveGlobalEvidenceProjectionAdapterId({ provider: "Telegram", fallback: "unknown" }),
+    ).toBe("message-adapter:telegram");
+    expect(
+      resolveGlobalEvidenceProjectionAdapterId({ adapterId: "  future-medium  ", surface: "lark" }),
+    ).toBe("future-medium");
+  });
+
+  it("reads the canonical governance envelope without becoming an owner", async () => {
+    const projection = buildGlobalEvidenceProjection({
+      generatedAt: "2026-08-31T00:00:00.000Z",
+      sourceOwners: ["mind-model"],
+      lanes: [],
+      invariants: [],
+    });
+    const envelope = readGlobalEvidenceProjection(projection, "2026-08-31T00:01:00.000Z", {
+      sourceOwner: "mind-model",
+    });
+    const loaded = await readCanonicalGlobalEvidenceProjectionCandidate({
+      workspaceDir: "/tmp/lcx-projection-test",
+      readFile: async () => JSON.stringify({ globalEvidenceProjection: envelope }),
+    });
+
+    expect(loaded).toMatchObject({
+      sourceOwner: "governance-autopilot",
+      sourcePath: "/tmp/lcx-projection-test/state/lcx-governance-autopilot-latest.json",
+      candidate: envelope,
+    });
+    expect(loaded?.candidate).not.toBe(projection);
   });
 });

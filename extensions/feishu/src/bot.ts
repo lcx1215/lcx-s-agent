@@ -1643,6 +1643,7 @@ async function sendFeishuBackendFactAnswerComposerReply(params: {
           cfg: params.cfg,
           dispatcher: params.dispatcher,
           replyOptions: params.replyOptions,
+          globalEvidenceProjectionInput: { adapterId: "feishu-bot-ingress" },
         }),
     });
     const queuedFinal = Boolean(composerResult?.queuedFinal);
@@ -6499,6 +6500,7 @@ export async function handleFeishuMessage(params: {
                 cfg,
                 dispatcher: effectiveDispatcher,
                 replyOptions,
+                globalEvidenceProjectionInput: { adapterId: "feishu-bot-ingress" },
               }),
           });
 
@@ -6542,6 +6544,7 @@ export async function handleFeishuMessage(params: {
                 ctx: agentCtx,
                 cfg,
                 dispatcher: noopDispatcher,
+                globalEvidenceProjectionInput: { adapterId: "feishu-bot-ingress" },
               }),
           });
         }
@@ -7378,6 +7381,7 @@ export async function handleFeishuMessage(params: {
             cfg,
             dispatcher: effectiveDispatcher,
             replyOptions,
+            globalEvidenceProjectionInput: { adapterId: "feishu-bot-ingress" },
           }),
       });
       if (!queuedFinal || counts.final <= 0) {

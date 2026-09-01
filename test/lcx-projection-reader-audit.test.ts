@@ -15,7 +15,9 @@ describe("LCX projection reader audit", () => {
     );
     expect(source).toContain("globalEvidenceProjectionInput");
     expect(source).toContain("onGlobalEvidenceProjectionRead");
-    expect(source).toContain('adapterId: "neutral-answer-boundary"');
+    expect(source).toContain("readCanonicalGlobalEvidenceProjectionCandidate");
+    expect(source).toContain("resolveGlobalEvidenceProjectionAdapterId");
+    expect(source).toContain('fallback: "neutral-answer-boundary"');
     expect(source).toContain("blocked read is reported to the caller");
     expect(source).not.toContain("extraSystemPrompt");
   });
@@ -42,8 +44,17 @@ describe("LCX projection reader audit", () => {
         messageAdapterCoverageStatus: string;
         allKnownEntrypointsAudited: boolean;
         readerContractReadyForAllAdapters: boolean;
+        answerBoundaryReady: boolean;
+        discoveredMessageAdapterTotal: number;
       };
-      entries: Array<{ id: string; status: string; readerIds: string[] }>;
+      entries: Array<{
+        id: string;
+        status: string;
+        readerIds: string[];
+        readerIdStrategy: string;
+        passesAdapterProjectionInput: boolean;
+        delegatedToAnswerBoundary: boolean;
+      }>;
       nextAction: string;
       liveTouched: boolean;
       providerConfigTouched: boolean;
@@ -59,18 +70,22 @@ describe("LCX projection reader audit", () => {
       protectedMemoryTouched: false,
     });
     expect(payload.summary).toMatchObject({
-      total: 6,
-      bound: 3,
-      missingReaderContract: 3,
+      missingReaderContract: 0,
       missingEntrypoints: 0,
-      coverageStatus: "partial",
-      messageAdapterTotal: 3,
-      messageAdapterBound: 0,
-      messageAdapterCoverage: 0,
-      messageAdapterCoverageStatus: "missing",
+      coverageStatus: "complete",
+      messageAdapterCoverage: 1,
+      messageAdapterCoverageStatus: "complete",
       allKnownEntrypointsAudited: true,
-      readerContractReadyForAllAdapters: false,
+      readerContractReadyForAllAdapters: true,
+      answerBoundaryReady: true,
     });
+    expect(payload.summary.total).toBeGreaterThanOrEqual(4);
+    expect(payload.summary.bound).toBe(payload.summary.total);
+    expect(payload.summary.messageAdapterTotal).toBeGreaterThan(0);
+    expect(payload.summary.messageAdapterBound).toBe(payload.summary.messageAdapterTotal);
+    expect(payload.summary.messageAdapterTotal).toBeGreaterThanOrEqual(
+      payload.summary.discoveredMessageAdapterTotal,
+    );
     expect(payload.entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -86,7 +101,15 @@ describe("LCX projection reader audit", () => {
         expect.objectContaining({
           id: "neutral_answer_boundary",
           status: "bound",
-          readerIds: ["neutral-answer-boundary"],
+          readerIdStrategy: "literal",
+        }),
+        expect.objectContaining({
+          id: "message_adapter:extensions:feishu:src:bot",
+          status: "bound",
+          delegatedToAnswerBoundary: true,
+          passesAdapterProjectionInput: true,
+          readerIdStrategy: "literal",
+          readerIds: ["feishu-bot-ingress"],
         }),
       ]),
     );

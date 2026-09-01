@@ -57,6 +57,41 @@ export type GlobalEvidenceProjectionAdapterReadOptions = {
   maxAgeMs?: number;
 };
 
+function normalizeAdapterSlug(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 80);
+}
+
+/**
+ * Resolve a stable reader identity without coupling the contract to Lark,
+ * Feishu, Telegram, or any other transport brand. Explicit ids are preserved;
+ * ordinary message contexts use their neutral surface/provider label.
+ */
+export function resolveGlobalEvidenceProjectionAdapterId(
+  options: {
+    adapterId?: unknown;
+    surface?: unknown;
+    provider?: unknown;
+    fallback?: string;
+  } = {},
+): string {
+  const explicit = normalizeAdapterSlug(options.adapterId);
+  if (explicit) {
+    return explicit;
+  }
+  const surface = normalizeAdapterSlug(options.surface);
+  const provider = normalizeAdapterSlug(options.provider);
+  const fallback = normalizeAdapterSlug(options.fallback) || "unknown";
+  return `message-adapter:${surface || provider || fallback}`;
+}
+
 /**
  * Reduce a projection read to a safe, read-only display shape.
  *
