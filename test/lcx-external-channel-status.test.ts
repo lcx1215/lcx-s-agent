@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { resolveExternalChannelTruth } from "../scripts/operator/lcx-external-channel-status.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -21,6 +22,29 @@ async function runStatus(args: string[]) {
 }
 
 describe("lcx-external-channel-status", () => {
+  it("does not let legacy compatibility evidence override the binding owner", () => {
+    expect(
+      resolveExternalChannelTruth({
+        binding: {
+          status: "deferred_active_training_or_eval",
+          userVisibleObserved: false,
+        },
+        legacyExternalChannelStatus: {
+          externalChannelBound: true,
+          userVisibleObserved: true,
+        },
+        visibleProof: {
+          status: "user_visible_observed",
+          acceptanceMatched: true,
+        },
+      }),
+    ).toEqual({
+      externalChannelBound: false,
+      userVisibleObserved: false,
+      bindingStatus: "deferred_active_training_or_eval",
+    });
+  });
+
   it("wraps legacy promote-live status as a read-only external-channel owner", async () => {
     const payload = await runStatus(["--json"]);
 

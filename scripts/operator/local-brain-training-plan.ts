@@ -132,6 +132,7 @@ type QwenCapabilityConsolidationSnapshot = {
 
 type ActiveGuardAdapterTruthSnapshot = {
   boundary: "local_active_guard_adapter_truth_only";
+  activeGuardCount: number;
   latestGuardStartAt?: string;
   guardCurrentAdapter?: string;
   guardTrainingSeedAdapter?: string;
@@ -143,7 +144,10 @@ type ActiveGuardAdapterTruthSnapshot = {
   guardStartedAfterLatestPromotion: boolean;
   guardUsesSelectedCleanAdapter: boolean | null;
   guardUsesLatestPromotedAdapter: boolean | null;
+  activeGuardUsesSelectedCleanAdapter: boolean | null;
   mismatchReasons: string[];
+  activeGuardMismatchReasons: string[];
+  historicalMismatchReasons: string[];
   stalePromotionReasons: string[];
   action:
     | "guard_adapter_matches_selected_clean_adapter"
@@ -991,12 +995,16 @@ function qwenCapabilityConsolidationSnapshot(params: {
   };
 }
 
-function activeGuardAdapterTruthSnapshot(params: {
+export function activeGuardAdapterTruthSnapshot(params: {
+  activeProcesses: ActiveTrainingProcess[];
   latestGuardStart?: JsonRecord;
   selectedCleanAdapter?: string;
   latestPromotedAdapter?: string;
   latestPromotedAt?: string;
 }): ActiveGuardAdapterTruthSnapshot {
+  const activeGuardCount = params.activeProcesses.filter(
+    (process) => process.role === "guard",
+  ).length;
   const latestGuardStartAt = eventTime(params.latestGuardStart) || undefined;
   const options =
     params.latestGuardStart?.options &&
@@ -1048,8 +1056,11 @@ function activeGuardAdapterTruthSnapshot(params: {
       ? "guard_training_resume_adapter_not_selected_clean"
       : undefined,
   ].filter((entry): entry is string => Boolean(entry));
+  const activeGuardMismatchReasons = activeGuardCount > 0 ? mismatchReasons : [];
+  const historicalMismatchReasons = activeGuardCount > 0 ? [] : mismatchReasons;
   return {
     boundary: "local_active_guard_adapter_truth_only",
+    activeGuardCount,
     latestGuardStartAt,
     guardCurrentAdapter,
     guardTrainingSeedAdapter,
@@ -1061,12 +1072,16 @@ function activeGuardAdapterTruthSnapshot(params: {
     guardStartedAfterLatestPromotion,
     guardUsesSelectedCleanAdapter,
     guardUsesLatestPromotedAdapter,
+    activeGuardUsesSelectedCleanAdapter:
+      activeGuardCount > 0 ? guardUsesSelectedCleanAdapter : null,
     mismatchReasons,
+    activeGuardMismatchReasons,
+    historicalMismatchReasons,
     stalePromotionReasons,
     action:
-      mismatchReasons.length > 0
+      activeGuardMismatchReasons.length > 0
         ? "wait_for_active_guard_then_restart_with_selected_clean_adapter"
-        : guardCurrentAdapter
+        : activeGuardCount > 0 && guardCurrentAdapter
           ? "guard_adapter_matches_selected_clean_adapter"
           : "no_active_guard_adapter_to_compare",
   };
@@ -1090,7 +1105,7 @@ function legacyLiveLarkBrainBindingSnapshot(params: {
     params.activeHeavyEvalCounts.localBrainEval > 0 ||
     params.activeHeavyEvalCounts.externalLocalBrainEval > 0 ||
     params.activeHeavyEvalCounts.mlx > 0;
-  const guardAdapterMismatchReasons = params.activeGuardAdapterTruth.mismatchReasons;
+  const guardAdapterMismatchReasons = params.activeGuardAdapterTruth.activeGuardMismatchReasons;
   const latestPromotedAdapterStillClean =
     params.activeGuardAdapterTruth.latestPromotedAdapterStillClean;
   const missingProof = [
@@ -1221,7 +1236,7 @@ function externalChannelBindingSnapshot(params: {
     params.activeHeavyEvalCounts.localBrainEval > 0 ||
     params.activeHeavyEvalCounts.externalLocalBrainEval > 0 ||
     params.activeHeavyEvalCounts.mlx > 0;
-  const guardAdapterMismatchReasons = params.activeGuardAdapterTruth.mismatchReasons;
+  const guardAdapterMismatchReasons = params.activeGuardAdapterTruth.activeGuardMismatchReasons;
   const latestPromotedAdapterStillClean =
     params.activeGuardAdapterTruth.latestPromotedAdapterStillClean;
   const missingProof = [
@@ -1624,30 +1639,33 @@ async function activeTrainingProcesses(enabled: boolean): Promise<ActiveTraining
   const result = await execFileAsync("ps", ["-ax", "-o", "pid=,ppid=,etime=,command="], {
     maxBuffer: 1024 * 1024,
   }).catch(() => ({ stdout: "" }));
-  return result.stdout
-    .split(/\r?\n/u)
-    .filter((line) =>
-      /minimax-brain-training-guard|local-brain-distill-eval|minimax-quota-brain-saturator|minimax-brain-teacher-batch|mlx_lm generate/u.test(
-        line,
-      ),
-    )
-    .filter((line) => !line.includes("--resolve-current-adapter"))
-    .filter((line) => !line.includes("rg "))
-    .map((line) => {
-      const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/u.exec(line);
-      if (match) {
-        const command = match[4];
-        return {
-          pid: Number(match[1]),
-          ppid: Number(match[2]),
-          elapsed: match[3],
-          command,
-          role: activeTrainingRole(command),
-        };
-      }
-      const command = line.trim();
-      return { command, role: activeTrainingRole(command) };
-    });
+  return result.stdout.split(/\r?\n/u).flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/u.exec(line);
+    if (!match) {
+      return [];
+    }
+    const pid = Number(match[1]);
+    const command = match[4];
+    if (
+      pid === process.pid ||
+      !/minimax-brain-training-guard|local-brain-distill-eval|minimax-quota-brain-saturator|minimax-brain-teacher-batch|mlx_lm generate/u.test(
+        command,
+      ) ||
+      command.includes("--resolve-current-adapter") ||
+      /\b(?:rg|grep)\s/u.test(command)
+    ) {
+      return [];
+    }
+    return [
+      {
+        pid,
+        ppid: Number(match[2]),
+        elapsed: match[3],
+        command,
+        role: activeTrainingRole(command),
+      },
+    ];
+  });
 }
 
 function activeHeavyEvalSummary(activeProcesses: ActiveTrainingProcess[]) {
@@ -1872,7 +1890,7 @@ function buildDecisions(params: {
   decisions.push({
     id: active ? "training_already_active" : "training_not_active",
     lane: "training",
-    severity: active ? "info" : "P2",
+    severity: "info",
     action: active ? "do_not_start_overlapping_guard" : "start_medium_training_guard",
     reason: active
       ? "A local-brain guard or child process is already active."
@@ -1934,7 +1952,12 @@ function buildDecisions(params: {
     });
   }
 
-  if ((params.activeGuardAdapterTruth?.mismatchReasons ?? []).length > 0) {
+  const activeGuardMismatchReasons =
+    params.activeGuardAdapterTruth?.activeGuardMismatchReasons ??
+    ((params.activeGuardAdapterTruth?.activeGuardCount ?? 0) > 0
+      ? (params.activeGuardAdapterTruth?.mismatchReasons ?? [])
+      : []);
+  if (activeGuardMismatchReasons.length > 0) {
     decisions.push({
       id: "guard_adapter_mismatch",
       lane: "training",
@@ -1944,7 +1967,7 @@ function buildDecisions(params: {
         `Active guard currentAdapter=${params.activeGuardAdapterTruth?.guardCurrentAdapter ?? "unknown"}`,
         `selectedCleanAdapter=${params.activeGuardAdapterTruth?.selectedCleanAdapter ?? "unknown"}`,
         `latestPromotedAdapter=${params.activeGuardAdapterTruth?.latestPromotedAdapter ?? "unknown"}`,
-        `mismatch=${params.activeGuardAdapterTruth?.mismatchReasons.join(",")}`,
+        `mismatch=${activeGuardMismatchReasons.join(",")}`,
       ].join("; "),
       codexRepairEligible: false,
     });
@@ -2083,7 +2106,7 @@ function buildDecisions(params: {
       codexRepairEligible: false,
     });
   }
-  const guardAdapterMismatch = (params.activeGuardAdapterTruth?.mismatchReasons ?? []).length > 0;
+  const guardAdapterMismatch = activeGuardMismatchReasons.length > 0;
 
   if (params.latestEval && latestEvalIsAfterStart && !params.latestEval.promotionReady) {
     decisions.push({
@@ -2196,7 +2219,7 @@ function buildDecisions(params: {
           ? `Latest eval timeout at ${params.latestEvalTimeout?.at} is newer than promotion-ready eval at ${params.latestEval.at}.`
           : undefined,
         guardAdapterMismatch
-          ? `Active guard adapter mismatch: ${params.activeGuardAdapterTruth?.mismatchReasons.join(",")}.`
+          ? `Active guard adapter mismatch: ${activeGuardMismatchReasons.join(",")}.`
           : undefined,
       ]
         .filter(Boolean)
@@ -2620,6 +2643,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const latestPromotedAdapter =
     typeof latestPromotion?.adapterPath === "string" ? latestPromotion.adapterPath : undefined;
   const activeGuardAdapterTruth = activeGuardAdapterTruthSnapshot({
+    activeProcesses,
     latestGuardStart,
     selectedCleanAdapter: qwenCapabilityConsolidation.selectedCleanAdapter,
     latestPromotedAdapter,
@@ -2740,6 +2764,8 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestEvalIsCurrentForGuardStart:
       Boolean(latestEval?.at) &&
       (!eventTime(latestGuardStart) || latestEval!.at >= eventTime(latestGuardStart)),
+    selectedCleanAdapter: qwenCapabilityConsolidation.selectedCleanAdapter,
+    selectedCleanEval: qwenCapabilityConsolidation.selectedCleanEval,
     latestTeacher,
     latestQuotaStatus,
     qwenBaseModelMigration,

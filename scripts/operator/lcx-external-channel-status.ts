@@ -57,6 +57,36 @@ function externalChannelVisibleProof(legacyVisibleProof: Record<string, unknown>
   };
 }
 
+export function resolveExternalChannelTruth(params: {
+  binding: Record<string, unknown> | undefined;
+  legacyExternalChannelStatus: Record<string, unknown> | undefined;
+  visibleProof: Record<string, unknown> | undefined;
+}): { externalChannelBound: boolean; userVisibleObserved: boolean; bindingStatus: unknown } {
+  const bindingStatus = params.binding?.status ?? "unavailable";
+  const bindingAvailable = params.binding !== undefined;
+  const bindingProvedChannelBound =
+    bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
+    bindingStatus === "channel_runtime_probe_ok_user_visible_observed";
+  const bindingUserVisibleObserved = params.binding?.userVisibleObserved === true;
+  const legacyExternalChannelBound =
+    params.legacyExternalChannelStatus?.externalChannelBound === true;
+  const legacyUserVisibleObserved =
+    params.legacyExternalChannelStatus?.userVisibleObserved === true;
+  const compatibilityVisibleProofObserved =
+    legacyExternalChannelBound &&
+    (params.visibleProof?.status === "live_visible_fixed" ||
+      params.visibleProof?.status === "user_visible_observed") &&
+    params.visibleProof?.acceptanceMatched === true;
+
+  return {
+    externalChannelBound: bindingAvailable ? bindingProvedChannelBound : legacyExternalChannelBound,
+    userVisibleObserved: bindingAvailable
+      ? bindingUserVisibleObserved
+      : legacyUserVisibleObserved || compatibilityVisibleProofObserved,
+    bindingStatus,
+  };
+}
+
 function externalChannelDriftStatus(params: {
   legacyRepositoryDrift: Record<string, unknown> | undefined;
   externalChannelBound: boolean;
@@ -194,21 +224,12 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const legacyExternalChannelStatus = recordValue(legacy.externalChannelStatus);
     const visibleProof = externalChannelVisibleProof(recordValue(legacy.visibleProof));
     const legacyRepositoryDrift = recordValue(legacy.devLiveDrift);
-    const bindingStatus = binding?.status ?? "unavailable";
-    const bindingProvedChannelBound =
-      bindingStatus === "channel_runtime_probe_ok_user_visible_pending" ||
-      bindingStatus === "channel_runtime_probe_ok_user_visible_observed";
-    const bindingUserVisibleObserved = binding?.userVisibleObserved === true;
-    const externalChannelBound =
-      bindingProvedChannelBound || legacyExternalChannelStatus?.externalChannelBound === true;
-    const visibleProofUserVisibleObserved =
-      externalChannelBound &&
-      visibleProof?.status === "live_visible_fixed" &&
-      visibleProof.acceptanceMatched === true;
-    const userVisibleObserved =
-      bindingUserVisibleObserved ||
-      legacyExternalChannelStatus?.userVisibleObserved === true ||
-      visibleProofUserVisibleObserved;
+    const { bindingStatus, externalChannelBound, userVisibleObserved } =
+      resolveExternalChannelTruth({
+        binding,
+        legacyExternalChannelStatus,
+        visibleProof,
+      });
     const externalChannelStatus = {
       ...legacyExternalChannelStatus,
       externalChannelBound,

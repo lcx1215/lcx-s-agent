@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   LCX_ONTOLOGY_ADAPTER_IMPLEMENTATION_IDS,
+  LCX_ONTOLOGY_EVOLUTION_CONTRACT,
   LCX_ONTOLOGY_FORBIDDEN_CANONICAL_TOKENS,
   LCX_ONTOLOGY_LEGACY_COMPATIBILITY_IDS,
   LCX_ONTOLOGY_REGISTRY_POLICY,
@@ -43,6 +44,10 @@ const INTEGRATION_SURFACES = [
       "non-canonical task-family outcomes",
       "versioned explicit migration",
       "parallel registries are forbidden",
+      "ontology evolution contract",
+      "vocabulary groups",
+      "additive canonical values",
+      "migration manifest",
     ],
   },
   {
@@ -129,6 +134,9 @@ const INTEGRATION_SURFACES = [
       "LcxOntologySurfaceId",
       "LcxOntologyCapabilityRole",
       "canonical_ontology_registry",
+      "ontology evolution contract",
+      "LCX_ONTOLOGY_EVOLUTION_CONTRACT",
+      "validateLcxOntologyMigrationManifest",
     ],
   },
   {
@@ -320,6 +328,7 @@ async function buildOntologyAudit() {
     ontologyVersion: LCX_ONTOLOGY_REGISTRY.version,
     canonicalSource: LCX_ONTOLOGY_REGISTRY_POLICY.canonicalSource,
     registryPolicy: LCX_ONTOLOGY_REGISTRY_POLICY,
+    evolutionContract: LCX_ONTOLOGY_EVOLUTION_CONTRACT,
     relationContracts: {
       count: LCX_ONTOLOGY_REGISTRY.relationContracts.length,
       relations: LCX_ONTOLOGY_REGISTRY.relationContracts.map((contract) => contract.relation),

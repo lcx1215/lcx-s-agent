@@ -57,6 +57,54 @@ describe("local-brain-promotion-audit", () => {
     expect(audit.realBugsFound).toEqual([]);
   });
 
+  it("holds when the training plan carries a promotion blocker", () => {
+    const adapterPath = "/tmp/adapter-r4";
+    const audit = buildPromotionAudit({
+      plan: {
+        activeProcesses: [],
+        decisions: [
+          {
+            id: "stable_eval_timeout_after_latest_start",
+            severity: "P2",
+            action: "repair_eval_timeout",
+          },
+        ],
+        latestEval: {
+          at: "2026-05-12T02:57:16.380Z",
+          name: "stable_hardened_eval",
+          adapterPath,
+          passed: 72,
+          total: 72,
+          passRate: 1,
+          promotionReady: true,
+          failedCaseIds: [],
+          parseErrorCaseIds: [],
+        },
+        latestTeacher: { acceptedCandidates: 35, failures: 0 },
+        moduleLearningReview: {
+          ok: true,
+          boundary: "module_learning_pipeline_review_only",
+          updated: false,
+          counts: { boundaryViolations: 0 },
+        },
+      },
+      resolver: {
+        ok: true,
+        details: { selectedAdapter: adapterPath, selectionMode: "latest-passing" },
+      },
+    });
+
+    expect(audit).toEqual(
+      expect.objectContaining({
+        promotionDecision: "hold",
+        promotionBlockingDecisionIds: ["stable_eval_timeout_after_latest_start"],
+      }),
+    );
+    expect(audit.qualityLaneConcernsConsidered).toContain(
+      "training_plan_stable_eval_timeout_after_latest_start",
+    );
+  });
+
   it("rejects promotion when resolver cannot return a latest-passing adapter", () => {
     const audit = buildPromotionAudit({
       plan: {

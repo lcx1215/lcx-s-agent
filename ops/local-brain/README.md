@@ -36,6 +36,16 @@ without a registered contract is invalid. `unknown` and
 parser reporting only, never semantic task meaning.
 The registry is extended in place by default. A physical move requires a
 versioned explicit migration, and parallel registries are forbidden.
+The ontology evolution contract also assigns every vocabulary to one of five
+vocabulary groups and distinguishes additive canonical values from breaking
+semantic changes. Additive canonical values and compatibility aliases stay in
+place after ontology audit, impact planning, and focused regression; renames,
+removals, relation/state changes, classification changes, and source moves
+require a version bump, a migration manifest, and the relevant head-tail,
+flow-graph, and mind-model proofs.
+The migration manifest schema is `lcx_ontology_migration_v1`; it records the
+exact change kind, scope, before/after identifiers, affected vocabularies,
+compatibility mode, rollback posture, and required proofs.
 
 Lark/Feishu-specific identifiers in the registry are classified as adapter
 implementation labels, not as core facts; old live/dev-shaped labels are

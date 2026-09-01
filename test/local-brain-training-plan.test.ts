@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  activeGuardAdapterTruthSnapshot,
   activeGuardEvolutionCooldownSnapshot,
   buildLocalBrainTrainingPlan,
   buildQwenBaseModelMigrationPlan,
@@ -26,6 +27,40 @@ async function writeJson(
 }
 
 describe("local-brain-training-plan", () => {
+  it("only treats an adapter mismatch as active when a guard process is observed", () => {
+    const active = activeGuardAdapterTruthSnapshot({
+      activeProcesses: [
+        {
+          pid: 101,
+          command: "node scripts/operator/minimax-brain-training-guard.ts",
+          role: "guard",
+        },
+      ],
+      latestGuardStart: {
+        at: "2026-05-09T10:00:00.000Z",
+        options: {
+          currentAdapter: "/tmp/adapter-stale-r1",
+          trainingSeedAdapter: "/tmp/adapter-stale-r1",
+          trainingResumeAdapter: "/tmp/adapter-stale-r1",
+        },
+      },
+      selectedCleanAdapter: "/tmp/adapter-clean-r2",
+      latestPromotedAdapter: "/tmp/adapter-clean-r2",
+      latestPromotedAt: "2026-05-09T09:45:00.000Z",
+    });
+
+    expect(active).toMatchObject({
+      activeGuardCount: 1,
+      activeGuardUsesSelectedCleanAdapter: false,
+      activeGuardMismatchReasons: expect.arrayContaining([
+        "guard_current_adapter_not_selected_clean",
+        "guard_training_seed_adapter_not_selected_clean",
+      ]),
+      historicalMismatchReasons: [],
+      action: "wait_for_active_guard_then_restart_with_selected_clean_adapter",
+    });
+  });
+
   it("detects an active guard launched before the evolution cooldown flag", () => {
     expect(
       activeGuardEvolutionCooldownSnapshot([
@@ -412,6 +447,13 @@ describe("local-brain-training-plan", () => {
         noRegressionGate: true,
         nextProofRequired: "targeted_eval_clean_then_full_hardened_eval_then_promotion_audit",
       },
+    });
+    expect(plan).toMatchObject({
+      selectedCleanAdapter: "/tmp/adapter-r2",
+      selectedCleanEval: expect.objectContaining({
+        adapterPath: "/tmp/adapter-r2",
+        promotionReady: true,
+      }),
     });
     expect(plan.qwenCapabilityConsolidation.adapterLadder).toMatchObject({
       champion: {
@@ -820,28 +862,28 @@ describe("local-brain-training-plan", () => {
 
     expect(plan.activeGuardAdapterTruth).toMatchObject({
       boundary: "local_active_guard_adapter_truth_only",
+      activeGuardCount: 0,
       guardCurrentAdapter: "/tmp/adapter-stale-r1",
       selectedCleanAdapter: "/tmp/adapter-clean-r2",
       latestPromotedAdapter: "/tmp/adapter-clean-r2",
       guardStartedAfterLatestPromotion: true,
       guardUsesSelectedCleanAdapter: false,
       guardUsesLatestPromotedAdapter: false,
+      activeGuardUsesSelectedCleanAdapter: null,
+      activeGuardMismatchReasons: [],
       mismatchReasons: expect.arrayContaining([
         "guard_current_adapter_not_selected_clean",
         "guard_current_adapter_not_latest_promoted_after_promotion",
         "guard_training_seed_adapter_not_selected_clean",
         "guard_training_resume_adapter_not_selected_clean",
       ]),
-    });
-    expect(plan.decisions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "guard_adapter_mismatch",
-          lane: "training",
-          severity: "P2",
-          codexRepairEligible: false,
-        }),
+      historicalMismatchReasons: expect.arrayContaining([
+        "guard_current_adapter_not_selected_clean",
+        "guard_current_adapter_not_latest_promoted_after_promotion",
       ]),
+    });
+    expect(plan.decisions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "guard_adapter_mismatch" })]),
     );
   });
 
@@ -1120,7 +1162,7 @@ describe("local-brain-training-plan", () => {
       guardUsesLatestPromotedAdapter: null,
       mismatchReasons: [],
       stalePromotionReasons: ["latest_promoted_adapter_no_longer_selected_clean"],
-      action: "guard_adapter_matches_selected_clean_adapter",
+      action: "no_active_guard_adapter_to_compare",
     });
     expect(plan.decisions).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "guard_adapter_mismatch" })]),

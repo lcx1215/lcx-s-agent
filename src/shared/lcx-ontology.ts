@@ -8,6 +8,8 @@
  */
 
 export const LCX_ONTOLOGY_VERSION = "lcx_ontology_v1" as const;
+export const LCX_ONTOLOGY_EVOLUTION_CONTRACT_VERSION = "lcx_ontology_evolution_v1" as const;
+export const LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION = "lcx_ontology_migration_v1" as const;
 
 /**
  * The registry is extended in place. A physical move requires an explicit
@@ -19,6 +21,8 @@ export const LCX_ONTOLOGY_REGISTRY_POLICY = {
   changeMode: "extend_in_place",
   migrationMode: "versioned_explicit_migration",
   parallelRegistry: "forbidden",
+  evolutionContractVersion: LCX_ONTOLOGY_EVOLUTION_CONTRACT_VERSION,
+  migrationManifestSchemaVersion: LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION,
 } as const;
 
 export const LCX_ONTOLOGY_ENTITY_TYPES = [
@@ -1116,6 +1120,274 @@ export type LcxOntologyVocabularyValue<V extends LcxOntologyVocabularyName> =
   (typeof LCX_ONTOLOGY_VOCABULARIES)[V][number];
 
 /**
+ * Every vocabulary belongs to one semantic area so future additions declare
+ * where they participate in the whole-system model instead of becoming
+ * another unowned list.
+ */
+export const LCX_ONTOLOGY_VOCABULARY_GROUPS = {
+  semanticGraph: ["entityType", "relation", "domainEntityType"],
+  architecture: [
+    "surface",
+    "evidenceKind",
+    "module",
+    "learningTarget",
+    "externalLearningTarget",
+    "moduleFamily",
+    "coreRiskBoundary",
+    "contractField",
+    "contractBoundary",
+    "capabilityMaturity",
+    "capabilityCoverage",
+    "adaptability",
+    "capabilityRole",
+    "actionKind",
+    "actionStatus",
+    "learningDecision",
+  ],
+  stateAndDelivery: [
+    "deliveryState",
+    "deliveryProofVisibility",
+    "boundaryStatus",
+    "evidenceStatus",
+    "projectionReadStatus",
+    "learningEvidenceStatus",
+    "channelMilestone",
+  ],
+  finance: [
+    "financeFrameworkCoreDomain",
+    "financeAllowedActionAuthority",
+    "financeConfidenceOrConviction",
+    "financeLearningCapabilityType",
+    "financeLearningCapabilityTag",
+    "financeLearningSourceType",
+    "financeLearningCollectionMethod",
+    "financeLearningEvidenceLevel",
+    "financeDataProviderRole",
+    "financeDataSourceFamily",
+    "financeDataDelayStatus",
+    "financeDataQualityStatus",
+    "financeArticleSourceType",
+    "financeArticleSourceCollectionMethod",
+    "financeEvidenceCategory",
+    "sourceEvidenceClass",
+    "sourceReliabilityGrade",
+    "weakEvidencePolicy",
+  ],
+  workflow: [
+    "taskFamily",
+    "workflowNode",
+    "workflowFilter",
+    "answerPipelineFilter",
+    "workflowScenario",
+    "workflowFamily",
+  ],
+} as const satisfies Readonly<Record<string, readonly LcxOntologyVocabularyName[]>>;
+export type LcxOntologyVocabularyGroupId = keyof typeof LCX_ONTOLOGY_VOCABULARY_GROUPS;
+
+export const LCX_ONTOLOGY_EVOLUTION_CHANGE_KINDS = [
+  "add_canonical_value",
+  "add_alias",
+  "change_relation_contract",
+  "change_state_chain",
+  "rename_canonical_value",
+  "remove_canonical_value",
+  "rename_vocabulary",
+  "move_canonical_source",
+  "change_identifier_classification",
+  "introduce_parallel_registry",
+] as const;
+export type LcxOntologyEvolutionChangeKind = (typeof LCX_ONTOLOGY_EVOLUTION_CHANGE_KINDS)[number];
+
+export const LCX_ONTOLOGY_EVOLUTION_ACTIONS = [
+  "extend_in_place",
+  "versioned_explicit_migration",
+  "forbidden",
+] as const;
+export type LcxOntologyEvolutionAction = (typeof LCX_ONTOLOGY_EVOLUTION_ACTIONS)[number];
+
+export const LCX_ONTOLOGY_EVOLUTION_PROOF_IDS = [
+  "ontology_audit",
+  "change_impact_plan",
+  "focused_regression",
+  "head_tail_consistency",
+  "flow_graph",
+  "mind_model",
+  "migration_manifest",
+] as const;
+export type LcxOntologyEvolutionProofId = (typeof LCX_ONTOLOGY_EVOLUTION_PROOF_IDS)[number];
+
+export type LcxOntologyEvolutionRule = {
+  changeKind: LcxOntologyEvolutionChangeKind;
+  action: LcxOntologyEvolutionAction;
+  requiresVersionBump: boolean;
+  requiresMigrationManifest: boolean;
+  requiredProofs: readonly LcxOntologyEvolutionProofId[];
+};
+
+const LCX_ONTOLOGY_EVOLUTION_ADDITIVE_PROOFS = [
+  "ontology_audit",
+  "change_impact_plan",
+  "focused_regression",
+] as const satisfies readonly LcxOntologyEvolutionProofId[];
+const LCX_ONTOLOGY_EVOLUTION_BREAKING_PROOFS = [
+  "ontology_audit",
+  "change_impact_plan",
+  "focused_regression",
+  "head_tail_consistency",
+  "flow_graph",
+  "mind_model",
+  "migration_manifest",
+] as const satisfies readonly LcxOntologyEvolutionProofId[];
+const LCX_ONTOLOGY_EVOLUTION_STRUCTURAL_PROOFS = [
+  "ontology_audit",
+  "change_impact_plan",
+  "focused_regression",
+  "head_tail_consistency",
+  "mind_model",
+  "migration_manifest",
+] as const satisfies readonly LcxOntologyEvolutionProofId[];
+
+/**
+ * Additive changes preserve the current registry version. Semantic breaks,
+ * physical moves, and classification changes require an explicit migration;
+ * a parallel registry is never an accepted evolution strategy.
+ */
+export const LCX_ONTOLOGY_EVOLUTION_RULES: readonly LcxOntologyEvolutionRule[] = [
+  {
+    changeKind: "add_canonical_value",
+    action: "extend_in_place",
+    requiresVersionBump: false,
+    requiresMigrationManifest: false,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_ADDITIVE_PROOFS,
+  },
+  {
+    changeKind: "add_alias",
+    action: "extend_in_place",
+    requiresVersionBump: false,
+    requiresMigrationManifest: false,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_ADDITIVE_PROOFS,
+  },
+  {
+    changeKind: "change_relation_contract",
+    action: "versioned_explicit_migration",
+    requiresVersionBump: true,
+    requiresMigrationManifest: true,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_BREAKING_PROOFS,
+  },
+  {
+    changeKind: "change_state_chain",
+    action: "versioned_explicit_migration",
+    requiresVersionBump: true,
+    requiresMigrationManifest: true,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_BREAKING_PROOFS,
+  },
+  {
+    changeKind: "rename_canonical_value",
+    action: "versioned_explicit_migration",
+    requiresVersionBump: true,
+    requiresMigrationManifest: true,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_BREAKING_PROOFS,
+  },
+  {
+    changeKind: "remove_canonical_value",
+    action: "versioned_explicit_migration",
+    requiresVersionBump: true,
+    requiresMigrationManifest: true,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_BREAKING_PROOFS,
+  },
+  {
+    changeKind: "rename_vocabulary",
+    action: "versioned_explicit_migration",
+    requiresVersionBump: true,
+    requiresMigrationManifest: true,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_BREAKING_PROOFS,
+  },
+  {
+    changeKind: "move_canonical_source",
+    action: "versioned_explicit_migration",
+    requiresVersionBump: true,
+    requiresMigrationManifest: true,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_STRUCTURAL_PROOFS,
+  },
+  {
+    changeKind: "change_identifier_classification",
+    action: "versioned_explicit_migration",
+    requiresVersionBump: true,
+    requiresMigrationManifest: true,
+    requiredProofs: LCX_ONTOLOGY_EVOLUTION_STRUCTURAL_PROOFS,
+  },
+  {
+    changeKind: "introduce_parallel_registry",
+    action: "forbidden",
+    requiresVersionBump: false,
+    requiresMigrationManifest: false,
+    requiredProofs: ["ontology_audit"],
+  },
+];
+
+export const LCX_ONTOLOGY_EVOLUTION_PROOF_SURFACES = {
+  ontology_audit: "scripts/operator/lcx-ontology.ts",
+  change_impact_plan: "scripts/operator/lcx-change-impact-plan.ts",
+  focused_regression: "test/lcx-ontology.test.ts",
+  head_tail_consistency: "scripts/operator/lcx-head-tail-consistency.ts",
+  flow_graph: "scripts/operator/lcx-flow-graph.ts",
+  mind_model: "scripts/operator/lcx-mind-model.ts",
+  migration_manifest: "versioned explicit migration manifest",
+} as const satisfies Record<LcxOntologyEvolutionProofId, string>;
+
+export const LCX_ONTOLOGY_MIGRATION_MANIFEST_REQUIRED_FIELDS = [
+  "schemaVersion",
+  "fromOntologyVersion",
+  "toOntologyVersion",
+  "changes",
+  "affectedVocabularies",
+  "reason",
+  "compatibility",
+  "rollback",
+  "requiredProofs",
+] as const;
+
+export const LCX_ONTOLOGY_EVOLUTION_CONTRACT = {
+  contractVersion: LCX_ONTOLOGY_EVOLUTION_CONTRACT_VERSION,
+  registryVersion: LCX_ONTOLOGY_VERSION,
+  canonicalSource: LCX_ONTOLOGY_REGISTRY_POLICY.canonicalSource,
+  defaultAction: "extend_in_place",
+  breakingChangeAction: "versioned_explicit_migration",
+  forbiddenAction: "forbidden",
+  vocabularyGroups: LCX_ONTOLOGY_VOCABULARY_GROUPS,
+  rules: LCX_ONTOLOGY_EVOLUTION_RULES,
+  proofSurfaces: LCX_ONTOLOGY_EVOLUTION_PROOF_SURFACES,
+  migrationManifestSchemaVersion: LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION,
+  migrationManifestRequiredFields: LCX_ONTOLOGY_MIGRATION_MANIFEST_REQUIRED_FIELDS,
+  invariants: [
+    "canonical_ids_are_stable",
+    "aliases_target_current_canonical_values",
+    "semantic_breaks_require_versioned_migration",
+    "parallel_registries_are_forbidden",
+    "non_canonical_runtime_outcomes_stay_outside_semantics",
+  ],
+} as const;
+
+export type LcxOntologyMigrationChange = {
+  changeKind: LcxOntologyEvolutionChangeKind;
+  scope: LcxOntologyVocabularyName | "registry";
+  from?: string;
+  to?: string;
+};
+
+export type LcxOntologyMigrationManifest = {
+  schemaVersion: typeof LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION;
+  fromOntologyVersion: string;
+  toOntologyVersion: string;
+  changes: readonly LcxOntologyMigrationChange[];
+  affectedVocabularies: readonly LcxOntologyVocabularyName[];
+  reason: string;
+  compatibility: "dual_read_then_cutover" | "explicit_cutover";
+  rollback: "available" | "not_available";
+  requiredProofs: readonly LcxOntologyEvolutionProofId[];
+};
+
+/**
  * These identifiers describe today's adapter implementation, not the
  * underlying capability or evidence. They remain canonical for compatibility
  * until the owning workflows migrate to neutral names.
@@ -1156,6 +1428,8 @@ export const LCX_ONTOLOGY_REGISTRY = {
   relationContracts: LCX_ONTOLOGY_RELATION_CONTRACTS,
   relationTypes: LCX_ONTOLOGY_RELATION_TYPES,
   vocabularies: LCX_ONTOLOGY_VOCABULARIES,
+  vocabularyGroups: LCX_ONTOLOGY_VOCABULARY_GROUPS,
+  evolution: LCX_ONTOLOGY_EVOLUTION_CONTRACT,
   nonCanonicalTaskFamilyIds: LCX_ONTOLOGY_NON_CANONICAL_TASK_FAMILY_IDS,
   nonCanonicalTaskFamilyClasses: LCX_ONTOLOGY_NON_CANONICAL_TASK_FAMILY_CLASSES,
   policy: LCX_ONTOLOGY_REGISTRY_POLICY,
@@ -1227,6 +1501,172 @@ export function canonicalizeLcxOntologyValue<V extends LcxOntologyVocabularyName
     : undefined;
 }
 
+export function getLcxOntologyEvolutionRule(
+  changeKind: LcxOntologyEvolutionChangeKind,
+): LcxOntologyEvolutionRule | undefined {
+  return LCX_ONTOLOGY_EVOLUTION_RULES.find((rule) => rule.changeKind === changeKind);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEvolutionChangeKind(value: unknown): value is LcxOntologyEvolutionChangeKind {
+  return (
+    typeof value === "string" &&
+    LCX_ONTOLOGY_EVOLUTION_CHANGE_KINDS.includes(value as LcxOntologyEvolutionChangeKind)
+  );
+}
+
+function isEvolutionProofId(value: unknown): value is LcxOntologyEvolutionProofId {
+  return (
+    typeof value === "string" &&
+    LCX_ONTOLOGY_EVOLUTION_PROOF_IDS.includes(value as LcxOntologyEvolutionProofId)
+  );
+}
+
+/**
+ * Validate a future migration artifact before it is used by an owner. The
+ * input is unknown on purpose: migration manifests normally arrive from JSON
+ * or another persisted boundary and must not be trusted by their type alone.
+ */
+export function validateLcxOntologyMigrationManifest(manifest: unknown): string[] {
+  const errors: string[] = [];
+  if (!isRecord(manifest)) {
+    return ["ontology migration manifest must be an object"];
+  }
+  if (manifest.schemaVersion !== LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION) {
+    errors.push("ontology migration manifest has an unsupported schema version");
+  }
+  const fromOntologyVersion = manifest.fromOntologyVersion;
+  const toOntologyVersion = manifest.toOntologyVersion;
+  if (typeof fromOntologyVersion !== "string" || fromOntologyVersion.trim().length === 0) {
+    errors.push("ontology migration manifest needs fromOntologyVersion");
+  }
+  if (typeof toOntologyVersion !== "string" || toOntologyVersion.trim().length === 0) {
+    errors.push("ontology migration manifest needs toOntologyVersion");
+  }
+  if (
+    typeof fromOntologyVersion === "string" &&
+    typeof toOntologyVersion === "string" &&
+    fromOntologyVersion === toOntologyVersion
+  ) {
+    errors.push("ontology migration manifest must change the ontology version");
+  }
+  if (typeof manifest.reason !== "string" || manifest.reason.trim().length === 0) {
+    errors.push("ontology migration manifest needs a reason");
+  }
+  if (!Array.isArray(manifest.changes) || manifest.changes.length === 0) {
+    errors.push("ontology migration manifest needs at least one change");
+  }
+  const requiredProofs = Array.isArray(manifest.requiredProofs) ? manifest.requiredProofs : [];
+  if (!Array.isArray(manifest.requiredProofs) || requiredProofs.length === 0) {
+    errors.push("ontology migration manifest needs requiredProofs");
+  }
+  if (
+    manifest.compatibility !== "dual_read_then_cutover" &&
+    manifest.compatibility !== "explicit_cutover"
+  ) {
+    errors.push("ontology migration manifest has an unsupported compatibility mode");
+  }
+  if (manifest.rollback !== "available" && manifest.rollback !== "not_available") {
+    errors.push("ontology migration manifest has an unsupported rollback mode");
+  }
+
+  const vocabularyNames = new Set(Object.keys(LCX_ONTOLOGY_VOCABULARIES));
+  const affectedVocabularies = Array.isArray(manifest.affectedVocabularies)
+    ? manifest.affectedVocabularies
+    : [];
+  if (!Array.isArray(manifest.affectedVocabularies) || affectedVocabularies.length === 0) {
+    errors.push("ontology migration manifest needs affectedVocabularies");
+  }
+  for (const vocabulary of affectedVocabularies) {
+    if (typeof vocabulary !== "string" || !vocabularyNames.has(vocabulary)) {
+      errors.push("ontology migration manifest uses unknown vocabulary: " + String(vocabulary));
+    }
+  }
+  for (const duplicate of duplicateValues(
+    affectedVocabularies.filter(
+      (vocabulary): vocabulary is string => typeof vocabulary === "string",
+    ),
+  )) {
+    errors.push("ontology migration manifest repeats vocabulary: " + duplicate);
+  }
+  const affectedVocabularySet = new Set(
+    affectedVocabularies.filter(
+      (vocabulary): vocabulary is string =>
+        typeof vocabulary === "string" && vocabularyNames.has(vocabulary),
+    ),
+  );
+  const requiredProofSet = new Set<LcxOntologyEvolutionProofId>();
+  for (const proof of requiredProofs) {
+    if (!isEvolutionProofId(proof)) {
+      errors.push("ontology migration manifest uses unknown proof: " + String(proof));
+    }
+  }
+  for (const duplicate of duplicateValues(requiredProofs.filter(isEvolutionProofId))) {
+    errors.push("ontology migration manifest repeats proof: " + duplicate);
+  }
+  for (const proof of requiredProofs) {
+    if (isEvolutionProofId(proof)) {
+      requiredProofSet.add(proof);
+    }
+  }
+
+  const changes = Array.isArray(manifest.changes) ? manifest.changes : [];
+  for (const [index, rawChange] of changes.entries()) {
+    if (!isRecord(rawChange)) {
+      errors.push("ontology migration change " + index + " must be an object");
+      continue;
+    }
+    const changeKind = rawChange.changeKind;
+    if (!isEvolutionChangeKind(changeKind)) {
+      errors.push("ontology migration change " + index + " uses unknown change kind");
+      continue;
+    }
+    const rule = getLcxOntologyEvolutionRule(changeKind);
+    if (rule === undefined) {
+      errors.push("ontology migration change has no rule: " + changeKind);
+      continue;
+    }
+    if (rule.action !== "versioned_explicit_migration") {
+      errors.push(
+        "ontology migration cannot contain non-breaking or forbidden change: " + changeKind,
+      );
+    }
+    for (const proof of rule.requiredProofs) {
+      if (!requiredProofSet.has(proof)) {
+        errors.push("ontology migration manifest is missing proof " + proof + " for " + changeKind);
+      }
+    }
+    const scope = rawChange.scope;
+    if (scope !== "registry" && (typeof scope !== "string" || !vocabularyNames.has(scope))) {
+      errors.push("ontology migration change " + index + " uses unknown scope");
+    } else if (scope !== "registry" && !affectedVocabularySet.has(scope)) {
+      errors.push(
+        "ontology migration change " + index + " scope is not listed in affectedVocabularies",
+      );
+    }
+    const from = rawChange.from;
+    const to = rawChange.to;
+    if (changeKind === "remove_canonical_value") {
+      if (typeof from !== "string" || from.trim().length === 0) {
+        errors.push("ontology removal change " + index + " needs from");
+      }
+    } else if (
+      typeof from !== "string" ||
+      from.trim().length === 0 ||
+      typeof to !== "string" ||
+      to.trim().length === 0
+    ) {
+      errors.push("ontology migration change " + index + " needs from and to");
+    } else if (from === to) {
+      errors.push("ontology migration change " + index + " must change its identifier or contract");
+    }
+  }
+  return errors;
+}
+
 function duplicateValues(values: readonly string[]): string[] {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
@@ -1237,6 +1677,126 @@ function duplicateValues(values: readonly string[]): string[] {
     seen.add(value);
   }
   return [...duplicates];
+}
+
+function validateVocabularyGroups(): string[] {
+  const errors: string[] = [];
+  const covered = new Map<string, string>();
+  const vocabularyNames = new Set(Object.keys(LCX_ONTOLOGY_VOCABULARIES));
+  for (const [group, vocabularies] of Object.entries(LCX_ONTOLOGY_VOCABULARY_GROUPS)) {
+    for (const duplicate of duplicateValues(vocabularies)) {
+      errors.push("vocabulary group " + group + " contains duplicate vocabulary " + duplicate);
+    }
+    for (const vocabulary of vocabularies) {
+      if (!vocabularyNames.has(vocabulary)) {
+        errors.push("vocabulary group " + group + " uses unknown vocabulary " + vocabulary);
+        continue;
+      }
+      const previousGroup = covered.get(vocabulary);
+      if (previousGroup !== undefined && previousGroup !== group) {
+        errors.push(
+          "vocabulary " +
+            vocabulary +
+            " belongs to multiple groups: " +
+            previousGroup +
+            ", " +
+            group,
+        );
+      }
+      covered.set(vocabulary, group);
+    }
+  }
+  for (const vocabulary of vocabularyNames) {
+    if (!covered.has(vocabulary)) {
+      errors.push("vocabulary has no evolution group: " + vocabulary);
+    }
+  }
+  return errors;
+}
+
+function validateEvolutionContract(): string[] {
+  const errors: string[] = [];
+  if (LCX_ONTOLOGY_EVOLUTION_CONTRACT.contractVersion !== LCX_ONTOLOGY_EVOLUTION_CONTRACT_VERSION) {
+    errors.push("ontology evolution contract version is inconsistent");
+  }
+  if (LCX_ONTOLOGY_EVOLUTION_CONTRACT.registryVersion !== LCX_ONTOLOGY_VERSION) {
+    errors.push("ontology evolution contract points to a different registry version");
+  }
+  if (
+    LCX_ONTOLOGY_EVOLUTION_CONTRACT.canonicalSource !== LCX_ONTOLOGY_REGISTRY_POLICY.canonicalSource
+  ) {
+    errors.push("ontology evolution contract points to a different canonical source");
+  }
+  if (
+    LCX_ONTOLOGY_EVOLUTION_CONTRACT.migrationManifestSchemaVersion !==
+    LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION
+  ) {
+    errors.push("ontology evolution contract uses an inconsistent migration manifest schema");
+  }
+  for (const proof of LCX_ONTOLOGY_EVOLUTION_PROOF_IDS) {
+    if (!(proof in LCX_ONTOLOGY_EVOLUTION_PROOF_SURFACES)) {
+      errors.push("ontology evolution contract has no proof surface: " + proof);
+    }
+  }
+  for (const duplicate of duplicateValues(LCX_ONTOLOGY_EVOLUTION_CONTRACT.invariants)) {
+    errors.push("ontology evolution contract repeats invariant: " + duplicate);
+  }
+  const knownChangeKinds = new Set<string>(LCX_ONTOLOGY_EVOLUTION_CHANGE_KINDS);
+  const coveredChangeKinds = new Set<string>();
+  for (const rule of LCX_ONTOLOGY_EVOLUTION_RULES) {
+    if (!knownChangeKinds.has(rule.changeKind)) {
+      errors.push("evolution rule uses unknown change kind: " + rule.changeKind);
+    }
+    if (coveredChangeKinds.has(rule.changeKind)) {
+      errors.push("evolution rule is duplicated: " + rule.changeKind);
+    }
+    coveredChangeKinds.add(rule.changeKind);
+    if (rule.action === "versioned_explicit_migration") {
+      if (!rule.requiresVersionBump || !rule.requiresMigrationManifest) {
+        errors.push(
+          "breaking evolution rule lacks version/migration requirement: " + rule.changeKind,
+        );
+      }
+    }
+    if (
+      rule.action === "extend_in_place" &&
+      (rule.requiresVersionBump || rule.requiresMigrationManifest)
+    ) {
+      errors.push("additive evolution rule requires an unnecessary migration: " + rule.changeKind);
+    }
+    if (
+      rule.action === "forbidden" &&
+      (rule.requiresVersionBump || rule.requiresMigrationManifest)
+    ) {
+      errors.push("forbidden evolution rule must stop before migration: " + rule.changeKind);
+    }
+    for (const proof of rule.requiredProofs) {
+      if (!(proof in LCX_ONTOLOGY_EVOLUTION_PROOF_SURFACES)) {
+        errors.push("evolution rule uses unknown proof: " + rule.changeKind + ":" + proof);
+      }
+    }
+    for (const duplicate of duplicateValues(rule.requiredProofs)) {
+      errors.push("evolution rule contains duplicate proof: " + rule.changeKind + ":" + duplicate);
+    }
+  }
+  for (const changeKind of LCX_ONTOLOGY_EVOLUTION_CHANGE_KINDS) {
+    if (!coveredChangeKinds.has(changeKind)) {
+      errors.push("evolution change kind has no rule: " + changeKind);
+    }
+  }
+  if (LCX_ONTOLOGY_REGISTRY_POLICY.changeMode !== LCX_ONTOLOGY_EVOLUTION_CONTRACT.defaultAction) {
+    errors.push("ontology policy and evolution contract disagree on additive changes");
+  }
+  if (
+    LCX_ONTOLOGY_REGISTRY_POLICY.migrationMode !==
+    LCX_ONTOLOGY_EVOLUTION_CONTRACT.breakingChangeAction
+  ) {
+    errors.push("ontology policy and evolution contract disagree on breaking changes");
+  }
+  if (LCX_ONTOLOGY_REGISTRY_POLICY.parallelRegistry !== "forbidden") {
+    errors.push("ontology evolution contract must forbid parallel registries");
+  }
+  return errors;
 }
 
 function validateRelationContracts(): string[] {
@@ -1327,7 +1887,13 @@ function validateAliasKeys(): string[] {
 
 export function validateLcxOntologyRegistry(): string[] {
   const errors: string[] = [];
-  errors.push(...validateRelationContracts(), ...validateStateChains(), ...validateAliasKeys());
+  errors.push(
+    ...validateVocabularyGroups(),
+    ...validateEvolutionContract(),
+    ...validateRelationContracts(),
+    ...validateStateChains(),
+    ...validateAliasKeys(),
+  );
   for (const duplicate of duplicateValues(LCX_ONTOLOGY_NON_CANONICAL_TASK_FAMILY_IDS)) {
     errors.push("non-canonical task-family value is duplicated: " + duplicate);
   }

@@ -18,6 +18,20 @@ type CliOptions = {
 type JsonRecord = Record<string, unknown>;
 type PromotionDecision = "safe" | "hold" | "ambiguous" | "rejected";
 
+const PROMOTION_BLOCKING_DECISION_IDS = new Set([
+  "overlapping_heavy_eval_detected",
+  "guard_failed_after_latest_start",
+  "eval_pending_after_latest_start",
+  "stable_eval_timeout_after_latest_start",
+  "eval_not_promotion_ready",
+  "promotion_candidate_blocked_by_runtime_truth",
+  "output_contract_or_parser_failure",
+  "train_slice_stale_after_dataset_update",
+  "guard_adapter_mismatch",
+  "latest_promoted_adapter_not_selected_clean",
+  "module_learning_incomplete_evidence",
+]);
+
 const execFileAsync = promisify(execFile);
 const HOME = process.env.HOME ?? os.homedir();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -125,7 +139,6 @@ async function resolveCurrentAdapter(params: {
         "--resolve-current-adapter",
         "--model",
         params.model,
-        "--bootstrap-if-missing",
         "--log",
         params.guardLogPath,
       ],
@@ -179,6 +192,19 @@ export function buildPromotionAudit(params: {
     Boolean(selectedAdapter) &&
     Boolean(latestPassingEvalAdapter) &&
     selectedAdapter === latestPassingEvalAdapter;
+  const trainingPlanDecisions = Array.isArray(params.plan.decisions)
+    ? params.plan.decisions.filter(
+        (decision): decision is JsonRecord =>
+          Boolean(decision) && typeof decision === "object" && !Array.isArray(decision),
+      )
+    : [];
+  const promotionBlockingDecisions = trainingPlanDecisions.filter(
+    (decision) =>
+      typeof decision.id === "string" && PROMOTION_BLOCKING_DECISION_IDS.has(decision.id),
+  );
+  const promotionBlockingDecisionIds = promotionBlockingDecisions.flatMap((decision) =>
+    typeof decision.id === "string" ? [decision.id] : [],
+  );
   const teacherFailures = numberValue(latestTeacher.failures) ?? 0;
   const boundaryViolations = numberValue(moduleLearningCounts.boundaryViolations) ?? 0;
   const activeProcesses = Array.isArray(params.plan.activeProcesses)
@@ -197,6 +223,8 @@ export function buildPromotionAudit(params: {
     promotionDecision = "ambiguous";
     realBugsFound.push("module_learning_boundary_violation");
   } else if (datasetPromotionRiskStatus === "source_stable_dataset_shrink") {
+    promotionDecision = "hold";
+  } else if (promotionBlockingDecisions.length > 0) {
     promotionDecision = "hold";
   } else if (
     !selectedEvalPromotionReady ||
@@ -294,6 +322,8 @@ export function buildPromotionAudit(params: {
     },
     resolverMatchesLatestEval,
     resolverMatchesLatestPassingEval,
+    promotionBlockingDecisionIds,
+    promotionBlockingDecisions,
     activeTraining: activeProcesses.length > 0,
     activeProcesses,
     latestTeacher,
@@ -303,7 +333,10 @@ export function buildPromotionAudit(params: {
       updated: moduleLearningReview.updated,
       counts: moduleLearningCounts,
     },
-    qualityLaneConcernsConsidered,
+    qualityLaneConcernsConsidered: [
+      ...qualityLaneConcernsConsidered,
+      ...promotionBlockingDecisionIds.map((id) => `training_plan_${id}`),
+    ],
     realBugsFound,
     suggestedNewEvalCase:
       promotionDecision === "safe"
@@ -326,6 +359,7 @@ function renderText(audit: JsonRecord): string {
     `latest_passing_adapter=${stringValue(audit.latestPassingAdapter, "none")}`,
     `latest_eval=${stringValue(latestEval.name, "unknown")} ${numberValue(latestEval.passed) ?? 0}/${numberValue(latestEval.total) ?? 0} promotionReady=${latestEval.promotionReady === true}`,
     `resolver_matches_latest_eval=${audit.resolverMatchesLatestEval === true}`,
+    `promotion_blocking_decisions=${stringArray(audit.promotionBlockingDecisionIds).join(",") || "none"}`,
     `active_training=${audit.activeTraining === true}`,
     `real_bugs_found=${stringArray(audit.realBugsFound).join(",") || "none"}`,
   ];

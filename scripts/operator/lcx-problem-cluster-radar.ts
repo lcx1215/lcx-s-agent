@@ -551,7 +551,9 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
       },
     }),
   );
-  const mismatchReasons = stringArray(activeGuardAdapterTruth?.mismatchReasons);
+  const mismatchReasons = stringArray(
+    activeGuardAdapterTruth?.activeGuardMismatchReasons ?? activeGuardAdapterTruth?.mismatchReasons,
+  );
   if (mismatchReasons.length > 0) {
     signals.push({
       id: "active_guard_adapter_truth_mismatch",

@@ -322,7 +322,7 @@ describe("lcx-promote-live status", () => {
       )}，用于精确匹配这次通道验收。`,
     );
     expect(stdout).toContain(
-      "postMigrationProbeCommand=/Users/liuchengxu/.codex/skills/lark-post-migration-probe/scripts/lark-post-migration-probe.sh --since 2099-01-01T00:00:00.000Z",
+      "postMigrationProbeCommand=bash \"${LCX_POST_MIGRATION_PROBE_SCRIPT:-${LCX_SKILLS_ROOT:-$HOME/.codex/skills}/lark-post-migration-probe/scripts/lark-post-migration-probe.sh}\" --since '2099-01-01T00:00:00.000Z'",
     );
     expect(stdout).toContain(
       "replyFlowProbeCommand=node --import tsx scripts/operator/lcx-external-channel-compat.ts --status --with-probe",

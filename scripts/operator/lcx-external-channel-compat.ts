@@ -16,11 +16,12 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const RESTART_COMMAND_TIMEOUT_MS = 2 * 60 * 1000;
 const LIVE_RESTART_HEALTH_TIMEOUT_MS = 90_000;
 const PROBE_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
-const DEFAULT_REPLY_FLOW_LOG = path.join(os.homedir(), ".openclaw/logs/feishu-reply-flow.jsonl");
+const DEFAULT_REPLY_FLOW_LOG =
+  process.env.LCX_REPLY_FLOW_LOG ??
+  path.join(os.homedir(), ".openclaw", "logs", "feishu-reply-flow.jsonl");
 const CHANNEL_PROBE_UNREACHABLE_PATTERN =
   /Gateway not reachable|config-only status|abnormal closure/iu;
-const LARK_POST_MIGRATION_PROBE_SCRIPT =
-  "/Users/liuchengxu/.codex/skills/lark-post-migration-probe/scripts/lark-post-migration-probe.sh";
+const quoteShellArg = (value: string): string => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
 type StepStatus = "skipped" | "passed" | "failed";
 
@@ -60,6 +61,8 @@ type LiveVisibleProof = {
     | "reply_flow_missing"
     | "waiting_for_real_lark"
     | "post_migration_reply_seen"
+    | "user_visible_observed"
+    /** @deprecated Read-only compatibility value from older receipts. */
     | "live_visible_fixed"
     | "reply_failed";
   logPath: string;
@@ -679,7 +682,7 @@ function writeJson(filePath: string, payload: unknown): void {
 
 function makeAcceptancePhrase(commit: string): string {
   const shortSha = commit.slice(0, 10);
-  return `lark-live-visible-fixed-${shortSha}`;
+  return `lark-acceptance-${shortSha}`;
 }
 
 function makeAcceptanceMessage(acceptancePhrase: string): string {
@@ -691,7 +694,7 @@ function makeNaturalProbeMessage(): string {
 }
 
 function makePostMigrationProbeCommand(since: string): string {
-  return `${LARK_POST_MIGRATION_PROBE_SCRIPT} --since ${since}`;
+  return `bash "\${LCX_POST_MIGRATION_PROBE_SCRIPT:-\${LCX_SKILLS_ROOT:-$HOME/.codex/skills}/lark-post-migration-probe/scripts/lark-post-migration-probe.sh}" --since ${quoteShellArg(since)}`;
 }
 
 function makeReplyFlowProbeCommand(): string {
@@ -790,7 +793,7 @@ function readLiveVisibleProof(params: {
   const latestOutboundResult = outboundResult.at(-1);
   const status =
     acceptanceMatched && latestInbound
-      ? "live_visible_fixed"
+      ? "user_visible_observed"
       : failedOutbound.length > 0 && outboundResult.length > 0
         ? "reply_failed"
         : latestInbound && latestOutboundResult
@@ -1100,7 +1103,8 @@ function resolveCanonicalOperatorStatus(params: {
   const externalChannelBound = channelCommitMatched && channelResponsive;
   const userVisibleObserved =
     externalChannelBound &&
-    (params.visibleProof?.status === "live_visible_fixed" ||
+    (params.visibleProof?.status === "user_visible_observed" ||
+      params.visibleProof?.status === "live_visible_fixed" ||
       params.visibleProof?.status === "post_migration_reply_seen");
   const nextHumanStep: OperatorStatus["nextHumanStep"] = devHasLocalChanges
     ? "commit_or_clean_local_then_run_local_tests"

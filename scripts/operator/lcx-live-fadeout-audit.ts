@@ -364,19 +364,19 @@ export async function buildLcxLiveFadeoutAudit() {
       file: "cloud_migration_docs",
       requiredTerms: [
         "local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
-        "/srv/lcx/lcx-s-openclaw",
+        "one LCX Agent core",
+        "supported-region control machine",
+        "canonical repo",
         "canonical `~/.openclaw` state",
-        "one LCX system and one factory/runtime",
-        "one canonical repository",
-        "linked Git worktrees",
-        "GitHub/GitLab",
-        "no second repository",
+        "not a second live",
+        "not a second runtime truth source",
         "Lark, WeChat, SMS",
       ],
       summary:
         "cloud migration must keep one local system/factory and one canonical repository; local isolation uses linked worktrees",
       text: `${agents}\n${readme}\n${runbook}`,
-      nextAction: "restore cloud-runtime-ready wording and single canonical LCX core boundary",
+      nextAction:
+        "restore cloud-runtime-ready wording and the single-core/source-of-truth boundary",
     }),
     checkTerms({
       id: "binding_owner_is_canonical",
