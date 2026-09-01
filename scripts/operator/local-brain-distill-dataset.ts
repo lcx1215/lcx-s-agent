@@ -5,9 +5,11 @@ import { pathToFileURL } from "node:url";
 import { generateCases, scorePlan, toDatasetRow } from "./local-brain-generalization-generator.js";
 import { LOCAL_BRAIN_RISK_BOUNDARIES, packLocalBrainModuleFields } from "./local-brain-taxonomy.js";
 import {
+  assessLocalBrainSemanticContract,
   buildLocalBrainTrainingPrompt,
   evaluateLocalBrainCurriculumGate,
   LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
+  redactTeacherContractLabels,
 } from "./local-brain-training-contract.js";
 
 export type DistillExample = {
@@ -54,6 +56,41 @@ const MAX_REQUIRED_TOOLS = 6;
 const MAX_MISSING_DATA = 8;
 const MAX_RISK_BOUNDARIES = 6;
 const MAX_REJECTED_CONTEXT = 3;
+const SHARED_SEMANTIC_MODULES = new Set([
+  "review_panel",
+  "finance_data_gateway",
+  "data_provenance_quality",
+  "portfolio_risk_gates",
+]);
+const LEARNING_SEMANTIC_ANCHORS = new Set([
+  "finance_learning_memory",
+  "source_registry",
+  "eval_harness_design",
+  "skill_pattern_distillation",
+  "agent_workflow_memory",
+]);
+const FINANCE_DOMAIN_ANCHORS = new Set([
+  "macro_rates_inflation",
+  "credit_liquidity",
+  "cross_asset_liquidity",
+  "fx_currency_liquidity",
+  "etf_regime",
+  "global_index_regime",
+  "us_equity_market_structure",
+  "china_a_share_policy_flow",
+  "crypto_market_structure",
+  "technical_timing",
+  "options_volatility",
+  "commodities_oil_gold",
+  "fx_dollar",
+  "event_driven",
+  "company_fundamentals_value",
+  "financial_modeling_valuation_qc",
+  "thesis_catalyst_lifecycle",
+  "research_artifact_qc",
+  "quant_math",
+  "causal_map",
+]);
 const DEFAULT_REJECTED_CONTEXT = [
   "old_lark_conversation_history",
   "language_routing_candidate_artifacts",
@@ -171,6 +208,18 @@ function hashText(value: string): string {
 
 function normalizedContent(value: string): string {
   return value.replace(/\s+/gu, " ").trim().toLowerCase();
+}
+
+function dedupeExamplesByPair(examples: DistillExample[]): DistillExample[] {
+  const seen = new Set<string>();
+  return examples.filter((example) => {
+    const signature = `${normalizedContent(example.prompt)}\u0000${normalizedContent(example.completion)}`;
+    if (seen.has(signature)) {
+      return false;
+    }
+    seen.add(signature);
+    return true;
+  });
 }
 
 function completionRecord(example: DistillExample): Record<string, unknown> | undefined {
@@ -582,6 +631,20 @@ function normalizeMissingDataEntries(values: string[]): string[] {
   }
   for (const entry of normalized) {
     const lower = entry.toLowerCase();
+    if (
+      /(?:iv|skew|gamma|option).*?(?:input|calendar)|(?:input|calendar).*?(?:iv|skew|gamma|option)/u.test(
+        lower,
+      )
+    ) {
+      exact.push("options_iv_skew_gamma_and_event_calendar");
+    }
+    if (
+      /(?:position|portfolio).*?(?:exposure|weight|holding)|(?:exposure|weight|holding).*?(?:position|portfolio)/u.test(
+        lower,
+      )
+    ) {
+      exact.push("position_weights_and_return_series");
+    }
     if (lower.includes("position_weights_and_return_series")) {
       exact.push("position_weights_and_return_series");
     }
@@ -619,7 +682,24 @@ function normalizeMissingDataEntries(values: string[]): string[] {
       exact.push("fx_dollar_yuan_and_global_liquidity_inputs");
     }
   }
-  return uniq([...exact, ...normalized]);
+  const canonicalAliases = new Set(exact);
+  return uniq([
+    ...exact,
+    ...normalized.filter((entry) => {
+      const lower = entry.toLowerCase();
+      const isOptionsAlias =
+        canonicalAliases.has("options_iv_skew_gamma_and_event_calendar") &&
+        /(?:iv|skew|gamma|option).*?(?:input|calendar)|(?:input|calendar).*?(?:iv|skew|gamma|option)/u.test(
+          lower,
+        );
+      const isPositionAlias =
+        canonicalAliases.has("position_weights_and_return_series") &&
+        /(?:position|portfolio).*?(?:exposure|weight|holding)|(?:exposure|weight|holding).*?(?:position|portfolio)/u.test(
+          lower,
+        );
+      return !isOptionsAlias && !isPositionAlias;
+    }),
+  ]);
 }
 
 function normalizeRiskBoundaries(values: string[]): string[] {
@@ -718,6 +798,62 @@ function inferRiskBoundariesFromText(text: string): string[] {
   return inferred;
 }
 
+/**
+ * Derive only the minimum task-conditioned contract from the natural-language
+ * ask.  This is curriculum construction, not answer synthesis: provenance,
+ * case ids, and teacher candidate text never participate.  Keeping this
+ * oracle beside the shared admission assessor means a receipt with incomplete
+ * labels can be repaired coherently while a semantically wrong row still
+ * remains quarantined by the same gate.
+ */
+export function deriveSemanticCurriculumFields(userAsk: string): {
+  primaryModules: string[];
+  missingData: string[];
+  riskBoundaries: string[];
+} {
+  const semantic = assessLocalBrainSemanticContract(redactTeacherContractLabels(userAsk), {});
+  return {
+    primaryModules: semantic.expectedModules,
+    missingData: semantic.expectedMissingData,
+    riskBoundaries: semantic.expectedRiskBoundaries,
+  };
+}
+
+function shouldAugmentSemanticCurriculum(
+  semantic: ReturnType<typeof deriveSemanticCurriculumFields>,
+  existingModules: string[],
+  userAsk: string,
+): boolean {
+  if (semantic.primaryModules.length === 0) {
+    // Trade-only/ops-only tasks can still need boundary normalization without
+    // a domain module anchor.
+    return true;
+  }
+  const existing = new Set(existingModules.map((entry) => entry.toLowerCase().replace(/-/gu, "_")));
+  const domainExpected = semantic.primaryModules.filter(
+    (entry) => !SHARED_SEMANTIC_MODULES.has(entry),
+  );
+  if (domainExpected.some((entry) => existing.has(entry))) {
+    return true;
+  }
+  if (
+    semantic.primaryModules.includes("portfolio_risk_gates") &&
+    existing.has("portfolio_risk_gates") &&
+    ([...existing].some((entry) => FINANCE_DOMAIN_ANCHORS.has(entry)) ||
+      /持有|持仓|仓位|组合|portfolio|position/iu.test(userAsk))
+  ) {
+    return true;
+  }
+  const learningTask = /学习|学会|内化|论文|开源|skill|learn|internaliz|github|arxiv/iu.test(
+    userAsk,
+  );
+  return (
+    learningTask &&
+    semantic.primaryModules.some((entry) => LEARNING_SEMANTIC_ANCHORS.has(entry)) &&
+    [...LEARNING_SEMANTIC_ANCHORS].some((entry) => existing.has(entry))
+  );
+}
+
 function buildPrompt(params: {
   sourceKind: string;
   userAsk: string;
@@ -734,6 +870,7 @@ function buildPrompt(params: {
 }
 
 function buildCompletion(params: {
+  userAsk?: string;
   taskFamily: string;
   primaryModules: string[];
   supportingModules?: string[];
@@ -743,18 +880,54 @@ function buildCompletion(params: {
   nextStep: string;
   rejectedContext?: string[];
 }): string {
-  const packedModules = packLocalBrainModuleFields(
+  const rawSemantic = params.userAsk ? deriveSemanticCurriculumFields(params.userAsk) : undefined;
+  const existingModuleFields = packLocalBrainModuleFields(
     params.primaryModules,
     params.supportingModules ?? [],
     params.requiredTools ?? [],
+  );
+  const existingModules = [
+    ...existingModuleFields.primary_modules,
+    ...existingModuleFields.supporting_modules,
+    ...existingModuleFields.required_tools,
+  ];
+  const semantic =
+    rawSemantic &&
+    shouldAugmentSemanticCurriculum(rawSemantic, existingModules, params.userAsk ?? "")
+      ? rawSemantic
+      : undefined;
+  const packedModules = packLocalBrainModuleFields(
+    [...params.primaryModules, ...(semantic?.primaryModules ?? [])],
+    params.supportingModules ?? [],
+    params.requiredTools ?? [],
+  );
+  if (packedModules.supporting_modules.length === 0 && packedModules.required_tools.length === 0) {
+    const lastPrimary = packedModules.primary_modules.at(-1);
+    if (packedModules.primary_modules.length > 1 && lastPrimary) {
+      packedModules.primary_modules = packedModules.primary_modules.slice(0, -1);
+      packedModules.supporting_modules = [lastPrimary];
+    } else {
+      packedModules.supporting_modules = ["review_panel"];
+    }
+  }
+  const normalizedMissingData = compactList(
+    normalizeMissingDataEntries([...(semantic?.missingData ?? []), ...(params.missingData ?? [])]),
+    MAX_MISSING_DATA,
+  );
+  const normalizedRiskBoundaries = compactList(
+    [
+      ...(semantic?.riskBoundaries ?? []),
+      ...normalizeRiskBoundaries(params.riskBoundaries ?? BOUNDARIES),
+    ],
+    MAX_RISK_BOUNDARIES,
   );
   return compactJson({
     task_family: params.taskFamily,
     primary_modules: packedModules.primary_modules,
     supporting_modules: packedModules.supporting_modules,
     required_tools: packedModules.required_tools,
-    missing_data: compactList(params.missingData ?? [], MAX_MISSING_DATA),
-    risk_boundaries: normalizeRiskBoundaries(params.riskBoundaries ?? BOUNDARIES),
+    missing_data: normalizedMissingData,
+    risk_boundaries: normalizedRiskBoundaries,
     next_step: compactText(params.nextStep, MAX_NEXT_STEP_CHARS),
     rejected_context: compactList(
       params.rejectedContext ?? DEFAULT_REJECTED_CONTEXT,
@@ -814,6 +987,7 @@ function exampleFromHandoff(
       sourceSummary,
     }),
     completion: buildCompletion({
+      userAsk,
       taskFamily: isFinancePlanning ? "finance_research_planning" : family,
       primaryModules: isFinancePlanning
         ? inferredModules
@@ -885,6 +1059,7 @@ function exampleFromApplyReceipt(
       sourceSummary,
     }),
     completion: buildCompletion({
+      userAsk: queryText,
       taskFamily: "finance_capability_application",
       primaryModules:
         matchedSignals.length > 0 ? matchedSignals.slice(0, 4) : ["finance_learning_memory"],
@@ -929,6 +1104,7 @@ function exampleFromModuleLearningPlanReceipt(
       targetModule,
       moduleFamily: readString(parsed.moduleFamily),
       status,
+      applicationValidationTask: applicationTask,
       sourceUrlOrPath: readString(parsed.sourceUrlOrPath),
       actualReadingScope: readString(parsed.actualReadingScope),
       moduleSpecificCapabilityRule: readString(parsed.moduleSpecificCapabilityRule),
@@ -942,10 +1118,15 @@ function exampleFromModuleLearningPlanReceipt(
   return {
     prompt: buildPrompt({
       sourceKind: "module_learning_plan_receipt",
-      userAsk: applicationTask ?? learningIntent,
+      // Keep the model-facing task on the learning intent.  The application
+      // validation task remains receipt metadata/next-step evidence; putting
+      // its market wording in the prompt would silently turn a source-
+      // internalization row into a second held-out market task.
+      userAsk: learningIntent,
       sourceSummary,
     }),
     completion: buildCompletion({
+      userAsk: learningIntent,
       taskFamily: "module_learning_internalization",
       primaryModules: [targetModule, "finance_learning_memory", "source_registry"],
       supportingModules: ["eval_harness_design", "review_panel", "control_room_summary"],
@@ -1032,6 +1213,7 @@ function exampleFromModuleLearningReview(
           sourceSummary,
         }),
         completion: buildCompletion({
+          userAsk: learningIntent,
           taskFamily: "module_learning_review_status",
           primaryModules: [targetModule, "finance_learning_memory", "source_registry"],
           supportingModules: ["eval_harness_design", "review_panel", "control_room_summary"],
@@ -1156,6 +1338,7 @@ function exampleFromAcceptedBrainCandidate(
       sourceSummary,
     }),
     completion: buildCompletion({
+      userAsk: compactText(userAsk, MAX_DISTILL_USER_ASK_CHARS),
       taskFamily,
       primaryModules,
       supportingModules,
@@ -1248,6 +1431,7 @@ function exampleFromWorkReceipt(raw: string, sourcePath: string): DistillExample
       sourceSummary: truncate(finalSummary, 1200),
     }),
     completion: buildCompletion({
+      userAsk,
       taskFamily: isFinancePlanning ? "finance_research_planning" : surface,
       primaryModules: isFinancePlanning ? inferredModules : [surface],
       supportingModules: isFinancePlanning
@@ -1326,13 +1510,14 @@ export function splitExamples(examples: DistillExample[]): {
   valid: DistillExample[];
   test: DistillExample[];
 } {
-  const curated = examples
+  const uniqueExamples = dedupeExamplesByPair(examples);
+  const curated = uniqueExamples
     .filter((example) => example.meta.sourceKind === "curated_seed")
     .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
-  const reviewedBrain = examples
+  const reviewedBrain = uniqueExamples
     .filter((example) => example.meta.sourceKind === "brain_distillation_review")
     .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
-  const moduleLearning = examples
+  const moduleLearning = uniqueExamples
     .filter(
       (example) =>
         example.meta.sourceKind === "module_learning_plan_receipt" ||
@@ -1342,10 +1527,10 @@ export function splitExamples(examples: DistillExample[]): {
   // Synthetic generated rows are TRAIN-ONLY: keep test/valid on the real receipt
   // distribution so eval never scores the model on its own synthetic labels, and
   // the generalization holdout stays the sole rule-vs-memorization probe.
-  const generated = examples
+  const generated = uniqueExamples
     .filter((example) => example.meta.sourceKind === "generalization_generator")
     .toSorted((a, b) => a.meta.sourcePath.localeCompare(b.meta.sourcePath));
-  const sorted = examples
+  const sorted = uniqueExamples
     .filter(
       (example) =>
         example.meta.sourceKind !== "curated_seed" &&
@@ -2519,6 +2704,7 @@ function buildSeedExamples(): DistillExample[] {
       sourceSummary: seed.sourceSummary,
     }),
     completion: buildCompletion({
+      userAsk: seed.userAsk,
       taskFamily: seed.taskFamily,
       primaryModules: seed.primaryModules,
       supportingModules: seed.supportingModules,
@@ -2648,6 +2834,9 @@ async function main(): Promise<void> {
 
   const curriculum = admittedCurriculumExamples(examples);
   const splits = splitExamples(curriculum.admitted);
+  const admittedRowsWrittenToSplits =
+    splits.train.length + splits.valid.length + splits.test.length;
+  const duplicateAdmittedRowsExcluded = curriculum.admitted.length - admittedRowsWrittenToSplits;
   await fs.mkdir(options.outDir, { recursive: true });
   await writeJsonl(path.join(options.outDir, "train.jsonl"), splits.train);
   await writeJsonl(path.join(options.outDir, "valid.jsonl"), splits.valid);
@@ -2664,6 +2853,7 @@ async function main(): Promise<void> {
       examples: examples.length,
       curriculumAdmitted: curriculum.admitted.length,
       curriculumQuarantined: curriculum.quarantined.length,
+      duplicateAdmittedRowsExcluded,
       train: splits.train.length,
       valid: splits.valid.length,
       test: splits.test.length,
@@ -2684,7 +2874,7 @@ async function main(): Promise<void> {
       holdoutFraction: options.generatedHoldoutFraction,
       split: "train",
       inTestOrValid: false,
-      note: "Generated rows vary feature combinations, are self-scored and pair-deduped before admission, and enter the train pool only; test/valid stay on the real receipt distribution and the generalization holdout remains the sole rule-vs-memorization probe.",
+      note: "Generated rows vary feature combinations, are self-scored and pair-deduped before split admission, and enter the train pool only; test/valid stay on the real receipt distribution and the generalization holdout remains the sole rule-vs-memorization probe.",
     },
     promptContract: {
       version: LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
@@ -2694,7 +2884,8 @@ async function main(): Promise<void> {
     },
     curriculumGate: {
       ...curriculumGateSummary(examples),
-      admittedRowsWrittenToSplits: curriculum.admitted.length,
+      admittedRowsWrittenToSplits,
+      duplicateAdmittedRowsExcluded,
       quarantinedRowsExcludedFromSplits: curriculum.quarantined.length,
       enforcement: "quarantine_rows_are_not_written_to_train_valid_or_test",
     },

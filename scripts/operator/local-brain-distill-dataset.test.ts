@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGeneratedExamples,
+  deriveSemanticCurriculumFields,
   splitExamples,
   type DistillExample,
 } from "./local-brain-distill-dataset.js";
@@ -34,6 +35,29 @@ describe("buildGeneratedExamples (infinite-stream mix)", () => {
   });
 });
 
+describe("semantic curriculum normalization", () => {
+  it("derives shared data and provenance gates from task wording only", () => {
+    const fields = deriveSemanticCurriculumFields(
+      "我持有 QQQ 和 NVDA，暂未提供带时间戳的价格数据，先做研究规划，不要交易建议。",
+    );
+
+    expect(fields.primaryModules).toEqual(
+      expect.arrayContaining([
+        "us_equity_market_structure",
+        "company_fundamentals_value",
+        "portfolio_risk_gates",
+        "finance_data_gateway",
+        "data_provenance_quality",
+      ]),
+    );
+    expect(fields.missingData).toEqual(
+      expect.arrayContaining(["latest_company_fundamental_inputs", "fresh_market_data_snapshot"]),
+    );
+    expect(fields.riskBoundaries).toContain("research_only");
+    expect(JSON.stringify(fields)).not.toMatch(/case|eval|answer|source_summary/iu);
+  });
+});
+
 describe("splitExamples keeps synthetic rows out of eval", () => {
   it("routes every generated row to train, never test/valid", () => {
     const receipts = Array.from({ length: 120 }, (_, i) => receipt(i));
@@ -41,8 +65,10 @@ describe("splitExamples keeps synthetic rows out of eval", () => {
     const splits = splitExamples([...receipts, ...generated]);
 
     const isGenerated = (e: DistillExample) => e.meta.sourceKind === "generalization_generator";
-    // All synthetic rows in train.
-    expect(splits.train.filter(isGenerated).length).toBe(80);
+    // Every unique synthetic row stays in train; duplicate pairs are removed
+    // before split assignment so they cannot inflate the curriculum.
+    expect(splits.train.filter(isGenerated).length).toBeLessThanOrEqual(80);
+    expect(splits.train.filter(isGenerated).length).toBeGreaterThan(0);
     // Zero synthetic rows leak into the eval slices.
     expect(splits.test.filter(isGenerated).length).toBe(0);
     expect(splits.valid.filter(isGenerated).length).toBe(0);
@@ -58,5 +84,15 @@ describe("splitExamples keeps synthetic rows out of eval", () => {
     expect(withNone.train.length).toBe(baseline.train.length);
     expect(withNone.test.length).toBe(baseline.test.length);
     expect(withNone.valid.length).toBe(baseline.valid.length);
+  });
+
+  it("removes exact prompt/completion duplicates before assigning splits", () => {
+    const duplicate = receipt(1);
+    const splits = splitExamples([
+      duplicate,
+      { ...duplicate, meta: { ...duplicate.meta, sourcePath: "feishu-work-receipts/alias.md" } },
+    ]);
+
+    expect(splits.train.length + splits.valid.length + splits.test.length).toBe(1);
   });
 });
