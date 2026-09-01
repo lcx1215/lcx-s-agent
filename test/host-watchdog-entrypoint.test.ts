@@ -6,9 +6,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PYTHON = process.platform === "win32" ? "python" : "python3";
 
 function runPython(args: string[]) {
-  return spawnSync("python3", args, {
+  return spawnSync(PYTHON, args, {
     cwd: repoRoot,
     encoding: "utf8",
     env: process.env,
@@ -108,7 +109,7 @@ describe("host watchdog clean-root entrypoint", () => {
     });
     writeFreshRuntimeState();
     const result = spawnSync(
-      "python3",
+      PYTHON,
       [
         "scripts/lobster_host_watchdog.py",
         "--dry-run",

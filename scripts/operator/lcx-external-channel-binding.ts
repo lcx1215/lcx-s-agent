@@ -3,15 +3,32 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { LCX_USER_HOME } from "./lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-const DEFAULT_SIDECAR_ROOT = "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw";
-const DEFAULT_SNAPSHOT_PATH =
-  "/Users/liuchengxu/.openclaw/workspace/state/lcx-external-channel-binding-latest.json";
-const SYNC_DOCTOR =
-  "/Users/liuchengxu/.codex/skills/live-sidecar-sync-doctor/scripts/live-sidecar-sync-doctor.sh";
+const DEFAULT_SIDECAR_ROOT = path.join(
+  LCX_USER_HOME,
+  ".openclaw",
+  "external-channel-runtime",
+  "lcx-s-openclaw",
+);
+const DEFAULT_SNAPSHOT_PATH = path.join(
+  LCX_USER_HOME,
+  ".openclaw",
+  "workspace",
+  "state",
+  "lcx-external-channel-binding-latest.json",
+);
+const SYNC_DOCTOR = path.join(
+  LCX_USER_HOME,
+  ".codex",
+  "skills",
+  "live-sidecar-sync-doctor",
+  "scripts",
+  "live-sidecar-sync-doctor.sh",
+);
 const MAX_BUFFER = 64 * 1024 * 1024;
 const DEFAULT_COMMAND_TIMEOUT_MS = (() => {
   const value = Number(process.env.LCX_EXTERNAL_CHANNEL_COMMAND_TIMEOUT_MS ?? "");

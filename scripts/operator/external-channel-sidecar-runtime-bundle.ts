@@ -2,10 +2,15 @@ import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { LCX_USER_HOME } from "./lcx-local-paths.ts";
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
-export const DEFAULT_RUNTIME_BUNDLE_ROOT =
-  "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw";
+export const DEFAULT_RUNTIME_BUNDLE_ROOT = path.join(
+  LCX_USER_HOME,
+  ".openclaw",
+  "external-channel-runtime",
+  "lcx-s-openclaw",
+);
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
 const RECEIPT_NAME = "external-channel-sidecar-runtime-bundle-receipt.json";
 

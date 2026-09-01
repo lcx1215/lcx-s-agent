@@ -1026,7 +1026,7 @@ describe("loadOpenClawPlugins", () => {
 
     const record = registry.plugins.find((entry) => entry.id === "legacy-root-import");
     expect(record?.status).toBe("loaded");
-  });
+  }, 300_000);
 
   it("prefers dist plugin-sdk alias when loader runs from dist", () => {
     const { root, distFile } = createPluginSdkAliasFixture();

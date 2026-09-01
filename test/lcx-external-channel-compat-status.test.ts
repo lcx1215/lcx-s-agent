@@ -130,33 +130,42 @@ function writeFakePnpm(
   logPath: string,
   options: { probeReachable: boolean },
 ): void {
-  const scriptPath = path.join(binDir, "pnpm");
+  const nodeScriptPath = path.join(binDir, "fake-pnpm.cjs");
   fs.writeFileSync(
-    scriptPath,
+    nodeScriptPath,
     [
-      "#!/bin/sh",
-      `echo "$*" >> ${JSON.stringify(logPath)}`,
-      'if [ "$*" = "ui:build" ]; then',
-      '  echo "ui built"',
-      "  exit 0",
-      "fi",
-      'if [ "$*" = "--silent openclaw daemon restart" ]; then',
-      `  echo "restart_timeout=$OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS" >> ${JSON.stringify(logPath)}`,
-      '  echo "Restarted LaunchAgent: gui/501/ai.openclaw.gateway"',
-      "  exit 0",
-      "fi",
-      'if [ "$*" = "--silent openclaw channels status --probe" ]; then',
-      options.probeReachable
-        ? '  echo "Gateway reachable."'
-        : '  echo "Gateway not reachable; showing config-only status."',
-      "  exit 0",
-      "fi",
-      "exit 0",
-      "",
+      'const fs = require("node:fs");',
+      "const args = process.argv.slice(2);",
+      `const logPath = ${JSON.stringify(logPath)};`,
+      'fs.appendFileSync(logPath, `${args.join(" ")}\\n`);',
+      'const command = args.join(" ");',
+      'if (command === "ui:build") { console.log("ui built"); process.exit(0); }',
+      'if (command === "--silent openclaw daemon restart") {',
+      '  fs.appendFileSync(logPath, `restart_timeout=${process.env.OPENCLAW_DAEMON_RESTART_HEALTH_TIMEOUT_MS ?? ""}\\n`);',
+      '  console.log("Restarted LaunchAgent: gui/501/ai.openclaw.gateway"); process.exit(0);',
+      "}",
+      'if (command === "--silent openclaw channels status --probe") {',
+      `  console.log(${JSON.stringify(options.probeReachable ? "Gateway reachable." : "Gateway not reachable; showing config-only status.")}); process.exit(0);`,
+      "}",
+      "process.exit(0);",
     ].join("\n"),
     "utf8",
   );
-  fs.chmodSync(scriptPath, 0o755);
+  if (process.platform === "win32") {
+    fs.writeFileSync(
+      path.join(binDir, "pnpm.cmd"),
+      `@echo off\r\n"${process.execPath}" "%~dp0fake-pnpm.cjs" %*\r\n`,
+      "utf8",
+    );
+  } else {
+    const scriptPath = path.join(binDir, "pnpm");
+    fs.writeFileSync(
+      scriptPath,
+      `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/fake-pnpm.cjs" "$@"\n`,
+      "utf8",
+    );
+    fs.chmodSync(scriptPath, 0o755);
+  }
 }
 
 function runApplyWithFakePnpm(params: {

@@ -6,6 +6,7 @@ import type {
   LcxOntologyCapabilityRole,
   LcxOntologySurfaceId,
 } from "../../src/shared/lcx-ontology.ts";
+import { LCX_USER_HOME } from "./lcx-local-paths.ts";
 import { buildOntologyAudit } from "./lcx-ontology.ts";
 
 type MindModelSurfaceGroup = LcxOntologySurfaceId;
@@ -56,7 +57,6 @@ type InvariantVerdict = {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(SCRIPT_DIR, "..", "..");
-const LCX_USER_HOME = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
 const LOCAL_OPERATOR_LOOP = path.join(
   LCX_USER_HOME,
   ".openclaw",
@@ -69,6 +69,7 @@ const LOCAL_CODEX_ARCHIVE = path.join(
   "bin",
   "codex-archive-lcx-automation-threads.sh",
 );
+const OPTIONAL_LOCAL_OPERATOR_SURFACES = new Set([LOCAL_OPERATOR_LOOP, LOCAL_CODEX_ARCHIVE]);
 
 const HEAD_SURFACES = [
   "AGENTS.md",
@@ -709,7 +710,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       proof: ["missingSurfaceFiles", "surface_missing"],
     },
     nextAction:
-      "Keep missingSurfaceFiles as a hard mind-model failure when adding any surface file.",
+      "Keep repository surfaces hard-failing; report optional local operator surfaces separately when unavailable.",
   },
   {
     id: "compressed_recovery_requires_fresh_operator_state",
@@ -1083,6 +1084,9 @@ async function joinedSurfaceText(files: readonly string[]): Promise<string> {
 async function missingSurfaceFiles(files: readonly string[]): Promise<string[]> {
   const statuses = await Promise.all(
     files.map(async (file) => {
+      if (OPTIONAL_LOCAL_OPERATOR_SURFACES.has(file)) {
+        return undefined;
+      }
       try {
         await fs.access(resolveSurfaceFile(file));
         return undefined;

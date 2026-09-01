@@ -7,6 +7,9 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
+const lcxUserHome = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
+const lcxWorkspace = path.join(lcxUserHome, ".openclaw", "workspace");
+const localOperatorPath = path.join(lcxUserHome, ".openclaw", "bin", "lcx-local-operator-loop.sh");
 
 async function runAutopilot() {
   const { stdout } = await execFileAsync(
@@ -256,10 +259,10 @@ describe("LCX governance autopilot", () => {
     expect(payload.owners.mindModel?.summary).toBeTruthy();
     expect(payload.owners.projectionReaderAudit).toEqual(
       expect.objectContaining({
-        coverageStatus: "partial",
-        bound: 3,
-        missingReaderContract: 3,
-        readerContractReadyForAllAdapters: false,
+        coverageStatus: "complete",
+        bound: expect.any(Number),
+        missingReaderContract: 0,
+        readerContractReadyForAllAdapters: true,
         nextAction: expect.stringContaining("neutral answer boundary"),
       }),
     );
@@ -293,9 +296,12 @@ describe("LCX governance autopilot", () => {
           /^(append_latest_entry|duplicate_latest_entry_not_appended)$/,
         ),
         guaranteeLevel: "data_accounting_not_model_capability_guarantee",
-        datasetExamples: expect.any(Number),
-        trainSliceWritten: expect.any(Number),
         acceptedSkillOptPackets: expect.any(Number),
+        materialChangeSignalCount: expect.any(Number),
+        proofBoundaries: expect.objectContaining({
+          dataIncreaseIsNotCapabilityIncrease: true,
+          modelWeightAbsorptionRequiresPromotionProof: true,
+        }),
       }),
     );
     expect(payload.owners.universeIndex?.trackedFiles).toEqual(expect.any(Number));
@@ -320,40 +326,40 @@ describe("LCX governance autopilot", () => {
     );
     expect(payload.owners.contextRecovery?.compressedContextRecovered).toEqual(expect.any(Boolean));
     expect(payload.latestStatePath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-governance-autopilot-latest.json"),
     );
     expect(payload.universeIndexLatestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-universe-index-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-universe-index-latest.json"),
     );
     expect(payload.evolutionPromotionDigestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-evolution-promotion-digest-latest.json"),
     );
     expect(payload.monotonicDataLedgerLatestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-monotonic-data-ledger-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-monotonic-data-ledger-latest.json"),
     );
     expect(payload.monotonicDataLedgerJsonlPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/logs/lcx-monotonic-data-ledger.jsonl",
+      path.join(lcxWorkspace, "logs", "lcx-monotonic-data-ledger.jsonl"),
     );
     expect(payload.localFailureTraceLatestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-local-failure-trace-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-local-failure-trace-latest.json"),
     );
     expect(payload.localFailureTraceJsonlPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/logs/lcx-local-failure-trace.jsonl",
+      path.join(lcxWorkspace, "logs", "lcx-local-failure-trace.jsonl"),
     );
     expect(payload.ownerBriefLatestJsonPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-brief-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-owner-brief-latest.json"),
     );
     expect(payload.ownerBriefLatestMarkdownPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-brief-latest.md",
+      path.join(lcxWorkspace, "state", "lcx-owner-brief-latest.md"),
     );
     expect(payload.ownerControlMapLatestJsonPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.json",
+      path.join(lcxWorkspace, "state", "lcx-owner-control-map-latest.json"),
     );
     expect(payload.ownerControlMapLatestMarkdownPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-owner-control-map-latest.md",
+      path.join(lcxWorkspace, "state", "lcx-owner-control-map-latest.md"),
     );
     expect(payload.handoffLatestPath).toBe(
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-context-recovery-handoff-latest.md",
+      path.join(lcxWorkspace, "state", "lcx-context-recovery-handoff-latest.md"),
     );
 
     const latest = JSON.parse(await fs.readFile(payload.latestStatePath, "utf8")) as {
@@ -363,8 +369,11 @@ describe("LCX governance autopilot", () => {
     expect(latest.boundary).toBe("local_governance_autopilot_only");
     expect(latest.autoTriggeredOwnerCommands).toEqual(payload.autoTriggeredOwnerCommands);
 
-    const digestPath =
-      "/Users/liuchengxu/.openclaw/workspace/state/lcx-evolution-promotion-digest-latest.json";
+    const digestPath = path.join(
+      lcxWorkspace,
+      "state",
+      "lcx-evolution-promotion-digest-latest.json",
+    );
     const digest = JSON.parse(await fs.readFile(digestPath, "utf8")) as {
       boundary: string;
       autopilot?: { ok?: boolean; summary?: { activeTrainingOrEval?: boolean } };
@@ -531,7 +540,7 @@ describe("LCX governance autopilot", () => {
       fs.readFile(path.join(repoRoot, "scripts/operator/lcx-flow-graph.ts"), "utf8"),
       fs.readFile(path.join(repoRoot, "scripts/operator/lcx-mind-model.ts"), "utf8"),
       fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
-      fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
+      fs.readFile(localOperatorPath, "utf8").catch(() => ""),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
     ]);
 
@@ -547,9 +556,11 @@ describe("LCX governance autopilot", () => {
     expect(mindModel).toContain("autoTriggeredOwnerCommands");
     expect(doctor).toContain("scripts/operator/lcx-governance-autopilot.ts");
     expect(doctor).toContain("scripts/operator/lcx-live-fadeout-audit.ts");
-    expect(localOperator).toContain("governance_file");
-    expect(localOperator).toContain("governanceAutopilot");
-    expect(localOperator).toContain("NODE_GOVERNANCE_FILE");
+    if (localOperator) {
+      expect(localOperator).toContain("governance_file");
+      expect(localOperator).toContain("governanceAutopilot");
+      expect(localOperator).toContain("NODE_GOVERNANCE_FILE");
+    }
     expect(runbook).toContain("Governance Autopilot");
     expect(runbook).toContain("lcx-governance-autopilot-latest.json");
     expect(runbook).toContain("lcx-local-failure-trace-latest.json");

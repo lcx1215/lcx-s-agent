@@ -155,6 +155,11 @@ jobs:
           # Default heap limits have been too low on Linux CI (V8 OOM near 4GB).
           echo "OPENCLAW_TEST_WORKERS=2" >> "$GITHUB_ENV"
           echo "OPENCLAW_TEST_MAX_OLD_SPACE_SIZE_MB=6144" >> "$GITHUB_ENV"
+          echo "LCX_USER_HOME=$RUNNER_TEMP/lcx-user-home" >> "$GITHUB_ENV"
+
+      - name: Isolate LCX operator state (Bun)
+        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'bun'
+        run: echo "LCX_USER_HOME=$RUNNER_TEMP/lcx-user-home" >> "$GITHUB_ENV"
 
       - name: Run ${{ matrix.task }} (${{ matrix.runtime }})
         if: matrix.runtime != 'bun' || github.event_name != 'push'
@@ -442,6 +447,7 @@ jobs:
         run: |
           echo "OPENCLAW_TEST_SHARDS=${{ matrix.shard_count }}" >> "$GITHUB_ENV"
           echo "OPENCLAW_TEST_SHARD_INDEX=${{ matrix.shard_index }}" >> "$GITHUB_ENV"
+          echo "LCX_USER_HOME=$RUNNER_TEMP/lcx-user-home" >> "$GITHUB_ENV"
 
       - name: Build A2UI bundle (Windows)
         if: matrix.task == 'test'
@@ -473,6 +479,7 @@ jobs:
       - name: TS tests (macOS)
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+          LCX_USER_HOME: ${{ runner.temp }}/lcx-user-home
         run: pnpm test
 
       # --- Xcode/Swift setup ---

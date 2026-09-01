@@ -55,7 +55,7 @@ describe("live sidecar launchagent plan", () => {
     const exitCode = launchAgentPlanMain(["--json"]);
     expect(exitCode).toBe(0);
     const payload = JSON.parse(String(write.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.targetRoot).toBe(DEFAULT_RUNTIME_BUNDLE_ROOT);
+    expect(path.resolve(payload.targetRoot)).toBe(path.resolve(DEFAULT_RUNTIME_BUNDLE_ROOT));
     expect(payload.targetRoot).not.toContain("/Desktop/");
     write.mockRestore();
   });

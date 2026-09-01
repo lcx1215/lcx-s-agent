@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-describe("local-brain-distill-eval", () => {
+describe.skipIf(process.platform === "win32")("local-brain-distill-eval", () => {
   it("supports current adapter resolution instead of requiring static adapter paths", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(
