@@ -256,7 +256,7 @@ describe("minimax brain training guard adapter resolution", () => {
     expect(source).toContain('"stable_hardened_eval_timeout_continue_guard"');
     expect(source).toContain('"stable_hardened_eval_non_passing_continue_guard"');
     expect(source).toMatch(
-      /"candidate_hardened_eval"[\s\S]*scripts\/dev\/local-brain-distill-eval\.ts[\s\S]*allowFailure: true[\s\S]*timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS[\s\S]*idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS/u,
+      /"candidate_hardened_eval"[\s\S]*scripts\/operator\/local-brain-distill-eval\.ts[\s\S]*allowFailure: true[\s\S]*timeoutMs: HARDENED_EVAL_STEP_TIMEOUT_MS[\s\S]*idleTimeoutMs: HARDENED_EVAL_IDLE_TIMEOUT_MS/u,
     );
     expect(source).toMatch(
       /const evalName = currentAdapter \? "stable_hardened_eval"[\s\S]*runJsonStep\([\s\S]*evalName[\s\S]*allowFailure: true[\s\S]*const backoff = stableEvalBackoff\(stableEval\)[\s\S]*await sleep\(backoff\.durationMs\)[\s\S]*continue;/u,

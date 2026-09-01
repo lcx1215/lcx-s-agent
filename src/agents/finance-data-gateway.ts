@@ -44,10 +44,18 @@ export type FinanceDataGatewayObservationInput = {
   providerName: string;
   providerRole: FinanceDataProviderRole;
   sourceFamily: FinanceDataSourceFamily;
+  legId?: string;
   observedAt: string;
   timezone: string;
   delayStatus: FinanceDataDelayStatus;
   fields: FinanceDataGatewayFieldInput[];
+};
+
+export type FinanceDataGatewayLegInput = {
+  legId: string;
+  instrument: string;
+  venue: string;
+  currency: string;
 };
 
 export type FinanceDataGatewayInput = {
@@ -57,6 +65,7 @@ export type FinanceDataGatewayInput = {
   asOf: string;
   freshnessMaxMinutes?: number;
   requireOfficialReference?: boolean;
+  legs?: FinanceDataGatewayLegInput[];
   observations: FinanceDataGatewayObservationInput[];
 };
 
@@ -68,6 +77,10 @@ export type FinanceDataGatewayNormalizedField = {
   adjusted?: boolean;
   providerName: string;
   providerRole: FinanceDataProviderRole;
+  sourceFamily: FinanceDataSourceFamily;
+  observedAt: string;
+  timezone: string;
+  delayStatus: FinanceDataDelayStatus;
   sourceTimestamp: string;
   fieldDefinition: string;
   sourceUrlOrArtifact: string;
@@ -93,6 +106,7 @@ export type FinanceDataGatewaySnapshot = {
   assetClass: string;
   useCase: string;
   asOf: string;
+  legs: FinanceDataGatewayLegInput[];
   qualityStatus: FinanceDataQualityStatus;
   providerRolesPresent: FinanceDataProviderRole[];
   sourceFamiliesPresent: FinanceDataSourceFamily[];
@@ -165,6 +179,10 @@ function selectPrimaryField(
     adjusted: selected.field.adjusted,
     providerName: selected.observation.providerName.trim(),
     providerRole: selected.observation.providerRole,
+    sourceFamily: selected.observation.sourceFamily,
+    observedAt: selected.observation.observedAt.trim(),
+    timezone: selected.observation.timezone.trim(),
+    delayStatus: selected.observation.delayStatus,
     sourceTimestamp: selected.field.sourceTimestamp.trim(),
     fieldDefinition: selected.field.fieldDefinition.trim(),
     sourceUrlOrArtifact: selected.field.sourceUrlOrArtifact.trim(),
@@ -219,6 +237,33 @@ export function buildFinanceDataGatewaySnapshot(
   const freshnessWarnings: string[] = [];
   const asOfMs = Date.parse(asOf);
   const freshnessMaxMinutes = input.freshnessMaxMinutes ?? 60 * 24;
+  const isArbitrageResearch = /arbitrage|套利|relative.?value|cross.?venue|basis|carry/iu.test(
+    useCase,
+  );
+  const legs = (input.legs ?? []).map((leg, legIndex) => ({
+    legId: trimRequired(leg.legId, `legs[${legIndex}].legId`),
+    instrument: trimRequired(leg.instrument, `legs[${legIndex}].instrument`),
+    venue: trimRequired(leg.venue, `legs[${legIndex}].venue`),
+    currency: trimRequired(leg.currency, `legs[${legIndex}].currency`),
+  }));
+  if (isArbitrageResearch) {
+    if (legs.length < 2) {
+      missingEvidence.push("multi_leg_instrument_and_venue_identity");
+    } else {
+      const legIds = new Set(legs.map((leg) => leg.legId));
+      if (legIds.size !== legs.length) {
+        missingEvidence.push("unique_leg_identity");
+      }
+      const observedLegIds = new Set(
+        input.observations.map((observation) => observation.legId).filter(Boolean),
+      );
+      for (const leg of legs) {
+        if (!observedLegIds.has(leg.legId)) {
+          missingEvidence.push(`synchronized_observation_missing:${leg.legId}`);
+        }
+      }
+    }
+  }
 
   for (const [observationIndex, observation] of input.observations.entries()) {
     trimRequired(observation.providerName, `observations[${observationIndex}].providerName`);
@@ -304,6 +349,7 @@ export function buildFinanceDataGatewaySnapshot(
     assetClass,
     useCase,
     asOf,
+    legs,
     qualityStatus,
     providerRolesPresent,
     sourceFamiliesPresent,
@@ -319,6 +365,7 @@ export function buildFinanceDataGatewaySnapshot(
         "unit_or_currency_when_applicable",
         "adjusted_status_when_applicable",
         "sourceUrlOrArtifact",
+        "legId_and_venue_when_arbitrage_research",
       ],
       providerRolePolicy:
         "Use primary_market_data only with cross_check_market_data; add official_or_issuer_reference unless explicitly disabled for the use case.",

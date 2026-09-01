@@ -342,12 +342,12 @@ export async function buildLcxLiveFadeoutAudit() {
       file: "scripts/operator/lcx-external-channel-status.ts",
       requiredTerms: [
         "local_external_channel_status_only",
-        "legacy_promote_live_status_wrapped_by_external_channel_status",
+        "external_channel_status_owner_current_legacy_compatibility_isolated",
         "legacyPromoteLiveStatus",
         "liveTouched: false",
       ],
       summary:
-        "external-channel status must be the canonical read-only wrapper over legacy promote-live evidence",
+        "external-channel status must be the canonical read-only owner with compatibility evidence isolated",
       text: statusOwner,
     }),
     checkTerms({

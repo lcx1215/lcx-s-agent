@@ -40,6 +40,7 @@ describe("LCX flow graph exam", () => {
         scenarios: number;
         nodes: number;
         filters: number;
+        receiptEvidenceMode: string;
         consolidationClusters: number;
         consolidatedEntrypointFamilies: number;
         sharedEntrypointOwnerRules: number;
@@ -83,6 +84,7 @@ describe("LCX flow graph exam", () => {
         fastCheck: string;
         evidenceReceipts: string[];
         failureSignals: string[];
+        receiptEvidenceMode: string;
         boundary: string;
       }>;
       liveTouched: boolean;
@@ -100,6 +102,7 @@ describe("LCX flow graph exam", () => {
       }),
     );
     expect(payload.summary.failed).toBe(0);
+    expect(payload.summary.receiptEvidenceMode).toBe("owner_declared_surface_only");
     expect(payload.summary.total).toBeGreaterThanOrEqual(8);
     expect(payload.summary.scenarios).toBeGreaterThanOrEqual(16);
     expect(payload.summary.nodes).toBeGreaterThanOrEqual(70);
@@ -653,6 +656,20 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
       ]),
+    );
+    expect(
+      payload.diagnosticIndex.every(
+        (entry) => entry.receiptEvidenceMode === "owner_declared_surface_only",
+      ),
+    ).toBe(true);
+    const receiptCheck = payload.checks.find(
+      (check) => check.id === "flow_graph_receipts_required",
+    );
+    expect(receiptCheck?.evidence).toEqual(
+      expect.objectContaining({
+        receiptEvidenceMode: "owner_declared_surface_only",
+        validationScope: "non_empty_receipt_declarations_only",
+      }),
     );
   });
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
@@ -28,6 +29,7 @@ const FinanceDataGatewayObservationSchema = Type.Object({
   providerName: Type.String(),
   providerRole: stringEnum(FINANCE_DATA_PROVIDER_ROLES),
   sourceFamily: stringEnum(FINANCE_DATA_SOURCE_FAMILIES),
+  legId: Type.Optional(Type.String()),
   observedAt: Type.String(),
   timezone: Type.String(),
   delayStatus: stringEnum(FINANCE_DATA_DELAY_STATUSES),
@@ -41,6 +43,16 @@ const FinanceDataGatewaySnapshotSchema = Type.Object({
   asOf: Type.String(),
   freshnessMaxMinutes: Type.Optional(Type.Number()),
   requireOfficialReference: Type.Optional(Type.Boolean()),
+  legs: Type.Optional(
+    Type.Array(
+      Type.Object({
+        legId: Type.String(),
+        instrument: Type.String(),
+        venue: Type.String(),
+        currency: Type.String(),
+      }),
+    ),
+  ),
   observations: Type.Array(FinanceDataGatewayObservationSchema),
   writeReceipt: Type.Optional(Type.Boolean()),
 });
@@ -59,6 +71,7 @@ function safeReceiptStem(value: string): string {
 async function writeReceipt(params: {
   workspaceDir: string;
   instrument: string;
+  executionId: string;
   payload: Record<string, unknown>;
 }) {
   const now = new Date().toISOString();
@@ -70,7 +83,20 @@ async function writeReceipt(params: {
   );
   const absPath = path.join(params.workspaceDir, relPath);
   await fs.mkdir(path.dirname(absPath), { recursive: true });
-  await fs.writeFile(absPath, `${JSON.stringify(params.payload, null, 2)}\n`, "utf8");
+  await fs.writeFile(
+    absPath,
+    `${JSON.stringify(
+      {
+        receiptSchemaVersion: 1,
+        receiptCreatedAt: now,
+        executionId: params.executionId,
+        ...params.payload,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
   return relPath;
 }
 
@@ -86,6 +112,7 @@ export function createFinanceDataGatewaySnapshotTool(options?: {
     parameters: FinanceDataGatewaySnapshotSchema,
     execute: async (_toolCallId, args) => {
       const params = args as FinanceDataGatewayInput & { writeReceipt?: boolean };
+      const executionId = randomUUID();
       try {
         const snapshot = buildFinanceDataGatewaySnapshot(params);
         const receiptPath =
@@ -93,11 +120,13 @@ export function createFinanceDataGatewaySnapshotTool(options?: {
             ? await writeReceipt({
                 workspaceDir,
                 instrument: snapshot.instrument,
+                executionId,
                 payload: snapshot,
               })
             : undefined;
         return jsonResult({
           ...snapshot,
+          executionId,
           receiptPath,
           nextTool:
             snapshot.qualityStatus === "ready"

@@ -80,10 +80,12 @@ describe("composeFinanceAnswer", () => {
       ask: "QQQ 最近风险怎么看?",
       snapshot,
       model: "moonshot/kimi-k2.5",
+      executionId: "gateway-execution-1",
       callModel: model.caller,
     });
     expect(result.dataPosture).toBe("data_blocked");
     expect(result.modelUsed).toBe("moonshot/kimi-k2.5");
+    expect(result.executionId).toBe("gateway-execution-1");
     expect(result.candidateAnswer).toContain("725.17");
     // The model must have been handed the research-only preamble + grounding.
     expect(model.seen).toHaveLength(1);

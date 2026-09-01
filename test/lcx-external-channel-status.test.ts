@@ -21,7 +21,7 @@ async function runStatus(args: string[]) {
 }
 
 describe("lcx-external-channel-status", () => {
-  it("wraps legacy promote-live status as a read-only external-channel owner", async () => {
+  it("exposes a neutral read-only external-channel owner with isolated compatibility evidence", async () => {
     const payload = await runStatus(["--json"]);
 
     expect(payload).toEqual(
@@ -29,7 +29,7 @@ describe("lcx-external-channel-status", () => {
         ok: true,
         boundary: "local_external_channel_status_only",
         owner: "lcx-external-channel-status",
-        conceptStatus: "legacy_promote_live_status_wrapped_by_external_channel_status",
+        conceptStatus: "external_channel_status_owner_current_legacy_compatibility_isolated",
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,

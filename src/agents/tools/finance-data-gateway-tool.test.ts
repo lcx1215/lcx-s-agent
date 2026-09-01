@@ -110,6 +110,10 @@ describe("finance_data_gateway_snapshot tool", () => {
             name: "last_price",
             value: 460.12,
             currency: "USD",
+            sourceFamily: "market_data_api",
+            observedAt: "2026-05-13T20:00:00.000Z",
+            timezone: "America/New_York",
+            delayStatus: "delayed",
             sourceTimestamp: "2026-05-13T19:58:00.000Z",
           }),
         ],
@@ -130,6 +134,20 @@ describe("finance_data_gateway_snapshot tool", () => {
 
     const receiptPath = (result.details as { receiptPath: string }).receiptPath;
     await expect(fs.stat(path.join(workspaceDir, receiptPath))).resolves.toBeDefined();
+    const executionId = (result.details as { executionId: string }).executionId;
+    expect(executionId).toEqual(expect.any(String));
+    const receipt = JSON.parse(await fs.readFile(path.join(workspaceDir, receiptPath), "utf8")) as {
+      receiptSchemaVersion?: number;
+      receiptCreatedAt?: string;
+      executionId?: string;
+    };
+    expect(receipt).toEqual(
+      expect.objectContaining({
+        receiptSchemaVersion: 1,
+        receiptCreatedAt: expect.any(String),
+        executionId,
+      }),
+    );
   });
 
   it("routes conflicted provider values to data provenance review", async () => {
@@ -173,6 +191,23 @@ describe("finance_data_gateway_snapshot tool", () => {
         qualityStatus: "blocked",
         missingEvidence: expect.arrayContaining(["cross_check_market_data_provider"]),
         requiredNextSteps: expect.arrayContaining(["collect_missing_provider_evidence"]),
+      }),
+    );
+  });
+
+  it("blocks arbitrage snapshots until multi-leg identity and synchronized observations exist", async () => {
+    const tool = createFinanceDataGatewaySnapshotTool({ workspaceDir: await makeWorkspace() });
+    const args = cleanSnapshotArgs();
+    args.useCase = "geographic_arbitrage_research";
+
+    const result = await tool.execute("call-arbitrage", args);
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        ok: false,
+        qualityStatus: "blocked",
+        legs: [],
+        missingEvidence: expect.arrayContaining(["multi_leg_instrument_and_venue_identity"]),
       }),
     );
   });

@@ -915,7 +915,7 @@ describe("local-brain-training-plan", () => {
     });
     expect(plan.liveLarkBrainBinding).toMatchObject({
       boundary: "dev_live_lark_brain_binding_plan_only",
-      conceptStatus: "legacy_live_terms_external_channel_owner_current",
+      conceptStatus: "external_channel_owner_current_legacy_compatibility_isolated",
       externalChannel: {
         boundary: "local_external_channel_binding_plan_only",
         channel: "lark",

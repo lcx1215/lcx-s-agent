@@ -28,7 +28,7 @@ describe("lcx-directed-daily-research-brief", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         ok: true,
-        boundary: "dev_directed_daily_research_brief_only",
+        boundary: "local_directed_daily_research_brief_only",
         productMode: "focused_daily_research_product_not_open_ended_chat",
         date: "2026-06-01",
         liveTouched: false,
@@ -46,6 +46,10 @@ describe("lcx-directed-daily-research-brief", () => {
       expect.objectContaining({
         indexOptions: expect.arrayContaining(["SPX", "NDX", "QQQ", "VIX"]),
         semiconductorAiCompute: expect.arrayContaining(["NVDA", "AMD", "AVGO", "TSM", "ASML"]),
+        arbitrageResearch: expect.arrayContaining([
+          "cross_venue_relative_value",
+          "cross_border_fx_basis",
+        ]),
       }),
     );
     expect(payload.outputContract).toEqual(
@@ -71,6 +75,7 @@ describe("lcx-directed-daily-research-brief", () => {
     );
     expect(String(payload.visibleBrief)).toContain("指数期权");
     expect(String(payload.visibleBrief)).toContain("半导体/AI 算力链");
+    expect(String(payload.visibleBrief)).toContain("套利研究类别");
     expect(String(payload.visibleBrief)).toContain("research-only");
   });
 

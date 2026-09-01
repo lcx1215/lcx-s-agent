@@ -33,6 +33,13 @@ const SEMICONDUCTOR_UNIVERSE = [
   "SOXX",
 ] as const;
 
+const ARBITRAGE_RESEARCH_UNIVERSE = [
+  "cross_venue_relative_value",
+  "cross_border_fx_basis",
+  "funding_and_carry",
+  "geographic_price_differentials",
+] as const;
+
 const DAILY_RESEARCH_TASKS: ResearchTask[] = [
   {
     id: "index_options_regime",
@@ -81,6 +88,24 @@ const DAILY_RESEARCH_TASKS: ResearchTask[] = [
     ],
     output: "输出 watchlist 分层：核心跟踪、需要数据、降权观察、丢弃；每个候选必须有证据和反证。",
     invalidation: ["候选变成直接推荐", "没有反证和失效条件", "只选半导体而忽略指数风险背景"],
+  },
+  {
+    id: "arbitrage_research",
+    title: "低频/地理/跨境套利研究",
+    purpose: "只做可审计的相对价值与套利假设筛选，不把研究队列变成交易执行系统。",
+    requiredFreshInputs: [
+      "多腿标的、场所、币种和同步观察时间点",
+      "FX、费用、税费、资金/借券、转移和结算成本",
+      "深度、流动性、滑点、容量、对手方和资本管制/法律约束",
+      "样本外纸面验证、反证和明确失效条件",
+    ],
+    output:
+      "输出净价差/净 carry 的研究包、证据缺口、成本敏感性、容量和失效条件；只允许 paper-only，不下单。",
+    invalidation: [
+      "腿之间不可比或报价不同步",
+      "忽略 FX、费用、税费、资金、转移或结算摩擦",
+      "把薄盘口、回测或单点价差当成可执行套利",
+    ],
   },
   {
     id: "risk_gate_and_learning_loop",
@@ -163,6 +188,7 @@ function buildVisibleBrief(dateKey: string): string {
     "固定研究宇宙：",
     `- 指数/期权: ${INDEX_OPTION_UNIVERSE.join(", ")}`,
     `- 半导体/AI 算力链: ${SEMICONDUCTOR_UNIVERSE.join(", ")}`,
+    `- 套利研究类别: ${ARBITRAGE_RESEARCH_UNIVERSE.join(", ")}`,
     "",
     "每天固定产出：",
     ...taskLines,
@@ -175,7 +201,7 @@ export function buildDirectedDailyResearchBrief(options: { date?: string } = {})
   const dateKey = dateKeyFromOption(options.date);
   return {
     ok: true,
-    boundary: "dev_directed_daily_research_brief_only",
+    boundary: "local_directed_daily_research_brief_only",
     productMode: "focused_daily_research_product_not_open_ended_chat",
     date: dateKey,
     thesis:
@@ -183,6 +209,7 @@ export function buildDirectedDailyResearchBrief(options: { date?: string } = {})
     focus: {
       primary: "index_options_and_semiconductor_ai_compute_chain",
       secondary: "timely_stock_candidate_radar",
+      arbitrage: "paper_only_relative_value_and_cross_border_research",
       cadence: "daily_low_frequency_research",
       ownerVisibleGoal:
         "Give the owner one useful daily research packet instead of forcing every value through open-ended chat.",
@@ -190,6 +217,7 @@ export function buildDirectedDailyResearchBrief(options: { date?: string } = {})
     universe: {
       indexOptions: INDEX_OPTION_UNIVERSE,
       semiconductorAiCompute: SEMICONDUCTOR_UNIVERSE,
+      arbitrageResearch: ARBITRAGE_RESEARCH_UNIVERSE,
     },
     tasks: DAILY_RESEARCH_TASKS,
     outputContract: {
@@ -198,6 +226,7 @@ export function buildDirectedDailyResearchBrief(options: { date?: string } = {})
         "index_options_regime",
         "semiconductor_leader_board",
         "timely_stock_candidates",
+        "arbitrage_research",
         "risk_gates_and_missing_data",
         "invalidation_and_next_watch",
         "learning_sedimentation",

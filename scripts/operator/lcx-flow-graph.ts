@@ -246,6 +246,11 @@ type SharedEntrypointOwner = {
   reason: string;
 };
 
+// Receipt names in the flow graph are static proof-surface declarations. The
+// graph does not read runtime receipt files, so this boundary must stay visible
+// wherever the declarations are exposed.
+const RECEIPT_EVIDENCE_MODE = "owner_declared_surface_only" as const;
+
 type FlowDiagnosticIndexEntry = {
   scenarioId: string;
   family: string;
@@ -254,6 +259,7 @@ type FlowDiagnosticIndexEntry = {
   fastCheck: string;
   requiredFilters: FlowFilterId[];
   evidenceReceipts: string[];
+  receiptEvidenceMode: typeof RECEIPT_EVIDENCE_MODE;
   failureSignals: string[];
   boundary: "dev_flow_graph_only";
 };
@@ -2452,8 +2458,14 @@ function receiptCheck(): FlowCheck {
   return {
     id: "flow_graph_receipts_required",
     ok: missingReceipts.length === 0,
-    summary: "each waterflow must leave at least one receipt or proof surface",
-    evidence: { missingReceipts },
+    summary:
+      "each waterflow must declare at least one receipt or proof surface; this check does not verify runtime receipt files",
+    evidence: {
+      missingReceipts,
+      receiptEvidenceMode: RECEIPT_EVIDENCE_MODE,
+      validationScope: "non_empty_receipt_declarations_only",
+      excludedChecks: ["receipt_file_existence", "receipt_freshness", "receipt_schema"],
+    },
   };
 }
 
@@ -2469,6 +2481,7 @@ function buildFlowDiagnosticIndex(): FlowDiagnosticIndexEntry[] {
       "node --import tsx scripts/operator/lcx-flow-graph.ts --json",
     requiredFilters: scenario.requiredFilters,
     evidenceReceipts: scenario.receipts,
+    receiptEvidenceMode: RECEIPT_EVIDENCE_MODE,
     failureSignals: [
       ...scenario.requiredFilters.map((filter) => `missing_or_skipped_filter:${filter}`),
       ...scenario.receipts.map((receipt) => `missing_or_stale_receipt:${receipt}`),
@@ -2647,6 +2660,7 @@ async function main() {
       scenarios: FLOW_SCENARIOS.length,
       nodes: NODE_IDS.length,
       filters: FILTER_IDS.length,
+      receiptEvidenceMode: RECEIPT_EVIDENCE_MODE,
       consolidationClusters: CONSOLIDATION_CLUSTERS.length,
       consolidatedEntrypointFamilies: CONSOLIDATED_ENTRYPOINT_FAMILIES.length,
       sharedEntrypointOwnerRules: SHARED_ENTRYPOINT_OWNERS.length,

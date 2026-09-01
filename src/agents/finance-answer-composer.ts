@@ -40,6 +40,8 @@ export type FinanceComposeRequest = {
   /** Model id to use, e.g. "moonshot/kimi-k2.5". Caller resolves the family. */
   model: string;
   callModel: FinanceModelCaller;
+  /** Correlation id shared with the data-gateway receipt when available. */
+  executionId?: string;
 };
 
 export type FinanceComposeResult = {
@@ -49,6 +51,7 @@ export type FinanceComposeResult = {
   /** Honest data posture derived from the snapshot, not from the model. */
   dataPosture: "grounded_ready" | "grounded_needs_review" | "data_blocked" | "no_snapshot";
   modelUsed: string;
+  executionId?: string;
 };
 
 const RESEARCH_ONLY_SYSTEM_PREAMBLE = [
@@ -74,12 +77,19 @@ export function buildGroundingContext(snapshot?: FinanceDataGatewaySnapshot): st
     `Finance data gateway snapshot for ${snapshot.instrument} (${snapshot.assetClass}), asOf ${snapshot.asOf}.`,
     `Data quality: ${snapshot.qualityStatus}. Research-only; ${snapshot.boundary}.`,
   ];
+  if (snapshot.legs.length > 0) {
+    lines.push(
+      `Multi-leg research scope: ${snapshot.legs
+        .map((leg) => `${leg.legId}=${leg.instrument}@${leg.venue}/${leg.currency}`)
+        .join(", ")}.`,
+    );
+  }
   if (snapshot.normalizedFields.length > 0) {
     lines.push("Fields (each usable only with its source and timestamp):");
     for (const field of snapshot.normalizedFields) {
       const unit = field.currency ?? field.unit ?? "";
       lines.push(
-        `- ${field.name} = ${field.value} ${unit} [${field.providerName}, ${field.providerRole}, ${field.sourceTimestamp}]`,
+        `- ${field.name} = ${field.value} ${unit} [${field.providerName}, ${field.providerRole}, ${field.sourceFamily}, observed ${field.observedAt} ${field.timezone}, ${field.delayStatus}, source ${field.sourceTimestamp}]`,
       );
     }
   }
@@ -150,5 +160,6 @@ export async function composeFinanceAnswer(
     groundingContext,
     dataPosture: derivePosture(request.snapshot),
     modelUsed: request.model,
+    executionId: request.executionId,
   };
 }

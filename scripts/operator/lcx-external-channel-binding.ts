@@ -661,7 +661,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     ),
     boundary: "local_external_channel_binding_operator_only",
     legacyBoundary: "dev_live_lark_brain_binding_operator_only",
-    conceptStatus: "legacy_live_terms_external_channel_owner_current",
+    conceptStatus: "external_channel_owner_current_legacy_compatibility_isolated",
     startedAt,
     generatedAt: new Date().toISOString(),
     cwd: REPO_ROOT,

@@ -153,7 +153,7 @@ type ActiveGuardAdapterTruthSnapshot = {
 
 type LegacyLiveLarkBrainBindingSnapshot = {
   boundary: "dev_live_lark_brain_binding_plan_only";
-  conceptStatus: "legacy_live_terms_external_channel_owner_current";
+  conceptStatus: "external_channel_owner_current_legacy_compatibility_isolated";
   objective: "live_lark_reads_one_selected_clean_local_brain";
   externalChannel: {
     boundary: "local_external_channel_binding_plan_only";
@@ -1144,7 +1144,7 @@ function legacyLiveLarkBrainBindingSnapshot(params: {
   }
   return {
     boundary: "dev_live_lark_brain_binding_plan_only",
-    conceptStatus: "legacy_live_terms_external_channel_owner_current",
+    conceptStatus: "external_channel_owner_current_legacy_compatibility_isolated",
     objective: "live_lark_reads_one_selected_clean_local_brain",
     externalChannel: {
       boundary: "local_external_channel_binding_plan_only",

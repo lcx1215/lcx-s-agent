@@ -138,7 +138,7 @@ function baseInputs() {
     }),
     directedDailyResearchBrief: owner("lcx-directed-daily-research-brief", {
       ok: true,
-      boundary: "dev_directed_daily_research_brief_only",
+      boundary: "local_directed_daily_research_brief_only",
       productMode: "focused_daily_research_product_not_open_ended_chat",
       focus: {
         primary: "index_options_and_semiconductor_ai_compute_chain",
