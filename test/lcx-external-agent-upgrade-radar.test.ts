@@ -23,6 +23,10 @@ async function runRadar() {
       failed: number;
       registeredCandidateCount: number;
       architectureIntegratedCount: number;
+      sourceRegistrationOnlyCount: number;
+      sourceReceiptVerifiedCount: number;
+      sourceReceiptMissingCount: number;
+      sourceVerificationClaim: boolean;
       runtimeAuthorityGrantedCount: number;
       blacktechMechanismCount: number;
       blacktechReadyDevOnlyCount: number;
@@ -46,6 +50,11 @@ async function runRadar() {
       requiredReceipts: string[];
       requiredFilters: string[];
       riskBoundaries: string[];
+      sourceEvidence: {
+        registration: string;
+        status: string;
+        receipts: Record<string, { status: string; receiptId: string }>;
+      };
     }>;
     blacktechMechanisms: Array<{
       id: string;
@@ -102,6 +111,10 @@ describe("lcx-external-agent-upgrade-radar", () => {
         failed: 0,
         registeredCandidateCount: 13,
         architectureIntegratedCount: 13,
+        sourceRegistrationOnlyCount: 13,
+        sourceReceiptVerifiedCount: 0,
+        sourceReceiptMissingCount: 52,
+        sourceVerificationClaim: false,
         runtimeAuthorityGrantedCount: 0,
         blacktechMechanismCount: 7,
         blacktechReadyDevOnlyCount: 2,
@@ -117,6 +130,8 @@ describe("lcx-external-agent-upgrade-radar", () => {
         expect.objectContaining({ id: "expected_external_candidates_registered", ok: true }),
         expect.objectContaining({ id: "all_candidates_map_to_existing_owners", ok: true }),
         expect.objectContaining({ id: "automatic_use_triggers_present", ok: true }),
+        expect.objectContaining({ id: "source_registration_and_receipt_state_explicit", ok: true }),
+        expect.objectContaining({ id: "source_receipts_not_claimed_verified", ok: true }),
         expect.objectContaining({ id: "direct_runtime_adoption_blocked", ok: true }),
         expect.objectContaining({ id: "expected_blacktech_mechanisms_registered", ok: true }),
         expect.objectContaining({ id: "blacktech_sources_map_to_candidates", ok: true }),
@@ -208,6 +223,19 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect(candidate.autocueTerms.length, candidate.id).toBeGreaterThan(0);
       expect(candidate.runtimeAuthority, candidate.id).toBe("not_granted");
       expect(candidate.blockedDirectAdoption, candidate.id).toBe(true);
+      expect(candidate.sourceEvidence, candidate.id).toEqual({
+        registration: "static",
+        status: "static_registration_only",
+        receipts: {
+          freshness: { status: "missing", receiptId: "source_freshness_receipt" },
+          version: { status: "missing", receiptId: "source_version_receipt" },
+          license_scope: { status: "missing", receiptId: "source_license_scope_receipt" },
+          actual_reading_scope: {
+            status: "missing",
+            receiptId: "actual_reading_scope_receipt",
+          },
+        },
+      });
       expect(candidate.riskBoundaries, candidate.id).toEqual(
         expect.arrayContaining(["no_provider_config_change"]),
       );

@@ -50,11 +50,26 @@ type ExternalUpgradeCandidate = {
   liveBoundary: string;
 };
 
+type SourceReceiptKey = "freshness" | "version" | "license_scope" | "actual_reading_scope";
+
+type SourceEvidenceContract = {
+  registration: "static";
+  status: "static_registration_only";
+  receipts: Record<
+    SourceReceiptKey,
+    {
+      status: "missing" | "verified";
+      receiptId: string;
+    }
+  >;
+};
+
 type CandidateVerdict = ExternalUpgradeCandidate & {
   status: "dev_architecture_integrated";
   runtimeAuthority: "not_granted";
   missing: string[];
   blockedDirectAdoption: boolean;
+  sourceEvidence: SourceEvidenceContract;
 };
 
 type BlacktechMechanismId =
@@ -1055,6 +1070,22 @@ function missingFor(candidate: ExternalUpgradeCandidate): string[] {
   return missing;
 }
 
+function staticSourceEvidence(): SourceEvidenceContract {
+  return {
+    registration: "static",
+    status: "static_registration_only",
+    receipts: {
+      freshness: { status: "missing", receiptId: "source_freshness_receipt" },
+      version: { status: "missing", receiptId: "source_version_receipt" },
+      license_scope: { status: "missing", receiptId: "source_license_scope_receipt" },
+      actual_reading_scope: {
+        status: "missing",
+        receiptId: "actual_reading_scope_receipt",
+      },
+    },
+  };
+}
+
 function candidateVerdicts(): CandidateVerdict[] {
   return CANDIDATES.map((candidate) => ({
     ...candidate,
@@ -1062,6 +1093,7 @@ function candidateVerdicts(): CandidateVerdict[] {
     runtimeAuthority: "not_granted",
     missing: missingFor(candidate),
     blockedDirectAdoption: true,
+    sourceEvidence: staticSourceEvidence(),
   }));
 }
 
@@ -1148,6 +1180,18 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
   const missingUseTriggers = verdicts.filter(
     (candidate) => !candidate.ownerUseTrigger || candidate.autocueTerms.length === 0,
   );
+  const sourceEvidenceGaps = verdicts.flatMap((candidate) =>
+    Object.entries(candidate.sourceEvidence.receipts)
+      .filter(([, receipt]) => receipt.status !== "verified")
+      .map(([kind, receipt]) => `${candidate.id}:${kind}:${receipt.receiptId}`),
+  );
+  const sourceEvidenceStateErrors = verdicts
+    .filter(
+      (candidate) =>
+        candidate.sourceEvidence.registration !== "static" ||
+        candidate.sourceEvidence.status !== "static_registration_only",
+    )
+    .map((candidate) => candidate.id);
   return [
     {
       id: "expected_external_candidates_registered",
@@ -1169,6 +1213,27 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
       ok: missingFields.length === 0,
       summary: "source, reading, distillation, receipt, filter, and probe fields are present",
       evidence: { missingFields },
+    },
+    {
+      id: "source_registration_and_receipt_state_explicit",
+      ok: sourceEvidenceStateErrors.length === 0,
+      summary:
+        "source URLs are static registrations; freshness, version, license scope, and actual reading scope remain separate receipt gates",
+      evidence: {
+        sourceEvidenceStateErrors,
+        sourceReceiptKinds: ["freshness", "version", "license_scope", "actual_reading_scope"],
+      },
+    },
+    {
+      id: "source_receipts_not_claimed_verified",
+      ok: sourceEvidenceGaps.length === verdicts.length * 4,
+      summary:
+        "the radar does not claim source freshness, version, license scope, or reading scope without receipts",
+      evidence: {
+        missingReceiptCount: sourceEvidenceGaps.length,
+        expectedMissingReceiptCount: verdicts.length * 4,
+        missingReceipts: sourceEvidenceGaps,
+      },
     },
     {
       id: "automatic_use_triggers_present",
@@ -1293,6 +1358,23 @@ export function buildExternalAgentUpgradeRadar() {
       architectureIntegratedCount: candidates.filter(
         (candidate) => candidate.status === "dev_architecture_integrated",
       ).length,
+      sourceRegistrationOnlyCount: candidates.filter(
+        (candidate) => candidate.sourceEvidence.status === "static_registration_only",
+      ).length,
+      sourceReceiptVerifiedCount: candidates.filter((candidate) =>
+        Object.values(candidate.sourceEvidence.receipts).every(
+          (receipt) => receipt.status === "verified",
+        ),
+      ).length,
+      sourceReceiptMissingCount: candidates.reduce(
+        (total, candidate) =>
+          total +
+          Object.values(candidate.sourceEvidence.receipts).filter(
+            (receipt) => receipt.status !== "verified",
+          ).length,
+        0,
+      ),
+      sourceVerificationClaim: false,
       runtimeAuthorityGrantedCount: candidates.filter(
         (candidate) => candidate.runtimeAuthority !== "not_granted",
       ).length,
@@ -1357,6 +1439,10 @@ function renderText(payload: ReturnType<typeof buildExternalAgentUpgradeRadar>):
     `blacktechMechanismCount=${payload.summary.blacktechMechanismCount}`,
     `architectureFit=${payload.architectureFit}`,
     `perfectIntegrationClaim=${payload.summary.perfectIntegrationClaim}`,
+    `sourceRegistrationOnlyCount=${payload.summary.sourceRegistrationOnlyCount}`,
+    `sourceReceiptVerifiedCount=${payload.summary.sourceReceiptVerifiedCount}`,
+    `sourceReceiptMissingCount=${payload.summary.sourceReceiptMissingCount}`,
+    `sourceVerificationClaim=${payload.summary.sourceVerificationClaim}`,
     `runtimeAuthorityGrantedCount=${payload.summary.runtimeAuthorityGrantedCount}`,
     `liveTouched=${payload.liveTouched}`,
     `providerConfigTouched=${payload.providerConfigTouched}`,
