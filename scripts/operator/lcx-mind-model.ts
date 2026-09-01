@@ -97,6 +97,7 @@ const WORKFLOW_SURFACES = [
   "scripts/operator/lcx-problem-cluster-radar.ts",
   "scripts/operator/lcx-commercial-acceptance-harness.ts",
   "scripts/operator/lcx-commercial-answer-pipeline.ts",
+  "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
   "scripts/operator/lcx-self-repair-hands.ts",
   "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   "scripts/operator/lcx-learning-sedimentation-bridge.ts",
@@ -142,6 +143,7 @@ const PROOF_SURFACES = [
   "src/auto-reply/reply/skillopt-autocue.test.ts",
   "test/lcx-head-tail-consistency.test.ts",
   "test/lcx-mind-model.test.ts",
+  "test/lcx-multi-agent-pattern-shadow.test.ts",
   "test/lcx-problem-cluster-radar.test.ts",
   "test/lcx-commercial-acceptance-harness.test.ts",
   "test/lcx-commercial-answer-pipeline.test.ts",
@@ -185,6 +187,7 @@ const BOUNDARY_SURFACES = [
   "scripts/operator/lcx-skillopt-lite.ts",
   "scripts/operator/lcx-commercial-acceptance-harness.ts",
   "scripts/operator/lcx-commercial-answer-pipeline.ts",
+  "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
   "scripts/operator/lcx-self-repair-hands.ts",
   "scripts/operator/lcx-system-doctor.ts",
   "scripts/operator/lcx-context-recovery-exam.ts",
@@ -696,6 +699,31 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     ],
     nextAction:
       "Run lcx-external-agent-upgrade-radar before absorbing external agent projects; distill only into existing owner lanes.",
+  },
+  {
+    id: "multi_agent_pattern_shadow",
+    masterLane: "agent_workflow_memory",
+    objective:
+      "Compare manager, handoff, and parallel-worker patterns on one replayable case while keeping ownership, cost evidence, permissions, recovery, and production boundaries explicit.",
+    headTerms: ["multi-agent orchestration", "handoff"],
+    workflowTerms: [
+      "lcx-multi-agent-pattern-shadow.ts",
+      "multi_agent_pattern_shadow_evaluation_waterflow",
+      "shadow_replay",
+    ],
+    proofTerms: [
+      "test/lcx-multi-agent-pattern-shadow.test.ts",
+      "receiptSchemaVersion",
+      "recoveryPassed",
+    ],
+    boundaryTerms: [
+      "local_multi_agent_pattern_shadow_only",
+      "no_shadow_external_side_effects",
+      "providerConfigTouched",
+      "protectedMemoryTouched",
+    ],
+    nextAction:
+      "Run deterministic replay first; only an explicitly supplied isolated executor may proceed, and missing usage or recovery evidence stays unknown or unverified.",
   },
 ];
 

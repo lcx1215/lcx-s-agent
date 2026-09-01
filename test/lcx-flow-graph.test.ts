@@ -322,6 +322,18 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "multi_agent_pattern_shadow_evaluation_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "same_case_required",
+            "replay_before_isolated_executor_required",
+            "shadow_tool_permission_audit_required",
+            "no_shadow_external_side_effects",
+            "shadow_recovery_receipt_required",
+            "wide_trial_not_production",
+          ]),
+          receipts: expect.arrayContaining(["lcx-multi-agent-pattern-shadow"]),
+        }),
+        expect.objectContaining({
           id: "prediction_market_research_only_waterflow",
           receipts: expect.arrayContaining([
             "lcx-external-agent-upgrade-radar",
@@ -619,6 +631,17 @@ describe("LCX flow graph exam", () => {
           fastCheck:
             "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
           evidenceReceipts: expect.arrayContaining(["lcx-external-agent-upgrade-radar"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "multi_agent_pattern_shadow_evaluation_waterflow",
+          ownerEntrypoint: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+          fastCheck:
+            "node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay --pattern all --case single_stock_loss_recovery_risk_triage --json",
+          evidenceReceipts: expect.arrayContaining(["lcx-multi-agent-pattern-shadow"]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:same_case_required",
+            "missing_or_skipped_filter:shadow_recovery_receipt_required",
+          ]),
         }),
         expect.objectContaining({
           scenarioId: "prediction_market_research_only_waterflow",

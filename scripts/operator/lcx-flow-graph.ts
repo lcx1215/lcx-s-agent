@@ -987,6 +987,56 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "multi_agent_pattern_shadow_evaluation_waterflow",
+    family: "multi_agent_pattern_shadow_evaluation",
+    objective:
+      "Manager, handoff, and parallel-worker topologies must be compared on the same case with replay, isolated execution, explicit ownership, permission evidence, and recoverable final delivery.",
+    start: "multi_agent_pattern_intake",
+    end: "acceptance_eval",
+    requiredNodes: [
+      "multi_agent_pattern_intake",
+      "shadow_replay",
+      "shadow_isolated_executor",
+      "shadow_live",
+      "interruption_recovery_probe",
+      "pattern_comparison",
+      "review_panel",
+      "acceptance_eval",
+    ],
+    requiredFilters: [
+      "same_case_required",
+      "same_model_policy_required",
+      "replay_before_isolated_executor_required",
+      "replay_before_live_required",
+      "explicit_cost_basis_required",
+      "shadow_tool_permission_audit_required",
+      "no_shadow_external_side_effects",
+      "shadow_recovery_receipt_required",
+      "wide_trial_not_production",
+      "research_only_boundary",
+      "no_trade_advice",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    edges: [
+      ["multi_agent_pattern_intake", "shadow_replay"],
+      ["shadow_replay", "shadow_isolated_executor"],
+      ["shadow_isolated_executor", "shadow_live"],
+      ["shadow_isolated_executor", "interruption_recovery_probe"],
+      ["shadow_live", "pattern_comparison"],
+      ["interruption_recovery_probe", "pattern_comparison"],
+      ["pattern_comparison", "review_panel"],
+      ["review_panel", "acceptance_eval"],
+    ],
+    receipts: [
+      "multi-agent-pattern-intake",
+      "lcx-multi-agent-pattern-shadow",
+      "lcx-multi-agent-pattern-shadow.jsonl",
+      "review_panel",
+    ],
+  },
+  {
     id: "prediction_market_research_only_waterflow",
     family: "prediction_market_research_and_strategy_audit",
     objective:
@@ -1665,6 +1715,8 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   similar_engineering_consolidation_waterflow: "scripts/operator/lcx-change-impact-plan.ts",
   external_agent_skill_distillation_waterflow:
     "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+  multi_agent_pattern_shadow_evaluation_waterflow:
+    "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
   prediction_market_research_only_waterflow: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   automation_repair_lock_waterflow: "scripts/operator/lcx-automation-repair-lock.ts",
 };
@@ -1707,6 +1759,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/operator/lcx-change-impact-plan.ts --json",
   external_agent_skill_distillation_waterflow:
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
+  multi_agent_pattern_shadow_evaluation_waterflow:
+    "node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay --pattern all --case single_stock_loss_recovery_risk_triage --json",
   prediction_market_research_only_waterflow:
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
   automation_repair_lock_waterflow:
