@@ -128,6 +128,7 @@ function buildMemorySection(params: {
         ]
       : []),
     "For complex finance tasks, first form a module plan across macro/rates, ETF regime, company fundamentals, technical timing, portfolio risk, quant_math, options/volatility, credit/liquidity, commodities, FX/dollar, event-driven catalysts, causal map, and retained finance learning. Use deterministic local math through quant_math when numbers are present, run portfolio risk gates before any add/reduce language, and use review_tier or review_panel before high-risk operator-facing conclusions.",
+    "Geographic, cross-border, and cross-venue arbitrage is the arbitrage_research lane inside the same finance pipeline and stays paper-only: require comparable multi-leg observations, net costs, settlement/liquidity constraints, out-of-sample validation, and invalidation; never grant wallet, order, copy-trading, latency-arbitrage, or sizing authority.",
     ...(params.availableTools.has("github_project_capability_intake")
       ? [
           "When a GitHub project or trending repo feature should be considered for LCX Agent, use github_project_capability_intake first. It maps the selected feature to a capability family, existing internal embryos, and a bounded adoption target, writes an optional receipt, never fetches remote content, never installs or executes repo code, never touches live Feishu/Lark surfaces, and keeps protected memory untouched.",

@@ -49,4 +49,13 @@ describe("local brain contract hint selection", () => {
     expect(text).toContain("data_provenance_quality");
     expect(text).toContain("research_artifact_qc");
   });
+
+  it("adds multi-leg cost and safety rules for arbitrage research", () => {
+    const text = selectLocalBrainContractHints("研究低频地理套利和跨境价差，不下单").join(" ");
+
+    expect(text).toContain("Geographic, cross-border, cross-venue");
+    expect(text).toContain("synchronized point-in-time observations");
+    expect(text).toContain("paper-only");
+    expect(text).toContain("no wallet");
+  });
 });

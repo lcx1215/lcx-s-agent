@@ -9,6 +9,7 @@ export type FinanceBrainModuleId =
   | "us_equity_market_structure"
   | "china_a_share_policy_flow"
   | "crypto_market_structure"
+  | "arbitrage_research"
   | "quant_math"
   | "finance_learning_memory";
 
@@ -114,6 +115,20 @@ export const FINANCE_BRAIN_MODULES = [
     triggerPatterns: [
       /\b(?:crypto|bitcoin|btc|ethereum|eth|stablecoin|usdt|exchange reserves?|on[- ]chain)\b/u,
       /加密|比特币|BTC|以太坊|ETH|稳定币|链上|交易所储备/u,
+    ],
+  },
+  {
+    id: "arbitrage_research",
+    role: "Evaluate low-frequency geographic, cross-border, cross-venue, pairs, basis, carry, and relative-value hypotheses as paper-only research with synchronized multi-leg evidence and explicit net-cost, settlement, and invalidation checks.",
+    requiredTools: [
+      "finance_framework_core_inspect",
+      "finance_data_gateway_snapshot",
+      "finance_learning_capability_apply",
+      "quant_math",
+    ],
+    triggerPatterns: [
+      /\b(?:arbitrage|geographic arbitrage|cross[- ]border arbitrage|cross[- ]venue arbitrage|relative value|pairs trade|basis arbitrage|carry arbitrage)\b/iu,
+      /套利|地理套利|跨境套利|跨市场套利|跨场所套利|价差套利|配对交易|相对价值|基差套利|搬砖/iu,
     ],
   },
   {
@@ -271,6 +286,16 @@ export function planFinanceBrainOrchestration(
     );
   const matched = financeTask ? rawMatched : [];
   const seeded = financeTask ? unique<FinanceBrainModuleId>([...matched, "causal_map"]) : matched;
+  if (seeded.includes("arbitrage_research")) {
+    seeded.push(
+      ...unique<FinanceBrainModuleId>([
+        "fx_currency_liquidity",
+        "cross_asset_liquidity",
+        "quant_math",
+        "portfolio_risk_gates",
+      ]),
+    );
+  }
 
   if (input.hasHoldingsOrPortfolioContext && !seeded.includes("portfolio_risk_gates")) {
     seeded.push("portfolio_risk_gates");
@@ -303,6 +328,7 @@ export function planFinanceBrainOrchestration(
     primaryModules.includes("portfolio_risk_gates") ||
     primaryModules.includes("quant_math");
   const reviewTools = needsPanel ? ["review_tier", "review_panel"] : ["review_tier"];
+  const arbitragePlan = primaryModules.includes("arbitrage_research");
 
   return {
     primaryModules,
@@ -317,6 +343,7 @@ export function planFinanceBrainOrchestration(
       "domain_modules",
       "quant_math_when_needed",
       "portfolio_risk_gates",
+      "arbitrage_research_when_relative_value_or_multi_venue_hypothesis_is_present",
       "causal_map_red_team",
       "review_tier_or_panel",
       "control_room_summary",
@@ -327,6 +354,14 @@ export function planFinanceBrainOrchestration(
       "evidence_required",
       "no_model_math_guessing",
       "risk_gate_before_action_language",
+      ...(arbitragePlan
+        ? [
+            "paper_only_strategy_audit",
+            "no_wallet_or_order_execution",
+            "no_latency_arbitrage",
+            "multi_leg_cost_and_settlement_evidence_required",
+          ]
+        : []),
     ],
   };
 }

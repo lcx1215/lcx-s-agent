@@ -137,6 +137,17 @@ const CRITICAL_MODULE_CONTRACTS: CriticalModuleContract[] = [
     tailTerms: ["finance_learning_memory", "finance_learning_capability_apply"],
   },
   {
+    id: "arbitrage_research",
+    headTerms: ["arbitrage_research", "relative-value research"],
+    tailTerms: [
+      "arbitrage_research",
+      "paper_only_strategy_audit",
+      "multi-leg",
+      "fees_slippage_and_sample_out_required",
+      "no_wallet_or_order_execution",
+    ],
+  },
+  {
     id: "eval_review_output_tail",
     headTerms: ["eval", "review", "summary"],
     tailTerms: ["eval_harness_design", "review_panel", "control_room_summary"],

@@ -505,7 +505,16 @@ function looksLikeEnergyInflationShockRisk(text: string): boolean {
 }
 
 function looksLikeEtfTimingFramework(text: string): boolean {
-  return /(低频|daily|weekly|etf|择时|timing|框架|framework)/iu.test(text);
+  return (
+    !looksLikeArbitrageResearch(text) &&
+    /(低频|daily|weekly|etf|择时|timing|框架|framework)/iu.test(text)
+  );
+}
+
+function looksLikeArbitrageResearch(text: string): boolean {
+  return /\b(?:arbitrage|geographic arbitrage|cross[- ]border arbitrage|cross[- ]venue arbitrage|relative value|pairs trade|basis arbitrage|carry arbitrage)\b|套利|地理套利|跨境套利|跨市场套利|跨场所套利|价差套利|配对交易|相对价值|基差套利|搬砖/iu.test(
+    text,
+  );
 }
 
 function looksLikeOpsContextAudit(text: string): boolean {
@@ -3180,7 +3189,7 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
-  if (looksLikeRebalanceExecutionBoundary(text)) {
+  if (looksLikeRebalanceExecutionBoundary(text) && !looksLikeArbitrageResearch(text)) {
     return {
       ...safe,
       task_family: "portfolio_rebalance_execution_boundary",
@@ -4091,6 +4100,61 @@ export function hardenLocalBrainPlanForAsk(
     };
   }
 
+  if (looksLikeArbitrageResearch(text)) {
+    return {
+      ...safe,
+      task_family: "arbitrage_research_planning",
+      primary_modules: mergeUnique(
+        withoutValues(arrayValue(safe.primary_modules), ["etf_regime"]),
+        [
+          "arbitrage_research",
+          "fx_currency_liquidity",
+          "cross_asset_liquidity",
+          "data_provenance_quality",
+          "quant_math",
+          "portfolio_risk_gates",
+          "causal_map",
+        ],
+      ),
+      supporting_modules: mergeUnique(arrayValue(safe.supporting_modules), [
+        "finance_learning_memory",
+        "source_registry",
+        "review_panel",
+        "control_room_summary",
+      ]),
+      required_tools: mergeUnique(arrayValue(safe.required_tools), [
+        "finance_data_gateway_snapshot",
+        "finance_learning_capability_apply",
+        "source_registry_lookup",
+        "quant_math",
+        "review_panel",
+      ]),
+      missing_data: mergeUnique(arrayValue(safe.missing_data), [
+        "multi_leg_instrument_and_venue_identity",
+        "synchronized_point_in_time_quotes_and_fx",
+        "fee_tax_funding_borrow_and_transfer_costs",
+        "depth_liquidity_slippage_and_capacity",
+        "settlement_counterparty_and_capital_control_constraints",
+        "out_of_sample_paper_validation_and_invalidation_rule",
+      ]),
+      risk_boundaries: mergeUnique(cleanRiskBoundaries(safe.risk_boundaries), [
+        "research_only",
+        "no_execution_authority",
+        "evidence_required",
+        "paper_only_strategy_audit",
+        "no_wallet_or_order_execution",
+        "no_latency_arbitrage",
+        "no_trade_advice",
+      ]),
+      next_step: "collect_synchronized_multi_leg_inputs_then_run_paper_only_net_spread_audit",
+      rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
+        "unverified_spread_as_guaranteed_profit",
+        "wallet_or_order_execution",
+        "latency_arbitrage_request",
+      ]),
+    };
+  }
+
   if (looksLikeEtfTimingFramework(text)) {
     return {
       ...safe,
@@ -4211,6 +4275,9 @@ function inferFinanceModulesFromLocalKnowledgeText(text: string): string[] {
   }
   if (/(数学|量化|波动|相关|回撤|correlation|volatility|drawdown)/iu.test(text)) {
     modules.push("quant_math");
+  }
+  if (looksLikeArbitrageResearch(text)) {
+    modules.push("arbitrage_research");
   }
   return modules;
 }

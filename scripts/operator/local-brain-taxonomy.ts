@@ -25,6 +25,7 @@ export const LOCAL_BRAIN_MODULE_TAXONOMY = [
   "finance_learning_memory",
   "source_registry",
   "skill_pattern_distillation",
+  "arbitrage_research",
   "agent_workflow_memory",
   "eval_harness_design",
   "review_panel",
@@ -179,6 +180,7 @@ export const LOCAL_BRAIN_CONTRACT_HINTS = [
   "Advanced trader research chains must not stop at broad fundamentals: DCF/comps/modeling asks use financial_modeling_valuation_qc, thesis/catalyst/invalidation asks use thesis_catalyst_lifecycle, vendor/field/timestamp conflicts use data_provenance_quality, and reports/spreadsheets/tables/narrative artifacts use research_artifact_qc before a visible control-room summary.",
   "Prediction-market and Polymarket sources are research-only weak evidence: require market id or URL, real market metadata packet, resolution criteria, resolution ambiguity review, close date/timezone, orderbook/liquidity timestamp, thin-liquidity downrank thresholds, market microstructure warning, paper-only strategy audit, sample-out validation, slippage/fee assumptions, counterevidence, paper-strategy failure log, no wallet connection, no order placement, no copy trading, no forecast authority, and no latency arbitrage.",
   "Market-facing commodity, A-share, and technical tasks pair their dedicated module with portfolio_risk_gates, review_panel, and data/provenance gates; commodity analysis is research-only and never a trade signal.",
+  "Geographic, cross-border, cross-venue, pairs, basis, carry, and relative-value arbitrage research must define comparable legs and synchronized point-in-time observations, then reconcile FX, fees, taxes, funding, borrow, transfer, settlement, capital-control, legal, liquidity, slippage, and capacity constraints. Keep the result paper-only with out-of-sample validation, counterevidence, and explicit invalidation; no wallet, no order, no copy-trading, no latency-arbitrage, and no position-sizing authority.",
 ] as const;
 
 const BASE_CONTRACT_HINT_INDEXES = [0, 1, 2, 3, 4, 5] as const;
@@ -221,6 +223,11 @@ const CONTRACT_HINT_SELECTORS: Array<{
     indexes: [15],
     pattern:
       /anthropic|financial agent|financial-services|hermes|harness|外部.*agent|金融.*agent|架构哲学/iu,
+  },
+  {
+    indexes: [20],
+    pattern:
+      /arbitrage|geographic|cross[- ]border|cross[- ]venue|relative value|pairs trade|basis arbitrage|carry arbitrage|套利|地理|跨境|跨市场|跨场所|价差|配对交易|相对价值|基差套利|搬砖/iu,
   },
 ];
 

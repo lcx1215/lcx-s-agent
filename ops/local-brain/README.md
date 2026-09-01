@@ -778,6 +778,7 @@ bridge:
 
 ```text
 factor_research
+arbitrage_research
 options_volatility
 global_index_regime
 macro_rates_inflation

@@ -41,6 +41,15 @@ clear next safe work. If fresh data, source evidence, user constraints, or
 owner receipts are missing, the answer should still be useful by stating
 exactly what is missing and what can be checked next.
 
+For future geographic, cross-border, cross-venue, pairs, basis, carry, or
+relative-value questions, `arbitrage_research` is a research-only lane inside
+this same finance pipeline. It must compare equivalent multi-leg instruments
+with synchronized point-in-time observations and subtract FX, fees, taxes,
+funding, borrow, transfer, settlement, capital-control, legal, liquidity,
+slippage, and capacity constraints before describing a spread hypothesis. It
+must remain paper-only with out-of-sample validation and invalidation checks;
+wallets, orders, copy trading, latency arbitrage, and sizing are forbidden.
+
 Commercial acceptance, visible-answer gates, short-intent canaries,
 provider-council evidence, finance data gateway, module-learning absorption,
 training samples, and daily research products should all be judged against this

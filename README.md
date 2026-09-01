@@ -44,6 +44,11 @@ unless the user explicitly asks for them.
 - One runtime should use one selected clean local-brain adapter, not multiple
   LoRA adapters stacked together.
 - Finance outputs are research-only and are not investment advice.
+- `arbitrage_research` is a low-frequency relative-value research lane inside
+  the same finance pipeline: geographic, cross-border, and cross-venue ideas
+  require synchronized multi-leg data, net-cost/settlement/liquidity checks,
+  paper-only out-of-sample validation, and explicit invalidation. It never
+  grants wallet, order, copy-trading, latency-arbitrage, or sizing authority.
 - Current market, price, fundamental, ETF, option, macro, or vendor numbers must
   pass `finance_data_gateway_snapshot` / 金融数据网关 and carry provenance before
   reaching Qwen, Lark, memory, or a visible summary.

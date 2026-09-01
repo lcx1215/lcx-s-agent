@@ -154,6 +154,17 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
+          id: "arbitrage_research_only_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "paper_only_backtest_required",
+            "fees_slippage_and_sample_out_required",
+            "multi_leg_equivalence_required",
+            "net_cost_model_required",
+            "settlement_legal_constraints_required",
+            "no_wallet_or_order_execution",
+          ]),
+        }),
+        expect.objectContaining({
           id: "module_learning_internalization_waterflow",
           requiredFilters: expect.arrayContaining([
             "stored_only_is_not_learning",

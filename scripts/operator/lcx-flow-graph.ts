@@ -184,6 +184,9 @@ type FlowFilterId =
   | "thin_liquidity_downrank_required"
   | "ambiguous_resolution_blocks_conclusion"
   | "fees_slippage_and_sample_out_required"
+  | "multi_leg_equivalence_required"
+  | "net_cost_model_required"
+  | "settlement_legal_constraints_required"
   | "commercial_error_budget_required"
   | "product_canary_suite_required"
   | "automation_schedule_gate"
@@ -441,6 +444,9 @@ const FILTER_IDS: FlowFilterId[] = [
   "thin_liquidity_downrank_required",
   "ambiguous_resolution_blocks_conclusion",
   "fees_slippage_and_sample_out_required",
+  "multi_leg_equivalence_required",
+  "net_cost_model_required",
+  "settlement_legal_constraints_required",
   "commercial_error_budget_required",
   "product_canary_suite_required",
   "automation_schedule_gate",
@@ -1417,6 +1423,69 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "arbitrage_research_only_waterflow",
+    family: "low_frequency_relative_value_research",
+    objective:
+      "Geographic, cross-border, cross-venue, pairs, basis, carry, and relative-value hypotheses must remain paper-only research: reconcile multi-leg identity, synchronized data, net costs, settlement, liquidity, and invalidation before any visible summary.",
+    start: "finance_research_modules",
+    end: "control_room_summary",
+    requiredNodes: [
+      "finance_research_modules",
+      "finance_data_gateway",
+      "normalized_data_snapshot",
+      "data_provenance_quality_review",
+      "source_registry",
+      "market_microstructure_review",
+      "strategy_experiment_audit",
+      "causal_map",
+      "review_panel",
+      "control_room_summary",
+    ],
+    requiredFilters: [
+      "source_evidence_gate",
+      "research_only_boundary",
+      "no_trade_advice",
+      "no_unverified_current_market_data",
+      "fresh_timestamp_required",
+      "field_definition_required",
+      "three_source_reconciliation_required",
+      "conflicted_data_blocks_conclusion",
+      "multi_leg_equivalence_required",
+      "net_cost_model_required",
+      "settlement_legal_constraints_required",
+      "market_microstructure_warning_required",
+      "paper_only_backtest_required",
+      "sample_out_validation_required",
+      "thin_liquidity_downrank_required",
+      "fees_slippage_and_sample_out_required",
+      "no_wallet_or_order_execution",
+      "no_external_channel_sender_change",
+    ],
+    edges: [
+      ["finance_research_modules", "finance_data_gateway"],
+      ["finance_research_modules", "source_registry"],
+      ["finance_data_gateway", "normalized_data_snapshot"],
+      ["finance_data_gateway", "data_provenance_quality_review"],
+      ["source_registry", "data_provenance_quality_review"],
+      ["normalized_data_snapshot", "market_microstructure_review"],
+      ["data_provenance_quality_review", "market_microstructure_review"],
+      ["market_microstructure_review", "strategy_experiment_audit"],
+      ["strategy_experiment_audit", "causal_map"],
+      ["causal_map", "review_panel"],
+      ["review_panel", "control_room_summary"],
+    ],
+    feedbackEdges: [
+      ["review_panel", "finance_data_gateway"],
+      ["strategy_experiment_audit", "market_microstructure_review"],
+    ],
+    receipts: [
+      "finance-data-gateway",
+      "data_provenance_quality",
+      "strategy_experiment_audit",
+      "review_panel",
+    ],
+  },
+  {
     id: "automation_repair_lock_waterflow",
     family: "codex_auto_repair_and_schedule_guard",
     objective:
@@ -2025,6 +2094,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   external_agent_skill_distillation_waterflow:
     "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   prediction_market_research_only_waterflow: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+  arbitrage_research_only_waterflow: "src/agents/finance-brain-orchestration.ts",
   automation_repair_lock_waterflow: "scripts/operator/lcx-automation-repair-lock.ts",
 };
 
@@ -2067,6 +2137,7 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
   prediction_market_research_only_waterflow:
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
+  arbitrage_research_only_waterflow: "node --import tsx scripts/operator/lcx-flow-graph.ts --json",
   automation_repair_lock_waterflow:
     "node --import tsx scripts/operator/lcx-automation-repair-lock.ts --mode status --json",
 };

@@ -1106,6 +1106,47 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.rejected_context).toContain("technical_timing_before_fundamentals");
   });
 
+  it("keeps low-frequency arbitrage on the research lane instead of ETF timing", () => {
+    const plan = hardenLocalBrainPlanForAsk(
+      {},
+      {
+        ask: "设计低频日频地理套利和跨境价差研究，不要钱包、下单或仓位建议。",
+      },
+    );
+
+    expect(plan.task_family).toBe("arbitrage_research_planning");
+    expect(plan.primary_modules).toEqual(
+      expect.arrayContaining([
+        "arbitrage_research",
+        "fx_currency_liquidity",
+        "cross_asset_liquidity",
+        "data_provenance_quality",
+        "quant_math",
+        "portfolio_risk_gates",
+        "causal_map",
+      ]),
+    );
+    expect(plan.primary_modules).not.toContain("etf_regime");
+    expect(plan.missing_data).toEqual(
+      expect.arrayContaining([
+        "multi_leg_instrument_and_venue_identity",
+        "synchronized_point_in_time_quotes_and_fx",
+        "fee_tax_funding_borrow_and_transfer_costs",
+        "depth_liquidity_slippage_and_capacity",
+        "settlement_counterparty_and_capital_control_constraints",
+        "out_of_sample_paper_validation_and_invalidation_rule",
+      ]),
+    );
+    expect(plan.risk_boundaries).toEqual(
+      expect.arrayContaining([
+        "paper_only_strategy_audit",
+        "no_wallet_or_order_execution",
+        "no_latency_arbitrage",
+        "no_trade_advice",
+      ]),
+    );
+  });
+
   it("routes sourced paper learning into internalization and eval absorption checks", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},

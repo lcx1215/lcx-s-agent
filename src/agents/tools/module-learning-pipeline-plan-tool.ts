@@ -9,6 +9,7 @@ import { jsonResult, readStringArrayParam, readStringParam, ToolInputError } fro
 
 export const MODULE_LEARNING_TARGETS = [
   "factor_research",
+  "arbitrage_research",
   "options_volatility",
   "global_index_regime",
   "macro_rates_inflation",
@@ -135,6 +136,54 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
       ],
       bridgeStatus: "direct_finance_pipeline",
       closestExistingFinanceDomains: ["causal_map", "portfolio_risk_gates"],
+    },
+  },
+  arbitrage_research: {
+    targetModule: "arbitrage_research",
+    moduleFamily: "finance_research",
+    requiredInputs: [
+      "multi_leg_instrument_and_venue_identity",
+      "synchronized_point_in_time_quotes_and_fx",
+      "fee_tax_funding_borrow_and_transfer_costs",
+      "depth_liquidity_slippage_and_capacity",
+      "settlement_counterparty_and_capital_control_constraints",
+      "out_of_sample_paper_validation_and_invalidation_rule",
+    ],
+    evidenceFamilies: [
+      "relative_value_evidence",
+      "market_microstructure_evidence",
+      "fx_dollar_evidence",
+      "portfolio_risk_evidence",
+    ],
+    moduleSpecificCapabilityRule:
+      "Arbitrage learning must prove comparable multi-leg instruments and synchronized observations, then subtract FX, fees, taxes, funding, borrow, transfer, settlement, liquidity, slippage, capacity, and legal or capital-control constraints before treating a spread as a research hypothesis.",
+    applicationValidationTask:
+      "Apply the arbitrage rule to a fresh geographic, cross-border, or cross-venue spread question; produce a paper-only net-spread audit with out-of-sample checks and explicit invalidation, and block any wallet, order, copy-trading, latency-arbitrage, or sizing instruction.",
+    safetyBoundaries: [
+      "research_only",
+      "no_execution_authority",
+      "no_trade_advice",
+      "paper_only_strategy_audit",
+      "no_wallet_or_order_execution",
+      "no_latency_arbitrage",
+      "multi_leg_evidence_required",
+    ],
+    existingToolBridge: {
+      primaryTool: "finance_learning_pipeline_orchestrator",
+      supportTools: [
+        "finance_data_gateway_snapshot",
+        "finance_learning_capability_apply",
+        "quant_math",
+        "source_registry_lookup",
+        "review_panel",
+      ],
+      bridgeStatus: "direct_finance_pipeline",
+      closestExistingFinanceDomains: [
+        "fx_currency_liquidity",
+        "cross_asset_liquidity",
+        "quant_math",
+        "portfolio_risk_gates",
+      ],
     },
   },
   options_volatility: {

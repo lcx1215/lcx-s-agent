@@ -195,6 +195,40 @@ describe("planFinanceBrainOrchestration", () => {
     );
   });
 
+  it("routes geographic and cross-border arbitrage into one paper-only research chain", () => {
+    const plan = planFinanceBrainOrchestration({
+      text: "分析低频地理套利和跨境价差，比较两个市场的同品报价、汇率、费用、税、流动性和结算风险，不下单。",
+      hasLocalMathInputs: true,
+      highStakesConclusion: true,
+    });
+
+    expect(plan.primaryModules).toEqual(
+      expect.arrayContaining([
+        "arbitrage_research",
+        "fx_currency_liquidity",
+        "cross_asset_liquidity",
+        "quant_math",
+        "causal_map",
+      ]),
+    );
+    expect(plan.requiredTools).toEqual(
+      expect.arrayContaining([
+        "finance_data_gateway_snapshot",
+        "finance_learning_capability_apply",
+        "quant_math",
+        "review_panel",
+      ]),
+    );
+    expect(plan.boundaries).toEqual(
+      expect.arrayContaining([
+        "research_only",
+        "paper_only_strategy_audit",
+        "no_wallet_or_order_execution",
+        "no_latency_arbitrage",
+      ]),
+    );
+  });
+
   it("does not invent a heavy finance plan for non-finance text", () => {
     const plan = planFinanceBrainOrchestration({
       text: "帮我整理一下今天的 marketing meeting 标题和 security risk 待办。",
