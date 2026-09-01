@@ -43,6 +43,10 @@ function isTestFile(filePath: string): boolean {
   return /(?:\.test|\.spec)\.ts$/u.test(filePath);
 }
 
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|[^:])\/\/.*$/gmu, "$1");
+}
+
 async function listTypeScriptFiles(root: string): Promise<string[]> {
   const result: string[] = [];
   const pending = [root];
@@ -73,9 +77,13 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
 }
 
 function usesCommonAnswerBoundary(source: string): boolean {
+  const executableSource = stripComments(source);
   return (
-    /\bdispatchInboundMessage(?:WithBufferedDispatcher|WithDispatcher)?\s*\(/u.test(source) ||
-    /(?:^|\.)dispatchReplyFromConfig\s*\(/u.test(source)
+    /\bdispatchInboundMessage(?:WithBufferedDispatcher|WithDispatcher)?\s*\(/u.test(
+      executableSource,
+    ) ||
+    /(?:^|\.)dispatchReplyFromConfig\s*\(/u.test(executableSource) ||
+    /\bdispatchReplyWith(?:BufferedBlockDispatcher|Dispatcher)\s*\(/u.test(executableSource)
   );
 }
 
@@ -140,9 +148,10 @@ async function auditEntry(
 ): Promise<ProjectionReaderAuditEntry> {
   try {
     const source = await fs.readFile(path.join(REPO_ROOT, entry.path), "utf8");
-    const usesReaderContract = source.includes(READER_CONTRACT);
+    const executableSource = stripComments(source);
+    const usesReaderContract = executableSource.includes(READER_CONTRACT);
     const passesAdapterProjectionInput =
-      /\bglobalEvidenceProjectionInput\s*:\s*\{[^}]*\badapterId\s*:/su.test(source);
+      /\bglobalEvidenceProjectionInput\s*:\s*\{[^}]*\badapterId\s*:/su.test(executableSource);
     const delegatedToAnswerBoundary =
       entry.binding === "delegated_to_neutral_answer_boundary" && answerBoundaryReady;
     const readerIdStrategy =
@@ -156,7 +165,9 @@ async function auditEntry(
       passesAdapterProjectionInput,
       delegatedToAnswerBoundary,
       readerIds:
-        usesReaderContract || passesAdapterProjectionInput ? readerIdsFromSource(source) : [],
+        usesReaderContract || passesAdapterProjectionInput
+          ? readerIdsFromSource(executableSource)
+          : [],
       readerIdStrategy,
       status:
         usesReaderContract || passesAdapterProjectionInput || delegatedToAnswerBoundary

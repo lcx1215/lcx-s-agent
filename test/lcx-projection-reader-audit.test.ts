@@ -111,6 +111,20 @@ describe("LCX projection reader audit", () => {
           readerIdStrategy: "literal",
           readerIds: ["feishu-bot-ingress"],
         }),
+        expect.objectContaining({
+          id: "message_adapter:src:telegram:bot-message-dispatch",
+          status: "bound",
+          delegatedToAnswerBoundary: true,
+          passesAdapterProjectionInput: false,
+          readerIdStrategy: "message_context_surface_or_provider",
+        }),
+        expect.objectContaining({
+          id: "message_adapter:extensions:googlechat:src:monitor",
+          status: "bound",
+          delegatedToAnswerBoundary: true,
+          passesAdapterProjectionInput: false,
+          readerIdStrategy: "message_context_surface_or_provider",
+        }),
       ]),
     );
     expect(payload.nextAction).toContain("neutral answer boundary");
