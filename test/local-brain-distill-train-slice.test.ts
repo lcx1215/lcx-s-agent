@@ -52,7 +52,7 @@ function line(sourceKind: string, sourcePath: string): string {
         ? ["research_only", "no_unverified_current_market_data"]
         : ["research_only"],
       next_step: "route_to_review",
-      rejected_context: [],
+      rejected_context: teacherReview ? ["old_lark_conversation_history"] : [],
     }),
     meta: { sourceKind, sourcePath },
   })}\n`;
@@ -221,7 +221,7 @@ describe("local brain distill train slice", () => {
         missing_data: ["position_weights_and_return_series", "fresh_market_data_snapshot"],
         risk_boundaries: ["research_only", "no_unverified_current_market_data"],
         next_step: "route_to_review",
-        rejected_context: [],
+        rejected_context: ["old_lark_conversation_history"],
       }),
       meta: { sourceKind: "brain_distillation_review", sourcePath: "legacy" },
     };
@@ -484,5 +484,58 @@ describe("local brain distill train slice", () => {
     await expect(parseJsonl(path.join(outDir, "train.jsonl"))).resolves.toHaveLength(0);
     await expect(parseJsonl(path.join(outDir, "valid.jsonl"))).resolves.toHaveLength(0);
     await expect(parseJsonl(path.join(outDir, "test.jsonl"))).resolves.toHaveLength(0);
+  });
+
+  it("does not select parse-invalid teacher rows into the curriculum slice", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-teacher-gate-slice-"));
+    const dataDir = path.join(fixtureRoot, "dataset");
+    const outDir = path.join(fixtureRoot, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    const invalid = JSON.parse(line("brain_distillation_review", "review-invalid")) as {
+      completion: string;
+    };
+    invalid.completion = "{not-json";
+    await fs.writeFile(
+      path.join(dataDir, "train.jsonl"),
+      `${JSON.stringify(invalid)}\n${line("brain_distillation_review", "review-valid")}`,
+      "utf8",
+    );
+    await fs.writeFile(path.join(dataDir, "valid.jsonl"), "", "utf8");
+    await fs.writeFile(path.join(dataDir, "test.jsonl"), "", "utf8");
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/local-brain-distill-train-slice.ts",
+        "--data",
+        dataDir,
+        "--out",
+        outDir,
+        "--max-review-examples",
+        "2",
+        "--json",
+      ],
+      { cwd: repoRoot, env: { ...process.env, HOME: fixtureRoot } },
+    );
+    const manifest = JSON.parse(stdout) as {
+      counts: { reviewSelected: number; reviewQuarantined: number };
+      curriculumGate: {
+        eligibleReviewCandidates: number;
+        quarantinedReviewCandidates: number;
+      };
+    };
+    expect(manifest.counts.reviewSelected).toBe(1);
+    expect(manifest.counts.reviewQuarantined).toBe(0);
+    expect(manifest.curriculumGate).toMatchObject({
+      eligibleReviewCandidates: 1,
+      quarantinedReviewCandidates: 1,
+    });
+    expect(
+      (await parseJsonl(path.join(outDir, "train.jsonl"))).filter(
+        (entry) => entry.meta?.sourceKind === "brain_distillation_review",
+      ),
+    ).toHaveLength(1);
   });
 });

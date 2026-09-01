@@ -4,10 +4,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import {
-  assessLocalBrainSemanticContract,
   buildLocalBrainTrainingPrompt,
+  evaluateLocalBrainCurriculumGate,
   LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
-  redactTeacherContractLabels,
 } from "./local-brain-training-contract.js";
 
 type CliOptions = {
@@ -53,6 +52,7 @@ type ReviewCandidate = {
   signature: string;
   qualityTier: string;
   failureFamily: string;
+  curriculumAdmitted: boolean;
 };
 
 const DEFAULT_DATA_DIR = path.join(
@@ -206,41 +206,31 @@ function qualityTierForTeacherReview(record: JsonRecord): string {
   if (!completion) {
     return "parse_invalid";
   }
-  const taskFamily = readString(completion.task_family);
-  const primaryModules = readStringArray(completion.primary_modules);
-  const supportingModules = readStringArray(completion.supporting_modules);
-  const requiredTools = readStringArray(completion.required_tools);
-  const missingData = readStringArray(completion.missing_data);
-  const riskBoundaries = readStringArray(completion.risk_boundaries);
-  const nextStep = readString(completion.next_step);
-  if (!taskFamily || primaryModules.length === 0 || !nextStep) {
-    return "contract_incomplete";
-  }
-  if (!riskBoundaries.includes("research_only")) {
-    return "boundary_incomplete";
-  }
-  if (missingData.length > 8 || riskBoundaries.length > 6) {
-    return "overwide_contract";
-  }
-  if (requiredTools.length === 0 && supportingModules.length === 0) {
-    return "weak_tooling";
-  }
   const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
   const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim();
   if (!userAsk) {
     return "semantic_unknown";
   }
-  const semantic = assessLocalBrainSemanticContract(
-    redactTeacherContractLabels(userAsk),
-    completion,
-  );
-  if (semantic.alignment === "mismatch") {
+  const gate = evaluateLocalBrainCurriculumGate(userAsk, completion);
+  if (gate.admitted) {
+    return "contract_complete_high_signal";
+  }
+  if (gate.semantic.alignment === "mismatch") {
     return "semantic_mismatch";
   }
-  if (semantic.alignment === "unknown") {
+  if (gate.semantic.alignment === "unknown") {
     return "semantic_unknown";
   }
-  return "contract_complete_high_signal";
+  if (gate.shapeErrors.some((error) => error.startsWith("array_over_cap:"))) {
+    return "overwide_contract";
+  }
+  if (gate.shapeErrors.includes("research_only_boundary_missing")) {
+    return "boundary_incomplete";
+  }
+  if (gate.shapeErrors.includes("supporting_or_required_tools_empty")) {
+    return "weak_tooling";
+  }
+  return "contract_incomplete";
 }
 
 function failureFamilyForTeacherReview(record: JsonRecord): string {
@@ -310,11 +300,15 @@ function teacherReviewSignature(record: JsonRecord): string {
 }
 
 function reviewCandidateForRecord(index: number, record: JsonRecord): ReviewCandidate {
+  const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim() ?? "";
+  const gate = evaluateLocalBrainCurriculumGate(userAsk, completionRecord(record) ?? {});
   return {
     index,
     signature: teacherReviewSignature(record),
     qualityTier: qualityTierForTeacherReview(record),
     failureFamily: failureFamilyForTeacherReview(record),
+    curriculumAdmitted: gate.admitted,
   };
 }
 
@@ -406,8 +400,7 @@ function targetReviewIndexes(
   // curriculum.  Keep the source row available for later repair instead of
   // teaching the student a contradictory route.
   const eligibleReviewCandidates = reviewCandidates.filter(
-    (candidate) =>
-      candidate.qualityTier !== "semantic_mismatch" && candidate.qualityTier !== "semantic_unknown",
+    (candidate) => candidate.curriculumAdmitted,
   );
   const selectedIndexes = new Set<number>();
   const selectedSignatures = new Set<string>();
@@ -605,6 +598,8 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
   let trainWritten = 0;
   let reviewIndex = 0;
   let reviewSelected = 0;
+  let reviewQuarantined = 0;
+  const reviewQuarantineReasons: Record<string, number> = {};
   let curatedWritten = 0;
   let nonReviewWritten = 0;
   const writtenSourceKinds: Record<string, number> = {};
@@ -684,6 +679,17 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
         }
       } else if (sourceKind === REVIEW_SOURCE_KIND) {
         if (selectedReviewIndexes.has(reviewIndex)) {
+          const rawPrompt = typeof record.prompt === "string" ? record.prompt : "";
+          const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(rawPrompt)?.[1]?.trim() ?? "";
+          const gate = evaluateLocalBrainCurriculumGate(userAsk, completionRecord(record) ?? {});
+          if (!gate.admitted) {
+            reviewQuarantined += 1;
+            for (const reason of gate.reasonCodes) {
+              incrementCount(reviewQuarantineReasons, reason);
+            }
+            reviewIndex += 1;
+            continue;
+          }
           const written = await writeSliceRecord(record, 0, "review");
           if (written) {
             trainWritten += 1;
@@ -744,6 +750,7 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       nonReviewSeen: counts.nonReviewSeen,
       reviewSeen: counts.reviewSeen,
       reviewSelected,
+      reviewQuarantined,
       curatedWritten,
       nonReviewWritten,
       trainWritten,
@@ -792,6 +799,18 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       boundary: "dev_teacher_distillation_review_quality_summary_only",
       sourceTrain: finishTeacherQualitySummary(counts.teacherQuality, "source_train"),
       writtenSlice: finishTeacherQualitySummary(writtenTeacherQuality, "written_slice"),
+    },
+    curriculumGate: {
+      boundary: "local_auxiliary_curriculum_admission_only",
+      eligibleReviewCandidates: counts.reviewCandidates.filter(
+        (candidate) => candidate.curriculumAdmitted,
+      ).length,
+      quarantinedReviewCandidates: counts.reviewCandidates.filter(
+        (candidate) => !candidate.curriculumAdmitted,
+      ).length,
+      selectedRowsRechecked: reviewSelected + reviewQuarantined,
+      recheckQuarantineReasons: reviewQuarantineReasons,
+      enforcement: "only_shared_gate_admitted_teacher_rows_enter_the_slice",
     },
     sampleTrust: {
       boundary: "dev_local_brain_sample_trust_summary_only",

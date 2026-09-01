@@ -128,7 +128,7 @@ export type LocalBrainTrainingPromptInput = {
   userAsk: string;
 };
 
-type CompletionValue = Record<string, unknown>;
+export type LocalBrainCompletion = Record<string, unknown>;
 
 export type LocalBrainSemanticContractAssessment = {
   alignment: "aligned" | "mismatch" | "unknown";
@@ -139,6 +139,23 @@ export type LocalBrainSemanticContractAssessment = {
   missingData: string[];
   missingRiskBoundaries: string[];
   reasonCodes: string[];
+};
+
+export const LOCAL_BRAIN_CURRICULUM_ARRAY_CAPS = {
+  primary_modules: 8,
+  supporting_modules: 6,
+  required_tools: 6,
+  missing_data: 8,
+  risk_boundaries: 6,
+  rejected_context: 3,
+} as const;
+
+export type LocalBrainCurriculumGate = {
+  admitted: boolean;
+  status: "admit" | "quarantine";
+  reasonCodes: string[];
+  shapeErrors: string[];
+  semantic: LocalBrainSemanticContractAssessment;
 };
 
 function semanticStringArray(value: unknown): string[] {
@@ -219,7 +236,7 @@ function compactTrainingContractHints(userAsk: string): string[] {
  */
 export function assessLocalBrainSemanticContract(
   userAsk: string,
-  completion: CompletionValue,
+  completion: LocalBrainCompletion,
 ): LocalBrainSemanticContractAssessment {
   const text = userAsk.trim();
   if (!text) {
@@ -257,10 +274,13 @@ export function assessLocalBrainSemanticContract(
   const aShare = /(?:^|\b)a股|沪深|北向|a[- ]shares/iu.test(lower);
   const index =
     /指数|指数权重|成分股|纳指|标普500|沪深300|global indices?|index regime|breadth/iu.test(lower);
-  const etf = /\betf\b|qqq|tlt|spy|一篮子 etf|etf regime|基金/iu.test(lower);
-  const crypto = /比特币|加密币|加密资产|btc|eth|crypto/iu.test(lower);
+  const etf =
+    /\betf\b|\b(?:qqq|tlt|spy)\b|一篮子\s*etf|etf regime|基金(?:持仓|流量|跟踪|净值|组合|指数)/iu.test(
+      lower,
+    );
+  const crypto = /比特币|加密币|加密资产|\b(?:btc|eth)\b|crypto/iu.test(lower);
   const fx = /美元|美元指数|人民币汇率|外汇|汇率|dollar|fx|currency/iu.test(lower);
-  const options = /期权|隐含波动率|\biv\b|skew|gamma|options?/iu.test(lower);
+  const options = /期权|隐含波动率|\b(?:iv|skew|gamma|option|options)\b/iu.test(lower);
   const bond = /债券|久期|长端利率|利率曲线|treasury|bond|duration|yield/iu.test(lower);
   const technical = /技术面|技术指标|量价|择时|technical|timing|price[- ]?volume/iu.test(lower);
   const portfolio = /持有|持仓|仓位|组合|我的资产|portfolio|exposure|position(?:s)?\b/iu.test(
@@ -288,7 +308,7 @@ export function assessLocalBrainSemanticContract(
       lower,
     );
   const actionTerm =
-    /(?:买入|卖出|加仓|减仓|下单|仓位比例|position size|buy(?:ing)?|sell(?:ing)?|place an order|trade execution|trade signal)/iu.test(
+    /(?:交易建议|交易信号|买卖点|买入|卖出|加仓|减仓|下单|仓位比例|trade advice|trade signal|position size|buy(?:ing)?|sell(?:ing)?|place an order|trade execution)/iu.test(
       lower,
     );
   const tradeWording = actionQuestion || (actionTerm && !tradeProhibition);
@@ -299,7 +319,7 @@ export function assessLocalBrainSemanticContract(
     );
   const dataSupplied =
     !dataMissing &&
-    /(?:已有|已提供|提供了|附有).{0,16}(?:带时间戳|时间戳|timestamp|fresh).{0,8}(?:数据|输入|快照|data|snapshot)|带时间戳(?:输入|数据|快照)|(?:fresh|timestamped|attached) (?:market )?data(?: supplied| attached)?/iu.test(
+    /(?:已有|已提供|提供了|附有).{0,24}(?:(?:带时间戳|时间戳|timestamped|fresh).{0,16}(?:数据|输入|快照|价格|行情|报价|data|snapshot|price|quote)|(?:数据|输入|快照|价格|行情|报价|data|snapshot|price|quote).{0,16}(?:时间戳|timestamp|fresh))|(?:fresh|timestamped|attached)\s+(?:market\s+)?(?:data|inputs?|snapshot|price|quote)(?: supplied| attached)?/iu.test(
       lower,
     );
   const marketFacing =
@@ -442,6 +462,136 @@ export function assessLocalBrainSemanticContract(
     missingData: missingExpectedData,
     missingRiskBoundaries: missingExpectedRiskBoundaries,
     reasonCodes,
+  };
+}
+
+const LOCAL_BRAIN_COMPLETION_ARRAY_FIELDS = [
+  "primary_modules",
+  "supporting_modules",
+  "required_tools",
+  "missing_data",
+  "risk_boundaries",
+  "rejected_context",
+] as const;
+
+const LOCAL_BRAIN_COMPLETION_SCALAR_FIELDS = ["task_family", "next_step"] as const;
+
+const LOCAL_BRAIN_CURRICULUM_SCALAR_CAPS = {
+  task_family: 120,
+  next_step: 220,
+} as const;
+
+const LOCAL_BRAIN_ALLOWED_COMPLETION_KEYS = new Set<string>([
+  ...LOCAL_BRAIN_COMPLETION_ARRAY_FIELDS,
+  ...LOCAL_BRAIN_COMPLETION_SCALAR_FIELDS,
+]);
+
+// These fields are provenance, answer, or evaluator labels.  They belong in
+// receipt/meta only; admitting them into a completion would teach the student
+// to copy the target rather than infer a contract from the task.
+const LOCAL_BRAIN_FORBIDDEN_COMPLETION_KEYS = new Set([
+  "source_kind",
+  "source_summary",
+  "candidate_text",
+  "user_message",
+  "case_id",
+  "eval_id",
+  "acceptance",
+  "answer",
+  "answer_text",
+]);
+
+function curriculumShapeErrors(completion: LocalBrainCompletion): string[] {
+  const errors: string[] = [];
+  if (!completion || typeof completion !== "object" || Array.isArray(completion)) {
+    return ["completion_invalid_object"];
+  }
+  for (const key of Object.keys(completion).toSorted()) {
+    if (LOCAL_BRAIN_FORBIDDEN_COMPLETION_KEYS.has(key)) {
+      errors.push(`forbidden_key:${key}`);
+    } else if (!LOCAL_BRAIN_ALLOWED_COMPLETION_KEYS.has(key)) {
+      errors.push(`unknown_key:${key}`);
+    }
+  }
+  for (const field of LOCAL_BRAIN_COMPLETION_ARRAY_FIELDS) {
+    const value = completion[field];
+    if (!Array.isArray(value)) {
+      errors.push(`array_missing_or_invalid:${field}`);
+      continue;
+    }
+    const cap = LOCAL_BRAIN_CURRICULUM_ARRAY_CAPS[field];
+    if (value.length > cap) {
+      errors.push(`array_over_cap:${field}:${value.length}>${cap}`);
+    }
+    if (value.some((entry) => typeof entry !== "string" || entry.trim().length === 0)) {
+      errors.push(`array_contains_non_string:${field}`);
+    }
+  }
+  for (const field of LOCAL_BRAIN_COMPLETION_SCALAR_FIELDS) {
+    const value = completion[field];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      errors.push(`scalar_missing_or_invalid:${field}`);
+    } else if (value.length > LOCAL_BRAIN_CURRICULUM_SCALAR_CAPS[field]) {
+      errors.push(
+        `scalar_over_cap:${field}:${value.length}>${LOCAL_BRAIN_CURRICULUM_SCALAR_CAPS[field]}`,
+      );
+    }
+  }
+  const riskBoundaries = semanticStringArray(completion.risk_boundaries).map(semanticToken);
+  if (!riskBoundaries.includes("research_only")) {
+    errors.push("research_only_boundary_missing");
+  }
+  const primaryModules = semanticStringArray(completion.primary_modules);
+  const supportingModules = semanticStringArray(completion.supporting_modules);
+  const requiredTools = semanticStringArray(completion.required_tools);
+  if (primaryModules.length === 0) {
+    errors.push("primary_modules_empty");
+  }
+  if (supportingModules.length === 0 && requiredTools.length === 0) {
+    errors.push("supporting_or_required_tools_empty");
+  }
+  if (
+    !semanticStringArray(completion.rejected_context).some(
+      (entry) => semanticToken(entry) === "old_lark_conversation_history",
+    )
+  ) {
+    errors.push("old_context_rejection_missing");
+  }
+  return errors;
+}
+
+/**
+ * Shared teacher/student curriculum admission gate.
+ *
+ * The gate is intentionally fail-closed: shape-valid JSON is not enough.  A
+ * row is admitted only when its redacted natural-language task is semantically
+ * aligned with the completion.  This is a curriculum-quality decision only;
+ * it is not model-learning, adapter-promotion, or user-visible evidence.
+ */
+export function evaluateLocalBrainCurriculumGate(
+  userAsk: string,
+  completion: LocalBrainCompletion,
+): LocalBrainCurriculumGate {
+  const shapeErrors = curriculumShapeErrors(completion);
+  const safeUserAsk = redactTeacherContractLabels(userAsk);
+  const semanticCompletion =
+    completion && typeof completion === "object" && !Array.isArray(completion) ? completion : {};
+  const semantic = assessLocalBrainSemanticContract(safeUserAsk, semanticCompletion);
+  const reasonCodes = [
+    ...shapeErrors.map((error) => `shape:${error}`),
+    ...(semantic.alignment === "mismatch"
+      ? semantic.reasonCodes.map((reason) => `semantic:${reason}`)
+      : semantic.alignment === "unknown"
+        ? ["semantic:unknown"]
+        : []),
+  ];
+  const admitted = shapeErrors.length === 0 && semantic.alignment === "aligned";
+  return {
+    admitted,
+    status: admitted ? "admit" : "quarantine",
+    reasonCodes,
+    shapeErrors,
+    semantic,
   };
 }
 

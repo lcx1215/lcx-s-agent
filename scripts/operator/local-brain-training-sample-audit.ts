@@ -7,9 +7,8 @@ import {
   LOCAL_BRAIN_RISK_BOUNDARIES,
 } from "./local-brain-taxonomy.js";
 import {
-  assessLocalBrainSemanticContract,
+  evaluateLocalBrainCurriculumGate,
   findAnswerBearingContractTokens,
-  redactTeacherContractLabels,
 } from "./local-brain-training-contract.js";
 
 export type TrainingSampleAuditRow = {
@@ -231,6 +230,8 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
   const semanticAlignedRows = new Set<number>();
   const semanticMismatchRows = new Set<number>();
   const semanticUnknownRows = new Set<number>();
+  const curriculumQuarantineRows = new Set<number>();
+  const curriculumReasonCounts = new Map<string, number>();
   const semanticReasonCounts = new Map<string, number>();
   const semanticMismatchExamples: Array<Record<string, unknown>> = [];
 
@@ -330,10 +331,14 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
       });
     }
     if (completion && dynamic.userOrTask) {
-      const semantic = assessLocalBrainSemanticContract(
-        redactTeacherContractLabels(dynamic.userOrTask),
-        completion,
-      );
+      const gate = evaluateLocalBrainCurriculumGate(dynamic.userOrTask, completion);
+      const semantic = gate.semantic;
+      if (!gate.admitted) {
+        curriculumQuarantineRows.add(index);
+        for (const reason of gate.reasonCodes) {
+          curriculumReasonCounts.set(reason, (curriculumReasonCounts.get(reason) ?? 0) + 1);
+        }
+      }
       if (semantic.alignment === "aligned") {
         semanticAlignedRows.add(index);
       } else if (semantic.alignment === "mismatch") {
@@ -355,6 +360,11 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
       }
     } else {
       semanticUnknownRows.add(index);
+      curriculumQuarantineRows.add(index);
+      curriculumReasonCounts.set(
+        "semantic:missing_user_task",
+        (curriculumReasonCounts.get("semantic:missing_user_task") ?? 0) + 1,
+      );
     }
   });
 
@@ -383,11 +393,13 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
     ...answerBearingPromptTokenRows,
   ]).size;
   const curriculumReady =
+    rows.length > 0 &&
     completions.every((completion) => Boolean(completion)) &&
     modelVisibleLeakRows === 0 &&
     duplicateRows === 0 &&
     semanticMismatchRows.size === 0 &&
-    semanticUnknownRows.size === 0;
+    semanticUnknownRows.size === 0 &&
+    curriculumQuarantineRows.size === 0;
   const fullCaps = {
     primaryModules: rows.filter((_, index) => {
       const value = completions[index]?.primary_modules;
@@ -426,6 +438,11 @@ function splitAudit(rows: TrainingSampleAuditRow[], split: string): Record<strin
       duplicateRows,
       semanticMismatchRows: semanticMismatchRows.size,
       semanticUnknownRows: semanticUnknownRows.size,
+      curriculumQuarantineRows: curriculumQuarantineRows.size,
+      nonEmptySplitRequired: true,
+      curriculumReasonCounts: [...curriculumReasonCounts.entries()].toSorted(
+        (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+      ),
       note: "A false gate blocks training-slice use; it is not model-learning or promotion proof.",
     },
     prompt: {

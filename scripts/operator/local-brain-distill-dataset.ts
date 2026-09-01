@@ -5,10 +5,9 @@ import { pathToFileURL } from "node:url";
 import { generateCases, scorePlan, toDatasetRow } from "./local-brain-generalization-generator.js";
 import { LOCAL_BRAIN_RISK_BOUNDARIES, packLocalBrainModuleFields } from "./local-brain-taxonomy.js";
 import {
-  assessLocalBrainSemanticContract,
   buildLocalBrainTrainingPrompt,
+  evaluateLocalBrainCurriculumGate,
   LOCAL_BRAIN_TRAINING_PROMPT_VERSION,
-  redactTeacherContractLabels,
 } from "./local-brain-training-contract.js";
 
 export type DistillExample = {
@@ -186,40 +185,30 @@ function qualityTierForTeacherReview(example: DistillExample): string {
   if (!completion) {
     return "parse_invalid";
   }
-  const taskFamily = readString(completion.task_family);
-  const primaryModules = readStringArray(completion.primary_modules);
-  const supportingModules = readStringArray(completion.supporting_modules);
-  const requiredTools = readStringArray(completion.required_tools);
-  const missingData = readStringArray(completion.missing_data);
-  const riskBoundaries = readStringArray(completion.risk_boundaries);
-  const nextStep = readString(completion.next_step);
-  if (!taskFamily || primaryModules.length === 0 || !nextStep) {
-    return "contract_incomplete";
-  }
-  if (!riskBoundaries.includes("research_only")) {
-    return "boundary_incomplete";
-  }
-  if (missingData.length > MAX_MISSING_DATA || riskBoundaries.length > MAX_RISK_BOUNDARIES) {
-    return "overwide_contract";
-  }
-  if (requiredTools.length === 0 && supportingModules.length === 0) {
-    return "weak_tooling";
-  }
   const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(example.prompt)?.[1]?.trim();
   if (!userAsk) {
     return "semantic_unknown";
   }
-  const semantic = assessLocalBrainSemanticContract(
-    redactTeacherContractLabels(userAsk),
-    completion,
-  );
-  if (semantic.alignment === "mismatch") {
+  const gate = evaluateLocalBrainCurriculumGate(userAsk, completion);
+  if (gate.admitted) {
+    return "contract_complete_high_signal";
+  }
+  if (gate.semantic.alignment === "mismatch") {
     return "semantic_mismatch";
   }
-  if (semantic.alignment === "unknown") {
+  if (gate.semantic.alignment === "unknown") {
     return "semantic_unknown";
   }
-  return "contract_complete_high_signal";
+  if (gate.shapeErrors.some((error) => error.startsWith("array_over_cap:"))) {
+    return "overwide_contract";
+  }
+  if (gate.shapeErrors.includes("research_only_boundary_missing")) {
+    return "boundary_incomplete";
+  }
+  if (gate.shapeErrors.includes("supporting_or_required_tools_empty")) {
+    return "weak_tooling";
+  }
+  return "contract_incomplete";
 }
 
 function failureFamilyForTeacherReview(example: DistillExample): string {
@@ -304,6 +293,73 @@ function teacherReviewQualitySummary(examples: DistillExample[]): Record<string,
     selectionBoundary:
       "teacher review quality stats guide bounded sampling; they are not promotion or absorption proof",
   };
+}
+
+function curriculumGateSummary(examples: DistillExample[]): Record<string, unknown> {
+  const reasonCounts: Record<string, number> = {};
+  const sourceCounts: Record<string, { evaluated: number; admitted: number; quarantined: number }> =
+    {};
+  let admitted = 0;
+  let quarantined = 0;
+  const quarantineExamples: Array<Record<string, unknown>> = [];
+  for (const example of examples) {
+    const sourceKind = example.meta.sourceKind;
+    const source = sourceCounts[sourceKind] ?? { evaluated: 0, admitted: 0, quarantined: 0 };
+    source.evaluated += 1;
+    const gate = curriculumGateForExample(example);
+    if (gate.admitted) {
+      admitted += 1;
+      source.admitted += 1;
+    } else {
+      quarantined += 1;
+      source.quarantined += 1;
+      for (const reason of gate.reasonCodes) {
+        reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+      }
+      if (quarantineExamples.length < 8) {
+        quarantineExamples.push({
+          sourceKind,
+          sourcePath: example.meta.sourcePath,
+          reasonCodes: gate.reasonCodes.slice(0, 8),
+        });
+      }
+    }
+    sourceCounts[sourceKind] = source;
+  }
+  return {
+    boundary: "local_auxiliary_curriculum_admission_only",
+    evaluated: examples.length,
+    admitted,
+    quarantined,
+    admissionRate: examples.length === 0 ? 0 : Number((admitted / examples.length).toFixed(4)),
+    reasonCounts: Object.entries(reasonCounts).toSorted(
+      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+    ),
+    bySourceKind: sourceCounts,
+    examples: quarantineExamples,
+    note: "Quarantined rows remain source evidence only; this gate is not model-learning or promotion proof.",
+  };
+}
+
+function curriculumGateForExample(example: DistillExample) {
+  const userAsk = /^user_or_task:\s*([^\n]*)/mu.exec(example.prompt)?.[1]?.trim() ?? "";
+  return evaluateLocalBrainCurriculumGate(userAsk, completionRecord(example) ?? {});
+}
+
+function admittedCurriculumExamples(examples: DistillExample[]): {
+  admitted: DistillExample[];
+  quarantined: DistillExample[];
+} {
+  const admitted: DistillExample[] = [];
+  const quarantined: DistillExample[] = [];
+  for (const example of examples) {
+    if (curriculumGateForExample(example).admitted) {
+      admitted.push(example);
+    } else {
+      quarantined.push(example);
+    }
+  }
+  return { admitted, quarantined };
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -2590,7 +2646,8 @@ async function main(): Promise<void> {
     throw new Error(`Not enough distillation examples: ${examples.length}`);
   }
 
-  const splits = splitExamples(examples);
+  const curriculum = admittedCurriculumExamples(examples);
+  const splits = splitExamples(curriculum.admitted);
   await fs.mkdir(options.outDir, { recursive: true });
   await writeJsonl(path.join(options.outDir, "train.jsonl"), splits.train);
   await writeJsonl(path.join(options.outDir, "valid.jsonl"), splits.valid);
@@ -2605,6 +2662,8 @@ async function main(): Promise<void> {
     counts: {
       sourceFiles: files.length,
       examples: examples.length,
+      curriculumAdmitted: curriculum.admitted.length,
+      curriculumQuarantined: curriculum.quarantined.length,
       train: splits.train.length,
       valid: splits.valid.length,
       test: splits.test.length,
@@ -2614,7 +2673,13 @@ async function main(): Promise<void> {
     generatedMix: {
       boundary: "synthetic_rule_generated_train_only",
       requested: options.mixGenerated,
-      admitted: generatedExamples.length,
+      generatedRows: generatedExamples.length,
+      admitted: curriculum.admitted.filter(
+        (example) => example.meta.sourceKind === "generalization_generator",
+      ).length,
+      quarantined: curriculum.quarantined.filter(
+        (example) => example.meta.sourceKind === "generalization_generator",
+      ).length,
       seed: options.generatedSeed,
       holdoutFraction: options.generatedHoldoutFraction,
       split: "train",
@@ -2626,6 +2691,12 @@ async function main(): Promise<void> {
       sourceKindAndSourceSummaryInModelPrompt: false,
       answerBearingContractLabelsRedacted: true,
       provenanceLocation: "meta_or_receipt_only",
+    },
+    curriculumGate: {
+      ...curriculumGateSummary(examples),
+      admittedRowsWrittenToSplits: curriculum.admitted.length,
+      quarantinedRowsExcludedFromSplits: curriculum.quarantined.length,
+      enforcement: "quarantine_rows_are_not_written_to_train_valid_or_test",
     },
     teacherReviewQuality: teacherReviewQualitySummary(examples),
     sampleTrust: {
