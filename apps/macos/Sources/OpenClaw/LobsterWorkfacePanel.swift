@@ -73,7 +73,9 @@ enum LobsterWorkfacePanel {
     @MainActor
     static func openInCanvas() throws -> LobsterWorkfacePanelArtifacts {
         let canvasDirectory = try CanvasManager.shared.show(sessionKey: self.sessionKey, path: "/")
-        let artifacts = try self.prepareArtifacts(outputDirectoryURL: URL(fileURLWithPath: canvasDirectory, isDirectory: true))
+        let artifacts = try self.prepareArtifacts(outputDirectoryURL: URL(
+            fileURLWithPath: canvasDirectory,
+            isDirectory: true))
         _ = try CanvasManager.shared.show(sessionKey: self.sessionKey, path: "/")
         return artifacts
     }
@@ -243,14 +245,19 @@ enum LobsterWorkfacePanel {
             watchtowerSignals: self.extractTopLevelValue(from: normalized, label: "Watchtower Signals") ?? "0",
             codexEscalations: self.extractTopLevelValue(from: normalized, label: "Codex Escalations") ?? "0",
             activeSurfaceLanes: self.extractTopLevelValue(from: normalized, label: "Active Surface Lanes")
-                ?? self.extractSectionValue(from: self.extractSectionLines(from: normalized, heading: "External Message Lane Panel"), label: "Active Lanes")
+                ?? self.extractSectionValue(
+                    from: self.extractSectionLines(from: normalized, heading: "External Message Lane Panel"),
+                    label: "Active Lanes")
                 ?? "0",
-            portfolioScorecard: self.extractTopLevelValue(from: normalized, label: "Portfolio Scorecard") ?? "not scored",
+            portfolioScorecard: self
+                .extractTopLevelValue(from: normalized, label: "Portfolio Scorecard") ?? "not scored",
             totalTokens: self.extractTopLevelValue(from: normalized, label: "Total Tokens") ?? "0",
             estimatedCost: self.extractTopLevelValue(from: normalized, label: "Estimated Cost") ?? "$0.0000",
-            strongestDomain: self.extractSectionValue(from: validationLines, label: "Strongest Domain") ?? "Not recorded",
+            strongestDomain: self
+                .extractSectionValue(from: validationLines, label: "Strongest Domain") ?? "Not recorded",
             weakestDomain: self.extractSectionValue(from: validationLines, label: "Weakest Domain") ?? "Not recorded",
-            hallucinationWatch: self.extractSectionValue(from: validationLines, label: "Hallucination Watch") ?? "Not recorded",
+            hallucinationWatch: self
+                .extractSectionValue(from: validationLines, label: "Hallucination Watch") ?? "Not recorded",
             learningKeep: self.extractSectionValue(from: learnedLines, label: "keep") ?? "Not recorded yet",
             learningDiscard: self.extractSectionValue(from: learnedLines, label: "discard") ?? "Not recorded yet",
             learningReplay: self.extractSectionValue(from: learnedLines, label: "replay") ?? "Not recorded yet",
@@ -297,7 +304,8 @@ enum LobsterWorkfacePanel {
             recallOrder: recallOrder,
             continuousImprovementLines: self.extractSectionLines(from: normalized, heading: "Continuous Improvement"),
             memoryBudgetLines: self.extractSectionLines(from: normalized, heading: "Memory Budget"),
-            verifiedAnchorLines: Array(self.extractSectionLines(from: normalized, heading: "Verified Anchors").prefix(8)))
+            verifiedAnchorLines: Array(self.extractSectionLines(from: normalized, heading: "Verified Anchors")
+                .prefix(8)))
     }
 
     private static func extractTopLevelValue(from content: String, label: String) -> String? {
@@ -932,11 +940,10 @@ enum LobsterWorkfacePanel {
     }
 
     private static func renderListPanel(title: String, lines: [String]) -> String {
-        let renderedLines: String
-        if lines.isEmpty {
-            renderedLines = "<li class=\"panel-line muted\">No entries recorded.</li>"
+        let renderedLines: String = if lines.isEmpty {
+            "<li class=\"panel-line muted\">No entries recorded.</li>"
         } else {
-            renderedLines = lines
+            lines
                 .map { "<li class=\"panel-line\">\(self.escapeHTML(self.normalizeListLine($0)))</li>" }
                 .joined(separator: "")
         }

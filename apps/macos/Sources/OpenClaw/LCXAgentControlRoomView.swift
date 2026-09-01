@@ -41,7 +41,10 @@ struct LCXAgentControlRoomView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     self.statusPill("checked \(self.store.snapshot.checkedAt)", image: "clock", tone: .neutral)
-                    self.statusPill(self.store.snapshot.sourceReadStatus, image: "doc.text.magnifyingglass", tone: .good)
+                    self.statusPill(
+                        self.store.snapshot.sourceReadStatus,
+                        image: "doc.text.magnifyingglass",
+                        tone: .good)
                 }
             }
 
@@ -151,7 +154,7 @@ struct LCXAgentControlRoomView: View {
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing)
-            .opacity(0.65)
+                .opacity(0.65)
         }
         .ignoresSafeArea()
     }
@@ -236,7 +239,9 @@ private struct LCXFarmPlot: View {
     }
 
     private var shortStatus: String {
-        if self.department.status.count <= 18 { return self.department.status }
+        if self.department.status.count <= 18 {
+            return self.department.status
+        }
         return String(self.department.status.prefix(18)) + "..."
     }
 }

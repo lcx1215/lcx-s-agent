@@ -148,7 +148,9 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             blacktechRoutedCount: JSONPath.int(material, "externalUpgradeBlacktechAutopilotRoutedCount")
                 ?? JSONPath.int(summary, "externalUpgradeBlacktechAutopilotRoutedCount")
                 ?? 0,
-            blacktechRuntimeAuthorityCount: JSONPath.int(material, "externalUpgradeBlacktechRuntimeAuthorityGrantedCount")
+            blacktechRuntimeAuthorityCount: JSONPath.int(
+                material,
+                "externalUpgradeBlacktechRuntimeAuthorityGrantedCount")
                 ?? JSONPath.int(summary, "externalUpgradeBlacktechRuntimeAuthorityGrantedCount")
                 ?? 0,
             blacktechPerfectIntegrationClaim: JSONPath.bool(material, "externalUpgradePerfectIntegrationClaim")
@@ -164,7 +166,8 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             handoffPath: handoffPath,
             handoffGeneratedAt: handoffLines["generatedAt"] ?? "not available",
             handoffBoundary: handoffLines["boundary"] ?? "not available",
-            sourceReadStatus: autopilot.isEmpty && digest.isEmpty ? "owner snapshots missing" : "owner snapshots loaded",
+            sourceReadStatus: autopilot.isEmpty && digest
+                .isEmpty ? "owner snapshots missing" : "owner snapshots loaded",
             departments: [])
         return snapshot.withDepartments()
     }
@@ -200,7 +203,8 @@ struct LCXAgentControlRoomSnapshot: Equatable {
                 status: self.skillOptStatus,
                 detail: self.skillOptMatchedSkillIds.isEmpty
                     ? "等待错题、用户反馈或 owner 候选。"
-                    : "把错题锻造成工具: \(self.skillOptMatchedSkillIds.joined(separator: ", ")); 下一步: \(self.skillOptNextIdleAction)。",
+                    :
+                    "把错题锻造成工具: \(self.skillOptMatchedSkillIds.joined(separator: ", ")); 下一步: \(self.skillOptNextIdleAction)。",
                 systemImage: "hammer",
                 tone: skillTone),
             LCXAgentDepartment(
@@ -376,22 +380,34 @@ private enum JSONPath {
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }
-        if let number = value as? NSNumber { return number.stringValue }
+        if let number = value as? NSNumber {
+            return number.stringValue
+        }
         return nil
     }
 
     static func int(_ root: [String: Any], _ path: String...) -> Int? {
         let value = self.value(root, path)
-        if let int = value as? Int { return int }
-        if let number = value as? NSNumber { return number.intValue }
-        if let string = value as? String { return Int(string.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if let int = value as? Int {
+            return int
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let string = value as? String {
+            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         return nil
     }
 
     static func bool(_ root: [String: Any], _ path: String...) -> Bool? {
         let value = self.value(root, path)
-        if let bool = value as? Bool { return bool }
-        if let number = value as? NSNumber { return number.boolValue }
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
         if let string = value as? String {
             switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             case "true", "yes", "1": return true
@@ -409,7 +425,9 @@ private enum JSONPath {
                 let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.isEmpty ? nil : trimmed
             }
-            if let number = value as? NSNumber { return number.stringValue }
+            if let number = value as? NSNumber {
+                return number.stringValue
+            }
             return nil
         }
     }
@@ -435,8 +453,8 @@ private enum JSONPath {
     }
 }
 
-private extension Array where Element == String {
-    func ifEmpty(_ fallback: [String]) -> [String] {
+extension [String] {
+    fileprivate func ifEmpty(_ fallback: [String]) -> [String] {
         self.isEmpty ? fallback : self
     }
 }
