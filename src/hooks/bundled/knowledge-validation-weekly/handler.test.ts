@@ -5,14 +5,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
 import { writeWorkspaceFile } from "../../../test-helpers/workspace.js";
 import { createHookEvent } from "../../hooks.js";
-import type { HookHandler } from "../../hooks.js";
 import {
   buildKnowledgeValidationNoteFilename,
   buildKnowledgeValidationWeeklyArtifactFilename,
   parseKnowledgeValidationWeeklyArtifact,
 } from "../lobster-brain-registry.js";
+import handler from "./handler.js";
 
-let handler: HookHandler;
 let suiteWorkspaceRoot = "";
 let workspaceCaseCounter = 0;
 
@@ -24,7 +23,6 @@ async function createCaseWorkspace(prefix = "case"): Promise<string> {
 }
 
 beforeAll(async () => {
-  ({ default: handler } = await import("./handler.js"));
   suiteWorkspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-knowledge-validation-"));
 });
 
