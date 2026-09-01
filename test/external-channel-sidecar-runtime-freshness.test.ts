@@ -58,6 +58,7 @@ describe("live sidecar runtime freshness", () => {
     expect(receipt.status).toBe("fresh");
     expect(receipt.readyForLaunchAgent).toBe(true);
     expect(receipt.checkedFileCount).toBe(2);
+    expect(receipt.comparisonMode).toBe("tracked_workspace_subset");
     expect(receipt.missingCount).toBe(0);
     expect(receipt.mismatchCount).toBe(0);
   });
@@ -101,7 +102,30 @@ describe("live sidecar runtime freshness", () => {
 
     expect(receipt.status).toBe("fresh");
     expect(receipt.boundary.join("\n")).toContain(
-      "Excludes memory, dist, apps, node_modules, and ops/external-channel-artifacts launchagent receipts",
+      "Compares the runtime bundle required files by default; pass --full-workspace for an explicit tracked-workspace comparison.",
     );
+  });
+
+  it("uses the runtime bundle contract when all required entrypoints are present", () => {
+    const sourceRoot = makeTmpRoot("freshness-bundle-source");
+    const targetRoot = makeTmpRoot("freshness-bundle-target");
+    const outputDir = makeTmpRoot("freshness-bundle-output");
+    initTrackedSource(sourceRoot);
+    for (const relativePath of [
+      "daily_learning_runner.py",
+      "lobster_orchestrator.py",
+      "scripts/lobster_paths.py",
+      "scripts/branch_freshness.py",
+      "scripts/lobster_host_watchdog.py",
+    ]) {
+      writeFile(sourceRoot, relativePath, `${relativePath}\n`);
+      writeFile(targetRoot, relativePath, `${relativePath}\n`);
+    }
+
+    const receipt = buildRuntimeFreshnessReceipt({ sourceRoot, targetRoot, outputDir });
+
+    expect(receipt.comparisonMode).toBe("runtime_bundle_required_files");
+    expect(receipt.checkedFileCount).toBe(5);
+    expect(receipt.status).toBe("fresh");
   });
 });

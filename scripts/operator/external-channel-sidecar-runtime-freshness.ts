@@ -9,6 +9,13 @@ const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidate
 const RECEIPT_NAME = "external-channel-sidecar-runtime-freshness-receipt.json";
 const RUNTIME_STATE_NAME = "branches/_system/runtime_freshness.json";
 const SAMPLE_LIMIT = 50;
+const RUNTIME_BUNDLE_REQUIRED_FILES = [
+  "daily_learning_runner.py",
+  "lobster_orchestrator.py",
+  "scripts/lobster_paths.py",
+  "scripts/branch_freshness.py",
+  "scripts/lobster_host_watchdog.py",
+] as const;
 
 type Args = {
   sourceRoot: string;
@@ -16,6 +23,7 @@ type Args = {
   outputDir: string;
   write: boolean;
   writeRuntimeState: boolean;
+  fullWorkspace: boolean;
   json: boolean;
 };
 
@@ -34,6 +42,7 @@ export type RuntimeFreshnessReceipt = {
   mismatchCount: number;
   sampleMissing: string[];
   sampleMismatched: string[];
+  comparisonMode: "runtime_bundle_required_files" | "tracked_workspace_subset";
   boundary: string[];
 };
 
@@ -48,6 +57,7 @@ function parseArgs(argv: string[]): Args {
     outputDir: path.resolve(readValue("--output-dir") ?? DEFAULT_OUTPUT_DIR),
     write: argv.includes("--write"),
     writeRuntimeState: argv.includes("--write-runtime-state"),
+    fullWorkspace: argv.includes("--full-workspace"),
     json: argv.includes("--json"),
   };
 }
@@ -84,12 +94,25 @@ export function buildRuntimeFreshnessReceipt(params: {
   sourceRoot: string;
   targetRoot: string;
   outputDir: string;
+  fullWorkspace?: boolean;
   generatedAt?: string;
 }): RuntimeFreshnessReceipt {
   const sourceRoot = path.resolve(params.sourceRoot);
   const targetRoot = path.resolve(params.targetRoot);
   const outputDir = path.resolve(params.outputDir);
-  const trackedFiles = listTrackedComparableFiles(sourceRoot);
+  const requiredFilesPresent = RUNTIME_BUNDLE_REQUIRED_FILES.every((relativePath) =>
+    fs.existsSync(path.join(sourceRoot, relativePath)),
+  );
+  const fullWorkspace = params.fullWorkspace === true;
+  const comparisonMode = fullWorkspace
+    ? "tracked_workspace_subset"
+    : requiredFilesPresent
+      ? "runtime_bundle_required_files"
+      : "tracked_workspace_subset";
+  const trackedFiles =
+    comparisonMode === "runtime_bundle_required_files"
+      ? [...RUNTIME_BUNDLE_REQUIRED_FILES]
+      : listTrackedComparableFiles(sourceRoot);
   const blockedReasons: string[] = [];
   const sampleMissing: string[] = [];
   const sampleMismatched: string[] = [];
@@ -147,8 +170,9 @@ export function buildRuntimeFreshnessReceipt(params: {
     mismatchCount,
     sampleMissing,
     sampleMismatched,
+    comparisonMode,
     boundary: [
-      "Compares git-tracked source files against the non-Desktop live sidecar runtime.",
+      "Compares the runtime bundle required files by default; pass --full-workspace for an explicit tracked-workspace comparison.",
       "Excludes memory, dist, apps, node_modules, and ops/external-channel-artifacts launchagent receipts to preserve protected memory and generated-output boundaries.",
       "Does not copy files, change LaunchAgents, send Feishu/Lark messages, or modify provider config.",
     ],
