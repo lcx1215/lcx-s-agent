@@ -1,16 +1,16 @@
 {
   "name": "openclaw",
   "version": "2026.3.3",
-  "description": "LCX Agent personal AI research operating system with Lark control room, Harness/Hermes routing, durable memory, evidence audit, and finance research workflows",
+  "description": "LCX Agent personal AI research operating system with an external message channel, Harness/Hermes routing, durable memory, evidence audit, and finance research workflows",
   "keywords": [
     "ai-research-os",
     "durable-memory",
     "evidence-audit",
-    "feishu",
+    "external-message",
     "finance-research",
     "harness",
     "hermes",
-    "lark",
+    "webhook",
     "lcx-agent",
     "openclaw-runtime"
   ],

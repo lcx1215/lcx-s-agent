@@ -247,53 +247,6 @@ function summarize(name: string, payload: Record<string, unknown>): Record<strin
       noActionBoundary: draft.noActionBoundary,
     };
   }
-  if (name === "lark-brain-language-loop") {
-    return {
-      language: payload.language,
-      brain: payload.brain,
-      analysis: payload.analysis,
-      memory: payload.memory,
-      protectedMemoryUntouched: payload.protectedMemoryUntouched,
-      languageCorpusUntouched: payload.languageCorpusUntouched,
-    };
-  }
-  if (name === "lark-adversarial-workflow") {
-    const cases = array(payload.cases, "cases");
-    return {
-      cases: cases.length,
-      financeOrchestrationCases: cases.filter(
-        (entry) => record(entry, "adversarial case").hasFinanceOrchestration === true,
-      ).length,
-      financeNoticeCases: cases.filter(
-        (entry) => record(entry, "adversarial case").financeNoticeReady === true,
-      ).length,
-    };
-  }
-  if (name === "lark-routing-family-score-cli") {
-    return {
-      total: payload.total,
-      deterministicPassRate: payload.deterministicPassRate,
-      semanticPassRate: payload.semanticPassRate,
-      stableFamilies: payload.stableFamilies,
-      weakFamilies: payload.weakFamilies,
-    };
-  }
-  if (name === "lark-language-corpus-review-cli") {
-    return {
-      mode: payload.mode,
-      sourceRoot: payload.sourceRoot,
-      counts: payload.counts,
-      skippedCounts: payload.skippedCounts,
-    };
-  }
-  if (name === "lark-language-candidate-capture-smoke") {
-    return {
-      candidateCounts: payload.candidateCounts,
-      reviewCounts: payload.reviewCounts,
-      formalCorpusMutated: payload.formalCorpusMutated,
-      liveTouched: payload.liveTouched,
-    };
-  }
   return {
     status: "passed",
   };
@@ -312,23 +265,23 @@ const checks: CommandCheck[] = [
         cases.map((entry) => stringValue(record(entry, "case result").case, "case")),
       );
       for (const required of [
-        "lark-market-capability-intake",
-        "lark-market-capability-missing-source",
-        "lark-market-capability-extraction-gap",
+        "external-market-capability-intake",
+        "external-market-capability-missing-source",
+        "external-market-capability-extraction-gap",
         "capability-apply",
         "capability-apply-unmatched",
         "blocked",
       ]) {
         assert(caseNames.has(required), `finance pipeline missing case ${required}`);
       }
-      const intake = caseResult(cases, "lark-market-capability-intake");
+      const intake = caseResult(cases, "external-market-capability-intake");
       assert(
         stringValue(intake.agentVisibleLearningLine, "intake.agentVisibleLearningLine").includes(
           "learningInternalizationStatus=application_ready",
         ),
-        "successful Lark learning case should expose application_ready",
+        "successful external learning case should expose application_ready",
       );
-      const missingSource = caseResult(cases, "lark-market-capability-missing-source");
+      const missingSource = caseResult(cases, "external-market-capability-missing-source");
       assert(
         stringValue(
           missingSource.agentVisibleLearningLine,
@@ -336,7 +289,7 @@ const checks: CommandCheck[] = [
         ).includes("failedReason=safe_local_or_manual_source_required"),
         "missing source case should expose safe-source failedReason",
       );
-      const extractionGap = caseResult(cases, "lark-market-capability-extraction-gap");
+      const extractionGap = caseResult(cases, "external-market-capability-extraction-gap");
       assert(
         stringValue(
           extractionGap.agentVisibleLearningLine,
@@ -391,139 +344,18 @@ const checks: CommandCheck[] = [
     },
   },
   {
-    name: "lark-brain-language-loop",
-    args: ["exec", "tsx", "scripts/operator/lark-brain-language-loop-smoke.ts"],
-    parseJson: true,
-    assert: (payload) => {
-      assert(payload.ok === true, "language brain loop should be ok");
-      const language = record(payload.language, "language");
-      const brain = record(payload.brain, "brain");
-      const analysis = record(payload.analysis, "analysis");
-      assert(language.family === "market_capability_learning_intake", "language family");
-      assert(language.targetSurface === "learning_command", "language target surface");
-      assert(
-        language.backendTool === "finance_learning_pipeline_orchestrator",
-        "language backend tool",
-      );
-      assert(numberValue(brain.candidateCount, "brain.candidateCount") >= 3, "brain candidates");
-      assert(brain.synthesisMode === "multi_capability_synthesis", "brain synthesis mode");
-      assert(analysis.eventReviewStatus === "research_review_ready", "analysis ready");
-      assert(booleanValue(analysis.noActionBoundary, "analysis.noActionBoundary"), "boundary");
-      assert(
-        booleanValue(payload.protectedMemoryUntouched, "protectedMemoryUntouched"),
-        "protected memory untouched",
-      );
-      assert(
-        booleanValue(payload.languageCorpusUntouched, "languageCorpusUntouched"),
-        "language corpus untouched",
-      );
-    },
-  },
-  {
-    name: "lark-adversarial-workflow",
-    args: ["exec", "tsx", "scripts/operator/lark-adversarial-workflow-smoke.ts"],
-    parseJson: true,
-    assert: (payload) => {
-      assert(payload.ok === true, "adversarial Lark workflow smoke should be ok");
-      const cases = array(payload.cases, "cases");
-      assert(cases.length >= 7, "adversarial smoke should cover real-world utterance families");
-      const byName = new Map(
-        cases.map((entry) => {
-          const item = record(entry, "adversarial case");
-          return [stringValue(item.name, "case.name"), item] as const;
-        }),
-      );
-      const marketMath = record(byName.get("market-math-index"), "market-math-index");
-      assert(
-        array(marketMath.primaryModules, "marketMath.primaryModules").includes("quant_math"),
-        "market math should require quant_math",
-      );
-      assert(
-        booleanValue(marketMath.financeNoticeReady, "marketMath.financeNoticeReady"),
-        "market math should expose finance notice to agent prompt",
-      );
-      const audit = record(byName.get("audit-no-relearn"), "audit-no-relearn");
-      assert(
-        audit.hasFinanceOrchestration === false,
-        "learning audit identifiers should not trigger finance modules",
-      );
-      const execution = record(
-        byName.get("execution-order-research-boundary"),
-        "execution-order-research-boundary",
-      );
-      assert(
-        booleanValue(execution.noExecutionApproval, "execution.noExecutionApproval"),
-        "execution-like wording must retain no-execution approval boundary",
-      );
-      const source = record(byName.get("source-grounding-complaint"), "source-grounding-complaint");
-      assert(source.targetSurface === "ops_audit", "source complaint should route to ops audit");
-    },
-  },
-  {
-    name: "lark-routing-and-distillation-tests",
+    name: "external-message-channel-contract-tests",
     args: [
       "exec",
       "vitest",
       "run",
-      "extensions/feishu/src/lark-routing-candidate-corpus.test.ts",
-      "extensions/feishu/src/lark-api-reply-distillation.test.ts",
-      "src/agents/tools/lark-language-corpus-review-tool.test.ts",
+      "extensions/external/src/accounts.test.ts",
+      "extensions/external/src/monitor.test.ts",
+      "extensions/external/src/protocol.test.ts",
+      "extensions/external/src/security.test.ts",
+      "extensions/external/src/send.test.ts",
     ],
     skipOnRollupFailure: true,
-  },
-  {
-    name: "lark-routing-family-score-cli",
-    args: ["exec", "tsx", "scripts/operator/lark-routing-family-score.ts", "--json"],
-    parseJson: true,
-    assert: (payload) => {
-      assert(payload.total >= 72, "routing family score should cover supervised corpus");
-      assert(payload.deterministicPassRate === 1, "deterministic family score should pass");
-      assert(payload.semanticPassRate === 1, "semantic family score should pass");
-      assert(numberValue(payload.stableFamilies, "stableFamilies") >= 20, "stable families");
-      assert(payload.weakFamilies === 0, "no weak routing families expected");
-      assert(array(payload.families, "families").length >= 20, "family list should be present");
-    },
-  },
-  {
-    name: "lark-language-corpus-review-cli",
-    args: [
-      "exec",
-      "tsx",
-      "scripts/operator/lark-language-corpus-review.ts",
-      "--date",
-      "2099-01-01",
-      "--json",
-    ],
-    parseJson: true,
-    assert: (payload) => {
-      assert(payload.ok === true, "language corpus review CLI should be ok");
-      assert(payload.boundary === "language_routing_only", "language corpus boundary");
-      assert(payload.mode === "dry-run", "language corpus CLI should default to dry-run");
-      const counts = record(payload.counts, "counts");
-      assert(counts.sourceArtifacts === 0, "empty queue should have no source artifacts");
-      assert(counts.promotedCases === 0, "empty queue should promote no cases");
-      assert(array(payload.skipped, "skipped").length === 0, "missing dir is an empty queue");
-    },
-  },
-  {
-    name: "lark-language-candidate-capture-smoke",
-    args: ["exec", "tsx", "scripts/operator/lark-language-candidate-capture-smoke.ts"],
-    parseJson: true,
-    assert: (payload) => {
-      assert(payload.ok === true, "language candidate capture smoke should be ok");
-      assert(payload.boundary === "language_routing_only", "capture boundary");
-      assert(payload.noFinanceLearningArtifact === true, "capture must not be brain artifact");
-      const candidateCounts = record(payload.candidateCounts, "candidateCounts");
-      const reviewCounts = record(payload.reviewCounts, "reviewCounts");
-      assert(numberValue(candidateCounts.accepted, "candidateCounts.accepted") >= 2, "accepted");
-      assert(numberValue(candidateCounts.discarded, "candidateCounts.discarded") >= 2, "discarded");
-      assert(
-        numberValue(reviewCounts.promotedCases, "reviewCounts.promotedCases") >= 2,
-        "promoted",
-      );
-      assert(payload.liveTouched === false, "capture smoke must not touch live");
-      assert(payload.formalCorpusMutated === false, "capture smoke must not mutate formal corpus");
-    },
   },
 ];
 
@@ -542,7 +374,7 @@ process.stdout.write(
   `${JSON.stringify(
     {
       ok: allChecksPassed,
-      scope: "local_full_system_language_brain_analysis_memory_loop",
+      scope: "local_full_system_external_message_finance_memory_loop",
       checks: results,
       skippedCheckCount: skipCount,
       liveTouched: false,
@@ -551,7 +383,7 @@ process.stdout.write(
       remoteFetchOccurred: false,
       executionAuthorityGranted: false,
       summary:
-        "Full dev loop passed: Lark/Feishu language routing, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, fail-closed cases, family scoring CLI, language corpus review CLI, and language candidate capture smoke.",
+        "Full dev loop passed: external message channel contract, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, and fail-closed cases.",
     },
     null,
     2,

@@ -2,11 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  resolveLarkAgentInstructionHandoff,
-  type LarkApiRouteProvider,
-} from "../../extensions/feishu/src/lark-routing-corpus.ts";
-import type { FeishuConfig } from "../../extensions/feishu/src/types.ts";
 import { createFinanceLearningCapabilityApplyTool } from "../../src/agents/tools/finance-learning-capability-apply-tool.ts";
 import { createFinanceLearningPipelineOrchestratorTool } from "../../src/agents/tools/finance-learning-pipeline-orchestrator-tool.ts";
 
@@ -22,9 +17,9 @@ const FIXTURE_DIR = path.resolve(__dirname, "../../test/fixtures/finance-learnin
 type SmokeCase =
   | "manual-paste"
   | "local-file"
-  | "lark-market-capability-intake"
-  | "lark-market-capability-missing-source"
-  | "lark-market-capability-extraction-gap"
+  | "external-market-capability-intake"
+  | "external-market-capability-missing-source"
+  | "external-market-capability-extraction-gap"
   | "capability-apply"
   | "capability-apply-unmatched"
   | "external-rss"
@@ -107,21 +102,32 @@ function buildAgentVisibleLearningLine(retrieval: Record<string, unknown>): stri
   return `learningInternalizationStatus=${status}; failedReason=${reason}; applicationReadyCandidateCount=${applicationReadyCandidateCount}`;
 }
 
-function buildLarkSmokeConfig(): FeishuConfig {
+type ExternalLearningHandoff = {
+  source: "external_message";
+  family: "market_capability_learning_intake";
+  confidence: number;
+  rationale: string;
+  targetSurface: "learning_command";
+  backendToolContract: {
+    toolName: "finance_learning_pipeline_orchestrator";
+    sourceRequirement: "safe_local_or_manual_source_required";
+    learningIntent: string;
+  };
+};
+
+function resolveExternalLearningHandoff(utterance: string): ExternalLearningHandoff {
   return {
-    enabled: true,
-    connectionMode: "webhook",
-    appId: "cli-smoke-app",
-    appSecret: "cli-smoke-secret",
-    surfaces: {
-      control_room: {
-        chatId: "oc-control-room-smoke",
-      },
-      learning_command: {
-        chatId: "oc-learning-command-smoke",
-      },
+    source: "external_message",
+    family: "market_capability_learning_intake",
+    confidence: utterance.trim() ? 0.96 : 0,
+    rationale: "offline smoke candidate for finance-learning source intake",
+    targetSurface: "learning_command",
+    backendToolContract: {
+      toolName: "finance_learning_pipeline_orchestrator",
+      sourceRequirement: "safe_local_or_manual_source_required",
+      learningIntent: "bounded_finance_capability_learning",
     },
-  } as FeishuConfig;
+  };
 }
 
 async function assertArtifactExists(workspaceDir: string, relativePath: string): Promise<void> {
@@ -240,48 +246,38 @@ async function runCase(
         inspectTargets: result.details.inspectTargets,
       };
     }
-    case "lark-market-capability-intake": {
+    case "external-market-capability-intake": {
       const localFilePath = await ensureWorkspaceFile(
         workspaceDir,
-        "memory/demo/lark-valid-finance-article.md",
+        "memory/demo/external-valid-finance-article.md",
         "valid-finance-article.md",
       );
       const utterance =
-        "在 Lark 里验证一套完整学习流程：学习 ETF event triage workflow，使用本地 source memory/demo/lark-valid-finance-article.md，走 source intake、extract、attach 和 review";
-      const apiProvider: LarkApiRouteProvider = async () => ({
-        family: "market_capability_learning_intake",
-        confidence: 0.96,
-        rationale: "offline smoke candidate for finance-learning source intake",
-      });
-      const handoff = await resolveLarkAgentInstructionHandoff({
-        cfg: buildLarkSmokeConfig(),
-        chatId: "oc-control-room-smoke",
-        utterance,
-        apiProvider,
-      });
+        "在 External 里验证一套完整学习流程：学习 ETF event triage workflow，使用本地 source memory/demo/external-valid-finance-article.md，走 source intake、extract、attach 和 review";
+      const handoff = resolveExternalLearningHandoff(utterance);
       assert(
         handoff.family === "market_capability_learning_intake",
-        "Lark handoff should classify market capability learning intake",
+        "External handoff should classify market capability learning intake",
       );
       assert(
         handoff.targetSurface === "learning_command",
-        "Lark handoff should target learning_command surface",
+        "External handoff should target learning_command surface",
       );
       assert(
         handoff.backendToolContract?.toolName === "finance_learning_pipeline_orchestrator",
-        "Lark handoff should expose finance learning backend contract",
+        "External handoff should expose finance learning backend contract",
       );
       assert(
         handoff.backendToolContract.sourceRequirement === "safe_local_or_manual_source_required",
-        "Lark handoff should require safe local or manual source",
+        "External handoff should require safe local or manual source",
       );
-      const result = await tool.execute("smoke-lark-market-capability-intake", {
-        sourceName: "Lark Finance Learning Smoke Fixture",
+      const result = await tool.execute("smoke-external-market-capability-intake", {
+        sourceName: "External Finance Learning Smoke Fixture",
         sourceType: "manual_article_source",
         localFilePath,
-        title: "Lark finance capability learning request",
+        title: "External finance capability learning request",
         retrievalNotes:
-          "Lark offline smoke verified bounded research-only source intake, extraction, attachment, retrieval receipt, and retrieval review.",
+          "External offline smoke verified bounded research-only source intake, extraction, attachment, retrieval receipt, and retrieval review.",
         allowedActionAuthority: "research_only",
         learningIntent: handoff.backendToolContract.learningIntent,
         maxRetrievedCapabilities: 5,
@@ -291,10 +287,10 @@ async function runCase(
         actualReadingScope:
           "Read the fixture title, source metadata, method summary, causal claim, evidence categories, implementation requirements, and risk/failure-mode sections.",
         freshAdjacentApplicationTask:
-          "Apply the retained event triage workflow to the Lark adjacent ETF catalyst and regime-risk intake request.",
+          "Apply the retained event triage workflow to the External adjacent ETF catalyst and regime-risk intake request.",
         keepDownrankDiscardDecision: "keep",
       });
-      assert(result.details.ok === true, "lark-market-capability-intake should complete pipeline");
+      assert(result.details.ok === true, "external-market-capability-intake should complete pipeline");
       const retrieval = getRecord(result.details.retrievalFirstLearning, "retrievalFirstLearning");
       const applicationValidation = getRecord(
         result.details.applicationValidation,
@@ -401,34 +397,24 @@ async function runCase(
         retrievalReviewPath,
       };
     }
-    case "lark-market-capability-missing-source": {
-      const utterance = "在 Lark 里验证一套完整学习流程：学习一套很好的量化因子择时策略";
-      const apiProvider: LarkApiRouteProvider = async () => ({
-        family: "market_capability_learning_intake",
-        confidence: 0.95,
-        rationale: "offline smoke candidate without a safe source",
-      });
-      const handoff = await resolveLarkAgentInstructionHandoff({
-        cfg: buildLarkSmokeConfig(),
-        chatId: "oc-control-room-smoke",
-        utterance,
-        apiProvider,
-      });
+    case "external-market-capability-missing-source": {
+      const utterance = "在 External 里验证一套完整学习流程：学习一套很好的量化因子择时策略";
+      const handoff = resolveExternalLearningHandoff(utterance);
       assert(
         handoff.family === "market_capability_learning_intake",
-        "missing-source Lark handoff should still classify the learning intent",
+        "missing-source External handoff should still classify the learning intent",
       );
       assert(
         handoff.targetSurface === "learning_command",
-        "missing-source Lark handoff should target learning_command surface",
+        "missing-source External handoff should target learning_command surface",
       );
       assert(
         handoff.backendToolContract?.toolName === "finance_learning_pipeline_orchestrator",
-        "missing-source Lark handoff should expose backend contract",
+        "missing-source External handoff should expose backend contract",
       );
       assert(
         handoff.backendToolContract.sourceRequirement === "safe_local_or_manual_source_required",
-        "missing-source Lark handoff should require safe source before learning",
+        "missing-source External handoff should require safe source before learning",
       );
       return {
         case: caseName,
@@ -444,8 +430,8 @@ async function runCase(
           "learningInternalizationStatus=not_started; failedReason=safe_local_or_manual_source_required",
       };
     }
-    case "lark-market-capability-extraction-gap": {
-      const localFilePath = "memory/demo/lark-weak-finance-note.md";
+    case "external-market-capability-extraction-gap": {
+      const localFilePath = "memory/demo/external-weak-finance-note.md";
       const absolutePath = path.join(workspaceDir, localFilePath);
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(
@@ -458,25 +444,15 @@ async function runCase(
         "utf8",
       );
       const utterance =
-        "在 Lark 里验证一套完整学习流程：学习 ETF 因子择时策略，使用本地 source memory/demo/lark-weak-finance-note.md，走 source intake、extract、attach 和 review";
-      const apiProvider: LarkApiRouteProvider = async () => ({
-        family: "market_capability_learning_intake",
-        confidence: 0.94,
-        rationale: "offline smoke candidate with a weak local source",
-      });
-      const handoff = await resolveLarkAgentInstructionHandoff({
-        cfg: buildLarkSmokeConfig(),
-        chatId: "oc-control-room-smoke",
-        utterance,
-        apiProvider,
-      });
+        "在 External 里验证一套完整学习流程：学习 ETF 因子择时策略，使用本地 source memory/demo/external-weak-finance-note.md，走 source intake、extract、attach 和 review";
+      const handoff = resolveExternalLearningHandoff(utterance);
       assert(
         handoff.family === "market_capability_learning_intake",
-        "extraction-gap Lark handoff should still classify the learning intent",
+        "extraction-gap External handoff should still classify the learning intent",
       );
       assert(
         handoff.backendToolContract?.toolName === "finance_learning_pipeline_orchestrator",
-        "extraction-gap Lark handoff should expose backend contract",
+        "extraction-gap External handoff should expose backend contract",
       );
       const retrievalReceiptCountBefore = await countJsonFilesUnder(
         workspaceDir,
@@ -486,13 +462,13 @@ async function runCase(
         workspaceDir,
         "memory/finance-learning-apply-usage-reviews",
       );
-      const result = await tool.execute("smoke-lark-market-capability-extraction-gap", {
-        sourceName: "Lark Weak Finance Learning Smoke Fixture",
+      const result = await tool.execute("smoke-external-market-capability-extraction-gap", {
+        sourceName: "External Weak Finance Learning Smoke Fixture",
         sourceType: "manual_article_source",
         localFilePath,
-        title: "Lark weak finance capability learning request",
+        title: "External weak finance capability learning request",
         retrievalNotes:
-          "Lark offline smoke verified that weak local source content fails closed before attachment and review.",
+          "External offline smoke verified that weak local source content fails closed before attachment and review.",
         allowedActionAuthority: "research_only",
         learningIntent: handoff.backendToolContract.learningIntent,
         maxRetrievedCapabilities: 5,
@@ -773,9 +749,9 @@ async function main() {
       ? [
           "manual-paste",
           "local-file",
-          "lark-market-capability-intake",
-          "lark-market-capability-missing-source",
-          "lark-market-capability-extraction-gap",
+          "external-market-capability-intake",
+          "external-market-capability-missing-source",
+          "external-market-capability-extraction-gap",
           "capability-apply",
           "capability-apply-unmatched",
           "external-rss",

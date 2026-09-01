@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrineTeacherCandidateInputReconciliationFilename,
-  buildFeishuFinanceDoctrineTeacherCandidateInputReviewFilename,
-  buildFeishuFinanceDoctrineTeacherCandidateInputsFilename,
-  parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
-  renderFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrineTeacherCandidateInputReconciliationFilename,
+  buildExternalFinanceDoctrineTeacherCandidateInputReviewFilename,
+  buildExternalFinanceDoctrineTeacherCandidateInputsFilename,
+  parseExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
+  renderExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -64,8 +64,8 @@ export function createFinanceDoctrineTeacherFeedbackCandidateInputReconciliation
       const reconciliationRelPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherCandidateInputReconciliationFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherCandidateInputReconciliationFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       const reconciliationAbsPath = path.join(workspaceDir, reconciliationRelPath);
@@ -90,7 +90,7 @@ export function createFinanceDoctrineTeacherFeedbackCandidateInputReconciliation
       }
 
       const parsedReconciliation =
-        parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
+        parseExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
           reconciliationContent,
         );
       if (!parsedReconciliation) {
@@ -109,15 +109,15 @@ export function createFinanceDoctrineTeacherFeedbackCandidateInputReconciliation
       const expectedTeacherCandidateInputPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherCandidateInputsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherCandidateInputsFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       const expectedTeacherCandidateInputReviewPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherCandidateInputReviewFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherCandidateInputReviewFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       if (
@@ -144,8 +144,8 @@ export function createFinanceDoctrineTeacherFeedbackCandidateInputReconciliation
       const expectedTargetFinanceCandidatePath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey),
         )
         .replace(/\\/gu, "/");
 
@@ -214,7 +214,7 @@ export function createFinanceDoctrineTeacherFeedbackCandidateInputReconciliation
 
       await fs.writeFile(
         reconciliationAbsPath,
-        renderFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact({
+        renderExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact({
           ...parsedReconciliation,
           reconciliations: nextReconciliations,
         }),

@@ -765,8 +765,8 @@ describe("loadOpenClawPlugins", () => {
   it("prefers bundled plugin over auto-discovered global duplicate ids", () => {
     const bundledDir = makeTempDir();
     writePlugin({
-      id: "feishu",
-      body: `module.exports = { id: "feishu", register() {} };`,
+      id: "external",
+      body: `module.exports = { id: "external", register() {} };`,
       dir: bundledDir,
       filename: "index.cjs",
     });
@@ -774,11 +774,11 @@ describe("loadOpenClawPlugins", () => {
 
     const stateDir = makeTempDir();
     withEnv({ OPENCLAW_STATE_DIR: stateDir, CLAWDBOT_STATE_DIR: undefined }, () => {
-      const globalDir = path.join(stateDir, "extensions", "feishu");
+      const globalDir = path.join(stateDir, "extensions", "external");
       fs.mkdirSync(globalDir, { recursive: true });
       writePlugin({
-        id: "feishu",
-        body: `module.exports = { id: "feishu", register() {} };`,
+        id: "external",
+        body: `module.exports = { id: "external", register() {} };`,
         dir: globalDir,
         filename: "index.cjs",
       });
@@ -787,15 +787,15 @@ describe("loadOpenClawPlugins", () => {
         cache: false,
         config: {
           plugins: {
-            allow: ["feishu"],
+            allow: ["external"],
             entries: {
-              feishu: { enabled: true },
+              external: { enabled: true },
             },
           },
         },
       });
 
-      const entries = registry.plugins.filter((entry) => entry.id === "feishu");
+      const entries = registry.plugins.filter((entry) => entry.id === "external");
       const loaded = entries.find((entry) => entry.status === "loaded");
       const overridden = entries.find((entry) => entry.status === "disabled");
       expect(loaded?.origin).toBe("bundled");

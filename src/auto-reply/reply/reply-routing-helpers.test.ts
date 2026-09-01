@@ -2,23 +2,22 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import { createOutboundTestPlugin, createTestRegistry } from "../../test-utils/channel-plugins.js";
 import {
-  isFeishuFamilyChannel,
   normalizeReplyRouteProviderAlias,
   resolveReplyRouteChannel,
 } from "./reply-routing-helpers.js";
 
-const registryWithFeishu = createTestRegistry([
+const registryWithExternal = createTestRegistry([
   {
-    pluginId: "feishu",
+    pluginId: "external",
     source: "test",
     plugin: createOutboundTestPlugin({
-      id: "feishu",
+      id: "external",
       outbound: {
         deliveryMode: "direct",
-        sendText: async () => ({ channel: "feishu", messageId: "ok" }),
-        sendMedia: async () => ({ channel: "feishu", messageId: "ok" }),
+        sendText: async () => ({ channel: "external", messageId: "ok" }),
+        sendMedia: async () => ({ channel: "external", messageId: "ok" }),
       },
-      label: "Feishu",
+      label: "External",
     }),
   },
 ]);
@@ -26,7 +25,7 @@ const registryWithFeishu = createTestRegistry([
 const emptyRegistry = createTestRegistry([]);
 
 beforeEach(() => {
-  setActivePluginRegistry(registryWithFeishu);
+  setActivePluginRegistry(registryWithExternal);
 });
 
 afterEach(() => {
@@ -34,29 +33,25 @@ afterEach(() => {
 });
 
 describe("reply routing helpers", () => {
-  it("does not require plugin registration for feishu-family routing classification", () => {
-    expect(normalizeReplyRouteProviderAlias("lark")).toBe("feishu");
+  it("normalizes an external channel label without requiring registration", () => {
+    expect(normalizeReplyRouteProviderAlias("external")).toBe("external");
     setActivePluginRegistry(emptyRegistry);
 
-    expect(resolveReplyRouteChannel("lark")).toBe("feishu");
-    expect(resolveReplyRouteChannel("lark:dm:ou_xyz")).toBe("feishu");
-    expect(isFeishuFamilyChannel("lark")).toBe(true);
-    expect(isFeishuFamilyChannel("lark:group:oc_123")).toBe(true);
-    expect(resolveReplyRouteChannel("feishu")).toBe("feishu");
-    expect(resolveReplyRouteChannel("feishu:dm:ou_123")).toBe("feishu");
+    expect(resolveReplyRouteChannel("external")).toBeUndefined();
+    expect(resolveReplyRouteChannel("external:dm:recipient")).toBeUndefined();
   });
 
-  it("maps lark family aliases to feishu", () => {
-    expect(normalizeReplyRouteProviderAlias("lark")).toBe("feishu");
-    expect(normalizeReplyRouteProviderAlias("LARK")).toBe("feishu");
-    expect(normalizeReplyRouteProviderAlias("lark:dm:ou_123")).toBe("feishu");
-    expect(normalizeReplyRouteProviderAlias("lark:user:ou_123")).toBe("feishu");
-    expect(normalizeReplyRouteProviderAlias("lark:group:oc_123")).toBe("feishu");
+  it("resolves a registered external channel for direct and structured targets", () => {
+    expect(resolveReplyRouteChannel("external")).toBe("external");
+    expect(resolveReplyRouteChannel("external:dm:recipient")).toBe("external");
+    expect(resolveReplyRouteChannel("external:group:room")).toBe("external");
   });
 
-  it("normalizes feishu directly", () => {
-    expect(normalizeReplyRouteProviderAlias("feishu")).toBe("feishu");
-    expect(normalizeReplyRouteProviderAlias("feishu:dm:ou_123")).toBe("feishu");
+  it("normalizes a registered alias through the plugin registry", () => {
+    const plugin = registryWithExternal.channels[0]?.plugin as { meta?: { aliases?: string[] } };
+    plugin.meta = { ...plugin.meta, aliases: ["http-json"] };
+    expect(normalizeReplyRouteProviderAlias("http-json:dm:recipient")).toBe("external");
+    expect(resolveReplyRouteChannel("http-json:dm:recipient")).toBe("external");
   });
 
   it("falls back unknown alias to normalized segment", () => {
@@ -64,26 +59,8 @@ describe("reply routing helpers", () => {
     expect(resolveReplyRouteChannel("telegram:dm:123")).toBe("telegram");
   });
 
-  it("resolves lark chain labels to feishu routing", () => {
-    expect(resolveReplyRouteChannel("lark:dm:ou_xyz")).toBe("feishu");
-    expect(resolveReplyRouteChannel("lark:user:ou_xyz")).toBe("feishu");
-  });
-
-  it("treats feishu family channels as true", () => {
-    expect(isFeishuFamilyChannel("lark")).toBe(true);
-    expect(isFeishuFamilyChannel("Lark")).toBe(true);
-    expect(isFeishuFamilyChannel("lark:dm:ou_xyz")).toBe(true);
-    expect(isFeishuFamilyChannel("lark:user:ou_xyz")).toBe(true);
-    expect(isFeishuFamilyChannel("feishu")).toBe(true);
-    expect(isFeishuFamilyChannel("feishu:dm:ou_xyz")).toBe(true);
-    expect(isFeishuFamilyChannel("webchat")).toBe(false);
-    expect(isFeishuFamilyChannel("telegram")).toBe(false);
-    expect(isFeishuFamilyChannel("telegram:dm:123")).toBe(false);
-  });
-
   it("returns undefined for internal channel marker", () => {
     expect(normalizeReplyRouteProviderAlias("webchat")).toBeUndefined();
     expect(resolveReplyRouteChannel("webchat")).toBeUndefined();
-    expect(isFeishuFamilyChannel("webchat")).toBe(false);
   });
 });

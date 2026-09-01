@@ -4,13 +4,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import "./test-helpers/fast-coding-tools.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionDecisionsFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionDecisionArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
-  renderFeishuFinanceDoctrinePromotionCandidateArtifact,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionDecisionsFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionDecisionArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
+  renderExternalFinanceDoctrinePromotionCandidateArtifact,
 } from "../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../test-helpers/workspace.js";
 import { createOpenClawCodingTools } from "./pi-tools.js";
@@ -24,7 +24,7 @@ type RuntimeTool = {
   execute: (toolCallId: string, args: unknown, signal?: AbortSignal) => Promise<RuntimeToolResult>;
 };
 
-function createFeishuMainRuntimeTools(params: {
+function createExternalMainRuntimeTools(params: {
   workspaceDir: string;
   config?: OpenClawConfig;
   groupId?: string;
@@ -34,8 +34,8 @@ function createFeishuMainRuntimeTools(params: {
     config: params.config,
     workspaceDir: params.workspaceDir,
     agentDir: "/tmp/openclaw-agent",
-    sessionKey: `agent:main:feishu:group:${groupId}`,
-    messageProvider: "feishu",
+    sessionKey: `agent:main:external:group:${groupId}`,
+    messageProvider: "external",
     groupId,
     modelProvider: "openai",
     modelId: "gpt-5.2",
@@ -49,11 +49,11 @@ function getRuntimeTool(tools: { name: string }[], name: string): RuntimeTool {
 }
 
 async function seedPromotionCandidates(workspaceDir: string, dateKey: string) {
-  const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+  const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
   await fs.mkdir(receiptsDir, { recursive: true });
   await fs.writeFile(
-    path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)),
-    renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+    path.join(receiptsDir, buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)),
+    renderExternalFinanceDoctrinePromotionCandidateArtifact({
       generatedAt: `${dateKey}T15:00:00.000Z`,
       consumer: "holdings_thesis_revalidation",
       windowDays: 7,
@@ -87,7 +87,7 @@ async function seedPromotionCandidates(workspaceDir: string, dateKey: string) {
   );
 }
 
-describe("Feishu finance governance runtime-equivalent path", () => {
+describe("External finance governance runtime-equivalent path", () => {
   let workspaceDir: string | undefined;
 
   afterEach(async () => {
@@ -97,12 +97,12 @@ describe("Feishu finance governance runtime-equivalent path", () => {
     }
   });
 
-  it("keeps same-day inspection plus review and manual promotion decision reachable in the Feishu main runtime path", async () => {
+  it("keeps same-day inspection plus review and manual promotion decision reachable in the External main runtime path", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-runtime-");
     const dateKey = "2026-03-25";
     await seedPromotionCandidates(workspaceDir, dateKey);
 
-    const tools = createFeishuMainRuntimeTools({ workspaceDir });
+    const tools = createExternalMainRuntimeTools({ workspaceDir });
     const toolNames = tools.map((tool) => tool.name);
     expect(toolNames).toContain("finance_promotion_candidates");
     expect(toolNames).toContain("finance_promotion_review");
@@ -114,7 +114,7 @@ describe("Feishu finance governance runtime-equivalent path", () => {
     const bulkReviewTool = getRuntimeTool(tools, "finance_promotion_bulk_review");
     const decisionTool = getRuntimeTool(tools, "finance_promotion_decision");
 
-    const initialList = (await candidatesTool.execute("feishu-finance-list-initial", { dateKey }))
+    const initialList = (await candidatesTool.execute("external-finance-list-initial", { dateKey }))
       .details as {
       ok: boolean;
       stateSource: string;
@@ -129,7 +129,7 @@ describe("Feishu finance governance runtime-equivalent path", () => {
       "unreviewed",
     ]);
 
-    const singleReview = await reviewTool.execute("feishu-finance-review-single", {
+    const singleReview = await reviewTool.execute("external-finance-review-single", {
       dateKey,
       candidateKey: "closest_scenario:base_case",
       action: "deferred",
@@ -145,7 +145,7 @@ describe("Feishu finance governance runtime-equivalent path", () => {
       }),
     );
 
-    const bulkReview = await bulkReviewTool.execute("feishu-finance-review-bulk", {
+    const bulkReview = await bulkReviewTool.execute("external-finance-review-bulk", {
       dateKey,
       reviews: [
         {
@@ -165,7 +165,7 @@ describe("Feishu finance governance runtime-equivalent path", () => {
       }),
     );
 
-    const promotionDecision = await decisionTool.execute("feishu-finance-promotion-decision", {
+    const promotionDecision = await decisionTool.execute("external-finance-promotion-decision", {
       dateKey,
       candidateKey: "conviction_looks:too_high",
       decision: "proposal_created",
@@ -182,7 +182,7 @@ describe("Feishu finance governance runtime-equivalent path", () => {
       }),
     );
 
-    const reviewedList = await candidatesTool.execute("feishu-finance-list-reviewed", {
+    const reviewedList = await candidatesTool.execute("external-finance-list-reviewed", {
       dateKey,
     });
     expect(reviewedList.details).toEqual(
@@ -190,9 +190,9 @@ describe("Feishu finance governance runtime-equivalent path", () => {
         ok: true,
         stateSource: "candidate_review_and_decision_artifacts",
         reviewPath:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
         decisionPath:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       }),
     );
     expect(
@@ -260,28 +260,28 @@ describe("Feishu finance governance runtime-equivalent path", () => {
     const candidateArtifactPath = path.join(
       workspaceDir,
       "memory",
-      "feishu-work-receipts",
-      buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey),
+      "external-work-receipts",
+      buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey),
     );
     const reviewArtifactPath = path.join(
       workspaceDir,
       "memory",
-      "feishu-work-receipts",
-      buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey),
+      "external-work-receipts",
+      buildExternalFinanceDoctrinePromotionReviewFilename(dateKey),
     );
-    const parsedCandidateArtifact = parseFeishuFinanceDoctrinePromotionCandidateArtifact(
+    const parsedCandidateArtifact = parseExternalFinanceDoctrinePromotionCandidateArtifact(
       await fs.readFile(candidateArtifactPath, "utf8"),
     );
-    const parsedReviewArtifact = parseFeishuFinanceDoctrinePromotionReviewArtifact(
+    const parsedReviewArtifact = parseExternalFinanceDoctrinePromotionReviewArtifact(
       await fs.readFile(reviewArtifactPath, "utf8"),
     );
-    const parsedDecisionArtifact = parseFeishuFinanceDoctrinePromotionDecisionArtifact(
+    const parsedDecisionArtifact = parseExternalFinanceDoctrinePromotionDecisionArtifact(
       await fs.readFile(
         path.join(
           workspaceDir,
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey),
         ),
         "utf8",
       ),
@@ -307,12 +307,12 @@ describe("Feishu finance governance runtime-equivalent path", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("fails closed in the Feishu main runtime path when same-day promotion candidates are missing", async () => {
+  it("fails closed in the External main runtime path when same-day promotion candidates are missing", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-runtime-");
-    const tools = createFeishuMainRuntimeTools({ workspaceDir });
+    const tools = createExternalMainRuntimeTools({ workspaceDir });
     const candidatesTool = getRuntimeTool(tools, "finance_promotion_candidates");
 
-    const result = await candidatesTool.execute("feishu-finance-list-missing", {
+    const result = await candidatesTool.execute("external-finance-list-missing", {
       dateKey: "2026-03-25",
     });
 
@@ -321,17 +321,17 @@ describe("Feishu finance governance runtime-equivalent path", () => {
       reason: "candidate_artifact_missing",
       dateKey: "2026-03-25",
       candidatePath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       action:
         "No same-day finance promotion candidate artifact exists yet. Generate it first before trying to inspect candidate keys.",
     });
   });
 
-  it("respects Feishu group tool policy boundaries in the runtime assembly", async () => {
+  it("respects External group tool policy boundaries in the runtime assembly", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-runtime-");
     const cfg: OpenClawConfig = {
       channels: {
-        feishu: {
+        external: {
           groups: {
             "locked-finance-room": {
               tools: { allow: ["read"] },
@@ -341,7 +341,7 @@ describe("Feishu finance governance runtime-equivalent path", () => {
       },
     };
 
-    const tools = createFeishuMainRuntimeTools({
+    const tools = createExternalMainRuntimeTools({
       workspaceDir,
       config: cfg,
       groupId: "locked-finance-room",

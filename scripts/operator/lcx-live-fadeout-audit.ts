@@ -149,9 +149,9 @@ function classifyLiveReference(file: string, text: string): LiveReferenceClass {
     return "historical_ops_receipt";
   }
   if (
-    file.startsWith("extensions/feishu/") ||
-    file.startsWith("src/agents/tools/feishu-live-probe") ||
-    file.startsWith("src/commands/capabilities/lark-loop-diagnose")
+    file.startsWith("extensions/external/") ||
+    file.startsWith("src/agents/tools/external-live-probe") ||
+    file.startsWith("src/agents/visible-answer-adoption-gate")
   ) {
     return lower.includes("external-channel") ||
       lower.includes("user-visible") ||
@@ -189,7 +189,7 @@ async function buildLiveReferenceInventory(): Promise<LiveReferenceInventory> {
         "grep",
         "-nI",
         "-E",
-        "(^|[^[:alpha:]])live([^[:alpha:]]|$)|LiveLark|LIVE_TEST|liveUserSeen|liveRuntime|live-visible|live-user-seen|live_lark|live_sidecar|live_sender",
+        "(^|[^[:alpha:]])live([^[:alpha:]]|$)|LiveExternal|LIVE_TEST|liveUserSeen|liveRuntime|live-visible|live-user-seen|live_external|live_sidecar|live_sender",
         "--",
         "AGENTS.md",
         "README.md",
@@ -370,7 +370,7 @@ export async function buildLcxLiveFadeoutAudit() {
         "canonical `~/.openclaw` state",
         "not a second live",
         "not a second runtime truth source",
-        "Lark, WeChat, SMS",
+        "External, WeChat, SMS",
       ],
       summary:
         "cloud migration must keep one local system/factory and one canonical repository; local isolation uses linked worktrees",
@@ -388,7 +388,7 @@ export async function buildLcxLiveFadeoutAudit() {
         "userVisibleObserved",
         "legacyLiveCompatibility",
       ],
-      summary: "Lark channel binding must be owned by the external-channel binding owner",
+      summary: "External channel binding must be owned by the external-channel binding owner",
       text: bindingOwner,
     }),
     checkTerms({
@@ -427,7 +427,7 @@ export async function buildLcxLiveFadeoutAudit() {
       requiredTerms: [
         "channel_runtime_probe_ok_user_visible_pending",
         "externalChannelBinding",
-        "post_migration_lark_canary_missing",
+        "post_migration_external_canary_missing",
         "bindingMissingProof",
       ],
       summary: "commercial acceptance must prefer binding-owner proof over legacy commit drift",
@@ -442,8 +442,8 @@ export async function buildLcxLiveFadeoutAudit() {
         "externalChannelBinding",
         "local_external_channel_binding_plan_only",
         "externalChannelMissingProof",
-        "lark_external_channel_binding_ready",
-        "route_lark_transport_to_selected_clean_answer_path",
+        "external_channel_binding_ready",
+        "route_external_transport_to_selected_clean_answer_path",
       ],
       summary:
         "training plan must expose external-channel readiness as the primary field without starting work",
@@ -456,7 +456,7 @@ export async function buildLcxLiveFadeoutAudit() {
       requiredTerms: [
         "externalChannelProofPlan",
         "user-visible-observed proof",
-        "lark_external_channel_binding",
+        "external_channel_binding",
       ],
       summary: "SkillOpt can help the next answer but cannot bypass channel/user-visible proof",
       text: skillOptLite,

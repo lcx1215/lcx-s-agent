@@ -109,7 +109,7 @@ describe("run-node script", () => {
         const { runNodeMain } = await import("../../scripts/run-node.mjs");
         const exitCode = await runNodeMain({
           cwd: tmp,
-          args: ["capabilities", "lark-loop-diagnose", "--json"],
+          args: ["capabilities", "l5-baseline-doctor", "--json"],
           env: {
             ...process.env,
             OPENCLAW_FORCE_BUILD: "1",

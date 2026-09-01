@@ -77,7 +77,7 @@ vi.mock("./route-reply.js", () => ({
   isRoutableChannel: (channel: string | undefined) =>
     Boolean(
       channel &&
-      ["telegram", "slack", "discord", "signal", "imessage", "whatsapp", "feishu"].includes(
+      ["telegram", "slack", "discord", "signal", "imessage", "whatsapp", "external"].includes(
         channel,
       ),
     ),
@@ -391,16 +391,16 @@ describe("dispatchReplyFromConfig", () => {
     );
   });
 
-  it("routes Feishu replies when provider is webchat and origin metadata points to Feishu", async () => {
+  it("routes External replies when provider is webchat and origin metadata points to External", async () => {
     setNoAbort();
     mocks.routeReply.mockClear();
     const cfg = emptyConfig;
     const dispatcher = createDispatcher();
     const ctx = buildTestCtx({
       Provider: "webchat",
-      Surface: "feishu",
-      OriginatingChannel: "feishu",
-      OriginatingTo: "ou_feishu_direct_123",
+      Surface: "external",
+      OriginatingChannel: "external",
+      OriginatingTo: "ou_external_direct_123",
     });
 
     const replyResolver = async () => ({ text: "hi" }) satisfies ReplyPayload;
@@ -409,21 +409,21 @@ describe("dispatchReplyFromConfig", () => {
     expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
     expect(mocks.routeReply).toHaveBeenCalledWith(
       expect.objectContaining({
-        channel: "feishu",
-        to: "ou_feishu_direct_123",
+        channel: "external",
+        to: "ou_external_direct_123",
       }),
     );
   });
 
-  it("normalizes lark chain-originating channel to feishu when routing", async () => {
+  it("normalizes external chain-originating channel to external when routing", async () => {
     setNoAbort();
     mocks.routeReply.mockClear();
     const cfg = emptyConfig;
     const dispatcher = createDispatcher();
     const ctx = buildTestCtx({
       Provider: "webchat",
-      Surface: "feishu",
-      OriginatingChannel: "lark:dm:ou_xyz",
+      Surface: "external",
+      OriginatingChannel: "external:dm:ou_xyz",
       OriginatingTo: "ou_xyz",
     });
 
@@ -433,7 +433,7 @@ describe("dispatchReplyFromConfig", () => {
     expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
     expect(mocks.routeReply).toHaveBeenCalledWith(
       expect.objectContaining({
-        channel: "feishu",
+        channel: "external",
         to: "ou_xyz",
       }),
     );

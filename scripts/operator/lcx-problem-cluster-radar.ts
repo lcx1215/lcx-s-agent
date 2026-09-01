@@ -134,7 +134,7 @@ function externalChannelBindingPlan(
 ): Record<string, unknown> | undefined {
   return (
     recordValue(trainingPlan?.externalChannelBinding) ??
-    recordValue(trainingPlan?.liveLarkBrainBinding)
+    recordValue(trainingPlan?.liveExternalBrainBinding)
   );
 }
 
@@ -541,13 +541,13 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
         severity: "P3",
         summary: "latest promoted adapter is no longer the selected clean runtime adapter",
       },
-      lark_external_channel_binding_ready: {
+      external_message_channel_binding_ready: {
         severity: "P3",
-        summary: "external Lark channel binding is ready but still needs explicit apply/proof",
+        summary: "external message channel binding is ready but still needs explicit apply/proof",
       },
-      live_lark_brain_binding_deferred: {
+      live_external_brain_binding_deferred: {
         severity: "P3",
-        summary: "legacy live Lark binding alias is deferred; use external-channel binding truth",
+        summary: "legacy live External binding alias is deferred; use external-channel binding truth",
       },
     }),
   );
@@ -630,9 +630,9 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
     signals.push({
       id: "external_channel_binding_not_ready",
       severity: "P3",
-      summary: "external Lark channel must wait before consuming the selected clean adapter",
+      summary: "external message channel must wait before consuming the selected clean adapter",
       evidence: {
-        legacySignalId: "live_lark_brain_binding_not_ready",
+        legacySignalId: "live_external_brain_binding_not_ready",
         status: externalChannelBinding?.status,
         action: externalChannelBinding?.action,
         selectedCleanAdapter: externalChannelBinding?.selectedCleanAdapter,
@@ -647,14 +647,14 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
     sourceOwners: ["local-brain-training-plan"],
     signals,
     nextAction:
-      "Keep runtime on one clean latest-passing adapter; bind the external Lark channel to that selected clean adapter only after eval/MLX is idle, sidecar drift is zero, runtime is restarted, and real user-visible Lark proof is collected.",
+      "Keep runtime on one clean latest-passing adapter; bind the external message channel to that selected clean adapter only after eval/MLX is idle, sidecar drift is zero, runtime is restarted, and real user-visible External proof is collected.",
     actionability:
       hasActiveHeavyLocalBrainProcess(payload) ||
       ownerDecisionRepairBlocked(payload, "guard_adapter_mismatch") ||
       ownerDecisionRepairBlocked(payload, "eval_not_promotion_ready") ||
       ownerDecisionRepairBlockedAny(payload, [
-        "lark_external_channel_binding_ready",
-        "live_lark_brain_binding_deferred",
+        "external_message_channel_binding_ready",
+        "live_external_brain_binding_deferred",
       ])
         ? "blocked_by_owner_gate"
         : undefined,
@@ -667,8 +667,8 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
         ? ["training_plan_codex_repair_not_eligible"]
         : []),
       ...(ownerDecisionRepairBlockedAny(payload, [
-        "lark_external_channel_binding_ready",
-        "live_lark_brain_binding_deferred",
+        "external_message_channel_binding_ready",
+        "live_external_brain_binding_deferred",
       ])
         ? ["external_channel_binding_waiting_for_owner_proof"]
         : []),

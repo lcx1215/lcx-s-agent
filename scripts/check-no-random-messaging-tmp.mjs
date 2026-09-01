@@ -11,7 +11,7 @@ const sourceRoots = [
   "src/media-understanding",
   "extensions",
 ];
-const allowedRelativePaths = new Set(["extensions/feishu/src/dedup.ts"]);
+const allowedRelativePaths = new Set(["extensions/external/src/dedup.ts"]);
 
 function collectOsTmpdirImports(sourceFile) {
   const osModuleSpecifiers = new Set(["node:os", "os"]);

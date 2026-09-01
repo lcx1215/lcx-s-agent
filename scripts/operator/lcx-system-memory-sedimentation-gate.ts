@@ -212,7 +212,7 @@ async function buildGate(options: CliOptions) {
       "external_channel_sender",
       "provider_config",
       "protected_repo_memory",
-      "formal_lark_routing_corpus",
+      "formal_external_routing_corpus",
       "module_learning_receipts",
     ],
     liveTouched: false,

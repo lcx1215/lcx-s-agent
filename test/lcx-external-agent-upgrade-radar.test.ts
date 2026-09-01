@@ -270,7 +270,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
           requiredProofChain: expect.arrayContaining([
             "targeted_eval_clean",
             "train_slice_contains_skillopt_evidence",
-            "fresh_real_lark_inbound_and_outbound_seen",
+            "fresh_real_external_inbound_and_outbound_seen",
           ]),
         }),
         expect.objectContaining({

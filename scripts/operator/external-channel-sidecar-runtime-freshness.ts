@@ -150,7 +150,7 @@ export function buildRuntimeFreshnessReceipt(params: {
     boundary: [
       "Compares git-tracked source files against the non-Desktop live sidecar runtime.",
       "Excludes memory, dist, apps, node_modules, and ops/external-channel-artifacts launchagent receipts to preserve protected memory and generated-output boundaries.",
-      "Does not copy files, change LaunchAgents, send Feishu/Lark messages, or modify provider config.",
+      "Does not copy files, change LaunchAgents, send external message messages, or modify provider config.",
     ],
   };
 }

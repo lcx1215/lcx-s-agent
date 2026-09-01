@@ -185,7 +185,7 @@ function basePlan(plan: Record<string, unknown>): Record<string, unknown> {
       "no_model_math_guessing",
     ]),
     rejected_context: mergeUnique(cleanRejectedContext(plan.rejected_context), [
-      "old_lark_conversation_history",
+      "old_external_conversation_history",
       "language_routing_candidate_artifacts",
       "unsupported_execution_language",
     ]),
@@ -501,7 +501,7 @@ function looksLikeEtfTimingFramework(text: string): boolean {
 }
 
 function looksLikeOpsContextAudit(text: string): boolean {
-  return /(上下文污染|串到旧任务|旧任务|lark.*污染|lark.*审计|上下文.*审计|旧任务.*审计|context pollution|不要继续金融分析|ops audit)/iu.test(
+  return /(上下文污染|串到旧任务|旧任务|external.*污染|external.*审计|上下文.*审计|旧任务.*审计|context pollution|不要继续金融分析|ops audit)/iu.test(
     text,
   );
 }
@@ -672,7 +672,7 @@ function looksLikePlainLanguageHiddenComplexityIntake(text: string): boolean {
       text,
     );
   const givesShortExamples =
-    /(分析最近股市|持仓多少|学习大宗商品|读这篇论文|lark 回复|回复看不懂|recent market|position sizing|learn commodities|read this paper)/iu.test(
+    /(分析最近股市|持仓多少|学习大宗商品|读这篇论文|external 回复|回复看不懂|recent market|position sizing|learn commodities|read this paper)/iu.test(
       text,
     );
   return namesHiddenComplexity && givesShortExamples;
@@ -903,7 +903,7 @@ function looksLikeAllModuleKnowledgeInternalizationChain(text: string): boolean 
     return false;
   }
   const namesConcreteNonFactorModule =
-    /(期权|波动率|iv|gamma|skew|指数|index|indices|纳指|标普|沪深300|宏观|利率|基本面|财报|大宗商品|商品|原油|黄金|美元|外汇|fx|事件|event|技术面|technical|lark|feishu|飞书|记忆|memory|ops|skill|workflow)/iu.test(
+    /(期权|波动率|iv|gamma|skew|指数|index|indices|纳指|标普|沪深300|宏观|利率|基本面|财报|大宗商品|商品|原油|黄金|美元|外汇|fx|事件|event|技术面|technical|external|external|外部消息通道|记忆|memory|ops|skill|workflow)/iu.test(
       text,
     ) &&
     /(也要|同样|等等|等模块|都要|都有|同一条|这种链条|这条链|same chain|same pipeline)/iu.test(
@@ -931,7 +931,7 @@ function looksLikeAbstractionTransferProtocol(text: string): boolean {
       text,
     );
   const namesExampleTransfer =
-    /(例子|比如|例如|example|seed).{0,80}(通用|抽象|迁移|相邻|adjacent|非同类|non[- ]?identical|回归|regression|证明|proof)|(?:大宗商品|lark wording|visible reply|论文|开源项目).{0,80}(不是.*边界|问题族|通用规则|同类|相邻)/iu.test(
+    /(例子|比如|例如|example|seed).{0,80}(通用|抽象|迁移|相邻|adjacent|非同类|non[- ]?identical|回归|regression|证明|proof)|(?:大宗商品|external wording|visible reply|论文|开源项目).{0,80}(不是.*边界|问题族|通用规则|同类|相邻)/iu.test(
       text,
     );
   return namesAbstraction || namesExampleTransfer;
@@ -1099,7 +1099,7 @@ export function hardenLocalBrainPlanForAsk(
       risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
       next_step: "ask_user_for_current_subject_before_reusing_prior_context",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ],
@@ -1117,7 +1117,7 @@ export function hardenLocalBrainPlanForAsk(
       risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
       next_step: "acknowledge_context_reset_then_ask_for_new_task_subject",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ],
@@ -1127,15 +1127,15 @@ export function hardenLocalBrainPlanForAsk(
   if (looksLikeOpsContextAudit(text)) {
     return {
       ...safe,
-      task_family: "lark_context_pollution_audit",
+      task_family: "external_context_pollution_audit",
       primary_modules: ["ops_audit"],
       supporting_modules: ["control_room_summary", "review_panel"],
-      required_tools: ["lark_loop_diagnose", "sessions_history", "review_panel"],
-      missing_data: ["fresh_lark_message_id_or_visible_reply_text"],
+      required_tools: ["external_loop_diagnose", "sessions_history", "review_panel"],
+      missing_data: ["fresh_external_message_id_or_visible_reply_text"],
       risk_boundaries: ["no_execution_authority", "evidence_required"],
-      next_step: "inspect_lark_session_store_and_candidate_replay_before_claiming_live_fixed",
+      next_step: "inspect_external_session_store_and_candidate_replay_before_claiming_live_fixed",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ],
@@ -1184,7 +1184,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "classify_short_utterance_as_hidden_complexity_family_then_prove_original_example_adjacent_scenario_shared_contract_and_regression_before_specialized_handling",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "literal_short_answer",
         "single_phrase_patch_without_transfer",
         "current_example_only_success",
@@ -1251,7 +1251,7 @@ export function hardenLocalBrainPlanForAsk(
       ],
       next_step: "build_research_only_risk_packet_before_any_position_language",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "execution_or_order_instruction",
         "trade_recommendation_without_evidence",
         "model_guessed_position_size",
@@ -1318,7 +1318,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "route_each_failed_family_through_source_gateway_capability_retrieval_apply_eval_training_and_review_before_any_promotion_claim",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "force_promote_candidate",
         "stored_source_as_learned_module",
         "unverified_current_market_claim",
@@ -1380,7 +1380,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "ask_for_market_scope_time_window_and_timestamped_sources_then_build_macro_breadth_fundamental_timing_risk_and_review_brief",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "generic_market_commentary_without_scope_or_sources",
         "unverified_current_market_claim",
         "trade_recommendation_without_evidence",
@@ -1440,7 +1440,7 @@ export function hardenLocalBrainPlanForAsk(
       ],
       next_step: "build_watchlist_rank_opportunities_then_red_team_risk_gate_before_summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "overly_conservative_refusal_only",
         "direct_buy_list_without_sources",
         "lottery_ticket_story_without_fundamentals",
@@ -1495,7 +1495,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "request_current_position_cost_basis_total_assets_risk_budget_sources_and_return_series_before_any_position_size_language",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "invented_position_percentage",
         "single_stock_sizing_without_portfolio_context",
         "trade_recommendation_without_evidence",
@@ -1545,7 +1545,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "convert_buy_hold_wording_into_research_preflight_then_request_position_fundamental_valuation_macro_timing_and_risk_inputs",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "direct_buy_sell_answer",
         "unverified_price_or_fundamental_claim",
         "trade_recommendation_without_evidence",
@@ -1600,7 +1600,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "separate_memory_claims_current_data_and_model_opinions_then_resolve_by_source_timestamp_assumptions_quant_checks_and_review_before_summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "stale_memory_rule_as_current_fact",
         "single_model_authority_claim",
         "single_vendor_unverified_claim",
@@ -1655,7 +1655,7 @@ export function hardenLocalBrainPlanForAsk(
         "single_phrase_patch_without_transfer",
         "current_example_only_success",
         "unverified_generalization_claim",
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
       ],
     };
   }
@@ -1712,7 +1712,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "apply_source_registry_capability_retrieval_apply_eval_chain_then_review_each_target_module_before_claiming_internalized",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "factor_only_internalization_rule",
         "stored_source_as_learned_module",
         "module_claim_without_receipt_or_eval",
@@ -1801,7 +1801,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "build_a_layered_finance_module_map_then_select_only_relevant_modules_per_user_task_before_review_and_control_room_summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "single_bucket_finance_routing",
         "module_name_dump_without_task_selection",
         "trade_recommendation_without_evidence",
@@ -1857,7 +1857,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "request_scenario_base_rates_sample_window_macro_inputs_and_portfolio_series_before_assigning_probabilities",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "model_invented_scenario_probability",
         "trade_recommendation_without_evidence",
       ],
@@ -1913,7 +1913,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "treat_commodities_as_macro_supply_demand_curve_and_portfolio_risk_framework_require_sources_fresh_inputs_roll_yield_and_review_before_summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "commodity_term_dump_without_application_path",
         "trade_recommendation_without_evidence",
@@ -1972,7 +1972,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "register_source_type_timestamp_and_transcript_then_check_official_followup_fundamentals_price_window_and_review_before_any_lesson",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "viral_event_as_direct_causal_proof",
         "single_blog_or_interview_as_trade_signal",
         "unverified_market_claim",
@@ -1996,7 +1996,7 @@ export function hardenLocalBrainPlanForAsk(
       ],
       next_step: "mark_claim_unverified_until_source_artifact_or_receipt_is_found",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unverified_market_claim",
       ],
@@ -2041,7 +2041,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "compare_sentiment_vendors_timestamps_and_sample_out_validation_before_any_risk_preference_claim",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "single_vendor_unverified_claim",
         "sentiment_as_standalone_trade_signal",
       ],
@@ -2085,7 +2085,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "compare_vendor_timestamps_definitions_and_missing_fields_before_promoting_any_market_claim",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "single_vendor_unverified_claim",
         "stale_market_data_snapshot",
       ],
@@ -2120,7 +2120,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "separate_portfolio_math_from_tax_or_professional_advice_and_request_authoritative_sources",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "tax_advice_claim",
         "trade_recommendation_without_evidence",
       ],
@@ -2180,7 +2180,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "treat_options_iv_as_event_risk_context_require_event_source_iv_inputs_position_exposure_and_review_not_trade_instruction",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "options_strategy_recommendation",
         "trade_recommendation_without_evidence",
       ],
@@ -2229,7 +2229,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "collect filing sources model assumptions and provenance then audit valuation sensitivity before summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "valuation_without_source_evidence",
         "spreadsheet_number_without_provenance",
         "trade_recommendation_without_evidence",
@@ -2274,7 +2274,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "map thesis catalysts invalidation evidence and post-event correction path before any durable lesson",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "thesis_without_invalidation",
         "news_heat_as_conclusion",
         "trade_recommendation_without_evidence",
@@ -2315,7 +2315,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "compare field definitions vendors timestamps and update policy before promoting any sourced number",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "single_vendor_unverified_claim",
         "field_definition_missing",
       ],
@@ -2354,7 +2354,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "audit every number source table model output and visible summary before artifact use",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "raw_artifact_without_qc",
         "number_without_provenance",
       ],
@@ -2376,7 +2376,7 @@ export function hardenLocalBrainPlanForAsk(
       risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
       next_step: "return_source_required_failed_reason_and_ask_for_link_or_local_file",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ],
@@ -2417,7 +2417,7 @@ export function hardenLocalBrainPlanForAsk(
         "collect_or_verify_source_list_then_report_actual_reading_scope_before_any_learning_claim",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
         "unverified_full_coverage_claim",
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ]),
@@ -2481,7 +2481,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "check_prior_art_then_classify_source_reuse_or_extend_existing_path_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "new_parallel_protocol_without_prior_art_check",
         "unverified_paper_summary",
         "untrusted_external_skill",
@@ -2570,7 +2570,7 @@ export function hardenLocalBrainPlanForAsk(
         "strategy_profit_claim_without_fees_slippage_or_sample_out",
         "same_day_price_prediction",
         "unverified_market_probability_as_truth",
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
       ],
     };
   }
@@ -2647,7 +2647,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "read_source_at_pinned_commit_then_distill_workflow_owner_leaf_workers_handoff_contract_tool_boundaries_untrusted_source_isolation_qc_sequence_human_signoff_and_visible_summary_before_claiming_helpful",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "install_enterprise_mcp_without_credentials",
         "direct_install_external_agent_without_isolation",
         "single_agent_chat_role_without_workflow_contract",
@@ -2699,7 +2699,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "collect_candidate_skill_sources_review_license_and_write_scope_then_distill_safe_workflow_into_local_skill_and_eval_case",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
         "cloud_skill_sharing_by_default",
@@ -2758,7 +2758,7 @@ export function hardenLocalBrainPlanForAsk(
         "unverified_paper_summary",
         "paper_backtest_as_trade_rule",
         "model_internal_learning_claim_without_training_eval_evidence",
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
       ]),
     };
   }
@@ -2806,7 +2806,7 @@ export function hardenLocalBrainPlanForAsk(
         "mark_current_market_claims_unverified_until_source_timestamp_and_fresh_data_snapshot_are_available_then_run_review",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
         "unverified_current_market_claim",
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "trade_recommendation_without_evidence",
       ]),
@@ -2850,7 +2850,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "convert_strategy_into_hypothesis_with_bias_checks_sample_out_plan_failure_regime_and_review_before_any_reusable_rule",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "backtest_as_profit_claim",
         "single_sample_factor_myth",
         "trade_recommendation_without_evidence",
@@ -2891,7 +2891,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "reject_execution_or_high_leverage_language_then_analyze_crypto_as_risk_sentiment_and_liquidity_input_only",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "execution_or_high_leverage_crypto_instruction",
         "trade_recommendation_without_evidence",
       ],
@@ -2952,7 +2952,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "review_repo_license_data_sources_and_validation_plan_then_distill_sentiment_as_one_evidence_layer_with_eval_gate",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "market_alpha_claim_without_source",
         "sentiment_as_standalone_trade_signal",
         "cloud_skill_sharing_by_default",
@@ -2999,7 +2999,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "request_or_collect_filing_source_before_stating_fundamental_claims_then_route_to_review_panel",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "unverified_filing_summary",
         "trade_recommendation_without_evidence",
       ],
@@ -3057,7 +3057,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "read_source_filings_first_then_score_business_quality_cash_flow_roic_balance_sheet_moat_valuation_safety_margin_value_trap_and_invalidation",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "technical_timing_before_fundamentals",
         "valuation_without_source_evidence",
         "trade_recommendation_without_evidence",
@@ -3108,7 +3108,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "recall_local_rules_then_compare_model_claims_by_source_assumption_and_missing_data_before_control_room_summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "single_model_authority_claim",
         "trade_recommendation_without_evidence",
       ],
@@ -3165,7 +3165,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "frame_event_risk_as_preflight_scenarios_then_collect_macro_liquidity_etf_position_and_review_inputs",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "same_day_price_prediction",
         "trade_recommendation_without_evidence",
       ],
@@ -3206,7 +3206,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "convert_rebalance_wording_into_research_only_portfolio_risk_analysis_and_request_weights_limits",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "execution_instruction",
         "order_entry_language",
       ],
@@ -3253,7 +3253,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "diagnose_single_stock_curve_as_timing_context_then_attach_fundamentals_portfolio_risk_and_review_before_summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "direct_buy_sell_answer",
         "technical_timing_as_standalone_alpha",
         "technical_pattern_as_trade_recommendation",
@@ -3312,7 +3312,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "use_technical_inputs_only_for_timing_context_after_macro_liquidity_and_risk_gate_review",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "single_factor_technical_story",
         "technical_pattern_as_trade_recommendation",
       ],
@@ -3411,7 +3411,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "recall_local_finance_rules_then_collect_fundamental_macro_position_technical_inputs_build_causal_map_run_quant_risk_gates_and_red_team_review_before_control_room_summary",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
         "single_factor_technical_story",
@@ -3464,7 +3464,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "treat_the_symbol_as_fund_or_etf_structure_research_require_fact_sheet_holdings_nav_or_methodology_context_and_reject_company_fundamental_labels",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "single_company_fundamental_labels_for_etf",
         "company_revenue_quality_for_fund",
         "trade_recommendation_without_evidence",
@@ -3518,7 +3518,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "identify_wrong_premise_stale_data_or_risk_gate_failure_then_write_correction_note_before_new_rule",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "silent_memory_rewrite",
         "unverified_new_rule",
       ],
@@ -3569,7 +3569,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "extract_report_assumptions_source_quality_and_sensitivity_then_red_team_before_learning",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "analyst_price_target_as_fact",
         "trade_recommendation_without_evidence",
       ],
@@ -3665,7 +3665,7 @@ export function hardenLocalBrainPlanForAsk(
               "execution_or_high_leverage_crypto_instruction",
             ]),
         [
-          "old_lark_conversation_history",
+          "old_external_conversation_history",
           "language_routing_candidate_artifacts",
           "unsupported_execution_language",
           ...(mentionsCryptoMarket(input.ask)
@@ -3819,7 +3819,7 @@ export function hardenLocalBrainPlanForAsk(
       ]),
       next_step: "route_treasury_supply_to_rates_credit_fx_etf_math_and_risk_gates_before_summary",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "rate_move_as_single_trade_signal",
         "unverified_treasury_auction_claim",
         "trade_recommendation_without_evidence",
@@ -3876,7 +3876,7 @@ export function hardenLocalBrainPlanForAsk(
       ]),
       next_step: "map_private_credit_and_nonbank_leverage_to_liquidity_etf_risk_gates_and_review",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "credit_headline_as_certain_contagion",
         "unverified_private_credit_loss_claim",
         "trade_recommendation_without_evidence",
@@ -3941,7 +3941,7 @@ export function hardenLocalBrainPlanForAsk(
       next_step:
         "connect_ai_capex_to_fundamentals_power_supply_chain_index_concentration_and_portfolio_risk",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "ai_story_without_filing_or_capex_source",
         "market_attention_as_causality",
         "trade_recommendation_without_evidence",
@@ -4006,7 +4006,7 @@ export function hardenLocalBrainPlanForAsk(
       ]),
       next_step: "route_energy_supply_shock_to_commodity_macro_fx_cross_asset_etf_and_risk_review",
       rejected_context: mergeUnique(arrayValue(safe.rejected_context), [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "oil_headline_as_direct_equity_signal",
         "unverified_energy_price_claim",
         "trade_recommendation_without_evidence",

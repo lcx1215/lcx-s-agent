@@ -793,68 +793,6 @@ function resolveTlonSession(
   };
 }
 
-/**
- * Feishu ID formats:
- * - oc_xxx: chat_id (can be group or DM, use chat_mode to distinguish or explicit dm:/group: prefix)
- * - ou_xxx: user open_id (DM)
- * - on_xxx: user union_id (DM)
- * - cli_xxx: app_id (not a valid send target)
- */
-function resolveFeishuSession(
-  params: ResolveOutboundSessionRouteParams,
-): OutboundSessionRoute | null {
-  let trimmed = stripProviderPrefix(params.target, "feishu");
-  trimmed = stripProviderPrefix(trimmed, "lark").trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const lower = trimmed.toLowerCase();
-  let isGroup = false;
-  let typeExplicit = false;
-
-  if (lower.startsWith("group:") || lower.startsWith("chat:")) {
-    trimmed = trimmed.replace(/^(group|chat):/i, "").trim();
-    isGroup = true;
-    typeExplicit = true;
-  } else if (lower.startsWith("user:") || lower.startsWith("dm:")) {
-    trimmed = trimmed.replace(/^(user|dm):/i, "").trim();
-    isGroup = false;
-    typeExplicit = true;
-  }
-
-  const idLower = trimmed.toLowerCase();
-  // Only infer type from ID prefix if not explicitly specified
-  // Note: oc_ is a chat_id and can be either group or DM (must check chat_mode from API)
-  // Only ou_/on_ can be reliably identified as user IDs (always DM)
-  if (!typeExplicit) {
-    if (idLower.startsWith("ou_") || idLower.startsWith("on_")) {
-      isGroup = false;
-    }
-    // oc_ requires explicit prefix: dm:oc_xxx or group:oc_xxx
-  }
-
-  const peer: RoutePeer = {
-    kind: isGroup ? "group" : "direct",
-    id: trimmed,
-  };
-  const baseSessionKey = buildBaseSessionKey({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    channel: "feishu",
-    accountId: params.accountId,
-    peer,
-  });
-  return {
-    sessionKey: baseSessionKey,
-    baseSessionKey,
-    peer,
-    chatType: isGroup ? "group" : "direct",
-    from: isGroup ? `feishu:group:${trimmed}` : `feishu:${trimmed}`,
-    to: trimmed,
-  };
-}
-
 function resolveFallbackSession(
   params: ResolveOutboundSessionRouteParams,
 ): OutboundSessionRoute | null {
@@ -913,7 +851,6 @@ const OUTBOUND_SESSION_RESOLVERS: Partial<Record<ChannelId, OutboundSessionResol
   zalouser: resolveZalouserSession,
   nostr: resolveNostrSession,
   tlon: resolveTlonSession,
-  feishu: resolveFeishuSession,
 };
 
 export async function resolveOutboundSessionRoute(

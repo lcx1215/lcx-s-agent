@@ -133,7 +133,7 @@ describe("LCX flow graph exam", () => {
     expect(payload.scenarios).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "lark_finance_research_waterflow",
+          id: "external_finance_research_waterflow",
           requiredFilters: expect.arrayContaining([
             "source_evidence_gate",
             "no_trade_advice",
@@ -171,11 +171,11 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
-          id: "local_to_external_channel_lark_waterflow",
+          id: "local_to_external_channel_external_waterflow",
           requiredFilters: expect.arrayContaining([
             "local_ready_not_user_visible_observed",
             "external_channel_probe_required",
-            "real_lark_inbound_required",
+            "real_external_inbound_required",
           ]),
         }),
         expect.objectContaining({
@@ -192,7 +192,7 @@ describe("LCX flow graph exam", () => {
             "skillopt_external_channel_proof_required",
             "local_ready_not_user_visible_observed",
             "external_channel_probe_required",
-            "real_lark_inbound_required",
+            "real_external_inbound_required",
           ]),
         }),
         expect.objectContaining({
@@ -213,7 +213,7 @@ describe("LCX flow graph exam", () => {
           ]),
         }),
         expect.objectContaining({
-          id: "lark_visible_language_waterflow",
+          id: "external_visible_language_waterflow",
           requiredFilters: expect.arrayContaining([
             "visible_text_no_internal_labels",
             "no_internal_runtime_details_visible",
@@ -250,13 +250,13 @@ describe("LCX flow graph exam", () => {
           receipts: expect.arrayContaining([
             "commercial_acceptance_harness",
             "lcx-problem-cluster-radar",
-            "feishu-reply-flow",
+            "external-message-channel",
           ]),
           requiredFilters: expect.arrayContaining([
             "commercial_error_budget_required",
             "product_canary_suite_required",
             "single_owner_required",
-            "real_lark_inbound_required",
+            "real_external_inbound_required",
           ]),
         }),
         expect.objectContaining({
@@ -444,7 +444,7 @@ describe("LCX flow graph exam", () => {
           watchedPathTerms: expect.arrayContaining(["module-learning", "learning-sedimentation"]),
         }),
         expect.objectContaining({
-          id: "lark_visible_reply_audit_entrypoints",
+          id: "external_visible_reply_audit_entrypoints",
           ownerCluster: "commercial_answer_pipeline_cluster",
           watchedPathTerms: expect.arrayContaining([
             "reply-flow-audit",
@@ -454,8 +454,8 @@ describe("LCX flow graph exam", () => {
             "skillopt-autocue",
           ]),
           allowedPaths: expect.arrayContaining([
-            "extensions/feishu/src/visible-answer-adoption-gate.ts",
-            "extensions/feishu/src/visible-answer-adoption-gate.test.ts",
+            "src/agents/visible-answer-adoption-gate.ts",
+            "src/agents/visible-answer-adoption-gate.test.ts",
             "src/auto-reply/reply/skill-autocue.ts",
             "src/auto-reply/reply/skill-autocue.test.ts",
             "src/auto-reply/reply/skillopt-autocue.ts",
@@ -513,17 +513,10 @@ describe("LCX flow graph exam", () => {
     expect(payload.sharedEntrypointOwnerRules).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: "src/commands/capabilities/lark-loop-diagnose.ts",
+          path: "scripts/operator/lcx-external-channel-status.ts",
           familyIds: expect.arrayContaining([
             "local_live_evidence_entrypoints",
-            "lark_visible_reply_audit_entrypoints",
-          ]),
-        }),
-        expect.objectContaining({
-          path: "src/commands/capabilities.lark-loop-diagnose.test.ts",
-          familyIds: expect.arrayContaining([
-            "local_live_evidence_entrypoints",
-            "lark_visible_reply_audit_entrypoints",
+            "external_visible_reply_audit_entrypoints",
           ]),
         }),
       ]),

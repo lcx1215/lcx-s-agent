@@ -147,7 +147,7 @@ function validateExample(example: Record<string, unknown>, split: string, index:
   );
   assert(Array.isArray(completion.rejected_context), `${split}[${index}] rejected_context array`);
   assert(
-    completion.rejected_context.includes("old_lark_conversation_history"),
+    completion.rejected_context.includes("old_external_conversation_history"),
     `${split}[${index}] missing old context rejection`,
   );
 }

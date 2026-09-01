@@ -1,7 +1,7 @@
 # Local Brain Open Evals
 
 LCX local-brain training can be checked with open-source eval tools without
-touching live Lark, live sender, provider config, protected memory, language
+touching a live external channel, live sender, provider config, protected memory, intent
 corpus, or finance doctrine.
 
 ## Local Bridge
@@ -56,9 +56,9 @@ available. Do not add it to the runtime package dependencies.
 - source-gated finance learning
 - isolated agent-skill distillation from SKILL.md/local skill patterns
 - quant math missing-input refusal
-- Lark context-pollution audit staying ops-first
+- external-channel context-pollution audit staying ops-first
 
-These evals are dev checks. They are not live Lark proof.
+These evals are dev checks. They are not live external-channel proof.
 
 ## Skill Learning Config
 

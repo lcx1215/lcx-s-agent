@@ -22,7 +22,7 @@ OpenClaw 可以在你已经使用的任何聊天应用上与你交流。每个�
 
 - [BlueBubbles](/channels/bluebubbles) — **推荐用于 iMessage**；使用 BlueBubbles macOS 服务器 REST API，功能完整（编辑、撤回、特效、回应、群组管理——编辑功能在 macOS 26 Tahoe 上目前不可用）。
 - [Discord](/channels/discord) — Discord Bot API + Gateway；支持服务器、频道和私信。
-- [飞书](/channels/feishu) — 飞书（Lark）机器人（插件，需单独安装）。
+- [外部消息通道](/channels/external) — 通用 JSON Webhook 入站和 HTTP JSON 出站，可连接任意软件。
 - [Google Chat](/channels/googlechat) — 通过 HTTP webhook 的 Google Chat API 应用。
 - [iMessage（旧版）](/channels/imessage) — 通过 imsg CLI 的旧版 macOS 集成（已弃用，新设置请使用 BlueBubbles）。
 - [LINE](/channels/line) — LINE Messaging API 机器人（插件，需单独安装）。

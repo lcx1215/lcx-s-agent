@@ -119,7 +119,7 @@ const LOCAL_BRAIN_EVAL_PROMPT_CACHE_PREFIX =
     "/no_think",
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
     "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 8 words, and always close the final brace.",
-    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     "primary_modules, supporting_modules, and required_tools must use exact recommended module ids only; do not invent prefixes like finance_framework_*.",
@@ -138,8 +138,8 @@ const PARSE_STABILITY_COMPACT_EVAL_CASE_PREFIXES = [
 const PARSE_STABILITY_COMPACT_EVAL_CASE_IDS = new Set([
   "broad_finance_module_taxonomy_coverage",
   "private_credit_nonbank_leverage_stress_waterflow",
-  "short_lark_commodity_scope_01",
-  "short_lark_commodity_scope_04",
+  "short_external_commodity_scope_01",
+  "short_external_commodity_scope_04",
   "external_knowledge_expansion_04",
   "adversarial_scenario_no_guess_02",
 ]);
@@ -383,7 +383,7 @@ const EVAL_CASES: EvalCase[] = [
     id: "portfolio_mixed_q_t_nvda",
     userAsk:
       "我持有QQQ、TLT和少量NVDA，未来两周担心利率、AI capex、美元流动性。请先规划内部模块，不要给交易建议。",
-    sourceSummary: "clean_context_eval_no_old_lark_history",
+    sourceSummary: "clean_context_eval_no_old_external_history",
     requiredModules: REQUIRED_FINANCE_MODULES,
     minModuleMatches: 3,
   },
@@ -469,7 +469,7 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "ambiguous_repeat_no_old_context",
     userAsk: "重新来一遍。",
-    sourceSummary: "ambiguous repeat request with no current subject and old Lark context cleared.",
+    sourceSummary: "ambiguous repeat request with no current subject and old External context cleared.",
     requiredModules: [],
     forbiddenModules: REQUIRED_FINANCE_MODULES,
     minModuleMatches: 0,
@@ -727,7 +727,7 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "all_module_knowledge_internalization_chain",
     userAsk:
-      "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 等模块也要有这种从网上学习、source registry、实际阅读范围、能力卡、retrieval receipt、apply validation、Qwen eval 吸收、fresh adjacent task、module learning review 状态和 keep/downrank/discard 的链条；不能把存了文件说成模块学会了。",
+      "不止是因子模块，期权、指数、宏观、基本面、external message 工作流、记忆、ops 和 skill 等模块也要有这种从网上学习、source registry、实际阅读范围、能力卡、retrieval receipt、apply validation、Qwen eval 吸收、fresh adjacent task、module learning review 状态和 keep/downrank/discard 的链条；不能把存了文件说成模块学会了。",
     sourceSummary:
       "all local-brain modules must share the source-to-capability-to-retrieval-to-application-to-eval-to-review internalization chain instead of keeping it factor-only or plan-only.",
     requiredModules: [
@@ -764,7 +764,7 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "abstraction_transfer_repair_protocol",
     userAsk:
-      "以后我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。请把它抽象成问题族，留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract 和 regression proof，再证明简单前置题和相邻非同类题都能过。",
+      "以后我给一个例子，比如 External 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。请把它抽象成问题族，留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract 和 regression proof，再证明简单前置题和相邻非同类题都能过。",
     sourceSummary:
       "abstraction-transfer repair protocol requiring original example, failure family, adjacent transfer case, shared contract, and regression proof.",
     requiredModules: [
@@ -791,7 +791,7 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "plain_language_hidden_complexity_intake",
     userAsk:
-      "如果我只说一句很短的话，比如“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”或“Lark 回复看不懂”，不要按字面短答。请先抽象成问题族：original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof，然后再决定具体模块和人话总结。",
+      "如果我只说一句很短的话，比如“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”或“External 回复看不懂”，不要按字面短答。请先抽象成问题族：original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof，然后再决定具体模块和人话总结。",
     sourceSummary:
       "generic plain-language hidden-complexity intake requiring abstraction transfer before specialized finance, learning, ops, or visible-reply handling.",
     requiredModules: [
@@ -871,8 +871,8 @@ const EVAL_CASES: EvalCase[] = [
     ],
   },
   {
-    id: "lark_context_pollution_audit",
-    userAsk: "它刚才又像串到旧任务了，先审计是不是 Lark 上下文污染，不要继续金融分析。",
+    id: "external_context_pollution_audit",
+    userAsk: "它刚才又像串到旧任务了，先审计是不是 External 上下文污染，不要继续金融分析。",
     sourceSummary: "ops audit request, explicitly not a finance research request.",
     requiredModules: ["ops_audit"],
     forbiddenModules: REQUIRED_FINANCE_MODULES,
@@ -2398,10 +2398,10 @@ const EVAL_CASES: EvalCase[] = [
     requiredRiskBoundaries: ["do_not_promote_unverified_memory_claims"],
   },
   {
-    id: "short_lark_commodity_learning_intake",
+    id: "short_external_commodity_learning_intake",
     userAsk: "学习大宗商品。",
     sourceSummary:
-      "short realistic Lark utterance; must expand into commodity framework learning instead of a vague reply.",
+      "short realistic External utterance; must expand into commodity framework learning instead of a vague reply.",
     requiredModules: [
       "finance_learning_memory",
       "source_registry",
@@ -2490,7 +2490,7 @@ const EVAL_CASES: EvalCase[] = [
       "我想把原油、黄金、铜和 DBC 放进未来美股组合研究里，先学习大宗商品框架：美元、实际利率、库存、期限结构、roll yield、通胀和组合风险怎么连贯拆？",
     sourceSummary:
       "commodity macro loop across USD, real rates, inventory, term structure, roll yield, inflation, and portfolio risk.",
-    prerequisiteCaseIds: ["short_lark_commodity_learning_intake"],
+    prerequisiteCaseIds: ["short_external_commodity_learning_intake"],
     requiredModules: [
       "finance_learning_memory",
       "source_registry",
@@ -2975,7 +2975,7 @@ function expandEvalTemplate(template: EvalExpansionTemplate): EvalCase[] {
 
 const GENERATED_EVAL_EXPANSION_CASES = [
   ...expandEvalTemplate({
-    idPrefix: "short_lark_recent_market_scope",
+    idPrefix: "short_external_recent_market_scope",
     canonicalAsk: "分析最近股市。",
     sourceSummary: "short natural-language market brief no-regression prompt variant.",
     prerequisiteCaseIds: ["plain_language_hidden_complexity_intake"],
@@ -3003,7 +3003,7 @@ const GENERATED_EVAL_EXPANSION_CASES = [
     ],
   }),
   ...expandEvalTemplate({
-    idPrefix: "short_lark_position_sizing_scope",
+    idPrefix: "short_external_position_sizing_scope",
     canonicalAsk: "关注 NVDA 持仓多少。",
     sourceSummary: "short natural-language position sizing no-regression prompt variant.",
     prerequisiteCaseIds: ["plain_single_stock_position_sizing_preflight"],
@@ -3036,7 +3036,7 @@ const GENERATED_EVAL_EXPANSION_CASES = [
     ],
   }),
   ...expandEvalTemplate({
-    idPrefix: "short_lark_buy_hold_boundary",
+    idPrefix: "short_external_buy_hold_boundary",
     canonicalAsk: "NVDA 还能不能拿，要不要买一点？",
     sourceSummary: "short natural-language buy hold no-regression prompt variant.",
     prerequisiteCaseIds: ["plain_buy_hold_research_boundary"],
@@ -3107,10 +3107,10 @@ const GENERATED_EVAL_EXPANSION_CASES = [
     ],
   }),
   ...expandEvalTemplate({
-    idPrefix: "short_lark_commodity_scope",
+    idPrefix: "short_external_commodity_scope",
     canonicalAsk: "学习大宗商品。",
     sourceSummary: "short commodity framework no-regression prompt variant.",
-    prerequisiteCaseIds: ["short_lark_commodity_learning_intake"],
+    prerequisiteCaseIds: ["short_external_commodity_learning_intake"],
     requiredModules: [
       "finance_learning_memory",
       "source_registry",
@@ -3407,7 +3407,7 @@ const GENERATED_EVAL_EXPANSION_CASES = [
   ...expandEvalTemplate({
     idPrefix: "memory_internalization_expansion",
     canonicalAsk:
-      "期权、指数、宏观、基本面、Lark workflow、记忆和 ops 等模块也都要走同一条 source registry、retrieval receipt、apply validation、qwen eval 吸收和 review 链条。",
+      "期权、指数、宏观、基本面、External workflow、记忆和 ops 等模块也都要走同一条 source registry、retrieval receipt、apply validation、qwen eval 吸收和 review 链条。",
     sourceSummary: "memory learning internalization expansion prompt variant.",
     prerequisiteCaseIds: ["all_module_knowledge_internalization_chain"],
     requiredModules: [
@@ -3435,7 +3435,7 @@ const GENERATED_EVAL_EXPANSION_CASES = [
     userAsks: [
       "期权模块也要走同一条 source registry 到 eval 吸收链。",
       "宏观模块学网页内容，也要 retrieval receipt 和 apply validation。",
-      "Lark workflow 学习不能只存总结，也要评测吸收。",
+      "External workflow 学习不能只存总结，也要评测吸收。",
       "记忆模块和 ops 模块都要同一条内化链。",
       "基本面模块学习外部材料，不能只生成摘要。",
     ],
@@ -3532,7 +3532,7 @@ const GENERATED_EVAL_EXPANSION_CASES = [
     ],
     userAsks: [
       "这个不是修一句话，要抽象成同类问题族。",
-      "比如 Lark 回复怪，别只修当前样例，要有 adjacent case。",
+      "比如 External 回复怪，别只修当前样例，要有 adjacent case。",
       "大宗商品这个例子要迁移成通用学习入口。",
       "把这次失败抽成 shared contract 和 regression proof。",
       "不要只 patch 原例子，要证明非同类相邻场景也过。",
@@ -3868,11 +3868,11 @@ const EVAL_REGISTRY_SUITES = [
       evalCase.requiredModules.includes("data_provenance_quality"),
   },
   {
-    id: "lark_short_intake",
+    id: "external_short_intake",
     targetCaseCount: 30,
     description: "short natural-language asks that must expand into the right workflow",
     matches: (evalCase: EvalCase) =>
-      /(plain|short_lark|lark|ambiguous|短|一句|口语)/iu.test(`${evalCase.id} ${evalCase.userAsk}`),
+      /(plain|short_external|external|ambiguous|短|一句|口语)/iu.test(`${evalCase.id} ${evalCase.userAsk}`),
   },
   {
     id: "memory_learning",
@@ -4119,9 +4119,9 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
     "options_iv_event_risk_no_trade",
     ["single_company_fundamental_risk", "portfolio_math_without_guessing"],
   ],
-  ["commodity_fx_inflation_inventory_portfolio_loop", ["short_lark_commodity_learning_intake"]],
+  ["commodity_fx_inflation_inventory_portfolio_loop", ["short_external_commodity_learning_intake"]],
   ["energy_inflation_cross_asset_shock_risk", ["commodity_fx_inflation_inventory_portfolio_loop"]],
-  ["short_lark_commodity_learning_intake", ["plain_language_hidden_complexity_intake"]],
+  ["short_external_commodity_learning_intake", ["plain_language_hidden_complexity_intake"]],
   ["plain_recent_stock_market_brief_preflight", ["plain_language_hidden_complexity_intake"]],
   [
     "plain_single_stock_position_sizing_preflight",
@@ -4220,8 +4220,8 @@ const EVAL_CASE_PREREQUISITES = new Map<string, string[]>([
     "abstraction_transfer_repair_protocol",
     [
       "plain_language_hidden_complexity_intake",
-      "short_lark_commodity_learning_intake",
-      "lark_context_pollution_audit",
+      "short_external_commodity_learning_intake",
+      "external_context_pollution_audit",
     ],
   ],
 ]);
@@ -4329,8 +4329,8 @@ function scoreEvalContractHint(evalCase: EvalCase, hint: string): number {
       4,
     ],
     [
-      /lark|feishu|plain|visible|short|position|buy|hold/u,
-      /plain|short|Lark|Feishu|visible|position|buy|hold/iu,
+      /external|external|plain|visible|short|position|buy|hold/u,
+      /plain|short|External|External|visible|position|buy|hold/iu,
       3,
     ],
     [/memory|review|causal|receipt/u, /memory|learned rules|receipts|causal|review/iu, 3],
@@ -4442,7 +4442,7 @@ function buildBlindPrompt(evalCase: EvalCase): string {
     "Blind neutral raw-contract eval: infer the contract from only the user/task.",
     "/no_think",
     "No prose, no markdown, no <think>, no explanations, no nested objects.",
-    '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    '{"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
     "Return one single-line JSON object only; close the final brace and do not echo an answer template.",
     `Allowed module ids (choose only those justified by the task): ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
     `Allowed risk_boundary ids (choose only those justified by the task): ${LOCAL_BRAIN_RISK_BOUNDARIES.join(", ")}.`,
@@ -4465,7 +4465,7 @@ function buildRetryPrompt(evalCase: EvalCase, mode: "timeout_retry" | "parse_ret
     `${mode === "parse_retry" ? "Parse" : "Timeout"} retry compact mode: output one single-line JSON object only.`,
     "/no_think",
     "No prose, no markdown, no <think>, no explanations, no nested objects.",
-    'Exact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    'Exact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
     "Keep arrays short; use only compact snake_case ids.",
     `Allowed module ids: ${promptModuleIds.join(", ")}.`,
     requiredMissingData.length > 0
@@ -5144,7 +5144,7 @@ function evaluate(
     riskBoundaries.includes("research_only") || riskBoundaries.includes("no_execution_authority");
   const oldContextRejected = includesCanonicalContractToken(
     rejectedContext,
-    "old_lark_conversation_history",
+    "old_external_conversation_history",
   );
   return {
     ok:

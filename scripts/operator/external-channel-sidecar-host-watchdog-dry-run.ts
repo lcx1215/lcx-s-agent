@@ -43,7 +43,7 @@ type Args = {
 
 export type HostWatchdogDryRunReport = {
   schemaVersion: 1;
-  mode: "dry_run_no_launchagent_change_no_lark_send";
+  mode: "dry_run_no_launchagent_change_no_external_send";
   checkedAt: string;
   legacyRoot: string;
   targetRoot: string;
@@ -249,7 +249,7 @@ export function buildHostWatchdogDryRunReport(params: {
   const migrationReady = blockedReasons.length === 0;
   return {
     schemaVersion: 1,
-    mode: "dry_run_no_launchagent_change_no_lark_send",
+    mode: "dry_run_no_launchagent_change_no_external_send",
     checkedAt: params.checkedAt ?? new Date().toISOString(),
     legacyRoot: params.legacyRoot,
     targetRoot: params.targetRoot,
@@ -262,12 +262,12 @@ export function buildHostWatchdogDryRunReport(params: {
     nextSafePatch: migrationReady
       ? [
           "Install a new host watchdog LaunchAgent only after the runtime bundle and smoke receipt pass.",
-          "Keep Feishu/Lark proxy unchanged until scheduler and watchdog root drift are resolved.",
+          "Keep external message proxy unchanged until scheduler and watchdog root drift are resolved.",
         ]
       : [
           "Port only the missing host watchdog read-only dependency chain into the clean repo or runtime bundle.",
           "Add a no-alert watchdog smoke before changing the macOS LaunchAgent.",
-          "Leave Feishu/Lark proxy and live plist untouched until the smoke is ready.",
+          "Leave external message proxy and live plist untouched until the smoke is ready.",
         ],
   };
 }

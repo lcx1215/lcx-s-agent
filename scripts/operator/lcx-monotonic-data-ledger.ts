@@ -364,7 +364,7 @@ export function buildMonotonicDataLedgerSnapshot(params: {
       runtimeMonotonicNotEveryTrainingRound: true,
       modelWeightAbsorptionRequiresPromotionProof: true,
       externalChannelRequiresSeparateUserVisibleProof: true,
-      liveLarkRequiresSeparateLiveProof: true,
+      liveExternalRequiresSeparateLiveProof: true,
     },
     materialChangeSignalCount: countNonEmpty([
       compareNumber(currentCounts.datasetExamples, previousCounts.datasetExamples) === "increased",

@@ -1,0 +1,9 @@
+{
+  "id": "external",
+  "channels": ["external"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

@@ -745,8 +745,8 @@ function isStatusReadbackQuestion(text: string): boolean {
     "live了",
     "上 live",
     "上线",
-    "真实 lark",
-    "真实 feishu",
+    "真实 external",
+    "真实外部通道",
   ].some((phrase) => text.includes(phrase));
   const asksCurrent = [
     "now",

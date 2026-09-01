@@ -456,7 +456,7 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
   }
 
   if (id === "trainingPlan") {
-    const liveLarkBrainBinding = recordValue(payload.liveLarkBrainBinding);
+    const liveExternalBrainBinding = recordValue(payload.liveExternalBrainBinding);
     const externalChannelBinding = recordValue(payload.externalChannelBinding);
     const accelerationQueue = recordValue(payload.evolutionAccelerationQueue);
     const latestCandidateEval = recordValue(payload.latestCandidateEval);
@@ -471,7 +471,7 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
       selectedCleanAdapter:
         payload.selectedCleanAdapter ??
         externalChannelBinding?.selectedCleanAdapter ??
-        liveLarkBrainBinding?.selectedCleanAdapter,
+        liveExternalBrainBinding?.selectedCleanAdapter,
       decisionIds: decisionIds(payload),
       latestCandidateEval: latestCandidateEval
         ? {
@@ -491,11 +491,11 @@ function compactOwner(id: OwnerId, payload: Record<string, unknown> | undefined)
             userVisibleObserved: externalChannelBinding.userVisibleObserved,
           }
         : undefined,
-      liveLarkBrainBinding: liveLarkBrainBinding
+      liveExternalBrainBinding: liveExternalBrainBinding
         ? {
-            status: liveLarkBrainBinding.status,
-            action: liveLarkBrainBinding.action,
-            missingProof: liveLarkBrainBinding.missingProof,
+            status: liveExternalBrainBinding.status,
+            action: liveExternalBrainBinding.action,
+            missingProof: liveExternalBrainBinding.missingProof,
           }
         : undefined,
       evolutionAcceleration: accelerationQueue

@@ -106,7 +106,7 @@ async function seedGeneralLearningEvidence(workspaceDir: string): Promise<void> 
   await writeJson(path.join(memoryDir, "finance-learning-apply-usage-reviews", "day.json"), {
     ok: true,
   });
-  await writeJson(path.join(memoryDir, "lark-brain-distillation-reviews", "day", "b.json"), {
+  await writeJson(path.join(memoryDir, "external-brain-distillation-reviews", "day", "b.json"), {
     acceptedCandidates: [
       {
         boundary: "brain_distillation_candidate",
@@ -366,7 +366,7 @@ describe("LCX learning sedimentation audit", () => {
         ok: true,
       },
     );
-    await writeJson(path.join(memoryDir, "lark-brain-distillation-reviews", "day", "b.json"), {
+    await writeJson(path.join(memoryDir, "external-brain-distillation-reviews", "day", "b.json"), {
       acceptedCandidates: [
         {
           boundary: "brain_distillation_candidate",

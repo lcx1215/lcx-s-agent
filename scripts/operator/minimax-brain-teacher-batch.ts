@@ -3,11 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  buildLarkBrainDistillationCandidate,
-  LARK_BRAIN_DISTILLATION_REVIEW_DIR,
-  type LarkBrainDistillationCandidate,
-  type LarkBrainDistillationReviewArtifact,
-} from "../../extensions/feishu/src/lark-brain-distillation-candidates.js";
+  buildExternalBrainDistillationCandidate,
+  EXTERNAL_BRAIN_DISTILLATION_REVIEW_DIR,
+  type ExternalBrainDistillationCandidate,
+  type ExternalBrainDistillationReviewArtifact,
+} from "../../src/agents/external-brain-distillation-candidates.js";
 import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
 import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
 import { loadConfig } from "../../src/config/config.js";
@@ -223,7 +223,7 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
   {
     id: "context_reset",
     userMessage: "清除上下文，换个题，从头开始。",
-    sourceSummary: "fresh-start request; reject old Lark history.",
+    sourceSummary: "fresh-start request; reject old External history.",
   },
   {
     id: "ambiguous_repeat",
@@ -231,8 +231,8 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
     sourceSummary: "ambiguous repeat without current subject.",
   },
   {
-    id: "lark_context_pollution",
-    userMessage: "它刚才又像串到旧任务了，先审计是不是 Lark 上下文污染，不要继续金融分析。",
+    id: "external_context_pollution",
+    userMessage: "它刚才又像串到旧任务了，先审计是不是 External 上下文污染，不要继续金融分析。",
     sourceSummary: "ops audit request; not a finance research task.",
   },
   {
@@ -301,14 +301,14 @@ const TEACHER_PROMPTS: TeacherPrompt[] = [
   {
     id: "all_module_knowledge_internalization_chain",
     userMessage:
-      "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 等模块也要走同一条网上学习内化链条：先确认目标模块和 prior-art，再做 source registry、实际阅读范围、模块专属能力规则、retrieval receipt、apply validation、Qwen/local-brain eval 或训练吸收、fresh adjacent task、module_learning_pipeline_review 状态、模块安全边界和 keep/downrank/discard；不能把“存了文件”或 plan receipt 说成“模块学会了”。",
+      "不止是因子模块，期权、指数、宏观、基本面、external message 工作流、记忆、ops 和 skill 等模块也要走同一条网上学习内化链条：先确认目标模块和 prior-art，再做 source registry、实际阅读范围、模块专属能力规则、retrieval receipt、apply validation、Qwen/local-brain eval 或训练吸收、fresh adjacent task、module_learning_pipeline_review 状态、模块安全边界和 keep/downrank/discard；不能把“存了文件”或 plan receipt 说成“模块学会了”。",
     sourceSummary:
       "all-module internalization chain request requiring source registry, module-specific capability rule, retrieval/apply proof, eval absorption, fresh adjacent task, module-learning review status, and no storage-only or plan-only learning claim.",
   },
   {
     id: "abstraction_transfer_repair_protocol",
     userMessage:
-      "训练本地大脑具备人类抽象能力：我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。必须抽象成问题族，并留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof；还要证明简单前置题和相邻非同类题都能过。",
+      "训练本地大脑具备人类抽象能力：我给一个例子，比如 External 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。必须抽象成问题族，并留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof；还要证明简单前置题和相邻非同类题都能过。",
     sourceSummary:
       "abstraction-transfer repair protocol requiring original example, failure family, adjacent transfer case, shared contract, and regression proof.",
   },
@@ -491,13 +491,13 @@ export function buildTeacherSystemPrompt(): string {
     "- research only; no execution authority",
     "- missing source must include source_url_or_local_source_path",
     "- missing portfolio math inputs must include position_weights_and_return_series",
-    "- ambiguous repeat must ask for current_subject_or_original_request and reject old_lark_conversation_history",
+    "- ambiguous repeat must ask for current_subject_or_original_request and reject old_external_conversation_history",
     "- ops audit must not become finance analysis",
     "- complex finance decomposition must include finance_learning_memory, source_registry, causal_map, portfolio_risk_gates, review_panel, and control_room_summary",
     "- fundamentals and value-investing asks must prioritize company_fundamentals_value before technical timing; require filing/source evidence, revenue quality, margin durability, free cash flow, ROIC, balance sheet, moat, management capital allocation, valuation range, margin of safety, value-trap risk, and thesis invalidation",
     "- DCF, comps, three-statement, spreadsheet, or valuation-model asks must include financial_modeling_valuation_qc, data_provenance_quality, research_artifact_qc, source evidence, assumptions, sensitivity, and no_model_math_guessing",
     "- thesis, catalyst, invalidation, event-calendar, post-event, or correction-note asks must include thesis_catalyst_lifecycle and red_team_invalidation_required",
-    "- current market, price, fundamental, macro, ETF, options, index-weight, vendor, or portfolio-risk numbers must include finance_data_gateway before Qwen or Lark uses them; require primary source, cross-check source, official or issuer reference when applicable, source timestamp, timezone, field definition, unit/currency, adjusted status, and conflict routing to data_provenance_quality",
+    "- current market, price, fundamental, macro, ETF, options, index-weight, vendor, or portfolio-risk numbers must include finance_data_gateway before Qwen or External uses them; require primary source, cross-check source, official or issuer reference when applicable, source timestamp, timezone, field definition, unit/currency, adjusted status, and conflict routing to data_provenance_quality",
     "- vendor, field-definition, timestamp, currency, adjustment, data-source conflict, or sourced-number quality asks must include finance_data_gateway, data_provenance_quality, and source_registry",
     "- report, spreadsheet, table, model-output, citation, or visible-summary artifact asks must include research_artifact_qc and cite_every_number_or_mark_unsourced",
     "- all-domain finance learning must make company fundamentals and value-investing judgment a core anchor, then connect macro rates, credit, FX, cross-asset liquidity, US equities, A-shares, global indices, ETFs, commodities, options volatility, crypto, technical timing, quant validation, event risk, sentiment validation, portfolio risk gates, source registry, and review panel",
@@ -797,19 +797,19 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       missing_data: ["current_subject_or_original_request"],
       risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
       next_step: "ask_user_for_current_subject_before_reusing_prior_context",
-      rejected_context: ["old_lark_conversation_history"],
+      rejected_context: ["old_external_conversation_history"],
     };
   }
   if (/上下文|污染|ops audit/u.test(text)) {
     return {
-      task_family: "lark_context_pollution_audit",
+      task_family: "external_context_pollution_audit",
       primary_modules: ["ops_audit"],
       supporting_modules: ["control_room_summary", "review_panel"],
-      required_tools: ["lark_loop_diagnose", "sessions_history", "review_panel"],
-      missing_data: ["fresh_lark_message_id_or_visible_reply_text"],
+      required_tools: ["external_loop_diagnose", "sessions_history", "review_panel"],
+      missing_data: ["fresh_external_message_id_or_visible_reply_text"],
       risk_boundaries: ["no_execution_authority", "evidence_required"],
-      next_step: "inspect_lark_session_store_and_candidate_replay_before_claiming_live_fixed",
-      rejected_context: ["old_lark_conversation_history"],
+      next_step: "inspect_external_session_store_and_candidate_replay_before_claiming_live_fixed",
+      rejected_context: ["old_external_conversation_history"],
     };
   }
   if (
@@ -883,7 +883,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       next_step:
         "read_source_at_pinned_commit_then_distill_workflow_owner_leaf_workers_handoff_contract_tool_boundaries_untrusted_source_isolation_qc_sequence_human_signoff_and_visible_summary_before_claiming_helpful",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "install_enterprise_mcp_without_credentials",
         "direct_install_external_agent_without_isolation",
         "single_agent_chat_role_without_workflow_contract",
@@ -943,7 +943,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       next_step:
         "collect_candidate_skill_sources_review_license_and_write_scope_then_distill_safe_workflow_into_local_skill_and_eval_case",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "cloud_skill_sharing_by_default",
         "market_alpha_claim_without_source",
       ],
@@ -1013,7 +1013,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       next_step:
         "check_prior_art_then_classify_source_reuse_or_extend_existing_path_verify_license_security_reading_scope_replication_capability_card_retrieval_apply_eval_and_keep_or_downrank",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "new_parallel_protocol_without_prior_art_check",
         "unverified_paper_summary",
         "untrusted_external_skill",
@@ -1067,7 +1067,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
         "unverified_paper_summary",
         "paper_backtest_as_trade_rule",
         "model_internal_learning_claim_without_training_eval_evidence",
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
       ],
     };
   }
@@ -1114,7 +1114,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       ],
       next_step:
         "mark_current_market_claims_unverified_until_source_timestamp_and_fresh_data_snapshot_are_available_then_run_review",
-      rejected_context: ["unverified_current_market_claim", "old_lark_conversation_history"],
+      rejected_context: ["unverified_current_market_claim", "old_external_conversation_history"],
     };
   }
   if (
@@ -1156,7 +1156,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       ],
       next_step:
         "convert_strategy_into_hypothesis_with_bias_checks_sample_out_plan_failure_regime_and_review_before_any_reusable_rule",
-      rejected_context: ["old_lark_conversation_history", "backtest_as_profit_claim"],
+      rejected_context: ["old_external_conversation_history", "backtest_as_profit_claim"],
     };
   }
   if (/高杠杆|20x|50x|100x|leverage|开多|开空|下单|爆仓/u.test(text)) {
@@ -1191,7 +1191,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       next_step:
         "reject_execution_or_high_leverage_language_then_analyze_crypto_as_risk_sentiment_and_liquidity_input_only",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "execution_or_high_leverage_crypto_instruction",
       ],
     };
@@ -1241,7 +1241,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       ],
       next_step:
         "review_repo_license_data_sources_and_validation_plan_then_distill_sentiment_as_one_evidence_layer_with_eval_gate",
-      rejected_context: ["old_lark_conversation_history", "sentiment_as_standalone_trade_signal"],
+      rejected_context: ["old_external_conversation_history", "sentiment_as_standalone_trade_signal"],
     };
   }
   if (
@@ -1278,7 +1278,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       ],
       next_step:
         "request_or_collect_filing_source_before_stating_fundamental_claims_then_route_to_review_panel",
-      rejected_context: ["old_lark_conversation_history", "unverified_filing_summary"],
+      rejected_context: ["old_external_conversation_history", "unverified_filing_summary"],
     };
   }
   if (/技术面|technical|均线|rsi|macd|成交量|breadth|动量|momentum/u.test(text)) {
@@ -1321,7 +1321,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       ],
       next_step:
         "use_technical_inputs_only_for_timing_context_after_macro_liquidity_and_risk_gate_review",
-      rejected_context: ["old_lark_conversation_history", "single_factor_technical_story"],
+      rejected_context: ["old_external_conversation_history", "single_factor_technical_story"],
     };
   }
   if (
@@ -1379,7 +1379,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       next_step:
         "route_failure_family_through_source_gateway_capability_apply_eval_review_before_summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "parallel_failure_pipeline",
         "stored_source_as_learned_module",
         "trade_recommendation_without_evidence",
@@ -1466,7 +1466,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       next_step:
         "recall_memory_then_decompose_all_finance_layers_check_simple_prerequisites_collect_evidence_run_quant_risk_and_review",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "single_bucket_finance_routing",
         "simple_prerequisite_skipped",
         "trade_recommendation_without_evidence",
@@ -1516,7 +1516,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       next_step:
         "read_source_filings_first_then_score_business_quality_cash_flow_roic_balance_sheet_moat_valuation_safety_margin_value_trap_and_invalidation",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "technical_timing_before_fundamentals",
         "valuation_without_source_evidence",
         "trade_recommendation_without_evidence",
@@ -1579,7 +1579,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       next_step:
         "recall_local_finance_rules_then_build_cross_market_causal_map_collect_fresh_inputs_run_quant_and_review_before_control_room_summary",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "execution_or_high_leverage_crypto_instruction",
       ],
     };
@@ -1592,7 +1592,7 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
     missing_data: /没给|without|missing/u.test(text) ? ["source_url_or_local_source_path"] : [],
     risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
     next_step: "review_teacher_plan_before_dataset_promotion",
-    rejected_context: ["old_lark_conversation_history"],
+    rejected_context: ["old_external_conversation_history"],
   };
 }
 
@@ -1875,8 +1875,8 @@ function canonicalRiskBoundary(entry: string): string {
     normalized === "no_language_corpus_changes" ||
     normalized === "no_language_corpus_modification" ||
     normalized === "no_language_corpus_modify" ||
-    normalized === "no_formal_lark_routing_corpus" ||
-    normalized === "no_formal_lark_routing_corpus_change"
+    normalized === "no_formal_external_routing_corpus" ||
+    normalized === "no_formal_external_routing_corpus_change"
   ) {
     return "no_language_corpus_modification";
   }
@@ -2081,7 +2081,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   };
 
   const isContextReset =
-    /context_reset|ambiguous_repeat|lark_context_pollution|重新来一遍|别串|旧任务|没说清楚|上下文污染|清除上下文/u.test(
+    /context_reset|ambiguous_repeat|external_context_pollution|重新来一遍|别串|旧任务|没说清楚|上下文污染|清除上下文/u.test(
       ask,
     );
   const isEtfAsCompanyFundamentals =
@@ -2148,7 +2148,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   const isAllModuleKnowledgeInternalization =
     /(不止是因子|所有模块|全部模块|all[- ]?module|target module|目标模块).{0,120}(内化|吸收|学习|learn|internalization|source registry|retrieval receipt|apply validation)/iu.test(
       ask,
-    ) || /(期权|指数|宏观|基本面|Lark|Feishu|记忆|ops|skill).{0,120}(同一条|内化链)/iu.test(ask);
+    ) || /(期权|指数|宏观|基本面|External|External|记忆|ops|skill).{0,120}(同一条|内化链)/iu.test(ask);
   const isAbstractionTransfer =
     /(抽象能力|人类的抽象|抽象迁移|问题族|failure family|problem family|同类问题|同类接口|shared contract|共享契约|original example|regression proof|adjacent non-identical|相邻非同类)/iu.test(
       ask,
@@ -2159,7 +2159,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     replaceSupporting(["review_panel"]);
     replaceRequiredTools([]);
     ensureMissing(["current_subject_or_original_request"]);
-    ensureRejected(["old_lark_conversation_history", "unstated_finance_subject"]);
+    ensureRejected(["old_external_conversation_history", "unstated_finance_subject"]);
     ensureRisk(["ops_audit_must_not_become_finance_analysis"]);
     nextStep =
       "Ask for the current subject or audit context pollution before doing any finance analysis.";
@@ -2222,7 +2222,7 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
     ensureRisk(["no_unverified_current_market_data"]);
   }
 
-  if (/language corpus|formal_lark_routing_corpus|语言语料|路由语料/iu.test(ask)) {
+  if (/language corpus|formal_external_routing_corpus|语言语料|路由语料/iu.test(ask)) {
     ensureRisk(["no_language_corpus_modification"]);
   }
 
@@ -2758,8 +2758,8 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
 function makeAcceptedCandidate(
   input: TeacherPrompt,
   plan: TeacherPlan,
-): LarkBrainDistillationCandidate {
-  const candidate = buildLarkBrainDistillationCandidate({
+): ExternalBrainDistillationCandidate {
+  const candidate = buildExternalBrainDistillationCandidate({
     source: "teacher_review",
     userMessage: input.userMessage,
     payload: JSON.stringify({ teacher: "MiniMax-M2.7", sourceSummary: input.sourceSummary }),
@@ -2787,7 +2787,7 @@ function makeAcceptedCandidate(
 const PROVIDER_PAYLOAD_UNSTABLE_PROMPTS = new Set([
   "context_reset",
   "ambiguous_repeat",
-  "lark_context_pollution",
+  "external_context_pollution",
   "source_grounding_audit",
   "local_math_then_review",
   "daily_learning_automation",
@@ -2834,7 +2834,7 @@ async function main(): Promise<void> {
           (prompt) => !PROVIDER_PAYLOAD_UNSTABLE_PROMPTS.has(prompt.id),
         );
   const selectedPrompts = teacherPromptPool.slice(0, options.limit);
-  const acceptedCandidates: LarkBrainDistillationCandidate[] = [];
+  const acceptedCandidates: ExternalBrainDistillationCandidate[] = [];
   const failures: Array<{ id: string; error: string }> = [];
   const directApiFallbackPromptIds: string[] = [];
   const providerUsageReceipts: Array<{ id: string; usage: unknown }> = [];
@@ -2889,7 +2889,7 @@ async function main(): Promise<void> {
   const reviewedAt = new Date().toISOString();
   const providerSkippedFailures = failures.filter(isProviderPayloadMissingFailure);
   const hardFailures = failures.filter((failure) => !isProviderPayloadMissingFailure(failure));
-  const review: LarkBrainDistillationReviewArtifact = {
+  const review: ExternalBrainDistillationReviewArtifact = {
     schemaVersion: 1,
     boundary: "brain_distillation_review",
     reviewedAt,
@@ -2921,7 +2921,7 @@ async function main(): Promise<void> {
       const dateKey = reviewedAt.slice(0, 10);
       const reviewDir = path.join(
         options.workspaceDir,
-        LARK_BRAIN_DISTILLATION_REVIEW_DIR,
+        EXTERNAL_BRAIN_DISTILLATION_REVIEW_DIR,
         dateKey,
       );
       await fs.mkdir(reviewDir, { recursive: true });

@@ -16,7 +16,7 @@ level.
 
 The target product shape is simple:
 
-- When the owner asks in Lark or any future communication medium, LCX Agent
+- When the owner asks in external message channel or any future communication medium, LCX Agent
   should understand the ask, do the necessary internal work, use the right
   finance modules, call current-data and provider-council owners when needed,
   and return a direct, concise, useful answer rather than a vague conservative
@@ -93,18 +93,18 @@ node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json
 
 It consumes existing owners for answer quality, problem clusters, architecture,
 external-channel status, training overlap, and provider council evidence. It must not
-replace those owners, send Lark messages, start training, change provider
+  replace those owners, send external messages, start training, change provider
 config, touch protected memory, or claim `user-visible-observed` without real
-post-migration Lark evidence.
+  post-migration external-channel evidence.
 Commercial answer quality must be judged against frontier peer-level finance
 assistant behavior, not against "does not crash" or a few hard-coded short
-phrases. For Lark or any future communication adapter, the owner expectation is:
+phrases. For the External Message Channel or any future communication adapter, the owner expectation is:
 the user asks naturally, the system classifies the ask, gathers evidence through
 the selected clean LCX Agent path, uses Kimi/MiniMax/DeepSeek and local Qwen only
 as attributable candidate/challenge evidence, then returns a concise useful
 answer or an exact blocked reason. A local fuzzer pass is not enough if real
-Lark user utterances and final visible replies are not captured as replayable
-candidate artifacts. `lark-loop-diagnose` must expose that capture/replay truth,
+external-channel user utterances and final visible replies are not captured as replayable
+candidate artifacts. `scripts/operator/lcx-external-channel-status.ts` must expose that capture/replay truth,
 and commercial acceptance must block or watch real-candidate gaps instead of
 treating handoff receipts alone as product proof.
 
@@ -113,7 +113,7 @@ treating handoff receipts alone as product proof.
 Future Codex, Claude Code, and LCX Agent operator flows should not wait for the
 user to ask for each architecture check by name. For any non-trivial engineering
 task, compressed-context handoff, training/promotion judgment, module-learning
-claim, memory sedimentation claim, Lark external-channel/user-visible claim, or
+claim, memory sedimentation claim, external-channel/user-visible claim, or
 "continue finding issues" request, run the governance stack automatically:
 
 ```bash
@@ -202,15 +202,16 @@ Use the matching skill before acting:
 - `lcx-evolution-loop` for realistic self-improvement loops.
 - `agent-brain-eval` for judging local-brain learning/internalization.
 - `finance-learning-researcher` for finance, ETF, quant, source-gated learning.
-- `lark-live-loop-debugger` and `lark-post-migration-probe` for Feishu/Lark proof.
+- `agent-runtime-drift-auditor` for external-channel/runtime drift and
+  `scripts/operator/lcx-external-channel-status.ts` for read-only channel proof.
 - `agent-runtime-drift-auditor` for core/external-channel/runtime drift,
   including legacy live-sidecar compatibility checks.
 - `lcx-qwen-training-operator` for Qwen 24-hour training supervision, overlap prevention, launchd/operator checks, and promotion truth.
 - `lcx-workflow-waterflow-auditor` for god-view workflow, waterflow, head-tail, memory sedimentation, and macro/micro consistency checks.
 - `lcx-module-learning-absorption-operator` for online/source learning, module internalization, and stored-only vs eval-absorbed truth.
-- `lcx-commercial-answer-pipeline-operator` for commercial-grade answer adoption, short Lark intent expansion, bounded model/Qwen review, and failed-reason diagnostics.
+- `lcx-commercial-answer-pipeline-operator` for commercial-grade answer adoption, short external intent expansion, bounded model/Qwen review, and failed-reason diagnostics.
 - `lcx-promotion-and-adapter-truth-operator` for selected-clean adapter, latest-promoted invalidation, parseRecovered promotion blocks, and active guard adapter mismatch.
-- `l5-regression-batterer` for L5 baseline pressure tests with realistic user/Lark prompts.
+- `l5-regression-batterer` for L5 baseline pressure tests with realistic user/external prompts.
 - `l4-regression-batterer` only as a legacy compatibility alias that should forward to the L5 battery. Prefer the L5 skill.
 - `skill-harvester` for evaluating and isolating new external/local skills.
 - `cli-anything-harvester` for CLI-Anything, CLI-Hub, GUI/local software CLI wrapper evaluation, and safe agent-native software-control planning.
@@ -267,7 +268,7 @@ downranked. Strategy results without fees, slippage, and sample-out proof become
 failure logs, not alpha. They must never become trading execution,
 wallet/private-key, order-routing, copy-trading, sizing, forecast authority, or
 latency-arbitrage authority.
-The Lark/local reply path should not rely only on weak-model memory for common
+The external message channel/local reply path should not rely only on weak-model memory for common
 LCX skills: deterministic skill preflight may cue one matching installed skill
 before the model answers, while explicit `/skill` commands still take priority.
 SkillOpt-lite may also cue eval-derived SOP skills from
@@ -276,7 +277,7 @@ planner runs. Treat this as immediate context injection only: it can guide the
 next agent right away, but it is not Qwen weight absorption, selected-clean
 adapter promotion, or user-visible proof until the SkillOpt proof chain passes
 targeted eval, regression eval, train-slice/training evidence, clean promotion
-truth, external-channel binding, and fresh real Lark inbound/outbound evidence.
+truth, external-channel binding, and fresh real external message channel inbound/outbound evidence.
 The actual runtime hook is the normal reply path in
 `src/auto-reply/reply/get-reply-run.ts`, which reads matched SkillOpt
 `best_skill.md` files through `src/auto-reply/reply/skillopt-autocue.ts`. Keep
@@ -286,7 +287,7 @@ of requiring a later manual format move.
 Mind model and flow graph must treat this as its own supervised waterflow:
 eval failures may create SkillOpt SOPs, the runtime hook may use them as
 preflight context immediately, but weight absorption, selected adapter
-promotion, external-channel binding, and real Lark user-visible proof remain
+promotion, external-channel binding, and real external message channel user-visible proof remain
 separate owner gates.
 
 Do not rely on chat memory for these entrypoints. Prefer the runbook and current CLI/log evidence.
@@ -311,20 +312,20 @@ candidates only, with no delete/migration/live authority. It must report
 `local_universe_index_only`, `liveTouched=false`, `providerConfigTouched=false`,
 and `protectedMemoryTouched=false`. Cleanup, live migration, provider changes,
 protected-memory edits, train-slice rebuilds, adapter promotion, and
-Lark-visible claims still require their existing owner gates and proof surfaces.
+external message channel-visible claims still require their existing owner gates and proof surfaces.
 
 Use the universe index before broad cleanup, broad architecture review,
 compressed-context recovery, or a future-agent "read everything fast" request.
 Then route each candidate to its owner lane: change-impact for changed files,
 mind model and flow graph for architecture coverage, training plan for volatile
-Qwen/MiniMax/MLX truth, external-channel binding/probe owner for Lark channel
+Qwen/MiniMax/MLX truth, external-channel binding/probe owner for external message channel channel
 truth, and module learning owners for stored/learned capability boundaries.
 
 ## Cross-Border Cloud Control Doctrine
 
 The v1 cross-border operating model is a cloud control station, not an API
 relay, model-access bypass, or second live truth source. The user may send
-commands from China by phone, Lark, SSH, or a small control panel, but the
+commands from China by phone, external message channel, SSH, or a small control panel, but the
 actual Codex/agent execution, canonical repo, local state, secrets, provider
 access, receipts, and audit logs must live on the supported-region control
 machine.
@@ -332,7 +333,7 @@ machine.
 Cloud migration must not resurrect a dual-repository model. The forward
 cloud migration path is `local LCX core -> cloud-runtime-ready ->
 external-channel-bound -> user-visible-observed`: one LCX Agent core moves to a
-supported-region runtime, then communication adapters such as Lark, WeChat, SMS,
+supported-region runtime, then communication adapters such as external message channel, WeChat, SMS,
 or Slack bind to that same selected clean answer path. Cloud runtime readiness
 means the same LCX core, repo, `.openclaw` state, skills, receipts, selected
 clean adapter policy, and governance owners are available on the cloud control
@@ -352,7 +353,7 @@ neutral local names as well as neutral status semantics. The target paths are
 `ops/external-channel-history/` for historical handoff material,
 `ops/external-channel-artifacts/launchagent-candidates/` for generated channel
 deployment candidates, and
-`ops/external-channel-feishu-acceptance-runbook.md` for the active acceptance
+`ops/external-channel-acceptance-runbook.md` for the active acceptance
 runbook. The old `scripts/dev/`, `ops/live-handoff/`, `dev-to-live-*`,
 `live-sidecar-*` paths are migration inputs only: do not
 add new callers, new receipts, or new documentation references to them. During
@@ -365,13 +366,13 @@ through the neutral paths.
 The preferred v1 topology is:
 
 ```text
-China phone / Lark / SSH command
+China phone / external message channel / SSH command
   -> Tailscale or Cloudflare Access identity gate
   -> US VPS: lcx-cloud-control
   -> /srv/lcx/lcx-s-openclaw as the only canonical repo
   -> ~/.openclaw as the only canonical runtime state
   -> Codex / agent runner executes on the US machine
-  -> receipts / outbox / owner summaries return to Lark
+  -> receipts / outbox / owner summaries return to external message channel
 ```
 
 Keep this architecture boring and auditable:
@@ -387,14 +388,14 @@ Keep this architecture boring and auditable:
   after migration. Copying or syncing skills is allowed only as cloud runtime
   readiness work; it must not create cloud-only skill authority or a separate
   live skill lane.
-- Lark is only the communication medium and transport connector between the
-  owner and LCX Agent. It may use Lark/Feishu official APIs, SDKs, or
+- The External Message Channel is only the communication medium and transport connector between the
+  owner and LCX Agent. It may use External Message Channel official APIs, SDKs, or
   open-source connector code, but that connector layer never becomes model
-  authority, a second runtime truth source, or a brain. Lark does not make the
+  authority, a second runtime truth source, or a brain. The channel does not make the
   legacy deployment checkout authoritative. If a temporary service must stay online
   during migration, treat it as a deployment artifact with a short read-only
   rollback window, not as a development or truth source.
-- Lark/Feishu is the owner-agent external communication channel, not a second
+- External Message Channel is the owner-agent external communication channel, not a second
   live brain or second runtime truth source. The forward status words are
   `core-ready`, `external-channel-bound`, and `user-visible-observed`.
   Historical `live-runtime-updated`, `live-user-seen`, and
@@ -405,13 +406,13 @@ Keep this architecture boring and auditable:
   maintained as a parallel repository lane. A controlled one-time sync is
   allowed only to keep service alive during cutover; it must not restore a
   second checkout's authority.
-- Canonical Lark channel truth belongs to
+- Canonical external-channel truth belongs to
   `scripts/operator/lcx-external-channel-binding.ts`. It may prove
   `external-channel-bound` after a clean idle apply, connector build/restart,
   and probe, meaning the transport routes to the selected clean LCX answer path.
-  It does not prove that Lark hosts, consumes, or becomes the brain.
+  It does not prove that the external software hosts, consumes, or becomes the brain.
   `local-brain-training-plan` must expose `externalChannelBinding` as the
-  primary planner field; `liveLarkBrainBinding` is only a legacy compatibility
+  primary planner field; `liveExternalBrainBinding` is only a legacy compatibility
   alias while older owners migrate.
   `scripts/operator/lcx-external-channel-status.ts` is the canonical read-only
   external-channel status wrapper; `scripts/operator/lcx-external-channel-compat.ts` is the
@@ -419,7 +420,7 @@ Keep this architecture boring and auditable:
   aliases and forwarding wrappers have been removed. The status wrapper
   must not override the binding owner. Commercial acceptance may clear
   external-channel binding while still blocking release on
-  `post_migration_lark_canary_missing` until fresh real inbound/outbound Lark
+  `post_migration_external_canary_missing` until fresh real inbound/outbound external-channel
   evidence proves `user-visible-observed`.
 - System-wide live fadeout truth belongs to
   `scripts/operator/lcx-live-fadeout-audit.ts`. It checks package aliases, docs,
@@ -437,14 +438,14 @@ Keep this architecture boring and auditable:
 - Use a command queue, not manual remote-desktop clicking, as the durable phone
   control surface: `inbox` for requested work, `running` for claimed tasks,
   `outbox` for user-visible replies, and `receipts` for audit evidence.
-- Secrets, Lark URLs, provider keys, SSH keys, and tokens must not be copied
-  into git, migration manifests, Lark messages, screenshots, or public logs.
+- Secrets, external message channel URLs, provider keys, SSH keys, and tokens must not be copied
+  into git, migration manifests, external message channel messages, screenshots, or public logs.
   Preflight may report that a secret exists, but output must redact values.
 - Do not design or describe this as a proxy for unsupported-region model access.
   The compliant pattern is that the supported-region cloud workstation performs
   the work and returns receipts/results to the user.
 - `lcx-cloud-control` should own migration manifest, preflight, and verify
-  checks for Docker, domain/DNS, Lark URL presence with redaction, Tailscale,
+  checks for Docker, domain/DNS, external message channel URL presence with redaction, Tailscale,
   tmux/git/node/pnpm/tsx, disk space, SSH, repo migration, `.openclaw`
   migration, `.codex` skills/automations, live retirement, and receipt replay.
 
@@ -459,7 +460,7 @@ before making claims or changes.
   `lcx-universe-index`, `lcx-system-doctor`, `local-brain-training-plan`, and
   `/Users/liuchengxu/.openclaw/workspace/state/lcx-local-operator-latest.json`.
 - Classify every small fix into one current master lane before coding:
-  Qwen training, MiniMax teacher, adapter promotion, Lark/Feishu visible reply,
+  Qwen training, MiniMax teacher, adapter promotion, External Message Channel visible reply,
   local automation, memory sedimentation, finance research capability, or
   core/external-channel/user-visible boundary. If a change cannot be attached to
   a master lane, do not make it unless the user explicitly asks for unrelated
@@ -484,7 +485,7 @@ before making claims or changes.
   label, a receipt is not model-weight absorption, a stored source is not
   learned knowledge, and `parseRecovered` is not a fully clean promotion pass.
 - As live wording fades out, treat `external-channel sender` as the current
-  high-authority Lark/Feishu send path. Normal repairs must have no
+  high-authority External Message Channel send path. Normal repairs must have no
   external-channel sender authority; legacy `external channel sender` wording is only a
   compatibility label until the matching owner removes it.
 - Before adding a new module, prompt, eval, receipt, automation, or memory lane,
@@ -507,7 +508,7 @@ before making claims or changes.
   check must fail if macro doctrine/prompt/runbook language and micro
   taxonomy/eval/teacher/module-learning schema stop supervising each other.
   This rule is not limited to modules: core/external-channel/user-visible
-  boundary, protected memory, Lark/Feishu visible reply, local automation,
+  boundary, protected memory, External Message Channel visible reply, local automation,
   memory sedimentation, and finance capability changes must also have a head
   rule and a tail proof path.
 
@@ -564,7 +565,7 @@ readiness gate.
   alignment:
   `node --import tsx scripts/operator/lcx-mind-model.ts --json`.
 - The mind model must cover workflow closure for context recovery, change
-  impact planning, Qwen training, MiniMax teacher, adapter promotion, Lark/Feishu
+  impact planning, Qwen training, MiniMax teacher, adapter promotion, External Message Channel
   live boundary, local automation, memory sedimentation, finance research
   capability, and protected-memory/provider/live-sender boundaries.
 - A lane is not globally healthy just because one file, one receipt, one test,
@@ -628,7 +629,7 @@ receipts, and review gates it actually needs, without wrong-flow or silent
 shortcuts.
 
 - Run the flow graph exam when a workflow change could alter task routing,
-  filters, receipts, feedback loops, module learning, Lark/Feishu replies,
+  filters, receipts, feedback loops, module learning, External Message Channel replies,
   Qwen/MiniMax training, local automation, or
   core/external-channel/user-visible proof:
   `node --import tsx scripts/operator/lcx-flow-graph.ts --json`.
@@ -644,7 +645,7 @@ shortcuts.
   only the first six obvious paths. Current core families include visible
   finance research, module learning, training feedback,
   core/external-channel/user-visible proof,
-  compressed-context recovery, local automation digest, Lark visible language,
+  compressed-context recovery, local automation digest, external message channel visible language,
   provider council evidence, memory correction/downrank, same-philosophy
   engineering consolidation, external skill/agent distillation, automation
   repair locks, and finance data gateway reconciliation.
@@ -653,7 +654,7 @@ shortcuts.
   `finance_data_gateway_snapshot` or an equivalent future 金融数据网关 owner, preserve source
   timestamp, field definition, unit/currency, adjusted status, provider role,
   and official/issuer reference scope, and route conflicted values to
-  `data_provenance_quality` instead of letting Qwen or Lark infer numbers.
+  `data_provenance_quality` instead of letting Qwen or external message channel infer numbers.
 - Philosophically similar engineering mechanisms must merge into a named
   consolidation cluster with one owner scenario, one owner node, and merge
   filters such as `same_philosophy_merge_required` and
@@ -688,7 +689,7 @@ owner and the other entrypoints must consume or reference that owner:
   runtime process truth.
 - System doctor owns one operator health report, not separate business logic for
   every lane.
-- Lark external-channel proof owns `user-visible-observed`; local tests and
+- External-channel proof owns `user-visible-observed`; local tests and
   channel probes must not upgrade themselves into that state.
 
 Commercial quality means clear product surfaces, one factual owner per volatile
@@ -698,14 +699,14 @@ needs.
 
 Commercial answer quality has its own local owner:
 `scripts/operator/lcx-commercial-answer-pipeline.ts`. Use it when changing answer
-composition, Lark visible replies, model/Qwen review, source gating, or
+composition, external message channel visible replies, model/Qwen review, source gating, or
 control-room summary wording. The terminal decision is always either
 `adopt_visible_answer` or `return_failed_reason`; never let model rewrites loop
 without a budget, never treat Qwen as final authority, and never expose raw
 JSON/module labels as the user-visible answer.
-The fixed short-Lark canary list is not a whitelist. Future short asks must be
+The fixed short-external canary list is not a whitelist. Future short asks must be
 covered by the family fuzzer owner:
-`node --import tsx scripts/operator/lcx-lark-short-intent-fuzzer.ts --json`. It
+`node --import tsx scripts/operator/lcx-external-short-intent-fuzzer.ts --json`. It
 generates variants by failure family such as trade/action boundary, generic
 intro wrong-route, status-without-owner-evidence, learning overclaim, async
 started-is-not-learned, numeric data gateway, source conflict, provider council
@@ -723,7 +724,7 @@ clear failed reason instead of becoming vague, over-conservative, generic, or
 internally worded.
 Product-grade hardening must keep the fixed canaries and generated family
 fuzzer wired into existing owners:
-real short Lark asks such as `能买吗`, `加不加仓`, `学一下这个链接`, and `到哪了`;
+real short external asks such as `能买吗`, `加不加仓`, `学一下这个链接`, and `到哪了`;
 Kimi/MiniMax/DeepSeek council evidence with separately attributable role
 outputs; module-learning source -> retrieval/apply -> eval absorption ->
 fresh-adjacent-task -> keep/downrank/discard closure; and finance data gateway
@@ -743,7 +744,7 @@ MiniMax Agent may be used as a higher-quality external draft and red-team input
 for this pipeline, but its output is not final authority. LCX must still run
 local contract audit, source/data gates, Qwen patch-only challenge when needed,
 review panel, and the visible answer adoption gate before any MiniMax Agent
-draft reaches the user. It must not directly send Lark replies, change provider
+draft reaches the user. It must not directly send external message channel replies, change provider
 config, write protected memory, or gain trade/execution authority.
 Because this operator treats MiniMax capacity as monthly fixed-cost capacity,
 use MiniMax Agent aggressively for complex finance answers by default. Event
@@ -777,7 +778,7 @@ recoverable, auditable, and honest under real use.
   summary first, specialist detail on demand, no internal labels, no raw JSON
   leaks, no fake `user-visible-observed` or legacy `live-user-seen`, and no
   hidden execution authority.
-  Lark/Feishu visible replies must also hide runtime machinery by default:
+  External Message Channel visible replies must also hide runtime machinery by default:
   module ids, receipt/handoff labels, message ids, timeout milliseconds,
   `retrieval/apply`, `answer_audit`, and `eval/training absorption` are
   internal proof language. Translate them into source list, reading scope,
@@ -789,7 +790,7 @@ recoverable, auditable, and honest under real use.
   provider-config, or live-sender drift.
 - Mind model, flow graph, head-tail, doctor, training plan, context recovery,
   problem cluster radar, and the external-channel probe/binding owner when
-  explicitly in Lark scope are the governance stack for this standard. If they
+  explicitly in external message channel scope are the governance stack for this standard. If they
   disagree, the disagreement is a P2 architecture issue before feature
   expansion.
 
@@ -920,7 +921,7 @@ remembering which diagnostic to run.
   The ledger must record dataset counts, train-slice counts, SkillOpt accepted
   and pending packets, blocked/rejected/downranked evidence, and promotion
   truth for each observed round. It proves data accounting only: data growth is
-  not model-weight absorption, Lark user-visible proof, provider health, or
+  not model-weight absorption, external message channel user-visible proof, provider health, or
   protected memory authority.
 - For every new complex brain loop, add or reuse a simple prerequisite eval. Local-brain promotion must run the prerequisite together with the complex case, not as an optional separate check.
 - Convert learning into concise lessons, reusable decision rules, correction notes, follow-up items, and stale/downrank decisions.
@@ -953,7 +954,7 @@ remembering which diagnostic to run.
 - Clean failure is better than silent empty output.
 - Do not decorate immature paths.
 - Do not hide failure behind empty output.
-- Preserve continuity of stable Feishu / queue / nightly batch / operating-loop paths.
+- Preserve continuity of stable External Message Channel / queue / nightly batch / operating-loop paths.
 
 ### Priority Order
 
@@ -983,8 +984,8 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
 - The target is the smallest coherent system upgrade that closes the failure family, improves a core workflow, or raises a measured L5 capability without creating unrelated drift.
 - A coding agent may add or reshape modules, CLIs, docs, evals, receipts, skills, prompts, or workflow glue when the change directly supports the verified improvement goal.
 - Do not wait for a second human confirmation for routine implementation steps inside an already approved improvement goal.
-- Treat user examples as failure-family seeds, not as the full scope. If the user names one instance, such as commodities, Lark wording, a model disagreement, a paper, or a visible reply flaw, infer the shared contract and repair the generic class unless the user explicitly asks for a one-off patch.
-- Treat short plain-language asks as possible hidden-complexity workflows, not as permission to give a shallow answer. A phrase like "analyze recent market", "how much should I hold", "learn commodities", "read this paper", or "Lark replied weirdly" must first be classified into the generic intake family, then expanded into scope, evidence, modules, review, user-visible summary, and regression proof.
+- Treat user examples as failure-family seeds, not as the full scope. If the user names one instance, such as commodities, external message channel wording, a model disagreement, a paper, or a visible reply flaw, infer the shared contract and repair the generic class unless the user explicitly asks for a one-off patch.
+- Treat short plain-language asks as possible hidden-complexity workflows, not as permission to give a shallow answer. A phrase like "analyze recent market", "how much should I hold", "learn commodities", "read this paper", or "external message channel replied weirdly" must first be classified into the generic intake family, then expanded into scope, evidence, modules, review, user-visible summary, and regression proof.
 - When turning an example into a generic rule, cover at least one adjacent non-identical scenario in tests or evals so the repair cannot pass by memorizing the original example.
 - Every abstraction-transfer repair must identify the original example, the abstracted failure family, at least one adjacent non-identical scenario, the shared contract being changed, and the regression proof. This is the engineering version of human abstraction: example -> family -> transfer -> proof.
 - If a weakness spans language intake, local brain planning, memory retrieval, visible reply formatting, eval, and receipts, repair the whole loop instead of fixing only the first failing file.
@@ -1089,7 +1090,7 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
 - Default to coherent bounded batches rather than tiny artificial steps. When a bug implies a shared contract failure, continue through related failure families end to end instead of stopping after the first small patch.
 - Do not perform unrelated cleanup or opportunistic refactors. Cleanup, refactor, module extraction, or interface reshaping is in scope when it directly improves the active system goal, removes repeated leakage, reduces verification risk, or prevents the failure family from reappearing through sibling paths.
 - Treat verification as mandatory: run targeted tests, lint touched files, then
-  use a plain natural Lark probe plus reply-flow/answer-audit/outbound-result
+  use a plain natural external-channel probe plus reply-flow/answer-audit/outbound-result
   trace for real verification. A fixed acceptance phrase is only an optional
   receipt anchor, not the default diagnostic path.
 - Do not confuse `core-ready` with `user-visible-observed`.
@@ -1099,15 +1100,15 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
   receipts are not user-visible-observed proof. Keep this as explicit
   user-visible-observed proof language so future agents do not upgrade a dev
   helper into the owner-visible channel result.
-- No fake user-visible-observed: only fresh real Lark inbound plus a successful
+- No fake user-visible-observed: only fresh real external-channel inbound plus a successful
   visible reply may set that state.
 - For human-facing status, prefer the simpler three-layer wording:
-  `core-ready` means local tests/smoke/synthetic or replay Lark checks passed;
-  `external-channel-bound` means the Lark channel sidecar has been migrated to
+  `core-ready` means local tests/smoke/synthetic or replay external-channel checks passed;
+  `external-channel-bound` means the external channel sidecar has been migrated to
   the verified canonical git snapshot and restarted/probed; `user-visible-observed`
   means a real
-  Lark/Feishu user entry produced the expected visible reply. Core correctness
-  must not depend on the real Lark bot, because the external channel is a
+  External Message Channel user entry produced the expected visible reply. Core correctness
+  must not depend on the real external message channel bot, because the external channel is a
   communication medium, not a second brain.
 - Keep degraded / partial / rescue states honest; never present degraded behavior as full success.
 
@@ -1123,7 +1124,7 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
 
 ## Codex Slash Goal Protocol
 
-- `/goal <objective>` is a Codex operator directive for the current work session, not a runtime Lark / Feishu command.
+- `/goal <objective>` is a Codex operator directive for the current work session, not a runtime External Message Channel command.
 - When the user sends `/goal`, first restate the objective in plain language, then name success criteria, explicit boundaries, the next execution surface, and the proof command or live acceptance check.
 - For system-improvement goals, include the proactive-error-discovery target by
   default: run the relevant owner/radar/recovery checks first, refresh stale

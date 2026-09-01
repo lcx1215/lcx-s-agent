@@ -107,7 +107,7 @@ Current npm plugin list (update as needed):
 - @openclaw/bluebubbles
 - @openclaw/diagnostics-otel
 - @openclaw/discord
-- @openclaw/feishu
+- @openclaw/external
 - @openclaw/lobster
 - @openclaw/matrix
 - @openclaw/msteams

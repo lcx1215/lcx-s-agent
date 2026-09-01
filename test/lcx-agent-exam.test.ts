@@ -24,12 +24,12 @@ const cognitiveSources = {
     "do not describe a run as learned/internalized when the status is not application_ready; retrievalFirstLearning.failedReason; weakLearningIntents.failedReason; usageReceiptPath",
   moduleLearningReviewTool:
     "weakModuleLearning exactMissingProof nextProofOwner proofGapSummary boundaryViolation languageCorpusUntouched protectedMemoryUntouched providerConfigTouched: false",
-  larkSurfaces:
-    "core-verified means local implementation or tests only; user-visible-observed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path; started, running, completed, blocked, or unproven",
+  externalSurfaces:
+    "core-verified means local implementation or tests only; user-visible-observed means migrated, built, restarted, probed, and verified through the real external message path; started, running, completed, blocked, or unproven",
   localBrainRunbook:
-    "live-visible-fixed; fresh real Lark inbound plus visible reply; Do not call local training or synthetic replay `live-visible-fixed`; A stored source, summary, or dataset row is not enough; stored_only; application_ready; eval_absorbed; Do not claim Qwen model-internal learning without retained artifacts and eval evidence; bounded feedback; answer audit; model answer is candidate; Qwen is challenger; terminal decision; Commercial-grade convergence does not mean deleting useful entrypoints; Converge duplicated authority instead; single factual owner",
+    "live-visible-fixed; fresh real External inbound plus visible reply; Do not call local training or synthetic replay `live-visible-fixed`; A stored source, summary, or dataset row is not enough; stored_only; application_ready; eval_absorbed; Do not claim Qwen model-internal learning without retained artifacts and eval evidence; bounded feedback; answer audit; model answer is candidate; Qwen is challenger; terminal decision; Commercial-grade convergence does not mean deleting useful entrypoints; Converge duplicated authority instead; single factual owner",
   answerAuditSurfaces:
-    "buildLarkAnswerAuditPolicy local_commercial_answer_pipeline_only model_candidate_not_final_authority candidate_answer_not_final_authority challenger_only_not_final_authority answer_audit terminalDecision return_failed_reason local_memory_recall learning_sedimentation_review stored_only_is_not_learning retrieval_apply_eval_review_required",
+    "buildExternalAnswerAuditPolicy local_commercial_answer_pipeline_only model_candidate_not_final_authority candidate_answer_not_final_authority challenger_only_not_final_authority answer_audit terminalDecision return_failed_reason local_memory_recall learning_sedimentation_review stored_only_is_not_learning retrieval_apply_eval_review_required",
   controlRoomSurfaces:
     "one main control room control_room_main_lane specialist detail only on demand",
 };
@@ -101,7 +101,7 @@ describe("lcx-agent-exam", () => {
         boundary: "core_verified_not_user_visible_observed",
       }),
     );
-    expect(report.lanes.find((lane) => lane.lane === "lark_feishu_visible_loop")).toEqual(
+    expect(report.lanes.find((lane) => lane.lane === "external_message_visible_loop")).toEqual(
       expect.objectContaining({
         status: "not_run",
       }),
@@ -594,7 +594,7 @@ describe("lcx-agent-exam", () => {
         },
       }),
       cognitiveIntegritySources: cognitiveSources,
-      larkDiagnose: okCommand("lark", {
+      externalDiagnose: okCommand("external", {
         ok: true,
         languageCandidates: {
           currentReplay: { candidateCount: 126, rejectedCount: 0 },
@@ -618,7 +618,7 @@ describe("lcx-agent-exam", () => {
         issue: expect.stringContaining("channel probe 不是真实用户可见回复证据"),
       }),
     );
-    expect(report.lanes.find((lane) => lane.lane === "lark_feishu_visible_loop")).toEqual(
+    expect(report.lanes.find((lane) => lane.lane === "external_message_visible_loop")).toEqual(
       expect.objectContaining({
         status: "warn",
         evidence: expect.arrayContaining([

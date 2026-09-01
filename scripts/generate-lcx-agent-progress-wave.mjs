@@ -38,7 +38,7 @@ const architectureModules = [
   {
     no: "3",
     title: "Control Room",
-    subtitle: "飞书主入口",
+    subtitle: "外部消息通道主入口",
     color: "#6a45c9",
     bg: "#f4f0ff",
     items: ["自然语言请求", "任务 family", "summary-first"],
@@ -111,7 +111,7 @@ function architectureSvg() {
   <rect width="1717" height="916" fill="url(#bg)"/>
   <g font-family="${font}">
     <text x="858.5" y="92" text-anchor="middle" fill="#071225" font-size="56" font-weight="950">LCX Agent：Harness + Hermes 研究系统</text>
-    <text x="858.5" y="138" text-anchor="middle" fill="#51606f" font-size="24" font-weight="760">约束验收层 + 消息证据流 + 飞书控制室 + 本地大脑 + 低频金融研究</text>
+    <text x="858.5" y="138" text-anchor="middle" fill="#51606f" font-size="24" font-weight="760">约束验收层 + 消息证据流 + 外部消息通道控制室 + 本地大脑 + 低频金融研究</text>
   </g>
   <g filter="url(#shadow)">${cards}</g>
   <g font-family="${font}">
@@ -120,7 +120,7 @@ function architectureSvg() {
     <rect x="90" y="760" width="350" height="46" rx="18" fill="#eff6ff" stroke="#bfd7ff"/>
     <text x="265" y="791" text-anchor="middle" fill="#123a7a" font-size="22" font-weight="850">研究系统，不是交易执行</text>
     <rect x="474" y="760" width="274" height="46" rx="18" fill="#effbf2" stroke="#bee8c8"/>
-    <text x="611" y="791" text-anchor="middle" fill="#14532d" font-size="22" font-weight="850">Feishu = Lark</text>
+    <text x="611" y="791" text-anchor="middle" fill="#14532d" font-size="22" font-weight="850">External = External</text>
     <rect x="782" y="760" width="350" height="46" rx="18" fill="#fff7e6" stroke="#f5d08a"/>
     <text x="957" y="791" text-anchor="middle" fill="#7a4a00" font-size="20" font-weight="850">core-verified ≠ user-visible-observed</text>
     <rect x="1166" y="760" width="460" height="46" rx="18" fill="#f5f3ff" stroke="#d8ccff"/>
@@ -132,7 +132,7 @@ function architectureSvg() {
 const boardCards = [
   ["Harness", "约束与验收", "权限、风险、测试、eval、live 验收", "#1557c0", "#edf4ff"],
   ["Hermes", "消息与证据流", "上下文、handoff、receipt、review artifact", "#0f8a9d", "#ecfbff"],
-  ["飞书控制室", "自然语言入口", "一个主入口承接研究、学习、运维和审计", "#6a45c9", "#f4f0ff"],
+  ["外部消息通道控制室", "自然语言入口", "一个主入口承接研究、学习、运维和审计", "#6a45c9", "#f4f0ff"],
   ["本地大脑", "学习沉淀", "吸收蒸馏样本、能力卡和修正笔记", "#15803d", "#effbf2"],
   ["金融研究", "research-only", "ETF、主要资产、头部公司、风险门控", "#b66a00", "#fff8e8"],
   ["Runtime", "底层执行", "gateway、channel、session、CLI、工具调用", "#be123c", "#fff1f2"],

@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
-  renderFeishuFinanceDoctrinePromotionCandidateArtifact,
-  renderFeishuFinanceDoctrinePromotionReviewArtifact,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
+  renderExternalFinanceDoctrinePromotionCandidateArtifact,
+  renderExternalFinanceDoctrinePromotionReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -64,11 +64,11 @@ export function createFinancePromotionReviewTool(options?: {
         );
       }
 
-      const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+      const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
       const candidateRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey),
       );
       const candidateAbsPath = path.join(workspaceDir, candidateRelPath);
 
@@ -92,7 +92,7 @@ export function createFinancePromotionReviewTool(options?: {
       }
 
       const parsedCandidateArtifact =
-        parseFeishuFinanceDoctrinePromotionCandidateArtifact(candidateArtifactContent);
+        parseExternalFinanceDoctrinePromotionCandidateArtifact(candidateArtifactContent);
       if (!parsedCandidateArtifact) {
         return jsonResult({
           ok: false,
@@ -127,15 +127,15 @@ export function createFinancePromotionReviewTool(options?: {
 
       const reviewRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionReviewFilename(dateKey),
       );
       const reviewAbsPath = path.join(workspaceDir, reviewRelPath);
       let parsedReviewArtifact = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrinePromotionReviewArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrinePromotionReviewArtifact>
         | undefined;
       try {
-        parsedReviewArtifact = parseFeishuFinanceDoctrinePromotionReviewArtifact(
+        parsedReviewArtifact = parseExternalFinanceDoctrinePromotionReviewArtifact(
           await fs.readFile(reviewAbsPath, "utf8"),
         );
         if (!parsedReviewArtifact) {
@@ -181,7 +181,7 @@ export function createFinancePromotionReviewTool(options?: {
       await fs.mkdir(receiptsDir, { recursive: true });
       await fs.writeFile(
         candidateAbsPath,
-        renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+        renderExternalFinanceDoctrinePromotionCandidateArtifact({
           ...parsedCandidateArtifact,
           candidates: nextCandidates,
         }),
@@ -189,7 +189,7 @@ export function createFinancePromotionReviewTool(options?: {
       );
       await fs.writeFile(
         reviewAbsPath,
-        renderFeishuFinanceDoctrinePromotionReviewArtifact({
+        renderExternalFinanceDoctrinePromotionReviewArtifact({
           reviewedAt: now,
           consumer: parsedReviewArtifact?.consumer ?? parsedCandidateArtifact.consumer,
           linkedCandidateArtifact:

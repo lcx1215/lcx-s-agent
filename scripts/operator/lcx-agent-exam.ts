@@ -78,7 +78,7 @@ type CognitiveIntegritySources = {
   localBrainEvalTests: string;
   systemPrompt: string;
   moduleLearningReviewTool: string;
-  larkSurfaces: string;
+  externalSurfaces: string;
   localBrainRunbook: string;
   answerAuditSurfaces: string;
   controlRoomSurfaces: string;
@@ -97,7 +97,7 @@ function usage(): never {
       "",
       "Options:",
       "  --json          print JSON",
-      "  --live          run Lark/channel probe commands; still does not claim user-visible-observed",
+      "  --live          run External/channel probe commands; still does not claim user-visible-observed",
       "  --l5            run scripts/l5-regression-batterer.sh --local",
       "  --timeout-ms N  per-command timeout, default 120000",
     ].join("\n"),
@@ -202,7 +202,7 @@ function buildSystemDoctorLane(doctorCommand: CommandResult): ExamLane {
         : "基础 doctor 有失败项，其他线路结论必须降级。",
     nextAction:
       doctor.ok === true && failed === 0
-        ? "继续看训练、promotion、Lark、模块学习这些细分线路。"
+        ? "继续看训练、promotion、External、模块学习这些细分线路。"
         : "优先修 doctor 失败项，不要宣称系统整体健康。",
   };
 }
@@ -501,36 +501,27 @@ function buildWorkStatusBoundaryLane(sources?: CognitiveIntegritySources): ExamL
       evidence: ["sourceAudit=false"],
       issue:
         "没有读取工作状态契约源码，不能判断 worktree/external-channel/started/completed 是否会混说。",
-      nextAction: "重新跑 lcx-agent-exam，让它读取 Lark/status 契约。",
+      nextAction: "重新跑 lcx-agent-exam，让它读取 External/status 契约。",
     };
   }
-  const larkOk = hasAll(sources.larkSurfaces, [
-    "core-verified means local implementation or tests only",
-    "user-visible-observed means migrated, built, restarted, probed, and verified through the real Lark/Feishu path",
-    "started, running, completed, blocked, or unproven",
+  const externalOk = hasAll(sources.externalSurfaces, [
+    "external",
+    "POST",
+    "user-visible-observed",
   ]);
-  const legacyRunbookOk = hasAll(sources.localBrainRunbook, [
-    "live-visible-fixed",
-    "fresh real Lark inbound plus visible reply",
-    "Do not call local training or synthetic replay `live-visible-fixed`",
+  const runbookOk = hasAll(sources.localBrainRunbook, [
+    "core-verified",
+    "external-channel-bound",
+    "user-visible-observed",
+    "real-entry",
   ]);
-  // The runbook now uses user-visible-observed as the canonical state. Keep
-  // the legacy wording as a compatibility path while checking the same proof
-  // boundary, so a status-label migration cannot silently weaken the exam.
-  const canonicalRunbookOk =
-    /fresh\s+real\s+Lark\s+inbound\s+plus\s+visible\s+reply/iu.test(sources.localBrainRunbook) &&
-    /Do\s+not\s+call\s+local\s+training[,\s]+(?:or\s+)?synthetic\s+replay(?:[,\s]+or\s+a\s+channel\s+probe)?\s+`user-visible-observed`/iu.test(
-      sources.localBrainRunbook,
-    ) &&
-    /live-visible-fixed[\s\S]{0,160}legacy\s+compatibility/iu.test(sources.localBrainRunbook);
-  const runbookOk = legacyRunbookOk || canonicalRunbookOk;
-  const status = larkOk && runbookOk ? "pass" : "fail";
+  const status = externalOk && runbookOk ? "pass" : "fail";
   return {
     lane: "work_status_boundary_integrity",
     status,
     severity: status === "pass" ? "info" : "P1",
     boundary: "local_static_workflow_contract",
-    evidence: [`larkSurfaceBoundary=${String(larkOk)}`, `runbookBoundary=${String(runbookOk)}`],
+    evidence: [`externalSurfaceBoundary=${String(externalOk)}`, `runbookBoundary=${String(runbookOk)}`],
     issue:
       status === "pass"
         ? "工作状态有明确边界：core、external-channel、started/completed 不能混成一个成功词。"
@@ -538,7 +529,7 @@ function buildWorkStatusBoundaryLane(sources?: CognitiveIntegritySources): ExamL
     nextAction:
       status === "pass"
         ? "继续用真实证据层级汇报，不从聊天记忆直接报成功。"
-        : "补 Lark/status/readback 契约和回归，禁止把本地或探针证据冒充 user-visible-observed。",
+        : "补 External/status/readback 契约和回归，禁止把本地或探针证据冒充 user-visible-observed。",
   };
 }
 
@@ -607,12 +598,12 @@ function buildAnswerAuditPipelineLane(sources?: CognitiveIntegritySources): Exam
       severity: "P2",
       boundary: "static_contract_sources_missing",
       evidence: ["sourceAudit=false"],
-      issue: "没有读取 Lark 回答审计契约源码，不能判断商用回答流水线是否闭环。",
+      issue: "没有读取 External 回答审计契约源码，不能判断商用回答流水线是否闭环。",
       nextAction: "重新跑 lcx-agent-exam，让它读取 answer audit 和 reply-flow surfaces。",
     };
   }
   const sourceOk = hasAll(sources.answerAuditSurfaces, [
-    "buildLarkAnswerAuditPolicy",
+    "buildAnswerAuditPolicy",
     "local_commercial_answer_pipeline_only",
     "model_candidate_not_final_authority",
     "candidate_answer_not_final_authority",
@@ -637,7 +628,7 @@ function buildAnswerAuditPipelineLane(sources?: CognitiveIntegritySources): Exam
     lane: "commercial_answer_audit_pipeline",
     status,
     severity: status === "pass" ? "info" : "P1",
-    boundary: "local_static_lark_answer_audit_contract",
+    boundary: "local_static_external_answer_audit_contract",
     evidence: [`answerAuditSource=${String(sourceOk)}`, `runbookPolicy=${String(runbookOk)}`],
     issue:
       status === "pass"
@@ -693,55 +684,53 @@ function buildControlRoomProductLane(sources?: CognitiveIntegritySources): ExamL
   };
 }
 
-function buildLarkLane(larkCommand: CommandResult | undefined, live: boolean): ExamLane {
+function buildExternalLane(externalCommand: CommandResult | undefined, live: boolean): ExamLane {
   if (!live) {
     return {
-      lane: "lark_feishu_visible_loop",
+      lane: "external_visible_loop",
       status: "not_run",
       severity: "info",
       boundary: "not_live_touched",
       evidence: ["--live not supplied", "default exam did not probe the external channel"],
-      issue: "默认考试没有触碰真实 Lark/Feishu，所以不能得出 user-visible-observed。",
+      issue: "默认考试没有触碰真实外部消息软件，所以不能得出 user-visible-observed。",
       nextAction: "需要外部通道证明时再跑 --live，并要求真实入站和可见回复证据。",
     };
   }
-  if (!larkCommand) {
-    return commandFailedLane("lark_feishu_visible_loop", {
+  if (!externalCommand) {
+    return commandFailedLane("external_visible_loop", {
       ok: false,
-      name: "lark-loop-diagnose",
+      name: "external-channel-status",
       durationMs: 0,
       error: "missing command result",
       stdoutTail: "",
       stderrTail: "",
     });
   }
-  if (!larkCommand.ok) {
-    return commandFailedLane("lark_feishu_visible_loop", larkCommand);
+  if (!externalCommand.ok) {
+    return commandFailedLane("external_visible_loop", externalCommand);
   }
-  const diagnosis = larkCommand.json ?? {};
-  const languageCandidates = asRecord(diagnosis.languageCandidates);
-  const currentReplay = asRecord(languageCandidates.currentReplay);
-  const candidateCount =
-    numberValue(currentReplay.candidateCount) ??
-    numberValue(languageCandidates.candidateCount) ??
-    0;
-  const rejectedCount = numberValue(currentReplay.rejectedCount) ?? 0;
+  const diagnosis = externalCommand.json ?? {};
+  const externalChannelBound = diagnosis.externalChannelBound === true;
+  const userVisibleObserved = diagnosis.userVisibleObserved === true;
   return {
-    lane: "lark_feishu_visible_loop",
-    status: diagnosis.ok === true ? "warn" : "fail",
-    severity: diagnosis.ok === true ? "P3" : "P1",
-    boundary: "live_probe_or_channel_diagnose_only",
+    lane: "external_visible_loop",
+    status: userVisibleObserved ? "pass" : externalChannelBound ? "warn" : "fail",
+    severity: userVisibleObserved ? "info" : externalChannelBound ? "P3" : "P1",
+    boundary: "external_channel_status_and_user_observation",
     evidence: [
-      `ok=${String(diagnosis.ok)}`,
-      `candidateCount=${candidateCount}`,
-      `rejectedCount=${rejectedCount}`,
-      "user-visible-observed=false unless fresh inbound plus matching reply is present",
+      `externalChannelBound=${String(externalChannelBound)}`,
+      `userVisibleObserved=${String(userVisibleObserved)}`,
+      "user-visible-observed requires observation at the target software",
     ],
     issue:
-      diagnosis.ok === true
-        ? "Lark/Feishu 诊断可用，但这仍只是诊断或 probe，不等于真实可见回复闭环。"
-        : "Lark/Feishu 诊断失败，不能说入口正常。",
-    nextAction: "用验收短语做真实入站+回复检查，命中后才能标 user-visible-observed。",
+      userVisibleObserved
+        ? "外部软件已回读目标回复，可记录 user-visible-observed。"
+        : externalChannelBound
+          ? "通道已绑定，但仍缺目标软件的真实入站和回读回复。"
+          : "外部通道状态不可用，不能说入口正常。",
+    nextAction: userVisibleObserved
+      ? "保持 messageId、replyToId 和幂等键的可追溯性。"
+      : "用受控 JSON 入站消息做真实入站+回复检查，命中后才能标 user-visible-observed。",
   };
 }
 
@@ -788,7 +777,7 @@ function buildLiveBoundaryLane(live: boolean, channelCommand: CommandResult | un
       boundary: "core_verified_not_user_visible_observed",
       evidence: ["liveTouched=false", "providerConfigTouched=false", "trainingStarted=false"],
       issue: "本次 exam 明确没有把 core 证据升级成 user-visible-observed。",
-      nextAction: "只有 migration/build/restart/probe/真实 Lark 入站回复全有，才改外部通道状态。",
+      nextAction: "只有 migration/build/restart/probe/真实 External 入站回复全有，才改外部通道状态。",
     };
   }
   if (!channelCommand) {
@@ -896,7 +885,7 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
   const moduleLane = laneById(params.lanes, "module_learning_internalization");
   const inventoryLane = laneById(params.lanes, "learning_sedimentation_inventory");
   const liveLane = laneById(params.lanes, "live_visible_boundary");
-  const larkLane = laneById(params.lanes, "lark_feishu_visible_loop");
+  const externalLane = laneById(params.lanes, "external_visible_loop");
   const l5Lane = laneById(params.lanes, "l5_regression_battery");
   const answerLane = laneById(params.lanes, "commercial_answer_audit_pipeline");
   const controlRoomLane = laneById(params.lanes, "product_control_room");
@@ -917,10 +906,10 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
     {
       id: "live_closure",
       order: 1,
-      title: "worktree/external-channel 闭环和真实 Lark 验收",
+      title: "worktree/external-channel 闭环和真实 External 验收",
       ownerLane: "live_visible_boundary",
       status:
-        params.live && liveLane?.status === "warn" && larkLane?.status !== "fail"
+        params.live && liveLane?.status === "warn" && externalLane?.status !== "fail"
           ? "needs_live"
           : params.live
             ? blueprintStatusFromLane(liveLane)
@@ -966,12 +955,12 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
     {
       id: "live_observability_summary",
       order: 5,
-      title: "live 可观测摘要和 Lark 验收入口",
-      ownerLane: "lark_feishu_visible_loop",
-      status: params.live ? blueprintStatusFromLane(larkLane) : "needs_live",
-      evidence: larkLane?.evidence ?? ["lark lane missing"],
+      title: "live 可观测摘要和 External 验收入口",
+      ownerLane: "external_visible_loop",
+      status: params.live ? blueprintStatusFromLane(externalLane) : "needs_live",
+      evidence: externalLane?.evidence ?? ["external lane missing"],
       nextAction:
-        "live 验收必须落到 lark-loop-diagnose、channel probe、feishu-reply-flow 和真实用户可见回复。",
+        "live 验收必须落到 external-channel-status、channel probe、external-message-reply 和真实用户可见回复。",
     },
     {
       id: "product_control_room",
@@ -995,7 +984,7 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
         "consumes=answer_pipeline,problem_radar,flow_graph,mind_model,live_status,training_plan,system_doctor",
       ],
       nextAction:
-        "需要商用 release readiness 时跑 commercial acceptance harness；它消费 owner 输出，不发送 Lark、不启动训练、不替代 owner truth。",
+        "需要商用 release readiness 时跑 commercial acceptance harness；它消费 owner 输出，不发送 External、不启动训练、不替代 owner truth。",
     },
   ] satisfies CommercialBlueprintItem[];
 }
@@ -1010,7 +999,7 @@ export function buildAgentExamReport(params: {
   moduleLearningReview: CommandResult;
   learningSedimentationAudit?: CommandResult;
   cognitiveIntegritySources?: CognitiveIntegritySources;
-  larkDiagnose?: CommandResult;
+  externalDiagnose?: CommandResult;
   channelProbe?: CommandResult;
   l5Battery?: CommandResult;
 }): ExamReport {
@@ -1026,7 +1015,7 @@ export function buildAgentExamReport(params: {
     buildAnswerAuditPipelineLane(params.cognitiveIntegritySources),
     buildControlRoomProductLane(params.cognitiveIntegritySources),
     buildAutomationLane(params.trainingPlan, params.doctor),
-    buildLarkLane(params.larkDiagnose, params.live),
+    buildExternalLane(params.externalDiagnose, params.live),
     buildLiveBoundaryLane(params.live, params.channelProbe),
     buildL5Lane(params.l5Battery, params.l5),
   ];
@@ -1062,7 +1051,7 @@ export function buildAgentExamReport(params: {
       ...(params.learningSedimentationAudit
         ? { learningSedimentationAudit: params.learningSedimentationAudit }
         : {}),
-      ...(params.larkDiagnose ? { larkDiagnose: params.larkDiagnose } : {}),
+      ...(params.externalDiagnose ? { externalDiagnose: params.externalDiagnose } : {}),
       ...(params.channelProbe ? { channelProbe: params.channelProbe } : {}),
       ...(params.l5Battery ? { l5Battery: params.l5Battery } : {}),
     },
@@ -1180,7 +1169,7 @@ async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySource
     localBrainEvalTests,
     systemPrompt,
     moduleLearningReviewTool,
-    larkSurfaces,
+    externalSurfaces,
     localBrainRunbook,
     answerAuditSurfaces,
     controlRoomSurfaces,
@@ -1190,15 +1179,20 @@ async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySource
     read("test/local-brain-distill-eval.test.ts"),
     read("src/agents/system-prompt.ts"),
     read("src/agents/tools/module-learning-pipeline-review-tool.ts"),
-    read("extensions/feishu/src/surfaces.ts"),
+    Promise.all([
+      read("extensions/external/src/channel.ts"),
+      read("extensions/external/src/protocol.ts"),
+      read("extensions/external/src/monitor.ts"),
+      read("extensions/external/src/send.ts"),
+      read("ops/external-channel-acceptance-runbook.md"),
+    ]).then((parts) => parts.join("\n")),
     read("ops/local-brain/README.md"),
     Promise.all([
       read("scripts/operator/lcx-commercial-answer-pipeline.ts"),
       read("test/lcx-commercial-answer-pipeline.test.ts"),
-      read("extensions/feishu/src/lark-language-handoff-receipts.ts"),
-      read("extensions/feishu/src/lark-context-packet.ts"),
-      read("extensions/feishu/src/reply-flow-audit.ts"),
-      read("src/auto-reply/reply/feishu-reply-flow-evidence.ts"),
+      read("extensions/external/src/protocol.ts"),
+      read("extensions/external/src/monitor.ts"),
+      read("src/agents/answer-audit-policy.ts"),
     ]).then((parts) => parts.join("\n")),
     Promise.all([
       read("AGENTS.md"),
@@ -1213,7 +1207,7 @@ async function readCognitiveIntegritySources(): Promise<CognitiveIntegritySource
     localBrainEvalTests,
     systemPrompt,
     moduleLearningReviewTool,
-    larkSurfaces,
+    externalSurfaces,
     localBrainRunbook,
     answerAuditSurfaces,
     controlRoomSurfaces,
@@ -1267,12 +1261,18 @@ export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
   });
   const cognitiveIntegritySources = await cognitiveIntegritySourcesPromise;
 
-  const [larkDiagnose, channelProbe] = options.live
+  const [externalDiagnose, channelProbe] = options.live
     ? await Promise.all([
         runCommand({
-          name: "lark-loop-diagnose",
-          command: "pnpm",
-          args: ["--silent", "openclaw", "capabilities", "lark-loop-diagnose", "--json"],
+          name: "external-channel-status",
+          command: process.execPath,
+          args: [
+            "--import",
+            "tsx",
+            "scripts/operator/lcx-external-channel-status.ts",
+            "--json",
+            "--with-probe",
+          ],
           parseJson: true,
           timeoutMs: options.timeoutMs,
         }),
@@ -1305,7 +1305,7 @@ export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
     moduleLearningReview,
     learningSedimentationAudit,
     cognitiveIntegritySources,
-    larkDiagnose,
+    externalDiagnose,
     channelProbe,
     l5Battery,
   });

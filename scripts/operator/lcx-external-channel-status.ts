@@ -37,7 +37,7 @@ function externalChannelNextHumanStep(params: {
     return "none_external_channel_user_visible_observed";
   }
   if (params.externalChannelBound) {
-    return "send_real_lark_canary_for_user_visible_proof";
+    return "send_real_external_canary_for_user_visible_proof";
   }
   if (params.bindingStatus === "ready_for_channel_bind_apply") {
     return "run_lcx_external_channel_binding_apply";

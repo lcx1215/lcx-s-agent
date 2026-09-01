@@ -132,7 +132,7 @@ async function runAutopilot() {
         externalChannelBound?: boolean;
         userVisibleObserved?: boolean;
       };
-      liveLarkBrainBinding?: { status?: string };
+      liveExternalBrainBinding?: { status?: string };
       problemRadar?: { actionableClusters?: string[] };
       changeImpact?: { affectedLanes?: string[] };
       universeIndex?: {

@@ -2,28 +2,28 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
-  buildFeishuFinanceDoctrineTeacherCandidateInputReconciliationFilename,
-  buildFeishuFinanceDoctrineTeacherCandidateInputReviewFilename,
-  buildFeishuFinanceDoctrineTeacherCandidateInputsFilename,
-  buildFeishuFinanceDoctrineTeacherElevationHandoffsFilename,
-  buildFeishuFinanceDoctrineTeacherFeedbackFilename,
-  buildFeishuFinanceDoctrineTeacherReviewFilename,
-  buildFeishuFinanceDoctrineEditHandoffsFilename,
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionDecisionsFilename,
-  buildFeishuFinanceDoctrinePromotionProposalsFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  parseFeishuFinanceDoctrineTeacherCandidateInputArtifact,
-  parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
-  parseFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact,
-  parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact,
-  parseFeishuFinanceDoctrineTeacherFeedbackArtifact,
-  parseFeishuFinanceDoctrineTeacherReviewArtifact,
-  parseFeishuFinanceDoctrineEditHandoffArtifact,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionDecisionArtifact,
-  parseFeishuFinanceDoctrinePromotionProposalArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
+  buildExternalFinanceDoctrineTeacherCandidateInputReconciliationFilename,
+  buildExternalFinanceDoctrineTeacherCandidateInputReviewFilename,
+  buildExternalFinanceDoctrineTeacherCandidateInputsFilename,
+  buildExternalFinanceDoctrineTeacherElevationHandoffsFilename,
+  buildExternalFinanceDoctrineTeacherFeedbackFilename,
+  buildExternalFinanceDoctrineTeacherReviewFilename,
+  buildExternalFinanceDoctrineEditHandoffsFilename,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionDecisionsFilename,
+  buildExternalFinanceDoctrinePromotionProposalsFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  parseExternalFinanceDoctrineTeacherCandidateInputArtifact,
+  parseExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
+  parseExternalFinanceDoctrineTeacherCandidateInputReviewArtifact,
+  parseExternalFinanceDoctrineTeacherElevationHandoffArtifact,
+  parseExternalFinanceDoctrineTeacherFeedbackArtifact,
+  parseExternalFinanceDoctrineTeacherReviewArtifact,
+  parseExternalFinanceDoctrineEditHandoffArtifact,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionDecisionArtifact,
+  parseExternalFinanceDoctrinePromotionProposalArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
@@ -97,8 +97,8 @@ export function createFinancePromotionCandidatesTool(options?: {
       const dateKey = assertDateKey(readStringParam(params, "dateKey", { required: true }));
       const candidateRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey),
       );
       const candidateAbsPath = path.join(workspaceDir, candidateRelPath);
 
@@ -120,7 +120,7 @@ export function createFinancePromotionCandidatesTool(options?: {
       }
 
       const parsedCandidates =
-        parseFeishuFinanceDoctrinePromotionCandidateArtifact(candidateContent);
+        parseExternalFinanceDoctrinePromotionCandidateArtifact(candidateContent);
       if (!parsedCandidates) {
         return jsonResult({
           ok: false,
@@ -134,17 +134,17 @@ export function createFinancePromotionCandidatesTool(options?: {
 
       const reviewRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionReviewFilename(dateKey),
       );
       const reviewAbsPath = path.join(workspaceDir, reviewRelPath);
       let parsedReview = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrinePromotionReviewArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrinePromotionReviewArtifact>
         | undefined;
       let stateSource = "candidate_artifact_only";
       try {
         const reviewContent = await fs.readFile(reviewAbsPath, "utf8");
-        parsedReview = parseFeishuFinanceDoctrinePromotionReviewArtifact(reviewContent);
+        parsedReview = parseExternalFinanceDoctrinePromotionReviewArtifact(reviewContent);
         if (!parsedReview) {
           return jsonResult({
             ok: false,
@@ -165,16 +165,16 @@ export function createFinancePromotionCandidatesTool(options?: {
 
       const decisionRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey),
       );
       const decisionAbsPath = path.join(workspaceDir, decisionRelPath);
       let parsedDecisions = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrinePromotionDecisionArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrinePromotionDecisionArtifact>
         | undefined;
       try {
         const decisionContent = await fs.readFile(decisionAbsPath, "utf8");
-        parsedDecisions = parseFeishuFinanceDoctrinePromotionDecisionArtifact(decisionContent);
+        parsedDecisions = parseExternalFinanceDoctrinePromotionDecisionArtifact(decisionContent);
         if (!parsedDecisions) {
           return jsonResult({
             ok: false,
@@ -202,16 +202,16 @@ export function createFinancePromotionCandidatesTool(options?: {
       );
       const proposalRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionProposalsFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionProposalsFilename(dateKey),
       );
       const proposalAbsPath = path.join(workspaceDir, proposalRelPath);
       let parsedProposals = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrinePromotionProposalArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrinePromotionProposalArtifact>
         | undefined;
       try {
         const proposalContent = await fs.readFile(proposalAbsPath, "utf8");
-        parsedProposals = parseFeishuFinanceDoctrinePromotionProposalArtifact(proposalContent);
+        parsedProposals = parseExternalFinanceDoctrinePromotionProposalArtifact(proposalContent);
         if (!parsedProposals) {
           return jsonResult({
             ok: false,
@@ -236,16 +236,16 @@ export function createFinancePromotionCandidatesTool(options?: {
       );
       const handoffRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrineEditHandoffsFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrineEditHandoffsFilename(dateKey),
       );
       const handoffAbsPath = path.join(workspaceDir, handoffRelPath);
       let parsedHandoffs = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineEditHandoffArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineEditHandoffArtifact>
         | undefined;
       try {
         const handoffContent = await fs.readFile(handoffAbsPath, "utf8");
-        parsedHandoffs = parseFeishuFinanceDoctrineEditHandoffArtifact(handoffContent);
+        parsedHandoffs = parseExternalFinanceDoctrineEditHandoffArtifact(handoffContent);
         if (!parsedHandoffs) {
           return jsonResult({
             ok: false,
@@ -271,17 +271,17 @@ export function createFinancePromotionCandidatesTool(options?: {
       );
       const teacherFeedbackRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrineTeacherFeedbackFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrineTeacherFeedbackFilename(dateKey),
       );
       const teacherFeedbackAbsPath = path.join(workspaceDir, teacherFeedbackRelPath);
       let parsedTeacherFeedback = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineTeacherFeedbackArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineTeacherFeedbackArtifact>
         | undefined;
       try {
         const teacherFeedbackContent = await fs.readFile(teacherFeedbackAbsPath, "utf8");
         parsedTeacherFeedback =
-          parseFeishuFinanceDoctrineTeacherFeedbackArtifact(teacherFeedbackContent);
+          parseExternalFinanceDoctrineTeacherFeedbackArtifact(teacherFeedbackContent);
         if (!parsedTeacherFeedback) {
           return jsonResult({
             ok: false,
@@ -305,16 +305,16 @@ export function createFinancePromotionCandidatesTool(options?: {
       }
       const teacherReviewRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrineTeacherReviewFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrineTeacherReviewFilename(dateKey),
       );
       const teacherReviewAbsPath = path.join(workspaceDir, teacherReviewRelPath);
       let parsedTeacherReview = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineTeacherReviewArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineTeacherReviewArtifact>
         | undefined;
       try {
         const teacherReviewContent = await fs.readFile(teacherReviewAbsPath, "utf8");
-        parsedTeacherReview = parseFeishuFinanceDoctrineTeacherReviewArtifact(teacherReviewContent);
+        parsedTeacherReview = parseExternalFinanceDoctrineTeacherReviewArtifact(teacherReviewContent);
         if (!parsedTeacherReview) {
           return jsonResult({
             ok: false,
@@ -345,22 +345,22 @@ export function createFinancePromotionCandidatesTool(options?: {
       );
       const teacherElevationHandoffRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrineTeacherElevationHandoffsFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrineTeacherElevationHandoffsFilename(dateKey),
       );
       const teacherElevationHandoffAbsPath = path.join(
         workspaceDir,
         teacherElevationHandoffRelPath,
       );
       let parsedTeacherElevationHandoffs = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineTeacherElevationHandoffArtifact>
         | undefined;
       try {
         const teacherElevationHandoffContent = await fs.readFile(
           teacherElevationHandoffAbsPath,
           "utf8",
         );
-        parsedTeacherElevationHandoffs = parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact(
+        parsedTeacherElevationHandoffs = parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(
           teacherElevationHandoffContent,
         );
         if (!parsedTeacherElevationHandoffs) {
@@ -397,19 +397,19 @@ export function createFinancePromotionCandidatesTool(options?: {
       );
       const teacherCandidateInputRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrineTeacherCandidateInputsFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrineTeacherCandidateInputsFilename(dateKey),
       );
       const teacherCandidateInputAbsPath = path.join(workspaceDir, teacherCandidateInputRelPath);
       let parsedTeacherCandidateInputs = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineTeacherCandidateInputArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineTeacherCandidateInputArtifact>
         | undefined;
       try {
         const teacherCandidateInputContent = await fs.readFile(
           teacherCandidateInputAbsPath,
           "utf8",
         );
-        parsedTeacherCandidateInputs = parseFeishuFinanceDoctrineTeacherCandidateInputArtifact(
+        parsedTeacherCandidateInputs = parseExternalFinanceDoctrineTeacherCandidateInputArtifact(
           teacherCandidateInputContent,
         );
         if (!parsedTeacherCandidateInputs) {
@@ -451,15 +451,15 @@ export function createFinancePromotionCandidatesTool(options?: {
       );
       const teacherCandidateInputReviewRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrineTeacherCandidateInputReviewFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrineTeacherCandidateInputReviewFilename(dateKey),
       );
       const teacherCandidateInputReviewAbsPath = path.join(
         workspaceDir,
         teacherCandidateInputReviewRelPath,
       );
       let parsedTeacherCandidateInputReview = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineTeacherCandidateInputReviewArtifact>
         | undefined;
       try {
         const teacherCandidateInputReviewContent = await fs.readFile(
@@ -467,7 +467,7 @@ export function createFinancePromotionCandidatesTool(options?: {
           "utf8",
         );
         parsedTeacherCandidateInputReview =
-          parseFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact(
+          parseExternalFinanceDoctrineTeacherCandidateInputReviewArtifact(
             teacherCandidateInputReviewContent,
           );
         if (!parsedTeacherCandidateInputReview) {
@@ -515,15 +515,15 @@ export function createFinancePromotionCandidatesTool(options?: {
       );
       const teacherCandidateInputReconciliationRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrineTeacherCandidateInputReconciliationFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrineTeacherCandidateInputReconciliationFilename(dateKey),
       );
       const teacherCandidateInputReconciliationAbsPath = path.join(
         workspaceDir,
         teacherCandidateInputReconciliationRelPath,
       );
       let parsedTeacherCandidateInputReconciliation = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact>
         | undefined;
       try {
         const teacherCandidateInputReconciliationContent = await fs.readFile(
@@ -531,7 +531,7 @@ export function createFinancePromotionCandidatesTool(options?: {
           "utf8",
         );
         parsedTeacherCandidateInputReconciliation =
-          parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
+          parseExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
             teacherCandidateInputReconciliationContent,
           );
         if (!parsedTeacherCandidateInputReconciliation) {

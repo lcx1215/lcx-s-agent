@@ -17,7 +17,7 @@ describe("parseJsonObjectFromOutput", () => {
         {
           ok: true,
           nested: { status: "application_ready" },
-          cases: [{ name: "lark-market-capability-intake" }],
+          cases: [{ name: "external-market-capability-intake" }],
         },
         null,
         2,
@@ -28,7 +28,7 @@ describe("parseJsonObjectFromOutput", () => {
     expect(parseJsonObjectFromOutput(output)).toEqual({
       ok: true,
       nested: { status: "application_ready" },
-      cases: [{ name: "lark-market-capability-intake" }],
+      cases: [{ name: "external-market-capability-intake" }],
     });
   });
 

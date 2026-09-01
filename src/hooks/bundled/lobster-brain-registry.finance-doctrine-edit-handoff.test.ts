@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseFeishuFinanceDoctrineEditHandoffArtifact,
-  renderFeishuFinanceDoctrineEditHandoffArtifact,
+  parseExternalFinanceDoctrineEditHandoffArtifact,
+  renderExternalFinanceDoctrineEditHandoffArtifact,
 } from "./lobster-brain-registry.js";
 
 describe("finance doctrine edit handoff artifact", () => {
   it("round-trips the bounded doctrine-edit handoff artifact contract", () => {
-    const rendered = renderFeishuFinanceDoctrineEditHandoffArtifact({
+    const rendered = renderExternalFinanceDoctrineEditHandoffArtifact({
       handedOffAt: "2026-03-25T21:00:00.000Z",
       consumer: "holdings_thesis_revalidation",
       sourceProposalArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-proposals.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-proposals.md",
       sourceDecisionArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       handoffs: [
         {
           handoffId:
@@ -38,17 +38,17 @@ describe("finance doctrine edit handoff artifact", () => {
       ],
     });
 
-    expect(parseFeishuFinanceDoctrineEditHandoffArtifact(rendered)).toEqual({
+    expect(parseExternalFinanceDoctrineEditHandoffArtifact(rendered)).toEqual({
       handedOffAt: "2026-03-25T21:00:00.000Z",
       consumer: "holdings_thesis_revalidation",
       sourceProposalArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-proposals.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-proposals.md",
       sourceDecisionArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       handoffs: [
         {
           handoffId:
@@ -73,15 +73,15 @@ describe("finance doctrine edit handoff artifact", () => {
 
   it("fails closed on invalid handoff status entries", () => {
     expect(
-      parseFeishuFinanceDoctrineEditHandoffArtifact(`\
-# Feishu Finance Doctrine Edit Handoffs
+      parseExternalFinanceDoctrineEditHandoffArtifact(`\
+# External Finance Doctrine Edit Handoffs
 
 - **Handed Off At**: 2026-03-25T21:00:00.000Z
 - **Consumer**: holdings_thesis_revalidation
-- **Source Proposal Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-proposals.md
-- **Source Decision Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md
-- **Linked Candidate Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md
-- **Linked Review Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md
+- **Source Proposal Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-proposals.md
+- **Source Decision Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md
+- **Linked Candidate Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md
+- **Linked Review Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md
 
 ## Handoffs
 ### Handoff 1
@@ -100,13 +100,13 @@ describe("finance doctrine edit handoff artifact", () => {
       handedOffAt: "2026-03-25T21:00:00.000Z",
       consumer: "holdings_thesis_revalidation",
       sourceProposalArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-proposals.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-proposals.md",
       sourceDecisionArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       handoffs: [],
     });
   });

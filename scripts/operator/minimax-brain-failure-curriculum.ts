@@ -98,7 +98,7 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
       "parse-recovered repair for alternative source expansion blocker; trains source-intake honesty, reading scope, receipt boundary, and compact JSON.",
   },
   {
-    caseId: "short_lark_commodity_learning_intake",
+    caseId: "short_external_commodity_learning_intake",
     priority: 120,
     userMessage:
       "用户只说“学习大宗商品”。训练本地大脑先把短请求扩成通用学习回路：确认对象范围，调本地记忆，拆原油、黄金、工业金属、农产品、美元、通胀、库存、期限结构、ETF/期货工具和风险门；最后只给人类可读总结，不甩 JSON。",
@@ -157,7 +157,7 @@ const FAILURE_CASE_RECIPES: FailureCaseRecipe[] = [
     caseId: "all_module_knowledge_internalization_chain",
     priority: 109,
     userMessage:
-      "训练本地大脑把网上学习内化链条推广到所有模块，不只因子模块，也包括期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 模块。每个目标模块都必须有 source registry、actual reading scope、模块专属能力规则、retrieval receipt、apply validation、eval/training absorption、fresh adjacent task、module_learning_pipeline_review 状态、安全边界和 keep/downrank/discard；不能把存档或 plan receipt 说成模块学会。",
+      "训练本地大脑把网上学习内化链条推广到所有模块，不只因子模块，也包括期权、指数、宏观、基本面、external message 工作流、记忆、ops 和 skill 模块。每个目标模块都必须有 source registry、actual reading scope、模块专属能力规则、retrieval receipt、apply validation、eval/training absorption、fresh adjacent task、module_learning_pipeline_review 状态、安全边界和 keep/downrank/discard；不能把存档或 plan receipt 说成模块学会。",
     sourceSummary:
       "targeted repair for all-module internalization chain; prevents factor-only gates, plan-only gates, and storage-only module learning claims.",
   },

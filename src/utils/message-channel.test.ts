@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
-import { createMSTeamsTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
+import {
+  createChannelTestPluginBase,
+  createMSTeamsTestPluginBase,
+  createTestRegistry,
+} from "../test-utils/channel-plugins.js";
 import {
   normalizeMessageChannel,
   normalizeMessageChannelFamilyAlias,
@@ -11,6 +15,14 @@ import {
 const emptyRegistry = createTestRegistry([]);
 const msteamsPlugin: ChannelPlugin = {
   ...createMSTeamsTestPluginBase(),
+};
+const externalBase = createChannelTestPluginBase({ id: "external", label: "External" });
+const externalPlugin: ChannelPlugin = {
+  ...externalBase,
+  meta: {
+    ...externalBase.meta,
+    aliases: ["http-json"],
+  },
 };
 
 describe("message-channel", () => {
@@ -36,15 +48,16 @@ describe("message-channel", () => {
     expect(resolveGatewayMessageChannel("teams")).toBe("msteams");
   });
 
-  it("normalizes lark chain labels to feishu family", () => {
-    expect(normalizeMessageChannelFamilyAlias("lark")).toBe("feishu");
-    expect(normalizeMessageChannelFamilyAlias("LARK:dm:ou_123")).toBe("feishu");
-    expect(normalizeMessageChannelFamilyAlias("lark:group:oc_456")).toBe("feishu");
-    expect(normalizeMessageChannelFamilyAlias("feishu:dm:ou_123")).toBe("feishu");
+  it("normalizes external channel labels to the plugin id", () => {
+    setActivePluginRegistry(
+      createTestRegistry([{ pluginId: "external", plugin: externalPlugin, source: "test" }]),
+    );
+    expect(normalizeMessageChannelFamilyAlias("external")).toBe("external");
+    expect(normalizeMessageChannelFamilyAlias("EXTERNAL:dm:recipient")).toBe("external");
+    expect(normalizeMessageChannelFamilyAlias("http-json:group:room")).toBe("external");
   });
 
-  it("normalizes lark and feishu chain labels without plugin registry", () => {
-    expect(normalizeMessageChannel("LARK:dm:ou_123")).toBe("feishu");
-    expect(normalizeMessageChannel("feishu:dm:ou_123")).toBe("feishu");
+  it("keeps external labels normalized even before plugin registration", () => {
+    expect(normalizeMessageChannel("EXTERNAL:dm:recipient")).toBe("external");
   });
 });

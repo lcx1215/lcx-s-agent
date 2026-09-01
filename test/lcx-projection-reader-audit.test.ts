@@ -104,12 +104,12 @@ describe("LCX projection reader audit", () => {
           readerIdStrategy: "literal",
         }),
         expect.objectContaining({
-          id: "message_adapter:extensions:feishu:src:bot",
+          id: "message_adapter:extensions:external:src:bot",
           status: "bound",
           delegatedToAnswerBoundary: true,
           passesAdapterProjectionInput: true,
           readerIdStrategy: "literal",
-          readerIds: ["feishu-bot-ingress"],
+          readerIds: ["external-bot-ingress"],
         }),
         expect.objectContaining({
           id: "message_adapter:src:telegram:bot-message-dispatch",

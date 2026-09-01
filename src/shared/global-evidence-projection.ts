@@ -151,9 +151,6 @@ export type BuildGlobalEvidenceProjectionParams = {
 const SURFACES: readonly GlobalProjectionSurface[] = LCX_ONTOLOGY_SURFACE_IDS;
 const CAPABILITY_ROLES: readonly GlobalProjectionCapabilityRole[] = LCX_ONTOLOGY_CAPABILITY_ROLES;
 const LEGACY_ID_ALIASES: Record<string, string> = {
-  lark_feishu_live_boundary: "external_delivery_boundary",
-  lark_feishu_boundary: "external_delivery_boundary",
-  lark_feishu_visible_reply: "external_adapter_visible_reply",
   local_live_status_words_stay_separate: "delivery_status_separation",
   skillopt_preflight_is_not_absorption_or_live_proof:
     "preflight_is_not_absorption_or_delivery_proof",
@@ -162,8 +159,6 @@ const LEGACY_ID_ALIASES: Record<string, string> = {
 const ID_TOKEN_ALIASES: Record<string, string> = {
   channel: "adapter",
   dev: "core",
-  feishu: "message_adapter",
-  lark: "message_adapter",
   live: "external",
 };
 function uniqueStrings(values: readonly string[]): string[] {
@@ -184,8 +179,8 @@ function neutralizeIdentifier(value: string): string {
 }
 function neutralizeText(value: string): string {
   return value
-    .replace(/\b(?:Lark\s*\/\s*Feishu|Feishu\s*\/\s*Lark)\b/giu, "message adapter")
-    .replace(/(?<![A-Za-z0-9])(?:Lark|Feishu)(?=[A-Z_-]|\b)/giu, "message_adapter")
+    .replace(/\b(?:External\s*\/\s*External|External\s*\/\s*External)\b/giu, "message adapter")
+    .replace(/(?<![A-Za-z0-9])(?:External|External)(?=[A-Z_-]|\b)/giu, "message_adapter")
     .replace(/\bdev[/-]live\b/giu, "core/adapter")
     .replace(/\blive-visible-fixed\b/giu, "observed")
     .replace(/\bdev-only\b/giu, "core-scoped")

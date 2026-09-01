@@ -49,20 +49,20 @@ describe("resolveSkillOptAutoCue", () => {
     expect(cue?.protectedMemoryTouched).toBe(false);
   });
 
-  it("can match LiveLark sync requests and keep the preflight as boundary-only", async () => {
+  it("can match LiveExternal sync requests and keep the preflight as boundary-only", async () => {
     await writeBestSkill(
       workspaceDir,
       "external_channel_boundary_preflight",
       [
-        "# Live Lark boundary preflight",
+        "# Live External boundary preflight",
         "",
         "- Syncing source to the live sidecar is not live-user-seen.",
-        "- Fresh real Lark inbound/outbound evidence is required before claiming visible fixed.",
+        "- Fresh real External inbound/outbound evidence is required before claiming visible fixed.",
       ].join("\n"),
     );
 
     const cue = await resolveSkillOptAutoCue({
-      body: "我说连接 LiveLark 是希望 live仓直接用训练进化，不要以后手动搬格式",
+      body: "我说连接 LiveExternal 是希望 live仓直接用训练进化，不要以后手动搬格式",
       workspaceDir,
       includeDefaultWorkspace: false,
     });

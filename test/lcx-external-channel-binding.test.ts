@@ -8,25 +8,25 @@ describe("lcx-external-channel-binding", () => {
     externalChannelBinding: {
       boundary: "local_external_channel_binding_plan_only",
       status: "ready_for_apply",
-      action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
+      action: "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
       selectedCleanAdapter: "/tmp/adapter-clean-r4",
       missingProof: [
         "external_channel_source_drift_zero_after_selected_adapter",
-        "lark_external_channel_gateway_restarted_after_selected_adapter",
-        "lark_external_channel_diagnose_ok_after_restart",
-        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+        "external_message_channel_gateway_restarted_after_selected_adapter",
+        "external_message_channel_diagnose_ok_after_restart",
+        "fresh_real_external_inbound_and_outbound_user_visible_observed",
       ],
     },
-    liveLarkBrainBinding: {
-      boundary: "local_live_lark_brain_binding_plan_only",
+    liveExternalBrainBinding: {
+      boundary: "local_live_external_brain_binding_plan_only",
       status: "ready_for_live_runtime_binding",
-      action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
+      action: "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
       selectedCleanAdapter: "/tmp/adapter-clean-r4",
       missingProof: [
         "live_sidecar_source_drift_zero_after_selected_adapter",
-        "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
-        "live_lark_loop_diagnose_ok_after_restart",
-        "fresh_real_lark_inbound_and_outbound_seen",
+        "live_gateway_and_external_proxy_restarted_after_selected_adapter",
+        "live_external_loop_diagnose_ok_after_restart",
+        "fresh_real_external_inbound_and_outbound_seen",
       ],
     },
   };
@@ -77,33 +77,33 @@ describe("lcx-external-channel-binding", () => {
     const decision = buildExternalChannelBindingDecision({
       apply: true,
       liveTouched: true,
-      larkLoopDiagnoseOk: true,
+      externalLoopDiagnoseOk: true,
       trainingPlan: readyTrainingPlan,
     });
 
     expect(decision).toMatchObject({
       status: "applied_runtime_probe_ok",
-      action: "keep_waiting_for_real_lark_user_seen_proof",
+      action: "keep_waiting_for_real_external_user_seen_proof",
       selectedCleanAdapter: "/tmp/adapter-clean-r4",
       liveTouched: true,
       liveUserSeen: false,
     });
-    expect(decision.missingProof).not.toContain("live_lark_loop_diagnose_ok_after_restart");
+    expect(decision.missingProof).not.toContain("live_external_loop_diagnose_ok_after_restart");
     expect(decision.missingProof).not.toContain(
       "external_channel_source_drift_zero_after_selected_adapter",
     );
     expect(decision.missingProof).not.toContain(
-      "lark_external_channel_gateway_restarted_after_selected_adapter",
+      "external_message_channel_gateway_restarted_after_selected_adapter",
     );
-    expect(decision.missingProof).not.toContain("lark_external_channel_diagnose_ok_after_restart");
+    expect(decision.missingProof).not.toContain("external_message_channel_diagnose_ok_after_restart");
     expect(decision.missingProof).not.toContain(
       "live_sidecar_source_drift_zero_after_selected_adapter",
     );
     expect(decision.missingProof).not.toContain(
-      "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
+      "live_gateway_and_external_proxy_restarted_after_selected_adapter",
     );
     expect(decision.missingProof).toContain(
-      "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+      "fresh_real_external_inbound_and_outbound_user_visible_observed",
     );
   });
 

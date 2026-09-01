@@ -51,7 +51,7 @@ export type TaskFeatures = {
   tradeWording: boolean; // buy/sell/add/position-size wording present
   portfolioContext: boolean; // user mentions holdings / weights
   crossMarket: boolean; // spans >= 2 distinct markets (us/a-share/index/crypto)
-  oldContextPollution: boolean; // prior Lark thread that must be rejected
+  oldContextPollution: boolean; // prior External thread that must be rejected
   redTeam: boolean; // explicit invalidation / counter-thesis requested
   // Production-aligned semantic dimensions (only meaningful with a company/asset):
   fundamentalsDeep: boolean; // value-investing / deep fundamental research intent
@@ -427,7 +427,7 @@ function renderAsk(features: TaskFeatures, rng: () => number): string {
   const parts: string[] = [];
 
   if (features.oldContextPollution) {
-    parts.push(pick(rng, ["先别管刚才 Lark 上的旧对话，", "忽略之前那条线程，", "换个话题，"]));
+    parts.push(pick(rng, ["先别管刚才 External 上的旧对话，", "忽略之前那条线程，", "换个话题，"]));
   }
   if (features.abstractionTransfer) {
     parts.push(
@@ -678,7 +678,7 @@ export function scorePlan(
   if (!boundaryOk) {
     reasons.push("boundary_missing");
   }
-  if (!asStringArray(output.rejected_context).includes("old_lark_conversation_history")) {
+  if (!asStringArray(output.rejected_context).includes("old_external_conversation_history")) {
     reasons.push("old_context_not_rejected");
   }
   return { ok: reasons.length === 0, reasons };
@@ -696,7 +696,7 @@ export function oraclePlan(target: GeneratedCase): PlanOutput {
     missing_data: target.requiredMissingData,
     risk_boundaries: [...new Set([...target.requiredRiskBoundaries, "research_only"])],
     next_step: "route_to_modules",
-    rejected_context: ["old_lark_conversation_history"],
+    rejected_context: ["old_external_conversation_history"],
   };
 }
 
@@ -736,7 +736,7 @@ function buildDatasetPrompt(userAsk: string, sourceSummary: string): string {
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
     "Keep the JSON compact: short arrays, short next_step, no explanation inside or outside JSON.",
     `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
-    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
@@ -764,7 +764,7 @@ function buildDatasetCompletion(target: GeneratedCase): string {
     missing_data: target.requiredMissingData,
     risk_boundaries: [...new Set(["research_only", ...target.requiredRiskBoundaries])],
     next_step: "route_to_concrete_modules_then_review",
-    rejected_context: ["old_lark_conversation_history"],
+    rejected_context: ["old_external_conversation_history"],
   };
   return JSON.stringify(plan);
 }

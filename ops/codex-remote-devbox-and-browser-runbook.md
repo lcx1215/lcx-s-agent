@@ -62,7 +62,7 @@ Settings -> Connections -> add/enable SSH host -> choose remote project folder
 
 Recommended first remote split:
 
-- keep LiveLark, protected memory, provider config, and local app UI on the Mac
+- keep the external-channel credentials, protected memory, provider config, and local app UI on the Mac
 - move heavy read-only eval, CI, broad static checks, and long web dashboard
   preview work to the devbox
 - do not move MLX adapter promotion unless the remote host has the same model,

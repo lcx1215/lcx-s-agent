@@ -19,7 +19,7 @@ function exampleLine(): string {
       missing_data: [],
       risk_boundaries: ["research_only", "no_execution_authority"],
       next_step: "continue_health_digest",
-      rejected_context: ["old_lark_conversation_history"],
+      rejected_context: ["old_external_conversation_history"],
     }),
     meta: { sourcePath: "test.json", sourceKind: "curated_seed" },
   });

@@ -2,13 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
-  buildFeishuFinanceDoctrineTeacherFeedbackFilename,
-  buildFeishuFinanceDoctrineTeacherReviewFilename,
-  parseFeishuFinanceDoctrineCalibrationFilename,
-  parseFeishuFinanceDoctrineTeacherFeedbackArtifact,
-  parseFeishuFinanceDoctrineTeacherReviewArtifact,
-  renderFeishuFinanceDoctrineTeacherReviewArtifact,
-  type FeishuFinanceDoctrineTeacherReviewArtifact,
+  buildExternalFinanceDoctrineTeacherFeedbackFilename,
+  buildExternalFinanceDoctrineTeacherReviewFilename,
+  parseExternalFinanceDoctrineCalibrationFilename,
+  parseExternalFinanceDoctrineTeacherFeedbackArtifact,
+  parseExternalFinanceDoctrineTeacherReviewArtifact,
+  renderExternalFinanceDoctrineTeacherReviewArtifact,
+  type ExternalFinanceDoctrineTeacherReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -72,8 +72,8 @@ export function createFinanceDoctrineTeacherFeedbackReviewTool(options?: {
       const feedbackRelPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherFeedbackFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherFeedbackFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       const feedbackAbsPath = path.join(workspaceDir, feedbackRelPath);
@@ -91,7 +91,7 @@ export function createFinanceDoctrineTeacherFeedbackReviewTool(options?: {
         });
       }
 
-      const parsedFeedback = parseFeishuFinanceDoctrineTeacherFeedbackArtifact(feedbackContent);
+      const parsedFeedback = parseExternalFinanceDoctrineTeacherFeedbackArtifact(feedbackContent);
       if (!parsedFeedback) {
         return jsonResult({
           ok: false,
@@ -122,7 +122,7 @@ export function createFinanceDoctrineTeacherFeedbackReviewTool(options?: {
 
       const feedbackSourceFilename = path.posix.basename(feedback.sourceArtifact);
       const parsedSourceFilename =
-        parseFeishuFinanceDoctrineCalibrationFilename(feedbackSourceFilename);
+        parseExternalFinanceDoctrineCalibrationFilename(feedbackSourceFilename);
       if (!parsedSourceFilename || parsedSourceFilename.dateStr !== dateKey) {
         return jsonResult({
           ok: false,
@@ -140,14 +140,14 @@ export function createFinanceDoctrineTeacherFeedbackReviewTool(options?: {
       const reviewRelPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherReviewFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherReviewFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       const reviewAbsPath = path.join(workspaceDir, reviewRelPath);
       const reviewContent = await readUtf8OrMissing(reviewAbsPath);
       const parsedReview = reviewContent
-        ? parseFeishuFinanceDoctrineTeacherReviewArtifact(reviewContent)
+        ? parseExternalFinanceDoctrineTeacherReviewArtifact(reviewContent)
         : undefined;
 
       if (reviewContent != null && !parsedReview) {
@@ -211,7 +211,7 @@ export function createFinanceDoctrineTeacherFeedbackReviewTool(options?: {
         });
       }
 
-      const nextArtifact: FeishuFinanceDoctrineTeacherReviewArtifact = {
+      const nextArtifact: ExternalFinanceDoctrineTeacherReviewArtifact = {
         reviewedAt: new Date().toISOString(),
         sourceTeacherFeedbackArtifact: feedbackRelPath,
         reviews: [
@@ -226,7 +226,7 @@ export function createFinanceDoctrineTeacherFeedbackReviewTool(options?: {
 
       await fs.writeFile(
         reviewAbsPath,
-        renderFeishuFinanceDoctrineTeacherReviewArtifact(nextArtifact),
+        renderExternalFinanceDoctrineTeacherReviewArtifact(nextArtifact),
         "utf8",
       );
 

@@ -153,7 +153,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "regression_eval_required",
       "train_slice_evidence_required",
       "promotion_ready_required",
-      "real_lark_proof_required",
+      "real_external_proof_required",
     ],
     riskBoundaries: [
       "local_skillopt_lite_only",
@@ -240,7 +240,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_external_channel_sender_change",
     ],
     liveBoundary:
-      "external channel can use the same prompt doctrine after migration, but memory regression proof remains local-only until a real Lark prompt uses it",
+      "external channel can use the same prompt doctrine after migration, but memory regression proof remains local-only until a real External prompt uses it",
   },
   {
     id: "local_first_memory_provenance",
@@ -443,12 +443,12 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     requiredReceipts: [
       "lcx-commercial-acceptance-harness",
       "l5-regression-batterer",
-      "feishu-reply-flow",
+      "external-message-flow",
     ],
     requiredFilters: [
       "commercial_error_budget_required",
       "product_canary_suite_required",
-      "real_lark_inbound_required",
+      "real_external_inbound_required",
     ],
     riskBoundaries: [
       "no_leaderboard_submission",
@@ -459,7 +459,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_external_channel_sender_change",
     ],
     liveBoundary:
-      "commercial canary is user-visible only after migration plus fresh Lark inbound and matching reply evidence",
+      "commercial canary is user-visible only after migration plus fresh External inbound and matching reply evidence",
   },
   {
     id: "computer_use_cli_bridge",
@@ -551,7 +551,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "protected_memory_guard",
     ],
     liveBoundary:
-      "GitHub CLI may become an operator-side control panel after wrapper tests and permission receipts, but it never becomes live Lark, provider, protected-memory, or trading authority by default",
+      "GitHub CLI may become an operator-side control panel after wrapper tests and permission receipts, but it never becomes live External, provider, protected-memory, or trading authority by default",
   },
   {
     id: "multi_agent_framework_orchestration_guardrails",
@@ -761,11 +761,11 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "new_adapter_hardened_eval_clean",
       "promotionReady_true_without_failed_or_parseRecovered",
       "live_preflight_cue_source_synced",
-      "fresh_real_lark_inbound_and_outbound_seen",
+      "fresh_real_external_inbound_and_outbound_seen",
     ],
     forbiddenAuthorities: [
       "model_weight_absorption_claim_without_training",
-      "live_visible_fixed_claim_without_lark_proof",
+      "live_visible_fixed_claim_without_external_proof",
       "provider_config_change",
       "protected_memory_write",
       "direct_trading_authority",
@@ -1399,7 +1399,7 @@ export function buildExternalAgentUpgradeRadar() {
     },
     architectureFit: "fully_integrated_into_existing_lcx_owner_stack",
     perfectIntegrationReason:
-      "No external project should be called perfectly integrated until a concrete dev probe, eval/receipt, external-channel migration, and fresh Lark visible proof all pass. This radar proves architecture wiring, not user-visible-observed behavior.",
+      "No external project should be called perfectly integrated until a concrete dev probe, eval/receipt, external-channel migration, and fresh External visible proof all pass. This radar proves architecture wiring, not user-visible-observed behavior.",
     checks,
     candidates,
     blacktechMechanisms,

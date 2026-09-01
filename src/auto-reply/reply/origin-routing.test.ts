@@ -15,21 +15,21 @@ describe("origin-routing helpers", () => {
     expect(provider).toBe("telegram");
   });
 
-  it("normalizes lark chain label as originating provider", () => {
+  it("normalizes external chain label as originating provider", () => {
     const provider = resolveOriginMessageProvider({
-      originatingChannel: "lark:dm:ou_123",
+      originatingChannel: "external:dm:ou_123",
       provider: "webchat",
     });
 
-    expect(provider).toBe("feishu");
+    expect(provider).toBe("external");
   });
 
   it("normalizes provider chain labels", () => {
     const provider = resolveOriginMessageProvider({
-      provider: "LARK:group:oc_123",
+      provider: "EXTERNAL:group:oc_123",
     });
 
-    expect(provider).toBe("feishu");
+    expect(provider).toBe("external");
   });
 
   it("falls back to provider when originating channel is missing", () => {

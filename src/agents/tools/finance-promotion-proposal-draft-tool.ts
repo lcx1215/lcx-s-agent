@@ -2,15 +2,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionDecisionsFilename,
-  buildFeishuFinanceDoctrinePromotionProposalsFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionDecisionArtifact,
-  parseFeishuFinanceDoctrinePromotionProposalArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
-  renderFeishuFinanceDoctrinePromotionProposalArtifact,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionDecisionsFilename,
+  buildExternalFinanceDoctrinePromotionProposalsFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionDecisionArtifact,
+  parseExternalFinanceDoctrinePromotionProposalArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
+  renderExternalFinanceDoctrinePromotionProposalArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
 import type { AnyAgentTool } from "./common.js";
@@ -53,26 +53,26 @@ export function createFinancePromotionProposalDraftTool(options?: {
       const dateKey = assertDateKey(readStringParam(params, "dateKey", { required: true }));
       const candidateKey = readStringParam(params, "candidateKey", { required: true });
 
-      const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+      const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
       const candidateRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey),
       );
       const reviewRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionReviewFilename(dateKey),
       );
       const decisionRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey),
       );
       const proposalRelPath = path.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrinePromotionProposalsFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrinePromotionProposalsFilename(dateKey),
       );
 
       const candidateAbsPath = path.join(workspaceDir, candidateRelPath);
@@ -99,7 +99,7 @@ export function createFinancePromotionProposalDraftTool(options?: {
         throw error;
       }
       const parsedCandidates =
-        parseFeishuFinanceDoctrinePromotionCandidateArtifact(candidateContent);
+        parseExternalFinanceDoctrinePromotionCandidateArtifact(candidateContent);
       if (!parsedCandidates) {
         return jsonResult({
           ok: false,
@@ -147,7 +147,7 @@ export function createFinancePromotionProposalDraftTool(options?: {
         }
         throw error;
       }
-      const parsedReview = parseFeishuFinanceDoctrinePromotionReviewArtifact(reviewContent);
+      const parsedReview = parseExternalFinanceDoctrinePromotionReviewArtifact(reviewContent);
       if (!parsedReview) {
         return jsonResult({
           ok: false,
@@ -192,7 +192,7 @@ export function createFinancePromotionProposalDraftTool(options?: {
         }
         throw error;
       }
-      const parsedDecisions = parseFeishuFinanceDoctrinePromotionDecisionArtifact(decisionContent);
+      const parsedDecisions = parseExternalFinanceDoctrinePromotionDecisionArtifact(decisionContent);
       if (!parsedDecisions) {
         return jsonResult({
           ok: false,
@@ -252,10 +252,10 @@ export function createFinancePromotionProposalDraftTool(options?: {
       }
 
       let parsedProposals = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrinePromotionProposalArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrinePromotionProposalArtifact>
         | undefined;
       try {
-        parsedProposals = parseFeishuFinanceDoctrinePromotionProposalArtifact(
+        parsedProposals = parseExternalFinanceDoctrinePromotionProposalArtifact(
           await fs.readFile(proposalAbsPath, "utf8"),
         );
         if (!parsedProposals) {
@@ -325,7 +325,7 @@ export function createFinancePromotionProposalDraftTool(options?: {
       await fs.mkdir(receiptsDir, { recursive: true });
       await fs.writeFile(
         proposalAbsPath,
-        renderFeishuFinanceDoctrinePromotionProposalArtifact({
+        renderExternalFinanceDoctrinePromotionProposalArtifact({
           draftedAt: new Date().toISOString(),
           consumer: parsedProposals?.consumer ?? parsedCandidates.consumer,
           sourceDecisionArtifact:

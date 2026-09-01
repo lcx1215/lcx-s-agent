@@ -167,7 +167,7 @@ describe("LCX monotonic data ledger", () => {
         runtimeMonotonicNotEveryTrainingRound: true,
         modelWeightAbsorptionRequiresPromotionProof: true,
         externalChannelRequiresSeparateUserVisibleProof: true,
-        liveLarkRequiresSeparateLiveProof: true,
+        liveExternalRequiresSeparateLiveProof: true,
       },
       liveTouched: false,
       providerConfigTouched: false,

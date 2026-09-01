@@ -12,7 +12,7 @@ describe("finance framework core contract artifact", () => {
         {
           domain: "macro_rates_inflation",
           sourceArtifacts: [
-            "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
+            "memory/external-work-receipts/2026-04-16-external-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
           ],
           evidenceCategories: ["macro_rates_evidence", "inflation_evidence"],
           evidenceSummary:
@@ -42,7 +42,7 @@ describe("finance framework core contract artifact", () => {
         {
           domain: "macro_rates_inflation",
           sourceArtifacts: [
-            "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
+            "memory/external-work-receipts/2026-04-16-external-finance-doctrine-calibration-190000-000Z-control-room-msg-1.md",
           ],
           evidenceCategories: ["macro_rates_evidence", "inflation_evidence"],
           evidenceSummary:
@@ -86,7 +86,7 @@ describe("finance framework core contract artifact", () => {
 - **Risk Gate Notes**: risk
 - **Allowed Action Authority**: research_only
 #### Source Artifacts
-- memory/feishu-work-receipts/example.md
+- memory/external-work-receipts/example.md
 #### Evidence Categories
 - macro_rates_evidence
 - inflation_evidence
@@ -118,7 +118,7 @@ describe("finance framework core contract artifact", () => {
 - **Risk Gate Notes**: risk
 - **Allowed Action Authority**: trade_now
 #### Source Artifacts
-- memory/feishu-work-receipts/example.md
+- memory/external-work-receipts/example.md
 #### Evidence Categories
 - macro_rates_evidence
 - inflation_evidence

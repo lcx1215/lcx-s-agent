@@ -60,10 +60,10 @@ describe("resolveCliChannelOptions", () => {
     readFileSyncMock.mockImplementation(() => {
       throw new Error("ENOENT");
     });
-    listCatalogMock.mockReturnValue([{ id: "feishu" }, { id: "telegram" }]);
+    listCatalogMock.mockReturnValue([{ id: "external" }, { id: "telegram" }]);
 
     const mod = await loadModule();
-    expect(mod.resolveCliChannelOptions()).toEqual(["telegram", "discord", "feishu"]);
+    expect(mod.resolveCliChannelOptions()).toEqual(["telegram", "discord", "external"]);
     expect(listCatalogMock).toHaveBeenCalledOnce();
   });
 

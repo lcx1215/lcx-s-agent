@@ -438,7 +438,7 @@ export async function buildLearningSedimentationBridge(
       "external_channel_sender",
       "provider_config",
       "protected_repo_memory",
-      "formal_lark_routing_corpus",
+      "formal_external_routing_corpus",
       "finance_doctrine",
     ],
     liveTouched: false,

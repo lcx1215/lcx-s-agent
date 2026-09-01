@@ -103,7 +103,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts [--json] [--write] [--date YYYY-MM-DD]",
       "",
       "Builds the focused daily research product brief for index options and semiconductor/AI compute-chain research.",
-      "This owner is research-only: it does not fetch live market data, send Lark messages, start training, or give trade execution instructions.",
+      "This owner is research-only: it does not fetch live market data, send External messages, start training, or give trade execution instructions.",
     ].join("\n"),
   );
 }

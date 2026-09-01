@@ -28,7 +28,7 @@ const VALID_DOMAIN_EVIDENCE: Record<string, string[]> = {
 function buildValidSkeletonArgs(domain: string) {
   return {
     domain,
-    sourceArtifacts: [`memory/feishu-work-receipts/${domain}-source.md`],
+    sourceArtifacts: [`memory/external-work-receipts/${domain}-source.md`],
     learningOutputs: [`${domain} learning output`],
     evidenceCategories: VALID_DOMAIN_EVIDENCE[domain],
     evidenceSummary: `${domain} domain evidence uses concrete category-matched support instead of generic finance claims.`,

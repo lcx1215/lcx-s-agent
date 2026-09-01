@@ -403,7 +403,7 @@ const plan = {
     "external_channel_sender",
     "provider_config",
     "protected_repo_memory",
-    "formal_lark_routing_corpus",
+    "formal_external_routing_corpus",
     "brain_distillation_training_samples",
     "finance_doctrine",
   ],

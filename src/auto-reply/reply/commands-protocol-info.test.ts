@@ -70,7 +70,7 @@ describe("commands-protocol-info", () => {
     ["is this live-fixed", "status_readback"],
     ["where are we now", "status_readback"],
     [
-      "Status audit what did you just fix in Lark Answer only with current evidence. Separate core-verified live-visible-fixed unverified next step proof. If unknown say failedReason.",
+      "Status audit what did you just fix in External Answer only with current evidence. Separate core-verified live-visible-fixed unverified next step proof. If unknown say failedReason.",
       "status_readback",
     ],
     ["can you use file_search", "specific_capability"],
@@ -128,14 +128,14 @@ describe("commands-protocol-info", () => {
           "",
         ].join("\n"),
       );
-      fs.mkdirSync(path.join(workspace, "memory", "feishu-learning-timeboxes"), {
+      fs.mkdirSync(path.join(workspace, "memory", "external-learning-timeboxes"), {
         recursive: true,
       });
       fs.writeFileSync(
         path.join(
           workspace,
           "memory",
-          "feishu-learning-timeboxes",
+          "external-learning-timeboxes",
           "2026-04-23T10-00-00.000Z__oc-learning.json",
         ),
         JSON.stringify({
@@ -186,36 +186,27 @@ describe("commands-protocol-info", () => {
       const statusReadbackReply = buildProtocolInfoReply({
         text: "现在修到哪了",
         cfg,
-        feishuReplyFlowEvidence: [
-          "## Recent Feishu/Lark Reply Flow Evidence",
-          "Reply-path status evidence: visible_reply_delivered",
-          "Boundary: this proves only the recorded reply delivery layer.",
-        ].join("\n"),
       });
       expect(statusReadbackReply?.text).toContain("当前状态回读：先看本地证据");
       expect(statusReadbackReply?.text).toContain(
-        "通道接上：只代表 Lark 运输层已重启并探活，不等于你已经看到了正确答案。",
+        "通道接上：只代表外部运输层已重启并探活，不等于你已经看到了正确答案。",
       );
       expect(statusReadbackReply?.text).toContain(
-        "你这边真的可见：必须有真实 Lark 入站、最终回复发送成功、回复内容命中验收语义",
+        "你这边真的可见：必须有真实外部通道入站、最终回复发送成功、回复内容命中验收语义",
       );
       expect(statusReadbackReply?.text).toContain("最近持久学习 artifact: 有 (2026-04-23)");
       expect(statusReadbackReply?.text).toContain(
         "最近学习 session 回执: running (2026-04-23T10-00-00.000Z__oc-learning)",
       );
       expect(statusReadbackReply?.text).toContain("最近写入异常: 未找到。");
-      expect(statusReadbackReply?.text).toContain("可见 Lark/Feishu reply-flow 证据: 已提供。");
+      expect(statusReadbackReply?.text).toContain(
+        "可见回复证据: 本次回复发出前无法自证，必须看随后真实出站回执。",
+      );
       expect(statusReadbackReply?.text).toContain("边界: 状态回读只报告证据层级");
       expect(statusReadbackReply?.text).not.toContain("Dev-fixed:");
       expect(statusReadbackReply?.text).not.toContain("Probe-fixed:");
       expect(statusReadbackReply?.text).not.toContain("Live-visible-fixed:");
       expect(statusReadbackReply?.text).not.toContain("🦞 Lobster:");
-      expect(statusReadbackReply?.text).toContain(
-        "Reply-path status evidence: visible_reply_delivered",
-      );
-      expect(statusReadbackReply?.text).toContain(
-        "Boundary: this proves only the recorded reply delivery layer.",
-      );
       expect(statusReadbackReply?.text).toContain("下一步检查: 找第一层缺失证据");
 
       const lobsterReply = buildProtocolInfoReply({ text: "lobster开了吗？", cfg });
@@ -330,7 +321,7 @@ describe("commands-protocol-info", () => {
       expect(agentArchitectureReply?.text).toContain("Kimi / MiniMax / DeepSeek");
       expect(agentArchitectureReply?.text).toContain("sessions_spawn / subagents");
       expect(agentArchitectureReply?.text).toContain("not marketing");
-      expect(agentArchitectureReply?.text).toContain("Live Lark proof still requires");
+      expect(agentArchitectureReply?.text).toContain("Live External proof still requires");
       expect(agentArchitectureReply?.text).toContain(
         "🦞 Lobster: control_room_main_lane · openclaw_embedded_agent",
       );
@@ -735,7 +726,7 @@ describe("commands-protocol-info", () => {
           occurrenceCount: 1,
           severity: "medium",
           category: "learning_quality_drift",
-          source: "feishu.learning_command",
+          source: "external.learning_command",
           problem: "background learning timebox iteration failed",
           impact: "fewer study passes than requested may have completed",
           suggestedScope: "smallest safe patch only",
@@ -831,7 +822,7 @@ describe("commands-protocol-info", () => {
           occurrenceCount: 1,
           severity: "medium",
           category: "write_edit_failure",
-          source: "feishu.learning_command",
+          source: "external.learning_command",
           problem: "failed to start learning timebox because workspace dir is unavailable",
           impact: "the request was downgraded to a single learning pass",
           suggestedScope: "smallest safe patch only",
@@ -925,8 +916,8 @@ describe("commands-protocol-info", () => {
           occurrenceCount: 1,
           severity: "high",
           category: "write_edit_failure",
-          source: "feishu.surface_memory",
-          problem: "failed to persist feishu surface line",
+          source: "external.surface_memory",
+          problem: "failed to persist external surface line",
           impact: "bounded memory ledger not updated",
           suggestedScope: "smallest safe patch only",
           evidence: ["surface=control_room"],
@@ -945,7 +936,7 @@ describe("commands-protocol-info", () => {
       expect(reply?.text).toContain("💾 Persistence state");
       expect(reply?.text).toContain("Durable artifact: current-research-line only");
       expect(reply?.text).toContain(
-        "Latest explicit write failure: feishu.surface_memory @ 2026-04-23T12:10:00.000Z",
+        "Latest explicit write failure: external.surface_memory @ 2026-04-23T12:10:00.000Z",
       );
     });
   });
@@ -966,7 +957,7 @@ describe("commands-protocol-info", () => {
           occurrenceCount: 2,
           severity: "medium",
           category: "provider_degradation",
-          source: "feishu.monitor.transport",
+          source: "external.monitor.transport",
           problem: "web search degraded under current provider path",
           impact: "search-backed answers may narrow or fail",
           suggestedScope: "smallest safe patch only",
@@ -1001,7 +992,7 @@ describe("commands-protocol-info", () => {
       expect(reply?.text).toContain("Provider-native search: not connected");
       expect(reply?.text).toContain("OpenClaw web_search: connected");
       expect(reply?.text).toContain(
-        "Recent degradation record: feishu.monitor.transport @ 2026-04-23T12:20:00.000Z",
+        "Recent degradation record: external.monitor.transport @ 2026-04-23T12:20:00.000Z",
       );
       expect(reply?.text).toContain(
         "Recent degradation problem: web search degraded under current provider path",
@@ -1076,8 +1067,8 @@ describe("commands-protocol-info", () => {
           occurrenceCount: 1,
           severity: "high",
           category: "write_edit_failure",
-          source: "feishu.work_receipts",
-          problem: "failed to persist feishu work receipt artifacts",
+          source: "external.work_receipts",
+          problem: "failed to persist external work receipt artifacts",
           impact: "structured work receipt missing",
           suggestedScope: "smallest safe patch only",
           evidence: ["surface=control_room"],
@@ -1100,10 +1091,10 @@ describe("commands-protocol-info", () => {
       expect(reply?.text).toContain("Durable write: no fresh learning artifact");
       expect(reply?.text).toContain("Current-session understanding: yes");
       expect(reply?.text).toContain(
-        "Latest explicit write failure: feishu.work_receipts @ 2026-04-23T12:10:00.000Z",
+        "Latest explicit write failure: external.work_receipts @ 2026-04-23T12:10:00.000Z",
       );
       expect(reply?.text).toContain(
-        "Failure problem: failed to persist feishu work receipt artifacts",
+        "Failure problem: failed to persist external work receipt artifacts",
       );
       expect(reply?.text).toContain(
         "Outcome: the system appears to understand the result in the current session or top-line carryover, but a fresh durable learning write is not proven yet.",
@@ -1141,7 +1132,7 @@ describe("commands-protocol-info", () => {
           occurrenceCount: 1,
           severity: "high",
           category: "write_edit_failure",
-          source: "feishu.surface_memory",
+          source: "external.surface_memory",
           problem: "failed to persist final control-room ledger text",
           impact: "operator-visible text and durable ledger may diverge",
           suggestedScope: "smallest safe patch only",
@@ -1165,7 +1156,7 @@ describe("commands-protocol-info", () => {
       expect(persistenceReply?.text).toContain("💾 Persistence state");
       expect(persistenceReply?.text).toContain("Durable artifact: lobster-workface 2026-04-23");
       expect(persistenceReply?.text).toContain(
-        "Latest explicit write failure: feishu.surface_memory @ 2026-04-23T12:10:00.000Z",
+        "Latest explicit write failure: external.surface_memory @ 2026-04-23T12:10:00.000Z",
       );
       expect(persistenceReply?.text).toContain(
         "Failure problem: failed to persist final control-room ledger text",
@@ -1181,7 +1172,7 @@ describe("commands-protocol-info", () => {
       expect(writeOutcomeReply?.text).toContain("🧱 Write outcome");
       expect(writeOutcomeReply?.text).toContain("Durable write: present (2026-04-23)");
       expect(writeOutcomeReply?.text).toContain(
-        "Latest explicit write failure: feishu.surface_memory @ 2026-04-23T12:10:00.000Z",
+        "Latest explicit write failure: external.surface_memory @ 2026-04-23T12:10:00.000Z",
       );
       expect(writeOutcomeReply?.text).toContain(
         "Outcome: durable artifact evidence exists, but a recent explicit write failure is also recorded. Treat the write lane as mixed until a fresh clean artifact lands after the failure.",
@@ -1222,7 +1213,7 @@ describe("commands-protocol-info", () => {
           occurrenceCount: 1,
           severity: "high",
           category: "write_edit_failure",
-          source: "feishu.surface_memory",
+          source: "external.surface_memory",
           problem: "failed to persist yesterday's control-room ledger text",
           impact: "operator-visible text and durable ledger may diverge",
           suggestedScope: "smallest safe patch only",

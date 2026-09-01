@@ -16,7 +16,7 @@ import {
 
 function hasLegacyArchitectureTerm(value: unknown): boolean {
   if (typeof value === "string") {
-    return /(?<![A-Za-z0-9])(?:lark|feishu|dev|live|channels?)(?=[A-Z_-]|\b)/iu.test(value);
+    return /(?<![A-Za-z0-9])(?:external|external|dev|live|channels?)(?=[A-Z_-]|\b)/iu.test(value);
   }
   if (Array.isArray(value)) {
     return value.some((item) => hasLegacyArchitectureTerm(item));
@@ -25,7 +25,7 @@ function hasLegacyArchitectureTerm(value: unknown): boolean {
     return Object.entries(value).some(
       ([key, item]) =>
         !["adapterId", "receiptId"].includes(key) &&
-        (/(?<![A-Za-z0-9])(?:lark|feishu|dev|live|channels?)(?=[A-Z_-]|\b)/iu.test(key) ||
+        (/(?<![A-Za-z0-9])(?:external|external|dev|live|channels?)(?=[A-Z_-]|\b)/iu.test(key) ||
           hasLegacyArchitectureTerm(item)),
     );
   }
@@ -135,9 +135,9 @@ describe("Global Evidence Projection", () => {
       sourceOwners: ["mind-model"],
       lanes: [
         {
-          id: "lark_feishu_live_boundary",
+          id: "external_message_live_boundary",
           masterLane: "external_channel_boundary",
-          objective: "Keep Lark/Feishu as a replaceable message medium.",
+          objective: "Keep external message as a replaceable message medium.",
           ok: false,
           missing: [{ surface: "boundary" as const, term: "liveTouched" }],
           evidence: [
@@ -255,12 +255,12 @@ describe("Global Evidence Projection", () => {
       lanes: [],
       invariants: [],
       delivery: {
-        adapterId: "lark-v2",
+        adapterId: "external-v2",
         state: "observed",
-        evidenceRefs: ["receipt:lark-v2"],
+        evidenceRefs: ["receipt:external-v2"],
         proof: {
           owner: "delivery-owner",
-          receiptId: "receipt:lark-v2",
+          receiptId: "receipt:external-v2",
           checkedAt: "2026-08-31T00:00:00.000Z",
           visibility: "user_visible",
         },
@@ -268,18 +268,18 @@ describe("Global Evidence Projection", () => {
     });
 
     expect(projection.delivery).toEqual({
-      adapterId: "lark-v2",
+      adapterId: "external-v2",
       state: "observed",
-      evidenceRefs: ["receipt:lark-v2"],
+      evidenceRefs: ["receipt:external-v2"],
       proof: {
         owner: "delivery-owner",
-        receiptId: "receipt:lark-v2",
+        receiptId: "receipt:external-v2",
         checkedAt: "2026-08-31T00:00:00.000Z",
         visibility: "user_visible",
       },
     });
     expect(projection.mode).toBe("read_only_shadow");
-    expect(projection.delivery.adapterId).toBe("lark-v2");
+    expect(projection.delivery.adapterId).toBe("external-v2");
   });
 
   it("blocks stale, missing, and invalid consumer reads", () => {
@@ -474,13 +474,13 @@ describe("Global Evidence Projection", () => {
 
   it("derives adapter-neutral reader ids from message context", () => {
     expect(
-      resolveGlobalEvidenceProjectionAdapterId({ surface: "Feishu / Lark", provider: "telegram" }),
-    ).toBe("message-adapter:feishu-lark");
+      resolveGlobalEvidenceProjectionAdapterId({ surface: "External / External", provider: "telegram" }),
+    ).toBe("message-adapter:external-external");
     expect(
       resolveGlobalEvidenceProjectionAdapterId({ provider: "Telegram", fallback: "unknown" }),
     ).toBe("message-adapter:telegram");
     expect(
-      resolveGlobalEvidenceProjectionAdapterId({ adapterId: "  future-medium  ", surface: "lark" }),
+      resolveGlobalEvidenceProjectionAdapterId({ adapterId: "  future-medium  ", surface: "external" }),
     ).toBe("future-medium");
   });
 

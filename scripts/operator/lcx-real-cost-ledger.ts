@@ -422,7 +422,7 @@ async function main() {
   const ledger = await buildRealCostLedger({
     checkedAt: new Date().toISOString(),
     logDir: DEFAULT_WORKSPACE_LOG_DIR,
-    reviewRoot: path.join(DEFAULT_WORKSPACE_DIR, "memory/lark-brain-distillation-reviews"),
+    reviewRoot: path.join(DEFAULT_WORKSPACE_DIR, "memory/external-brain-distillation-reviews"),
     councilRoot: path.join(DEFAULT_WORKSPACE_DIR, "bank/knowledge/learning-councils"),
     monthlySubscriptionCostCny: monthlyCost,
     outputPaths: {

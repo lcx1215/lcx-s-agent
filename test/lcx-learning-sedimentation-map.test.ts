@@ -76,7 +76,7 @@ describe("lcx-learning-sedimentation-map", () => {
         boundaryViolations: 0,
       },
     });
-    await seedJson(workspaceDir, "memory/lark-brain-distillation-reviews/review.json", {
+    await seedJson(workspaceDir, "memory/external-brain-distillation-reviews/review.json", {
       acceptedCandidates: [
         {
           boundary: "brain_distillation_candidate",

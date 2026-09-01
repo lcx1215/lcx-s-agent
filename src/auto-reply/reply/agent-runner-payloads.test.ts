@@ -91,7 +91,7 @@ describe("buildReplyPayloads media filter integration", () => {
       ...baseParams,
       payloads: [{ text: "hello world!" }],
       messageProvider: "heartbeat",
-      originatingChannel: "feishu",
+      originatingChannel: "external",
       originatingTo: "ou_abc123",
       messagingToolSentTexts: ["different message"],
       messagingToolSentTargets: [{ tool: "message", provider: "message", to: "ou_abc123" }],
@@ -105,10 +105,10 @@ describe("buildReplyPayloads media filter integration", () => {
       ...baseParams,
       payloads: [{ text: "hello world!" }],
       messageProvider: "heartbeat",
-      originatingChannel: "feishu",
+      originatingChannel: "external",
       originatingTo: "ou_abc123",
       messagingToolSentTexts: ["different message"],
-      messagingToolSentTargets: [{ tool: "message", provider: "lark", to: "ou_abc123" }],
+      messagingToolSentTargets: [{ tool: "message", provider: "external", to: "ou_abc123" }],
     });
 
     expect(replyPayloads).toHaveLength(0);

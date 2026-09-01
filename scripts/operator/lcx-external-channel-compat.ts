@@ -18,7 +18,7 @@ const LIVE_RESTART_HEALTH_TIMEOUT_MS = 90_000;
 const PROBE_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_REPLY_FLOW_LOG =
   process.env.LCX_REPLY_FLOW_LOG ??
-  path.join(os.homedir(), ".openclaw", "logs", "feishu-reply-flow.jsonl");
+  path.join(os.homedir(), ".openclaw", "logs", "external-message-flow.jsonl");
 const CHANNEL_PROBE_UNREACHABLE_PATTERN =
   /Gateway not reachable|config-only status|abnormal closure/iu;
 const quoteShellArg = (value: string): string => `'${value.replaceAll("'", "'\"'\"'")}'`;
@@ -59,7 +59,7 @@ type LiveVisibleProof = {
   status:
     | "not_checked"
     | "reply_flow_missing"
-    | "waiting_for_real_lark"
+    | "waiting_for_real_external"
     | "post_migration_reply_seen"
     | "user_visible_observed"
     /** @deprecated Read-only compatibility value from older receipts. */
@@ -146,7 +146,7 @@ type OperatorStatus = {
     | "commit_or_clean_local_then_run_local_tests"
     | "run_local_tests_then_promote_local_to_live"
     | "retry_live_restart_then_probe"
-    | "send_real_lark_natural_probe"
+    | "send_real_external_natural_probe"
     | "no_action_current_local_seen_in_live";
 };
 
@@ -162,9 +162,9 @@ type CanonicalOperatorStatus = {
 
 type ExternalChannelStatus = {
   statusModel: "core-ready -> external-channel-bound -> user-visible-observed";
-  channel: "lark";
+  channel: "external";
   role: "owner_agent_communication_medium";
-  objective: "lark_receives_current_best_verified_lcx_agent_answer";
+  objective: "external_receives_current_best_verified_lcx_agent_answer";
   channelCommitMatched: boolean;
   channelRestartCommandStatus: StepStatus | "not_run";
   channelProbePassed: boolean;
@@ -191,7 +191,7 @@ type PromotionReceipt = {
     | "live_promoted"
     | "probe_ok"
     | "probe_failed"
-    | "waiting_for_real_lark";
+    | "waiting_for_real_external";
   git: GitState;
   sourceSnapshot: {
     mode: "working_tree" | "auto_clean_head";
@@ -682,7 +682,7 @@ function writeJson(filePath: string, payload: unknown): void {
 
 function makeAcceptancePhrase(commit: string): string {
   const shortSha = commit.slice(0, 10);
-  return `lark-acceptance-${shortSha}`;
+  return `external-acceptance-${shortSha}`;
 }
 
 function makeAcceptanceMessage(acceptancePhrase: string): string {
@@ -694,7 +694,7 @@ function makeNaturalProbeMessage(): string {
 }
 
 function makePostMigrationProbeCommand(since: string): string {
-  return `bash "\${LCX_POST_MIGRATION_PROBE_SCRIPT:-\${LCX_SKILLS_ROOT:-$HOME/.codex/skills}/lark-post-migration-probe/scripts/lark-post-migration-probe.sh}" --since ${quoteShellArg(since)}`;
+  return `bash "\${LCX_POST_MIGRATION_PROBE_SCRIPT:-\${LCX_SKILLS_ROOT:-$HOME/.codex/skills}/external-post-migration-probe/scripts/external-post-migration-probe.sh}" --since ${quoteShellArg(since)}`;
 }
 
 function makeReplyFlowProbeCommand(): string {
@@ -798,7 +798,7 @@ function readLiveVisibleProof(params: {
         ? "reply_failed"
         : latestInbound && latestOutboundResult
           ? "post_migration_reply_seen"
-          : "waiting_for_real_lark";
+          : "waiting_for_real_external";
   return {
     status,
     logPath,
@@ -867,7 +867,7 @@ function buildReceipt(params: {
     statePath: path.join(params.args.targetRoot, PROMOTION_STATE_PATH),
     mode: params.args.apply ? "apply" : "dry_run",
     status,
-    liveStatus: liveStatus === "probe_ok" ? "waiting_for_real_lark" : liveStatus,
+    liveStatus: liveStatus === "probe_ok" ? "waiting_for_real_external" : liveStatus,
     git: params.git,
     sourceSnapshot: params.sourceSnapshot,
     visibleProof: params.args.apply
@@ -898,21 +898,21 @@ function buildReceipt(params: {
     commands: params.commands,
     acceptancePhrase,
     nextLiveProof: [
-      `First send a plain real Lark/Feishu user probe: ${makeNaturalProbeMessage()}`,
-      "Then inspect feishu-reply-flow inbound, answer_audit, and outbound_result by messageId/correlationId to find the internal route.",
+      `First send a plain real external message user probe: ${makeNaturalProbeMessage()}`,
+      "Then inspect external-message-flow inbound, answer_audit, and outbound_result by messageId/correlationId to find the internal route.",
       `Optional exact receipt anchor only if a deterministic match is needed: ${makeAcceptanceMessage(
         acceptancePhrase,
       )}`,
       `Then run: ${makePostMigrationProbeCommand(params.generatedAt)}`,
       `Status/probe command: ${makeReplyFlowProbeCommand()}`,
-      "Only mark user-visible-observed after fresh real Lark/Feishu inbound and outbound evidence; the exact anchor is optional and legacy live-visible-fixed wording is compatibility only.",
+      "Only mark user-visible-observed after fresh real external message inbound and outbound evidence; the exact anchor is optional and legacy live-visible-fixed wording is compatibility only.",
     ],
     boundary: [
-      "Copies a git-tracked dev snapshot into the Lark transport connector sidecar so it can route to LCX Agent.",
+      "Copies a git-tracked dev snapshot into the External transport connector sidecar so it can route to LCX Agent.",
       "If the source working tree is dirty, defaults to a temporary clean HEAD snapshot instead of copying dirty WIP.",
       "Excludes protected memory, dist, apps, node_modules, and ops/external-channel-artifacts receipts from source copying.",
       "Does not modify provider config, external-channel sender credentials, protected memory, or trading/execution authority.",
-      "Probe-ok is only external-channel-bound; fresh real Lark/Feishu inbound and reply are still required for user-visible-observed.",
+      "Probe-ok is only external-channel-bound; fresh real external message inbound and reply are still required for user-visible-observed.",
     ],
   };
 }
@@ -1113,7 +1113,7 @@ function resolveCanonicalOperatorStatus(params: {
       : !channelResponsive
         ? "retry_live_restart_then_probe"
         : !userVisibleObserved
-          ? "send_real_lark_natural_probe"
+          ? "send_real_external_natural_probe"
           : "no_action_current_local_seen_in_live";
   return {
     statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
@@ -1153,9 +1153,9 @@ export function resolveExternalChannelStatus(
 ): ExternalChannelStatus {
   return {
     statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
-    channel: "lark",
+    channel: "external",
     role: "owner_agent_communication_medium",
-    objective: "lark_receives_current_best_verified_lcx_agent_answer",
+    objective: "external_receives_current_best_verified_lcx_agent_answer",
     channelCommitMatched: operatorStatus.channelCommitMatched,
     channelRestartCommandStatus: operatorStatus.channelRestartCommandStatus,
     channelProbePassed: operatorStatus.channelProbePassed,

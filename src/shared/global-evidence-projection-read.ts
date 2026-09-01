@@ -70,8 +70,8 @@ function normalizeAdapterSlug(value: unknown): string {
 }
 
 /**
- * Resolve a stable reader identity without coupling the contract to Lark,
- * Feishu, Telegram, or any other transport brand. Explicit ids are preserved;
+ * Resolve a stable reader identity without coupling the contract to External,
+ * External, Telegram, or any other transport brand. Explicit ids are preserved;
  * ordinary message contexts use their neutral surface/provider label.
  */
 export function resolveGlobalEvidenceProjectionAdapterId(

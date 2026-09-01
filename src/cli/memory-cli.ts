@@ -34,7 +34,7 @@ type MemoryManagerPurpose = Parameters<typeof getMemorySearchManager>[0]["purpos
 
 type MemorySourceName = "memory" | "sessions";
 
-type LarkHandoffReceiptSummary = {
+type ExternalHandoffReceiptSummary = {
   path: string;
   generatedAt: string | null;
   boundary: string | null;
@@ -185,11 +185,11 @@ function readRecordField(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function summarizeLarkHandoffReceipt(params: {
+function summarizeExternalHandoffReceipt(params: {
   workspaceDir: string;
   filePath: string;
   payload: unknown;
-}): LarkHandoffReceiptSummary {
+}): ExternalHandoffReceiptSummary {
   const payload = params.payload && typeof params.payload === "object" ? params.payload : {};
   const root = payload as Record<string, unknown>;
   const handoff =
@@ -239,18 +239,18 @@ function summarizeL5EvalReceipt(params: {
   };
 }
 
-async function listLarkHandoffReceipts(params: {
+async function listExternalHandoffReceipts(params: {
   workspaceDir: string;
   limit?: number;
-}): Promise<LarkHandoffReceiptSummary[]> {
-  const root = path.join(params.workspaceDir, "memory", "lark-language-handoff-receipts");
+}): Promise<ExternalHandoffReceiptSummary[]> {
+  const root = path.join(params.workspaceDir, "memory", "external-message-handoff-receipts");
   const files = (await walkFiles(root)).filter((file) => file.endsWith(".json"));
-  const summaries: LarkHandoffReceiptSummary[] = [];
+  const summaries: ExternalHandoffReceiptSummary[] = [];
   for (const filePath of files) {
     try {
       const parsed = JSON.parse(await fs.readFile(filePath, "utf-8")) as unknown;
       summaries.push(
-        summarizeLarkHandoffReceipt({
+        summarizeExternalHandoffReceipt({
           workspaceDir: params.workspaceDir,
           filePath,
           payload: parsed,
@@ -317,7 +317,7 @@ async function listL5EvalReceipts(params: {
   return summaries.slice(0, limit);
 }
 
-async function runLarkHandoffReceiptsCommand(opts: {
+async function runExternalHandoffReceiptsCommand(opts: {
   agent?: string;
   workspace?: string;
   limit?: number;
@@ -329,17 +329,17 @@ async function runLarkHandoffReceiptsCommand(opts: {
     agent: opts.agent,
     workspace: opts.workspace,
   });
-  const receipts = await listLarkHandoffReceipts({ workspaceDir, limit: opts.limit });
+  const receipts = await listExternalHandoffReceipts({ workspaceDir, limit: opts.limit });
   if (opts.json) {
     defaultRuntime.log(JSON.stringify({ workspaceDir, receipts }, null, 2));
     return;
   }
   const rich = isRich();
   const lines: string[] = [];
-  lines.push(colorize(rich, theme.heading, "Lark language handoff receipts"));
+  lines.push(colorize(rich, theme.heading, "External language handoff receipts"));
   lines.push(`${colorize(rich, theme.muted, "Workspace:")} ${shortenHomePath(workspaceDir)}`);
   if (receipts.length === 0) {
-    lines.push("No lark-language handoff receipts found.");
+    lines.push("No external-language handoff receipts found.");
     defaultRuntime.log(lines.join("\n"));
     return;
   }
@@ -885,15 +885,15 @@ export function registerMemoryCli(program: Command) {
   const receipts = memory.command("receipts").description("Inspect memory-backed receipts");
 
   receipts
-    .command("lark-handoffs")
-    .description("List Lark language handoff receipts")
+    .command("external-handoffs")
+    .description("List External language handoff receipts")
     .option("--agent <id>", "Agent id used to resolve the workspace")
     .option("--workspace <dir>", "Workspace directory override")
     .option("--limit <n>", "Maximum receipts to show", (value: string) => Number(value))
     .option("--json", "Print JSON", false)
     .action(
       async (opts: { agent?: string; workspace?: string; limit?: number; json?: boolean }) => {
-        await runLarkHandoffReceiptsCommand(opts);
+        await runExternalHandoffReceiptsCommand(opts);
       },
     );
 

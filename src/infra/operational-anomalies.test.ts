@@ -25,7 +25,7 @@ describe("recordOperationalAnomaly", () => {
       workspaceDir,
       category: "provider_degradation",
       severity: "medium",
-      source: "feishu.monitor.startup",
+      source: "external.monitor.startup",
       problem: "startup probe timed out",
       foundationTemplate: "risk-transmission",
       evidence: ["account=alpha", "reason=timeout"],
@@ -41,7 +41,7 @@ describe("recordOperationalAnomaly", () => {
     ) as { occurrenceCount: number; category: string; source: string; foundationTemplate: string };
     expect(record.occurrenceCount).toBe(1);
     expect(record.category).toBe("provider_degradation");
-    expect(record.source).toBe("feishu.monitor.startup");
+    expect(record.source).toBe("external.monitor.startup");
     expect(record.foundationTemplate).toBe("risk-transmission");
   });
 
@@ -52,7 +52,7 @@ describe("recordOperationalAnomaly", () => {
       workspaceDir,
       category: "write_edit_failure",
       severity: "high",
-      source: "feishu.dispatch",
+      source: "external.dispatch",
       problem: "failed to dispatch message",
       foundationTemplate: "execution-hygiene",
       evidence: ["account=default", "surface=control_room"],
@@ -63,7 +63,7 @@ describe("recordOperationalAnomaly", () => {
       workspaceDir,
       category: "write_edit_failure",
       severity: "high",
-      source: "feishu.dispatch",
+      source: "external.dispatch",
       problem: "failed to dispatch message",
       foundationTemplate: "execution-hygiene",
       evidence: ["account=default", "surface=control_room"],

@@ -55,7 +55,7 @@ export type MsgContext = {
   MessageSidLast?: string;
   ReplyToId?: string;
   /**
-   * Root message id for thread reconstruction (used by Feishu for root_id).
+   * Root message id for thread reconstruction (used by External for root_id).
    * When a message is part of a thread, this is the id of the first message.
    */
   RootMessageId?: string;

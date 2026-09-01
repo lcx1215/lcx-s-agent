@@ -47,7 +47,7 @@ The migration manifest schema is `lcx_ontology_migration_v1`; it records the
 exact change kind, scope, before/after identifiers, affected vocabularies,
 compatibility mode, rollback posture, and required proofs.
 
-Lark/Feishu-specific identifiers in the registry are classified as adapter
+External Message Channel-specific identifiers in the registry are classified as adapter
 implementation labels, not as core facts; old live/dev-shaped labels are
 compatibility labels only. New semantic objects should use neutral adapter,
 delivery, evidence, and boundary vocabulary.
@@ -95,7 +95,7 @@ This is a read-only `local_mind_model_only` architecture audit. It checks whethe
 each main lane still has workflow closure across four surfaces: macro rule,
 workflow entrypoint, proof/eval surface, and boundary flag. It covers context
 recovery, change-impact planning, Qwen training, MiniMax teacher, adapter
-promotion, Lark/Feishu external-channel/user-visible boundary, local automation,
+promotion, External Message Channel external-channel/user-visible boundary, local automation,
 memory sedimentation, finance research capability, and
 protected-memory/provider/external-sender boundaries. It reports
 `liveTouched=false`, `providerConfigTouched=false`, and
@@ -187,7 +187,7 @@ sub-signal are active problem clusters without manually rediscovering them from
 raw logs. A blocked mixed cluster must not hide a sub-signal whose owner already
 marked `codexRepairEligible=true`.
 Run it automatically before non-trivial repairs, training/promotion judgments,
-module-learning absorption claims, memory sedimentation claims, Lark
+module-learning absorption claims, memory sedimentation claims, external message channel
 external-channel/user-visible boundary claims, and broad "find more problems"
 work. Start with the radar to get the cluster list, then follow each cluster's
 `ownerEntrypoint`; do not let the radar replace those owners. If the training
@@ -201,7 +201,7 @@ node --import tsx scripts/operator/lcx-governance-autopilot.ts --json
 ```
 
 It runs problem radar, commercial acceptance, change impact, universe index,
-external agent/blacktech upgrade radar, live fadeout audit, training plan, Lark
+external agent/blacktech upgrade radar, live fadeout audit, training plan, external message channel
 external-channel binding, mind model, flow graph, head-tail, and context
 recovery; writes
 `/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json`
@@ -246,15 +246,15 @@ node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json
 It consumes commercial answer pipeline, problem radar, flow graph, mind model,
 external-channel status, training plan, short-intent fuzzer, visible-answer
 quality fuzzer, and system doctor/provider council evidence. It is not a new
-truth owner, does not send Lark messages, and does not start training.
-The short-intent fuzzer is the owner that prevents the fixed short Lark canaries
+truth owner, does not send external message channel messages, and does not start training.
+The short-intent fuzzer is the owner that prevents the fixed short external message channel canaries
 from becoming a brittle whitelist:
 
 ```bash
-node --import tsx scripts/operator/lcx-lark-short-intent-fuzzer.ts --json
+node --import tsx scripts/operator/lcx-external-short-intent-fuzzer.ts --json
 ```
 
-It generates terse Lark-style variants by failure family and requires unknown
+It generates terse external message channel-style variants by failure family and requires unknown
 short asks to fail cleanly with owner evidence or a concrete missing-proof
 reason, not a generic intro, direct action answer, or silent success.
 The visible-answer quality fuzzer is the paired positive gate:
@@ -268,18 +268,18 @@ portfolio risk, learning, model disagreement, async work, entry/exit, and
 user-supplied arithmetic while still rejecting vague, generic, unsafe, or
 over-conservative replies. This prevents the answer gate from becoming a pure
 rejection machine.
-The real Lark candidate capture/replay gate is the field-proof companion:
+The real external message channel candidate capture/replay gate is the field-proof companion:
 
 ```bash
-pnpm --silent openclaw capabilities lark-loop-diagnose --json
+pnpm --silent openclaw capabilities external-loop-diagnose --json
 ```
 
-It must show that real Lark user utterances and final visible replies are
-persisted under `memory/lark-language-routing-candidates/` and replayed through
+It must show that real external message channel user utterances and final visible replies are
+persisted under `memory/external-message-intent-candidates/` and replayed through
 the routing/visible-answer owners. Handoff receipts alone are not enough; if
 `candidateArtifactCount=0` while handoff receipts exist, the system has only
 inferred proof and commercial acceptance must block or watch it. This keeps the
-entry/exit product loop from passing only synthetic canaries while real Lark
+entry/exit product loop from passing only synthetic canaries while real external message channel
 answers still leak wrong routing, silence, generic intros, or useless cautious
 fallbacks.
 The focused daily finance product owner is:
@@ -292,14 +292,14 @@ Use `--write` only when the operator wants a durable daily packet written under
 the workspace state and memory directories. This owner deliberately narrows the
 main daily product to index options, semiconductor/AI compute-chain research,
 timely-stock candidate radar, risk gates, invalidation, and learning
-sedimentation. It does not fetch live data, send Lark messages, start training,
+sedimentation. It does not fetch live data, send external message channel messages, start training,
 or produce trading instructions. Open Q&A remains a follow-up surface; the daily
 packet is the dependable research surface.
-Treat `blocked` gates as explicit acceptance gaps: post-migration natural Lark
+Treat `blocked` gates as explicit acceptance gaps: post-migration natural external message channel
 canary missing, provider degradation, active Qwen guard, or owner-gated module
 learning states are not green release proof.
 It should not stay at only six obvious waterflows. The current minimum is 17
-core waterflows, including universe index total coverage, Lark visible language,
+core waterflows, including universe index total coverage, external message channel visible language,
 commercial answer pipeline, commercial acceptance harness, provider council
 evidence, memory correction/downrank, same-philosophy engineering
 consolidation, external skill or agent distillation, automation repair locks,
@@ -353,15 +353,15 @@ flow graph, runbook, and live-probe surfaces; do not create a parallel
 blueprint lane.
 
 1. External-channel closure: keep `core-ready`, `external-channel-bound`, and
-   `user-visible-observed` separate. Lark/Feishu is the owner-agent external
+   `user-visible-observed` separate. External Message Channel is the owner-agent external
    communication channel, not a second live brain or second runtime truth
-   source. Lark official APIs, SDKs, and open-source connector code are only
+   source. external message channel official APIs, SDKs, and open-source connector code are only
    connector implementations; they never become model authority or brain state.
    Old `live-runtime-updated`, `live-user-seen`, and
    `live-visible-fixed` terms remain compatibility labels only:
    `legacy-live-runtime-updated`, `legacy-live-user-seen`, and
    `legacy-live-visible-fixed`. A transport claim still needs connector
-   build/restart/probe when applicable, real Lark inbound, outbound result, and
+   build/restart/probe when applicable, real external message channel inbound, outbound result, and
    visible reply evidence before any user-visible claim.
 2. Module-learning absorption: plan receipts, review rows, `application_ready`,
    `eval_absorbed`, and keep/downrank/discard are separate states. A stored
@@ -379,7 +379,7 @@ blueprint lane.
    node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts --json
    ```
 
-   Use it before touching answer composition, Lark visible reply wording,
+   Use it before touching answer composition, external message channel visible reply wording,
    model/Qwen review, source gates, or control-room summaries. It is local-only:
    it does not call providers, the external sender compatibility path, or MLX,
    and it does not prove `user-visible-observed` or legacy `live-user-seen`.
@@ -388,7 +388,7 @@ blueprint lane.
    candidate: LCX must run local contract audit, source/data gates, Qwen
    patch-only challenge when needed, review panel, and visible answer adoption
    before the draft reaches the user. MiniMax Agent must not become final
-   visible-answer authority, send Lark replies directly, change provider config,
+   visible-answer authority, send external message channel replies directly, change provider config,
    write protected memory, or gain trade/execution authority.
    Because MiniMax is a fixed monthly-capacity resource for this operator, use
    it aggressively on complex finance answers by default: event risk, current
@@ -398,19 +398,19 @@ blueprint lane.
    pressure before the local adoption gate. Do not spend that pressure on tiny
    factual replies or let the visible answer mention internal agent machinery.
 
-5. External-channel observability summary: Lark proof must converge through
-   `lark-loop-diagnose`, channel probe, `feishu-reply-flow.jsonl`, and fresh
+5. External-channel observability summary: external message channel proof must converge through
+   `external-loop-diagnose`, channel probe, `external-reply-flow.jsonl`, and fresh
    real-user inbound/reply evidence. Synthetic replay and local smoke stay
    local-only.
 
-   Lark external-channel binding has its own owner command:
+   external message channel external-channel binding has its own owner command:
 
    ```bash
    node --import tsx scripts/operator/lcx-external-channel-binding.ts --json
    ```
 
    It reads `local-brain-training-plan.externalChannelBinding` first and only
-   falls back to `local-brain-training-plan.liveLarkBrainBinding` for backward
+   falls back to `local-brain-training-plan.liveExternalBrainBinding` for backward
    compatibility. It is read-only by default. When it reports
    `ready_for_apply`, the bounded idle-only apply path is:
 
@@ -419,9 +419,9 @@ blueprint lane.
    ```
 
    The apply path is allowed to sync/build/restart the external-channel sidecar
-   and run `lark-loop-diagnose` only when eval/MLX is idle. It may prove
+   and run `external-loop-diagnose` only when eval/MLX is idle. It may prove
    `external-channel-bound`, but it must still keep `user-visible-observed=false`
-   until fresh real Lark inbound/outbound evidence exists.
+   until fresh real external message channel inbound/outbound evidence exists.
 
    This binding owner is canonical for `external-channel-bound`.
    `lcx-external-channel-status.ts` is the canonical read-only external-channel
@@ -448,7 +448,7 @@ blueprint lane.
    canonical repo, canonical `~/.openclaw` state, operator skills, receipts,
    selected-clean adapter proof, and governance owners. It is not a second live
    brain, not a second runtime truth source, and not `user-visible-observed`.
-   Future Lark, WeChat, SMS, Slack, or other connectors bind as external
+   Future external message channel, WeChat, SMS, Slack, or other connectors bind as external
    communication adapters only.
 
 6. Product control room: default UX is one main control room with specialist
@@ -458,7 +458,7 @@ blueprint lane.
 7. Product-grade acceptance: run
    `node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json`
    to judge release readiness across answer quality, radar clusters,
-   external-channel status, training overlap, provider council, real short Lark
+   external-channel status, training overlap, provider council, real short external message channel
    canaries, module-learning absorption, finance data gateway, and async receipt
    boundaries.
    It reports
@@ -471,13 +471,13 @@ external-channel/user-visible proof without rereading the chat.
 
 The finance data gateway owner is `finance_data_gateway_snapshot`. Use it before
 current market, price, fundamentals, macro, ETF, options, index-weight, vendor,
-or portfolio-risk numbers reach Qwen, Lark, memory, or a visible summary. The
+or portfolio-risk numbers reach Qwen, external message channel, memory, or a visible summary. The
 gateway requires provider role, source timestamp, timezone, field definition,
 unit/currency, adjusted status, and source URL/artifact. Conflicted primary,
 cross-check, or official/issuer evidence must route to data provenance review
 instead of becoming an unstated model assumption.
 If current data collection or learning review cannot finish in the foreground
-reply, the visible Lark experience must say queued/completion/failure boundary
+reply, the visible external message channel experience must say queued/completion/failure boundary
 plainly and must not claim the data, source, or module has already been
 absorbed.
 
@@ -620,11 +620,11 @@ node --import tsx scripts/operator/lcx-agent-exam.ts --json
 This is read-only by default. It combines doctor, training-plan, promotion
 audit, module-learning review, thinking-hierarchy integrity, work-status
 boundary integrity, memory-sedimentation integrity, automation coordination,
-Lark/Feishu boundary, and optional L5 evidence into one table-like verdict. It
+External Message Channel boundary, and optional L5 evidence into one table-like verdict. It
 does not start training, does not run heavy MLX eval, does not touch provider
 config, and does not prove `user-visible-observed` or legacy
 `live-visible-fixed`. Use `--live` only when you intentionally want
-channel/Lark probe evidence, and still require fresh real Lark inbound plus visible reply before claiming `user-visible-observed`. Use `--l5` for the heavier local
+channel/external message channel probe evidence, and still require fresh real external message channel inbound plus visible reply before claiming `user-visible-observed`. Use `--l5` for the heavier local
 L5 regression battery.
 
 The default system doctor includes doctrine-consistency and head-tail
@@ -634,7 +634,7 @@ invalid eval commands, upstream package identity, or missing L5 regression skill
 wiring. Head-tail consistency fails when macro doctrine/prompt/runbook changes
 and micro implementation tails no longer supervise each other. It covers module
 learning and broader engineering details: core/external-channel/user-visible
-boundary, protected memory, Lark/Feishu visible reply, local automation, memory
+boundary, protected memory, External Message Channel visible reply, local automation, memory
 sedimentation, finance capability, eval/review output, and fast change-impact
 planning.
 
@@ -657,7 +657,7 @@ The intended daily structure is:
   the local operator state and reports only the most important blocker or next
   action.
 - Small repairs must name their master lane before coding: Qwen training,
-  MiniMax teacher, adapter promotion, Lark/Feishu reply, local automation,
+  MiniMax teacher, adapter promotion, External Message Channel reply, local automation,
   memory sedimentation, finance capability, or core/external-channel/user-visible
   boundary.
 - Durable proof beats chat memory. Prefer tests, smoke/eval output,
@@ -679,7 +679,7 @@ LCX_LOCAL_OPERATOR_OBSERVE_ONLY=true \
 This mode skips cleanup, system-doctor/governance channel owners, daemon
 restart, and training restart; it runs only the local training-plan,
 mind-model, flow-graph, and context-recovery observations. The receipt remains
-`local_observability_only` and is not a release or Lark-visible proof.
+`local_observability_only` and is not a release or external message channel-visible proof.
 
 If the goal is to refresh the complete local operator receipt while still
 forbidding cleanup and training restart, use the explicit guards below. This
@@ -742,7 +742,7 @@ cli-anything-harvester. This is not direct runtime authority: no direct install,
 no provider config, no external channel sender, no protected memory mutation, no wallet
 connection, no order placement, no copy trading, and no latency arbitrage.
 Treat the radar as local-only architecture wiring until a concrete probe,
-eval/receipt, live migration, and fresh Lark visible proof all exist.
+eval/receipt, live migration, and fresh external message channel visible proof all exist.
 
 The radar also tracks six prioritized blacktech mechanisms:
 
@@ -758,7 +758,7 @@ The radar also tracks six prioritized blacktech mechanisms:
 These mechanisms are owner slots, not granted authority. SkillOpt v2 still
 needs targeted eval, regression eval, train-slice, clean promotion, and
 user-visible proof before model-weight or channel claims. Runtime batteries are dev
-canaries until real Lark proof. Trajectory and trace receipts are local
+canaries until real external message channel proof. Trajectory and trace receipts are local
 observability, not a runtime RL server or eBPF/TLS interception. Secure tool
 permissioning blocks untrusted tools until allowlist, least privilege,
 credential scope, audit log, and uninstall path are proven.
@@ -836,7 +836,7 @@ keep_downrank_or_discard_decision
 ```
 
 This applies to factor, options, indexes, macro, fundamentals, technical timing,
-commodities, FX, event-risk, Lark/Feishu workflow, agent workflow, memory, eval,
+commodities, FX, event-risk, External Message Channel workflow, agent workflow, memory, eval,
 ops, and skill modules. A stored source, summary, or dataset row is not enough
 to say the module learned it. Use `stored_only`, `retrieval_ready`,
 `application_ready`, or `eval_absorbed` style wording until the matching proof
@@ -880,14 +880,14 @@ commodities_oil_gold
 fx_currency_liquidity
 event_driven
 portfolio_risk_gates
-lark_feishu_workflow
+external_message_workflow
 agent_workflow_memory
 ops_audit
 skill_pattern_distillation
 ```
 
 Finance research modules should reuse
-`finance_learning_pipeline_orchestrator` where possible. Lark/Feishu, ops,
+`finance_learning_pipeline_orchestrator` where possible. External Message Channel, ops,
 `finance_learning_memory`, and skill modules must keep module-specific receipts
 and must not be claimed as learned from storage alone.
 
@@ -903,7 +903,7 @@ training-plan, doctor, and agent exam all read the local OpenClaw workspace.
 
 The receipt status is evidence-derived: `missing_evidence`, `stored_only`,
 `retrieval_ready`, `application_ready`, or `eval_absorbed`. Do not upgrade a
-module beyond the returned status in summaries, Lark replies, or training
+module beyond the returned status in summaries, external message channel replies, or training
 handoffs.
 
 Use the review tool to inspect same-day module-learning proof before claiming
@@ -1041,8 +1041,8 @@ When context is missing, load only the skills that match the current question. T
 /Users/liuchengxu/.codex/skills/lcx-evolution-loop/SKILL.md
 /Users/liuchengxu/.codex/skills/agent-brain-eval/SKILL.md
 /Users/liuchengxu/.codex/skills/finance-learning-researcher/SKILL.md
-/Users/liuchengxu/.codex/skills/lark-live-loop-debugger/SKILL.md
-/Users/liuchengxu/.codex/skills/lark-post-migration-probe/SKILL.md
+/Users/liuchengxu/.codex/skills/external-live-loop-debugger/SKILL.md
+/Users/liuchengxu/.codex/skills/external-post-migration-probe/SKILL.md
 /Users/liuchengxu/.codex/skills/agent-runtime-drift-auditor/SKILL.md
 /Users/liuchengxu/.codex/skills/lcx-qwen-training-operator/SKILL.md
 /Users/liuchengxu/.codex/skills/lcx-workflow-waterflow-auditor/SKILL.md
@@ -1064,16 +1064,16 @@ find /Users/liuchengxu/.codex/skills -maxdepth 2 -name SKILL.md | sort
 Use them like this:
 
 - `lcx-baseline-hardening`: bounded stability work, silent failure elimination, scoped verification.
-- `lcx-evolution-loop`: realistic self-improvement loop from a user/Lark-style prompt.
+- `lcx-evolution-loop`: realistic self-improvement loop from a user/external message channel-style prompt.
 - `agent-brain-eval`: judge whether the local brain actually learned and can apply a capability.
 - `finance-learning-researcher`: finance, ETF, quant, factor timing, source-gated learning.
-- `lark-live-loop-debugger`: Feishu/Lark live message, reply flow, routing, and visible reply diagnosis.
-- `lark-post-migration-probe`: prove post-migration real Lark inbound plus visible reply.
+- `external-live-loop-debugger`: External Message Channel live message, reply flow, routing, and visible reply diagnosis.
+- `external-post-migration-probe`: prove post-migration real external message channel inbound plus visible reply.
 - `agent-runtime-drift-auditor`: compare repo, live sidecar, daemon/runtime, and receipts for drift.
 - `lcx-qwen-training-operator`: check Qwen 24-hour training/eval/backoff/restart supervision without creating overlap.
 - `lcx-workflow-waterflow-auditor`: check god-view workflow closure, waterflow routing, head-tail consistency, and memory sedimentation gaps.
 - `lcx-module-learning-absorption-operator`: check online/source learning and module absorption without confusing stored-only, application-ready, and eval-absorbed states.
-- `lcx-commercial-answer-pipeline-operator`: check commercial answer adoption, short Lark intent expansion, bounded model/Qwen review, visible reply cleanliness, failed-reason output, and whether backend/runtime proof terms were translated before reaching Lark users.
+- `lcx-commercial-answer-pipeline-operator`: check commercial answer adoption, short external message channel intent expansion, bounded model/Qwen review, visible reply cleanliness, failed-reason output, and whether backend/runtime proof terms were translated before reaching external message channel users.
 - `lcx-promotion-and-adapter-truth-operator`: check latest-passing vs latest-promoted, parseRecovered promotion blocks, active guard mismatch, and blocked challenger capability.
 - `l5-regression-batterer`: L5 baseline pressure tests with realistic Chinese finance/control-room prompts.
 - `l4-regression-batterer`: legacy compatibility alias only; prefer the L5 skill in new work.
@@ -1089,7 +1089,7 @@ the local runtime can see and autocue the skill before claiming the agent will
 use it without reminders.
 The local reply path also has deterministic skill preflight for common LCX
 operator asks. Natural-language requests about Qwen training, whole-system
-waterflow, agent brain learning, Lark user-visible proof, runtime drift, finance
+waterflow, agent brain learning, external message channel user-visible proof, runtime drift, finance
 learning, CLI-Anything, and skill harvesting should be cued to one installed
 skill before the model answers. Explicit `/skill ...` commands still win.
 
@@ -1103,7 +1103,7 @@ three separate ways, and these boundaries must stay separate:
 - runtime self-use hook: the external-channel/local reply runner calls
   `src/auto-reply/reply/skillopt-autocue.ts` from
   `src/auto-reply/reply/get-reply-run.ts`, so accepted SkillOpt SOP files in the
-  shared workspace can guide the same answer path that Lark uses after bounded
+  shared workspace can guide the same answer path that external message channel uses after bounded
   source sync/promotion. Do not add a second live-only skill format.
 - governance coverage: `lcx-mind-model` and `lcx-flow-graph` must keep the
   SkillOpt runtime hook visible as a supervised waterflow, not only as a helper
@@ -1111,12 +1111,12 @@ three separate ways, and these boundaries must stay separate:
   both the immediate preflight boundary and the stronger proof chain.
 - SkillOpt family: failed, parse-error, and parseRecovered eval cases may grow
   narrow skills such as finance data provenance, local-memory conflict,
-  sentiment/vendor source gates, module-learning absorption, and Lark
+  sentiment/vendor source gates, module-learning absorption, and external message channel
   external-channel boundary checks.
 - proof chain: a candidate skill only becomes a learned runtime capability after
   targeted eval, regression eval, train-slice/training evidence, clean hardened
-  adapter promotion truth, and then the Lark external-channel binding owner
-  plus fresh inbound/outbound Lark evidence proves `user-visible-observed`.
+  adapter promotion truth, and then the external message channel external-channel binding owner
+  plus fresh inbound/outbound external message channel evidence proves `user-visible-observed`.
 
 Fast inspection:
 
@@ -1164,7 +1164,7 @@ Use these as support tools, not as LCX doctrine:
 - `jupyter-notebook`: finance research, data experiments, and tutorials that need a notebook artifact; do not treat notebooks as trading execution.
 - `gh-fix-ci`, `gh-address-comments`, and `yeet`: GitHub/CI/publish workflows when explicitly needed.
 - `pdf`, `doc`, and `transcribe`: local document and audio workflows.
-- `screenshot`: desktop or Lark/Feishu visual evidence capture when the user asks or when a visible UI proof is needed.
+- `screenshot`: desktop or External Message Channel visual evidence capture when the user asks or when a visible UI proof is needed.
 - `self-improving-for-codex`: Codex-global memory loop maintenance only; do not use it to replace LCX Agent's repo-local operator, doctor, memory, or training receipts.
 - `cli-anything-harvester`: CLI-Anything/CLI-Hub and local software wrapper evaluation only; keep wrappers isolated with JSON contracts, safety boundaries, and local proof before promoting any pattern.
 
@@ -1173,7 +1173,7 @@ Keep deployment, external service, and content-production skills such as
 `notion-*`, `linear`, `sentry`, `figma`, `imagegen`, `speech`, and platform
 publishing workflows in Codex global scope unless the user explicitly asks for
 that tool. They are not default LCX Agent runtime capabilities and must not
-become finance-brain, Lark, provider, or live-sender authority.
+become finance-brain, external message channel, provider, or live-sender authority.
 
 Do not migrate `chronicle` into LCX Agent. Treat it as a Codex-session
 observation aid with sensitive context boundaries, not as durable agent memory
@@ -1294,7 +1294,7 @@ Expected `notTouched` includes:
 external_channel_sender
 provider_config
 protected_repo_memory
-formal_lark_routing_corpus
+external_message_intent_corpus
 finance_doctrine
 ```
 
@@ -1343,7 +1343,7 @@ promote an adapter by itself and it is not user-visible proof.
 Local-brain evals must preserve a simple-to-complex hierarchy. A complex case may
 declare prerequisite cases, and `local-brain-distill-eval.ts` auto-includes them
 when a complex `--case-id` is selected. This prevents a false state where the
-brain passes a hard scenario but fails the simple Lark-style ask.
+brain passes a hard scenario but fails the simple external message channel-style ask.
 
 Example:
 
@@ -1358,7 +1358,7 @@ node --import tsx scripts/operator/local-brain-distill-eval.ts \
 Expected hierarchy evidence includes:
 
 ```text
-autoIncludedPrerequisiteCaseIds=["short_lark_commodity_learning_intake"]
+autoIncludedPrerequisiteCaseIds=["short_external_commodity_learning_intake"]
 promotionReady=true
 ```
 
@@ -1367,7 +1367,7 @@ must pass before the complex case can support promotion.
 
 The contract-only eval registry currently targets 200 cases. The expansion is
 kept as generated high-signal variants in `local-brain-distill-eval.ts`, grouped
-by realistic Lark short asks, core finance research loops, module learning,
+by realistic external message channel short asks, core finance research loops, module learning,
 alternative sources, local memory activation, abstraction transfer, and
 adversarial boundaries. Do not hand-write a parallel eval registry for the same
 families; extend the existing registry, keep prerequisite coverage, and prove it
@@ -1451,14 +1451,14 @@ Use these words precisely:
 - `core-ready`: local scripts, dataset, smoke, eval, and receipts pass.
 - `training-active`: guard or teacher/eval process is currently running.
 - `promotion-ready`: hardened eval passed and the adapter is selected by latest-passing.
-- `external-channel-bound`: the Lark channel sidecar has been synced to the
+- `external-channel-bound`: the external message channel channel sidecar has been synced to the
   verified dev snapshot and restarted/probed.
-- `user-visible-observed`: only after external-channel binding plus a fresh real Lark inbound plus visible reply.
+- `user-visible-observed`: only after external-channel binding plus a fresh real external message channel inbound plus visible reply.
 
 Do not call local training or synthetic replay `user-visible-observed`; a channel
 probe is transport evidence only. Old `live-visible-fixed` wording is a legacy
 compatibility label for the same boundary, not a shortcut around the fresh
-real Lark inbound plus visible reply proof.
+real external message channel inbound plus visible reply proof.
 
 ## Do Not Do
 

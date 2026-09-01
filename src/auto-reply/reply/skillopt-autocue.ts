@@ -83,11 +83,11 @@ const SKILLOPT_AUTO_CUE_RULES: SkillOptAutoCueRule[] = [
     skillId: "external_channel_boundary_preflight",
     title: "external-channel boundary preflight",
     reason:
-      "the request touches Lark/Feishu external-channel binding, legacy live sidecar sync, or user-visible proof boundaries",
+      "the request touches external message external-channel binding, legacy live sidecar sync, or user-visible proof boundaries",
     patterns: [
       // These aliases recognize historical user wording only; they never grant a second local repository or runtime authority.
-      /(live|lark|feishu|飞书|live仓|live repo|sidecar|livelock|lock).{0,24}(连接|同步|直接用|证明|可见|回复|迁移|手动搬|格式)/i,
-      /(dev|开发仓).{0,12}(live|live仓|sidecar|飞书|Lark).{0,18}(同步|迁移|漂移|直接用)/i,
+      /(live|external|external|外部消息通道|live仓|live repo|sidecar|livelock|lock).{0,24}(连接|同步|直接用|证明|可见|回复|迁移|手动搬|格式)/i,
+      /(dev|开发仓).{0,12}(live|live仓|sidecar|外部消息通道|External).{0,18}(同步|迁移|漂移|直接用)/i,
       /live[-_\s]?user[-_\s]?seen/i,
     ],
   },

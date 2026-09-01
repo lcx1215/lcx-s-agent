@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionDecisionsFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  parseFeishuFinanceDoctrinePromotionDecisionArtifact,
-  renderFeishuFinanceDoctrinePromotionCandidateArtifact,
-  renderFeishuFinanceDoctrinePromotionReviewArtifact,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionDecisionsFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  parseExternalFinanceDoctrinePromotionDecisionArtifact,
+  renderExternalFinanceDoctrinePromotionCandidateArtifact,
+  renderExternalFinanceDoctrinePromotionReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { createFinancePromotionDecisionTool } from "./finance-promotion-decision-tool.js";
@@ -23,11 +23,11 @@ describe("finance_promotion_decision tool", () => {
   });
 
   async function seedReadyCandidate(dateKey: string) {
-    const receiptsDir = path.join(workspaceDir!, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir!, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionCandidateArtifact({
         generatedAt: "2026-03-25T15:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         windowDays: 7,
@@ -62,12 +62,12 @@ describe("finance_promotion_decision tool", () => {
       "utf8",
     );
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionReviewArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionReviewArtifact({
         reviewedAt: "2026-03-25T18:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedCandidateArtifact:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
         reviews: [
           {
             candidateKey: "closest_scenario:base_case",
@@ -108,31 +108,31 @@ describe("finance_promotion_decision tool", () => {
       previousDecisionOutcome: null,
       decisionNotes: "create a manual doctrine proposal draft for operator review",
       candidatePath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       reviewPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       decisionPath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       action:
         "This records a bounded manual promotion decision only. It does not promote doctrine and does not update doctrine cards automatically.",
     });
 
-    const parsedDecisionArtifact = parseFeishuFinanceDoctrinePromotionDecisionArtifact(
+    const parsedDecisionArtifact = parseExternalFinanceDoctrinePromotionDecisionArtifact(
       await fs.readFile(
         path.join(
           workspaceDir,
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey),
         ),
         "utf8",
       ),
     );
     expect(parsedDecisionArtifact?.linkedCandidateArtifact).toBe(
-      "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+      "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
     );
     expect(parsedDecisionArtifact?.linkedReviewArtifact).toBe(
-      "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+      "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
     );
     expect(parsedDecisionArtifact?.decisions).toEqual([
       {
@@ -163,7 +163,7 @@ describe("finance_promotion_decision tool", () => {
       dateKey,
       candidateKey: "change_my_mind_triggered:no",
       candidatePath:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       availableCandidateKeys: ["closest_scenario:base_case", "conviction_looks:too_high"],
       action:
         "Use finance_promotion_candidates with this dateKey to discover valid same-day candidateKey values before retrying finance_promotion_decision.",
@@ -173,8 +173,8 @@ describe("finance_promotion_decision tool", () => {
         path.join(
           workspaceDir,
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey),
         ),
       ),
     ).rejects.toThrow();
@@ -208,8 +208,8 @@ describe("finance_promotion_decision tool", () => {
         path.join(
           workspaceDir,
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrinePromotionDecisionsFilename(dateKey),
         ),
       ),
     ).rejects.toThrow();

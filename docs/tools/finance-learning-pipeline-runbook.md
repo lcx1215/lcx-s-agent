@@ -110,13 +110,9 @@ Run the fresh event application smoke when the apply layer must prove it can mov
 pnpm exec tsx scripts/operator/finance-learning-event-review-smoke.ts
 ```
 
-Run the full language-to-brain loop smoke when the whole Lark language, finance brain, analysis, and memory receipt path must be checked together:
-
-```bash
-pnpm exec tsx scripts/operator/lark-brain-language-loop-smoke.ts
-```
-
-Run the full dev system loop when the Lark language system, finance learning brain, analysis application, memory receipt path, fail-closed cases, and language corpus review tests must be checked in one command:
+Run the full dev system loop when the external message intake, finance learning
+brain, analysis application, memory receipt path, and fail-closed cases must be
+checked together:
 
 ```bash
 pnpm exec tsx scripts/operator/agent-system-loop-smoke.ts
@@ -124,7 +120,7 @@ pnpm exec tsx scripts/operator/agent-system-loop-smoke.ts
 
 Run the finance data gateway smoke when sourced market, fundamental, macro, ETF,
 options, index, or vendor numbers need a timestamped reconciliation contract
-before Qwen, Lark, memory, or visible summaries can use them:
+before Qwen, the external message channel, memory, or visible summaries can use them:
 
 ```bash
 node --import tsx scripts/operator/finance-data-gateway-smoke.ts --json
@@ -141,8 +137,9 @@ Supported smoke cases:
 
 - `manual-paste`
 - `local-file`
-- `lark-market-capability-intake`
-- `lark-market-capability-missing-source`
+- `external-market-capability-intake`
+- `external-market-capability-missing-source`
+- `external-market-capability-extraction-gap`
 - `capability-apply`
 - `capability-apply-unmatched`
 - `external-rss`
@@ -151,13 +148,15 @@ Supported smoke cases:
 - `metadata-reference`
 - `all`
 
-## Lark Language Bridge Smoke
+## External Message Bridge Smoke
 
-The `lark-market-capability-intake` case verifies the boundary between the Lark language system and the finance learning system without touching live Lark.
+The `external-market-capability-intake` case verifies the boundary between the
+External Message Channel intake and the finance learning system without making
+an outbound request.
 
 It checks:
 
-- Lark utterance understanding returns `market_capability_learning_intake`
+- external message intake returns `market_capability_learning_intake`
 - the target surface is `learning_command`
 - the handoff exposes `finance_learning_pipeline_orchestrator`
 - the backend contract requires a safe local or manual source
@@ -172,12 +171,18 @@ It checks:
 Run it with:
 
 ```bash
-pnpm exec tsx scripts/operator/finance-learning-pipeline-smoke.ts --case lark-market-capability-intake
+pnpm exec tsx scripts/operator/finance-learning-pipeline-smoke.ts --case external-market-capability-intake
 ```
 
-This smoke does not promote language corpus samples. Lark language routing candidates stay under the language-routing review path, while finance learning artifacts stay under the finance learning source, capability, receipt, and review paths.
+This smoke does not send an external message or promote intent samples. External
+message intent candidates stay under their review boundary, while finance
+learning artifacts stay under the finance learning source, capability, receipt,
+and review paths.
 
-The `lark-market-capability-missing-source` case verifies the fail-closed side of the same bridge: Lark may understand the learning intent and expose the backend contract, but the finance learning pipeline must not execute until a safe local or manual source is available.
+The `external-market-capability-missing-source` case verifies the fail-closed
+side of the same bridge: the channel may understand the learning intent and
+expose the backend contract, but the finance learning pipeline must not execute
+until a safe local or manual source is available.
 
 ## Manual Pasted Article Flow
 
@@ -349,5 +354,4 @@ Smoke coverage:
 - `capability-apply-unmatched` seeds the same capability, asks an unrelated repository-governance question, and verifies the apply layer fails closed instead of inventing a learned finance answer.
 - `finance-learning-multi-candidate-smoke.ts` seeds four ETF event and risk-gate fixtures, then verifies `candidateCount >= 3`, `synthesisMode=multi_capability_synthesis`, and the research-only no-action boundary.
 - `finance-learning-event-review-smoke.ts` adds a local fresh ETF event fixture, checks required inputs and evidence coverage, and verifies `eventReviewDraft.status=research_review_ready` without approving trades.
-- `lark-brain-language-loop-smoke.ts` starts from a Lark utterance handoff, runs the finance learning brain, applies retained capabilities to fresh event analysis, and writes a loop receipt proving the language corpus and protected memory were untouched.
-- `agent-system-loop-smoke.ts` runs the full dev loop: all finance pipeline cases, multi-candidate synthesis, fresh event review, Lark/Feishu language-to-brain handoff, and Lark language routing/distillation tests.
+- `agent-system-loop-smoke.ts` runs the full dev loop: all finance pipeline cases, multi-candidate synthesis, fresh event review, external message intake, and external channel contract tests.

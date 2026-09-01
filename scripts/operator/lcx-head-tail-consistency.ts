@@ -57,7 +57,7 @@ const TAIL_SURFACE_FILES = [
   "src/agents/finance-brain-orchestration.ts",
   "src/agents/finance-data-gateway.ts",
   "src/agents/tools/finance-data-gateway-tool.ts",
-  "src/commands/capabilities/lark-loop-diagnose.ts",
+  "scripts/operator/lcx-external-channel-status.ts",
 ] as const;
 
 const MODULE_LEARNING_TARGET_EXEMPTIONS: Record<string, string> = {
@@ -166,9 +166,9 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
     tailTerms: ["local_automation", "automation_or_operator_loop"],
   },
   {
-    id: "lark_feishu_boundary",
-    headTerms: ["Lark/Feishu", "user-visible-observed"],
-    tailTerms: ["lark_loop_diagnose", "liveTouched"],
+    id: "external_message_boundary",
+    headTerms: ["external message channel", "user-visible-observed"],
+    tailTerms: ["external_channel_status", "liveTouched"],
   },
   {
     id: "memory_sedimentation_boundary",

@@ -84,7 +84,7 @@ const TASK_TEMPLATES = [
   {
     family: "plain_language_hidden_complexity_intake",
     message:
-      "训练本地大脑识别“短口语表层请求，隐藏复杂工作流”这一类问题：用户可能只说“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”或“Lark 回复看不懂”。不要按字面短答，要先写 original example、abstracted failure family、adjacent non-identical scenario、shared contract 和 regression proof，再拆范围、证据、模块、记忆、review panel 和人话总结。",
+      "训练本地大脑识别“短口语表层请求，隐藏复杂工作流”这一类问题：用户可能只说“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”或“External 回复看不懂”。不要按字面短答，要先写 original example、abstracted failure family、adjacent non-identical scenario、shared contract 和 regression proof，再拆范围、证据、模块、记忆、review panel 和人话总结。",
     summary:
       "generic plain-language hidden-complexity intake; turn short user examples into failure-family abstraction, adjacent transfer cases, shared contract, and regression proof before specialized handling.",
   },
@@ -143,7 +143,7 @@ const TASK_TEMPLATES = [
   {
     family: "context_reset_guard",
     message: "重新来一遍，但这次别串到旧的 {theme} 任务；如果我没说清楚，就先问我要当前对象。",
-    summary: "ambiguous repeat requiring current subject instead of old Lark context reuse.",
+    summary: "ambiguous repeat requiring current subject instead of old External context reuse.",
   },
   {
     family: "evidence_audit",
@@ -807,7 +807,7 @@ const plan = {
     "external_channel_sender",
     "provider_config",
     "protected_repo_memory",
-    "formal_lark_routing_corpus",
+    "formal_external_routing_corpus",
     "finance_doctrine",
   ],
 };

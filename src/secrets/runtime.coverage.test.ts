@@ -68,16 +68,6 @@ function buildConfigForOpenClawTarget(entry: SecretRegistryEntry, envId: string)
       "https://example.com/hook",
     );
   }
-  if (entry.id === "channels.feishu.verificationToken") {
-    setPathCreateStrict(config, ["channels", "feishu", "connectionMode"], "webhook");
-  }
-  if (entry.id === "channels.feishu.accounts.*.verificationToken") {
-    setPathCreateStrict(
-      config,
-      ["channels", "feishu", "accounts", "sample", "connectionMode"],
-      "webhook",
-    );
-  }
   if (entry.id === "tools.web.search.gemini.apiKey") {
     setPathCreateStrict(config, ["tools", "web", "search", "provider"], "gemini");
   }

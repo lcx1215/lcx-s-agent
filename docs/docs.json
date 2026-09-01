@@ -904,7 +904,7 @@
                 "pages": [
                   "channels/bluebubbles",
                   "channels/discord",
-                  "channels/feishu",
+                  "channels/external",
                   "channels/googlechat",
                   "channels/imessage",
                   "channels/irc",
@@ -1507,7 +1507,7 @@
                 "pages": [
                   "zh-CN/channels/bluebubbles",
                   "zh-CN/channels/discord",
-                  "zh-CN/channels/feishu",
+                  "zh-CN/channels/external",
                   "zh-CN/channels/grammy",
                   "zh-CN/channels/googlechat",
                   "zh-CN/channels/imessage",

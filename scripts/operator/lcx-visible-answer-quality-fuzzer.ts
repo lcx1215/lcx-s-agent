@@ -33,7 +33,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-visible-answer-quality-fuzzer.ts [--json] [--max-per-family N]",
       "",
       "Checks that LCX accepts concise useful answers, not only rejects bad answers.",
-      "This is local-only and never calls providers, sends Lark messages, starts training, or writes protected memory.",
+      "This is local-only and never calls providers, sends External messages, starts training, or writes protected memory.",
     ].join("\n"),
   );
 }
@@ -73,7 +73,7 @@ function parseArgs(args: string[]): CliOptions {
 }
 
 const GENERIC_FORBIDDEN_VISIBLE_TEXT = [
-  /我是\s*LCX Agent|Lark 控制室入口|当前可用能力/u,
+  /我是\s*LCX Agent|External 控制室入口|当前可用能力/u,
   /\b(?:task_family|primary_modules|required_tools|risk_boundaries|answer_audit|handoff|receipt)\b/u,
   /这个问题比较复杂|不能一概而论|建议谨慎并继续观察/u,
   /已经基本都好了|可以放心用了/u,
@@ -110,10 +110,10 @@ const QUALITY_FAMILIES: QualityFamily[] = [
     macroContractId: "owner_status_and_async_receipts",
     ask: "现在系统到哪了？",
     goodAnswer:
-      "查过当前本地 owner 输出后，能确认三件事：Lark 外部通道已绑定并有用户可见回路，commercial acceptance 主门通过，radar 只剩 P3 观察项。这个状态的证据时间戳以刚才检查为准；下一步是继续压入口出口质量，不启动训练。",
+      "查过当前本地 owner 输出后，能确认三件事：External 外部通道已绑定并有用户可见回路，commercial acceptance 主门通过，radar 只剩 P3 观察项。这个状态的证据时间戳以刚才检查为准；下一步是继续压入口出口质量，不启动训练。",
     requiredEvidence: [
       /查过|确认/u,
-      /Lark|外部通道/u,
+      /External|外部通道/u,
       /commercial acceptance/u,
       /时间戳/u,
       /下一步/u,
@@ -129,9 +129,9 @@ const QUALITY_FAMILIES: QualityFamily[] = [
       {
         id: "generic_intro",
         answer:
-          "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力：可以把自然语言请求分到 control_room。",
+          "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room。",
         expectedAnyFailedReasons: [
-          "short_lark_canary_wrong_route_generic_intro",
+          "short_external_canary_wrong_route_generic_intro",
           "system_status_answer_missing_owner_evidence",
         ],
       },

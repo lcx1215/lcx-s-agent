@@ -52,7 +52,7 @@ function writePromotionState(
         statePath,
         mode: "apply",
         status: "promoted",
-        liveStatus: "waiting_for_real_lark",
+        liveStatus: "waiting_for_real_external",
         git: {
           branch: "main",
           commit,
@@ -85,7 +85,7 @@ function writePromotionState(
             ? command("pnpm --silent openclaw channels status --probe", options.probeStatus)
             : null,
         },
-        acceptancePhrase: `lark-live-visible-fixed-${commit.slice(0, 10)}`,
+        acceptancePhrase: `external-live-visible-fixed-${commit.slice(0, 10)}`,
         nextLiveProof: [],
         boundary: [],
       },
@@ -264,7 +264,7 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain(
       "externalChannelStatusModel=core-ready -> external-channel-bound -> user-visible-observed",
     );
-    expect(stdout).toContain("externalChannel=lark");
+    expect(stdout).toContain("externalChannel=external");
     expect(stdout).toContain("externalChannelBound=false");
     expect(stdout).toContain("userVisibleObserved=false");
     expect(stdout).toContain("statusModel=core-ready -> live-runtime-updated -> live-user-seen");
@@ -303,7 +303,7 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain(
       "externalChannelStatusModel=core-ready -> external-channel-bound -> user-visible-observed",
     );
-    expect(stdout).toContain("externalChannel=lark");
+    expect(stdout).toContain("externalChannel=external");
     expect(stdout).toContain("externalChannelBound=true");
     expect(stdout).toContain("userVisibleObserved=false");
     expect(stdout).toContain("statusModel=core-ready -> live-runtime-updated -> live-user-seen");
@@ -313,16 +313,16 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveRuntimeProbePassed=true");
     expect(stdout).toContain("liveRuntimeUpdated=true");
     expect(stdout).toContain("liveUserSeen=false");
-    expect(stdout).toContain("nextHumanStep=send_real_lark_natural_probe");
+    expect(stdout).toContain("nextHumanStep=send_real_external_natural_probe");
     expect(stdout).toContain("naturalProbeMessage=现在状态怎么样？");
     expect(stdout).toContain(
-      `acceptanceMessage=可选收据锚点：请回复 lark-live-visible-fixed-${currentCommit.slice(
+      `acceptanceMessage=可选收据锚点：请回复 external-live-visible-fixed-${currentCommit.slice(
         0,
         10,
       )}，用于精确匹配这次通道验收。`,
     );
     expect(stdout).toContain(
-      "postMigrationProbeCommand=bash \"${LCX_POST_MIGRATION_PROBE_SCRIPT:-${LCX_SKILLS_ROOT:-$HOME/.codex/skills}/lark-post-migration-probe/scripts/lark-post-migration-probe.sh}\" --since '2099-01-01T00:00:00.000Z'",
+      "postMigrationProbeCommand=bash \"${LCX_POST_MIGRATION_PROBE_SCRIPT:-${LCX_SKILLS_ROOT:-$HOME/.codex/skills}/external-post-migration-probe/scripts/external-post-migration-probe.sh}\" --since '2099-01-01T00:00:00.000Z'",
     );
     expect(stdout).toContain(
       "replyFlowProbeCommand=node --import tsx scripts/operator/lcx-external-channel-compat.ts --status --with-probe",
@@ -414,10 +414,10 @@ describe("lcx-promote-live status", () => {
     expect(payload.visibleProof.status).toBe("reply_flow_missing");
   });
 
-  it("counts a real post-migration Lark reply as live-user-seen without requiring the fixed acceptance phrase", () => {
+  it("counts a real post-migration External reply as live-user-seen without requiring the fixed acceptance phrase", () => {
     const sourceRoot = tempDir("promote-live-source");
     const targetRoot = tempDir("promote-live-target");
-    const replyFlowLog = path.join(tempDir("promote-live-reply-flow"), "feishu-reply-flow.jsonl");
+    const replyFlowLog = path.join(tempDir("promote-live-reply-flow"), "external-message-flow.jsonl");
     git(sourceRoot, ["init", "--quiet"]);
     git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
     git(sourceRoot, ["config", "user.name", "LCX Test"]);
@@ -432,7 +432,7 @@ describe("lcx-promote-live status", () => {
       probeStatus: "passed",
     });
     appendReplyFlowRecord(replyFlowLog, {
-      kind: "feishu_reply_flow",
+      kind: "external_reply_flow",
       stage: "inbound",
       recordedAt: "2099-01-01T00:01:00.000Z",
       messageId: "om_learning_real_user",
@@ -442,7 +442,7 @@ describe("lcx-promote-live status", () => {
       textPreview: "请用网上可靠来源和本地沉淀，一起做一次期权基础学习审阅",
     });
     appendReplyFlowRecord(replyFlowLog, {
-      kind: "feishu_reply_flow",
+      kind: "external_reply_flow",
       stage: "outbound_result",
       recordedAt: "2099-01-01T00:02:00.000Z",
       messageId: "om_learning_real_user",
@@ -563,7 +563,7 @@ describe("lcx-promote-live status", () => {
     expect(result.status, result.stderr || result.stdout).toBe(0);
     expect(result.stdout).toContain("pnpm --silent openclaw channels status --probe.status=failed");
     expect(result.stdout).toContain("externalChannelBound=true");
-    expect(result.stdout).toContain("nextHumanStep=send_real_lark_natural_probe");
+    expect(result.stdout).toContain("nextHumanStep=send_real_external_natural_probe");
   });
 
   it("treats a matching commit as live-runtime-updated when fresh probe passes after restart timeout", () => {
@@ -588,7 +588,7 @@ describe("lcx-promote-live status", () => {
     expect(stdout).toContain("liveRuntimeRestartCommandStatus=failed");
     expect(stdout).toContain("liveRuntimeProbePassed=true");
     expect(stdout).toContain("liveRuntimeUpdated=true");
-    expect(stdout).toContain("nextHumanStep=send_real_lark_natural_probe");
+    expect(stdout).toContain("nextHumanStep=send_real_external_natural_probe");
   });
 
   it("runs target ui build before live restart and probe", () => {

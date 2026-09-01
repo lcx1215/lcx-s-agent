@@ -1,6 +1,6 @@
 # Local Brain Distillation
 
-This is a bounded path for training a local auxiliary model that helps LCX Agent think more smoothly. It does not replace the main API model, does not send live Lark replies, and does not write protected memory.
+This is a bounded path for training a local auxiliary model that helps LCX Agent think more smoothly. It does not replace the main API model, does not send live external-channel replies, and does not write protected memory.
 
 For fast operator recovery when chat context is missing, start with:
 
@@ -34,8 +34,8 @@ It should not produce final investment answers, unverified current market claims
 
 It does not directly rewrite the main agent. The training loop is:
 
-1. Read local receipts from Lark language handoff, finance learning application,
-   Feishu work receipts, and reviewed brain-distillation candidates.
+1. Read local receipts from external-message handoff, finance learning
+   application, external work receipts, and reviewed brain-distillation candidates.
 2. Normalize those receipts into prompt/completion pairs.
 3. Correct broad surfaces such as `control_room` and `learning_command` into
    concrete module targets when the text contains finance signals.
@@ -92,23 +92,23 @@ Default output:
 
 The dataset reads:
 
-- `memory/lark-language-handoff-receipts/`
+- `memory/external-message-handoff-receipts/`
 - `memory/finance-learning-apply-usage-receipts/`
-- `memory/feishu-work-receipts/`
-- `memory/lark-brain-distillation-reviews/`
+- `memory/external-work-receipts/`
+- `memory/external-brain-distillation-reviews/`
 
-It intentionally does not read the disabled `lark-language-routing-candidates` corpus.
+It intentionally does not read the disabled `external-message-intent-candidates` corpus.
 It also does not train directly on pending brain candidates.
 
 ## Brain Distillation Candidate Lane
 
-The old semantic candidate path remains language-routing-only for compatibility.
-It is not the main intent brain. New API/Lark/teacher samples that should improve
+The semantic candidate path is intent-review-only. It is not the main intent
+brain. New API, external-message, or teacher samples that should improve
 thinking quality go through a separate candidate boundary:
 
 ```text
 boundary=brain_distillation_candidate
-directory=memory/lark-brain-distillation-candidates/
+directory=memory/external-brain-distillation-candidates/
 ```
 
 This lane is deliberately reviewed before training:
@@ -125,28 +125,16 @@ learning separate: model providers can decompose the user's request, while the
 local auxiliary model learns better module planning, missing-data discipline,
 source boundaries, and rejected-context behavior.
 
-Run the candidate smoke:
+Run the teacher-backed candidate smoke without network:
 
 ```bash
-node --import tsx scripts/operator/lark-brain-distillation-candidate-smoke.ts
-```
-
-Review pending candidates without writing:
-
-```bash
-node --import tsx scripts/operator/lark-brain-distillation-review.ts --json
-```
-
-Write reviewed candidates when the pending artifacts look clean:
-
-```bash
-node --import tsx scripts/operator/lark-brain-distillation-review.ts --write --json
+node --import tsx scripts/operator/minimax-brain-teacher-batch.ts --mock --limit 3 --json
 ```
 
 The review output lives under:
 
 ```text
-memory/lark-brain-distillation-reviews/
+memory/external-brain-distillation-reviews/
 ```
 
 The dataset reads reviewed artifacts from that directory. It still ignores raw
@@ -158,8 +146,9 @@ MiniMax M2.7 is a stronger hosted teacher than the small local Qwen adapter.
 Use it to produce reviewed planning samples for the local brain; do not use it
 as a direct live sender from this script.
 
-This is additive. It does not replace the existing Lark/API candidate path,
-review path, dataset builder, local Qwen adapter, or hardened planner contract.
+This is additive. It does not replace the existing external-message/API
+candidate path, review path, dataset builder, local Qwen adapter, or hardened
+planner contract.
 It only appends higher-quality reviewed teacher samples into the same brain
 distillation review directory.
 
@@ -182,7 +171,7 @@ Defaults:
 - model ref: `minimax-portal/MiniMax-M2.7`
 - direct API base URL, when `--direct-api` is used:
   `https://api.minimax.io/anthropic`
-- output: `memory/lark-brain-distillation-reviews/`
+- output: `memory/external-brain-distillation-reviews/`
 
 Use `--direct-api` only when a direct MiniMax API key is available. The default
 path uses the existing local OpenClaw MiniMax agent interface.
@@ -190,7 +179,7 @@ path uses the existing local OpenClaw MiniMax agent interface.
 The resulting artifacts are still review artifacts with
 `noLanguageRoutingPromotion=true` and `noLiveSenderTouched=true`. They feed the
 local brain dataset; they do not promote language-routing families and do not
-prove live Lark behavior.
+prove live external-channel behavior.
 
 For normal recurring training, prefer the medium guard command in
 `ops/local-brain/README.md`. That guard runs MiniMax teacher generation as a
@@ -235,7 +224,7 @@ planning, and eval should resolve the current adapter through the guard
 
 The trained model is only useful if it can answer an adjacent prompt with:
 
-- no old Lark context reuse
+- no old external context reuse
 - research-only or no-execution boundary
 - correct module order
 - missing data before conclusion
@@ -272,7 +261,7 @@ shape but collapse the actual work plan into a generic `finance_learning` or
 `control_room` bucket. A passing adapter needs concrete finance modules such as
 `macro_rates_inflation`, `credit_liquidity`, `etf_regime`,
 `company_fundamentals_value`, and `portfolio_risk_gates`; it also needs to keep
-ambiguous repeat requests out of old Lark context.
+ambiguous repeat requests out of old external context.
 
 Current adapter selection is intentionally dynamic. Do not promote or copy a
 static adapter path from this page. Use the runbook or system doctor:

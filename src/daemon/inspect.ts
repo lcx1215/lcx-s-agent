@@ -139,7 +139,7 @@ function isKnownOpenClawCompanionLaunchdService(label: string, contents: string)
   const lowerContents = contents.toLowerCase();
   if (
     [
-      "ai.openclaw.feishu.proxy",
+      "ai.openclaw.external.proxy",
       "ai.openclaw.lobster.host_watchdog",
       "ai.openclaw.lobster.scheduler",
     ].includes(lowerLabel)

@@ -1,7 +1,7 @@
 # LCX System Doctor
 
 `scripts/operator/lcx-system-doctor.ts` is the CLI-first observability entrypoint for
-LCX Agent dev health. It is read-only by default and does not probe live Lark,
+LCX Agent dev health. It is read-only by default and does not probe a live external
 restart daemons, change provider config, or write durable memory.
 
 The default run also includes a `doctrine-consistency` gate. That gate catches
@@ -59,8 +59,8 @@ node --import tsx scripts/operator/lcx-system-doctor.ts --json --live
 
 Adds live-facing checks:
 
-- `openclaw capabilities lark-loop-diagnose --json`
+- `openclaw channels status --probe --json`
 - `openclaw channels status --probe --json`
 
-Only use this when the goal is to prove live Lark/Feishu state. A default dev
+Only use this when the goal is to prove live external-channel state. A default dev
 doctor result is not a live-visible-fixed claim.

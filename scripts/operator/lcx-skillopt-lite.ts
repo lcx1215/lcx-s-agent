@@ -87,7 +87,7 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       "给一段单个股 OHLCV 曲线，判断趋势阶段、支撑阻力、假突破和失效条件。",
     ],
     casePatterns: [
-      /single_stock|plain_single_stock|buy_hold|position_sizing|curve|technical|full_stack|a_share|recession|crypto|valuation|china_property|offensive_stock|short_lark_position_sizing/u,
+      /single_stock|plain_single_stock|buy_hold|position_sizing|curve|technical|full_stack|a_share|recession|crypto|valuation|china_property|offensive_stock|short_external_position_sizing/u,
     ],
     triggerPatterns: [
       /股票|个股|NVDA|买|卖|拿|仓位|持仓|支撑|阻力|突破|均线|量价|curve|stock|buy|sell|hold|position|sizing|technical/iu,
@@ -144,7 +144,7 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       /最新|当前|价格|数据|来源|口径|单位|币种|复权|vendor|provenance|gateway|conflict|timestamp|current market|fresh market/iu,
     ],
     capabilityRule:
-      "mutable finance numbers require source timestamp, field definition, unit/currency, adjusted status, provider role, and conflict review before Qwen or Lark may use them.",
+      "mutable finance numbers require source timestamp, field definition, unit/currency, adjusted status, provider role, and conflict review before Qwen or External may use them.",
   },
   local_memory_conflict_preflight: {
     id: "local_memory_conflict_preflight",
@@ -305,11 +305,11 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
   },
   external_channel_boundary_preflight: {
     id: "external_channel_boundary_preflight",
-    title: "Lark External Channel Boundary Preflight",
+    title: "External External Channel Boundary Preflight",
     purpose:
-      "Keep dev, eval, selected clean adapter, external-channel drift, channel restart, and real Lark user-visible evidence separated.",
+      "Keep dev, eval, selected clean adapter, external-channel drift, channel restart, and real External user-visible evidence separated.",
     requiredModules: [
-      "lark_external_channel_binding",
+      "external_message_channel_binding",
       "source_registry",
       "review_panel",
       "control_room_summary",
@@ -318,7 +318,7 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       "local_ready_not_user_visible_observed",
       "single_clean_adapter_only",
       "no_parse_recovered_runtime",
-      "fresh_real_lark_inbound_and_outbound_required",
+      "fresh_real_external_inbound_and_outbound_required",
       "no_external_channel_sender_write_without_owner_gate",
     ],
     rejectedContexts: [
@@ -330,9 +330,9 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
     requiredMissingData: [
       "selected_clean_adapter",
       "external_channel_source_drift_zero_after_selected_adapter",
-      "lark_external_channel_gateway_restarted_after_selected_adapter",
-      "lark_external_channel_diagnose_ok_after_restart",
-      "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+      "external_message_channel_gateway_restarted_after_selected_adapter",
+      "external_message_channel_diagnose_ok_after_restart",
+      "fresh_real_external_inbound_and_outbound_user_visible_observed",
     ],
     regressionCaseIds: [
       "plain_buy_hold_research_boundary",
@@ -340,18 +340,18 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       "adversarial_memory_model_conflict_06",
     ],
     triggerExamples: [
-      "Lark 现在是不是已经连到最好的本地脑了？",
+      "External 现在是不是已经连到最好的本地脑了？",
       "core-ready 和 user-visible-observed 有什么区别？",
-      "不能把 parseRecovered candidate 接进 Lark 外部通道。",
+      "不能把 parseRecovered candidate 接进 External 外部通道。",
     ],
     casePatterns: [
-      /live_lark|live_runtime|external_channel|user_visible|lark|feishu|live_user_seen|parse_recovered|adapter_mismatch/u,
+      /live_external|live_runtime|external_channel|user_visible|external|external|live_user_seen|parse_recovered|adapter_mismatch/u,
     ],
     triggerPatterns: [
-      /飞书|Lark|LiveLark|live|外部通道|可见|sidecar|adapter|LoRA|parseRecovered|core-ready|live-visible|user-visible/iu,
+      /外部消息通道|External|LiveExternal|live|外部通道|可见|sidecar|adapter|LoRA|parseRecovered|core-ready|live-visible|user-visible/iu,
     ],
     capabilityRule:
-      "Lark external-channel proof requires one selected clean adapter, zero channel drift, restarted/probed channel gateway, diagnose success, and fresh real inbound/outbound user-visible evidence.",
+      "external message-channel proof requires one selected clean adapter, zero channel drift, restarted/probed channel gateway, diagnose success, and fresh real inbound/outbound user-visible evidence.",
   },
 };
 
@@ -474,7 +474,7 @@ function extractLatestAutopilotTruth(
   const activeHeavyEvalCounts = recordValue(trainingPlan.activeHeavyEvalCounts);
   const externalChannelBinding =
     recordValue(trainingPlan.externalChannelBinding) ??
-    recordValue(trainingPlan.liveLarkBrainBinding);
+    recordValue(trainingPlan.liveExternalBrainBinding);
   const activeProcessCount =
     typeof trainingPlan.activeProcessCount === "number"
       ? trainingPlan.activeProcessCount
@@ -654,9 +654,9 @@ function buildCandidateEditLines(trainCases: string[]): string[] {
       "- do not let macro narrative replace company_fundamentals_value, source_registry, data_provenance_quality, portfolio_risk_gates, or review_panel",
     );
   }
-  if ([...cases].some((caseId) => /short_lark_position_sizing/u.test(caseId))) {
+  if ([...cases].some((caseId) => /short_external_position_sizing/u.test(caseId))) {
     lines.push(
-      "- short Lark wording such as '拿不拿', '卖不卖', or '仓位多少' must expand into research preflight plus blocked reason, not a direct position-size answer",
+      "- short External wording such as '拿不拿', '卖不卖', or '仓位多少' must expand into research preflight plus blocked reason, not a direct position-size answer",
     );
   }
   if ([...cases].some((caseId) => /offensive_stock_opportunity/u.test(caseId))) {
@@ -684,13 +684,13 @@ function buildCandidateEditLines(trainCases: string[]): string[] {
   }
   if (
     [...cases].some((caseId) =>
-      /live_lark|live_runtime|external_channel|user_visible|adapter_mismatch|parse_recovered/u.test(
+      /live_external|live_runtime|external_channel|user_visible|adapter_mismatch|parse_recovered/u.test(
         caseId,
       ),
     )
   ) {
     lines.push(
-      "- local proof, selected-clean adapter proof, external-channel binding, and user-visible-observed proof are separate; never bind dirty or parseRecovered candidates to the Lark external channel",
+      "- local proof, selected-clean adapter proof, external-channel binding, and user-visible-observed proof are separate; never bind dirty or parseRecovered candidates to the external message channel",
     );
   }
   lines.push(
@@ -905,9 +905,9 @@ function buildProofChain(params: {
       requiredProof: [
         "selected_clean_adapter_only",
         "external_channel_source_drift_zero_after_selected_adapter",
-        "lark_external_channel_gateway_restarted_after_selected_adapter",
-        "lark_external_channel_diagnose_ok_after_restart",
-        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+        "external_message_channel_gateway_restarted_after_selected_adapter",
+        "external_message_channel_diagnose_ok_after_restart",
+        "fresh_real_external_inbound_and_outbound_user_visible_observed",
       ],
     },
     liveTouched: false,

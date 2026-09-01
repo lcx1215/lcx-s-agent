@@ -55,7 +55,7 @@ const MAX_MISSING_DATA = 8;
 const MAX_RISK_BOUNDARIES = 6;
 const MAX_REJECTED_CONTEXT = 3;
 const DEFAULT_REJECTED_CONTEXT = [
-  "old_lark_conversation_history",
+  "old_external_conversation_history",
   "language_routing_candidate_artifacts",
   "unsupported_execution_language",
 ];
@@ -63,8 +63,8 @@ const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
   curated_seed: "gold_curated",
   brain_distillation_review: "teacher_distillation_review",
   finance_learning_capability_apply_receipt: "workflow_receipt",
-  feishu_work_receipt: "workflow_receipt",
-  lark_language_handoff_receipt: "workflow_receipt",
+  external_work_receipt: "workflow_receipt",
+  external_language_handoff_receipt: "workflow_receipt",
   module_learning_plan_receipt: "plan_only_receipt",
   module_learning_review_receipt: "review_only_receipt",
   // Synthetic rule-derived rows: high internal consistency but not a real
@@ -222,8 +222,8 @@ function failureFamilyForTeacherReview(example: DistillExample): string {
   if (/skill_pattern_distillation|external_agent|cli_anything|skill_harvester/u.test(text)) {
     return "agent_skill_distillation";
   }
-  if (/lark|feishu|reply|visible|old_lark|context|language/u.test(text)) {
-    return "lark_visible_workflow";
+  if (/external|external|reply|visible|old_external|context|language/u.test(text)) {
+    return "external_visible_workflow";
   }
   if (/learning|internalization|receipt|retrieval|module_learning|sedimentation/u.test(text)) {
     return "module_learning_absorption";
@@ -613,7 +613,7 @@ function canonicalRiskBoundary(entry: string): string {
   if (
     normalized === "no_external_channel_sender_change" ||
     normalized === "no_external_channel_sender_changes" ||
-    normalized === "no_lark_external_channel_sender_change" ||
+    normalized === "no_external_message_channel_sender_change" ||
     normalized === "no_live_sender_change" ||
     normalized === "no_live_sender_changes"
   ) {
@@ -623,8 +623,8 @@ function canonicalRiskBoundary(entry: string): string {
     normalized === "no_language_corpus_change" ||
     normalized === "no_language_corpus_changes" ||
     normalized === "no_language_corpus_modify" ||
-    normalized === "no_formal_lark_routing_corpus" ||
-    normalized === "no_formal_lark_routing_corpus_change"
+    normalized === "no_formal_external_routing_corpus" ||
+    normalized === "no_formal_external_routing_corpus_change"
   ) {
     return "no_language_corpus_modification";
   }
@@ -633,7 +633,7 @@ function canonicalRiskBoundary(entry: string): string {
 
 function inferRiskBoundariesFromText(text: string): string[] {
   const inferred: string[] = [];
-  if (/language corpus|formal_lark_routing_corpus|语言语料|路由语料/iu.test(text)) {
+  if (/language corpus|formal_external_routing_corpus|语言语料|路由语料/iu.test(text)) {
     inferred.push("no_language_corpus_modification");
   }
   if (
@@ -660,7 +660,7 @@ function buildPrompt(params: {
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
     "Keep the JSON compact: short arrays, short next_step, no explanation inside or outside JSON.",
     `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
-    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
     "Think like a careful human financial analyst: clarify objective, recall local memory and learned rules, split causal layers, identify missing evidence, route to review, then summarize for the control room.",
     "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
@@ -750,7 +750,7 @@ function exampleFromHandoff(
   );
   return {
     prompt: buildPrompt({
-      sourceKind: "lark_language_handoff_receipt",
+      sourceKind: "external_language_handoff_receipt",
       userAsk,
       sourceSummary,
     }),
@@ -783,7 +783,7 @@ function exampleFromHandoff(
     }),
     meta: {
       sourcePath,
-      sourceKind: "lark_language_handoff_receipt",
+      sourceKind: "external_language_handoff_receipt",
       generatedAt: readString(parsed.generatedAt),
     },
   };
@@ -920,7 +920,7 @@ function exampleFromModuleLearningPlanReceipt(
       rejectedContext: [
         "stored_source_only",
         "language_routing_candidate_artifacts",
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
       ],
     }),
     meta: {
@@ -1010,7 +1010,7 @@ function exampleFromModuleLearningReview(
           rejectedContext: [
             "stored_source_only",
             "language_routing_candidate_artifacts",
-            "old_lark_conversation_history",
+            "old_external_conversation_history",
           ],
         }),
         meta: {
@@ -1184,7 +1184,7 @@ function exampleFromWorkReceipt(raw: string, sourcePath: string): DistillExample
       : [];
   return {
     prompt: buildPrompt({
-      sourceKind: "feishu_work_receipt",
+      sourceKind: "external_work_receipt",
       userAsk,
       sourceSummary: truncate(finalSummary, 1200),
     }),
@@ -1207,7 +1207,7 @@ function exampleFromWorkReceipt(raw: string, sourcePath: string): DistillExample
     }),
     meta: {
       sourcePath,
-      sourceKind: "feishu_work_receipt",
+      sourceKind: "external_work_receipt",
     },
   };
 }
@@ -1244,7 +1244,7 @@ async function examplesFromFile(filePath: string, workspaceDir: string): Promise
     }
     return [];
   }
-  if (relativePath.includes("feishu-work-receipts/")) {
+  if (relativePath.includes("external-work-receipts/")) {
     const example = exampleFromWorkReceipt(raw, relativePath);
     return example ? [example] : [];
   }
@@ -1610,13 +1610,13 @@ function buildSeedExamples(): DistillExample[] {
     {
       userAsk: "重新来一遍。",
       sourceSummary:
-        "ambiguous repeat request with no current subject; prior Lark context was explicitly cleaned.",
+        "ambiguous repeat request with no current subject; prior External context was explicitly cleaned.",
       taskFamily: "ambiguous_repeat_without_current_subject",
       primaryModules: ["control_room"],
       supportingModules: [],
       requiredTools: ["review_tier"],
       missingData: ["current_subject_or_original_request"],
-      nextStep: "ask_user_which_task_to_repeat_instead_of_reusing_old_lark_context",
+      nextStep: "ask_user_which_task_to_repeat_instead_of_reusing_old_external_context",
     },
     {
       userAsk: "清除上下文，换个题，从头开始。",
@@ -2126,17 +2126,17 @@ function buildSeedExamples(): DistillExample[] {
       nextStep: "keep_clean_champion_until_no_failed_parse_or_recovered_cases",
     },
     {
-      userAsk: "Lark 里我说“最近市场”，它能不能自动知道我指 QQQ/TLT/NVDA？",
+      userAsk: "External 里我说“最近市场”，它能不能自动知道我指 QQQ/TLT/NVDA？",
       sourceSummary:
-        "short Lark context seed; local memory may cue scope but must not invent current data or old chat facts.",
-      taskFamily: "short_lark_market_scope_boundary",
+        "short External context seed; local memory may cue scope but must not invent current data or old chat facts.",
+      taskFamily: "short_external_market_scope_boundary",
       primaryModules: ["control_room_summary", "finance_learning_memory", "portfolio_risk_gates"],
       supportingModules: ["source_registry", "review_panel"],
       requiredTools: ["memory_recall_scope", "finance_data_gateway_snapshot", "review_panel"],
       missingData: ["memory_recall_scope_or_relevant_receipts", "fresh_market_data_snapshot"],
       riskBoundaries: [
         ...BOUNDARIES,
-        "old_lark_context_rejected",
+        "old_external_context_rejected",
         "no_unverified_current_market_claims",
       ],
       nextStep: "use_relevant_memory_scope_then_require_fresh_data_for_current_market",
@@ -2257,14 +2257,14 @@ function buildSeedExamples(): DistillExample[] {
     {
       userAsk: "有一条 receipt 就能证明 live 修好了吗？",
       sourceSummary:
-        "worktree/external-channel boundary seed; receipts prove local artifacts, not user-visible Lark behavior.",
+        "worktree/external-channel boundary seed; receipts prove local artifacts, not user-visible External behavior.",
       taskFamily: "receipt_not_live_visible_boundary",
-      primaryModules: ["ops_audit", "lark_live_loop_debugger", "review_panel"],
+      primaryModules: ["ops_audit", "external_live_loop_debugger", "review_panel"],
       supportingModules: ["control_room_summary"],
-      requiredTools: ["lark_loop_diagnose", "feishu_reply_flow_audit"],
-      missingData: ["fresh_real_lark_inbound_and_outbound_seen", "live_runtime_restart_proof"],
+      requiredTools: ["external_loop_diagnose", "external_reply_flow_audit"],
+      missingData: ["fresh_real_external_inbound_and_outbound_seen", "live_runtime_restart_proof"],
       riskBoundaries: [...BOUNDARIES, "local_fixed_not_live_visible_fixed"],
-      nextStep: "require_fresh_lark_inbound_outbound_before_live_visible_claim",
+      nextStep: "require_fresh_external_inbound_outbound_before_live_visible_claim",
     },
     {
       userAsk: "能不能把 r6 的能力和 r2 一起用，两个 LoRA 不是更强吗？",
@@ -2424,20 +2424,20 @@ function buildSeedExamples(): DistillExample[] {
         "collect_candidate_skill_sources_review_license_and_write_scope_then_distill_safe_workflow_into_local_skill_and_eval_case",
     },
     {
-      userAsk: "Lark 回复看起来又串到旧任务了，先判断是不是旧上下文污染。",
+      userAsk: "External 回复看起来又串到旧任务了，先判断是不是旧上下文污染。",
       sourceSummary:
-        "ops audit request for dirty Lark context; must inspect session and language-candidate state.",
+        "ops audit request for dirty External context; must inspect session and language-candidate state.",
       taskFamily: "ops_source_grounding",
       primaryModules: ["ops_audit", "control_room"],
-      supportingModules: ["lark_live_loop_debugger"],
+      supportingModules: ["external_live_loop_debugger"],
       requiredTools: [
         "sessions_list",
         "sessions_history",
-        "lark_loop_diagnose",
+        "external_loop_diagnose",
         "channels_status_probe",
       ],
-      missingData: ["fresh_lark_message_id_or_visible_reply_text"],
-      nextStep: "inspect_lark_session_store_and_candidate_replay_before_claiming_live_fixed",
+      missingData: ["fresh_external_message_id_or_visible_reply_text"],
+      nextStep: "inspect_external_session_store_and_candidate_replay_before_claiming_live_fixed",
     },
     {
       userAsk:
@@ -2447,7 +2447,7 @@ function buildSeedExamples(): DistillExample[] {
       taskFamily: "ops_source_grounding",
       primaryModules: ["ops_audit", "source_registry", "control_room_summary"],
       supportingModules: ["review_panel"],
-      requiredTools: ["lark_loop_diagnose", "source_registry_lookup", "review_panel"],
+      requiredTools: ["external_loop_diagnose", "source_registry_lookup", "review_panel"],
       missingData: ["claim_to_verify", "artifact_or_source_path"],
       nextStep: "verify_claim_against_receipts_or_mark_unverified_before_answering",
     },
@@ -2556,11 +2556,11 @@ async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const memoryDir = path.join(options.workspaceDir, "memory");
   const roots = [
-    path.join(memoryDir, "lark-language-handoff-receipts"),
+    path.join(memoryDir, "external-message-handoff-receipts"),
     path.join(memoryDir, "finance-learning-apply-usage-receipts"),
-    path.join(memoryDir, "feishu-work-receipts"),
-    path.join(memoryDir, "lark-brain-distillation-candidates"),
-    path.join(memoryDir, "lark-brain-distillation-reviews"),
+    path.join(memoryDir, "external-work-receipts"),
+    path.join(memoryDir, "external-brain-distillation-candidates"),
+    path.join(memoryDir, "external-brain-distillation-reviews"),
     path.join(memoryDir, "module-learning-pipeline-plan-receipts"),
     path.join(memoryDir, "module-learning-pipeline-reviews"),
   ];
@@ -2636,7 +2636,7 @@ async function main(): Promise<void> {
       "external_channel_sender",
       "provider_config",
       "protected_repo_memory",
-      "formal_lark_routing_corpus",
+      "formal_external_routing_corpus",
       "finance_doctrine",
     ],
   };

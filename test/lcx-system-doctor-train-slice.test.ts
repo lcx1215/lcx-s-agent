@@ -85,13 +85,12 @@ describe("LCX system doctor train slice observability", () => {
     expect(trainingPlanSource).toContain('!line.includes("--resolve-current-adapter")');
   });
 
-  it("bounds live Lark probes so a stuck channel check cannot look successful", async () => {
+  it("bounds live External probes so a stuck channel check cannot look successful", async () => {
     const source = await fs.readFile(
       path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"),
       "utf8",
     );
 
-    expect(source).toContain("LIVE_LARK_DIAGNOSE_TIMEOUT_MS");
     expect(source).toContain("LIVE_CHANNEL_PROBE_TIMEOUT_MS");
     expect(source).toContain("DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS = 90_000");
     expect(source).toContain("LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS");
@@ -104,7 +103,7 @@ describe("LCX system doctor train slice observability", () => {
       /name: "channels-status-probe"[\s\S]*timeoutMs: LIVE_CHANNEL_PROBE_TIMEOUT_MS/u,
     );
     expect(source).toMatch(
-      /name: "lark-loop-diagnose"[\s\S]*timeoutMs: LIVE_LARK_DIAGNOSE_TIMEOUT_MS/u,
+      /name: "external-channel-status"[\s\S]*timeoutMs: EXTERNAL_CHANNEL_BINDING_TIMEOUT_MS/u,
     );
   });
 

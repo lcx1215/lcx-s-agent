@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseFeishuFinanceDoctrinePromotionProposalArtifact,
-  renderFeishuFinanceDoctrinePromotionProposalArtifact,
+  parseExternalFinanceDoctrinePromotionProposalArtifact,
+  renderExternalFinanceDoctrinePromotionProposalArtifact,
 } from "./lobster-brain-registry.js";
 
 describe("finance promotion proposal artifact", () => {
   it("round-trips the bounded promotion proposal artifact contract", () => {
-    const rendered = renderFeishuFinanceDoctrinePromotionProposalArtifact({
+    const rendered = renderExternalFinanceDoctrinePromotionProposalArtifact({
       draftedAt: "2026-03-25T20:00:00.000Z",
       consumer: "holdings_thesis_revalidation",
       sourceDecisionArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       proposals: [
         {
           proposalId: "finance-doctrine-proposal-2026-03-25-closest-scenario-base-case",
@@ -33,15 +33,15 @@ describe("finance promotion proposal artifact", () => {
       ],
     });
 
-    expect(parseFeishuFinanceDoctrinePromotionProposalArtifact(rendered)).toEqual({
+    expect(parseExternalFinanceDoctrinePromotionProposalArtifact(rendered)).toEqual({
       draftedAt: "2026-03-25T20:00:00.000Z",
       consumer: "holdings_thesis_revalidation",
       sourceDecisionArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       proposals: [
         {
           proposalId: "finance-doctrine-proposal-2026-03-25-closest-scenario-base-case",
@@ -63,14 +63,14 @@ describe("finance promotion proposal artifact", () => {
 
   it("fails closed on invalid proposal status entries", () => {
     expect(
-      parseFeishuFinanceDoctrinePromotionProposalArtifact(`\
-# Feishu Finance Doctrine Promotion Proposals
+      parseExternalFinanceDoctrinePromotionProposalArtifact(`\
+# External Finance Doctrine Promotion Proposals
 
 - **Drafted At**: 2026-03-25T20:00:00.000Z
 - **Consumer**: holdings_thesis_revalidation
-- **Source Decision Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md
-- **Linked Candidate Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md
-- **Linked Review Artifact**: memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md
+- **Source Decision Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md
+- **Linked Candidate Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md
+- **Linked Review Artifact**: memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md
 
 ## Proposals
 ### Proposal 1
@@ -87,11 +87,11 @@ describe("finance promotion proposal artifact", () => {
       draftedAt: "2026-03-25T20:00:00.000Z",
       consumer: "holdings_thesis_revalidation",
       sourceDecisionArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-decisions.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-decisions.md",
       linkedCandidateArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
       linkedReviewArtifact:
-        "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-review.md",
+        "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-review.md",
       proposals: [],
     });
   });

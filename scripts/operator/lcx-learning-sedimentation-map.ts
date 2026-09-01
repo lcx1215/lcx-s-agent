@@ -259,8 +259,8 @@ async function buildMap(workspaceDir: string) {
     listFiles(path.join(memoryDir, "finance-learning-apply-usage-reviews"), ".json"),
     listFiles(path.join(memoryDir, "module-learning-pipeline-plan-receipts"), ".json"),
     listFiles(path.join(memoryDir, "module-learning-pipeline-reviews"), ".json"),
-    listFiles(path.join(memoryDir, "lark-brain-distillation-candidates"), ".json"),
-    listFiles(path.join(memoryDir, "lark-brain-distillation-reviews"), ".json"),
+    listFiles(path.join(memoryDir, "external-brain-distillation-candidates"), ".json"),
+    listFiles(path.join(memoryDir, "external-brain-distillation-reviews"), ".json"),
     listFiles(path.join(memoryDir, "review-panel-receipts"), ".json"),
     listFiles(path.join(memoryDir, "local-memory")),
     listFiles(memoryDir),
@@ -391,8 +391,8 @@ async function buildMap(workspaceDir: string) {
         "It is not a language-routing corpus.",
       ],
       evidenceSurfaces: [
-        "memory/lark-brain-distillation-candidates",
-        "memory/lark-brain-distillation-reviews",
+        "memory/external-brain-distillation-candidates",
+        "memory/external-brain-distillation-reviews",
         "local-brain-distill-dataset",
         "minimax-brain-training-guard",
       ],
@@ -478,13 +478,13 @@ async function buildMap(workspaceDir: string) {
       ],
       doesNotProve: [
         "Language handoff receipts are not brain distillation artifacts.",
-        "Brain distillation artifacts must not write the formal Lark routing corpus.",
+        "Brain distillation artifacts must not write the formal External routing corpus.",
       ],
-      evidenceSurfaces: ["formal_lark_routing_corpus", "lark_language_handoff_receipt"],
+      evidenceSurfaces: ["formal_external_routing_corpus", "external_language_handoff_receipt"],
       counts: {
         separatedFromBrainDistillation: true,
       },
-      nextGate: "use_lark_visible_language_waterflow_for_language_corpus_changes",
+      nextGate: "use_external_visible_language_waterflow_for_language_corpus_changes",
     },
   ];
 
@@ -538,7 +538,7 @@ async function buildMap(workspaceDir: string) {
       "external_channel_sender",
       "provider_config",
       "protected_repo_memory",
-      "formal_lark_routing_corpus",
+      "formal_external_routing_corpus",
       "finance_doctrine",
     ],
     liveTouched: false,

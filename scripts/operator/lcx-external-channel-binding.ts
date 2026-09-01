@@ -35,7 +35,7 @@ type BindingDecision = {
     | "wait_for_current_eval_then_bind_live_to_selected_clean_adapter"
     | "wait_for_training_plan_live_binding_ready"
     | "run_apply_when_operator_allows_live_runtime_restart"
-    | "keep_waiting_for_real_lark_user_seen_proof"
+    | "keep_waiting_for_real_external_user_seen_proof"
     | "no_action_external_channel_user_visible_observed"
     | "debug_live_runtime_probe_before_claiming_bound";
   selectedCleanAdapter?: string;
@@ -52,9 +52,9 @@ type BindingDecision = {
 
 type ExternalChannelBindingSummary = {
   boundary: "local_external_channel_binding_operator_only";
-  channel: "lark";
+  channel: "external";
   role: "owner_agent_communication_medium";
-  objective: "lark_receives_current_best_verified_lcx_agent_answer";
+  objective: "external_receives_current_best_verified_lcx_agent_answer";
   selectedCleanAdapter?: string;
   status:
     | "blocked_missing_training_plan"
@@ -66,12 +66,12 @@ type ExternalChannelBindingSummary = {
     | "channel_runtime_probe_failed";
   action:
     | "fix_training_plan_owner_first"
-    | "wait_for_current_eval_then_route_lark_transport_to_selected_clean_answer_path"
+    | "wait_for_current_eval_then_route_external_transport_to_selected_clean_answer_path"
     | "wait_for_training_plan_external_channel_ready"
-    | "run_apply_when_operator_allows_lark_channel_restart"
-    | "keep_waiting_for_real_lark_user_visible_proof"
+    | "run_apply_when_operator_allows_external_channel_restart"
+    | "keep_waiting_for_real_external_user_visible_proof"
     | "none_external_channel_user_visible_observed"
-    | "debug_lark_channel_probe_before_claiming_user_visible";
+    | "debug_external_channel_probe_before_claiming_user_visible";
   missingProof: string[];
   userVisibleObserved: boolean;
   legacyLiveCompatibility: {
@@ -93,8 +93,8 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/operator/lcx-external-channel-binding.ts [--json] [--apply]",
       "",
-      "External-channel operator for making the Lark transport route to the selected clean LCX answer path.",
-      "The historical live script name is legacy compatibility; Lark is the owner-agent communication medium, not a brain.",
+      "External-channel operator for making the External transport route to the selected clean LCX answer path.",
+      "The historical live script name is legacy compatibility; External is the owner-agent communication medium, not a brain.",
       "Default is read-only. --apply is allowed only when local-brain-training-plan exposes",
       "externalChannelBinding.status=ready_for_apply and no eval/MLX process is active.",
     ].join("\n"),
@@ -157,6 +157,29 @@ function booleanValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function externalChannelStatusSucceeded(value: JsonRecord | undefined): boolean {
+  if (!value || value.ok === false) {
+    return false;
+  }
+  if (value.ok === true) {
+    return true;
+  }
+  const channels = recordValue(value.channels);
+  const channel = recordValue(channels?.external);
+  if (channel?.configured === true && channel.enabled !== false) {
+    return true;
+  }
+  const channelAccounts = recordValue(value.channelAccounts);
+  const accounts = channelAccounts?.external;
+  return (
+    Array.isArray(accounts) &&
+    accounts.some((entry) => {
+      const account = recordValue(entry);
+      return account?.configured === true && account.enabled !== false;
+    })
+  );
+}
+
 async function readJson(filePath: string): Promise<JsonRecord | undefined> {
   try {
     return JSON.parse(await fs.readFile(filePath, "utf8")) as JsonRecord;
@@ -190,11 +213,11 @@ function sidecarDriftIsZero(summary: string | undefined): boolean {
 
 const RUNTIME_PROOF_NAMES = [
   "external_channel_source_drift_zero_after_selected_adapter",
-  "lark_external_channel_gateway_restarted_after_selected_adapter",
-  "lark_external_channel_diagnose_ok_after_restart",
+  "external_message_channel_gateway_restarted_after_selected_adapter",
+  "external_message_channel_status_ok_after_restart",
   "live_sidecar_source_drift_zero_after_selected_adapter",
-  "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
-  "live_lark_loop_diagnose_ok_after_restart",
+  "live_gateway_and_external_proxy_restarted_after_selected_adapter",
+  "live_external_channel_status_ok_after_restart",
 ];
 
 function requireRuntimeApply(decision: BindingDecision): BindingDecision {
@@ -215,13 +238,13 @@ function removeRuntimeProofNames(missingProof: string[]): string[] {
 export function buildExternalChannelBindingDecision(params: {
   trainingPlan?: JsonRecord;
   apply: boolean;
-  larkLoopDiagnoseOk?: boolean;
+  externalChannelStatusOk?: boolean;
   userVisibleObserved?: boolean;
   liveTouched: boolean;
 }): BindingDecision {
   const binding =
     recordValue(params.trainingPlan?.externalChannelBinding) ??
-    recordValue(params.trainingPlan?.liveLarkBrainBinding);
+    recordValue(params.trainingPlan?.liveExternalBrainBinding);
   const active = activeProcessSummary(params.trainingPlan);
   const heavyActive = active.some(
     (entry) => entry.role === "local_brain_eval" || entry.role === "mlx",
@@ -232,7 +255,7 @@ export function buildExternalChannelBindingDecision(params: {
   const userVisibleObserved = params.userVisibleObserved === true;
   const missingAfterUserVisibleProof = missingProof.filter(
     (entry) =>
-      externalProofName(entry) !== "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+      externalProofName(entry) !== "fresh_real_external_inbound_and_outbound_user_visible_observed",
   );
   const missingAfterRuntimeAndUserVisibleProof = removeRuntimeProofNames(
     missingAfterUserVisibleProof,
@@ -242,7 +265,7 @@ export function buildExternalChannelBindingDecision(params: {
     return {
       status: "blocked_missing_training_plan",
       action: "fix_training_plan_owner_first",
-      missingProof: ["training_plan_lark_external_channel_binding"],
+      missingProof: ["training_plan_external_message_channel_binding"],
       heavyActive,
       activeProcessSummary: active,
       userVisibleObserved: false,
@@ -290,7 +313,7 @@ export function buildExternalChannelBindingDecision(params: {
     }
     return {
       status: "applied_runtime_probe_ok",
-      action: "keep_waiting_for_real_lark_user_seen_proof",
+      action: "keep_waiting_for_real_external_user_seen_proof",
       selectedCleanAdapter,
       missingProof,
       heavyActive,
@@ -335,7 +358,7 @@ export function buildExternalChannelBindingDecision(params: {
     };
   }
 
-  const runtimeProbeOk = params.larkLoopDiagnoseOk === true;
+  const runtimeProbeOk = params.externalChannelStatusOk === true;
   return {
     status:
       runtimeProbeOk && userVisibleObserved
@@ -347,7 +370,7 @@ export function buildExternalChannelBindingDecision(params: {
       runtimeProbeOk && userVisibleObserved
         ? "no_action_external_channel_user_visible_observed"
         : runtimeProbeOk
-          ? "keep_waiting_for_real_lark_user_seen_proof"
+          ? "keep_waiting_for_real_external_user_seen_proof"
           : "debug_live_runtime_probe_before_claiming_bound",
     selectedCleanAdapter,
     missingProof: userVisibleObserved
@@ -365,26 +388,26 @@ export function buildExternalChannelBindingDecision(params: {
   };
 }
 
-export const buildLiveLarkBrainBindingDecision = buildExternalChannelBindingDecision;
+export const buildLiveExternalBrainBindingDecision = buildExternalChannelBindingDecision;
 
 function externalProofName(name: string): string {
   return name
-    .replace("training_plan_live_lark_brain_binding", "training_plan_lark_external_channel_binding")
+    .replace("training_plan_live_external_brain_binding", "training_plan_external_message_channel_binding")
     .replace(
       "live_sidecar_source_drift_zero_after_selected_adapter",
       "external_channel_source_drift_zero_after_selected_adapter",
     )
     .replace(
-      "live_gateway_and_feishu_proxy_restarted_after_selected_adapter",
-      "lark_external_channel_gateway_restarted_after_selected_adapter",
+      "live_gateway_and_external_proxy_restarted_after_selected_adapter",
+      "external_message_channel_gateway_restarted_after_selected_adapter",
     )
     .replace(
-      "live_lark_loop_diagnose_ok_after_restart",
-      "lark_external_channel_diagnose_ok_after_restart",
+      "live_external_channel_status_ok_after_restart",
+      "external_message_channel_status_ok_after_restart",
     )
     .replace(
-      "fresh_real_lark_inbound_and_outbound_seen",
-      "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+      "fresh_real_external_inbound_and_outbound_seen",
+      "fresh_real_external_inbound_and_outbound_user_visible_observed",
     );
 }
 
@@ -403,20 +426,20 @@ function buildExternalChannelBindingSummary(
   const actionMap: Record<BindingDecision["action"], ExternalChannelBindingSummary["action"]> = {
     fix_training_plan_owner_first: "fix_training_plan_owner_first",
     wait_for_current_eval_then_bind_live_to_selected_clean_adapter:
-      "wait_for_current_eval_then_route_lark_transport_to_selected_clean_answer_path",
+      "wait_for_current_eval_then_route_external_transport_to_selected_clean_answer_path",
     wait_for_training_plan_live_binding_ready: "wait_for_training_plan_external_channel_ready",
     run_apply_when_operator_allows_live_runtime_restart:
-      "run_apply_when_operator_allows_lark_channel_restart",
-    keep_waiting_for_real_lark_user_seen_proof: "keep_waiting_for_real_lark_user_visible_proof",
+      "run_apply_when_operator_allows_external_channel_restart",
+    keep_waiting_for_real_external_user_seen_proof: "keep_waiting_for_real_external_user_visible_proof",
     no_action_external_channel_user_visible_observed: "none_external_channel_user_visible_observed",
     debug_live_runtime_probe_before_claiming_bound:
-      "debug_lark_channel_probe_before_claiming_user_visible",
+      "debug_external_channel_probe_before_claiming_user_visible",
   };
   return {
     boundary: "local_external_channel_binding_operator_only",
-    channel: "lark",
+    channel: "external",
     role: "owner_agent_communication_medium",
-    objective: "lark_receives_current_best_verified_lcx_agent_answer",
+    objective: "external_receives_current_best_verified_lcx_agent_answer",
     selectedCleanAdapter: decision.selectedCleanAdapter,
     status: statusMap[decision.status],
     action: actionMap[decision.action],
@@ -531,7 +554,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
   const commands: JsonRecord[] = [];
   let liveSidecarDriftBefore: string | undefined;
   let liveSidecarDriftAfter: string | undefined;
-  let larkLoopDiagnose: JsonRecord | undefined;
+  let externalChannelStatus: JsonRecord | undefined;
 
   const driftBefore = await runCommand(SYNC_DOCTOR, [], REPO_ROOT);
   commands.push({ name: "live-sidecar-sync-doctor", ok: driftBefore.ok });
@@ -547,7 +570,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
 
   const previousSnapshot = options.apply ? undefined : await readJson(options.snapshotPath);
   const previousExternalChannel = recordValue(previousSnapshot?.externalChannelBinding);
-  const previousDiagnose = recordValue(previousSnapshot?.larkLoopDiagnose);
+  const previousStatus = recordValue(previousSnapshot?.externalChannelStatus);
   const previousChannelStillMatches =
     (stringValue(previousExternalChannel?.status) ===
       "channel_runtime_probe_ok_user_visible_pending" ||
@@ -555,20 +578,20 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
         "channel_runtime_probe_ok_user_visible_observed") &&
     stringValue(previousExternalChannel?.selectedCleanAdapter) === decision.selectedCleanAdapter &&
     sidecarDriftIsZero(liveSidecarDriftBefore) &&
-    booleanValue(previousDiagnose?.ok) === true;
+    externalChannelStatusSucceeded(previousStatus);
   if (!options.apply && decision.status === "ready_for_apply" && previousChannelStillMatches) {
     decision = buildExternalChannelBindingDecision({
       trainingPlan,
       apply: true,
-      larkLoopDiagnoseOk: true,
+      externalChannelStatusOk: true,
       userVisibleObserved,
       liveTouched: false,
     });
-    larkLoopDiagnose = {
+    externalChannelStatus = {
       ok: true,
       preservedFromPreviousApply: true,
-      nextBlocker: previousDiagnose?.nextBlocker,
-      boundaries: previousDiagnose?.boundaries,
+      nextBlocker: previousStatus?.nextBlocker,
+      boundaries: previousStatus?.boundaries,
     };
   }
 
@@ -578,23 +601,24 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     !previousChannelStillMatches &&
     sidecarDriftIsZero(liveSidecarDriftBefore)
   ) {
-    const diagnose = await runCommand(
+    const statusCheck = await runCommand(
       "corepack",
-      ["pnpm", "--silent", "openclaw", "capabilities", "lark-loop-diagnose", "--json"],
+      ["pnpm", "--silent", "openclaw", "channels", "status", "--probe", "--json"],
       options.sidecarRoot,
     );
-    commands.push({ name: "lark-loop-diagnose read-only", ok: diagnose.ok });
-    if (diagnose.ok) {
+    commands.push({ name: "external-channel-status read-only", ok: statusCheck.ok });
+    if (statusCheck.ok) {
       try {
-        larkLoopDiagnose = JSON.parse(diagnose.stdout) as JsonRecord;
+        externalChannelStatus = JSON.parse(statusCheck.stdout) as JsonRecord;
       } catch {
-        larkLoopDiagnose = { ok: false, parseError: "invalid_json" };
+        externalChannelStatus = { ok: false, parseError: "invalid_json" };
       }
     }
     decision = buildExternalChannelBindingDecision({
       trainingPlan,
       apply: true,
-      larkLoopDiagnoseOk: diagnose.ok && recordValue(larkLoopDiagnose)?.ok === true,
+      externalChannelStatusOk:
+        statusCheck.ok && externalChannelStatusSucceeded(externalChannelStatus),
       userVisibleObserved,
       liveTouched: false,
     });
@@ -617,7 +641,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
           "zsh",
           [
             "-lc",
-            "launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway && launchctl kickstart -k gui/$(id -u)/ai.openclaw.feishu.proxy",
+            "launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway && launchctl kickstart -k gui/$(id -u)/ai.openclaw.external.proxy",
           ],
           options.sidecarRoot,
         )
@@ -634,31 +658,32 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     liveSidecarDriftAfter = driftAfter.stdout
       .split("\n")
       .find((line) => line.startsWith("summary "));
-    const diagnose = restart.ok
+    const statusCheck = restart.ok
       ? await runCommand(
           "corepack",
-          ["pnpm", "--silent", "openclaw", "capabilities", "lark-loop-diagnose", "--json"],
+          ["pnpm", "--silent", "openclaw", "channels", "status", "--probe", "--json"],
           options.sidecarRoot,
         )
       : {
           ok: false,
-          command: "lark-loop-diagnose",
+          command: "external-channel-status",
           stdout: "",
           stderr: "",
           error: "restart_failed",
         };
-    commands.push({ name: "lark-loop-diagnose", ok: diagnose.ok });
-    if (diagnose.ok) {
+    commands.push({ name: "external-channel-status", ok: statusCheck.ok });
+    if (statusCheck.ok) {
       try {
-        larkLoopDiagnose = JSON.parse(diagnose.stdout) as JsonRecord;
+        externalChannelStatus = JSON.parse(statusCheck.stdout) as JsonRecord;
       } catch {
-        larkLoopDiagnose = { ok: false, parseError: "invalid_json" };
+        externalChannelStatus = { ok: false, parseError: "invalid_json" };
       }
     }
     decision = buildExternalChannelBindingDecision({
       trainingPlan,
       apply: true,
-      larkLoopDiagnoseOk: diagnose.ok && recordValue(larkLoopDiagnose)?.ok === true,
+      externalChannelStatusOk:
+        statusCheck.ok && externalChannelStatusSucceeded(externalChannelStatus),
       userVisibleObserved,
       liveTouched: syncApply.ok || build.ok || restart.ok,
     });
@@ -669,7 +694,7 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
       decision.status,
     ),
     boundary: "local_external_channel_binding_operator_only",
-    legacyBoundary: "local_live_lark_brain_binding_operator_only",
+    legacyBoundary: "local_live_external_brain_binding_operator_only",
     conceptStatus: "legacy_live_terms_external_channel_owner_current",
     startedAt,
     generatedAt: new Date().toISOString(),
@@ -679,17 +704,17 @@ export async function runExternalChannelBinding(options: CliOptions): Promise<Js
     decision,
     externalChannelBinding: buildExternalChannelBindingSummary(decision),
     trainingPlanBoundary: trainingPlan?.boundary,
-    liveLarkBrainBinding: recordValue(trainingPlan?.liveLarkBrainBinding),
+    liveExternalBrainBinding: recordValue(trainingPlan?.liveExternalBrainBinding),
     trainingPlanExternalChannelBinding: recordValue(trainingPlan?.externalChannelBinding),
     latestCandidateEval: trainingPlan?.latestCandidateEval,
     activeGuardAdapterTruth: trainingPlan?.activeGuardAdapterTruth,
     liveSidecarDriftBefore,
     liveSidecarDriftAfter,
-    larkLoopDiagnose: larkLoopDiagnose
+    externalChannelStatus: externalChannelStatus
       ? {
-          ok: larkLoopDiagnose.ok,
-          nextBlocker: larkLoopDiagnose.nextBlocker,
-          boundaries: larkLoopDiagnose.boundaries,
+          ok: externalChannelStatus.ok,
+          nextBlocker: externalChannelStatus.nextBlocker,
+          boundaries: externalChannelStatus.boundaries,
         }
       : undefined,
     commands,

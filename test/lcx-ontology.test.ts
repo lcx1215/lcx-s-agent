@@ -266,7 +266,7 @@ describe("LCX ontology registry", () => {
 
   it("classifies adapter and legacy identifiers without making them core facts", () => {
     expect(LCX_ONTOLOGY_ADAPTER_IMPLEMENTATION_IDS.workflowNode).toEqual(
-      expect.arrayContaining(["ingress_lark_feishu", "real_lark_inbound"]),
+      expect.arrayContaining(["ingress_external_message", "real_external_inbound"]),
     );
     expect(LCX_ONTOLOGY_LEGACY_COMPATIBILITY_IDS.workflowNode).toContain("live_user_seen");
     expect(LCX_ONTOLOGY_FORBIDDEN_CANONICAL_TOKENS).toContain("dev");

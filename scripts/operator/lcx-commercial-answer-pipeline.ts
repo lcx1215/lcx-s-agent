@@ -1,9 +1,9 @@
 import { pathToFileURL } from "node:url";
-import { buildLarkAnswerAuditPolicy } from "../../extensions/feishu/src/lark-language-handoff-receipts.js";
 import {
   applyVisibleAnswerAdoptionGate,
   findVisibleAnswerAdoptionGateFailures,
-} from "../../extensions/feishu/src/visible-answer-adoption-gate.js";
+} from "../../src/agents/visible-answer-adoption-gate.js";
+import { buildAnswerAuditPolicy } from "../../src/agents/answer-audit-policy.js";
 import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
@@ -225,15 +225,15 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "provider_disagreement_blocks_generic_control_room_intro",
     ask: "Kimi、MiniMax、DeepSeek 三个模型意见不一致时，你应该怎么裁决？只说证据排序、本地 gate 和不能直接采信谁。",
     candidateAnswer:
-      "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["provider_council_arbitration_answer_missing"],
   },
   {
-    id: "real_lark_provider_disagreement_blocks_capability_intro_and_rationale",
-    ask: "E2 Kimi MiniMax DeepSeek disagree who decides no JSON. lark-canary-e2",
+    id: "real_external_provider_disagreement_blocks_capability_intro_and_rationale",
+    ask: "E2 Kimi MiniMax DeepSeek disagree who decides no JSON. external-canary-e2",
     candidateAnswer:
-      "我是你在 Lark 里联系 LCX Agent 的入口。当前可用能力: 把你的自然语言问题转成研究、学习、复盘、审计或工程任务。证据: 识别理由: User is reporting a multi-model disagreement scenario.",
+      "我是你在 External 里联系 LCX Agent 的入口。当前可用能力: 把你的自然语言问题转成研究、学习、复盘、审计或工程任务。证据: 识别理由: User is reporting a multi-model disagreement scenario.",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: [
       "provider_council_arbitration_answer_missing",
@@ -244,7 +244,7 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "explicit_visible_contract_blocks_generic_control_room_intro",
     ask: "我问一个简单问题：没有最新行情时怎么回答？只给可信度边界和数据清单，不要讲系统能力，不要暴露内部标签。",
     candidateAnswer:
-      "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力: 可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["explicit_visible_contract_ignored_by_generic_intro"],
   },
@@ -290,7 +290,7 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     id: "status_readback_blocks_legacy_proof_labels_in_visible_answer",
     ask: "现在系统进化到哪一步了？不要流水账，只说当前等级、卡点、下一步。",
     candidateAnswer:
-      "Dev-fixed: 本地通过。Probe-fixed: channel probe 通过。Live-visible-fixed: 等真实 Lark inbound/outbound。",
+      "Dev-fixed: 本地通过。Probe-fixed: channel probe 通过。Live-visible-fixed: 等真实 External inbound/outbound。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["single_entry_single_exit_internal_label_leak"],
   },
@@ -318,15 +318,15 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["minimax_agent_lcx_gate_missing"],
   },
   {
-    id: "real_lark_short_buy_canary_blocks_generic_intro",
+    id: "real_external_short_buy_canary_blocks_generic_intro",
     ask: "能买吗",
     candidateAnswer:
-      "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     expectedDecision: "return_failed_reason",
-    expectedFailedReasons: ["short_lark_canary_wrong_route_generic_intro"],
+    expectedFailedReasons: ["short_external_canary_wrong_route_generic_intro"],
   },
   {
-    id: "real_lark_short_status_canary_blocks_empty_progress_claim",
+    id: "real_external_short_status_canary_blocks_empty_progress_claim",
     ask: "到哪了",
     candidateAnswer: "进展正常，系统已经基本可用了。",
     expectedDecision: "return_failed_reason",
@@ -354,31 +354,31 @@ const BUILT_IN_SCENARIOS: PipelineScenario[] = [
     expectedFailedReasons: ["finance_data_gateway_snapshot_missing_for_number"],
   },
   {
-    id: "real_lark_arithmetic_canary_blocks_generic_entry_exit_answer",
-    ask: "LCX真实入口探针B5：6818一天净增46条，大概涨了多少比例？直接算，别绕。验收码 lark-canary-b5",
+    id: "real_external_arithmetic_canary_blocks_generic_entry_exit_answer",
+    ask: "LCX真实入口探针B5：6818一天净增46条，大概涨了多少比例？直接算，别绕。验收码 external-canary-b5",
     candidateAnswer:
       "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["user_supplied_arithmetic_not_answered_directly"],
   },
   {
-    id: "real_lark_daily_semiconductor_options_format_blocks_generic_entry_exit_answer",
-    ask: "LCX真实入口探针B10：别废话，给我一个每天自动研究半导体和指数期权的产出格式。验收码 lark-canary-b10",
+    id: "real_external_daily_semiconductor_options_format_blocks_generic_entry_exit_answer",
+    ask: "LCX真实入口探针B10：别废话，给我一个每天自动研究半导体和指数期权的产出格式。验收码 external-canary-b10",
     candidateAnswer:
       "能弄好，而且出口必须简单：你发一句话，系统内部再复杂，也只能给你一个有用答案。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["daily_semiconductor_options_format_missing"],
   },
   {
-    id: "real_lark_semiconductor_options_risk_requires_three_risk_families",
-    ask: "LCX真实复测C4：今天半导体和指数期权最该看哪三个风险？没有实时数据就明确说。验收码 lark-canary-c4",
+    id: "real_external_semiconductor_options_risk_requires_three_risk_families",
+    ask: "LCX真实复测C4：今天半导体和指数期权最该看哪三个风险？没有实时数据就明确说。验收码 external-canary-c4",
     candidateAnswer:
       "实时数据不可用，本次与B8一致。web_search无法返回当前价格/IV/VIX数据，三个风险点均标注 [DATA_MISSING]。",
     expectedDecision: "return_failed_reason",
     expectedFailedReasons: ["semiconductor_options_risk_answer_incomplete"],
   },
   {
-    id: "real_lark_visible_answer_blocks_raw_work_order_json",
+    id: "real_external_visible_answer_blocks_raw_work_order_json",
     ask: "今天半导体和指数期权最该看哪三个风险？没有实时数据就明确说。",
     candidateAnswer:
       '{"family":"technical_timing","confidence":0.95,"work_order":{"output_contract":"三个风险点列表"}}',
@@ -445,12 +445,12 @@ const MACRO_PRODUCT_CONTRACTS = [
   {
     id: "single_entry_single_exit",
     invariant:
-      "Lark, WeChat, SMS, or any other channel is just an external transport; the product has one intake, one internal answer path, and one plain user-visible exit.",
+      "External, WeChat, SMS, or any other channel is just an external transport; the product has one intake, one internal answer path, and one plain user-visible exit.",
     ownsFilters: [
       "single_entry_single_exit_visible_answer_required",
       "single_entry_single_exit_internal_labels_hidden",
-      "short_lark_intent_expansion_required",
-      "real_lark_short_canary_suite_required",
+      "short_external_intent_expansion_required",
+      "real_external_short_canary_suite_required",
       "short_intent_family_fuzzer_required",
       "unknown_short_intent_clean_failure_required",
     ],
@@ -539,7 +539,7 @@ function buildProductGovernor() {
     macroPolicy:
       "Macro product contracts own answer quality. Micro rules, fixed canaries, ticker regressions, and replay failures are samples that must attach to one macro contract before this owner passes.",
     microPatchPolicy:
-      "If a real Lark failure appears, add or repair the smallest deterministic rule needed, then attach the rule to a macro contract and add at least one positive acceptance path when the class of answer should be allowed.",
+      "If a real External failure appears, add or repair the smallest deterministic rule needed, then attach the rule to a macro contract and add at least one positive acceptance path when the class of answer should be allowed.",
     requiredMacroContracts: MACRO_PRODUCT_CONTRACTS.map((contract) => contract.id),
     contracts: MACRO_PRODUCT_CONTRACTS,
     coverage: {
@@ -775,7 +775,7 @@ function auditCandidate(params: {
     askLower,
     /\b(?:buy|sell|add|reduce|hold|wait|position|sizing|average down|cut loss|stop loss|enter|exit|chase)\b|买|卖|加仓|加一点|减仓|持有|等待|仓位|持仓|补仓|摊低|摊平|割肉|止损|止盈|回本|能上|上不上|冲不冲|追不追|要不要冲|有没有戏|能拿|还能拿/u,
   );
-  const realLarkShortAsk =
+  const realExternalShortAsk =
     params.ask.trim().length <= 12 &&
     includesPattern(
       params.ask,
@@ -783,7 +783,7 @@ function auditCandidate(params: {
     );
   const genericControlRoomIntro = includesPattern(
     candidate,
-    /我是\s*LCX Agent|Lark 控制室入口|当前可用能力|control_room|learning_command|technical_daily/u,
+    /我是\s*LCX Agent|External 控制室入口|当前可用能力|control_room|learning_command|technical_daily/u,
   );
   const systemStatusAsk = includesPattern(
     params.ask,
@@ -918,16 +918,16 @@ function auditCandidate(params: {
         : "candidate is visible prose, not raw protocol output",
     },
     {
-      id: "real_lark_short_canary_not_generic_intro",
-      ok: !(realLarkShortAsk && genericControlRoomIntro),
+      id: "real_external_short_canary_not_generic_intro",
+      ok: !(realExternalShortAsk && genericControlRoomIntro),
       failedReason:
-        realLarkShortAsk && genericControlRoomIntro
-          ? "short_lark_canary_wrong_route_generic_intro"
+        realExternalShortAsk && genericControlRoomIntro
+          ? "short_external_canary_wrong_route_generic_intro"
           : undefined,
       evidence:
-        realLarkShortAsk && genericControlRoomIntro
-          ? "short Lark canary was answered with a generic control-room intro instead of the requested workflow"
-          : "short Lark canaries are not satisfied by generic intro text",
+        realExternalShortAsk && genericControlRoomIntro
+          ? "short External canary was answered with a generic control-room intro instead of the requested workflow"
+          : "short External canaries are not satisfied by generic intro text",
     },
     {
       id: "visible_text_no_internal_runtime_details",
@@ -1159,7 +1159,7 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
   });
   const needs = resolveNeeds(ask, orchestration);
   const stages = resolveRequiredStages(needs);
-  const answerAuditPolicy = buildLarkAnswerAuditPolicy({
+  const answerAuditPolicy = buildAnswerAuditPolicy({
     workOrder: {
       validation: {
         qwenChallenge: {
@@ -1169,7 +1169,7 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
         },
       },
     },
-  } as Parameters<typeof buildLarkAnswerAuditPolicy>[0]);
+  });
   const checks = auditCandidate({ ask, candidateAnswer, needs });
   const visibleGateDecision = applyVisibleAnswerAdoptionGate({
     userMessage: ask,
@@ -1209,7 +1209,7 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
       ],
       forbiddenUses: [
         "final_visible_answer_authority",
-        "direct_lark_send",
+        "direct_external_send",
         "provider_config_change",
         "protected_memory_write",
         "trade_or_execution_authority",
@@ -1259,10 +1259,10 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
     checks,
     receipts: [
       "commercial_answer_pipeline",
-      "lark_language_handoff_receipt",
-      "lark_context_packet",
+      "external_language_handoff_receipt",
+      "external_context_packet",
       "review_panel",
-      "feishu_reply_flow",
+      "external_reply_flow",
     ],
     liveTouched: false,
     providerConfigTouched: false,

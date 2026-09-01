@@ -50,9 +50,9 @@ This is the part that actually "does the work."
 
 ## Lane Discipline: Natural Language Stays In The Main Lane
 
-The most important control-room safeguard is in:
+The most important external-channel control-room safeguard is in:
 
-- `extensions/feishu/src/feishu-command-handler.ts`
+- `src/auto-reply/reply/get-reply-run.ts`
 
 Normal natural language stays untouched. Only explicit slash commands enter
 reset handling. This prevents ordinary turns like "继续" from silently jumping

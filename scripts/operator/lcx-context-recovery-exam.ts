@@ -27,8 +27,8 @@ const REQUIRED_RUNTIME_SKILLS = [
   "lcx-qwen-training-operator",
   "lcx-workflow-waterflow-auditor",
   "finance-learning-researcher",
-  "lark-live-loop-debugger",
-  "lark-post-migration-probe",
+  "external-live-loop-debugger",
+  "external-post-migration-probe",
   "agent-runtime-drift-auditor",
   "lcx-baseline-hardening",
   "lcx-evolution-loop",
@@ -190,11 +190,11 @@ function compactTrainingPlan(value: unknown) {
   const record = value as Record<string, unknown>;
   const latestEval = record.latestEval as Record<string, unknown> | undefined;
   const moduleLearningReview = record.moduleLearningReview as Record<string, unknown> | undefined;
-  const liveLarkBrainBinding =
-    record.liveLarkBrainBinding &&
-    typeof record.liveLarkBrainBinding === "object" &&
-    !Array.isArray(record.liveLarkBrainBinding)
-      ? (record.liveLarkBrainBinding as Record<string, unknown>)
+  const liveExternalBrainBinding =
+    record.liveExternalBrainBinding &&
+    typeof record.liveExternalBrainBinding === "object" &&
+    !Array.isArray(record.liveExternalBrainBinding)
+      ? (record.liveExternalBrainBinding as Record<string, unknown>)
       : undefined;
   const externalChannelBinding =
     record.externalChannelBinding &&
@@ -237,14 +237,14 @@ function compactTrainingPlan(value: unknown) {
           userVisibleObserved: externalChannelBinding.userVisibleObserved,
         }
       : undefined,
-    liveLarkBrainBinding: liveLarkBrainBinding
+    liveExternalBrainBinding: liveExternalBrainBinding
       ? {
-          boundary: liveLarkBrainBinding.boundary,
-          status: liveLarkBrainBinding.status,
-          action: liveLarkBrainBinding.action,
-          selectedCleanAdapter: liveLarkBrainBinding.selectedCleanAdapter,
-          missingProof: Array.isArray(liveLarkBrainBinding.missingProof)
-            ? liveLarkBrainBinding.missingProof
+          boundary: liveExternalBrainBinding.boundary,
+          status: liveExternalBrainBinding.status,
+          action: liveExternalBrainBinding.action,
+          selectedCleanAdapter: liveExternalBrainBinding.selectedCleanAdapter,
+          missingProof: Array.isArray(liveExternalBrainBinding.missingProof)
+            ? liveExternalBrainBinding.missingProof
             : [],
         }
       : undefined,
@@ -811,11 +811,11 @@ function buildNewWindowHandoffText(params: {
       ? (params.trainingPlan.evolutionAcceleration as Record<string, unknown>)
       : {};
   const accelerationStepIds = stringArray(evolutionAcceleration.stepIds);
-  const liveLarkBrainBinding =
-    params.trainingPlan?.liveLarkBrainBinding &&
-    typeof params.trainingPlan.liveLarkBrainBinding === "object" &&
-    !Array.isArray(params.trainingPlan.liveLarkBrainBinding)
-      ? (params.trainingPlan.liveLarkBrainBinding as Record<string, unknown>)
+  const liveExternalBrainBinding =
+    params.trainingPlan?.liveExternalBrainBinding &&
+    typeof params.trainingPlan.liveExternalBrainBinding === "object" &&
+    !Array.isArray(params.trainingPlan.liveExternalBrainBinding)
+      ? (params.trainingPlan.liveExternalBrainBinding as Record<string, unknown>)
       : {};
   const externalChannelBinding =
     params.trainingPlan?.externalChannelBinding &&
@@ -824,7 +824,7 @@ function buildNewWindowHandoffText(params: {
       ? (params.trainingPlan.externalChannelBinding as Record<string, unknown>)
       : {};
   const externalChannelMissingProof = stringArray(externalChannelBinding.missingProof);
-  const liveLarkMissingProof = stringArray(liveLarkBrainBinding.missingProof);
+  const liveExternalMissingProof = stringArray(liveExternalBrainBinding.missingProof);
   const moduleLatestEval = params.moduleAbsorption?.latestEval;
   const moduleGateCounts =
     params.moduleAbsorption?.counts && typeof params.moduleAbsorption.counts === "object"
@@ -863,7 +863,7 @@ function buildNewWindowHandoffText(params: {
     "",
     "## Boundaries",
     "- context handoff is local evidence; external-channel status below is read-only",
-    "- do not claim user-visible-observed unless fresh real Lark inbound and reply proof exists",
+    "- do not claim user-visible-observed unless fresh real External inbound and reply proof exists",
     "- legacy liveRuntimeUpdated/liveUserSeen terms are compatibility labels only",
     "- liveTouched=false; providerConfigTouched=false; protectedMemoryTouched=false",
     "- do not start overlapping Qwen/MiniMax/MLX training; trust fresh local-brain-training-plan",
@@ -902,8 +902,8 @@ function buildNewWindowHandoffText(params: {
     `decisionIds=${trainingDecisionIds.join(",") || "none"}`,
     `externalChannelBinding=${scalarText(externalChannelBinding.status, "none")} action=${scalarText(externalChannelBinding.action, "none")} selectedCleanAdapter=${scalarText(externalChannelBinding.selectedCleanAdapter, "none")}`,
     `externalChannelBindingMissingProof=${externalChannelMissingProof.join(",") || "none"}`,
-    `legacyLiveLarkBrainBinding=${scalarText(liveLarkBrainBinding.status, "none")} action=${scalarText(liveLarkBrainBinding.action, "none")} selectedCleanAdapter=${scalarText(liveLarkBrainBinding.selectedCleanAdapter, "none")}`,
-    `legacyLiveLarkBrainBindingMissingProof=${liveLarkMissingProof.join(",") || "none"}`,
+    `legacyLiveExternalBrainBinding=${scalarText(liveExternalBrainBinding.status, "none")} action=${scalarText(liveExternalBrainBinding.action, "none")} selectedCleanAdapter=${scalarText(liveExternalBrainBinding.selectedCleanAdapter, "none")}`,
+    `legacyLiveExternalBrainBindingMissingProof=${liveExternalMissingProof.join(",") || "none"}`,
     `evolutionAcceleration=${scalarText(evolutionAcceleration.fastestSafeNextAction, "none")} readyNow=${scalarText(evolutionAcceleration.readyNowCount)} idleOnly=${scalarText(evolutionAcceleration.idleOnlyCount)} blocked=${scalarText(evolutionAcceleration.blockedCount)} heavyAllowed=${scalarText(evolutionAcceleration.canStartHeavyWorkNow)}`,
     `evolutionAccelerationSteps=${accelerationStepIds.join(",") || "none"}`,
     "",

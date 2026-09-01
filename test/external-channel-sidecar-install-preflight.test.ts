@@ -10,7 +10,7 @@ import type { SchedulerDryRunReport } from "../scripts/operator/external-channel
 function schedulerReport(overrides: Partial<SchedulerDryRunReport> = {}): SchedulerDryRunReport {
   return {
     schemaVersion: 1,
-    mode: "dry_run_no_launchagent_change_no_lark_send",
+    mode: "dry_run_no_launchagent_change_no_external_send",
     checkedAt: "2026-04-27T00:00:00.000Z",
     legacyRoot: "/legacy",
     targetRoot: "/target",
@@ -34,7 +34,7 @@ function schedulerReport(overrides: Partial<SchedulerDryRunReport> = {}): Schedu
 function hostReport(overrides: Partial<HostWatchdogDryRunReport> = {}): HostWatchdogDryRunReport {
   return {
     schemaVersion: 1,
-    mode: "dry_run_no_launchagent_change_no_lark_send",
+    mode: "dry_run_no_launchagent_change_no_external_send",
     checkedAt: "2026-04-27T00:00:00.000Z",
     legacyRoot: "/legacy",
     targetRoot: "/target",

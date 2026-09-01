@@ -728,9 +728,9 @@ describe("minimax brain training guard adapter resolution", () => {
             train: 9263,
           },
           {
-            lark_language_handoff_receipt: 63,
+            external_language_handoff_receipt: 63,
             finance_learning_capability_apply_receipt: 14,
-            feishu_work_receipt: 61,
+            external_work_receipt: 61,
             brain_distillation_review: 8991,
             curated_seed: 160,
           },
@@ -743,9 +743,9 @@ describe("minimax brain training guard adapter resolution", () => {
             train: 4603,
           },
           {
-            lark_language_handoff_receipt: 63,
+            external_language_handoff_receipt: 63,
             finance_learning_capability_apply_receipt: 14,
-            feishu_work_receipt: 61,
+            external_work_receipt: 61,
             brain_distillation_review: 4331,
             curated_seed: 160,
           },

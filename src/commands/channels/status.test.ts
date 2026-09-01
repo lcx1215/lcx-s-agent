@@ -15,7 +15,7 @@ describe("formatGatewayChannelsStatusLines", () => {
               ok: false,
               health: "degraded",
               reason: "dns",
-              error: "getaddrinfo ENOTFOUND open.larksuite.com",
+              error: "getaddrinfo ENOTFOUND open.externalsuite.com",
             },
           },
         ],

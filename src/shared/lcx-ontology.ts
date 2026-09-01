@@ -267,7 +267,7 @@ export const LCX_ONTOLOGY_MODULE_ALIASES: Readonly<Record<string, LcxOntologyMod
   finance_framework_core_inspect: "source_registry",
   finance_learning_capability_apply: "finance_learning_memory",
   l5_regression_batterer: "eval_harness_design",
-  lark_loop_diagnose: "ops_audit",
+  external_loop_diagnose: "ops_audit",
   local_brain_eval: "eval_harness_design",
   local_memory_retrieval: "finance_learning_memory",
   review_tier: "review_panel",
@@ -291,7 +291,7 @@ export const LCX_ONTOLOGY_LEARNING_TARGET_IDS = [
   "fx_currency_liquidity",
   "event_driven",
   "portfolio_risk_gates",
-  "lark_feishu_workflow",
+  "external_message_workflow",
   "agent_workflow_memory",
   "ops_audit",
   "skill_pattern_distillation",
@@ -300,7 +300,7 @@ export type LcxOntologyLearningTargetId = (typeof LCX_ONTOLOGY_LEARNING_TARGET_I
 
 export const LCX_ONTOLOGY_EXTERNAL_LEARNING_TARGET_IDS = [
   "factor_research",
-  "lark_feishu_workflow",
+  "external_message_workflow",
 ] as const satisfies readonly LcxOntologyLearningTargetId[];
 
 export const LCX_ONTOLOGY_MODULE_FAMILY_IDS = [
@@ -385,7 +385,7 @@ export const LCX_ONTOLOGY_TASK_FAMILY_IDS = [
   "train_slice_weighting_boundary",
   "eval_pass_coverage_boundary",
   "parse_recovered_promotion_boundary",
-  "short_lark_market_scope_boundary",
+  "short_external_market_scope_boundary",
   "commodity_scope_module_boundary",
   "options_volatility_execution_boundary",
   "position_sizing_missing_inputs_boundary",
@@ -402,7 +402,7 @@ export const LCX_ONTOLOGY_TASK_FAMILY_IDS = [
   "finance_skill_curriculum_bridge",
   "ambiguous_repeat_without_current_subject",
   "context_reset_new_subject_required",
-  "lark_context_pollution_audit",
+  "external_context_pollution_audit",
   "plain_language_hidden_complexity_intake",
   "senior_trader_research_risk_packet",
   "senior_trader_failure_focus_promotion_chain",
@@ -510,7 +510,7 @@ export const LCX_ONTOLOGY_TASK_FAMILY_ALIASES: Readonly<Record<string, LcxOntolo
   fundamental_research_planning: "value_investing_fundamental_research_planning",
   human_brain_finance_decomposition: "human_brain_finance_decomposition",
   ambiguous_repeat: "ambiguous_repeat_without_current_subject",
-  lark_context_pollution: "lark_context_pollution_audit",
+  external_context_pollution: "external_context_pollution_audit",
   learning_external_source: "external_knowledge_internalization_protocol",
   learning_external_source_missing_source: "external_source_learning_missing_source",
   local_math_then_review: "portfolio_quant_math_missing_inputs",
@@ -786,7 +786,7 @@ export const LCX_ONTOLOGY_CHANNEL_MILESTONE_ALIASES: Readonly<
 } as const;
 
 export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
-  "ingress_lark_feishu",
+  "ingress_external_message",
   "intent_classifier",
   "local_brain_planner",
   "finance_research_modules",
@@ -833,7 +833,7 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "build_restart_probe",
   "external_channel_binding",
   "channel_restart_probe",
-  "real_lark_inbound",
+  "real_external_inbound",
   "live_user_seen",
   "user_visible_observed",
   "new_codex_window",
@@ -923,7 +923,7 @@ export const LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS = [
   "all_visible_answers_require_decision_value",
   "single_stock_loss_reply_requires_concrete_risk_triage",
   "visible_answer_quality_fuzzer_required",
-  "short_lark_intent_expansion_required",
+  "short_external_intent_expansion_required",
   "system_status_requires_owner_evidence",
   "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
   "model_rewrite_budget_required",
@@ -933,7 +933,7 @@ export const LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS = [
   "stored_only_is_not_learning",
   "retrieval_apply_eval_review_required",
   "async_task_receipt_required_for_deferred_work",
-  "real_lark_short_canary_suite_required",
+  "real_external_short_canary_suite_required",
   "short_intent_family_fuzzer_required",
   "unknown_short_intent_clean_failure_required",
   "no_unverified_current_market_data",
@@ -959,7 +959,7 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "live_runtime_probe_required",
   "local_ready_not_user_visible_observed",
   "external_channel_probe_required",
-  "real_lark_inbound_required",
+  "real_external_inbound_required",
   "fresh_operator_state_required",
   "single_digest_only",
   "error_receipt_required",
@@ -1014,16 +1014,16 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
 export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
-  "lark_finance_research_waterflow",
+  "external_finance_research_waterflow",
   "directed_daily_research_brief_waterflow",
   "module_learning_internalization_waterflow",
   "training_failure_feedback_waterflow",
-  "local_to_external_channel_lark_waterflow",
+  "local_to_external_channel_external_waterflow",
   "skillopt_runtime_self_use_waterflow",
   "compressed_context_recovery_waterflow",
   "universe_index_total_coverage_waterflow",
   "local_automation_digest_waterflow",
-  "lark_visible_language_waterflow",
+  "external_visible_language_waterflow",
   "commercial_answer_pipeline_waterflow",
   "provider_council_evidence_waterflow",
   "commercial_acceptance_harness_waterflow",
@@ -1039,16 +1039,16 @@ export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
 export type LcxOntologyWorkflowScenarioId = (typeof LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS)[number];
 
 export const LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS = [
-  "visible_lark_finance_research",
+  "visible_external_finance_research",
   "focused_daily_finance_research_product",
   "online_learning_to_memory_sedimentation",
   "teacher_qwen_eval_promotion_loop",
-  "local_ready_to_lark_user_visible_boundary",
-  "skillopt_eval_to_lark_external_channel_preflight",
+  "local_ready_to_external_user_visible_boundary",
+  "skillopt_eval_to_external_message_channel_preflight",
   "future_agent_state_recovery",
   "repo_runtime_artifact_total_inventory",
   "local_operator_to_single_digest",
-  "visible_lark_readability_and_language_boundary",
+  "visible_external_readability_and_language_boundary",
   "commercial_answer_adoption_and_failed_reason",
   "multi_model_provider_evidence_review",
   "commercial_product_acceptance_gate",
@@ -1393,10 +1393,10 @@ export type LcxOntologyMigrationManifest = {
  * until the owning workflows migrate to neutral names.
  */
 export const LCX_ONTOLOGY_ADAPTER_IMPLEMENTATION_IDS = {
-  learningTarget: ["lark_feishu_workflow"],
-  taskFamily: ["lark_context_pollution_audit"],
-  workflowNode: ["ingress_lark_feishu", "real_lark_inbound"],
-  workflowFilter: ["real_lark_inbound_required"],
+  learningTarget: ["external_message_workflow"],
+  taskFamily: ["external_context_pollution_audit"],
+  workflowNode: ["ingress_external_message", "real_external_inbound"],
+  workflowFilter: ["real_external_inbound_required"],
 } as const satisfies Partial<Record<LcxOntologyVocabularyName, readonly string[]>>;
 
 /**

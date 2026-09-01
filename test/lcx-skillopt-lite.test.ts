@@ -241,7 +241,7 @@ describe("lcx-skillopt-lite CLI", () => {
     await fs.writeFile(
       path.join(skillRoot, "best_skill.md"),
       [
-        "# Lark External Channel Boundary Preflight",
+        "# External External Channel Boundary Preflight",
         "",
         "boundary: local_skillopt_lite_only",
         "",
@@ -277,14 +277,14 @@ describe("lcx-skillopt-lite CLI", () => {
 
     const bestSkill = await fs.readFile(path.join(skillRoot, "best_skill.md"), "utf8");
     expect(bestSkill).toContain("## Current Static Contract Terms");
-    expect(bestSkill).toContain("lark_external_channel_binding");
+    expect(bestSkill).toContain("external_message_channel_binding");
     expect(bestSkill).toContain("local_ready_not_user_visible_observed");
     expect(bestSkill).toContain("channel_probe_as_user_visible_observed");
     expect(bestSkill).toContain("dirty_candidate_external_channel_binding");
     expect(bestSkill).toContain("external_channel_source_drift_zero_after_selected_adapter");
-    expect(bestSkill).toContain("lark_external_channel_gateway_restarted_after_selected_adapter");
-    expect(bestSkill).toContain("lark_external_channel_diagnose_ok_after_restart");
-    expect(bestSkill).toContain("fresh_real_lark_inbound_and_outbound_user_visible_observed");
+    expect(bestSkill).toContain("external_message_channel_gateway_restarted_after_selected_adapter");
+    expect(bestSkill).toContain("external_message_channel_diagnose_ok_after_restart");
+    expect(bestSkill).toContain("fresh_real_external_inbound_and_outbound_user_visible_observed");
   });
 
   it("builds an immediate deterministic preflight packet without claiming absorption or user-visible proof", async () => {

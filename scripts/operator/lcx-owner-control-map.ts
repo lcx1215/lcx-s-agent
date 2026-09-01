@@ -130,8 +130,8 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
   const providerCouncil = recordValue(owners.providerCouncilAcceleration) ?? {};
   const externalChannelBinding =
     recordValue(trainingPlan.externalChannelBinding) ??
-    recordValue(recordValue(owners.liveLarkBrainBinding)?.externalChannelBinding) ??
-    recordValue(owners.liveLarkBrainBinding) ??
+    recordValue(recordValue(owners.liveExternalBrainBinding)?.externalChannelBinding) ??
+    recordValue(owners.liveExternalBrainBinding) ??
     {};
   const universeIndex = recordValue(owners.universeIndex) ?? {};
   const processSummary = recordValue(input.localFailureTrace.processSummary) ?? {};
@@ -198,18 +198,18 @@ export function buildOwnerControlMap(input: OwnerControlInput) {
     items,
     externalChannelMissingProof.length > 0 || externalChannelStatus !== "ready_for_apply",
     {
-      id: "external_lark_channel_real_user_proof",
-      title: "真实 Lark 可见效果",
+      id: "external_message_channel_real_user_proof",
+      title: "真实 External 可见效果",
       status: "blocked_now",
       ownerCanSee: true,
       ownerCanDirectNow: false,
       codexCanActWhenSafe: true,
       supervisor: "外部通道绑定检查负责证明；Codex 只做读证据和准备；老板看是否真的用户可见。",
-      evidenceNow: "真实 Lark 入站/出站证据、外部通道绑定状态、缺失证明列表。",
-      reason: "现在只能看到开发侧准备情况，还缺真实 Lark 进出消息证明。",
+      evidenceNow: "真实 External 入站/出站证据、外部通道绑定状态、缺失证明列表。",
+      reason: "现在只能看到开发侧准备情况，还缺真实 External 进出消息证明。",
       nextControl: "等评测空下来，再按外部通道绑定检查走真实证明。",
-      proceedWhen: "有新鲜真实 Lark 收到消息和发出回复的证据，而且只绑定一个干净模型。",
-      stopWhen: "只有开发探针、模拟消息、旧日志，或准备把脏候选模型接到外部 Lark 通道。",
+      proceedWhen: "有新鲜真实 External 收到消息和发出回复的证据，而且只绑定一个干净模型。",
+      stopWhen: "只有开发探针、模拟消息、旧日志，或准备把脏候选模型接到外部 External 通道。",
       ownerAuthorization: "真实外部通道写入或发送必须你明确授权；只读检查不需要。",
     },
   );

@@ -62,7 +62,7 @@ describe("local-brain-plan adapter selection", () => {
         "#!/bin/sh",
         'printf "%s\\n" "$@" > "$LOCAL_BRAIN_FAKE_PYTHON_LOG"',
         "cat <<'JSON'",
-        '{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":[],"required_tools":["finance_learning_memory"],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_lark_conversation_history"]}',
+        '{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":[],"required_tools":["finance_learning_memory"],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_external_conversation_history"]}',
         "JSON",
       ].join("\n"),
       { mode: 0o755 },
@@ -110,7 +110,7 @@ describe("local-brain-plan adapter selection", () => {
       [
         "#!/bin/sh",
         "cat <<'JSON'",
-        '{"task_family":"agent_skill_pattern_distillation","primary_modules":["skill_pattern_distillation","agent_workflow_memory","source_registry","review_panel","eval_harness_design","control_room_summary","finance_learning_memory"],"supporting_modules":[],"required_tools":[],"missing_data":["candidate_skill_source_or_local_skill_path","target_workflow_acceptance_metric","license_and_write_scope_review"],"risk_boundaries":["research_only","no_execution_authority","no_provider_config_change","no_external_channel_sender_change","no_trading_execution_skill","no_trade_advice","evidence_required"],"next_step":"collect_candidate_skill_sources","rejected_context":["old_lark_conversation_history","language_routing_candidate_artifacts","unsupported_execution_language","cloud_skill_sharing_by_default"]}',
+        '{"task_family":"agent_skill_pattern_distillation","primary_modules":["skill_pattern_distillation","agent_workflow_memory","source_registry","review_panel","eval_harness_design","control_room_summary","finance_learning_memory"],"supporting_modules":[],"required_tools":[],"missing_data":["candidate_skill_source_or_local_skill_path","target_workflow_acceptance_metric","license_and_write_scope_review"],"risk_boundaries":["research_only","no_execution_authority","no_provider_config_change","no_external_channel_sender_change","no_trading_execution_skill","no_trade_advice","evidence_required"],"next_step":"collect_candidate_skill_sources","rejected_context":["old_external_conversation_history","language_routing_candidate_artifacts","unsupported_execution_language","cloud_skill_sharing_by_default"]}',
         "JSON",
       ].join("\n"),
       { mode: 0o755 },

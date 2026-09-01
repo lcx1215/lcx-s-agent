@@ -328,7 +328,7 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
-  it("folds external Lark channel proof gaps into adapter promotion truth", () => {
+  it("folds external message channel proof gaps into adapter promotion truth", () => {
     const result = buildProblemClusterRadar({
       trainingPlan: owner("local-brain-training-plan", {
         boundary: "local_brain_training_plan_only",
@@ -345,12 +345,12 @@ describe("lcx-problem-cluster-radar", () => {
           action: "wait_for_current_eval_then_bind_external_channel_to_selected_clean_adapter",
           missingProof: [
             "current_training_eval_or_mlx_finished",
-            "fresh_real_lark_inbound_and_outbound_seen",
+            "fresh_real_external_inbound_and_outbound_seen",
           ],
         },
         decisions: [
           {
-            id: "lark_external_channel_binding_ready",
+            id: "external_message_channel_binding_ready",
             action: "wait_for_current_eval_then_bind_external_channel_to_selected_clean_adapter",
             reason: "active eval still running",
             codexRepairEligible: false,
@@ -394,7 +394,7 @@ describe("lcx-problem-cluster-radar", () => {
     );
     expect(cluster?.signals.map((signal) => signal.id)).toEqual(
       expect.arrayContaining([
-        "lark_external_channel_binding_ready",
+        "external_message_channel_binding_ready",
         "external_channel_binding_not_ready",
       ]),
     );

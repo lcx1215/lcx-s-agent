@@ -73,7 +73,7 @@ describe("live sidecar scheduler dry-run", () => {
       checkedAt: "2026-04-27T00:00:00.000Z",
     });
 
-    expect(report.mode).toBe("dry_run_no_launchagent_change_no_lark_send");
+    expect(report.mode).toBe("dry_run_no_launchagent_change_no_external_send");
     expect(report.launchAgent.pointsAtLegacyRoot).toBe(true);
     expect(report.migrationReady).toBe(false);
     expect(report.blockedReasons).toContain(

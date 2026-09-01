@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildFeishuFinanceDoctrineTeacherCandidateInputReconciliationFilename,
-  buildFeishuFinanceDoctrineTeacherCandidateInputReviewFilename,
-  buildFeishuFinanceDoctrineTeacherCandidateInputsFilename,
-  parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
-  renderFeishuFinanceDoctrineTeacherCandidateInputArtifact,
-  renderFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact,
+  buildExternalFinanceDoctrineTeacherCandidateInputReconciliationFilename,
+  buildExternalFinanceDoctrineTeacherCandidateInputReviewFilename,
+  buildExternalFinanceDoctrineTeacherCandidateInputsFilename,
+  parseExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
+  renderExternalFinanceDoctrineTeacherCandidateInputArtifact,
+  renderExternalFinanceDoctrineTeacherCandidateInputReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { createFinanceDoctrineTeacherFeedbackCandidateInputReconciliationTool } from "./finance-doctrine-teacher-feedback-candidate-input-reconciliation-tool.js";
@@ -23,21 +23,21 @@ describe("finance_doctrine_teacher_feedback_candidate_input_reconciliation tool"
   });
 
   async function seedCandidateInput(reviewOutcome: "consumed_into_candidate_flow" | "superseded") {
-    const receiptsDir = path.join(workspaceDir!, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir!, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     const dateKey = "2026-04-16";
     const candidateInputId =
       "finance-teacher-candidate-input-2026-04-16-finance-teacher-elevation-handoff-2026-04-16-feedback-1";
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrineTeacherCandidateInputsFilename(dateKey)),
-      renderFeishuFinanceDoctrineTeacherCandidateInputArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrineTeacherCandidateInputsFilename(dateKey)),
+      renderExternalFinanceDoctrineTeacherCandidateInputArtifact({
         createdAt: "2026-04-16T23:10:00.000Z",
         sourceTeacherElevationHandoffArtifact:
-          "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-elevation-handoffs.md",
+          "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-elevation-handoffs.md",
         sourceTeacherFeedbackArtifact:
-          "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-feedback.md",
+          "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-feedback.md",
         sourceTeacherReviewArtifact:
-          "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-review.md",
+          "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-review.md",
         candidateInputs: [
           {
             candidateInputId,
@@ -51,7 +51,7 @@ describe("finance_doctrine_teacher_feedback_candidate_input_reconciliation tool"
               "Need repeated calibration artifacts showing the same omitted chain weakens later review quality.",
             riskOfAdopting: "Could overcorrect into boilerplate macro narration.",
             targetGovernancePath:
-              "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+              "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
             operatorNextAction:
               "Review this converted teacher critique against the same-day finance governance candidate flow before any later governance action.",
           },
@@ -62,19 +62,19 @@ describe("finance_doctrine_teacher_feedback_candidate_input_reconciliation tool"
     await fs.writeFile(
       path.join(
         receiptsDir,
-        buildFeishuFinanceDoctrineTeacherCandidateInputReviewFilename(dateKey),
+        buildExternalFinanceDoctrineTeacherCandidateInputReviewFilename(dateKey),
       ),
-      renderFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact({
+      renderExternalFinanceDoctrineTeacherCandidateInputReviewArtifact({
         reviewedAt: "2026-04-16T23:40:00.000Z",
         sourceTeacherCandidateInputArtifact:
-          "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-candidate-inputs.md",
+          "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-candidate-inputs.md",
         reviews: [
           {
             candidateInputId,
             handoffId: "finance-teacher-elevation-handoff-2026-04-16-feedback-1",
             feedbackId: "feedback-1",
             targetGovernancePath:
-              "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+              "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
             reviewOutcome,
           },
         ],
@@ -109,28 +109,28 @@ describe("finance_doctrine_teacher_feedback_candidate_input_reconciliation tool"
       reconciliationId:
         "finance-teacher-candidate-input-reconciliation-2026-04-16-finance-teacher-candidate-input-2026-04-16-finance-teacher-elevation-handoff-2026-04-16-feedback-1",
       targetFinanceCandidatePath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-promotion-candidates.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-promotion-candidates.md",
       reconciliationMode: "link_existing_candidate",
       reconciliationNotes:
         "Keep this teacher input attached to the same-day finance candidate flow as explicit candidate evidence only.",
       status: "open",
       teacherCandidateInputPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-candidate-inputs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-candidate-inputs.md",
       teacherCandidateInputReviewPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-candidate-input-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-candidate-input-review.md",
       teacherCandidateInputReconciliationPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-candidate-input-reconciliation.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-candidate-input-reconciliation.md",
       action:
         "This creates a bounded finance-candidate reconciliation artifact only. It does not create promotion candidates automatically, does not promote doctrine, and does not mutate doctrine cards automatically.",
     });
 
-    const parsed = parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
+    const parsed = parseExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
       await fs.readFile(
         path.join(
           workspaceDir,
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherCandidateInputReconciliationFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherCandidateInputReconciliationFilename(dateKey),
         ),
         "utf8",
       ),
@@ -167,9 +167,9 @@ describe("finance_doctrine_teacher_feedback_candidate_input_reconciliation tool"
       dateKey,
       candidateInputId,
       teacherCandidateInputPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-candidate-inputs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-candidate-inputs.md",
       teacherCandidateInputReviewPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-candidate-input-review.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-candidate-input-review.md",
       reviewOutcome: "superseded",
       action:
         "Only teacher candidate-input artifacts already marked consumed_into_candidate_flow can create a finance-candidate reconciliation artifact.",
@@ -199,7 +199,7 @@ describe("finance_doctrine_teacher_feedback_candidate_input_reconciliation tool"
       dateKey,
       candidateInputId: "candidate-input-does-not-exist",
       teacherCandidateInputPath:
-        "memory/feishu-work-receipts/2026-04-16-feishu-finance-doctrine-teacher-candidate-inputs.md",
+        "memory/external-work-receipts/2026-04-16-external-finance-doctrine-teacher-candidate-inputs.md",
       availableCandidateInputIds: [candidateInputId],
       action:
         "Use finance_promotion_candidates with this dateKey to inspect current teacher candidate-input ids before retrying finance_doctrine_teacher_feedback_candidate_input_reconciliation.",

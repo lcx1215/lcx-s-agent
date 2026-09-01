@@ -34,7 +34,7 @@ type StateCheck = {
 
 export type SchedulerDryRunReport = {
   schemaVersion: 1;
-  mode: "dry_run_no_launchagent_change_no_lark_send";
+  mode: "dry_run_no_launchagent_change_no_external_send";
   checkedAt: string;
   legacyRoot: string;
   targetRoot: string;
@@ -247,7 +247,7 @@ export function buildSchedulerDryRunReport(params: {
   const migrationReady = blockedReasons.length === 0;
   return {
     schemaVersion: 1,
-    mode: "dry_run_no_launchagent_change_no_lark_send",
+    mode: "dry_run_no_launchagent_change_no_external_send",
     checkedAt: params.checkedAt ?? new Date().toISOString(),
     legacyRoot: params.legacyRoot,
     targetRoot: params.targetRoot,
@@ -260,12 +260,12 @@ export function buildSchedulerDryRunReport(params: {
     nextSafePatch: migrationReady
       ? [
           "Install a new scheduler LaunchAgent only after the runtime bundle and smoke receipt pass.",
-          "Keep Feishu/Lark proxy unchanged until scheduler and watchdog root drift are resolved.",
+          "Keep external message proxy unchanged until scheduler and watchdog root drift are resolved.",
         ]
       : [
           "Port only the missing scheduler dependency chain into the clean repo or runtime bundle.",
           "Add a no-network scheduler smoke before changing the macOS LaunchAgent.",
-          "Leave Feishu/Lark proxy and live plist untouched until the smoke is ready.",
+          "Leave external message proxy and live plist untouched until the smoke is ready.",
         ],
   };
 }

@@ -62,18 +62,18 @@ describe("module learning pipeline plan tool", () => {
     );
   });
 
-  it("keeps Lark/Feishu learning on module-specific receipts instead of finance-only attach", async () => {
+  it("keeps external message learning on module-specific receipts instead of finance-only attach", async () => {
     const tool = createModuleLearningPipelinePlanTool();
 
-    const result = await tool.execute("lark-plan", {
-      targetModule: "lark_feishu_workflow",
-      learningIntent: "Learn a readable Lark reply workflow from a visible reply receipt.",
+    const result = await tool.execute("external-plan", {
+      targetModule: "external_message_workflow",
+      learningIntent: "Learn a readable External reply workflow from a visible reply receipt.",
     });
 
     expect(result.details).toEqual(
       expect.objectContaining({
         ok: true,
-        targetModule: "lark_feishu_workflow",
+        targetModule: "external_message_workflow",
         moduleFamily: "agent_workflow",
         financePipelineArgs: null,
       }),
@@ -81,7 +81,7 @@ describe("module learning pipeline plan tool", () => {
     expect(result.details).toEqual(
       expect.objectContaining({
         existingToolBridge: expect.objectContaining({
-          primaryTool: "lark_loop_diagnose",
+          primaryTool: "external_loop_diagnose",
           bridgeStatus: "module_specific_receipt_required",
         }),
         safetyBoundaries: expect.arrayContaining([

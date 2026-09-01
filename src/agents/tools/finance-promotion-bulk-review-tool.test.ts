@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildFeishuFinanceDoctrinePromotionCandidatesFilename,
-  buildFeishuFinanceDoctrinePromotionReviewFilename,
-  parseFeishuFinanceDoctrinePromotionCandidateArtifact,
-  parseFeishuFinanceDoctrinePromotionReviewArtifact,
-  renderFeishuFinanceDoctrinePromotionCandidateArtifact,
-  renderFeishuFinanceDoctrinePromotionReviewArtifact,
+  buildExternalFinanceDoctrinePromotionCandidatesFilename,
+  buildExternalFinanceDoctrinePromotionReviewFilename,
+  parseExternalFinanceDoctrinePromotionCandidateArtifact,
+  parseExternalFinanceDoctrinePromotionReviewArtifact,
+  renderExternalFinanceDoctrinePromotionCandidateArtifact,
+  renderExternalFinanceDoctrinePromotionReviewArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { createFinancePromotionBulkReviewTool } from "./finance-promotion-bulk-review-tool.js";
@@ -24,13 +24,13 @@ describe("finance_promotion_bulk_review tool", () => {
 
   it("applies multiple same-day review actions in one bounded all-or-nothing call", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-promotion-bulk-review-");
-    const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     const dateKey = "2026-03-25";
 
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionCandidateArtifact({
         generatedAt: "2026-03-25T15:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         windowDays: 7,
@@ -74,12 +74,12 @@ describe("finance_promotion_bulk_review tool", () => {
       "utf8",
     );
     await fs.writeFile(
-      path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey)),
-      renderFeishuFinanceDoctrinePromotionReviewArtifact({
+      path.join(receiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename(dateKey)),
+      renderExternalFinanceDoctrinePromotionReviewArtifact({
         reviewedAt: "2026-03-25T18:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
         linkedCandidateArtifact:
-          "memory/feishu-work-receipts/2026-03-25-feishu-finance-doctrine-promotion-candidates.md",
+          "memory/external-work-receipts/2026-03-25-external-finance-doctrine-promotion-candidates.md",
         reviews: [
           {
             candidateKey: "conviction_looks:too_high",
@@ -139,9 +139,9 @@ describe("finance_promotion_bulk_review tool", () => {
       },
     ]);
 
-    const parsedCandidates = parseFeishuFinanceDoctrinePromotionCandidateArtifact(
+    const parsedCandidates = parseExternalFinanceDoctrinePromotionCandidateArtifact(
       await fs.readFile(
-        path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey)),
+        path.join(receiptsDir, buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey)),
         "utf8",
       ),
     );
@@ -164,9 +164,9 @@ describe("finance_promotion_bulk_review tool", () => {
       ]),
     );
 
-    const parsedReview = parseFeishuFinanceDoctrinePromotionReviewArtifact(
+    const parsedReview = parseExternalFinanceDoctrinePromotionReviewArtifact(
       await fs.readFile(
-        path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey)),
+        path.join(receiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename(dateKey)),
         "utf8",
       ),
     );
@@ -187,11 +187,11 @@ describe("finance_promotion_bulk_review tool", () => {
 
   it("fails closed without writing anything when one candidate key is unknown", async () => {
     workspaceDir = await makeTempWorkspace("openclaw-finance-promotion-bulk-review-");
-    const receiptsDir = path.join(workspaceDir, "memory", "feishu-work-receipts");
+    const receiptsDir = path.join(workspaceDir, "memory", "external-work-receipts");
     await fs.mkdir(receiptsDir, { recursive: true });
     const dateKey = "2026-03-25";
-    const candidateFilename = buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateKey);
-    const seedContent = renderFeishuFinanceDoctrinePromotionCandidateArtifact({
+    const candidateFilename = buildExternalFinanceDoctrinePromotionCandidatesFilename(dateKey);
+    const seedContent = renderExternalFinanceDoctrinePromotionCandidateArtifact({
       generatedAt: "2026-03-25T15:00:00.000Z",
       consumer: "holdings_thesis_revalidation",
       windowDays: 7,
@@ -240,7 +240,7 @@ describe("finance_promotion_bulk_review tool", () => {
     });
     expect(await fs.readFile(path.join(receiptsDir, candidateFilename), "utf8")).toBe(seedContent);
     await expect(
-      fs.access(path.join(receiptsDir, buildFeishuFinanceDoctrinePromotionReviewFilename(dateKey))),
+      fs.access(path.join(receiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename(dateKey))),
     ).rejects.toThrow();
   });
 

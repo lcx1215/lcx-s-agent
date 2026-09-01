@@ -142,7 +142,7 @@ function selfCheck(options: Options): number {
     missing_data: [],
     risk_boundaries: ["research_only"],
     next_step: "guess",
-    rejected_context: ["old_lark_conversation_history"],
+    rejected_context: ["old_external_conversation_history"],
   };
   const memHoldout =
     holdout.filter((c) => scorePlan(table.get(c.userAsk) ?? degenerate, c).ok).length /

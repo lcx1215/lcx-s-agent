@@ -4,12 +4,12 @@ import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import { randomIdempotencyKey, callGateway } from "../../gateway/call.js";
 import {
-  buildFeishuFinanceDoctrineTeacherFeedbackFilename,
-  parseFeishuFinanceDoctrineCalibrationArtifact,
-  parseFeishuFinanceDoctrineCalibrationFilename,
-  parseFeishuFinanceDoctrineTeacherFeedbackArtifact,
-  parseFeishuWorkReceiptArtifact,
-  renderFeishuFinanceDoctrineTeacherFeedbackArtifact,
+  buildExternalFinanceDoctrineTeacherFeedbackFilename,
+  parseExternalFinanceDoctrineCalibrationArtifact,
+  parseExternalFinanceDoctrineCalibrationFilename,
+  parseExternalFinanceDoctrineTeacherFeedbackArtifact,
+  parseExternalWorkReceiptArtifact,
+  renderExternalFinanceDoctrineTeacherFeedbackArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -195,7 +195,7 @@ function normalizeRelativeReceiptPath(value: string): string {
     normalized.startsWith("/")
   ) {
     throw new ToolInputError(
-      "sourceArtifact must be a repo-relative path under memory/feishu-work-receipts",
+      "sourceArtifact must be a repo-relative path under memory/external-work-receipts",
     );
   }
   return normalized;
@@ -303,13 +303,13 @@ export function createFinanceDoctrineTeacherFeedbackTool(options?: {
       const sourceArtifact = normalizeRelativeReceiptPath(
         readStringParam(params, "sourceArtifact", { required: true }),
       );
-      if (!sourceArtifact.startsWith("memory/feishu-work-receipts/")) {
+      if (!sourceArtifact.startsWith("memory/external-work-receipts/")) {
         throw new ToolInputError(
-          "sourceArtifact must be under memory/feishu-work-receipts for finance_doctrine_teacher_feedback",
+          "sourceArtifact must be under memory/external-work-receipts for finance_doctrine_teacher_feedback",
         );
       }
 
-      const parsedSourceFilename = parseFeishuFinanceDoctrineCalibrationFilename(
+      const parsedSourceFilename = parseExternalFinanceDoctrineCalibrationFilename(
         path.posix.basename(sourceArtifact),
       );
       if (!parsedSourceFilename) {
@@ -354,7 +354,7 @@ export function createFinanceDoctrineTeacherFeedbackTool(options?: {
         }
         throw error;
       }
-      const parsedCalibration = parseFeishuFinanceDoctrineCalibrationArtifact(calibrationContent);
+      const parsedCalibration = parseExternalFinanceDoctrineCalibrationArtifact(calibrationContent);
       if (!parsedCalibration) {
         return jsonResult({
           ok: false,
@@ -387,7 +387,7 @@ export function createFinanceDoctrineTeacherFeedbackTool(options?: {
         }
         throw error;
       }
-      const parsedReceipt = parseFeishuWorkReceiptArtifact(linkedReceiptContent);
+      const parsedReceipt = parseExternalWorkReceiptArtifact(linkedReceiptContent);
       if (!parsedReceipt) {
         return jsonResult({
           ok: false,
@@ -484,15 +484,15 @@ export function createFinanceDoctrineTeacherFeedbackTool(options?: {
 
       const feedbackRelPath = path.posix.join(
         "memory",
-        "feishu-work-receipts",
-        buildFeishuFinanceDoctrineTeacherFeedbackFilename(dateKey),
+        "external-work-receipts",
+        buildExternalFinanceDoctrineTeacherFeedbackFilename(dateKey),
       );
       const feedbackAbsPath = path.join(workspaceDir, feedbackRelPath);
       let parsedArtifact = undefined as
-        | ReturnType<typeof parseFeishuFinanceDoctrineTeacherFeedbackArtifact>
+        | ReturnType<typeof parseExternalFinanceDoctrineTeacherFeedbackArtifact>
         | undefined;
       try {
-        parsedArtifact = parseFeishuFinanceDoctrineTeacherFeedbackArtifact(
+        parsedArtifact = parseExternalFinanceDoctrineTeacherFeedbackArtifact(
           await fs.readFile(feedbackAbsPath, "utf8"),
         );
         if (!parsedArtifact) {
@@ -532,7 +532,7 @@ export function createFinanceDoctrineTeacherFeedbackTool(options?: {
       await fs.mkdir(path.dirname(feedbackAbsPath), { recursive: true });
       await fs.writeFile(
         feedbackAbsPath,
-        renderFeishuFinanceDoctrineTeacherFeedbackArtifact({
+        renderExternalFinanceDoctrineTeacherFeedbackArtifact({
           generatedAt: new Date().toISOString(),
           teacherTask: "finance_calibration_audit",
           feedbacks: Array.from(feedbackBySourceArtifact.values()).toSorted((left, right) =>

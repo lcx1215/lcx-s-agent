@@ -12,7 +12,7 @@ describe("local brain contract hint selection", () => {
   });
 
   it("adds short-language abstraction rules for simple visible user asks", () => {
-    const hints = selectLocalBrainContractHints("Lark 回复看不懂，用户只说学习大宗商品");
+    const hints = selectLocalBrainContractHints("External 回复看不懂，用户只说学习大宗商品");
     const text = hints.join(" ");
 
     expect(text).toContain("Plain-language hidden-complexity intake");

@@ -621,7 +621,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
         next_step:
           "reject_execution_or_high_leverage_language_then_analyze_crypto_as_risk_sentiment_and_liquidity_input_only",
         rejected_context: [
-          "old_lark_conversation_history",
+          "old_external_conversation_history",
           "execution_or_high_leverage_crypto_instruction",
           "trade_recommendation_without_evidence",
         ],
@@ -943,7 +943,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
     expect(plan.risk_boundaries).not.toContain("no_high_leverage_crypto");
   });
 
-  it("turns repeat-only Lark fragments into context-pollution clarification", () => {
+  it("turns repeat-only External fragments into context-pollution clarification", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
       {
@@ -1265,7 +1265,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
   it("routes named non-factor modules into the same internalization chain", () => {
     for (const ask of [
       "还有期权、指数、宏观和基本面等模块，也要这种 source registry、retrieval receipt、apply validation、Qwen eval 吸收的链条。",
-      "Lark/Feishu 工作流、记忆模块、ops 模块和 skill 模块同样都要这条学习内化链，不能只给因子模块。",
+      "external message 工作流、记忆模块、ops 模块和 skill 模块同样都要这条学习内化链，不能只给因子模块。",
     ]) {
       const plan = hardenLocalBrainPlanForAsk({}, { ask });
 
@@ -1292,7 +1292,7 @@ describe("hardenLocalBrainPlanForAsk", () => {
     const plan = hardenLocalBrainPlanForAsk(
       {},
       {
-        ask: "如果我只说一个例子，比如大宗商品学习失败或者 Lark 回复看不懂，你要有人的抽象能力：先找 original example，再抽象成 failure family，覆盖 adjacent non-identical scenario，改 shared contract，并留下 regression proof。",
+        ask: "如果我只说一个例子，比如大宗商品学习失败或者 External 回复看不懂，你要有人的抽象能力：先找 original example，再抽象成 failure family，覆盖 adjacent non-identical scenario，改 shared contract，并留下 regression proof。",
       },
     );
 

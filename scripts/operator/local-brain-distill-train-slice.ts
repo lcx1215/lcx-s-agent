@@ -61,8 +61,8 @@ const REVIEW_SOURCE_KIND = "brain_distillation_review";
 const CURATED_SOURCE_KIND = "curated_seed";
 const NON_REVIEW_SOURCE_KINDS_TO_REPEAT = new Set([
   "finance_learning_capability_apply_receipt",
-  "feishu_work_receipt",
-  "lark_language_handoff_receipt",
+  "external_work_receipt",
+  "external_language_handoff_receipt",
   "module_learning_plan_receipt",
   "module_learning_review_receipt",
 ]);
@@ -70,8 +70,8 @@ const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
   [CURATED_SOURCE_KIND]: "gold_curated",
   [REVIEW_SOURCE_KIND]: "teacher_distillation_review",
   finance_learning_capability_apply_receipt: "workflow_receipt",
-  feishu_work_receipt: "workflow_receipt",
-  lark_language_handoff_receipt: "workflow_receipt",
+  external_work_receipt: "workflow_receipt",
+  external_language_handoff_receipt: "workflow_receipt",
   module_learning_plan_receipt: "plan_only_receipt",
   module_learning_review_receipt: "review_only_receipt",
 };
@@ -228,8 +228,8 @@ function failureFamilyForTeacherReview(record: JsonRecord): string {
   if (/skill_pattern_distillation|external_agent|cli_anything|skill_harvester/u.test(text)) {
     return "agent_skill_distillation";
   }
-  if (/lark|feishu|reply|visible|old_lark|context|language/u.test(text)) {
-    return "lark_visible_workflow";
+  if (/external|external|reply|visible|old_external|context|language/u.test(text)) {
+    return "external_visible_workflow";
   }
   if (/learning|internalization|receipt|retrieval|module_learning|sedimentation/u.test(text)) {
     return "module_learning_absorption";
@@ -578,7 +578,7 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       "external_channel_sender",
       "provider_config",
       "protected_repo_memory",
-      "formal_lark_routing_corpus",
+      "formal_external_routing_corpus",
       "finance_doctrine",
     ],
   };

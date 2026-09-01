@@ -101,11 +101,11 @@ describe("LCX commercial answer pipeline", () => {
         "all_visible_answers_require_decision_value",
         "single_stock_loss_reply_requires_concrete_risk_triage",
         "visible_answer_quality_fuzzer_required",
-        "short_lark_intent_expansion_required",
+        "short_external_intent_expansion_required",
         "system_status_requires_owner_evidence",
         "standalone_finance_ask_cannot_defer_to_stale_prior_answer",
         "async_task_receipt_required_for_deferred_work",
-        "real_lark_short_canary_suite_required",
+        "real_external_short_canary_suite_required",
         "short_intent_family_fuzzer_required",
         "unknown_short_intent_clean_failure_required",
         "finance_data_gateway_snapshot_required_for_numbers",
@@ -269,9 +269,9 @@ describe("LCX commercial answer pipeline", () => {
           failedReasons: expect.arrayContaining(["direct_trade_or_position_action_language"]),
         }),
         expect.objectContaining({
-          scenarioId: "real_lark_short_buy_canary_blocks_generic_intro",
+          scenarioId: "real_external_short_buy_canary_blocks_generic_intro",
           actualDecision: "return_failed_reason",
-          failedReasons: expect.arrayContaining(["short_lark_canary_wrong_route_generic_intro"]),
+          failedReasons: expect.arrayContaining(["short_external_canary_wrong_route_generic_intro"]),
         }),
         expect.objectContaining({
           scenarioId: "async_learning_receipt_visible_when_deferred",
@@ -310,7 +310,7 @@ describe("LCX commercial answer pipeline", () => {
     );
   });
 
-  it("routes unseen terse Lark variants by family instead of treating the fixed canaries as a whitelist", async () => {
+  it("routes unseen terse External variants by family instead of treating the fixed canaries as a whitelist", async () => {
     const action = await runPipeline([
       "--ask",
       "还能拿吗",
@@ -331,10 +331,10 @@ describe("LCX commercial answer pipeline", () => {
       "--ask",
       "这个呢",
       "--candidate-answer",
-      "我是 LCX Agent / OpenClaw 的 Lark 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
+      "我是 LCX Agent / OpenClaw 的 External 控制室入口。当前可用能力：可以把自然语言请求分到 control_room、learning_command、technical_daily 等工作面。",
     ]);
     expect(genericIntro.failedReasons).toEqual(
-      expect.arrayContaining(["short_lark_canary_wrong_route_generic_intro"]),
+      expect.arrayContaining(["short_external_canary_wrong_route_generic_intro"]),
     );
 
     const dataConflict = await runPipeline([
@@ -425,7 +425,7 @@ describe("LCX commercial answer pipeline", () => {
         role: "external_agent_draft_and_red_team_input_only",
         forbiddenUses: expect.arrayContaining([
           "final_visible_answer_authority",
-          "direct_lark_send",
+          "direct_external_send",
           "protected_memory_write",
         ]),
       }),
@@ -679,7 +679,7 @@ describe("LCX commercial answer pipeline", () => {
     );
   });
 
-  it("rejects learning replies that expose backend runtime details to Lark users", async () => {
+  it("rejects learning replies that expose backend runtime details to External users", async () => {
     const payload = await runPipeline([
       "--ask",
       "请用网上可靠来源和本地沉淀学习期权基础，说明后续怎么沉淀成系统能力和 eval；不要暴露后台细节。",

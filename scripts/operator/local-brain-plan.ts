@@ -122,7 +122,7 @@ function buildPrompt(options: CliOptions): string {
     "Do not emit chain-of-thought, markdown, or <think> blocks; output only the JSON object.",
     "Keep the JSON compact and complete: arrays contain short snake_case ids only, no prose explanations, no nested objects, next_step <= 8 words, and always close the final brace.",
     `Output contract: ${LOCAL_BRAIN_OUTPUT_CONTRACT_HINTS.join(" ")}`,
-    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_lark_conversation_history"]}',
+    'Use this exact compact shape: {"task_family":"snake_case","primary_modules":[],"supporting_modules":[],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"snake_case_action","rejected_context":["old_external_conversation_history"]}',
     "Do not invent current or timestamped market data, execution approval, or durable memory writes.",
     `Allowed module ids: ${LOCAL_BRAIN_MODULE_TAXONOMY.join(", ")}.`,
     "primary_modules, supporting_modules, and required_tools must use exact allowed module ids only; do not invent prefixes like finance_framework_*.",
@@ -453,7 +453,7 @@ function hardenPlanForKnownContracts(
       "no_model_math_guessing",
     ]),
     rejected_context: mergeUnique(arrayValue(plan.rejected_context), [
-      "old_lark_conversation_history",
+      "old_external_conversation_history",
       "language_routing_candidate_artifacts",
       "unsupported_execution_language",
     ]),
@@ -469,7 +469,7 @@ function hardenPlanForKnownContracts(
       risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
       next_step: "ask_user_for_current_subject_before_reusing_prior_context",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ],
@@ -486,7 +486,7 @@ function hardenPlanForKnownContracts(
       risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
       next_step: "acknowledge_context_reset_then_ask_for_new_task_subject",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ],
@@ -507,7 +507,7 @@ function hardenPlanForKnownContracts(
       risk_boundaries: ["research_only", "no_execution_authority", "evidence_required"],
       next_step: "return_source_required_failed_reason_and_ask_for_link_or_local_file",
       rejected_context: [
-        "old_lark_conversation_history",
+        "old_external_conversation_history",
         "language_routing_candidate_artifacts",
         "unsupported_execution_language",
       ],
@@ -575,7 +575,7 @@ function hardenPlanForKnownContracts(
       "collect_or_verify_source_list_then_report_actual_reading_scope_before_any_learning_claim",
     rejected_context: mergeUnique(arrayValue(basePlan.rejected_context), [
       "unverified_full_coverage_claim",
-      "old_lark_conversation_history",
+      "old_external_conversation_history",
       "language_routing_candidate_artifacts",
       "unsupported_execution_language",
     ]),

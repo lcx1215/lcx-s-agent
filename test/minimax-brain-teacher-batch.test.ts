@@ -68,7 +68,7 @@ describe("minimax brain teacher batch parsing", () => {
             missing_data: ["fresh_market_data_snapshot"],
             risk_boundaries: ["research_only"],
             next_step: "review_then_summarize",
-            rejected_context: ["old_lark_conversation_history"],
+            rejected_context: ["old_external_conversation_history"],
           }),
         },
       ],
@@ -91,7 +91,7 @@ describe("minimax brain teacher batch parsing", () => {
               missing_data: ["fresh_market_data_snapshot"],
               risk_boundaries: ["research_only"],
               next_step: "review_then_summarize",
-              rejected_context: ["old_lark_conversation_history"],
+              rejected_context: ["old_external_conversation_history"],
             }),
           },
         },
@@ -132,7 +132,7 @@ describe("minimax brain teacher batch parsing", () => {
         "missing_data": [],
         "risk_boundaries": ["evidence_required"],
         "next_step": "review",
-        "rejected_context": ["old_lark_conversation_history"]
+        "rejected_context": ["old_external_conversation_history"]
       }
       \`\`\`
       extra trailing prose
@@ -202,7 +202,7 @@ describe("minimax brain teacher batch parsing", () => {
       "missing_data": ["fresh_market_data_snapshot"],
       "risk_boundaries": ["research_only"],
       "next_step": "review",
-      "rejected_context": ["old_lark_conversation_history"]
+      "rejected_context": ["old_external_conversation_history"]
     }`);
 
     expect(plan.task_family).toBe("missing_comma_repair");
@@ -214,7 +214,7 @@ describe("minimax brain teacher batch parsing", () => {
       "task_family": "same_line_missing_comma" "primary_modules": ["macro_rates_inflation" "portfolio_risk_gates"],
       "supporting_modules": ["review_panel"] "required_tools": ["review_panel"],
       "missing_data": ["fresh_market_data_snapshot"] "risk_boundaries": ["research_only"],
-      "next_step": "review" "rejected_context": ["old_lark_conversation_history"]
+      "next_step": "review" "rejected_context": ["old_external_conversation_history"]
     }`);
 
     expect(plan.task_family).toBe("same_line_missing_comma");
@@ -232,7 +232,7 @@ describe("minimax brain teacher batch parsing", () => {
       "missing_data": [],
       "risk_boundaries": ["research_only"],
       "next_step": "review",
-      "rejected_context": ["old_lark_conversation_history"],
+      "rejected_context": ["old_external_conversation_history"],
       "confidence": 0.7
       "is_research_only": true
       "notes": null
@@ -253,12 +253,12 @@ describe("minimax brain teacher batch parsing", () => {
       missing_data: [],
       risk_boundaries: ["research_only"],
       next_step: "review"
-      rejected_context: ["old_lark_conversation_history"],
+      rejected_context: ["old_external_conversation_history"],
     }`);
 
     expect(plan.task_family).toBe("teacher_key_quote_repair");
     expect(plan.primary_modules).toEqual(["macro_rates_inflation", "portfolio_risk_gates"]);
-    expect(plan.rejected_context).toEqual(["old_lark_conversation_history"]);
+    expect(plan.rejected_context).toEqual(["old_external_conversation_history"]);
   });
 
   it("repairs MiniMax placeholder arrays before teacher-plan hardening", () => {
@@ -271,7 +271,7 @@ describe("minimax brain teacher batch parsing", () => {
         "missing_data": [],
         "risk_boundaries": ["research_only"],
         "next_step": "review",
-        "rejected_context": ["old_lark_conversation_history"]
+        "rejected_context": ["old_external_conversation_history"]
       }`),
     );
 
@@ -287,7 +287,7 @@ describe("minimax brain teacher batch parsing", () => {
         userMessage:
           "重新来一遍，但这次别串到旧的 volatility risk premium 任务；如果我没说清楚，就先问我要当前对象。",
         sourceSummary:
-          "ambiguous repeat requiring current subject instead of old Lark context reuse.",
+          "ambiguous repeat requiring current subject instead of old External context reuse.",
       },
       normalizeTeacherPlan({
         task_family: "research_planning",
@@ -331,7 +331,7 @@ describe("minimax brain teacher batch parsing", () => {
       expect.arrayContaining(["macro_rates_inflation", "crypto_market_structure"]),
     );
     expect(plan.missing_data).toContain("current_subject_or_original_request");
-    expect(plan.rejected_context).toContain("old_lark_conversation_history");
+    expect(plan.rejected_context).toContain("old_external_conversation_history");
     expect(plan.risk_boundaries).toContain("ops_audit_must_not_become_finance_analysis");
   });
 
@@ -868,7 +868,7 @@ describe("minimax brain teacher batch parsing", () => {
       {
         id: "all_module_knowledge_internalization_chain",
         userMessage:
-          "不止是因子模块，期权、指数、宏观、基本面、Lark/Feishu 工作流、记忆、ops 和 skill 模块都要同一条内化链条，不能把 plan receipt 当成模块学会。",
+          "不止是因子模块，期权、指数、宏观、基本面、external message 工作流、记忆、ops 和 skill 模块都要同一条内化链条，不能把 plan receipt 当成模块学会。",
         sourceSummary: "all-module internalization chain.",
       },
       normalizeTeacherPlan({
@@ -900,7 +900,7 @@ describe("minimax brain teacher batch parsing", () => {
       {
         id: "abstraction_transfer_repair_protocol",
         userMessage:
-          "训练本地大脑具备人类抽象能力：我给一个例子，比如 Lark 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。必须抽象成问题族，并留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof。",
+          "训练本地大脑具备人类抽象能力：我给一个例子，比如 External 回复看不懂、大宗商品学习失败、论文内化没证据，不能只修这一句。必须抽象成问题族，并留下 original example、abstracted failure family、adjacent non-identical scenario、shared contract、regression proof。",
         sourceSummary: "abstraction-transfer repair protocol.",
       },
       normalizeTeacherPlan({

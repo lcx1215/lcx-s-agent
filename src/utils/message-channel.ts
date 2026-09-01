@@ -132,13 +132,7 @@ export function resolveGatewayMessageChannel(
   return isGatewayMessageChannel(normalized) ? normalized : undefined;
 }
 
-/**
- * Normalize a raw channel label to the underlying routing family.
- *
- * Keeps split-chain identifiers such as "lark:dm:xxx" aligned with their
- * parent family and preserves Feishu/Lark equivalence through explicit
- * family mapping.
- */
+/** Normalize a raw channel label to the underlying routing family. */
 export function normalizeMessageChannelFamilyAlias(raw?: string | null): string | undefined {
   const normalized = raw?.trim().toLowerCase();
   if (!normalized) {
@@ -150,9 +144,6 @@ export function normalizeMessageChannelFamilyAlias(raw?: string | null): string 
   }
   if (baseAlias === INTERNAL_MESSAGE_CHANNEL) {
     return INTERNAL_MESSAGE_CHANNEL;
-  }
-  if (baseAlias === "lark" || baseAlias === "feishu") {
-    return "feishu";
   }
   const baseNormalized =
     normalizeChatChannelId(baseAlias) ?? normalizeFamilyAliasPluginId(baseAlias) ?? baseAlias;

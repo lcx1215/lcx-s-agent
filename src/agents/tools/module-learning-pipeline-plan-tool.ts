@@ -519,21 +519,21 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
       closestExistingFinanceDomains: ["portfolio_risk_gates", "causal_map"],
     },
   },
-  lark_feishu_workflow: {
-    targetModule: "lark_feishu_workflow",
+  external_message_workflow: {
+    targetModule: "external_message_workflow",
     moduleFamily: "agent_workflow",
     requiredInputs: [
       "visible_reply_sample_or_message_id",
       "routing_family_and_backend_tool_contract",
-      "reply_flow_receipt_or_lark_diagnose_output",
+      "reply_flow_receipt_or_external_diagnose_output",
       "human_readable_summary_contract",
       "local_vs_legacy_live_evidence_boundary",
     ],
     evidenceFamilies: ["visible_reply_evidence", "routing_receipt", "live_boundary_evidence"],
     moduleSpecificCapabilityRule:
-      "Lark/Feishu workflow learning must improve readable replies and routing while preserving dev-vs-live proof boundaries.",
+      "external message workflow learning must improve readable replies and routing while preserving dev-vs-live proof boundaries.",
     applicationValidationTask:
-      "Apply the workflow rule to a fresh Lark-style message and prove no raw JSON/internal labels leak into the visible reply.",
+      "Apply the workflow rule to a fresh External-style message and prove no raw JSON/internal labels leak into the visible reply.",
     safetyBoundaries: [
       "no_live_visible_fixed_claim_without_real_inbound_reply",
       "no_external_channel_sender_change",
@@ -541,8 +541,8 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
       "no_raw_json_visible_reply",
     ],
     existingToolBridge: {
-      primaryTool: "lark_loop_diagnose",
-      supportTools: ["lark_language_corpus_review", "review_panel", "local_brain_eval"],
+      primaryTool: "external_loop_diagnose",
+      supportTools: ["external_language_corpus_review", "review_panel", "local_brain_eval"],
       bridgeStatus: "module_specific_receipt_required",
       closestExistingFinanceDomains: [],
     },

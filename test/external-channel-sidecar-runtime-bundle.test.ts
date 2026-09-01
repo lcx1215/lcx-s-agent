@@ -57,7 +57,7 @@ describe("live sidecar runtime bundle", () => {
     expect(receipt.targetRoot).toBe(targetRoot);
     expect(receipt.files).toHaveLength(5);
     expect(receipt.files.every((file) => file.copied)).toBe(true);
-    expect(receipt.boundary.join("\n")).toContain("Does not copy Feishu/Lark proxy code");
+    expect(receipt.boundary.join("\n")).toContain("Does not copy external message proxy code");
     expect(fs.existsSync(path.join(targetRoot, "scripts/lobster_host_watchdog.py"))).toBe(true);
   });
 

@@ -7,7 +7,6 @@ const githubCapabilityIntakeCommand = vi.fn().mockResolvedValue(undefined);
 const l5BaselineDoctorCommand = vi.fn().mockResolvedValue(undefined);
 const l5SystemEvalCommand = vi.fn().mockResolvedValue(undefined);
 const languageBrainLoopSmokeCommand = vi.fn().mockResolvedValue(undefined);
-const larkLoopDiagnoseCommand = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../commands/capabilities.js", () => ({
   capabilitiesCommand,
@@ -23,10 +22,6 @@ vi.mock("../commands/capabilities/l5-system-eval.js", () => ({
   l5SystemEvalCommand,
 }));
 
-vi.mock("../commands/capabilities/lark-loop-diagnose.js", () => ({
-  larkLoopDiagnoseCommand,
-}));
-
 describe("capabilities cli", () => {
   let registerCapabilitiesCli: (typeof import("./capabilities-cli.js"))["registerCapabilitiesCli"];
 
@@ -40,7 +35,6 @@ describe("capabilities cli", () => {
     l5BaselineDoctorCommand.mockClear();
     l5SystemEvalCommand.mockClear();
     languageBrainLoopSmokeCommand.mockClear();
-    larkLoopDiagnoseCommand.mockClear();
   });
 
   it("registers a top-level capabilities command", () => {
@@ -144,17 +138,4 @@ describe("capabilities cli", () => {
     );
   });
 
-  it("registers lark loop diagnose as a CLI subcommand", async () => {
-    await runRegisteredCli({
-      register: registerCapabilitiesCli as (program: Command) => void,
-      argv: ["capabilities", "lark-loop-diagnose", "--workspace", "/tmp/lcx-live", "--json"],
-    });
-    expect(larkLoopDiagnoseCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceDir: "/tmp/lcx-live",
-        json: true,
-      }),
-      expect.any(Object),
-    );
-  });
 });

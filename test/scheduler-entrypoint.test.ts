@@ -16,12 +16,12 @@ function runPython(args: string[], options: { env?: NodeJS.ProcessEnv } = {}) {
 }
 
 describe("scheduler clean-root entrypoints", () => {
-  it("exposes orchestrator status without Feishu/Lark or remote side effects", () => {
+  it("exposes orchestrator status without external message or remote side effects", () => {
     const result = runPython(["lobster_orchestrator.py", "status", "--json"]);
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout);
     expect(payload.status).toBe("scheduler_entrypoint_ready");
-    expect(payload.boundary.noFeishuLarkSend).toBe(true);
+    expect(payload.boundary.noExternalSend).toBe(true);
     expect(payload.boundary.noRemoteFetch).toBe(true);
     expect(payload.boundary.noTradingExecution).toBe(true);
   });
@@ -66,7 +66,7 @@ describe("scheduler clean-root entrypoints", () => {
     const payload = JSON.parse(result.stdout);
     expect(payload.status).toBe("cycle_completed");
     expect(payload.cycleResult.scope).toBe("test_cycle");
-    expect(payload.boundary.liveFeishuLarkSend).toBe(false);
+    expect(payload.boundary.liveExternalSend).toBe(false);
     expect(fs.existsSync(reportPath)).toBe(true);
     expect(fs.existsSync(failurePath)).toBe(false);
     fs.rmSync(reportPath, { force: true });

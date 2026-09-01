@@ -762,7 +762,7 @@ function collectZaloAssignments(params: {
   }
 }
 
-function collectFeishuAssignments(params: {
+function collectExternalAssignments(params: {
   config: OpenClawConfig;
   defaults: SecretDefaults | undefined;
   context: ResolverContext;
@@ -771,70 +771,21 @@ function collectFeishuAssignments(params: {
   if (!isRecord(channels)) {
     return;
   }
-  const feishu = channels.feishu;
-  if (!isRecord(feishu)) {
+  const external = channels.external;
+  if (!isRecord(external)) {
     return;
   }
-  const surface = resolveChannelAccountSurface(feishu);
-  collectSimpleChannelFieldAssignments({
-    channelKey: "feishu",
-    field: "appSecret",
-    channel: feishu,
-    surface,
-    defaults: params.defaults,
-    context: params.context,
-    topInactiveReason: "no enabled account inherits this top-level Feishu appSecret.",
-    accountInactiveReason: "Feishu account is disabled.",
-  });
-  const baseConnectionMode =
-    normalizeSecretStringValue(feishu.connectionMode) === "webhook" ? "webhook" : "websocket";
-  const topLevelVerificationTokenActive = !surface.channelEnabled
-    ? false
-    : !surface.hasExplicitAccounts
-      ? baseConnectionMode === "webhook"
-      : surface.accounts.some(({ account, enabled }) => {
-          if (!enabled || hasOwnProperty(account, "verificationToken")) {
-            return false;
-          }
-          const accountMode = hasOwnProperty(account, "connectionMode")
-            ? normalizeSecretStringValue(account.connectionMode)
-            : baseConnectionMode;
-          return accountMode === "webhook";
-        });
-  collectSecretInputAssignment({
-    value: feishu.verificationToken,
-    path: "channels.feishu.verificationToken",
-    expected: "string",
-    defaults: params.defaults,
-    context: params.context,
-    active: topLevelVerificationTokenActive,
-    inactiveReason:
-      "no enabled Feishu webhook-mode surface inherits this top-level verificationToken.",
-    apply: (value) => {
-      feishu.verificationToken = value;
-    },
-  });
-  if (!surface.hasExplicitAccounts) {
-    return;
-  }
-  for (const { accountId, account, enabled } of surface.accounts) {
-    if (!hasOwnProperty(account, "verificationToken")) {
-      continue;
-    }
-    const accountMode = hasOwnProperty(account, "connectionMode")
-      ? normalizeSecretStringValue(account.connectionMode)
-      : baseConnectionMode;
-    collectSecretInputAssignment({
-      value: account.verificationToken,
-      path: `channels.feishu.accounts.${accountId}.verificationToken`,
-      expected: "string",
+  const surface = resolveChannelAccountSurface(external);
+  for (const field of ["inboundToken", "outboundToken"] as const) {
+    collectSimpleChannelFieldAssignments({
+      channelKey: "external",
+      field,
+      channel: external,
+      surface,
       defaults: params.defaults,
       context: params.context,
-      active: enabled && accountMode === "webhook",
-      inactiveReason: "Feishu account is disabled or not running in webhook mode.",
-      apply: (value) => {
-        account.verificationToken = value;
-      },
+      topInactiveReason: `no enabled account inherits this top-level external ${field}.`,
+      accountInactiveReason: "External channel account is disabled.",
     });
   }
 }
@@ -1039,6 +990,6 @@ export function collectChannelConfigAssignments(params: {
   collectMatrixAssignments(params);
   collectMSTeamsAssignments(params);
   collectNextcloudTalkAssignments(params);
-  collectFeishuAssignments(params);
+  collectExternalAssignments(params);
   collectZaloAssignments(params);
 }

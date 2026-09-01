@@ -503,7 +503,7 @@ export type LobsterWorkfaceArtifact = {
   estimatedCost: string;
   dashboardSnapshotLines: string[];
   validationRadarLines: string[];
-  feishuLanePanelLines: string[];
+  externalLanePanelLines: string[];
   sevenDayOperatingViewLines: string[];
   yesterdayLearnedLines: string[];
   yesterdayWorkReceiptLines?: string[];
@@ -539,7 +539,7 @@ export type ParsedLobsterWorkfaceArtifact = {
   laneMeterRows: string[];
 };
 
-export type FeishuSurfaceLineArtifact = {
+export type ExternalSurfaceLineArtifact = {
   surface: string;
   chatId: string;
   laneKey: string;
@@ -548,7 +548,7 @@ export type FeishuSurfaceLineArtifact = {
   recentTurnEntries: string[];
 };
 
-export type ParsedFeishuSurfaceLineArtifact = {
+export type ParsedExternalSurfaceLineArtifact = {
   surface: string;
   chatId: string;
   laneKey: string;
@@ -557,7 +557,7 @@ export type ParsedFeishuSurfaceLineArtifact = {
   recentTurnEntries: string[];
 };
 
-export type FeishuWorkReceiptArtifact = {
+export type ExternalWorkReceiptArtifact = {
   handledAt: string;
   surface: string;
   chatId: string;
@@ -580,7 +580,7 @@ export type FeishuWorkReceiptArtifact = {
   };
 };
 
-export type ParsedFeishuWorkReceiptArtifact = {
+export type ParsedExternalWorkReceiptArtifact = {
   handledAt: string;
   surface: string;
   chatId: string;
@@ -603,7 +603,7 @@ export type ParsedFeishuWorkReceiptArtifact = {
   };
 };
 
-export type FeishuFinanceDoctrineCalibrationArtifact = {
+export type ExternalFinanceDoctrineCalibrationArtifact = {
   reviewDate: string;
   consumer: string;
   linkedReceipt: string;
@@ -615,10 +615,10 @@ export type FeishuFinanceDoctrineCalibrationArtifact = {
   notes: string;
 };
 
-export type ParsedFeishuFinanceDoctrineCalibrationArtifact =
-  FeishuFinanceDoctrineCalibrationArtifact;
+export type ParsedExternalFinanceDoctrineCalibrationArtifact =
+  ExternalFinanceDoctrineCalibrationArtifact;
 
-export type FeishuFinanceDoctrineTeacherFeedbackArtifact = {
+export type ExternalFinanceDoctrineTeacherFeedbackArtifact = {
   generatedAt: string;
   teacherTask: "finance_calibration_audit";
   feedbacks: Array<{
@@ -640,10 +640,10 @@ export type FeishuFinanceDoctrineTeacherFeedbackArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrineTeacherFeedbackArtifact =
-  FeishuFinanceDoctrineTeacherFeedbackArtifact;
+export type ParsedExternalFinanceDoctrineTeacherFeedbackArtifact =
+  ExternalFinanceDoctrineTeacherFeedbackArtifact;
 
-export type FeishuFinanceDoctrineTeacherReviewArtifact = {
+export type ExternalFinanceDoctrineTeacherReviewArtifact = {
   reviewedAt: string;
   sourceTeacherFeedbackArtifact: string;
   reviews: Array<{
@@ -653,17 +653,17 @@ export type FeishuFinanceDoctrineTeacherReviewArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrineTeacherReviewArtifact =
-  FeishuFinanceDoctrineTeacherReviewArtifact;
+export type ParsedExternalFinanceDoctrineTeacherReviewArtifact =
+  ExternalFinanceDoctrineTeacherReviewArtifact;
 
-export type FeishuFinanceDoctrineTeacherElevationHandoffArtifact = {
+export type ExternalFinanceDoctrineTeacherElevationHandoffArtifact = {
   handedOffAt: string;
   sourceTeacherFeedbackArtifact: string;
   sourceTeacherReviewArtifact: string;
   handoffs: Array<{
     handoffId: string;
     feedbackId: string;
-    critiqueType: FeishuFinanceDoctrineTeacherFeedbackArtifact["feedbacks"][number]["critiqueType"];
+    critiqueType: ExternalFinanceDoctrineTeacherFeedbackArtifact["feedbacks"][number]["critiqueType"];
     critiqueText: string;
     suggestedCandidateText: string;
     evidenceNeeded: string;
@@ -678,10 +678,10 @@ export type FeishuFinanceDoctrineTeacherElevationHandoffArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrineTeacherElevationHandoffArtifact =
-  FeishuFinanceDoctrineTeacherElevationHandoffArtifact;
+export type ParsedExternalFinanceDoctrineTeacherElevationHandoffArtifact =
+  ExternalFinanceDoctrineTeacherElevationHandoffArtifact;
 
-export type FeishuFinanceDoctrineTeacherCandidateInputArtifact = {
+export type ExternalFinanceDoctrineTeacherCandidateInputArtifact = {
   createdAt: string;
   sourceTeacherElevationHandoffArtifact: string;
   sourceTeacherFeedbackArtifact: string;
@@ -690,7 +690,7 @@ export type FeishuFinanceDoctrineTeacherCandidateInputArtifact = {
     candidateInputId: string;
     handoffId: string;
     feedbackId: string;
-    critiqueType: FeishuFinanceDoctrineTeacherFeedbackArtifact["feedbacks"][number]["critiqueType"];
+    critiqueType: ExternalFinanceDoctrineTeacherFeedbackArtifact["feedbacks"][number]["critiqueType"];
     critiqueText: string;
     suggestedCandidateText: string;
     evidenceNeeded: string;
@@ -700,10 +700,10 @@ export type FeishuFinanceDoctrineTeacherCandidateInputArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrineTeacherCandidateInputArtifact =
-  FeishuFinanceDoctrineTeacherCandidateInputArtifact;
+export type ParsedExternalFinanceDoctrineTeacherCandidateInputArtifact =
+  ExternalFinanceDoctrineTeacherCandidateInputArtifact;
 
-export type FeishuFinanceDoctrineTeacherCandidateInputReviewArtifact = {
+export type ExternalFinanceDoctrineTeacherCandidateInputReviewArtifact = {
   reviewedAt: string;
   sourceTeacherCandidateInputArtifact: string;
   reviews: Array<{
@@ -715,10 +715,10 @@ export type FeishuFinanceDoctrineTeacherCandidateInputReviewArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact =
-  FeishuFinanceDoctrineTeacherCandidateInputReviewArtifact;
+export type ParsedExternalFinanceDoctrineTeacherCandidateInputReviewArtifact =
+  ExternalFinanceDoctrineTeacherCandidateInputReviewArtifact;
 
-export type FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact = {
+export type ExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact = {
   reconciledAt: string;
   sourceTeacherCandidateInputArtifact: string;
   sourceTeacherCandidateInputReviewArtifact: string;
@@ -739,8 +739,8 @@ export type FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact =
-  FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact;
+export type ParsedExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact =
+  ExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact;
 
 /** Compatibility exports; canonical finance semantics live in the ontology. */
 export const FINANCE_FRAMEWORK_CORE_DOMAINS = LCX_ONTOLOGY_FINANCE_FRAMEWORK_CORE_DOMAIN_IDS;
@@ -862,7 +862,7 @@ export type FinanceFrameworkCoreContractArtifact = {
 
 export type ParsedFinanceFrameworkCoreContractArtifact = FinanceFrameworkCoreContractArtifact;
 
-export type FeishuFinanceDoctrinePromotionCandidateArtifact = {
+export type ExternalFinanceDoctrinePromotionCandidateArtifact = {
   generatedAt: string;
   consumer: string;
   windowDays: number;
@@ -885,10 +885,10 @@ export type FeishuFinanceDoctrinePromotionCandidateArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrinePromotionCandidateArtifact =
-  FeishuFinanceDoctrinePromotionCandidateArtifact;
+export type ParsedExternalFinanceDoctrinePromotionCandidateArtifact =
+  ExternalFinanceDoctrinePromotionCandidateArtifact;
 
-export type FeishuFinanceDoctrinePromotionReviewArtifact = {
+export type ExternalFinanceDoctrinePromotionReviewArtifact = {
   reviewedAt: string;
   consumer: string;
   linkedCandidateArtifact: string;
@@ -899,10 +899,10 @@ export type FeishuFinanceDoctrinePromotionReviewArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrinePromotionReviewArtifact =
-  FeishuFinanceDoctrinePromotionReviewArtifact;
+export type ParsedExternalFinanceDoctrinePromotionReviewArtifact =
+  ExternalFinanceDoctrinePromotionReviewArtifact;
 
-export type FeishuFinanceDoctrinePromotionDecisionArtifact = {
+export type ExternalFinanceDoctrinePromotionDecisionArtifact = {
   decidedAt: string;
   consumer: string;
   linkedCandidateArtifact: string;
@@ -918,10 +918,10 @@ export type FeishuFinanceDoctrinePromotionDecisionArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrinePromotionDecisionArtifact =
-  FeishuFinanceDoctrinePromotionDecisionArtifact;
+export type ParsedExternalFinanceDoctrinePromotionDecisionArtifact =
+  ExternalFinanceDoctrinePromotionDecisionArtifact;
 
-export type FeishuFinanceDoctrinePromotionProposalArtifact = {
+export type ExternalFinanceDoctrinePromotionProposalArtifact = {
   draftedAt: string;
   consumer: string;
   sourceDecisionArtifact: string;
@@ -939,10 +939,10 @@ export type FeishuFinanceDoctrinePromotionProposalArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrinePromotionProposalArtifact =
-  FeishuFinanceDoctrinePromotionProposalArtifact;
+export type ParsedExternalFinanceDoctrinePromotionProposalArtifact =
+  ExternalFinanceDoctrinePromotionProposalArtifact;
 
-export type FeishuFinanceDoctrineEditHandoffArtifact = {
+export type ExternalFinanceDoctrineEditHandoffArtifact = {
   handedOffAt: string;
   consumer: string;
   sourceProposalArtifact: string;
@@ -963,26 +963,26 @@ export type FeishuFinanceDoctrineEditHandoffArtifact = {
   }>;
 };
 
-export type ParsedFeishuFinanceDoctrineEditHandoffArtifact =
-  FeishuFinanceDoctrineEditHandoffArtifact;
+export type ParsedExternalFinanceDoctrineEditHandoffArtifact =
+  ExternalFinanceDoctrineEditHandoffArtifact;
 
-export type ParsedFeishuWorkReceiptFilename = {
+export type ParsedExternalWorkReceiptFilename = {
   dateStr: string;
   timeSlug: string;
   noteSlug: string;
 };
 
-export type FeishuSurfaceLanePanelArtifact = {
+export type ExternalSurfaceLanePanelArtifact = {
   activeLanes: number;
   laneMeterLines: string[];
 };
 
-export type ParsedFeishuSurfaceLanePanelArtifact = {
+export type ParsedExternalSurfaceLanePanelArtifact = {
   activeLanes?: number;
   laneMeterLines: string[];
 };
 
-export type FeishuSurfaceLaneHealthArtifact = {
+export type ExternalSurfaceLaneHealthArtifact = {
   status: string;
   activeLanes: number;
   crowdedChats: string[];
@@ -990,7 +990,7 @@ export type FeishuSurfaceLaneHealthArtifact = {
   guidanceLines: string[];
 };
 
-export type ParsedFeishuSurfaceLaneHealthArtifact = {
+export type ParsedExternalSurfaceLaneHealthArtifact = {
   status: string;
   activeLanes: number;
   crowdedChats: string[];
@@ -1006,26 +1006,26 @@ const LEARNING_COUNCIL_ADOPTION_LEDGER_FILENAME_RE =
 const CORRECTION_NOTE_FILENAME_RE =
   /^(\d{4}-\d{2}-\d{2})-correction-note-([A-Za-z0-9-]+)-([0-9]{6}-[0-9]{3,}Z)\.md$/u;
 const LOBSTER_WORKFACE_FILENAME_RE = /^(\d{4}-\d{2}-\d{2})-lobster-workface\.md$/u;
-const FEISHU_WORK_RECEIPT_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-work-receipt-([0-9]{6}-[0-9]{3,}Z)-(.+)\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_CALIBRATION_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-calibration-([0-9]{6}-[0-9]{3,}Z)-(.+)\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_TEACHER_FEEDBACK_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-teacher-feedback\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_TEACHER_REVIEW_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-teacher-review\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_TEACHER_ELEVATION_HANDOFFS_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-teacher-elevation-handoffs\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_PROMOTION_CANDIDATES_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-promotion-candidates\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_PROMOTION_REVIEW_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-promotion-review\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_PROMOTION_DECISIONS_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-promotion-decisions\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_PROMOTION_PROPOSALS_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-promotion-proposals\.md$/u;
-const FEISHU_FINANCE_DOCTRINE_EDIT_HANDOFFS_FILENAME_RE =
-  /^(\d{4}-\d{2}-\d{2})-feishu-finance-doctrine-edit-handoffs\.md$/u;
+const EXTERNAL_WORK_RECEIPT_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-work-receipt-([0-9]{6}-[0-9]{3,}Z)-(.+)\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_CALIBRATION_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-calibration-([0-9]{6}-[0-9]{3,}Z)-(.+)\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_TEACHER_FEEDBACK_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-teacher-feedback\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_TEACHER_REVIEW_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-teacher-review\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_TEACHER_ELEVATION_HANDOFFS_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-teacher-elevation-handoffs\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_PROMOTION_CANDIDATES_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-promotion-candidates\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_PROMOTION_REVIEW_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-promotion-review\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_PROMOTION_DECISIONS_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-promotion-decisions\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_PROMOTION_PROPOSALS_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-promotion-proposals\.md$/u;
+const EXTERNAL_FINANCE_DOCTRINE_EDIT_HANDOFFS_FILENAME_RE =
+  /^(\d{4}-\d{2}-\d{2})-external-finance-doctrine-edit-handoffs\.md$/u;
 
 export type KnowledgeValidationType = "benchmark" | "daily_real_task";
 export type LearningCouncilMemoryNoteStatus =
@@ -1767,7 +1767,7 @@ function sanitizeWorkReceiptSlug(value: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export function buildFeishuWorkReceiptFilename(params: {
+export function buildExternalWorkReceiptFilename(params: {
   handledAt: string;
   surface: string;
   messageId: string;
@@ -1776,13 +1776,13 @@ export function buildFeishuWorkReceiptFilename(params: {
   const timeSlug = buildIsoTimeSlug(params.handledAt);
   const noteSlug =
     sanitizeWorkReceiptSlug(`${params.surface}-${params.messageId}`) || "work-receipt";
-  return `${dateStr}-feishu-work-receipt-${timeSlug}-${noteSlug}.md`;
+  return `${dateStr}-external-work-receipt-${timeSlug}-${noteSlug}.md`;
 }
 
-export function parseFeishuWorkReceiptFilename(
+export function parseExternalWorkReceiptFilename(
   filename: string,
-): ParsedFeishuWorkReceiptFilename | undefined {
-  const match = filename.match(FEISHU_WORK_RECEIPT_FILENAME_RE);
+): ParsedExternalWorkReceiptFilename | undefined {
+  const match = filename.match(EXTERNAL_WORK_RECEIPT_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1793,11 +1793,11 @@ export function parseFeishuWorkReceiptFilename(
   };
 }
 
-export function isFeishuWorkReceiptFilename(filename: string): boolean {
-  return Boolean(parseFeishuWorkReceiptFilename(filename));
+export function isExternalWorkReceiptFilename(filename: string): boolean {
+  return Boolean(parseExternalWorkReceiptFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrineCalibrationFilename(params: {
+export function buildExternalFinanceDoctrineCalibrationFilename(params: {
   reviewDate: string;
   consumer: string;
   linkedReceipt: string;
@@ -1807,13 +1807,13 @@ export function buildFeishuFinanceDoctrineCalibrationFilename(params: {
   const noteSlug =
     sanitizeWorkReceiptSlug(`${params.consumer}-${params.linkedReceipt}`) ||
     "finance-doctrine-calibration";
-  return `${dateStr}-feishu-finance-doctrine-calibration-${timeSlug}-${noteSlug}.md`;
+  return `${dateStr}-external-finance-doctrine-calibration-${timeSlug}-${noteSlug}.md`;
 }
 
-export function parseFeishuFinanceDoctrineCalibrationFilename(
+export function parseExternalFinanceDoctrineCalibrationFilename(
   filename: string,
-): ParsedFeishuWorkReceiptFilename | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_CALIBRATION_FILENAME_RE);
+): ParsedExternalWorkReceiptFilename | undefined {
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_CALIBRATION_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1824,18 +1824,18 @@ export function parseFeishuFinanceDoctrineCalibrationFilename(
   };
 }
 
-export function isFeishuFinanceDoctrineCalibrationFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrineCalibrationFilename(filename));
+export function isExternalFinanceDoctrineCalibrationFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrineCalibrationFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrinePromotionCandidatesFilename(dateStr: string): string {
-  return `${dateStr}-feishu-finance-doctrine-promotion-candidates.md`;
+export function buildExternalFinanceDoctrinePromotionCandidatesFilename(dateStr: string): string {
+  return `${dateStr}-external-finance-doctrine-promotion-candidates.md`;
 }
 
-export function parseFeishuFinanceDoctrinePromotionCandidatesFilename(
+export function parseExternalFinanceDoctrinePromotionCandidatesFilename(
   filename: string,
 ): { dateStr: string } | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_PROMOTION_CANDIDATES_FILENAME_RE);
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_PROMOTION_CANDIDATES_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1844,18 +1844,18 @@ export function parseFeishuFinanceDoctrinePromotionCandidatesFilename(
   };
 }
 
-export function isFeishuFinanceDoctrinePromotionCandidatesFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrinePromotionCandidatesFilename(filename));
+export function isExternalFinanceDoctrinePromotionCandidatesFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrinePromotionCandidatesFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrinePromotionReviewFilename(dateStr: string): string {
-  return `${dateStr}-feishu-finance-doctrine-promotion-review.md`;
+export function buildExternalFinanceDoctrinePromotionReviewFilename(dateStr: string): string {
+  return `${dateStr}-external-finance-doctrine-promotion-review.md`;
 }
 
-export function parseFeishuFinanceDoctrinePromotionReviewFilename(
+export function parseExternalFinanceDoctrinePromotionReviewFilename(
   filename: string,
 ): { dateStr: string } | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_PROMOTION_REVIEW_FILENAME_RE);
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_PROMOTION_REVIEW_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1864,18 +1864,18 @@ export function parseFeishuFinanceDoctrinePromotionReviewFilename(
   };
 }
 
-export function isFeishuFinanceDoctrinePromotionReviewFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrinePromotionReviewFilename(filename));
+export function isExternalFinanceDoctrinePromotionReviewFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrinePromotionReviewFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrinePromotionDecisionsFilename(dateStr: string): string {
-  return `${dateStr}-feishu-finance-doctrine-promotion-decisions.md`;
+export function buildExternalFinanceDoctrinePromotionDecisionsFilename(dateStr: string): string {
+  return `${dateStr}-external-finance-doctrine-promotion-decisions.md`;
 }
 
-export function parseFeishuFinanceDoctrinePromotionDecisionsFilename(
+export function parseExternalFinanceDoctrinePromotionDecisionsFilename(
   filename: string,
 ): { dateStr: string } | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_PROMOTION_DECISIONS_FILENAME_RE);
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_PROMOTION_DECISIONS_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1884,18 +1884,18 @@ export function parseFeishuFinanceDoctrinePromotionDecisionsFilename(
   };
 }
 
-export function isFeishuFinanceDoctrinePromotionDecisionsFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrinePromotionDecisionsFilename(filename));
+export function isExternalFinanceDoctrinePromotionDecisionsFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrinePromotionDecisionsFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrinePromotionProposalsFilename(dateStr: string): string {
-  return `${dateStr}-feishu-finance-doctrine-promotion-proposals.md`;
+export function buildExternalFinanceDoctrinePromotionProposalsFilename(dateStr: string): string {
+  return `${dateStr}-external-finance-doctrine-promotion-proposals.md`;
 }
 
-export function parseFeishuFinanceDoctrinePromotionProposalsFilename(
+export function parseExternalFinanceDoctrinePromotionProposalsFilename(
   filename: string,
 ): { dateStr: string } | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_PROMOTION_PROPOSALS_FILENAME_RE);
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_PROMOTION_PROPOSALS_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1904,18 +1904,18 @@ export function parseFeishuFinanceDoctrinePromotionProposalsFilename(
   };
 }
 
-export function isFeishuFinanceDoctrinePromotionProposalsFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrinePromotionProposalsFilename(filename));
+export function isExternalFinanceDoctrinePromotionProposalsFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrinePromotionProposalsFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrineTeacherFeedbackFilename(dateStr: string): string {
-  return `${dateStr}-feishu-finance-doctrine-teacher-feedback.md`;
+export function buildExternalFinanceDoctrineTeacherFeedbackFilename(dateStr: string): string {
+  return `${dateStr}-external-finance-doctrine-teacher-feedback.md`;
 }
 
-export function parseFeishuFinanceDoctrineTeacherFeedbackFilename(
+export function parseExternalFinanceDoctrineTeacherFeedbackFilename(
   filename: string,
 ): { dateStr: string } | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_TEACHER_FEEDBACK_FILENAME_RE);
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_TEACHER_FEEDBACK_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1924,18 +1924,18 @@ export function parseFeishuFinanceDoctrineTeacherFeedbackFilename(
   };
 }
 
-export function isFeishuFinanceDoctrineTeacherFeedbackFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrineTeacherFeedbackFilename(filename));
+export function isExternalFinanceDoctrineTeacherFeedbackFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrineTeacherFeedbackFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrineTeacherReviewFilename(dateStr: string): string {
-  return `${dateStr}-feishu-finance-doctrine-teacher-review.md`;
+export function buildExternalFinanceDoctrineTeacherReviewFilename(dateStr: string): string {
+  return `${dateStr}-external-finance-doctrine-teacher-review.md`;
 }
 
-export function parseFeishuFinanceDoctrineTeacherReviewFilename(
+export function parseExternalFinanceDoctrineTeacherReviewFilename(
   filename: string,
 ): { dateStr: string } | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_TEACHER_REVIEW_FILENAME_RE);
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_TEACHER_REVIEW_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1944,30 +1944,30 @@ export function parseFeishuFinanceDoctrineTeacherReviewFilename(
   };
 }
 
-export function isFeishuFinanceDoctrineTeacherReviewFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrineTeacherReviewFilename(filename));
+export function isExternalFinanceDoctrineTeacherReviewFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrineTeacherReviewFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrineTeacherElevationHandoffsFilename(
+export function buildExternalFinanceDoctrineTeacherElevationHandoffsFilename(
   dateStr: string,
 ): string {
-  return `${dateStr}-feishu-finance-doctrine-teacher-elevation-handoffs.md`;
+  return `${dateStr}-external-finance-doctrine-teacher-elevation-handoffs.md`;
 }
 
-export function buildFeishuFinanceDoctrineTeacherCandidateInputsFilename(dateStr: string): string {
-  return `${dateStr}-feishu-finance-doctrine-teacher-candidate-inputs.md`;
+export function buildExternalFinanceDoctrineTeacherCandidateInputsFilename(dateStr: string): string {
+  return `${dateStr}-external-finance-doctrine-teacher-candidate-inputs.md`;
 }
 
-export function buildFeishuFinanceDoctrineTeacherCandidateInputReviewFilename(
+export function buildExternalFinanceDoctrineTeacherCandidateInputReviewFilename(
   dateStr: string,
 ): string {
-  return `${dateStr}-feishu-finance-doctrine-teacher-candidate-input-review.md`;
+  return `${dateStr}-external-finance-doctrine-teacher-candidate-input-review.md`;
 }
 
-export function buildFeishuFinanceDoctrineTeacherCandidateInputReconciliationFilename(
+export function buildExternalFinanceDoctrineTeacherCandidateInputReconciliationFilename(
   dateStr: string,
 ): string {
-  return `${dateStr}-feishu-finance-doctrine-teacher-candidate-input-reconciliation.md`;
+  return `${dateStr}-external-finance-doctrine-teacher-candidate-input-reconciliation.md`;
 }
 
 export function buildFinanceFrameworkCoreContractPath(): string {
@@ -1982,10 +1982,10 @@ export function buildFinanceArticleSourceRegistryPath(): string {
   return "memory/local-memory/finance-article-source-registry.md";
 }
 
-export function parseFeishuFinanceDoctrineTeacherElevationHandoffsFilename(
+export function parseExternalFinanceDoctrineTeacherElevationHandoffsFilename(
   filename: string,
 ): { dateStr: string } | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_TEACHER_ELEVATION_HANDOFFS_FILENAME_RE);
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_TEACHER_ELEVATION_HANDOFFS_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -1994,18 +1994,18 @@ export function parseFeishuFinanceDoctrineTeacherElevationHandoffsFilename(
   };
 }
 
-export function isFeishuFinanceDoctrineTeacherElevationHandoffsFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrineTeacherElevationHandoffsFilename(filename));
+export function isExternalFinanceDoctrineTeacherElevationHandoffsFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrineTeacherElevationHandoffsFilename(filename));
 }
 
-export function buildFeishuFinanceDoctrineEditHandoffsFilename(dateStr: string): string {
-  return `${dateStr}-feishu-finance-doctrine-edit-handoffs.md`;
+export function buildExternalFinanceDoctrineEditHandoffsFilename(dateStr: string): string {
+  return `${dateStr}-external-finance-doctrine-edit-handoffs.md`;
 }
 
-export function parseFeishuFinanceDoctrineEditHandoffsFilename(
+export function parseExternalFinanceDoctrineEditHandoffsFilename(
   filename: string,
 ): { dateStr: string } | undefined {
-  const match = filename.match(FEISHU_FINANCE_DOCTRINE_EDIT_HANDOFFS_FILENAME_RE);
+  const match = filename.match(EXTERNAL_FINANCE_DOCTRINE_EDIT_HANDOFFS_FILENAME_RE);
   if (!match) {
     return undefined;
   }
@@ -2014,8 +2014,8 @@ export function parseFeishuFinanceDoctrineEditHandoffsFilename(
   };
 }
 
-export function isFeishuFinanceDoctrineEditHandoffsFilename(filename: string): boolean {
-  return Boolean(parseFeishuFinanceDoctrineEditHandoffsFilename(filename));
+export function isExternalFinanceDoctrineEditHandoffsFilename(filename: string): boolean {
+  return Boolean(parseExternalFinanceDoctrineEditHandoffsFilename(filename));
 }
 
 export function parseLobsterWorkfaceFilename(
@@ -3009,8 +3009,8 @@ export function renderLobsterWorkfaceArtifact(artifact: LobsterWorkfaceArtifact)
     "## Validation Radar",
     ...artifact.validationRadarLines,
     "",
-    "## Feishu Lane Panel",
-    ...artifact.feishuLanePanelLines,
+    "## External Lane Panel",
+    ...artifact.externalLanePanelLines,
     "",
     "## 7-Day Operating View",
     ...artifact.sevenDayOperatingViewLines,
@@ -3020,7 +3020,7 @@ export function renderLobsterWorkfaceArtifact(artifact: LobsterWorkfaceArtifact)
     "",
     "## Yesterday Work Receipts",
     ...(artifact.yesterdayWorkReceiptLines ?? [
-      "- No structured Feishu work receipt was captured yesterday.",
+      "- No structured External work receipt was captured yesterday.",
     ]),
     "",
     "## Self-Repair Signals",
@@ -3060,7 +3060,7 @@ export function parseLobsterWorkfaceArtifact(
   if (!dateKey) {
     return undefined;
   }
-  const lanePanelLines = extractSectionBulletLines(content, "Feishu Lane Panel");
+  const lanePanelLines = extractSectionBulletLines(content, "External Lane Panel");
   return {
     dateKey,
     learningItems: extractBulletValue(content, "Learning Items") ?? "0",
@@ -3069,7 +3069,7 @@ export function parseLobsterWorkfaceArtifact(
     codexEscalations: extractBulletValue(content, "Codex Escalations") ?? "0",
     activeSurfaceLanes:
       extractBulletValue(content, "Active Surface Lanes") ??
-      extractSectionLabeledValue(content, "Feishu Lane Panel", "Active Lanes"),
+      extractSectionLabeledValue(content, "External Lane Panel", "Active Lanes"),
     portfolioScorecard: extractBulletValue(content, "Portfolio Scorecard"),
     totalTokens: extractBulletValue(content, "Total Tokens") ?? "0",
     estimatedCost: extractBulletValue(content, "Estimated Cost") ?? "$0.0000",
@@ -3093,7 +3093,7 @@ export function parseLobsterWorkfaceArtifact(
       .filter(
         (line) =>
           !/^Active Lanes:/i.test(line) &&
-          !/^No active Feishu surface lanes are recorded yet\.?$/i.test(line),
+          !/^No active External surface lanes are recorded yet\.?$/i.test(line),
       )
       .slice(0, 2),
   };
@@ -3180,9 +3180,9 @@ export function buildKnowledgeValidationWeeklyControlRoomSummary(
   return `Validation radar: ${parts.join("; ")}.`;
 }
 
-export function renderFeishuSurfaceLineArtifact(artifact: FeishuSurfaceLineArtifact): string {
+export function renderExternalSurfaceLineArtifact(artifact: ExternalSurfaceLineArtifact): string {
   return [
-    `# Feishu Surface Line: ${artifact.surface} / ${artifact.chatId}`,
+    `# External Surface Line: ${artifact.surface} / ${artifact.chatId}`,
     "",
     `- **Surface**: ${artifact.surface}`,
     `- **Chat**: ${artifact.chatId}`,
@@ -3196,9 +3196,9 @@ export function renderFeishuSurfaceLineArtifact(artifact: FeishuSurfaceLineArtif
   ].join("\n");
 }
 
-export function parseFeishuSurfaceLineArtifact(
+export function parseExternalSurfaceLineArtifact(
   content: string,
-): ParsedFeishuSurfaceLineArtifact | undefined {
+): ParsedExternalSurfaceLineArtifact | undefined {
   const surface = content.match(/- \*\*Surface\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const chatId = content.match(/- \*\*Chat\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const laneKey = content.match(/- \*\*Lane Key\*\*: ([^\r\n]+)/)?.[1]?.trim();
@@ -3222,9 +3222,9 @@ export function parseFeishuSurfaceLineArtifact(
   };
 }
 
-export function renderFeishuWorkReceiptArtifact(artifact: FeishuWorkReceiptArtifact): string {
+export function renderExternalWorkReceiptArtifact(artifact: ExternalWorkReceiptArtifact): string {
   return [
-    `# Feishu Work Receipt: ${artifact.surface} / ${artifact.chatId}`,
+    `# External Work Receipt: ${artifact.surface} / ${artifact.chatId}`,
     "",
     `- **Handled At**: ${artifact.handledAt}`,
     `- **Surface**: ${artifact.surface}`,
@@ -3260,9 +3260,9 @@ export function renderFeishuWorkReceiptArtifact(artifact: FeishuWorkReceiptArtif
   ].join("\n");
 }
 
-export function parseFeishuWorkReceiptArtifact(
+export function parseExternalWorkReceiptArtifact(
   content: string,
-): ParsedFeishuWorkReceiptArtifact | undefined {
+): ParsedExternalWorkReceiptArtifact | undefined {
   const handledAt = content.match(/- \*\*Handled At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const surface = content.match(/- \*\*Surface\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const chatId = content.match(/- \*\*Chat\*\*: ([^\r\n]+)/)?.[1]?.trim();
@@ -3346,11 +3346,11 @@ export function parseFeishuWorkReceiptArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrineCalibrationArtifact(
-  artifact: FeishuFinanceDoctrineCalibrationArtifact,
+export function renderExternalFinanceDoctrineCalibrationArtifact(
+  artifact: ExternalFinanceDoctrineCalibrationArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Calibration",
+    "# External Finance Doctrine Calibration",
     "",
     `- **Review Date**: ${artifact.reviewDate}`,
     `- **Consumer**: ${artifact.consumer}`,
@@ -3367,25 +3367,25 @@ export function renderFeishuFinanceDoctrineCalibrationArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrineCalibrationArtifact(
+export function parseExternalFinanceDoctrineCalibrationArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrineCalibrationArtifact | undefined {
+): ParsedExternalFinanceDoctrineCalibrationArtifact | undefined {
   const reviewDate = content.match(/- \*\*Review Date\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const consumer = content.match(/- \*\*Consumer\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const linkedReceipt = content.match(/- \*\*Linked Receipt\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const observedOutcome = content.match(/- \*\*Observed Outcome\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const scenarioClosestToOutcome = content
     .match(/- \*\*Scenario Closest To Outcome\*\*: ([^\r\n]+)/)?.[1]
-    ?.trim() as FeishuFinanceDoctrineCalibrationArtifact["scenarioClosestToOutcome"] | undefined;
+    ?.trim() as ExternalFinanceDoctrineCalibrationArtifact["scenarioClosestToOutcome"] | undefined;
   const baseCaseDirectionallyCloser = content
     .match(/- \*\*Base Case Directionally Closer\*\*: ([^\r\n]+)/)?.[1]
-    ?.trim() as FeishuFinanceDoctrineCalibrationArtifact["baseCaseDirectionallyCloser"] | undefined;
+    ?.trim() as ExternalFinanceDoctrineCalibrationArtifact["baseCaseDirectionallyCloser"] | undefined;
   const changeMyMindTriggered = content
     .match(/- \*\*Change My Mind Triggered\*\*: ([^\r\n]+)/)?.[1]
-    ?.trim() as FeishuFinanceDoctrineCalibrationArtifact["changeMyMindTriggered"] | undefined;
+    ?.trim() as ExternalFinanceDoctrineCalibrationArtifact["changeMyMindTriggered"] | undefined;
   const convictionLooksTooHighOrLow = content
     .match(/- \*\*Conviction Looks Too High Or Low\*\*: ([^\r\n]+)/)?.[1]
-    ?.trim() as FeishuFinanceDoctrineCalibrationArtifact["convictionLooksTooHighOrLow"] | undefined;
+    ?.trim() as ExternalFinanceDoctrineCalibrationArtifact["convictionLooksTooHighOrLow"] | undefined;
   const notes = extractSectionBulletLines(content, "Notes")[0]?.trim();
   if (
     !reviewDate ||
@@ -3413,11 +3413,11 @@ export function parseFeishuFinanceDoctrineCalibrationArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrineTeacherFeedbackArtifact(
-  artifact: FeishuFinanceDoctrineTeacherFeedbackArtifact,
+export function renderExternalFinanceDoctrineTeacherFeedbackArtifact(
+  artifact: ExternalFinanceDoctrineTeacherFeedbackArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Teacher Feedback",
+    "# External Finance Doctrine Teacher Feedback",
     "",
     `- **Generated At**: ${artifact.generatedAt}`,
     `- **Teacher Task**: ${artifact.teacherTask}`,
@@ -3441,9 +3441,9 @@ export function renderFeishuFinanceDoctrineTeacherFeedbackArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrineTeacherFeedbackArtifact(
+export function parseExternalFinanceDoctrineTeacherFeedbackArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrineTeacherFeedbackArtifact | undefined {
+): ParsedExternalFinanceDoctrineTeacherFeedbackArtifact | undefined {
   const generatedAt = content.match(/- \*\*Generated At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const teacherTask = content.match(/- \*\*Teacher Task\*\*: ([^\r\n]+)/)?.[1]?.trim() as
     | "finance_calibration_audit"
@@ -3498,7 +3498,7 @@ export function parseFeishuFinanceDoctrineTeacherFeedbackArtifact(
       };
     })
     .filter(
-      (feedback): feedback is FeishuFinanceDoctrineTeacherFeedbackArtifact["feedbacks"][number] =>
+      (feedback): feedback is ExternalFinanceDoctrineTeacherFeedbackArtifact["feedbacks"][number] =>
         Boolean(feedback),
     );
   return {
@@ -3508,11 +3508,11 @@ export function parseFeishuFinanceDoctrineTeacherFeedbackArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrineTeacherReviewArtifact(
-  artifact: FeishuFinanceDoctrineTeacherReviewArtifact,
+export function renderExternalFinanceDoctrineTeacherReviewArtifact(
+  artifact: ExternalFinanceDoctrineTeacherReviewArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Teacher Review",
+    "# External Finance Doctrine Teacher Review",
     "",
     `- **Reviewed At**: ${artifact.reviewedAt}`,
     `- **Source Teacher Feedback Artifact**: ${artifact.sourceTeacherFeedbackArtifact}`,
@@ -3530,9 +3530,9 @@ export function renderFeishuFinanceDoctrineTeacherReviewArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrineTeacherReviewArtifact(
+export function parseExternalFinanceDoctrineTeacherReviewArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrineTeacherReviewArtifact | undefined {
+): ParsedExternalFinanceDoctrineTeacherReviewArtifact | undefined {
   const reviewedAt = content.match(/- \*\*Reviewed At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const sourceTeacherFeedbackArtifact = content
     .match(/- \*\*Source Teacher Feedback Artifact\*\*: ([^\r\n]+)/)?.[1]
@@ -3558,7 +3558,7 @@ export function parseFeishuFinanceDoctrineTeacherReviewArtifact(
         reviewOutcome,
       };
     })
-    .filter((review): review is FeishuFinanceDoctrineTeacherReviewArtifact["reviews"][number] =>
+    .filter((review): review is ExternalFinanceDoctrineTeacherReviewArtifact["reviews"][number] =>
       Boolean(review),
     );
   return {
@@ -3568,11 +3568,11 @@ export function parseFeishuFinanceDoctrineTeacherReviewArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrineTeacherElevationHandoffArtifact(
-  artifact: FeishuFinanceDoctrineTeacherElevationHandoffArtifact,
+export function renderExternalFinanceDoctrineTeacherElevationHandoffArtifact(
+  artifact: ExternalFinanceDoctrineTeacherElevationHandoffArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Teacher Elevation Handoffs",
+    "# External Finance Doctrine Teacher Elevation Handoffs",
     "",
     `- **Handed Off At**: ${artifact.handedOffAt}`,
     `- **Source Teacher Feedback Artifact**: ${artifact.sourceTeacherFeedbackArtifact}`,
@@ -3598,9 +3598,9 @@ export function renderFeishuFinanceDoctrineTeacherElevationHandoffArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact(
+export function parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrineTeacherElevationHandoffArtifact | undefined {
+): ParsedExternalFinanceDoctrineTeacherElevationHandoffArtifact | undefined {
   const handedOffAt = content.match(/- \*\*Handed Off At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const sourceTeacherFeedbackArtifact = content
     .match(/- \*\*Source Teacher Feedback Artifact\*\*: ([^\r\n]+)/)?.[1]
@@ -3667,7 +3667,7 @@ export function parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact(
     .filter(
       (
         handoff,
-      ): handoff is FeishuFinanceDoctrineTeacherElevationHandoffArtifact["handoffs"][number] =>
+      ): handoff is ExternalFinanceDoctrineTeacherElevationHandoffArtifact["handoffs"][number] =>
         Boolean(handoff),
     );
   return {
@@ -3678,11 +3678,11 @@ export function parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrineTeacherCandidateInputArtifact(
-  artifact: FeishuFinanceDoctrineTeacherCandidateInputArtifact,
+export function renderExternalFinanceDoctrineTeacherCandidateInputArtifact(
+  artifact: ExternalFinanceDoctrineTeacherCandidateInputArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Teacher Candidate Inputs",
+    "# External Finance Doctrine Teacher Candidate Inputs",
     "",
     `- **Created At**: ${artifact.createdAt}`,
     `- **Source Teacher Elevation Handoff Artifact**: ${artifact.sourceTeacherElevationHandoffArtifact}`,
@@ -3709,9 +3709,9 @@ export function renderFeishuFinanceDoctrineTeacherCandidateInputArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrineTeacherCandidateInputArtifact(
+export function parseExternalFinanceDoctrineTeacherCandidateInputArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrineTeacherCandidateInputArtifact | undefined {
+): ParsedExternalFinanceDoctrineTeacherCandidateInputArtifact | undefined {
   const createdAt = content.match(/- \*\*Created At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const sourceTeacherElevationHandoffArtifact = content
     .match(/- \*\*Source Teacher Elevation Handoff Artifact\*\*: ([^\r\n]+)/)?.[1]
@@ -3786,7 +3786,7 @@ export function parseFeishuFinanceDoctrineTeacherCandidateInputArtifact(
     .filter(
       (
         candidateInput,
-      ): candidateInput is FeishuFinanceDoctrineTeacherCandidateInputArtifact["candidateInputs"][number] =>
+      ): candidateInput is ExternalFinanceDoctrineTeacherCandidateInputArtifact["candidateInputs"][number] =>
         Boolean(candidateInput),
     );
   return {
@@ -3798,11 +3798,11 @@ export function parseFeishuFinanceDoctrineTeacherCandidateInputArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact(
-  artifact: FeishuFinanceDoctrineTeacherCandidateInputReviewArtifact,
+export function renderExternalFinanceDoctrineTeacherCandidateInputReviewArtifact(
+  artifact: ExternalFinanceDoctrineTeacherCandidateInputReviewArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Teacher Candidate Input Review",
+    "# External Finance Doctrine Teacher Candidate Input Review",
     "",
     `- **Reviewed At**: ${artifact.reviewedAt}`,
     `- **Source Teacher Candidate Input Artifact**: ${artifact.sourceTeacherCandidateInputArtifact}`,
@@ -3822,9 +3822,9 @@ export function renderFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact(
+export function parseExternalFinanceDoctrineTeacherCandidateInputReviewArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact | undefined {
+): ParsedExternalFinanceDoctrineTeacherCandidateInputReviewArtifact | undefined {
   const reviewedAt = content.match(/- \*\*Reviewed At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const sourceTeacherCandidateInputArtifact = content
     .match(/- \*\*Source Teacher Candidate Input Artifact\*\*: ([^\r\n]+)/)?.[1]
@@ -3865,7 +3865,7 @@ export function parseFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact(
     .filter(
       (
         review,
-      ): review is FeishuFinanceDoctrineTeacherCandidateInputReviewArtifact["reviews"][number] =>
+      ): review is ExternalFinanceDoctrineTeacherCandidateInputReviewArtifact["reviews"][number] =>
         Boolean(review),
     );
   return {
@@ -3875,11 +3875,11 @@ export function parseFeishuFinanceDoctrineTeacherCandidateInputReviewArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
-  artifact: FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
+export function renderExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
+  artifact: ExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Teacher Candidate Input Reconciliation",
+    "# External Finance Doctrine Teacher Candidate Input Reconciliation",
     "",
     `- **Reconciled At**: ${artifact.reconciledAt}`,
     `- **Source Teacher Candidate Input Artifact**: ${artifact.sourceTeacherCandidateInputArtifact}`,
@@ -3903,9 +3903,9 @@ export function renderFeishuFinanceDoctrineTeacherCandidateInputReconciliationAr
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
+export function parseExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact | undefined {
+): ParsedExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact | undefined {
   const reconciledAt = content.match(/- \*\*Reconciled At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const sourceTeacherCandidateInputArtifact = content
     .match(/- \*\*Source Teacher Candidate Input Artifact\*\*: ([^\r\n]+)/)?.[1]
@@ -3973,7 +3973,7 @@ export function parseFeishuFinanceDoctrineTeacherCandidateInputReconciliationArt
     .filter(
       (
         reconciliation,
-      ): reconciliation is FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact["reconciliations"][number] =>
+      ): reconciliation is ExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact["reconciliations"][number] =>
         Boolean(reconciliation),
     );
   return {
@@ -4509,11 +4509,11 @@ export function parseFinanceArticleSourceRegistryArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrinePromotionCandidateArtifact(
-  artifact: FeishuFinanceDoctrinePromotionCandidateArtifact,
+export function renderExternalFinanceDoctrinePromotionCandidateArtifact(
+  artifact: ExternalFinanceDoctrinePromotionCandidateArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Promotion Candidates",
+    "# External Finance Doctrine Promotion Candidates",
     "",
     `- **Generated At**: ${artifact.generatedAt}`,
     `- **Consumer**: ${artifact.consumer}`,
@@ -4543,7 +4543,7 @@ export function renderFeishuFinanceDoctrinePromotionCandidateArtifact(
 function normalizeFinanceDoctrinePromotionReviewState(
   value: string | undefined,
 ):
-  | FeishuFinanceDoctrinePromotionCandidateArtifact["candidates"][number]["reviewState"]
+  | ExternalFinanceDoctrinePromotionCandidateArtifact["candidates"][number]["reviewState"]
   | undefined {
   if (!value) {
     return undefined;
@@ -4568,7 +4568,7 @@ function normalizeFinanceDoctrinePromotionReviewState(
 function normalizeFinanceDoctrinePromotionDecisionOutcome(
   value: string | undefined,
 ):
-  | FeishuFinanceDoctrinePromotionDecisionArtifact["decisions"][number]["decisionOutcome"]
+  | ExternalFinanceDoctrinePromotionDecisionArtifact["decisions"][number]["decisionOutcome"]
   | undefined {
   if (!value) {
     return undefined;
@@ -4585,7 +4585,7 @@ function normalizeFinanceDoctrinePromotionDecisionOutcome(
 
 function normalizeFinanceDoctrinePromotionProposalStatus(
   value: string | undefined,
-): FeishuFinanceDoctrinePromotionProposalArtifact["proposals"][number]["status"] | undefined {
+): ExternalFinanceDoctrinePromotionProposalArtifact["proposals"][number]["status"] | undefined {
   if (!value) {
     return undefined;
   }
@@ -4602,7 +4602,7 @@ function normalizeFinanceDoctrinePromotionProposalStatus(
 
 function normalizeFinanceDoctrineTeacherFeedbackCritiqueType(
   value: string | undefined,
-): FeishuFinanceDoctrineTeacherFeedbackArtifact["feedbacks"][number]["critiqueType"] | undefined {
+): ExternalFinanceDoctrineTeacherFeedbackArtifact["feedbacks"][number]["critiqueType"] | undefined {
   if (!value) {
     return undefined;
   }
@@ -4621,7 +4621,7 @@ function normalizeFinanceDoctrineTeacherFeedbackCritiqueType(
 
 function normalizeFinanceDoctrineTeacherReviewOutcome(
   value: string | undefined,
-): FeishuFinanceDoctrineTeacherReviewArtifact["reviews"][number]["reviewOutcome"] | undefined {
+): ExternalFinanceDoctrineTeacherReviewArtifact["reviews"][number]["reviewOutcome"] | undefined {
   if (!value) {
     return undefined;
   }
@@ -4637,7 +4637,7 @@ function normalizeFinanceDoctrineTeacherReviewOutcome(
 
 function normalizeFinanceDoctrineTeacherElevationHandoffStatus(
   value: string | undefined,
-): FeishuFinanceDoctrineTeacherElevationHandoffArtifact["handoffs"][number]["status"] | undefined {
+): ExternalFinanceDoctrineTeacherElevationHandoffArtifact["handoffs"][number]["status"] | undefined {
   if (!value) {
     return undefined;
   }
@@ -4655,7 +4655,7 @@ function normalizeFinanceDoctrineTeacherElevationHandoffStatus(
 function normalizeFinanceDoctrineTeacherCandidateInputReviewOutcome(
   value: string | undefined,
 ):
-  | FeishuFinanceDoctrineTeacherCandidateInputReviewArtifact["reviews"][number]["reviewOutcome"]
+  | ExternalFinanceDoctrineTeacherCandidateInputReviewArtifact["reviews"][number]["reviewOutcome"]
   | undefined {
   if (!value) {
     return undefined;
@@ -4673,7 +4673,7 @@ function normalizeFinanceDoctrineTeacherCandidateInputReviewOutcome(
 function normalizeFinanceDoctrineTeacherCandidateInputReconciliationMode(
   value: string | undefined,
 ):
-  | FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact["reconciliations"][number]["reconciliationMode"]
+  | ExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact["reconciliations"][number]["reconciliationMode"]
   | undefined {
   if (!value) {
     return undefined;
@@ -4690,7 +4690,7 @@ function normalizeFinanceDoctrineTeacherCandidateInputReconciliationMode(
 function normalizeFinanceDoctrineTeacherCandidateInputReconciliationStatus(
   value: string | undefined,
 ):
-  | FeishuFinanceDoctrineTeacherCandidateInputReconciliationArtifact["reconciliations"][number]["status"]
+  | ExternalFinanceDoctrineTeacherCandidateInputReconciliationArtifact["reconciliations"][number]["status"]
   | undefined {
   if (!value) {
     return undefined;
@@ -4895,7 +4895,7 @@ function extractSectionList(block: string, heading: string): string[] {
 
 function normalizeFinanceDoctrineEditHandoffStatus(
   value: string | undefined,
-): FeishuFinanceDoctrineEditHandoffArtifact["handoffs"][number]["status"] | undefined {
+): ExternalFinanceDoctrineEditHandoffArtifact["handoffs"][number]["status"] | undefined {
   if (!value) {
     return undefined;
   }
@@ -4910,9 +4910,9 @@ function normalizeFinanceDoctrineEditHandoffStatus(
   }
 }
 
-export function parseFeishuFinanceDoctrinePromotionCandidateArtifact(
+export function parseExternalFinanceDoctrinePromotionCandidateArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrinePromotionCandidateArtifact | undefined {
+): ParsedExternalFinanceDoctrinePromotionCandidateArtifact | undefined {
   const generatedAt = content.match(/- \*\*Generated At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const consumer = content.match(/- \*\*Consumer\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const windowDaysRaw = content.match(/- \*\*Window Days\*\*: ([^\r\n]+)/)?.[1]?.trim();
@@ -4941,7 +4941,7 @@ export function parseFeishuFinanceDoctrinePromotionCandidateArtifact(
     .map((block) => {
       const candidateKey = block.match(/- \*\*Candidate Key\*\*: ([^\r\n]+)/)?.[1]?.trim();
       const signal = block.match(/- \*\*Signal\*\*: ([^\r\n]+)/)?.[1]?.trim() as
-        | FeishuFinanceDoctrinePromotionCandidateArtifact["candidates"][number]["signal"]
+        | ExternalFinanceDoctrinePromotionCandidateArtifact["candidates"][number]["signal"]
         | undefined;
       const observedValue = block.match(/- \*\*Observed Value\*\*: ([^\r\n]+)/)?.[1]?.trim();
       const occurrencesRaw = block.match(/- \*\*Occurrences\*\*: ([^\r\n]+)/)?.[1]?.trim();
@@ -4988,11 +4988,11 @@ export function parseFeishuFinanceDoctrinePromotionCandidateArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrinePromotionReviewArtifact(
-  artifact: FeishuFinanceDoctrinePromotionReviewArtifact,
+export function renderExternalFinanceDoctrinePromotionReviewArtifact(
+  artifact: ExternalFinanceDoctrinePromotionReviewArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Promotion Review",
+    "# External Finance Doctrine Promotion Review",
     "",
     `- **Reviewed At**: ${artifact.reviewedAt}`,
     `- **Consumer**: ${artifact.consumer}`,
@@ -5011,9 +5011,9 @@ export function renderFeishuFinanceDoctrinePromotionReviewArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrinePromotionReviewArtifact(
+export function parseExternalFinanceDoctrinePromotionReviewArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrinePromotionReviewArtifact | undefined {
+): ParsedExternalFinanceDoctrinePromotionReviewArtifact | undefined {
   const reviewedAt = content.match(/- \*\*Reviewed At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const consumer = content.match(/- \*\*Consumer\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const linkedCandidateArtifact = content
@@ -5049,11 +5049,11 @@ export function parseFeishuFinanceDoctrinePromotionReviewArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrinePromotionDecisionArtifact(
-  artifact: FeishuFinanceDoctrinePromotionDecisionArtifact,
+export function renderExternalFinanceDoctrinePromotionDecisionArtifact(
+  artifact: ExternalFinanceDoctrinePromotionDecisionArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Promotion Decisions",
+    "# External Finance Doctrine Promotion Decisions",
     "",
     `- **Decided At**: ${artifact.decidedAt}`,
     `- **Consumer**: ${artifact.consumer}`,
@@ -5074,9 +5074,9 @@ export function renderFeishuFinanceDoctrinePromotionDecisionArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrinePromotionDecisionArtifact(
+export function parseExternalFinanceDoctrinePromotionDecisionArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrinePromotionDecisionArtifact | undefined {
+): ParsedExternalFinanceDoctrinePromotionDecisionArtifact | undefined {
   const decidedAt = content.match(/- \*\*Decided At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const consumer = content.match(/- \*\*Consumer\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const linkedCandidateArtifact = content
@@ -5126,11 +5126,11 @@ export function parseFeishuFinanceDoctrinePromotionDecisionArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrinePromotionProposalArtifact(
-  artifact: FeishuFinanceDoctrinePromotionProposalArtifact,
+export function renderExternalFinanceDoctrinePromotionProposalArtifact(
+  artifact: ExternalFinanceDoctrinePromotionProposalArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Promotion Proposals",
+    "# External Finance Doctrine Promotion Proposals",
     "",
     `- **Drafted At**: ${artifact.draftedAt}`,
     `- **Consumer**: ${artifact.consumer}`,
@@ -5156,9 +5156,9 @@ export function renderFeishuFinanceDoctrinePromotionProposalArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrinePromotionProposalArtifact(
+export function parseExternalFinanceDoctrinePromotionProposalArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrinePromotionProposalArtifact | undefined {
+): ParsedExternalFinanceDoctrinePromotionProposalArtifact | undefined {
   const draftedAt = content.match(/- \*\*Drafted At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const consumer = content.match(/- \*\*Consumer\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const sourceDecisionArtifact = content
@@ -5229,7 +5229,7 @@ export function parseFeishuFinanceDoctrinePromotionProposalArtifact(
       };
     })
     .filter(
-      (proposal): proposal is FeishuFinanceDoctrinePromotionProposalArtifact["proposals"][number] =>
+      (proposal): proposal is ExternalFinanceDoctrinePromotionProposalArtifact["proposals"][number] =>
         Boolean(proposal),
     );
   return {
@@ -5242,11 +5242,11 @@ export function parseFeishuFinanceDoctrinePromotionProposalArtifact(
   };
 }
 
-export function renderFeishuFinanceDoctrineEditHandoffArtifact(
-  artifact: FeishuFinanceDoctrineEditHandoffArtifact,
+export function renderExternalFinanceDoctrineEditHandoffArtifact(
+  artifact: ExternalFinanceDoctrineEditHandoffArtifact,
 ): string {
   return [
-    "# Feishu Finance Doctrine Edit Handoffs",
+    "# External Finance Doctrine Edit Handoffs",
     "",
     `- **Handed Off At**: ${artifact.handedOffAt}`,
     `- **Consumer**: ${artifact.consumer}`,
@@ -5281,9 +5281,9 @@ export function renderFeishuFinanceDoctrineEditHandoffArtifact(
   ].join("\n");
 }
 
-export function parseFeishuFinanceDoctrineEditHandoffArtifact(
+export function parseExternalFinanceDoctrineEditHandoffArtifact(
   content: string,
-): ParsedFeishuFinanceDoctrineEditHandoffArtifact | undefined {
+): ParsedExternalFinanceDoctrineEditHandoffArtifact | undefined {
   const handedOffAt = content.match(/- \*\*Handed Off At\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const consumer = content.match(/- \*\*Consumer\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const sourceProposalArtifact = content
@@ -5358,7 +5358,7 @@ export function parseFeishuFinanceDoctrineEditHandoffArtifact(
         status,
       };
     })
-    .filter((handoff): handoff is FeishuFinanceDoctrineEditHandoffArtifact["handoffs"][number] =>
+    .filter((handoff): handoff is ExternalFinanceDoctrineEditHandoffArtifact["handoffs"][number] =>
       Boolean(handoff),
     );
   return {
@@ -5372,11 +5372,11 @@ export function parseFeishuFinanceDoctrineEditHandoffArtifact(
   };
 }
 
-export function renderFeishuSurfaceLanePanelArtifact(
-  artifact: FeishuSurfaceLanePanelArtifact,
+export function renderExternalSurfaceLanePanelArtifact(
+  artifact: ExternalSurfaceLanePanelArtifact,
 ): string {
   return [
-    "# Feishu Surface Lane Panel",
+    "# External Surface Lane Panel",
     "",
     `- **Active Lanes**: ${artifact.activeLanes}`,
     "",
@@ -5386,9 +5386,9 @@ export function renderFeishuSurfaceLanePanelArtifact(
   ].join("\n");
 }
 
-export function parseFeishuSurfaceLanePanelArtifact(
+export function parseExternalSurfaceLanePanelArtifact(
   content: string,
-): ParsedFeishuSurfaceLanePanelArtifact | undefined {
+): ParsedExternalSurfaceLanePanelArtifact | undefined {
   const activeRaw = content.match(/- \*\*Active Lanes\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const active = activeRaw ? Number(activeRaw) : Number.NaN;
   const laneMeterLines = extractSectionBulletLines(content, "Lane Meter");
@@ -5401,11 +5401,11 @@ export function parseFeishuSurfaceLanePanelArtifact(
   };
 }
 
-export function renderFeishuSurfaceLaneHealthArtifact(
-  artifact: FeishuSurfaceLaneHealthArtifact,
+export function renderExternalSurfaceLaneHealthArtifact(
+  artifact: ExternalSurfaceLaneHealthArtifact,
 ): string {
   return [
-    "# Feishu Surface Lane Health",
+    "# External Surface Lane Health",
     "",
     `- **Status**: ${artifact.status}`,
     `- **Active Lanes**: ${artifact.activeLanes}`,
@@ -5418,9 +5418,9 @@ export function renderFeishuSurfaceLaneHealthArtifact(
   ].join("\n");
 }
 
-export function parseFeishuSurfaceLaneHealthArtifact(
+export function parseExternalSurfaceLaneHealthArtifact(
   content: string,
-): ParsedFeishuSurfaceLaneHealthArtifact | undefined {
+): ParsedExternalSurfaceLaneHealthArtifact | undefined {
   const status = content.match(/- \*\*Status\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const activeRaw = content.match(/- \*\*Active Lanes\*\*: ([^\r\n]+)/)?.[1]?.trim();
   const activeLanes = Number(activeRaw ?? "NaN");

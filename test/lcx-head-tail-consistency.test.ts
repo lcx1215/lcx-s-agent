@@ -86,7 +86,7 @@ describe("LCX head-tail consistency doctor", () => {
         "--changed",
         "src/agents/tools/module-learning-pipeline-plan-tool.ts",
         "--changed",
-        "extensions/feishu/src/bot.test.ts",
+        "extensions/external/src/protocol.test.ts",
       ],
       {
         cwd: repoRoot,
@@ -120,7 +120,7 @@ describe("LCX head-tail consistency doctor", () => {
       }),
     );
     expect(payload.affectedLanes).toEqual(
-      expect.arrayContaining(["memory_sedimentation", "lark_feishu_visible_reply"]),
+      expect.arrayContaining(["memory_sedimentation", "external_message_visible_reply"]),
     );
     expect(payload.impacts).toEqual(
       expect.arrayContaining([
@@ -130,7 +130,7 @@ describe("LCX head-tail consistency doctor", () => {
           requiredChecks: expect.arrayContaining(["head-tail-consistency"]),
         }),
         expect.objectContaining({
-          id: "lark_feishu_visible_surface",
+          id: "external_message_visible_surface",
           risk: "elevated",
         }),
       ]),
@@ -139,7 +139,7 @@ describe("LCX head-tail consistency doctor", () => {
       "scripts/operator/lcx-head-tail-consistency.ts",
     );
     expect(payload.recommendedFastCommands.join("\n")).toContain(
-      "extensions/feishu/src/bot.test.ts",
+      "extensions/external/src/protocol.test.ts",
     );
   });
 });

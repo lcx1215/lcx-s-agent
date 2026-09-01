@@ -76,7 +76,7 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
   {
     skillName: "lcx-commercial-answer-pipeline-operator",
     reason:
-      "the request is about commercial answer adoption, short Lark intent expansion, bounded review, or visible reply failed reasons",
+      "the request is about commercial answer adoption, short External intent expansion, bounded review, or visible reply failed reasons",
     patterns: [
       /商用.{0,12}(回答|回复|流水线|pipeline)/,
       /回答.{0,12}流水线/,
@@ -132,24 +132,24 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
     ],
   },
   {
-    skillName: "lark-post-migration-probe",
+    skillName: "external-post-migration-probe",
     reason:
       "the request asks for post-migration external-channel proof or user-visible-observed validation",
     patterns: [
-      /lark.{0,16}(迁移|probe|验收|live)/i,
-      /feishu.{0,16}(迁移|probe|验收|live)/i,
-      /飞书.{0,16}(迁移|探针|验收|真实)/,
+      /external.{0,16}(迁移|probe|验收|live)/i,
+      /external.{0,16}(迁移|probe|验收|live)/i,
+      /外部消息通道.{0,16}(迁移|探针|验收|真实)/,
       /user-visible-observed/i,
       /真实.{0,8}(发消息|收消息|验证|验收)/,
     ],
   },
   {
-    skillName: "lark-live-loop-debugger",
-    reason: "the request is about Lark/Feishu reply-flow debugging or visible reply behavior",
+    skillName: "external-live-loop-debugger",
+    reason: "the request is about external message reply-flow debugging or visible reply behavior",
     patterns: [
-      /lark.{0,16}(回复|消息|回路|debug|weird|bug)/i,
-      /feishu.{0,16}(回复|消息|回路|debug|weird|bug)/i,
-      /飞书.{0,16}(回复|消息|回路|调试|异常)/,
+      /external.{0,16}(回复|消息|回路|debug|weird|bug)/i,
+      /external.{0,16}(回复|消息|回路|debug|weird|bug)/i,
+      /外部消息通道.{0,16}(回复|消息|回路|调试|异常)/,
       /可见.{0,8}回复/,
       /reply-flow/i,
     ],

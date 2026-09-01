@@ -108,7 +108,7 @@ type FreshEventReview = {
   };
 };
 
-type LocalLarkStyleHandoff = {
+type LocalExternalChannelHandoff = {
   family: "market_capability_learning_intake";
   source: "local_cli_contract";
   targetSurface: "learning_command";
@@ -148,7 +148,7 @@ async function ensureWorkspaceDir(opts: LanguageBrainLoopSmokeCommandOptions): P
   };
 }
 
-function resolveLocalLarkStyleHandoff(utterance: string): LocalLarkStyleHandoff {
+function resolveLocalExternalChannelHandoff(utterance: string): LocalExternalChannelHandoff {
   const normalized = utterance.toLowerCase();
   assert(
     normalized.includes("etf") && normalized.includes("workflow"),
@@ -507,7 +507,7 @@ export async function runLanguageBrainLoopSmoke(
   const event = JSON.parse(
     await fs.readFile(path.join(fixtureDir, "fresh-etf-event-review.json"), "utf8"),
   ) as FreshEventReview;
-  const handoff = resolveLocalLarkStyleHandoff(utterance);
+  const handoff = resolveLocalExternalChannelHandoff(utterance);
   assert(handoff.family === "market_capability_learning_intake", "language route mismatch");
   assert(handoff.targetSurface === "learning_command", "target surface mismatch");
   assert(handoff.backendTool === "finance_learning_pipeline_orchestrator", "backend tool mismatch");

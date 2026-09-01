@@ -87,14 +87,14 @@ const FAMILY_IDS: FlowFamilyId[] = [...LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS];
 
 const FLOW_SCENARIOS: FlowScenario[] = [
   {
-    id: "lark_finance_research_waterflow",
-    family: "visible_lark_finance_research",
+    id: "external_finance_research_waterflow",
+    family: "visible_external_finance_research",
     objective:
-      "A broad Lark/Feishu finance ask must reach the right research modules and visible summary without becoming trade advice or unsourced market data.",
-    start: "ingress_lark_feishu",
+      "A broad external message finance ask must reach the right research modules and visible summary without becoming trade advice or unsourced market data.",
+    start: "ingress_external_message",
     end: "visible_reply",
     requiredNodes: [
-      "ingress_lark_feishu",
+      "ingress_external_message",
       "intent_classifier",
       "local_brain_planner",
       "finance_research_modules",
@@ -112,7 +112,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "no_unverified_current_market_data",
     ],
     edges: [
-      ["ingress_lark_feishu", "intent_classifier"],
+      ["ingress_external_message", "intent_classifier"],
       ["intent_classifier", "local_brain_planner"],
       ["local_brain_planner", "finance_research_modules"],
       ["finance_research_modules", "source_registry"],
@@ -124,7 +124,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["control_room_summary", "visible_reply"],
     ],
     feedbackEdges: [["review_panel", "finance_research_modules"]],
-    receipts: ["feishu-reply-flow", "finance_learning_capability_apply", "review_panel"],
+    receipts: ["external-message-channel", "finance_learning_capability_apply", "review_panel"],
   },
   {
     id: "directed_daily_research_brief_waterflow",
@@ -274,10 +274,10 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
-    id: "local_to_external_channel_lark_waterflow",
-    family: "local_ready_to_lark_user_visible_boundary",
+    id: "local_to_external_channel_external_waterflow",
+    family: "local_ready_to_external_user_visible_boundary",
     objective:
-      "Local changes can reach the owner through Lark only after tests, external-channel binding, probe, and real Lark inbound proof; live runtime wording is legacy compatibility.",
+      "Local changes can reach the owner through External only after tests, external-channel binding, probe, and real External inbound proof; live runtime wording is legacy compatibility.",
     start: "local_change",
     end: "user_visible_observed",
     requiredNodes: [
@@ -285,28 +285,28 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "local_tests",
       "external_channel_binding",
       "channel_restart_probe",
-      "real_lark_inbound",
+      "real_external_inbound",
       "user_visible_observed",
     ],
     requiredFilters: [
       "local_ready_not_user_visible_observed",
       "external_channel_probe_required",
-      "real_lark_inbound_required",
+      "real_external_inbound_required",
     ],
     edges: [
       ["local_change", "local_tests"],
       ["local_tests", "external_channel_binding"],
       ["external_channel_binding", "channel_restart_probe"],
-      ["channel_restart_probe", "real_lark_inbound"],
-      ["real_lark_inbound", "user_visible_observed"],
+      ["channel_restart_probe", "real_external_inbound"],
+      ["real_external_inbound", "user_visible_observed"],
     ],
-    receipts: ["live-promotion", "feishu-reply-flow"],
+    receipts: ["external-channel-binding", "external-message-channel"],
   },
   {
     id: "skillopt_runtime_self_use_waterflow",
-    family: "skillopt_eval_to_lark_external_channel_preflight",
+    family: "skillopt_eval_to_external_message_channel_preflight",
     objective:
-      "Accepted SkillOpt SOPs from eval failures should enter the Lark/local reply planner as deterministic preflight context while model-weight absorption, adapter promotion, and user-visible-observed proof stay gated.",
+      "Accepted SkillOpt SOPs from eval failures should enter the External/local reply planner as deterministic preflight context while model-weight absorption, adapter promotion, and user-visible-observed proof stay gated.",
     start: "hardened_eval",
     end: "user_visible_observed",
     requiredNodes: [
@@ -318,7 +318,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "local_tests",
       "external_channel_binding",
       "channel_restart_probe",
-      "real_lark_inbound",
+      "real_external_inbound",
       "user_visible_observed",
     ],
     requiredFilters: [
@@ -329,7 +329,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "skillopt_external_channel_proof_required",
       "local_ready_not_user_visible_observed",
       "external_channel_probe_required",
-      "real_lark_inbound_required",
+      "real_external_inbound_required",
       "no_internal_runtime_details_visible",
     ],
     edges: [
@@ -340,11 +340,11 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["skillopt_runtime_preflight", "local_tests"],
       ["local_tests", "external_channel_binding"],
       ["external_channel_binding", "channel_restart_probe"],
-      ["channel_restart_probe", "real_lark_inbound"],
-      ["real_lark_inbound", "user_visible_observed"],
+      ["channel_restart_probe", "real_external_inbound"],
+      ["real_external_inbound", "user_visible_observed"],
     ],
     feedbackEdges: [
-      ["real_lark_inbound", "skillopt_runtime_preflight"],
+      ["real_external_inbound", "skillopt_runtime_preflight"],
       ["skillopt_candidate_edit", "failure_curriculum"],
     ],
     receipts: [
@@ -352,7 +352,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "skillopt-autocue",
       "lcx-governance-autopilot-latest",
       "lcx-external-channel-binding",
-      "feishu-reply-flow",
+      "external-message-channel",
     ],
   },
   {
@@ -473,14 +473,14 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
-    id: "lark_visible_language_waterflow",
-    family: "visible_lark_readability_and_language_boundary",
+    id: "external_visible_language_waterflow",
+    family: "visible_external_readability_and_language_boundary",
     objective:
-      "Lark/Feishu visible replies must route language, normalize display text, audit reply flow, and hide internal labels from the user.",
-    start: "ingress_lark_feishu",
+      "external message visible replies must route language, normalize display text, audit reply flow, and hide internal labels from the user.",
+    start: "ingress_external_message",
     end: "visible_reply",
     requiredNodes: [
-      "ingress_lark_feishu",
+      "ingress_external_message",
       "intent_classifier",
       "language_router",
       "local_brain_planner",
@@ -500,7 +500,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "local_ready_not_user_visible_observed",
     ],
     edges: [
-      ["ingress_lark_feishu", "intent_classifier"],
+      ["ingress_external_message", "intent_classifier"],
       ["intent_classifier", "language_router"],
       ["language_router", "local_brain_planner"],
       ["local_brain_planner", "control_room_summary"],
@@ -513,11 +513,11 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
     feedbackEdges: [["readability_review", "display_text_normalizer"]],
     receipts: [
-      "lark-language-handoff-receipt",
-      "lark-context-packet",
-      "feishu-reply-flow",
-      "normalizeFeishuDisplayText",
-      "lark-loop-diagnose",
+      "external-message-handoff-receipt",
+      "external-message-envelope",
+      "external-message-channel",
+      "normalizeExternalDisplayText",
+      "external-channel-status",
     ],
   },
   {
@@ -525,10 +525,10 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     family: "commercial_answer_adoption_and_failed_reason",
     objective:
       "A user-facing answer must move from language intake through planning, evidence gates, bounded local/Qwen/model review, and a terminal adoption gate instead of looping forever or treating a model answer as final authority.",
-    start: "ingress_lark_feishu",
+    start: "ingress_external_message",
     end: "visible_reply",
     requiredNodes: [
-      "ingress_lark_feishu",
+      "ingress_external_message",
       "intent_classifier",
       "local_brain_planner",
       "model_council",
@@ -565,7 +565,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "reply_flow_audit_required",
     ],
     edges: [
-      ["ingress_lark_feishu", "intent_classifier"],
+      ["ingress_external_message", "intent_classifier"],
       ["intent_classifier", "local_brain_planner"],
       ["local_brain_planner", "model_council"],
       ["model_council", "provider_evidence"],
@@ -585,10 +585,10 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
     receipts: [
       "commercial_answer_pipeline",
-      "lark_language_handoff_receipt",
-      "lark_context_packet",
+      "external_language_handoff_receipt",
+      "external_context_packet",
       "review_panel",
-      "feishu-reply-flow",
+      "external-message-channel",
     ],
   },
   {
@@ -628,7 +628,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     id: "commercial_acceptance_harness_waterflow",
     family: "commercial_product_acceptance_gate",
     objective:
-      "Commercial acceptance must grade real product readiness by consuming existing owner outputs, error budgets, and Lark external-channel canaries instead of fixing isolated red dots or becoming a new truth owner.",
+      "Commercial acceptance must grade real product readiness by consuming existing owner outputs, error budgets, and external message-channel canaries instead of fixing isolated red dots or becoming a new truth owner.",
     start: "local_operator_loop",
     end: "acceptance_eval",
     requiredNodes: [
@@ -641,7 +641,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "answer_audit_budget",
       "external_channel_binding",
       "channel_restart_probe",
-      "real_lark_inbound",
+      "real_external_inbound",
       "user_visible_observed",
       "acceptance_eval",
     ],
@@ -654,7 +654,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "provider_evidence_required",
       "local_ready_not_user_visible_observed",
       "external_channel_probe_required",
-      "real_lark_inbound_required",
+      "real_external_inbound_required",
     ],
     edges: [
       ["local_operator_loop", "system_doctor"],
@@ -665,8 +665,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       ["commercial_acceptance_harness", "answer_audit_budget"],
       ["commercial_acceptance_harness", "external_channel_binding"],
       ["external_channel_binding", "channel_restart_probe"],
-      ["channel_restart_probe", "real_lark_inbound"],
-      ["real_lark_inbound", "user_visible_observed"],
+      ["channel_restart_probe", "real_external_inbound"],
+      ["real_external_inbound", "user_visible_observed"],
       ["user_visible_observed", "acceptance_eval"],
       ["answer_audit_budget", "acceptance_eval"],
     ],
@@ -679,7 +679,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
       "commercial_answer_pipeline",
       "lcx-problem-cluster-radar",
       "live-promotion",
-      "feishu-reply-flow",
+      "external-message-channel",
     ],
   },
   {
@@ -785,7 +785,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     id: "finance_data_gateway_waterflow",
     family: "timestamped_finance_data_reconciliation",
     objective:
-      "Finance answers that use current, priced, fundamental, macro, ETF, options, or vendor numbers must pass through one data gateway that preserves timestamps, field definitions, and provider conflicts before Qwen, Lark, or memory can use the numbers.",
+      "Finance answers that use current, priced, fundamental, macro, ETF, options, or vendor numbers must pass through one data gateway that preserves timestamps, field definitions, and provider conflicts before Qwen, External, or memory can use the numbers.",
     start: "finance_research_modules",
     end: "control_room_summary",
     requiredNodes: [
@@ -1089,7 +1089,7 @@ const ILLEGAL_EDGES: Array<[string, string, string]> = [
   [
     "local_change",
     "user_visible_observed",
-    "local changes must not skip external-channel binding and real Lark proof",
+    "local changes must not skip external-channel binding and real External proof",
   ],
   ["source_intake", "keep_downrank_discard", "stored or read source must not skip internalization"],
   ["hardened_eval", "adapter_resolver", "eval must pass through promotion gate"],
@@ -1180,7 +1180,7 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
     id: "local_live_evidence_cluster",
     philosophy:
       "core-ready, external-channel-bound, and user-visible-observed are one boundary model; old live terms are legacy aliases",
-    ownerScenario: "local_to_external_channel_lark_waterflow",
+    ownerScenario: "local_to_external_channel_external_waterflow",
     ownerNode: "external_channel_binding",
     sameClassTerms: [
       "core-ready",
@@ -1189,7 +1189,7 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "legacy-live-runtime-updated",
       "legacy-live-user-seen",
     ],
-    mergeFilters: ["local_ready_not_user_visible_observed", "real_lark_inbound_required"],
+    mergeFilters: ["local_ready_not_user_visible_observed", "real_external_inbound_required"],
   },
   {
     id: "commercial_answer_pipeline_cluster",
@@ -1237,7 +1237,7 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
   {
     id: "commercial_acceptance_harness_cluster",
     philosophy:
-      "commercial acceptance is one product-grade exam that consumes owner outputs, error budgets, and Lark external-channel canaries without replacing those owners",
+      "commercial acceptance is one product-grade exam that consumes owner outputs, error budgets, and external message-channel canaries without replacing those owners",
     ownerScenario: "commercial_acceptance_harness_waterflow",
     ownerNode: "commercial_acceptance_harness",
     sameClassTerms: [
@@ -1245,7 +1245,7 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "product canary",
       "error budget",
       "readyForCommercialRelease",
-      "post_migration_lark_canary",
+      "post_migration_external_canary",
     ],
     mergeFilters: [
       "commercial_error_budget_required",
@@ -1421,38 +1421,40 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     ],
   },
   {
-    id: "lark_visible_reply_audit_entrypoints",
+    id: "external_visible_reply_audit_entrypoints",
     ownerCluster: "commercial_answer_pipeline_cluster",
-    ownerPath: "src/commands/capabilities/lark-loop-diagnose.ts",
+    ownerPath: "scripts/operator/lcx-external-channel-status.ts",
     watchedPathTerms: [
-      "lark-context-packet",
-      "lark-language-handoff",
+      "external-message-envelope",
+      "external-message-handoff",
       "reply-flow-audit",
-      "feishu-reply-flow-evidence",
-      "lark-loop-diagnose",
+      "answer-audit-policy",
+      "external-channel-status",
       "commercial-answer",
       "visible-answer-adoption",
       "skill-autocue",
       "skillopt-autocue",
     ],
     allowedPaths: [
-      "extensions/feishu/src/lark-context-packet.test.ts",
-      "extensions/feishu/src/lark-context-packet.ts",
-      "extensions/feishu/src/lark-language-handoff-receipts.test.ts",
-      "extensions/feishu/src/lark-language-handoff-receipts.ts",
-      "extensions/feishu/src/reply-flow-audit.ts",
-      "extensions/feishu/src/visible-answer-adoption-gate.test.ts",
-      "extensions/feishu/src/visible-answer-adoption-gate.ts",
-      "src/auto-reply/reply/feishu-reply-flow-evidence.test.ts",
-      "src/auto-reply/reply/feishu-reply-flow-evidence.ts",
+      "extensions/external/src/channel.ts",
+      "extensions/external/src/monitor.test.ts",
+      "extensions/external/src/monitor.ts",
+      "extensions/external/src/protocol.test.ts",
+      "extensions/external/src/protocol.ts",
+      "extensions/external/src/send.test.ts",
+      "extensions/external/src/send.ts",
+      "src/agents/answer-audit-policy.ts",
+      "src/agents/visible-answer-adoption-gate.test.ts",
+      "src/agents/visible-answer-adoption-gate.ts",
       "src/auto-reply/reply/get-reply-run.ts",
+      "src/auto-reply/reply/commands-protocol-info.test.ts",
+      "src/auto-reply/reply/commands-protocol-info.ts",
       "src/auto-reply/reply/skill-autocue.test.ts",
       "src/auto-reply/reply/skill-autocue.ts",
       "src/auto-reply/reply/skillopt-autocue.test.ts",
       "src/auto-reply/reply/skillopt-autocue.ts",
       "scripts/operator/lcx-commercial-answer-pipeline.ts",
-      "src/commands/capabilities.lark-loop-diagnose.test.ts",
-      "src/commands/capabilities/lark-loop-diagnose.ts",
+      "scripts/operator/lcx-external-channel-status.ts",
       "test/lcx-commercial-answer-pipeline.test.ts",
     ],
   },
@@ -1512,13 +1514,13 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     id: "local_live_evidence_entrypoints",
     ownerCluster: "local_live_evidence_cluster",
     ownerPath: "scripts/operator/lcx-external-channel-binding.ts",
-    watchedPathTerms: ["lcx-external-channel-compat", "live-promotion", "lark-loop-diagnose"],
+    watchedPathTerms: ["lcx-external-channel-compat", "external-channel-binding", "external-channel-status"],
     allowedPaths: [
       "scripts/operator/lcx-external-channel-binding.ts",
       "scripts/operator/lcx-external-channel-compat.ts",
-      "src/commands/capabilities.lark-loop-diagnose.test.ts",
-      "src/commands/capabilities/lark-loop-diagnose.ts",
+      "scripts/operator/lcx-external-channel-status.ts",
       "test/lcx-external-channel-compat-status.test.ts",
+      "test/lcx-external-channel-binding.test.ts",
     ],
   },
   {
@@ -1549,8 +1551,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     allowedPaths: [
       "scripts/operator/lcx-external-agent-upgrade-radar.ts",
       "test/lcx-external-agent-upgrade-radar.test.ts",
-      "extensions/feishu/src/learning-council.test.ts",
-      "extensions/feishu/src/learning-council.ts",
+      "src/agents/provider-learning-council.ts",
       "src/agents/openclaw-tools.github-project-capability-intake-registration.test.ts",
       "src/agents/tools/github-project-capability-intake-tool.test.ts",
       "src/agents/tools/github-project-capability-intake-tool.ts",
@@ -1598,19 +1599,13 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
     path: "scripts/operator/lcx-external-channel-binding.ts",
     familyIds: ["architecture_supervision_entrypoints", "local_live_evidence_entrypoints"],
     reason:
-      "external-channel binding is both part of architecture supervision and the current owner for Lark channel proof.",
+      "external-channel binding is both part of architecture supervision and the current owner for External channel proof.",
   },
   {
-    path: "src/commands/capabilities/lark-loop-diagnose.ts",
-    familyIds: ["local_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
+    path: "scripts/operator/lcx-external-channel-status.ts",
+    familyIds: ["local_live_evidence_entrypoints", "external_visible_reply_audit_entrypoints"],
     reason:
-      "lark-loop-diagnose is the intentional bridge between visible reply audit and worktree/external-channel evidence.",
-  },
-  {
-    path: "src/commands/capabilities.lark-loop-diagnose.test.ts",
-    familyIds: ["local_live_evidence_entrypoints", "lark_visible_reply_audit_entrypoints"],
-    reason:
-      "the lark-loop-diagnose test is the shared proof surface for visible reply audit and worktree/external-channel evidence.",
+      "external-channel status is the shared proof surface for visible answer audit and channel-boundary evidence.",
   },
   {
     path: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
@@ -1632,19 +1627,19 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
 ];
 
 const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
-  lark_finance_research_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
+  external_finance_research_waterflow: "scripts/operator/lcx-commercial-answer-pipeline.ts",
   directed_daily_research_brief_waterflow: "scripts/operator/lcx-directed-daily-research-brief.ts",
   module_learning_internalization_waterflow: "scripts/operator/module-learning-pipeline-review.ts",
   training_failure_feedback_waterflow: "scripts/operator/local-brain-training-plan.ts",
-  local_to_external_channel_lark_waterflow: "scripts/operator/lcx-external-channel-binding.ts",
+  local_to_external_channel_external_waterflow: "scripts/operator/lcx-external-channel-binding.ts",
   skillopt_runtime_self_use_waterflow: "scripts/operator/lcx-skillopt-lite.ts",
   compressed_context_recovery_waterflow: "scripts/operator/lcx-context-recovery-exam.ts",
   universe_index_total_coverage_waterflow: "scripts/operator/lcx-universe-index.ts",
   local_automation_digest_waterflow: "scripts/operator/lcx-governance-autopilot.ts",
-  lark_visible_language_waterflow: "src/commands/capabilities/lark-loop-diagnose.ts",
+  external_visible_language_waterflow: "src/agents/visible-answer-adoption-gate.ts",
   commercial_answer_pipeline_waterflow: "scripts/operator/lcx-commercial-answer-pipeline.ts",
   commercial_acceptance_harness_waterflow: "scripts/operator/lcx-commercial-acceptance-harness.ts",
-  provider_council_evidence_waterflow: "extensions/feishu/src/learning-council.ts",
+  provider_council_evidence_waterflow: "src/agents/provider-learning-council.ts",
   memory_correction_downrank_waterflow: "scripts/operator/lcx-system-memory-sedimentation-gate.ts",
   self_repair_hands_waterflow: "scripts/operator/lcx-self-repair-hands.ts",
   finance_data_gateway_waterflow: "src/agents/finance-data-gateway.ts",
@@ -1657,14 +1652,14 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
 };
 
 const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
-  lark_finance_research_waterflow: "node --import tsx scripts/operator/lcx-flow-graph.ts --json",
+  external_finance_research_waterflow: "node --import tsx scripts/operator/lcx-flow-graph.ts --json",
   directed_daily_research_brief_waterflow:
     "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
   module_learning_internalization_waterflow:
     "node --import tsx scripts/operator/module-learning-pipeline-review.ts --json",
   training_failure_feedback_waterflow:
     "node --import tsx scripts/operator/local-brain-training-plan.ts --json",
-  local_to_external_channel_lark_waterflow:
+  local_to_external_channel_external_waterflow:
     "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json",
   skillopt_runtime_self_use_waterflow:
     "node --import tsx scripts/operator/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json",
@@ -1674,8 +1669,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/operator/lcx-universe-index.ts --json",
   local_automation_digest_waterflow:
     "node --import tsx scripts/operator/lcx-governance-autopilot.ts --json",
-  lark_visible_language_waterflow:
-    "node --import tsx src/commands/capabilities/lark-loop-diagnose.ts --json",
+  external_visible_language_waterflow:
+    "node --import tsx scripts/operator/lcx-external-channel-status.ts --json",
   commercial_answer_pipeline_waterflow:
     "node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts --json",
   commercial_acceptance_harness_waterflow:
@@ -1728,8 +1723,10 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/operator/module-learning-pipeline-plan.ts",
     "scripts/operator/module-learning-pipeline-review.ts",
     "scripts/operator/lcx-external-channel-binding.ts",
-    "scripts/operator/lcx-external-channel-binding.ts",
-    "src/commands/capabilities/lark-loop-diagnose.ts",
+    "scripts/operator/lcx-external-channel-status.ts",
+    "extensions/external/src/channel.ts",
+    "extensions/external/src/monitor.ts",
+    "extensions/external/src/send.ts",
     "src/auto-reply/reply/get-reply-run.ts",
     "src/auto-reply/reply/skillopt-autocue.ts",
     "src/agents/finance-data-gateway.ts",

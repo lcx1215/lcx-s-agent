@@ -177,7 +177,7 @@ describe("LCX mind model god-view architecture check", () => {
         expect.objectContaining({ id: "canonical_ontology_registry", ok: true }),
         expect.objectContaining({ id: "module_learning_memory", ok: true }),
         expect.objectContaining({ id: "self_repair_hands", ok: true }),
-        expect.objectContaining({ id: "lark_feishu_live_boundary", ok: true }),
+        expect.objectContaining({ id: "external_message_channel_boundary", ok: true }),
         expect.objectContaining({ id: "flow_graph_waterflow_supervision", ok: true }),
         expect.objectContaining({ id: "skillopt_runtime_self_use", ok: true }),
         expect.objectContaining({ id: "universe_index_total_coverage", ok: true }),

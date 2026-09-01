@@ -11,46 +11,17 @@ import { resolveProtocolInfoQuestionKind } from "./commands-protocol-families.js
 import { buildProtocolInfoReply } from "./commands-protocol-info.js";
 import { buildStatusReply } from "./commands-status.js";
 import type { CommandHandler } from "./commands-types.js";
-import { summarizeRecentFeishuReplyFlowEvidence } from "./feishu-reply-flow-evidence.js";
-import { isFeishuFamilyChannel } from "./reply-routing-helpers.js";
-
-function shouldReadFeishuReplyFlowEvidence(params: {
-  kind: ReturnType<typeof resolveProtocolInfoQuestionKind>;
-  originatingChannel?: string;
-  provider?: string;
-}): boolean {
-  if (params.kind !== "status_readback") {
-    return false;
-  }
-  return isFeishuFamilyChannel(params.originatingChannel) || isFeishuFamilyChannel(params.provider);
-}
-
 export const handleHelpCommand: CommandHandler = async (params, allowTextCommands) => {
   if (!allowTextCommands) {
     return null;
   }
   const protocolKind = resolveProtocolInfoQuestionKind(params.command.commandBodyNormalized);
-  let feishuReplyFlowEvidence: string | undefined;
-  if (
-    shouldReadFeishuReplyFlowEvidence({
-      kind: protocolKind,
-      originatingChannel: params.ctx.OriginatingChannel ?? params.sessionEntry?.channel,
-      provider: params.provider,
-    })
-  ) {
-    try {
-      feishuReplyFlowEvidence = await summarizeRecentFeishuReplyFlowEvidence();
-    } catch (error) {
-      logVerbose(`Skipping Feishu protocol reply-flow evidence: ${String(error)}`);
-    }
-  }
   const protocolReply = buildProtocolInfoReply({
     text: params.command.commandBodyNormalized,
     cfg: params.cfg,
     provider: params.provider,
     model: params.model,
     sessionEntry: params.sessionEntry,
-    feishuReplyFlowEvidence,
   });
   const helpRequested = params.command.commandBodyNormalized === "/help" || Boolean(protocolReply);
   if (!helpRequested) {

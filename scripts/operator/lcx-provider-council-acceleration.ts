@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { runFeishuLearningCouncil } from "../../extensions/feishu/src/learning-council.ts";
+import { runExternalLearningCouncil } from "../../src/agents/provider-learning-council.js";
 import { loadConfig } from "../../src/config/config.js";
 import { DEFAULT_WORKSPACE_DIR, GOVERNANCE_AUTOPILOT_LATEST_PATH } from "./lcx-local-paths.ts";
 
@@ -478,7 +478,7 @@ async function runCouncil(prompt: string, options: CliOptions): Promise<string> 
   const messageId = `provider-council-acceleration-${new Date()
     .toISOString()
     .replaceAll(":", "-")}`;
-  return runFeishuLearningCouncil({
+  return runExternalLearningCouncil({
     cfg: loadConfig(),
     userMessage: prompt,
     routeAgentId: options.routeAgentId,

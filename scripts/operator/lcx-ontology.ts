@@ -27,8 +27,6 @@ const TASK_FAMILY_SOURCE_PATHS = [
   "scripts/operator/local-brain-distill-train-slice.ts",
   "scripts/operator/local-brain-generalization-harness.ts",
   "scripts/operator/minimax-brain-teacher-batch.ts",
-  "scripts/operator/lark-brain-distillation-teacher-batch.ts",
-  "extensions/feishu/src/lark-brain-distillation-candidates.ts",
   "scripts/operator/lcx-self-repair-hands.ts",
 ] as const;
 
@@ -176,14 +174,6 @@ const INTEGRATION_SURFACES = [
     ],
   },
   {
-    path: "extensions/feishu/src/lark-brain-distillation-candidates.ts",
-    terms: ["canonicalizeLcxOntologyValue", "control_room_planning"],
-  },
-  {
-    path: "scripts/operator/lark-brain-distillation-teacher-batch.ts",
-    terms: ["canonicalizeLcxOntologyValue"],
-  },
-  {
     path: "scripts/operator/minimax-brain-teacher-batch.ts",
     terms: ["canonicalizeLcxOntologyValue"],
   },
@@ -215,13 +205,6 @@ function extractTaskFamilies(sourcePath: string, source: string): string[] {
       /(?:^|\n)\s*(?:[\p{L}\p{N}_$]+\.)?(?:task_family|taskFamily)\s*(?::|=)\s*"([a-z0-9_]+)"/gu,
     ),
   ].map((match) => match[1]);
-  const candidateInferenceBlock =
-    sourcePath === "extensions/feishu/src/lark-brain-distillation-candidates.ts"
-      ? (source.match(/function inferTaskFamily[\s\S]*?\n\}\n/iu)?.[0] ?? "")
-      : "";
-  const candidateInferenceValues = [
-    ...candidateInferenceBlock.matchAll(/(?:return\s+|[?:]\s*)"([a-z0-9_]+)"/gu),
-  ].map((match) => match[1]);
   const minimaxPromptIds =
     sourcePath === "scripts/operator/minimax-brain-teacher-batch.ts"
       ? [
@@ -230,7 +213,7 @@ function extractTaskFamilies(sourcePath: string, source: string): string[] {
             .matchAll(/\bid:\s*"([a-z0-9_]+)"/gu) ?? []),
         ].map((match) => match[1])
       : [];
-  return unique([...fieldValues, ...candidateInferenceValues, ...minimaxPromptIds]);
+  return unique([...fieldValues, ...minimaxPromptIds]);
 }
 
 async function inspectIntegrationSurface(

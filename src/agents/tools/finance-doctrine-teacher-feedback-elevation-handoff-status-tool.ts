@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
-  buildFeishuFinanceDoctrineTeacherElevationHandoffsFilename,
-  buildFeishuFinanceDoctrineTeacherFeedbackFilename,
-  buildFeishuFinanceDoctrineTeacherReviewFilename,
-  parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact,
-  renderFeishuFinanceDoctrineTeacherElevationHandoffArtifact,
+  buildExternalFinanceDoctrineTeacherElevationHandoffsFilename,
+  buildExternalFinanceDoctrineTeacherFeedbackFilename,
+  buildExternalFinanceDoctrineTeacherReviewFilename,
+  parseExternalFinanceDoctrineTeacherElevationHandoffArtifact,
+  renderExternalFinanceDoctrineTeacherElevationHandoffArtifact,
 } from "../../hooks/bundled/lobster-brain-registry.js";
 import { stringEnum } from "../schema/typebox.js";
 import { resolveWorkspaceRoot } from "../workspace-dir.js";
@@ -59,8 +59,8 @@ export function createFinanceDoctrineTeacherFeedbackElevationHandoffStatusTool(o
       const handoffRelPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherElevationHandoffsFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherElevationHandoffsFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       const handoffAbsPath = path.join(workspaceDir, handoffRelPath);
@@ -85,7 +85,7 @@ export function createFinanceDoctrineTeacherFeedbackElevationHandoffStatusTool(o
       }
 
       const parsedHandoffs =
-        parseFeishuFinanceDoctrineTeacherElevationHandoffArtifact(handoffContent);
+        parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(handoffContent);
       if (!parsedHandoffs) {
         return jsonResult({
           ok: false,
@@ -102,15 +102,15 @@ export function createFinanceDoctrineTeacherFeedbackElevationHandoffStatusTool(o
       const expectedTeacherFeedbackPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherFeedbackFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherFeedbackFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       const expectedTeacherReviewPath = path
         .join(
           "memory",
-          "feishu-work-receipts",
-          buildFeishuFinanceDoctrineTeacherReviewFilename(dateKey),
+          "external-work-receipts",
+          buildExternalFinanceDoctrineTeacherReviewFilename(dateKey),
         )
         .replace(/\\/gu, "/");
       if (
@@ -169,7 +169,7 @@ export function createFinanceDoctrineTeacherFeedbackElevationHandoffStatusTool(o
 
       await fs.writeFile(
         handoffAbsPath,
-        renderFeishuFinanceDoctrineTeacherElevationHandoffArtifact({
+        renderExternalFinanceDoctrineTeacherElevationHandoffArtifact({
           ...parsedHandoffs,
           handoffs: nextHandoffs,
         }),

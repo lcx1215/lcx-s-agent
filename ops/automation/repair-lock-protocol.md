@@ -36,7 +36,7 @@ node --import tsx scripts/operator/lcx-automation-repair-lock.ts \
 ```
 
 The lock is not a training lock. It must not stop MiniMax/Qwen training, quota saturation,
-read-only doctor checks, Lark evidence checks, or health dashboards. It only gates write-mode
+read-only doctor checks, external-channel evidence checks, or health dashboards. It only gates write-mode
 automation repair.
 
 Never claim a repair happened if the lock was not acquired.

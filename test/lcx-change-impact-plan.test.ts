@@ -305,7 +305,7 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
-  it("routes SkillOpt runtime self-use hooks to the Lark visible reply lane", async () => {
+  it("routes SkillOpt runtime self-use hooks to the External visible reply lane", async () => {
     const payload = await runPlanArgs([
       "--files",
       "src/auto-reply/reply/get-reply-run.ts",
@@ -315,12 +315,12 @@ describe("lcx-change-impact-plan", () => {
 
     expect(payload.ok).toBe(true);
     expect(payload.unmatchedFiles).toEqual([]);
-    expect(payload.affectedLanes).toEqual(["lark_feishu_visible_reply", "test_surface"]);
+    expect(payload.affectedLanes).toEqual(["external_message_visible_reply", "test_surface"]);
     expect(payload.impacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "lark_feishu_visible_surface",
-          lane: "lark_feishu_visible_reply",
+          id: "external_message_visible_surface",
+          lane: "external_message_visible_reply",
           matchedFiles: [
             "src/auto-reply/reply/get-reply-run.ts",
             "src/auto-reply/reply/skillopt-autocue.test.ts",
@@ -339,7 +339,7 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
-  it("routes commercial visible answer quality owners to the Lark visible reply lane", async () => {
+  it("routes commercial visible answer quality owners to the External visible reply lane", async () => {
     const payload = await runPlanArgs([
       "--files",
       "scripts/operator/lcx-commercial-answer-pipeline.ts",
@@ -349,12 +349,12 @@ describe("lcx-change-impact-plan", () => {
 
     expect(payload.ok).toBe(true);
     expect(payload.unmatchedFiles).toEqual([]);
-    expect(payload.affectedLanes).toEqual(["lark_feishu_visible_reply", "test_surface"]);
+    expect(payload.affectedLanes).toEqual(["external_message_visible_reply", "test_surface"]);
     expect(payload.impacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "lark_feishu_visible_surface",
-          lane: "lark_feishu_visible_reply",
+          id: "external_message_visible_surface",
+          lane: "external_message_visible_reply",
           matchedFiles: [
             "scripts/operator/lcx-commercial-answer-pipeline.ts",
             "scripts/operator/lcx-visible-answer-quality-fuzzer.ts",
@@ -428,7 +428,7 @@ describe("lcx-change-impact-plan", () => {
           requiredChecks: ["macos-control-room-build-or-test"],
           safetyNotes: expect.arrayContaining([
             expect.stringContaining(
-              "do not treat them as external-channel or legacy live Lark proof",
+              "do not treat them as external-channel or legacy live External proof",
             ),
           ]),
         }),

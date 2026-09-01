@@ -119,8 +119,8 @@ const CASES: OpenEvalCase[] = [
     requiredMissingData: ["position_weights_and_return_series"],
   },
   {
-    id: "lark_context_pollution_ops_first",
-    ask: "它刚才又像串到旧任务了，先审计是不是 Lark 上下文污染，不要继续金融分析。",
+    id: "external_context_pollution_ops_first",
+    ask: "它刚才又像串到旧任务了，先审计是不是 External 上下文污染，不要继续金融分析。",
     sourceSummary: "open eval ops audit request, explicitly not a finance research request.",
     requiredModules: ["ops_audit"],
     forbiddenModules: [
@@ -322,7 +322,7 @@ function evaluatePlan(plan: Record<string, unknown>, evalCase: OpenEvalCase) {
   const rejectedContext = stringArray(plan.rejected_context);
   const boundaryOk =
     riskBoundaries.includes("research_only") || riskBoundaries.includes("no_execution_authority");
-  const oldContextRejected = rejectedContext.includes("old_lark_conversation_history");
+  const oldContextRejected = rejectedContext.includes("old_external_conversation_history");
   return {
     ok:
       missingKeys.length === 0 &&
@@ -380,7 +380,7 @@ const result = {
     "external_channel_sender",
     "provider_config",
     "protected_repo_memory",
-    "formal_lark_routing_corpus",
+    "formal_external_routing_corpus",
     "finance_doctrine",
   ],
   cases: caseResults,

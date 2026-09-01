@@ -28,7 +28,6 @@ const MINIMAX_GUARD_LOG = DEFAULT_GUARD_LOG_PATH;
 const LEARNING_COUNCIL_DIR = path.join(WORKSPACE_DIR, "bank", "knowledge", "learning-councils");
 const REVIEW_PANEL_RECEIPT_DIR = path.join(WORKSPACE_DIR, "memory", "review-panel-receipts");
 const MODEL_COUNCIL_AUDIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-const LIVE_LARK_DIAGNOSE_TIMEOUT_MS = 30_000;
 const DEFAULT_LIVE_CHANNEL_PROBE_TIMEOUT_MS = 90_000;
 const LIVE_CHANNEL_PROBE_TIMEOUT_MS = resolvePositiveTimeout(
   process.env.LIVE_CHANNEL_PROBE_TIMEOUT_MS,
@@ -360,10 +359,10 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
         ? (payload.decision as Record<string, unknown>)
         : {};
     const liveBinding =
-      payload.liveLarkBrainBinding &&
-      typeof payload.liveLarkBrainBinding === "object" &&
-      !Array.isArray(payload.liveLarkBrainBinding)
-        ? (payload.liveLarkBrainBinding as Record<string, unknown>)
+      payload.liveExternalBrainBinding &&
+      typeof payload.liveExternalBrainBinding === "object" &&
+      !Array.isArray(payload.liveExternalBrainBinding)
+        ? (payload.liveExternalBrainBinding as Record<string, unknown>)
         : {};
     const externalChannelBinding =
       payload.externalChannelBinding &&
@@ -566,9 +565,6 @@ function summarizeJson(name: string, payload: Record<string, unknown>): Record<s
       adapterSelectionStatus: payload.adapterSelectionStatus,
     };
   }
-  if (name === "lark-loop-diagnose" || name === "channels-status-probe") {
-    return payload;
-  }
   return payload;
 }
 
@@ -680,8 +676,8 @@ async function minimaxTrainingGuardStatusCheck(): Promise<CheckResult> {
         latestCandidateEval: plan.latestCandidateEval,
         qwenCapabilityConsolidation: plan.qwenCapabilityConsolidation,
         externalChannelBinding: plan.externalChannelBinding,
-        legacyLiveLarkBrainBinding: plan.liveLarkBrainBinding,
-        liveLarkBrainBinding: plan.liveLarkBrainBinding,
+        legacyLiveExternalBrainBinding: plan.liveExternalBrainBinding,
+        liveExternalBrainBinding: plan.liveExternalBrainBinding,
         evolutionAccelerationQueue: plan.evolutionAccelerationQueue,
         latestPromotionAt: plan.latestPromotionAt,
         latestPromotedAdapter: plan.latestPromotedAdapter,
@@ -755,8 +751,8 @@ function localBrainCurrentAdapterFromTrainingPlan(trainingPlanCheck: CheckResult
       latestPassingEval,
       latestPromotedAdapter: trainingPlanCheck.summary.latestPromotedAdapter,
       externalChannelBinding: trainingPlanCheck.summary.externalChannelBinding,
-      legacyLiveLarkBrainBinding: trainingPlanCheck.summary.legacyLiveLarkBrainBinding,
-      liveLarkBrainBinding: trainingPlanCheck.summary.liveLarkBrainBinding,
+      legacyLiveExternalBrainBinding: trainingPlanCheck.summary.legacyLiveExternalBrainBinding,
+      liveExternalBrainBinding: trainingPlanCheck.summary.liveExternalBrainBinding,
       selectionMode: "training-plan-latest-passing",
       liveTouched: false,
       providerConfigTouched: false,
@@ -1003,9 +999,7 @@ async function entrypointCheck(): Promise<CheckResult> {
   const startedAt = Date.now();
   const entries = [
     "scripts/operator/agent-system-loop-smoke.ts",
-    "scripts/operator/lark-brain-language-loop-smoke.ts",
-    "scripts/operator/lark-brain-distillation-candidate-smoke.ts",
-    "scripts/operator/lark-brain-distillation-review.ts",
+    "scripts/operator/lcx-external-short-intent-fuzzer.ts",
     "scripts/operator/finance-learning-pipeline-smoke.ts",
     "scripts/operator/local-brain-distill-dataset.ts",
     "scripts/operator/local-brain-distill-smoke.ts",
@@ -1029,7 +1023,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/operator/lcx-mind-model.ts",
     "scripts/operator/module-learning-pipeline-review.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
-    "src/commands/capabilities/lark-loop-diagnose.ts",
+    "scripts/operator/lcx-external-channel-status.ts",
   ];
   const missing = [];
   for (const entry of entries) {
@@ -1170,22 +1164,14 @@ checks.push(
 const trainingGuardCheck = await minimaxTrainingGuardStatusCheck();
 checks.push(trainingGuardCheck);
 checks.push(await modelCouncilProviderEvidenceCheck());
-checks.push(
-  await runCommand({
-    name: "brain-distillation-candidate-smoke",
-    command: process.execPath,
-    args: ["--import", "tsx", "scripts/operator/lark-brain-distillation-candidate-smoke.ts"],
-    parseJson: true,
-  }),
-);
-checks.push(
-  await runCommand({
-    name: "brain-distillation-review-dry-run",
-    command: process.execPath,
-    args: ["--import", "tsx", "scripts/operator/lark-brain-distillation-review.ts", "--json"],
-    parseJson: true,
-  }),
-);
+  checks.push(
+    await runCommand({
+      name: "external-channel-status",
+      command: process.execPath,
+      args: ["--import", "tsx", "scripts/operator/lcx-external-channel-status.ts", "--json"],
+      parseJson: true,
+    }),
+  );
 checks.push(
   await runCommand({
     name: "local-brain-dataset",
@@ -1270,11 +1256,6 @@ if (options.deep) {
 }
 
 if (options.live) {
-  const liveLarkDiagnose = await liveOpenClawInvocation([
-    "capabilities",
-    "lark-loop-diagnose",
-    "--json",
-  ]);
   const liveChannelProbe = await liveOpenClawInvocation([
     "channels",
     "status",
@@ -1283,16 +1264,6 @@ if (options.live) {
     "--timeout",
     String(LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS),
   ]);
-  checks.push(
-    await runCommand({
-      name: "lark-loop-diagnose",
-      command: liveLarkDiagnose.command,
-      args: liveLarkDiagnose.args,
-      cwd: liveLarkDiagnose.cwd,
-      parseJson: true,
-      timeoutMs: LIVE_LARK_DIAGNOSE_TIMEOUT_MS,
-    }),
-  );
   checks.push(
     await runCommand({
       name: "channels-status-probe",
@@ -1304,7 +1275,6 @@ if (options.live) {
     }),
   );
 } else {
-  checks.push(skipped("lark-loop-diagnose", "use --live; default doctor does not touch live Lark"));
   checks.push(
     skipped("channels-status-probe", "use --live; default doctor does not probe live channels"),
   );

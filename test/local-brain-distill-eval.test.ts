@@ -287,7 +287,7 @@ describe("local-brain-distill-eval", () => {
           targetCaseCount: 50,
         }),
         expect.objectContaining({
-          id: "lark_short_intake",
+          id: "external_short_intake",
           currentCaseCount: expect.any(Number),
           targetCaseCount: 30,
         }),
@@ -379,7 +379,7 @@ describe("local-brain-distill-eval", () => {
           missing_data: [],
           risk_boundaries: ["research_only"],
           next_step: "route_to_review",
-          rejected_context: ["old_lark_conversation_history"],
+          rejected_context: ["old_external_conversation_history"],
         }),
         "trailing explanation with an unmatched { that must not poison parsing",
         "EOF",
@@ -632,7 +632,7 @@ describe("local-brain-distill-eval", () => {
         "#!/bin/sh",
         'printf "%s\\n" "$@" >> "$EVAL_FAKE_PYTHON_LOG"',
         "cat <<'JSON'",
-        '{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":[],"required_tools":["finance_learning_memory"],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_lark_conversation_history"]}',
+        '{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":[],"required_tools":["finance_learning_memory"],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_external_conversation_history"]}',
         "JSON",
       ].join("\n"),
       { mode: 0o755 },
@@ -693,7 +693,7 @@ describe("local-brain-distill-eval", () => {
         "missing_data: ['source_url_or_local_source_path','actual_reading_scope','module_learning_pipeline_review_status'],",
         "risk_boundaries: ['research_only','no_protected_memory_write'],",
         "next_step: 'route_to_review',",
-        "rejected_context: ['old_lark_conversation_history']",
+        "rejected_context: ['old_external_conversation_history']",
         "}));",
       ].join("\n"),
       { mode: 0o755 },
@@ -770,7 +770,7 @@ describe("local-brain-distill-eval", () => {
         "missing_data: ['current_total_assets_and_position_size','position_weights_cost_basis_and_risk_limits','position_weights_and_return_series','portfolio_weights_and_risk_limits','latest_10q_10k_or_earnings_release','latest_company_fundamental_inputs','revenue_quality_margin_fcf_roic_and_balance_sheet_inputs','valuation_range_and_margin_of_safety_inputs','original_example','abstracted_failure_family','adjacent_non_identical_scenario','shared_contract','regression_proof','hidden_workflow_scope','user_visible_summary_contract','market_scope_and_time_window','fresh_market_data_snapshot','source_timestamp_and_vendor','price_volume_breadth_and_technical_regime_inputs'],",
         "risk_boundaries: ['research_only','no_model_math_guessing','risk_gate_before_action_language','position_sizing_requires_user_constraints_and_risk_budget','no_unverified_filing_claims','no_trade_advice','do_not_answer_literal_short_phrase_only','do_not_stop_at_original_example','proof_required_before_claiming_transfer','no_raw_json_visible_reply','no_unverified_current_market_data','technical_timing_not_standalone_alpha'],",
         "next_step: 'route_to_review',",
-        "rejected_context: ['old_lark_conversation_history']",
+        "rejected_context: ['old_external_conversation_history']",
         "}));",
       ].join("\n"),
       { mode: 0o755 },
@@ -843,12 +843,12 @@ describe("local-brain-distill-eval", () => {
         "const fs = require('node:fs');",
         "fs.appendFileSync(process.env.EVAL_FAKE_PYTHON_LOG, `${JSON.stringify(process.argv.slice(2))}\\n`);",
         "const prompt = process.argv[process.argv.indexOf('--prompt') + 1] || '';",
-        "if (prompt.includes('去学习这篇金融论文并沉淀成规则')) { console.log(JSON.stringify({task_family:'external_source_missing_url',primary_modules:['finance_learning_memory','source_registry'],supporting_modules:[],required_tools:[],missing_data:['source_url_or_local_source_path'],risk_boundaries:['research_only'],next_step:'request_source',rejected_context:['old_lark_conversation_history']})); process.exit(0); }",
+        "if (prompt.includes('去学习这篇金融论文并沉淀成规则')) { console.log(JSON.stringify({task_family:'external_source_missing_url',primary_modules:['finance_learning_memory','source_registry'],supporting_modules:[],required_tools:[],missing_data:['source_url_or_local_source_path'],risk_boundaries:['research_only'],next_step:'request_source',rejected_context:['old_external_conversation_history']})); process.exit(0); }",
         "const parseList = (label) => { const match = new RegExp(`${label}: ([^\\\\n.]+)`).exec(prompt); return match ? match[1].split(',').map((item) => item.trim()).filter(Boolean) : []; };",
         "const modules = parseList('Recommended module ids for this case');",
         "const missing = parseList('Required missing_data ids for this case');",
         "const risk = ['research_only', ...parseList('Required risk_boundaries for this case').filter((item) => item !== 'research_only')];",
-        "console.log(JSON.stringify({task_family:'parse_stability_eval',primary_modules:modules.slice(0,8),supporting_modules:modules.slice(8,14),required_tools:modules.slice(14,20),missing_data:missing,risk_boundaries:risk,next_step:'route_to_review',rejected_context:['old_lark_conversation_history']}));",
+        "console.log(JSON.stringify({task_family:'parse_stability_eval',primary_modules:modules.slice(0,8),supporting_modules:modules.slice(8,14),required_tools:modules.slice(14,20),missing_data:missing,risk_boundaries:risk,next_step:'route_to_review',rejected_context:['old_external_conversation_history']}));",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -864,7 +864,7 @@ describe("local-brain-distill-eval", () => {
           "--python",
           fakePython,
           "--case-id",
-          "core_options_event_boundary_02,core_thesis_catalyst_lifecycle_06,research_artifact_qc_expansion_03,broad_finance_module_taxonomy_coverage,private_credit_nonbank_leverage_stress_waterflow,short_lark_commodity_scope_01,short_lark_commodity_scope_04,external_knowledge_expansion_04,adversarial_scenario_no_guess_02",
+          "core_options_event_boundary_02,core_thesis_catalyst_lifecycle_06,research_artifact_qc_expansion_03,broad_finance_module_taxonomy_coverage,private_credit_nonbank_leverage_stress_waterflow,short_external_commodity_scope_01,short_external_commodity_scope_04,external_knowledge_expansion_04,adversarial_scenario_no_guess_02",
           "--summary-only",
           "--json",
         ],
@@ -914,7 +914,7 @@ describe("local-brain-distill-eval", () => {
         "fs.appendFileSync(argLog, `${JSON.stringify(process.argv.slice(2))}\\n`);",
         "const prompt = process.argv[process.argv.indexOf('--prompt') + 1] || '';",
         "if (prompt.includes('Recommended module ids for this case') || prompt.includes('Required missing_data ids for this case') || prompt.includes('Required risk_boundaries for this case') || prompt.includes('Relevant compact contract hints')) process.exit(23);",
-        "console.log(JSON.stringify({task_family:'portfolio_research_preflight',primary_modules:['macro_rates_inflation','credit_liquidity','etf_regime','company_fundamentals_value','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:[],risk_boundaries:['research_only'],next_step:'route_to_review',rejected_context:['old_lark_conversation_history']}));",
+        "console.log(JSON.stringify({task_family:'portfolio_research_preflight',primary_modules:['macro_rates_inflation','credit_liquidity','etf_regime','company_fundamentals_value','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:[],risk_boundaries:['research_only'],next_step:'route_to_review',rejected_context:['old_external_conversation_history']}));",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -1175,7 +1175,7 @@ describe("local-brain-distill-eval", () => {
         "const prompt = process.argv[process.argv.indexOf('--prompt') + 1] || '';",
         "fs.appendFileSync(argLog, `${JSON.stringify(process.argv.slice(2))}\\n`);",
         "if (prompt.includes('commodity_curve_roll_yield_and_inventory_inputs') || prompt.includes('ac:commodity') || prompt.includes('generated held-out case') || prompt.includes('source_summary:')) process.exit(23);",
-        "console.log(JSON.stringify({task_family:'commodity_research_preflight',primary_modules:['commodities_oil_gold','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:['commodity_curve_roll_yield_and_inventory_inputs'],risk_boundaries:['research_only','commodity_framework_not_trade_signal'],next_step:'request_missing_inputs',rejected_context:['old_lark_conversation_history']}));",
+        "console.log(JSON.stringify({task_family:'commodity_research_preflight',primary_modules:['commodities_oil_gold','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:['commodity_curve_roll_yield_and_inventory_inputs'],risk_boundaries:['research_only','commodity_framework_not_trade_signal'],next_step:'request_missing_inputs',rejected_context:['old_external_conversation_history']}));",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -1366,7 +1366,7 @@ describe("local-brain-distill-eval", () => {
       fakePython,
       [
         "#!/usr/bin/env node",
-        "process.stdout.write('prefix ' + JSON.stringify({task_family:'portfolio_research_preflight',primary_modules:['macro_rates_inflation','credit_liquidity','etf_regime','company_fundamentals_value','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:[],risk_boundaries:['research_only'],next_step:'route_to_review',rejected_context:['old_lark_conversation_history']}) + ' suffix');",
+        "process.stdout.write('prefix ' + JSON.stringify({task_family:'portfolio_research_preflight',primary_modules:['macro_rates_inflation','credit_liquidity','etf_regime','company_fundamentals_value','portfolio_risk_gates'],supporting_modules:[],required_tools:[],missing_data:[],risk_boundaries:['research_only'],next_step:'route_to_review',rejected_context:['old_external_conversation_history']}) + ' suffix');",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -1430,7 +1430,7 @@ describe("local-brain-distill-eval", () => {
         '  process.stdout.write(\'{"task_family":"scenario_probability_gate","primary_modules":["macro_rates_inflation"\');',
         "  process.exit(0);",
         "}",
-        "console.log(JSON.stringify({task_family:'parse_retry_contract',primary_modules:modules.slice(0,8),supporting_modules:modules.slice(8,14),required_tools:modules.slice(14,20),missing_data:missing,risk_boundaries:risk,next_step:'route_to_review',rejected_context:['old_lark_conversation_history']}));",
+        "console.log(JSON.stringify({task_family:'parse_retry_contract',primary_modules:modules.slice(0,8),supporting_modules:modules.slice(8,14),required_tools:modules.slice(14,20),missing_data:missing,risk_boundaries:risk,next_step:'route_to_review',rejected_context:['old_external_conversation_history']}));",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -1535,7 +1535,7 @@ describe("local-brain-distill-eval", () => {
         "missing_data: ['fresh_market_data_snapshot'],",
         "risk_boundaries: ['research_only'],",
         "next_step: 'request_missing_inputs',",
-        "rejected_context: ['old_lark_conversation_history']",
+        "rejected_context: ['old_external_conversation_history']",
         "}));",
       ].join("\n"),
       { mode: 0o755 },
@@ -1631,7 +1631,7 @@ describe("local-brain-distill-eval", () => {
         "missing_data: ['crypto_liquidity_volatility_custody_and_regulatory_inputs','fresh_market_data_snapshot','portfolio_weights_and_risk_limits'],",
         "risk_boundaries: ['research_only','no_high_leverage_crypto','no_unverified_cross_market_claims'],",
         "next_step: 'route_to_review',",
-        "rejected_context: ['old_lark_conversation_history']",
+        "rejected_context: ['old_external_conversation_history']",
         "}));",
       ].join("\n"),
       { mode: 0o755 },
@@ -1696,7 +1696,7 @@ describe("local-brain-distill-eval", () => {
       fakePython,
       [
         "#!/usr/bin/env node",
-        'process.stdout.write(\'{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":["company_fundamentals_value","portfolio_risk_gates"],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_lark_conversation_history"]\');',
+        'process.stdout.write(\'{"task_family":"finance_research_planning","primary_modules":["macro_rates_inflation","credit_liquidity","etf_regime"],"supporting_modules":["company_fundamentals_value","portfolio_risk_gates"],"required_tools":[],"missing_data":[],"risk_boundaries":["research_only"],"next_step":"route_to_review","rejected_context":["old_external_conversation_history"]\');',
         "setInterval(() => {}, 1000);",
       ].join("\n"),
       { mode: 0o755 },
@@ -1781,7 +1781,7 @@ describe("local-brain-distill-eval", () => {
         "missing_data: ['fresh_market_data_snapshot'],",
         "risk_boundaries: ['research_only'],",
         "next_step: 'request_missing_inputs',",
-        "rejected_context: ['old_lark_conversation_history']",
+        "rejected_context: ['old_external_conversation_history']",
         "}));",
       ].join("\n"),
       { mode: 0o755 },
@@ -1899,7 +1899,7 @@ describe("local-brain-distill-eval", () => {
         "    missing_data: ['position_weights_and_return_series','portfolio_weights_and_risk_limits','current_rates_and_inflation_inputs'],",
         "    risk_boundaries: ['research_only','no_model_math_guessing','no_trade_advice'],",
         "    next_step: 'request_missing_inputs',",
-        "    rejected_context: ['old_lark_conversation_history']",
+        "    rejected_context: ['old_external_conversation_history']",
         "  }));",
         "}",
       ].join("\n"),
@@ -2029,13 +2029,13 @@ describe("local-brain-distill-eval", () => {
       requestedCaseIds: ["commodity_fx_inflation_inventory_portfolio_loop"],
       autoIncludedPrerequisiteCaseIds: [
         "plain_language_hidden_complexity_intake",
-        "short_lark_commodity_learning_intake",
+        "short_external_commodity_learning_intake",
       ],
     });
     expect(payload.hierarchy.registeredPrerequisiteRuleCount).toBeGreaterThan(10);
     expect(payload.cases.map((entry) => entry.id)).toEqual([
       "plain_language_hidden_complexity_intake",
-      "short_lark_commodity_learning_intake",
+      "short_external_commodity_learning_intake",
       "commodity_fx_inflation_inventory_portfolio_loop",
     ]);
     expect(payload.cases.every((entry) => entry.acceptance.ok)).toBe(true);
@@ -2425,8 +2425,8 @@ describe("local-brain-distill-eval", () => {
     expect(payload.hierarchy.autoIncludedPrerequisiteCaseIds).toEqual(
       expect.arrayContaining([
         "plain_language_hidden_complexity_intake",
-        "short_lark_commodity_learning_intake",
-        "lark_context_pollution_audit",
+        "short_external_commodity_learning_intake",
+        "external_context_pollution_audit",
       ]),
     );
     expect(payload.summary.total).toBeGreaterThanOrEqual(3);

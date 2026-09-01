@@ -11,7 +11,7 @@ function receipt(i: number): DistillExample {
   return {
     prompt: `receipt prompt ${i}`,
     completion: JSON.stringify({ task_family: "x", primary_modules: [] }),
-    meta: { sourcePath: `feishu-work-receipts/${i}.md`, sourceKind: "feishu_work_receipt" },
+    meta: { sourcePath: `external-work-receipts/${i}.md`, sourceKind: "external_work_receipt" },
   };
 }
 

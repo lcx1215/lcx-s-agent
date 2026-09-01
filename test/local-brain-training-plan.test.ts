@@ -540,7 +540,7 @@ describe("local-brain-training-plan", () => {
             passRate: 0.986,
             failedCaseIds: ["index_concentration_mag7_portfolio_risk"],
             parseErrorCaseIds: ["index_concentration_mag7_portfolio_risk"],
-            parseRecoveredCaseIds: ["short_lark_commodity_scope_01"],
+            parseRecoveredCaseIds: ["short_external_commodity_scope_01"],
             promotionReady: false,
           },
         },
@@ -574,11 +574,11 @@ describe("local-brain-training-plan", () => {
       sourceBlockedAdapter: "/tmp/adapter-r8",
       targetedEvalFirstCaseIds: [
         "index_concentration_mag7_portfolio_risk",
-        "short_lark_commodity_scope_01",
+        "short_external_commodity_scope_01",
       ],
     });
     expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
-      "--case-id index_concentration_mag7_portfolio_risk,short_lark_commodity_scope_01",
+      "--case-id index_concentration_mag7_portfolio_risk,short_external_commodity_scope_01",
     );
     expect(plan.qwenCapabilityConsolidation.capabilityHarvest.targetedEvalCommand).toContain(
       "--adapter '/tmp/adapter-r8'",
@@ -887,7 +887,7 @@ describe("local-brain-training-plan", () => {
     );
   });
 
-  it("surfaces the Lark external-channel binding gate for the selected clean adapter", async () => {
+  it("surfaces the external message-channel binding gate for the selected clean adapter", async () => {
     const guardLogPath = await writeJsonl("lcx-training-plan-guard-", [
       {
         at: "2026-05-09T09:40:00.000Z",
@@ -932,14 +932,14 @@ describe("local-brain-training-plan", () => {
 
     expect(plan.externalChannelBinding).toMatchObject({
       boundary: "local_external_channel_binding_plan_only",
-      channel: "lark",
+      channel: "external",
       role: "owner_agent_communication_medium",
-      objective: "lark_receives_current_best_verified_lcx_agent_answer",
+      objective: "external_receives_current_best_verified_lcx_agent_answer",
       selectedCleanAdapter: "/tmp/adapter-clean-r2",
       activeTrainingOrEval: false,
       status: "ready_for_apply",
-      action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
-      bindingPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path",
+      action: "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
+      bindingPolicy: "external_transport_may_only_route_to_selected_clean_answer_path",
       userVisibleObserved: false,
       liveTouched: false,
       providerConfigTouched: false,
@@ -948,48 +948,48 @@ describe("local-brain-training-plan", () => {
     expect(plan.externalChannelBinding.missingProof).toEqual(
       expect.arrayContaining([
         "external_channel_source_drift_zero_after_selected_adapter",
-        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+        "fresh_real_external_inbound_and_outbound_user_visible_observed",
       ]),
     );
     expect(plan.externalChannelBinding.legacyLiveCompatibility).toMatchObject({
-      liveLarkBrainBinding: "legacy_compatibility_field",
+      liveExternalBrainBinding: "legacy_compatibility_field",
       legacyStatus: "ready_for_live_runtime_binding",
     });
-    expect(plan.liveLarkBrainBinding).toMatchObject({
-      boundary: "local_live_lark_brain_binding_plan_only",
+    expect(plan.liveExternalBrainBinding).toMatchObject({
+      boundary: "local_live_external_brain_binding_plan_only",
       conceptStatus: "legacy_live_terms_external_channel_owner_current",
       externalChannel: {
         boundary: "local_external_channel_binding_plan_only",
-        channel: "lark",
+        channel: "external",
         role: "owner_agent_communication_medium",
-        objective: "lark_receives_current_best_verified_lcx_agent_answer",
+        objective: "external_receives_current_best_verified_lcx_agent_answer",
       },
       selectedCleanAdapter: "/tmp/adapter-clean-r2",
       activeTrainingOrEval: false,
       guardUsesSelectedCleanAdapter: true,
       status: "ready_for_live_runtime_binding",
-      action: "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
-      externalChannelPolicy: "lark_transport_may_only_route_to_selected_clean_answer_path",
+      action: "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
+      externalChannelPolicy: "external_transport_may_only_route_to_selected_clean_answer_path",
       liveTouched: false,
       providerConfigTouched: false,
       protectedMemoryTouched: false,
     });
-    expect(plan.liveLarkBrainBinding.missingProof).toEqual(
+    expect(plan.liveExternalBrainBinding.missingProof).toEqual(
       expect.arrayContaining([
         "live_sidecar_source_drift_zero_after_selected_adapter",
-        "fresh_real_lark_inbound_and_outbound_seen",
+        "fresh_real_external_inbound_and_outbound_seen",
       ]),
     );
-    expect(plan.liveLarkBrainBinding.externalChannelMissingProof).toEqual(
+    expect(plan.liveExternalBrainBinding.externalChannelMissingProof).toEqual(
       expect.arrayContaining([
         "external_channel_source_drift_zero_after_selected_adapter",
-        "fresh_real_lark_inbound_and_outbound_user_visible_observed",
+        "fresh_real_external_inbound_and_outbound_user_visible_observed",
       ]),
     );
     expect(plan.decisions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "lark_external_channel_binding_ready",
+          id: "external_message_channel_binding_ready",
           lane: "external_channel",
           nextCommand: "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json",
         }),
@@ -998,7 +998,7 @@ describe("local-brain-training-plan", () => {
     expect(plan.evolutionAccelerationQueue.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "route_lark_transport_to_selected_clean_answer_path",
+          id: "route_external_transport_to_selected_clean_answer_path",
           lane: "external_channel",
           status: "ready_when_idle",
           command: "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json",

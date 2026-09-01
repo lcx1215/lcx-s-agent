@@ -116,12 +116,15 @@ const WORKFLOW_SURFACES = [
   LOCAL_OPERATOR_LOOP,
   LOCAL_CODEX_ARCHIVE,
   "scripts/operator/lcx-external-channel-compat.ts",
-  "extensions/feishu/src/lark-language-handoff-receipts.ts",
+  "extensions/external/src/channel.ts",
+  "extensions/external/src/monitor.ts",
+  "extensions/external/src/protocol.ts",
+  "extensions/external/src/send.ts",
   "src/auto-reply/reply/get-reply-run.ts",
   "src/auto-reply/reply/skillopt-autocue.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
-  "src/commands/capabilities/lark-loop-diagnose.ts",
+  "scripts/operator/lcx-external-channel-status.ts",
 ] as const;
 
 const PROOF_SURFACES = [
@@ -142,7 +145,10 @@ const PROOF_SURFACES = [
   "test/lcx-commercial-acceptance-harness.test.ts",
   "test/lcx-commercial-answer-pipeline.test.ts",
   "test/lcx-self-repair-hands.test.ts",
-  "extensions/feishu/src/lark-language-handoff-receipts.test.ts",
+  "extensions/external/src/monitor.test.ts",
+  "extensions/external/src/protocol.test.ts",
+  "extensions/external/src/send.test.ts",
+  "src/agents/visible-answer-adoption-gate.test.ts",
   "test/lcx-external-agent-upgrade-radar.test.ts",
   "test/lcx-agent-exam.test.ts",
   "test/local-brain-training-plan.test.ts",
@@ -185,7 +191,10 @@ const BOUNDARY_SURFACES = [
   "src/auto-reply/reply/skillopt-autocue.ts",
   "scripts/operator/minimax-brain-teacher-batch.ts",
   "scripts/operator/lcx-automation-repair-lock.ts",
-  "extensions/feishu/src/lark-language-handoff-receipts.ts",
+  "extensions/external/src/channel.ts",
+  "extensions/external/src/monitor.ts",
+  "extensions/external/src/protocol.ts",
+  "extensions/external/src/send.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.ts",
 ] as const;
 
@@ -308,10 +317,10 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "Review self-repair packets through governance/autopilot and owner-control before any owner-approved eval or train-slice absorption.",
   },
   {
-    id: "lark_feishu_live_boundary",
+    id: "external_message_channel_boundary",
     masterLane: "external_channel_boundary",
     objective:
-      "Treat Lark/Feishu as owner-agent communication transport, not a second live brain; keep core correctness, connector routing, and user-visible proof separate.",
+      "Treat the external message channel as owner-agent communication transport, not a second brain; keep core correctness, connector routing, and user-visible proof separate.",
     headTerms: [
       "core-ready",
       "external-channel-bound",
@@ -319,7 +328,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "legacy-live-runtime-updated",
       "legacy-live-user-seen",
     ],
-    workflowTerms: ["lcx-external-channel-compat", "lark-loop-diagnose", "channels status"],
+    workflowTerms: ["lcx-external-channel-status", "lcx-external-channel-binding", "channels status"],
     proofTerms: ["naturalProbeMessage", "userVisibleObserved", "freshInboundCount"],
     boundaryTerms: [
       "user-visible-observed",
@@ -347,7 +356,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "canaryPlan",
       "blockedGates",
       "provider_council_degraded",
-      "post_migration_lark_canary_missing",
+      "post_migration_external_canary_missing",
     ],
     boundaryTerms: [
       "local_commercial_acceptance_harness_only",
@@ -574,9 +583,9 @@ const MIND_MODEL_LANES: MindModelLane[] = [
   },
   {
     id: "skillopt_runtime_self_use",
-    masterLane: "lark_feishu_visible_reply",
+    masterLane: "external_message_visible_reply",
     objective:
-      "Let eval-derived SkillOpt SOPs guide the Lark/local reply planner immediately while keeping model-weight absorption and user-visible proof separate.",
+      "Let eval-derived SkillOpt SOPs guide the External/local reply planner immediately while keeping model-weight absorption and user-visible proof separate.",
     headTerms: ["SkillOpt-lite", "runtime hook", "not Qwen weight absorption"],
     workflowTerms: ["lcx-skillopt-lite", "skillopt-autocue", "get-reply-run", "best_skill.md"],
     proofTerms: [
@@ -590,7 +599,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "not user-visible-observed proof",
     ],
     nextAction:
-      "Keep SkillOpt as deterministic preflight context until targeted eval, training/promotion truth, external-channel binding, and real Lark user-visible proof pass.",
+      "Keep SkillOpt as deterministic preflight context until targeted eval, training/promotion truth, external-channel binding, and real External user-visible proof pass.",
   },
   {
     id: "world_class_agent_architecture",
@@ -770,7 +779,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     id: "local_live_status_words_stay_separate",
     category: "boundary",
     objective:
-      "Local proof, Lark external-channel binding, and real user-visible proof must stay separate while legacy live terms fade out.",
+      "Local proof, external message-channel binding, and real user-visible proof must stay separate while legacy live terms fade out.",
     termsBySurface: {
       head: [
         "core-ready",
@@ -789,13 +798,13 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       ],
     },
     nextAction:
-      "Do not claim user-visible-observed unless Lark channel proof has fresh inbound plus a successful visible reply; legacy live-user-seen is only a compatibility alias.",
+      "Do not claim user-visible-observed unless External channel proof has fresh inbound plus a successful visible reply; legacy live-user-seen is only a compatibility alias.",
   },
   {
     id: "visible_reply_hides_internal_runtime_details",
     category: "content",
     objective:
-      "Lark-visible answers must translate backend and eval machinery into user language unless the user asks for protocol proof.",
+      "External-visible answers must translate backend and eval machinery into user language unless the user asks for protocol proof.",
     termsBySurface: {
       head: ["visible reply", "no internal labels", "用户入口简单"],
       workflow: [
@@ -810,7 +819,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       boundary: ["providerConfigTouched", "liveTouched", "protectedMemoryTouched"],
     },
     nextAction:
-      "If a real Lark reply exposes module ids, receipt paths, message ids, timeout milliseconds, or protocol labels, repair the shared visible-answer gate before adding features.",
+      "If a real External reply exposes module ids, receipt paths, message ids, timeout milliseconds, or protocol labels, repair the shared visible-answer gate before adding features.",
   },
   {
     id: "content_claims_need_source_or_unverified_flag",
@@ -893,7 +902,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       ],
     },
     nextAction:
-      "Use SkillOpt preflight for immediate planning only; require targeted eval, clean promotion truth, live sync, and real Lark evidence before stronger claims.",
+      "Use SkillOpt preflight for immediate planning only; require targeted eval, clean promotion truth, live sync, and real External evidence before stronger claims.",
   },
   {
     id: "universe_index_is_inventory_not_delete_authority",

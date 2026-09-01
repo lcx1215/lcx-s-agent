@@ -218,8 +218,8 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.handoffForNewWindow.text).toContain("legacyLiveUserSeen=");
     expect(payload.handoffForNewWindow.text).toContain("externalChannelBinding=");
     expect(payload.handoffForNewWindow.text).toContain("externalChannelBindingMissingProof=");
-    expect(payload.handoffForNewWindow.text).toContain("legacyLiveLarkBrainBinding=");
-    expect(payload.handoffForNewWindow.text).toContain("legacyLiveLarkBrainBindingMissingProof=");
+    expect(payload.handoffForNewWindow.text).toContain("legacyLiveExternalBrainBinding=");
+    expect(payload.handoffForNewWindow.text).toContain("legacyLiveExternalBrainBindingMissingProof=");
     expect(payload.handoffForNewWindow.text).toContain("deferredCommands=");
     expect(payload.handoffForNewWindow.text).toContain("safetyNotes=");
     expect(payload.handoffForNewWindow.text).toContain("moduleGateCounts=");
@@ -258,7 +258,7 @@ describe("LCX compressed context recovery exam", () => {
     expect(doctorSource).toContain("context-recovery-exam");
     expect(doctorSource).toContain("flow-graph-exam");
     expect(doctorSource).toContain("lcx-governance-autopilot");
-    expect(doctorSource).toContain("liveLarkBrainBinding");
+    expect(doctorSource).toContain("liveExternalBrainBinding");
     expect(recoverySource).toContain("local_operator_latest_is_fresh");
     expect(recoverySource).toContain("local_operator_latest_matches_current_workflow_surface");
     expect(recoverySource).toContain("fresh_training_plan_decision_visible_after_recovery");

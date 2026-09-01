@@ -238,7 +238,7 @@ export function buildRuntimeBundleReceipt(params: {
       params.fullWorkspace
         ? "Full-workspace mode also copies tracked source needed by the agent-system loop, excluding memory, dist, apps, and node_modules."
         : "Minimal mode copies only the Python sidecar compatibility runtime.",
-      "Does not copy Feishu/Lark proxy code.",
+      "Does not copy external message proxy code.",
       "Does not copy secrets or .env.lobster.",
       "Does not modify LaunchAgents.",
       "Does not enable production scheduler cycles.",

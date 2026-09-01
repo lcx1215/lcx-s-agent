@@ -8,7 +8,7 @@ describe("LCX real cost ledger", () => {
   it("keeps confirmed calls separate from estimated tokens and unknown billing", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "tmp-real-cost-ledger-"));
     const logDir = path.join(root, "logs");
-    const reviewDir = path.join(root, "memory/lark-brain-distillation-reviews/day");
+    const reviewDir = path.join(root, "memory/external-brain-distillation-reviews/day");
     const councilDir = path.join(root, "bank/knowledge/learning-councils");
     await fs.mkdir(logDir, { recursive: true });
     await fs.mkdir(reviewDir, { recursive: true });
@@ -80,7 +80,7 @@ describe("LCX real cost ledger", () => {
     const ledger = await buildRealCostLedger({
       checkedAt: "2026-05-28T01:00:00.000Z",
       logDir,
-      reviewRoot: path.join(root, "memory/lark-brain-distillation-reviews"),
+      reviewRoot: path.join(root, "memory/external-brain-distillation-reviews"),
       councilRoot: councilDir,
       monthlySubscriptionCostCny: undefined,
       outputPaths: {

@@ -26,8 +26,8 @@ SCHEDULER_HEARTBEAT_STALE_AFTER_HOURS = 36.0
 SCHEDULER_HEARTBEAT_STUCK_AFTER_HOURS = 6.0
 SCHEDULER_CYCLE_STALE_AFTER_HOURS = 36.0
 REQUIRED_CYCLE_CHECK_COUNT = 5
-FEISHU_PROXY_LABEL = "ai.openclaw.feishu.proxy"
-FEISHU_PROXY_ERR_LOG = Path.home() / ".openclaw" / "logs" / "feishu_proxy.err.log"
+EXTERNAL_CHANNEL_PROXY_LABEL = "ai.openclaw.external.proxy"
+EXTERNAL_CHANNEL_PROXY_ERR_LOG = Path.home() / ".openclaw" / "logs" / "external_channel_proxy.err.log"
 ENABLE_ALERTS_ENV = "OPENCLAW_HOST_WATCHDOG_ENABLE_ALERTS"
 RUNTIME_FRESHNESS_STALE_AFTER_HOURS = 36.0
 
@@ -139,7 +139,7 @@ def read_tail(path: Path, limit: int = 6000) -> str:
     return data[-limit:].decode("utf-8", errors="ignore")
 
 
-def probe_feishu_proxy_health(timeout_seconds: float = 3.0) -> dict[str, Any]:
+def probe_external_channel_proxy_health(timeout_seconds: float = 3.0) -> dict[str, Any]:
     try:
         with urlopen("http://127.0.0.1:3011/healthz", timeout=timeout_seconds) as response:
             raw = response.read(4000).decode("utf-8", errors="ignore")
@@ -154,9 +154,9 @@ def probe_feishu_proxy_health(timeout_seconds: float = 3.0) -> dict[str, Any]:
     return payload
 
 
-def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
-    launchd = inspect_launchagent(FEISHU_PROXY_LABEL, skip_launchd=skip_launchd)
-    err_tail = read_tail(FEISHU_PROXY_ERR_LOG)
+def build_external_channel_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
+    launchd = inspect_launchagent(EXTERNAL_CHANNEL_PROXY_LABEL, skip_launchd=skip_launchd)
+    err_tail = read_tail(EXTERNAL_CHANNEL_PROXY_ERR_LOG)
     desktop_root = "/Users/liuchengxu/Desktop/openclaw"
     runtime_root = "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw"
     args_text = "\n".join(str(item) for item in launchd.get("program_arguments", []))
@@ -172,7 +172,7 @@ def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
         ]
         if marker in err_tail
     ]
-    health = probe_feishu_proxy_health() if not skip_launchd else {"ok": None, "skipped": True}
+    health = probe_external_channel_proxy_health() if not skip_launchd else {"ok": None, "skipped": True}
     health_ok = health.get("ok") is True and health.get("port") == 3011
     stale_error_markers = (
         error_markers if health_ok and launchd.get("running") and points_at_runtime else []
@@ -188,14 +188,14 @@ def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
         status = "root_drift"
     return {
         "status": status,
-        "label": FEISHU_PROXY_LABEL,
+        "label": EXTERNAL_CHANNEL_PROXY_LABEL,
         "launchd": launchd,
         "points_at_desktop": points_at_desktop,
         "points_at_runtime": points_at_runtime,
         "error_markers": error_markers,
         "stale_error_markers": stale_error_markers,
         "health": health,
-        "err_log_path": str(FEISHU_PROXY_ERR_LOG),
+        "err_log_path": str(EXTERNAL_CHANNEL_PROXY_ERR_LOG),
         "err_tail_sample": err_tail[-1000:] if error_markers and not stale_error_markers else "",
     }
 
@@ -372,7 +372,7 @@ def build_watchdog_snapshot(
     cycle_failure_state: dict[str, Any],
     runtime_freshness_state: dict[str, Any],
     launchd_state: dict[str, Any],
-    feishu_proxy_state: dict[str, Any],
+    external_channel_proxy_state: dict[str, Any],
     mode: str,
 ) -> dict[str, Any]:
     freshness = build_branch_freshness_snapshot(branch_state, scheduler_state)
@@ -405,8 +405,8 @@ def build_watchdog_snapshot(
         "incomplete",
     }:
         issues.append("scheduler_cycle")
-    if str(feishu_proxy_state.get("status") or "") in {"unknown", "not_running", "log_errors"}:
-        issues.append("feishu_proxy")
+    if str(external_channel_proxy_state.get("status") or "") in {"unknown", "not_running", "log_errors"}:
+        issues.append("external_channel_proxy")
     if nonfresh:
         issues.append("branch_freshness")
     if str(runtime_freshness.get("status") or "") != "fresh":
@@ -423,12 +423,12 @@ def build_watchdog_snapshot(
         "launchd": launchd_state,
         "scheduler_heartbeat": heartbeat,
         "scheduler_cycle": cycle,
-        "feishu_proxy": feishu_proxy_state,
+        "external_channel_proxy": external_channel_proxy_state,
         "runtime_freshness": runtime_freshness,
         "branch_freshness": freshness,
         "nonfresh_branches": nonfresh,
         "boundary": {
-            "noFeishuLarkSend": True,
+            "noExternalChannelSend": True,
             "noCodexEscalation": True,
             "noRemoteFetch": True,
             "noTradingExecution": True,
@@ -465,7 +465,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="Emit the full JSON snapshot")
     parser.add_argument("--dry-run", action="store_true", help="Force no-alert compatibility mode")
     parser.add_argument("--skip-launchd", action="store_true", help="Skip launchctl read during tests")
-    parser.add_argument("--skip-feishu-proxy", action="store_true", help="Skip Feishu/Lark proxy inspection")
+    parser.add_argument("--skip-external-channel-proxy", action="store_true", help="Skip external channel proxy inspection")
     parser.add_argument("--write-receipt", action="store_true", help="Write host_watchdog_state.json")
     return parser
 
@@ -483,8 +483,8 @@ def main(argv: list[str] | None = None) -> int:
     alerts_enabled = truthy(os.environ.get(ENABLE_ALERTS_ENV)) and not args.dry_run
     mode = "live_guarded" if alerts_enabled else "dry_run_no_alert"
     launchd_state = detect_scheduler_disabled(skip_launchd=args.skip_launchd)
-    feishu_proxy_state = build_feishu_proxy_snapshot(
-        skip_launchd=args.skip_launchd or args.skip_feishu_proxy
+    external_channel_proxy_state = build_external_channel_proxy_snapshot(
+        skip_launchd=args.skip_launchd or args.skip_external_channel_proxy
     )
     snapshot = build_watchdog_snapshot(
         branch_state=branch_state,
@@ -494,7 +494,7 @@ def main(argv: list[str] | None = None) -> int:
         cycle_failure_state=cycle_failure_state,
         runtime_freshness_state=runtime_freshness_state,
         launchd_state=launchd_state,
-        feishu_proxy_state=feishu_proxy_state,
+        external_channel_proxy_state=external_channel_proxy_state,
         mode=mode,
     )
 
@@ -506,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"hostWatchdog={ 'ok' if snapshot['ok'] else 'issues_detected' }")
         print(f"mode={snapshot['mode']}")
         print(f"issues={','.join(snapshot['issues']) or 'none'}")
-        print(f"noFeishuLarkSend={snapshot['boundary']['noFeishuLarkSend']}")
+        print(f"noExternalChannelSend={snapshot['boundary']['noExternalChannelSend']}")
     return 0
 
 

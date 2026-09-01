@@ -16,7 +16,7 @@ import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
 import { shouldSuppressReasoningPayload } from "./reply-payloads.js";
-import { isFeishuFamilyChannel, resolveReplyRouteChannel } from "./reply-routing-helpers.js";
+import { resolveReplyRouteChannel } from "./reply-routing-helpers.js";
 
 let deliverRuntimePromise: Promise<
   typeof import("../../infra/outbound/deliver-runtime.js")
@@ -214,9 +214,6 @@ export function isRoutableChannel(
   const normalized = normalizeMessageChannel(channel);
   if (!normalized || normalized === INTERNAL_MESSAGE_CHANNEL) {
     return false;
-  }
-  if (isFeishuFamilyChannel(channel)) {
-    return true;
   }
   return Boolean(resolveReplyRouteChannel(channel));
 }

@@ -23,21 +23,21 @@ describe("bundled plugin sources", () => {
       candidates: [
         {
           origin: "global",
-          rootDir: "/global/feishu",
-          packageName: "@openclaw/feishu",
-          packageManifest: { install: { npmSpec: "@openclaw/feishu" } },
+          rootDir: "/global/external",
+          packageName: "@openclaw/external",
+          packageManifest: { install: { npmSpec: "@openclaw/external" } },
         },
         {
           origin: "bundled",
-          rootDir: "/app/extensions/feishu",
-          packageName: "@openclaw/feishu",
-          packageManifest: { install: { npmSpec: "@openclaw/feishu" } },
+          rootDir: "/app/extensions/external",
+          packageName: "@openclaw/external",
+          packageManifest: { install: { npmSpec: "@openclaw/external" } },
         },
         {
           origin: "bundled",
-          rootDir: "/app/extensions/feishu-dup",
-          packageName: "@openclaw/feishu",
-          packageManifest: { install: { npmSpec: "@openclaw/feishu" } },
+          rootDir: "/app/extensions/external-dup",
+          packageName: "@openclaw/external",
+          packageManifest: { install: { npmSpec: "@openclaw/external" } },
         },
         {
           origin: "bundled",
@@ -50,8 +50,8 @@ describe("bundled plugin sources", () => {
     });
 
     loadPluginManifestMock.mockImplementation((rootDir: string) => {
-      if (rootDir === "/app/extensions/feishu") {
-        return { ok: true, manifest: { id: "feishu" } };
+      if (rootDir === "/app/extensions/external") {
+        return { ok: true, manifest: { id: "external" } };
       }
       if (rootDir === "/app/extensions/msteams") {
         return { ok: true, manifest: { id: "msteams" } };
@@ -65,11 +65,11 @@ describe("bundled plugin sources", () => {
 
     const map = resolveBundledPluginSources({});
 
-    expect(Array.from(map.keys())).toEqual(["feishu", "msteams"]);
-    expect(map.get("feishu")).toEqual({
-      pluginId: "feishu",
-      localPath: "/app/extensions/feishu",
-      npmSpec: "@openclaw/feishu",
+    expect(Array.from(map.keys())).toEqual(["external", "msteams"]);
+    expect(map.get("external")).toEqual({
+      pluginId: "external",
+      localPath: "/app/extensions/external",
+      npmSpec: "@openclaw/external",
     });
   });
 
@@ -78,24 +78,24 @@ describe("bundled plugin sources", () => {
       candidates: [
         {
           origin: "bundled",
-          rootDir: "/app/extensions/feishu",
-          packageName: "@openclaw/feishu",
-          packageManifest: { install: { npmSpec: "@openclaw/feishu" } },
+          rootDir: "/app/extensions/external",
+          packageName: "@openclaw/external",
+          packageManifest: { install: { npmSpec: "@openclaw/external" } },
         },
       ],
       diagnostics: [],
     });
-    loadPluginManifestMock.mockReturnValue({ ok: true, manifest: { id: "feishu" } });
+    loadPluginManifestMock.mockReturnValue({ ok: true, manifest: { id: "external" } });
 
     const resolved = findBundledPluginSource({
-      lookup: { kind: "npmSpec", value: "@openclaw/feishu" },
+      lookup: { kind: "npmSpec", value: "@openclaw/external" },
     });
     const missing = findBundledPluginSource({
       lookup: { kind: "npmSpec", value: "@openclaw/not-found" },
     });
 
-    expect(resolved?.pluginId).toBe("feishu");
-    expect(resolved?.localPath).toBe("/app/extensions/feishu");
+    expect(resolved?.pluginId).toBe("external");
+    expect(resolved?.localPath).toBe("/app/extensions/external");
     expect(missing).toBeUndefined();
   });
 
