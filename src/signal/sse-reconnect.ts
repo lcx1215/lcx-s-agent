@@ -16,7 +16,7 @@ type RunSignalSseLoopParams = {
   account?: string;
   abortSignal?: AbortSignal;
   runtime: RuntimeEnv;
-  onEvent: (event: SignalSseEvent) => void;
+  onEvent: (event: SignalSseEvent) => void | Promise<void>;
   policy?: Partial<BackoffPolicy>;
 };
 
@@ -47,9 +47,9 @@ export async function runSignalSseLoop({
         baseUrl,
         account,
         abortSignal,
-        onEvent: (event) => {
+        onEvent: async (event) => {
           reconnectAttempts = 0;
-          onEvent(event);
+          await onEvent(event);
         },
       });
       if (abortSignal?.aborted) {

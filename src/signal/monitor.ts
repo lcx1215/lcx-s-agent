@@ -453,10 +453,12 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
       abortSignal: daemonLifecycle.abortSignal,
       runtime,
       policy: opts.reconnectPolicy,
-      onEvent: (event) => {
-        void handleEvent(event).catch((err) => {
+      onEvent: async (event) => {
+        try {
+          await handleEvent(event);
+        } catch (err) {
           runtime.error?.(`event handler failed: ${String(err)}`);
-        });
+        }
       },
     });
     const daemonExitError = daemonLifecycle.getExitError();

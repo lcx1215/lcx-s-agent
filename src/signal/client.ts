@@ -135,7 +135,7 @@ export async function streamSignalEvents(params: {
   baseUrl: string;
   account?: string;
   abortSignal?: AbortSignal;
-  onEvent: (event: SignalSseEvent) => void;
+  onEvent: (event: SignalSseEvent) => void | Promise<void>;
 }): Promise<void> {
   const baseUrl = normalizeBaseUrl(params.baseUrl);
   const url = new URL(`${baseUrl}/api/v1/events`);
@@ -161,11 +161,11 @@ export async function streamSignalEvents(params: {
   let buffer = "";
   let currentEvent: SignalSseEvent = {};
 
-  const flushEvent = () => {
+  const flushEvent = async () => {
     if (!currentEvent.data && !currentEvent.event && !currentEvent.id) {
       return;
     }
-    params.onEvent({
+    await params.onEvent({
       event: currentEvent.event,
       data: currentEvent.data,
       id: currentEvent.id,
@@ -188,7 +188,7 @@ export async function streamSignalEvents(params: {
       }
 
       if (line === "") {
-        flushEvent();
+        await flushEvent();
         lineEnd = buffer.indexOf("\n");
         continue;
       }
@@ -211,5 +211,5 @@ export async function streamSignalEvents(params: {
     }
   }
 
-  flushEvent();
+  await flushEvent();
 }

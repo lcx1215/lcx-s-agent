@@ -435,6 +435,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
       });
     const externalChannelStatus = {
       ...legacyExternalChannelStatus,
+      statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
       externalChannelBound,
       userVisibleObserved,
       nextHumanStep: externalChannelNextHumanStep({

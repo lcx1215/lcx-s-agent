@@ -71,8 +71,13 @@ describe("LCX universe index", () => {
       expect.objectContaining({
         ok: true,
         boundary: "local_universe_index_only",
-        latestStatePath:
-          "/Users/liuchengxu/.openclaw/workspace/state/lcx-universe-index-latest.json",
+        latestStatePath: path.join(
+          process.env.LCX_USER_HOME ?? "/Users/liuchengxu",
+          ".openclaw",
+          "workspace",
+          "state",
+          "lcx-universe-index-latest.json",
+        ),
         liveTouched: false,
         providerConfigTouched: false,
         protectedMemoryTouched: false,
@@ -98,7 +103,12 @@ describe("LCX universe index", () => {
     expect(payload.artifacts.workspaceState.exists).toBe(true);
     expect(Array.isArray(payload.artifacts.workspaceState.largestFiles)).toBe(true);
     expect(payload.artifacts.liveSidecar.path).toBe(
-      "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw",
+      path.join(
+        process.env.LCX_USER_HOME ?? "/Users/liuchengxu",
+        ".openclaw",
+        "external-channel-runtime",
+        "lcx-s-openclaw",
+      ),
     );
     expect(Array.isArray(payload.garbageCandidates.untrackedRepoFiles)).toBe(true);
     expect(Array.isArray(payload.garbageCandidates.staleRuntimeFiles)).toBe(true);

@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   GLOBAL_EVIDENCE_PROJECTION_READER_CONTRACT_VERSION,
@@ -507,7 +508,11 @@ describe("Global Evidence Projection", () => {
 
     expect(loaded).toMatchObject({
       sourceOwner: "governance-autopilot",
-      sourcePath: "/tmp/lcx-projection-test/state/lcx-governance-autopilot-latest.json",
+      sourcePath: path.join(
+        path.resolve("/tmp/lcx-projection-test"),
+        "state",
+        "lcx-governance-autopilot-latest.json",
+      ),
       candidate: envelope,
     });
     expect(loaded?.candidate).not.toBe(projection);
