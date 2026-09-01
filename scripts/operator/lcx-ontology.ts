@@ -142,7 +142,7 @@ const INTEGRATION_SURFACES = [
     terms: [
       "multi_agent_pattern_intake_20260901",
       "architecture pattern intake only",
-      "replay before live",
+      "isolated executor phase",
       "lcx_ontology_v1",
     ],
   },

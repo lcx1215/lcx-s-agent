@@ -126,6 +126,7 @@ const PATH_RULES: PathRule[] = [
       /^test\/lcx-commercial-acceptance-harness\.test\.ts$/u,
       /^test\/lcx-external-agent-upgrade-radar\.test\.ts$/u,
       /^test\/lcx-multi-agent-pattern-shadow\.test\.ts$/u,
+      /^test\/fixtures\/lcx-multi-agent-pattern-shadow-executor\.ts$/u,
       /^test\/lcx-github-cli-capability-inventory\.test\.ts$/u,
       /^test\/lcx-governance-autopilot\.test\.ts$/u,
       /^test\/lcx-live-fadeout-audit\.test\.ts$/u,

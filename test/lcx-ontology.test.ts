@@ -130,7 +130,7 @@ describe("LCX ontology registry", () => {
       expect.arrayContaining([
         "multi_agent_pattern_intake",
         "shadow_replay",
-        "shadow_live",
+        "shadow_isolated_executor",
         "pattern_comparison",
         "interruption_recovery_probe",
       ]),
@@ -139,6 +139,7 @@ describe("LCX ontology registry", () => {
       expect.arrayContaining([
         "same_case_required",
         "explicit_cost_basis_required",
+        "replay_before_isolated_executor_required",
         "shadow_tool_permission_audit_required",
         "shadow_recovery_receipt_required",
       ]),

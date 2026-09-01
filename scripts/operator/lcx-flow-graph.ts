@@ -990,13 +990,13 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     id: "multi_agent_pattern_shadow_evaluation_waterflow",
     family: "multi_agent_pattern_shadow_evaluation",
     objective:
-      "The same failure case must run through replay, explicitly isolated live shadow, comparison, and interruption recovery before any topology is considered for another shadow round.",
+      "The same failure case must run through replay, an explicitly isolated executor shadow, comparison, and interruption recovery before any topology is considered for another shadow round.",
     start: "multi_agent_pattern_intake",
     end: "control_room_summary",
     requiredNodes: [
       "multi_agent_pattern_intake",
       "shadow_replay",
-      "shadow_live",
+      "shadow_isolated_executor",
       "pattern_comparison",
       "interruption_recovery_probe",
       "review_panel",
@@ -1005,7 +1005,7 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     requiredFilters: [
       "same_case_required",
       "same_model_policy_required",
-      "replay_before_live_required",
+      "replay_before_isolated_executor_required",
       "explicit_cost_basis_required",
       "shadow_tool_permission_audit_required",
       "no_shadow_external_side_effects",
@@ -1014,8 +1014,8 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
     edges: [
       ["multi_agent_pattern_intake", "shadow_replay"],
-      ["shadow_replay", "shadow_live"],
-      ["shadow_live", "pattern_comparison"],
+      ["shadow_replay", "shadow_isolated_executor"],
+      ["shadow_isolated_executor", "pattern_comparison"],
       ["pattern_comparison", "interruption_recovery_probe"],
       ["interruption_recovery_probe", "review_panel"],
       ["review_panel", "control_room_summary"],
@@ -1652,6 +1652,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     allowedPaths: [
       "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
       "test/lcx-multi-agent-pattern-shadow.test.ts",
+      "test/fixtures/lcx-multi-agent-pattern-shadow-executor.ts",
     ],
   },
   {

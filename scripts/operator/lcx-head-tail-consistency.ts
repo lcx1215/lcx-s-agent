@@ -232,7 +232,7 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
     id: "multi_agent_pattern_shadow_boundary",
     headTerms: [
       "multi-agent pattern shadow",
-      "replay before live",
+      "replay before the isolated executor phase",
       "architecture pattern intake only",
     ],
     tailTerms: [

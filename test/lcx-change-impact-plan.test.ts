@@ -98,6 +98,7 @@ describe("lcx-change-impact-plan", () => {
       "--files",
       "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
       "test/lcx-multi-agent-pattern-shadow.test.ts",
+      "test/fixtures/lcx-multi-agent-pattern-shadow-executor.ts",
     ]);
 
     expect(payload.ok).toBe(true);
@@ -110,6 +111,7 @@ describe("lcx-change-impact-plan", () => {
           lane: "global_doctrine_and_runbook",
           matchedFiles: [
             "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+            "test/fixtures/lcx-multi-agent-pattern-shadow-executor.ts",
             "test/lcx-multi-agent-pattern-shadow.test.ts",
           ],
           commands: expect.arrayContaining([

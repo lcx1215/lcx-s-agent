@@ -13,9 +13,50 @@ instruction, external-channel change, or production architecture decision.
 
 The implementation owner is
 `scripts/operator/lcx-multi-agent-pattern-shadow.ts`. It runs deterministic
-replay before live: it runs deterministic replay first, then an explicitly
-supplied isolated JSON executor in a separate live phase. It has no external side effect: it does not call Lark, change provider configuration, start
+replay before the isolated executor phase: it runs deterministic replay first,
+then an explicitly supplied isolated JSON executor. The wire field
+`mode=live` is retained as a compatibility label only; it is not an
+external-channel, deployment, or user-visible authority. The owner has no
+external side effect: it does not call Lark, change provider configuration, start
 training, write protected memory, or execute trades.
+
+### Naming normalization
+
+New documentation and internal APIs should say `isolated executor phase` or
+`isolated-executor` and use the neutral receipt field `executionPhase`. Existing
+`mode=live`, `multi-agent-pattern-shadow-live`, and old receipt fields remain
+readable for compatibility. A future removal or rename requires a versioned
+ontology migration manifest; this intake does not create a second registry or
+state root.
+
+### Local protocol fixture
+
+`test/fixtures/lcx-multi-agent-pattern-shadow-executor.ts` is a deterministic,
+no-network executor for exercising the isolated executor seam when no provider
+executor is authorized or available. It accepts one JSON request on stdin and
+returns one versioned JSON response on stdout, supports all three topology
+roles plus the declared interruption/resume probe, and deliberately omits
+usage so cost remains `missing` rather than fabricated. A local protocol run
+can be invoked with:
+
+```bash
+node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts \
+  --mode isolated-executor \
+  --pattern all \
+  --case single_stock_loss_recovery_risk_triage \
+  --experiment-id multi-agent-pattern-shadow-fixture-20260901 \
+  --executor-command "node --import tsx test/fixtures/lcx-multi-agent-pattern-shadow-executor.ts" \
+  --json
+```
+
+This run proves request/response compatibility, topology ownership,
+permission evidence plumbing, idempotency, and recovery handling only. Its
+quality, latency, and missing-usage fields are fixture evidence; they are not
+provider quality, real cost, model learning, external-channel proof, or
+production promotion evidence.
+
+For older automation, `--mode live` remains accepted and normalizes to the same
+isolated executor phase and receipt semantics.
 
 ## Official sources and reading scope
 
@@ -113,8 +154,8 @@ baseline failure: safe_but_empty_thesis_list
 ```
 
 Replay injects the safe-but-empty candidate, direct trade language, blocked
-permission attempt, timeout, and interruption fixtures. Live runs are opt-in,
-five normal repetitions per pattern, with one separate recovery probe only
+permission attempt, timeout, and interruption fixtures. Isolated-executor runs
+are opt-in, five normal repetitions per pattern, with one separate recovery probe only
 when the executor declares that capability. The comparison records quality,
 the eight-item evidence denominator, wall-clock and critical-path latency,
 exact/estimated/missing usage, duplicate task/artifact counts, blocked versus
@@ -123,8 +164,9 @@ Each run receipt carries the stable experiment idempotency key plus a distinct
 final-output delivery key, so an explicit retry cannot deliver the same final
 answer twice.
 
-The CLI keeps the default replay and live experiment IDs separate, so a blocked
-live probe cannot overwrite the latest replay summary. An executor response with
+The CLI keeps the default replay and isolated-executor experiment IDs separate;
+the historical `...-live` id remains stable so a blocked isolated-executor probe
+cannot overwrite the latest replay summary. An executor response with
 an unknown canonical enum is retained only as `unknown` capability evidence; it
 cannot be counted as a verified event, permission, or side-effect receipt.
 

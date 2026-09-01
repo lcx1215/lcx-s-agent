@@ -62,9 +62,38 @@ export const DEFAULT_REPETITIONS = 5;
 export const DEFAULT_CHILD_TIMEOUT_MS = 30_000;
 export const DEFAULT_ROOT_TIMEOUT_MS = 120_000;
 export const DEFAULT_REPLAY_EXPERIMENT_ID = "multi-agent-pattern-shadow-replay";
+/** Stable on-disk id retained for wire/receipt compatibility. */
 export const DEFAULT_LIVE_EXPERIMENT_ID = "multi-agent-pattern-shadow-live";
+/** Preferred neutral name for the isolated executor phase. */
+export const DEFAULT_ISOLATED_EXECUTOR_EXPERIMENT_ID = DEFAULT_LIVE_EXPERIMENT_ID;
 
+/**
+ * `live` is a frozen CLI/receipt compatibility label. It does not grant
+ * external-channel, provider, training, or user-visible authority.
+ */
 export type ShadowMode = "replay" | "live";
+export type ShadowExecutionPhase = "replay" | "isolated_executor";
+export const SHADOW_EXECUTION_PHASES: readonly ShadowExecutionPhase[] = [
+  "replay",
+  "isolated_executor",
+];
+
+export type ShadowModeInput = ShadowMode | "isolated-executor";
+
+export function normalizeShadowModeInput(value: string): ShadowMode {
+  if (value === "isolated-executor") {
+    return "live";
+  }
+  if (value === "replay" || value === "live") {
+    return value;
+  }
+  throw new Error("--mode must be replay or isolated-executor (live is a compatibility alias)");
+}
+
+export function canonicalShadowExecutionPhase(mode: ShadowMode): ShadowExecutionPhase {
+  return mode === "live" ? "isolated_executor" : "replay";
+}
+
 export type ShadowPattern = LcxOntologyOrchestrationPattern;
 export type ShadowStatus =
   | "completed"
@@ -291,6 +320,8 @@ export type ShadowRunReceipt = {
   idempotencyKey: string;
   deliveryKey: string;
   mode: ShadowMode;
+  /** Additive field; old receipts may omit it and remain readable. */
+  executionPhase?: ShadowExecutionPhase;
   pattern: ShadowPattern;
   repetition: number;
   fixture?: ReplayFixtureId;
@@ -375,6 +406,8 @@ export type ShadowExperimentReceipt = {
   intakeId: typeof INTAKE_ID;
   experimentId: string;
   mode: ShadowMode;
+  /** Additive field; old receipts may omit it and remain readable. */
+  executionPhase?: ShadowExecutionPhase;
   case: typeof SHADOW_CASE;
   executorFingerprint: string;
   createdAt: string;
@@ -1649,6 +1682,7 @@ function runReceiptFromResponse(params: {
       executorFingerprint: params.executorFingerprint,
     }),
     mode: params.execution.mode,
+    executionPhase: canonicalShadowExecutionPhase(params.execution.mode),
     pattern: params.execution.pattern,
     repetition: params.execution.repetition,
     fixture: params.execution.fixture,
@@ -2043,6 +2077,7 @@ export function buildReplayExperiment(
     intakeId: INTAKE_ID,
     experimentId,
     mode: "replay",
+    executionPhase: "replay",
     case: SHADOW_CASE,
     executorFingerprint: executorFingerprint(undefined, "replay"),
     createdAt: now,
@@ -2063,7 +2098,7 @@ export function buildReplayExperiment(
   };
 }
 
-async function livePattern(
+async function isolatedExecutorPattern(
   params: PatternExecutionOptions,
   fingerprint: string,
 ): Promise<ShadowRunReceipt> {
@@ -2074,7 +2109,7 @@ async function livePattern(
       capabilities: unknownCapabilities(),
       error: {
         code: "executor_command_required",
-        message: "live mode requires --executor-command",
+        message: "isolated-executor mode requires --executor-command",
       },
     };
     return runReceiptFromResponse({
@@ -2296,7 +2331,7 @@ type CliOptions = {
 };
 
 export function getDefaultShadowExperimentId(mode: ShadowMode): string {
-  return mode === "live" ? DEFAULT_LIVE_EXPERIMENT_ID : DEFAULT_REPLAY_EXPERIMENT_ID;
+  return mode === "live" ? DEFAULT_ISOLATED_EXECUTOR_EXPERIMENT_ID : DEFAULT_REPLAY_EXPERIMENT_ID;
 }
 
 function readArgValue(args: readonly string[], index: number, name: string): string {
@@ -2322,11 +2357,8 @@ function parseArgs(args: readonly string[]): CliOptions {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--mode") {
-      const value = readArgValue(args, index, arg) as ShadowMode;
-      if (value !== "replay" && value !== "live") {
-        throw new Error("--mode must be replay or live");
-      }
-      mode = value;
+      const value = readArgValue(args, index, arg);
+      mode = normalizeShadowModeInput(value);
       index += 1;
     } else if (arg === "--pattern") {
       const value = readArgValue(args, index, arg);
@@ -2362,7 +2394,7 @@ function parseArgs(args: readonly string[]): CliOptions {
       json = true;
     } else if (arg === "--help" || arg === "-h") {
       throw new Error(
-        "Usage: node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay|live --pattern all|manager|handoff|parallel_worker --case single_stock_loss_recovery_risk_triage --json",
+        "Usage: node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay|isolated-executor|live --pattern all|manager|handoff|parallel_worker --case single_stock_loss_recovery_risk_triage --json",
       );
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -2540,6 +2572,7 @@ function blockedExperiment(params: {
     intakeId: INTAKE_ID,
     experimentId: params.experimentId,
     mode: params.mode,
+    executionPhase: canonicalShadowExecutionPhase(params.mode),
     case: SHADOW_CASE,
     executorFingerprint: params.fingerprint,
     createdAt: now,
@@ -2565,7 +2598,7 @@ function blockedExperiment(params: {
   };
 }
 
-export async function buildLiveExperiment(
+export async function buildIsolatedExecutorExperiment(
   params: {
     experimentId?: string;
     patterns?: readonly ShadowPattern[];
@@ -2577,7 +2610,7 @@ export async function buildLiveExperiment(
     retryReason?: string;
   } = {},
 ): Promise<ShadowExperimentReceipt> {
-  const experimentId = params.experimentId ?? "multi-agent-pattern-shadow-live";
+  const experimentId = params.experimentId ?? DEFAULT_ISOLATED_EXECUTOR_EXPERIMENT_ID;
   const patterns = params.patterns ?? SHADOW_PATTERNS;
   const repetitions = params.repetitions ?? DEFAULT_REPETITIONS;
   const childTimeoutMs = params.childTimeoutMs ?? DEFAULT_CHILD_TIMEOUT_MS;
@@ -2602,7 +2635,8 @@ export async function buildLiveExperiment(
       repetitions,
       fingerprint,
       code: "executor_command_required",
-      message: "live phase is blocked until an isolated JSON --executor-command is supplied",
+      message:
+        "isolated-executor phase is blocked until an isolated JSON --executor-command is supplied",
     });
   }
   const guard = await checkTrainingGuard();
@@ -2687,7 +2721,7 @@ export async function buildLiveExperiment(
         appendRuns.push(blocked);
         continue;
       }
-      const result = await livePattern(execution, fingerprint);
+      const result = await isolatedExecutorPattern(execution, fingerprint);
       const withRetry =
         params.retry && prior
           ? {
@@ -2779,7 +2813,7 @@ export async function buildLiveExperiment(
       appendRuns.push(blockedRecovery);
       continue;
     }
-    const probe = await livePattern(recoveryExecution, fingerprint);
+    const probe = await isolatedExecutorPattern(recoveryExecution, fingerprint);
     const recoveryReceipt = {
       ...probe,
       fixture: "interruption" as const,
@@ -2805,6 +2839,7 @@ export async function buildLiveExperiment(
     intakeId: INTAKE_ID,
     experimentId,
     mode: "live",
+    executionPhase: "isolated_executor",
     case: SHADOW_CASE,
     executorFingerprint: fingerprint,
     createdAt: now,
@@ -2825,9 +2860,15 @@ export async function buildLiveExperiment(
   };
 }
 
+/**
+ * @deprecated Use buildIsolatedExecutorExperiment. The old export remains so
+ * existing callers can migrate without changing the receipt protocol.
+ */
+export const buildLiveExperiment = buildIsolatedExecutorExperiment;
+
 function renderText(payload: ShadowExperimentReceipt): string {
   return [
-    `multi-agent pattern shadow ${payload.mode}`,
+    `multi-agent pattern shadow ${payload.executionPhase ?? canonicalShadowExecutionPhase(payload.mode)}`,
     `experimentId=${payload.experimentId}`,
     `case=${payload.case.schemaVersion}`,
     `patterns=${payload.summary.patternCount}`,
@@ -2922,7 +2963,7 @@ async function main(): Promise<void> {
     return;
   }
   try {
-    const payload = await buildLiveExperiment({
+    const payload = await buildIsolatedExecutorExperiment({
       experimentId: options.experimentId,
       patterns: options.patterns,
       repetitions: options.repetitions,

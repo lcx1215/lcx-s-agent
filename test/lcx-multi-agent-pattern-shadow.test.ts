@@ -1,22 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_LIVE_EXPERIMENT_ID,
+  DEFAULT_ISOLATED_EXECUTOR_EXPERIMENT_ID,
   DEFAULT_REPLAY_EXPERIMENT_ID,
   EXECUTOR_SCHEMA_VERSION,
   METRICS_SCHEMA_VERSION,
   RECEIPT_SCHEMA_VERSION,
   REPLAY_FIXTURES,
+  SHADOW_EXECUTION_PHASES,
   SHADOW_PATTERNS,
   auditShadowPermissions,
+  buildIsolatedExecutorExperiment,
   buildLiveExperiment,
+  canonicalShadowExecutionPhase,
   buildReplayExperiment,
   buildShadowDeliveryKey,
   buildShadowIdempotencyKey,
   getDefaultShadowExperimentId,
   getShadowTopology,
   normalizeExecutorResponse,
+  normalizeShadowModeInput,
   scoreShadowAnswer,
+  type ShadowExecutorRequest,
 } from "../scripts/operator/lcx-multi-agent-pattern-shadow.js";
+import { buildFixtureResponse } from "./fixtures/lcx-multi-agent-pattern-shadow-executor.ts";
 
 describe("LCX multi-agent pattern shadow", () => {
   it("keeps the protocol versioned, forward-compatible, and evidence-bounded", () => {
@@ -148,6 +155,8 @@ describe("LCX multi-agent pattern shadow", () => {
 
     expect(stableProjection(first)).toEqual(stableProjection(second));
     expect(first.replayFixtures).toEqual(REPLAY_FIXTURES);
+    expect(first.executionPhase).toBe("replay");
+    expect(first.runs.every((run) => run.executionPhase === "replay")).toBe(true);
     expect(first.summary.normalRuns).toBe(3);
     expect(first.summary.normalPasses).toBe(3);
     expect(first.summary.usageBasis).toBe("missing");
@@ -164,7 +173,7 @@ describe("LCX multi-agent pattern shadow", () => {
     expect(new Set(first.runs.map((run) => run.deliveryKey)).size).toBe(first.runs.length);
   });
 
-  it("keeps a single-pattern experiment scoped and blocks live without an executor", async () => {
+  it("keeps a single-pattern experiment scoped and blocks the isolated executor without an executor", async () => {
     const replay = buildReplayExperiment({
       experimentId: "shadow-test-single-pattern",
       patterns: ["handoff"],
@@ -181,15 +190,18 @@ describe("LCX multi-agent pattern shadow", () => {
       parallel_worker: null,
     });
 
-    const live = await buildLiveExperiment({
+    const isolated = await buildIsolatedExecutorExperiment({
       experimentId: "shadow-test-live-blocked",
       patterns: ["manager"],
       repetitions: 5,
     });
-    expect(live.runs).toHaveLength(5);
-    expect(live.runs.every((run) => run.status === "blocked")).toBe(true);
-    expect(live.runs.every((run) => run.metrics.childCallCount === 0)).toBe(true);
-    expect(live.runs.every((run) => run.permissionAudit.evidence === "unverified")).toBe(true);
+    expect(isolated.runs).toHaveLength(5);
+    expect(isolated.runs.every((run) => run.status === "blocked")).toBe(true);
+    expect(isolated.runs.every((run) => run.metrics.childCallCount === 0)).toBe(true);
+    expect(isolated.runs.every((run) => run.permissionAudit.evidence === "unverified")).toBe(true);
+    expect(isolated.executionPhase).toBe("isolated_executor");
+    expect(isolated.runs.every((run) => run.executionPhase === "isolated_executor")).toBe(true);
+    expect(buildLiveExperiment).toBe(buildIsolatedExecutorExperiment);
   });
 
   it("preserves topology ownership, call counts, and critical-path differences", () => {
@@ -299,6 +311,12 @@ describe("LCX multi-agent pattern shadow", () => {
   it("uses a stable idempotency key and rejects path traversal experiment IDs", () => {
     expect(getDefaultShadowExperimentId("replay")).toBe(DEFAULT_REPLAY_EXPERIMENT_ID);
     expect(getDefaultShadowExperimentId("live")).toBe(DEFAULT_LIVE_EXPERIMENT_ID);
+    expect(DEFAULT_ISOLATED_EXECUTOR_EXPERIMENT_ID).toBe(DEFAULT_LIVE_EXPERIMENT_ID);
+    expect(SHADOW_EXECUTION_PHASES).toEqual(["replay", "isolated_executor"]);
+    expect(canonicalShadowExecutionPhase("replay")).toBe("replay");
+    expect(canonicalShadowExecutionPhase("live")).toBe("isolated_executor");
+    expect(normalizeShadowModeInput("isolated-executor")).toBe("live");
+    expect(() => normalizeShadowModeInput("unknown")).toThrow("--mode must be replay");
     expect(
       buildShadowIdempotencyKey({
         experimentId: "exp",
@@ -321,5 +339,68 @@ describe("LCX multi-agent pattern shadow", () => {
     expect(() => buildReplayExperiment({ patterns: ["manager", "manager"] })).toThrow(
       "patterns must not contain duplicates",
     );
+  });
+
+  it("provides a no-network fixture for isolated topology and recovery probes", () => {
+    const requestFor = (
+      pattern: ShadowExecutorRequest["pattern"],
+      role: ShadowExecutorRequest["role"],
+      ownershipMode: ShadowExecutorRequest["ownershipMode"],
+    ): ShadowExecutorRequest => ({
+      schemaVersion: EXECUTOR_SCHEMA_VERSION,
+      runId: `fixture-test:${pattern}`,
+      caseId: "single_stock_loss_recovery_risk_triage",
+      pattern,
+      role,
+      taskPath: ["root", role],
+      parentTaskId: `fixture-test:${pattern}:root`,
+      contextScope: "inherited",
+      workspaceScope: "disjoint_write_set",
+      ownershipMode,
+      allowedTools: ["read_case", "write_workspace_artifact"],
+      workspaceDir: "/tmp/lcx-multi-agent-pattern-shadow-fixture-test",
+    });
+
+    const requests: ShadowExecutorRequest[] = [
+      requestFor("manager", "risk_gate", "verifier_only"),
+      requestFor("handoff", "specialist", "specialist_final_owner"),
+      requestFor("parallel_worker", "risk_gate", "verifier_only"),
+    ];
+    for (const request of requests) {
+      const response = buildFixtureResponse({ ...request, futureOptionalField: "ignored" });
+      expect(response).toMatchObject({
+        schemaVersion: EXECUTOR_SCHEMA_VERSION,
+        status: "completed",
+        capabilities: {
+          eventReceipt: "supported",
+          toolEventReceipt: "supported",
+          sideEffectReceipt: "supported",
+          faultInjection: "supported",
+          resume: "supported",
+        },
+        sideEffects: [],
+      });
+      expect(response.usage).toBeUndefined();
+      expect(scoreShadowAnswer(response.answer)?.pass).toBe(true);
+      expect(normalizeExecutorResponse(response)).toMatchObject({ ok: true });
+    }
+
+    const interruptedRequest = requestFor("handoff", "specialist", "specialist_final_owner");
+    const interrupted = buildFixtureResponse({
+      ...interruptedRequest,
+      faultInjection: { kind: "interrupt_after_checkpoint" },
+    });
+    expect(interrupted.status).toBe("interrupted");
+    const checkpointEventId = interrupted.events?.find(
+      (event) => event.kind === "checkpoint",
+    )?.eventId;
+    expect(checkpointEventId).toBeTruthy();
+    const resumed = buildFixtureResponse({
+      ...interruptedRequest,
+      faultInjection: { kind: "interrupt_after_checkpoint" },
+      resumeFromEventId: checkpointEventId,
+    });
+    expect(resumed).toMatchObject({ status: "resumed", answer: expect.any(String) });
+    expect(normalizeExecutorResponse(resumed)).toMatchObject({ ok: true });
   });
 });

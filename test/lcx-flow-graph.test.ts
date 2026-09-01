@@ -358,6 +358,7 @@ describe("LCX flow graph exam", () => {
           requiredFilters: expect.arrayContaining([
             "same_case_required",
             "explicit_cost_basis_required",
+            "replay_before_isolated_executor_required",
             "shadow_tool_permission_audit_required",
             "shadow_recovery_receipt_required",
             "wide_trial_not_production",
@@ -546,6 +547,7 @@ describe("LCX flow graph exam", () => {
           allowedPaths: expect.arrayContaining([
             "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
             "test/lcx-multi-agent-pattern-shadow.test.ts",
+            "test/fixtures/lcx-multi-agent-pattern-shadow-executor.ts",
           ]),
         }),
       ]),
