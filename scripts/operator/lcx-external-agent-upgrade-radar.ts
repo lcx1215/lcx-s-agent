@@ -138,7 +138,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "SOP expansion",
     ],
     distilledPattern:
-      "turn real mistakes into skill packets with variant tasks, static gates, targeted eval, regression eval, train-slice evidence, clean promotion truth, and live preflight cue",
+      "turn real mistakes into skill packets with variant tasks, static gates, targeted eval, regression eval, train-slice evidence, clean promotion truth, and external-channel preflight cue",
     firstLocalProbe:
       "extend one existing SkillOpt packet with generated adjacent validation cases and compare original versus optimized SOP before any training claim",
     requiredReceipts: [
@@ -164,7 +164,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_direct_training_start",
     ],
     liveBoundary:
-      "SkillOpt SOPs may cue the live/local reply planner only after source sync; model-weight absorption and user-visible-observed still require separate owner proof",
+      "SkillOpt SOPs may cue the local/external-channel reply planner only after source sync; model-weight absorption and user-visible-observed still require separate owner proof",
   },
   {
     id: "agent_lightning_trace_credit",
@@ -203,7 +203,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_direct_training_start",
     ],
     liveBoundary:
-      "external channel can surface the dev radar result after migration, but no external-channel model behavior is changed by this radar alone",
+      "external channel can surface the local radar result after migration, but no external-channel model behavior is changed by this radar alone",
   },
   {
     id: "longmemeval_agentrunbook_memory_regression",
@@ -370,7 +370,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "protected_memory_guard",
     ],
     liveBoundary:
-      "Live trace summaries require explicit migration and redaction; dev trace receipts alone are not user-visible proof",
+      "External-channel trace summaries require explicit migration and redaction; local trace receipts alone are not user-visible proof",
   },
   {
     id: "secure_tool_skill_permission_layer",
@@ -384,7 +384,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "agent security controls for tool poisoning, prompt injection, privilege escalation, authentication, policy enforcement, and audit logging",
     adoptionMode: "secure_tool_permission_probe",
     existingOwner: "skill harvester, CLI-Anything harvester, and security threat model",
-    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+    ownerEntrypoint: "codex-security:threat-model",
     ownerUseTrigger:
       "When a future task asks to add tools, MCP servers, CLI wrappers, desktop control, external skills, or agent permissions, run security ownership/threat-model checks before granting authority.",
     autocueTerms: [
@@ -551,7 +551,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "protected_memory_guard",
     ],
     liveBoundary:
-      "GitHub CLI may become an operator-side control panel after wrapper tests and permission receipts, but it never becomes live Lark, provider, protected-memory, or trading authority by default",
+      "GitHub CLI may become an operator-side control panel after wrapper tests and permission receipts, but it never becomes external-channel Lark, provider, protected-memory, or trading authority by default",
   },
   {
     id: "multi_agent_framework_orchestration_guardrails",
@@ -771,7 +771,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "direct_trading_authority",
     ],
     liveBoundary:
-      "Immediate SkillOpt preflight can improve planning, but learned capability and external-channel usage require separate promotion and live-proof owners.",
+      "Immediate SkillOpt preflight can improve planning, but learned capability and external-channel usage require separate promotion and user-visible-proof owners.",
   },
   {
     id: "real_runtime_battery",
@@ -782,7 +782,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     automaticTrigger:
       "When a task claims product-grade, user-visible, long-horizon, runtime, or commercial acceptance readiness, autopilot includes the commercial acceptance harness.",
     ownerGate:
-      "canary tasks may inspect dev/runtime state, but cannot create user-visible-observed, install untrusted tasks, or mutate provider/external-channel/protected surfaces",
+      "canary tasks may inspect local runtime state, but cannot create user-visible-observed, install untrusted tasks, or mutate provider/external-channel/protected surfaces",
     autopilotSurface:
       "lcx-governance-autopilot owners.commercialAcceptance and context handoff commercial gates",
     doctrineTerms: [
@@ -943,18 +943,18 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "external_channel_sender_change",
     ],
     liveBoundary:
-      "Dev traces may explain operator behavior; live trace summaries require explicit redaction and migration proof.",
+      "Local traces may explain operator behavior; external-channel trace summaries require explicit redaction and migration proof.",
   },
   {
     id: "secure_tool_skill_permission_layer",
     priority: 6,
     label: "Secure tool and skill permission layer",
     sourceCandidates: ["secure_tool_skill_permission_layer", "computer_use_cli_bridge"],
-    ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+    ownerEntrypoint: "codex-security:threat-model",
     automaticTrigger:
       "When a task proposes a CLI wrapper, MCP server, external skill, browser/desktop bridge, credentialed tool, or install, route through skill-harvester plus security threat-model gates first.",
     ownerGate:
-      "untrusted tools need allowlist, write-scope, credential-scope, prompt-injection, audit-log, and uninstall proof before any runtime or live authority",
+      "untrusted tools need allowlist, write-scope, credential-scope, prompt-injection, audit-log, and uninstall proof before any runtime or external-channel authority",
     autopilotSurface:
       "external agent upgrade radar, skill-harvester boundary, and future security review receipt",
     doctrineTerms: [
@@ -988,7 +988,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "wallet_or_order_execution",
     ],
     liveBoundary:
-      "No new tool or skill becomes live authority without security receipts, owner mapping, source sync, and explicit migration.",
+      "No new tool or skill becomes external-channel authority without security receipts, owner mapping, source sync, and explicit migration.",
   },
   {
     id: "github_cli_agentic_control_plane",
@@ -1034,7 +1034,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "external_channel_sender_change",
     ],
     liveBoundary:
-      "GitHub CLI control-plane proof is dev/operator-only; it cannot prove user-visible-observed or grant remote repository write authority by itself.",
+      "GitHub CLI control-plane proof is local/operator-only; it cannot prove user-visible-observed or grant remote repository write authority by itself.",
   },
 ];
 
@@ -1256,7 +1256,7 @@ function buildChecks(verdicts: readonly CandidateVerdict[]): RadarCheck[] {
       id: "boundary_guards_present",
       ok: missingBoundaries.length === 0,
       summary:
-        "provider, live, protected-memory, install, and execution boundaries remain explicit",
+        "provider, external-channel, protected-memory, install, and execution boundaries remain explicit",
       evidence: verdicts.map((candidate) => ({
         id: candidate.id,
         riskBoundaries: candidate.riskBoundaries,
@@ -1326,7 +1326,7 @@ function buildBlacktechChecks(
       id: "blacktech_runtime_authority_blocked",
       ok: unsafeAuthority.length === 0,
       summary:
-        "blacktech mechanisms are architecture intake only, not runtime/live/model-weight authority",
+        "blacktech mechanisms are architecture intake only, not runtime/external-channel/model-weight authority",
       evidence: unsafeAuthority.map((mechanism) => mechanism.id),
     },
     {
@@ -1399,7 +1399,7 @@ export function buildExternalAgentUpgradeRadar() {
     },
     architectureFit: "fully_integrated_into_existing_lcx_owner_stack",
     perfectIntegrationReason:
-      "No external project should be called perfectly integrated until a concrete dev probe, eval/receipt, external-channel migration, and fresh Lark visible proof all pass. This radar proves architecture wiring, not user-visible-observed behavior.",
+      "No external project should be called perfectly integrated until a concrete local probe, eval/receipt, external-channel migration, and fresh Lark visible proof all pass. This radar proves architecture wiring, not user-visible-observed behavior.",
     checks,
     candidates,
     blacktechMechanisms,

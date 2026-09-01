@@ -182,7 +182,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
         }),
         expect.objectContaining({
           label: "OWASP Agentic Top 10 / SMCP",
-          ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+          ownerEntrypoint: "codex-security:threat-model",
         }),
         expect.objectContaining({
           label: "ClawBench / WildClawBench",
