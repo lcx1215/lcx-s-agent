@@ -52,6 +52,7 @@ const INTEGRATION_SURFACES = [
     path: "package.json",
     terms: [
       "lcx:ontology",
+      "lcx:multi-agent:shadow",
       "lcx:projection-reader-audit",
       LCX_ONTOLOGY_REGISTRY_POLICY.auditEntrypoint,
     ],
@@ -140,6 +141,28 @@ const INTEGRATION_SURFACES = [
   {
     path: "scripts/operator/lcx-commercial-answer-pipeline.ts",
     terms: ["LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS"],
+  },
+  {
+    path: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+    terms: [
+      "EXECUTOR_SCHEMA_VERSION",
+      "RECEIPT_SCHEMA_VERSION",
+      "METRICS_SCHEMA_VERSION",
+      "lcx_multi_agent_shadow_executor_v1",
+      "local_multi_agent_pattern_shadow_only",
+      "missingEvidenceIsUnknown",
+      "providerConfigTouched",
+      "protectedMemoryTouched",
+    ],
+  },
+  {
+    path: "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
+    terms: [
+      "multi_agent_pattern_intake_20260901",
+      "architecture pattern intake only",
+      "isolated executor phase",
+      "lcx_ontology_v1",
+    ],
   },
   {
     path: "src/shared/global-evidence-projection-read.ts",

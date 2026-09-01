@@ -311,6 +311,102 @@ export const LCX_ONTOLOGY_MODULE_FAMILY_IDS = [
 ] as const;
 export type LcxOntologyModuleFamilyId = (typeof LCX_ONTOLOGY_MODULE_FAMILY_IDS)[number];
 
+export const LCX_ONTOLOGY_ORCHESTRATION_PATTERNS = [
+  "manager",
+  "handoff",
+  "parallel_worker",
+] as const;
+export type LcxOntologyOrchestrationPattern = (typeof LCX_ONTOLOGY_ORCHESTRATION_PATTERNS)[number];
+
+export const LCX_ONTOLOGY_AGENT_ROLES = [
+  "coordinator",
+  "worker",
+  "specialist",
+  "evaluator",
+  "risk_gate",
+  "advisor",
+] as const;
+export type LcxOntologyAgentRole = (typeof LCX_ONTOLOGY_AGENT_ROLES)[number];
+
+export const LCX_ONTOLOGY_DELEGATION_MODES = [
+  "manager_as_tool",
+  "handoff",
+  "parallel_fanout",
+  "deterministic_chain",
+  "background_task",
+] as const;
+export type LcxOntologyDelegationMode = (typeof LCX_ONTOLOGY_DELEGATION_MODES)[number];
+
+export const LCX_ONTOLOGY_EXECUTION_STATES = [
+  "queued",
+  "running",
+  "waiting",
+  "idle",
+  "rescheduled",
+  "completed",
+  "failed",
+  "terminated",
+  "paused",
+] as const;
+export type LcxOntologyExecutionState = (typeof LCX_ONTOLOGY_EXECUTION_STATES)[number];
+
+export const LCX_ONTOLOGY_COMMUNICATION_KINDS = [
+  "parent_message",
+  "peer_message",
+  "tool_result",
+  "artifact",
+  "report",
+  "final_answer",
+] as const;
+export type LcxOntologyCommunicationKind = (typeof LCX_ONTOLOGY_COMMUNICATION_KINDS)[number];
+
+export const LCX_ONTOLOGY_CONTEXT_SCOPES = [
+  "inherited",
+  "fresh",
+  "summarized",
+  "shared_resource",
+] as const;
+export type LcxOntologyContextScope = (typeof LCX_ONTOLOGY_CONTEXT_SCOPES)[number];
+
+export const LCX_ONTOLOGY_WORKSPACE_SCOPES = [
+  "same_workspace",
+  "forked_workspace",
+  "read_only",
+  "disjoint_write_set",
+] as const;
+export type LcxOntologyWorkspaceScope = (typeof LCX_ONTOLOGY_WORKSPACE_SCOPES)[number];
+
+export const LCX_ONTOLOGY_OWNERSHIP_MODES = [
+  "root_final_owner",
+  "specialist_final_owner",
+  "verifier_only",
+  "artifact_owner",
+] as const;
+export type LcxOntologyOwnershipMode = (typeof LCX_ONTOLOGY_OWNERSHIP_MODES)[number];
+
+export const LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS = [
+  "trace",
+  "event_stream",
+  "tool_attribution",
+  "permission_audit",
+  "approval",
+  "replay",
+  "evaluator_result",
+  "usage",
+] as const;
+export type LcxOntologyOrchestrationProofKind =
+  (typeof LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS)[number];
+
+export const LCX_ONTOLOGY_INTERRUPTION_RECOVERY_STATES = [
+  "not_injected",
+  "resumed",
+  "retried_once",
+  "restarted",
+  "unrecoverable",
+] as const;
+export type LcxOntologyInterruptionRecoveryState =
+  (typeof LCX_ONTOLOGY_INTERRUPTION_RECOVERY_STATES)[number];
+
 export const LCX_ONTOLOGY_FINANCE_LEARNING_CAPABILITY_TYPES = [
   "analysis_method",
   "research_framework",
@@ -461,6 +557,7 @@ export const LCX_ONTOLOGY_TASK_FAMILY_IDS = [
   "finance_research_planning",
   "all_domain_finance_research_loop",
   "finance_memory_training_self_repair",
+  "multi_agent_pattern_shadow_evaluation",
   "generated_router_task",
 ] as const;
 export type LcxOntologyTaskFamilyId = (typeof LCX_ONTOLOGY_TASK_FAMILY_IDS)[number];
@@ -891,6 +988,12 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "blacktech_mechanism_map",
   "license_scope_review",
   "workflow_distillation",
+  "multi_agent_pattern_intake",
+  "shadow_replay",
+  "shadow_isolated_executor",
+  "shadow_live",
+  "pattern_comparison",
+  "interruption_recovery_probe",
   "local_skill_candidate",
   "trajectory_or_trace_receipt",
   "security_permission_review",
@@ -1010,6 +1113,15 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "focused_daily_product_required",
   "daily_research_packet_required",
   "candidate_watchlist_not_trade_recommendation",
+  "same_case_required",
+  "same_model_policy_required",
+  "replay_before_isolated_executor_required",
+  "replay_before_live_required",
+  "explicit_cost_basis_required",
+  "shadow_tool_permission_audit_required",
+  "no_shadow_external_side_effects",
+  "shadow_recovery_receipt_required",
+  "wide_trial_not_production",
 ] as const;
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
@@ -1033,6 +1145,7 @@ export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
   "senior_trader_failure_focus_waterflow",
   "similar_engineering_consolidation_waterflow",
   "external_agent_skill_distillation_waterflow",
+  "multi_agent_pattern_shadow_evaluation_waterflow",
   "prediction_market_research_only_waterflow",
   "automation_repair_lock_waterflow",
 ] as const;
@@ -1058,6 +1171,7 @@ export const LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS = [
   "senior_trader_promotion_failure_closure",
   "same_philosophy_engineering_merge",
   "external_agent_or_skill_learning",
+  "multi_agent_pattern_shadow_evaluation",
   "prediction_market_research_and_strategy_audit",
   "codex_auto_repair_and_schedule_guard",
 ] as const;
@@ -1089,6 +1203,16 @@ export const LCX_ONTOLOGY_VOCABULARIES = {
   actionKind: LCX_ONTOLOGY_ACTION_KINDS,
   actionStatus: LCX_ONTOLOGY_ACTION_STATUSES,
   learningDecision: LCX_ONTOLOGY_LEARNING_DECISIONS,
+  orchestrationPattern: LCX_ONTOLOGY_ORCHESTRATION_PATTERNS,
+  agentRole: LCX_ONTOLOGY_AGENT_ROLES,
+  delegationMode: LCX_ONTOLOGY_DELEGATION_MODES,
+  executionState: LCX_ONTOLOGY_EXECUTION_STATES,
+  communicationKind: LCX_ONTOLOGY_COMMUNICATION_KINDS,
+  contextScope: LCX_ONTOLOGY_CONTEXT_SCOPES,
+  workspaceScope: LCX_ONTOLOGY_WORKSPACE_SCOPES,
+  ownershipMode: LCX_ONTOLOGY_OWNERSHIP_MODES,
+  orchestrationProofKind: LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS,
+  interruptionRecovery: LCX_ONTOLOGY_INTERRUPTION_RECOVERY_STATES,
   financeFrameworkCoreDomain: LCX_ONTOLOGY_FINANCE_FRAMEWORK_CORE_DOMAIN_IDS,
   financeAllowedActionAuthority: LCX_ONTOLOGY_FINANCE_ALLOWED_ACTION_AUTHORITIES,
   financeConfidenceOrConviction: LCX_ONTOLOGY_FINANCE_CONFIDENCE_OR_CONVICTION_LEVELS,
@@ -1143,6 +1267,18 @@ export const LCX_ONTOLOGY_VOCABULARY_GROUPS = {
     "actionKind",
     "actionStatus",
     "learningDecision",
+  ],
+  orchestration: [
+    "orchestrationPattern",
+    "agentRole",
+    "delegationMode",
+    "executionState",
+    "communicationKind",
+    "contextScope",
+    "workspaceScope",
+    "ownershipMode",
+    "orchestrationProofKind",
+    "interruptionRecovery",
   ],
   stateAndDelivery: [
     "deliveryState",
