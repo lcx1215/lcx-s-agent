@@ -148,6 +148,31 @@ const PATH_RULES: PathRule[] = [
     headTailRequired: true,
   },
   {
+    id: "multi_agent_pattern_shadow",
+    lane: "agent_workflow_memory",
+    patterns: [
+      /^ops\/external-learning\/2026-09-01-multi-agent-pattern-intake\.md$/u,
+      /^scripts\/operator\/lcx-multi-agent-pattern-shadow\.ts$/u,
+      /^test\/fixtures\/lcx-multi-agent-pattern-shadow-executor\.ts$/u,
+      /^test\/lcx-multi-agent-pattern-shadow\.test\.ts$/u,
+    ],
+    requiredChecks: [
+      "multi-agent-pattern-replay",
+      "shadow-contract-tests",
+      "head-tail-consistency",
+    ],
+    commands: [
+      "node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay --pattern all --case single_stock_loss_recovery_risk_triage --json",
+      "pnpm vitest run test/lcx-multi-agent-pattern-shadow.test.ts",
+      "node --import tsx scripts/operator/lcx-head-tail-consistency.ts --json",
+    ],
+    safetyNotes: [
+      "Replay is the default verification path; isolated executor/live remains blocked without an explicit executor command and never grants provider, training, or external-channel authority.",
+    ],
+    headTailRequired: true,
+    risk: "elevated",
+  },
+  {
     id: "runtime_skill_package",
     lane: "skill_runtime",
     patterns: [/^skills\//u],

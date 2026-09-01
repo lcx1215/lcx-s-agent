@@ -427,6 +427,159 @@ export type ShadowExperimentReceipt = {
   protectedMemoryTouched: false;
 };
 
+export const SHADOW_LATEST_FRESHNESS_MS = 7 * 24 * 60 * 60 * 1000;
+export type ShadowLatestStatus = "fresh" | "stale" | "missing" | "blocked";
+
+export type ShadowLatestSnapshot = {
+  status: ShadowLatestStatus;
+  latestStatePath: string;
+  checkedAt: string;
+  experimentId?: string;
+  mode?: ShadowMode;
+  executionPhase?: ShadowExecutionPhase;
+  completedAt?: string;
+  trialDecision?: ShadowDecision;
+  trialDecisionReason?: string;
+  summary?: Pick<
+    ShadowExperimentSummary,
+    | "patternCount"
+    | "normalRuns"
+    | "normalPasses"
+    | "normalPassRate"
+    | "usageBasis"
+    | "blockedRuns"
+    | "escapedPermissionViolations"
+    | "externalSideEffects"
+    | "trialDecision"
+  >;
+  reason: string;
+};
+
+function asLatestRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function latestSnapshotFromReceipt(
+  value: unknown,
+  checkedAt = new Date().toISOString(),
+): ShadowLatestSnapshot {
+  const receipt = asLatestRecord(value);
+  const summary = asLatestRecord(receipt?.summary);
+  const completedAt = typeof receipt?.completedAt === "string" ? receipt.completedAt : undefined;
+  const completedAtMs = completedAt ? Date.parse(completedAt) : Number.NaN;
+  const base = {
+    latestStatePath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+    checkedAt,
+    experimentId: typeof receipt?.experimentId === "string" ? receipt.experimentId : undefined,
+    mode: receipt?.mode === "replay" || receipt?.mode === "live" ? receipt.mode : undefined,
+    executionPhase:
+      receipt?.executionPhase === "replay" || receipt?.executionPhase === "isolated_executor"
+        ? receipt.executionPhase
+        : undefined,
+    completedAt,
+    trialDecision:
+      summary?.trialDecision === "pass" ||
+      summary?.trialDecision === "downrank" ||
+      summary?.trialDecision === "unverified" ||
+      summary?.trialDecision === "discard"
+        ? summary.trialDecision
+        : undefined,
+    trialDecisionReason:
+      typeof summary?.trialDecisionReason === "string" ? summary.trialDecisionReason : undefined,
+    summary:
+      summary &&
+      typeof summary.patternCount === "number" &&
+      typeof summary.normalRuns === "number" &&
+      typeof summary.normalPasses === "number" &&
+      (summary.normalPassRate === null || typeof summary.normalPassRate === "number") &&
+      typeof summary.blockedRuns === "number" &&
+      (summary.usageBasis === "exact" ||
+        summary.usageBasis === "estimated" ||
+        summary.usageBasis === "missing") &&
+      typeof summary.escapedPermissionViolations === "number" &&
+      typeof summary.externalSideEffects === "number" &&
+      (summary.trialDecision === "pass" ||
+        summary.trialDecision === "downrank" ||
+        summary.trialDecision === "unverified" ||
+        summary.trialDecision === "discard")
+        ? (summary as ShadowLatestSnapshot["summary"])
+        : undefined,
+    reason: "",
+  } satisfies Omit<ShadowLatestSnapshot, "status">;
+
+  if (
+    receipt?.receiptSchemaVersion !== RECEIPT_SCHEMA_VERSION ||
+    receipt?.boundary !== "local_multi_agent_pattern_shadow_only" ||
+    !base.summary ||
+    !base.completedAt ||
+    Number.isNaN(completedAtMs)
+  ) {
+    return {
+      ...base,
+      status: "blocked",
+      reason: "latest shadow receipt is missing or incompatible",
+    };
+  }
+  const nowMs = Date.parse(checkedAt);
+  if (completedAtMs > nowMs) {
+    return {
+      ...base,
+      status: "blocked",
+      reason: "latest shadow receipt has a future completion time",
+    };
+  }
+  if (
+    base.trialDecision === "discard" ||
+    (base.mode === "live" &&
+      (base.summary.escapedPermissionViolations > 0 ||
+        base.summary.externalSideEffects > 0 ||
+        (base.summary.normalRuns === 0 && base.summary.blockedRuns > 0)))
+  ) {
+    return {
+      ...base,
+      status: "blocked",
+      reason: "latest shadow receipt contains a hard trial boundary",
+    };
+  }
+  return {
+    ...base,
+    status: nowMs - completedAtMs <= SHADOW_LATEST_FRESHNESS_MS ? "fresh" : "stale",
+    reason:
+      nowMs - completedAtMs <= SHADOW_LATEST_FRESHNESS_MS
+        ? "latest shadow receipt is within the freshness window"
+        : "latest shadow receipt is outside the freshness window",
+  };
+}
+
+export function classifyShadowLatestReceipt(
+  value: unknown,
+  checkedAt = new Date().toISOString(),
+): ShadowLatestSnapshot {
+  return latestSnapshotFromReceipt(value, checkedAt);
+}
+
+export async function readLatestShadowSnapshot(
+  checkedAt = new Date().toISOString(),
+): Promise<ShadowLatestSnapshot> {
+  try {
+    const content = await fs.readFile(MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH, "utf8");
+    return latestSnapshotFromReceipt(JSON.parse(content), checkedAt);
+  } catch (error) {
+    const reason =
+      error instanceof SyntaxError
+        ? "latest shadow receipt is not valid JSON"
+        : "latest shadow receipt is missing";
+    return {
+      status: error instanceof SyntaxError ? "blocked" : "missing",
+      latestStatePath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+      checkedAt,
+      reason,
+    };
+  }
+}
+
 type PatternTaskPlan = {
   taskIdSuffix: string;
   role: LcxOntologyAgentRole;

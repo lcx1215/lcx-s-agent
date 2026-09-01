@@ -58,6 +58,7 @@ const TAIL_SURFACE_FILES = [
   "src/agents/finance-data-gateway.ts",
   "src/agents/tools/finance-data-gateway-tool.ts",
   "scripts/operator/lcx-external-channel-status.ts",
+  "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
 ] as const;
 
 const MODULE_LEARNING_TARGET_EXEMPTIONS: Record<string, string> = {
@@ -224,6 +225,15 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
       "keep_python_engine",
       "wrap_with_ts_owner",
       "migrate_to_ts_control",
+    ],
+  },
+  {
+    id: "multi_agent_pattern_shadow_boundary",
+    headTerms: ["multi-agent", "shadow"],
+    tailTerms: [
+      "lcx-multi-agent-pattern-shadow.ts",
+      "local_multi_agent_pattern_shadow_only",
+      "shadow_recovery_receipt_required",
     ],
   },
 ];

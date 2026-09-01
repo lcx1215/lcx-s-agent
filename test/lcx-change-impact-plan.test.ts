@@ -93,6 +93,24 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
+  it("routes multi-agent pattern shadow artifacts through the dedicated owner lane", async () => {
+    const payload = await runPlan("scripts/operator/lcx-multi-agent-pattern-shadow.ts");
+
+    expect(payload.ok).toBe(true);
+    expect(payload.affectedLanes).toEqual(["agent_workflow_memory"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "multi_agent_pattern_shadow",
+          requiredChecks: expect.arrayContaining(["multi-agent-pattern-replay"]),
+          headTailRequired: true,
+          risk: "elevated",
+        }),
+      ]),
+    );
+    expect(payload.unmatchedFiles).toEqual([]);
+  });
+
   it("fails the stray gate when a changed file has no owner lane", async () => {
     const payload = await runPlan("tmp/unknown-stray-output.txt");
 

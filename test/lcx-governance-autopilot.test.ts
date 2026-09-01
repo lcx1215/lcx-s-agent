@@ -36,6 +36,8 @@ async function runAutopilot() {
     ownerControlMapLatestJsonPath: string;
     ownerControlMapLatestMarkdownPath: string;
     handoffLatestPath: string;
+    multiAgentPatternShadowLatestPath: string;
+    multiAgentPatternShadow: { status: string; reason: string };
     globalEvidenceProjectionReader: {
       contractVersion: string;
       adapterId: string;
@@ -75,6 +77,8 @@ async function runAutopilot() {
       activeTrainingOrEval: boolean;
       externalChannelBindingStatus?: string;
       externalChannelStatusModel?: string;
+      multiAgentPatternShadowStatus?: string;
+      multiAgentPatternShadowTrialDecision?: string;
       externalChannelBound?: boolean;
       userVisibleObserved?: boolean;
       evolutionCooldownActive?: boolean;
@@ -170,6 +174,11 @@ describe("LCX governance autopilot", () => {
         protectedMemoryTouched: false,
       }),
     );
+    expect(payload.multiAgentPatternShadowLatestPath).toContain(
+      "lcx-multi-agent-pattern-shadow-latest.json",
+    );
+    expect(payload.multiAgentPatternShadow.status).toBe("fresh");
+    expect(payload.summary.multiAgentPatternShadowStatus).toBe("fresh");
     expect(payload.triggerPolicy).toEqual(
       expect.objectContaining({
         readOnly: false,

@@ -26,11 +26,16 @@ import {
   OWNER_BRIEF_LATEST_MARKDOWN_PATH,
   OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+  MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   SELF_REPAIR_HANDS_JSONL_PATH,
   SELF_REPAIR_HANDS_LATEST_PATH,
   SELF_REPAIR_HANDS_MARKDOWN_PATH,
   UNIVERSE_INDEX_LATEST_PATH,
 } from "./lcx-local-paths.ts";
+import {
+  readLatestShadowSnapshot,
+  type ShadowLatestSnapshot,
+} from "./lcx-multi-agent-pattern-shadow.ts";
 import { buildOwnerBrief, writeOwnerBrief } from "./lcx-owner-brief.ts";
 import { buildOwnerControlMap, writeOwnerControlMap } from "./lcx-owner-control-map.ts";
 
@@ -1031,6 +1036,7 @@ function buildContextRecoveryHandoff({
   providerCouncilAccelerationCompact,
   externalChannelBindingCompact,
   externalAgentUpgradeCompact,
+  multiAgentPatternShadow,
   projectionReaderAuditCompact,
   localFailureTrace,
 }: {
@@ -1045,6 +1051,7 @@ function buildContextRecoveryHandoff({
   providerCouncilAccelerationCompact: Record<string, unknown> | undefined;
   externalChannelBindingCompact: Record<string, unknown> | undefined;
   externalAgentUpgradeCompact: Record<string, unknown> | undefined;
+  multiAgentPatternShadow: ShadowLatestSnapshot;
   projectionReaderAuditCompact: Record<string, unknown> | undefined;
   localFailureTrace: LocalFailureTraceReceipt;
 }) {
@@ -1178,6 +1185,15 @@ function buildContextRecoveryHandoff({
     `- nextBlacktechProbes: ${inlineValue(externalAgentUpgradeCompact?.nextBlacktechProbes)}`,
     "- boundary: local_external_agent_upgrade_radar_only; external blacktech is pattern intake, not runtime/live/provider/protected-memory authority",
     "",
+    "## Multi-Agent Pattern Shadow",
+    `- status: ${inlineValue(multiAgentPatternShadow.status)}`,
+    `- latestStatePath: ${inlineValue(multiAgentPatternShadow.latestStatePath)}`,
+    `- experimentId: ${inlineValue(multiAgentPatternShadow.experimentId)}`,
+    `- completedAt: ${inlineValue(multiAgentPatternShadow.completedAt)}`,
+    `- trialDecision: ${inlineValue(multiAgentPatternShadow.trialDecision)}`,
+    `- reason: ${inlineValue(multiAgentPatternShadow.reason)}`,
+    "- boundary: governance reads the latest shadow summary only; it never triggers isolated executor or live shadow",
+    "",
     "## Provider Council Acceleration",
     `- status: ${inlineValue(providerCouncilAccelerationCompact?.status)}`,
     `- action: ${inlineValue(providerCouncilAccelerationCompact?.action)}`,
@@ -1257,6 +1273,7 @@ function buildContextRecoveryHandoff({
 const options = parseArgs(process.argv.slice(2));
 let owners = await Promise.all(OWNER_COMMANDS.map((command) => runOwner(command)));
 let byOwner = ownerMap(owners);
+const multiAgentPatternShadow = await readLatestShadowSnapshot();
 const selfRepairAutoSignal = buildSelfRepairAutoSignal(byOwner);
 const selfRepairAutoWriteNeeded =
   selfRepairAutoSignal !== undefined &&
@@ -1306,6 +1323,8 @@ const receipt = {
   ownerControlMapLatestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+  multiAgentPatternShadowLatestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+  multiAgentPatternShadow,
   globalEvidenceProjection,
   globalEvidenceProjectionReader: {
     contractVersion: globalEvidenceProjectionReader.contractVersion,
@@ -1424,6 +1443,10 @@ const receipt = {
     evolutionCooldownActive: byOwner.trainingPlan?.compact.evolutionCooldownActive,
     latestEvolutionCooldown: byOwner.trainingPlan?.compact.latestEvolutionCooldown,
     latestGuardEvent: byOwner.trainingPlan?.compact.latestGuardEvent,
+    multiAgentPatternShadowStatus: multiAgentPatternShadow.status,
+    multiAgentPatternShadowTrialDecision: multiAgentPatternShadow.trialDecision,
+    multiAgentPatternShadowCompletedAt: multiAgentPatternShadow.completedAt,
+    multiAgentPatternShadowReason: multiAgentPatternShadow.reason,
     fastestSafeNextAction: recordValue(byOwner.trainingPlan?.compact.evolutionAcceleration)
       ?.fastestSafeNextAction,
     activeNonIdleProgress: recordValue(byOwner.trainingPlan?.compact.evolutionAcceleration)
@@ -1483,6 +1506,10 @@ const digestMaterial = {
   globalEvidenceProjectionBlocked: globalEvidenceProjection.blocked,
   globalEvidenceProjectionGeneratedAt: globalEvidenceProjection.generatedAt,
   globalEvidenceProjectionReason: globalEvidenceProjection.reason,
+  multiAgentPatternShadowStatus: multiAgentPatternShadow.status,
+  multiAgentPatternShadowTrialDecision: multiAgentPatternShadow.trialDecision,
+  multiAgentPatternShadowCompletedAt: multiAgentPatternShadow.completedAt,
+  multiAgentPatternShadowReason: multiAgentPatternShadow.reason,
   fastestSafeNextAction: receipt.summary.fastestSafeNextAction,
   evolutionCooldownActive: trainingCompact?.evolutionCooldownActive,
   latestEvolutionCooldown: trainingCompact?.latestEvolutionCooldown,
@@ -1591,6 +1618,7 @@ const localFailureTrace = buildLocalFailureTraceReceipt({
     MONOTONIC_DATA_LEDGER_LATEST_PATH,
     MONOTONIC_DATA_LEDGER_JSONL_PATH,
     CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+    MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   ],
   writtenArtifacts: [
     GOVERNANCE_AUTOPILOT_LATEST_PATH,
@@ -1626,6 +1654,7 @@ const ownerControlMap = buildOwnerControlMap({
       LOCAL_FAILURE_TRACE_LATEST_PATH,
       MONOTONIC_DATA_LEDGER_LATEST_PATH,
       CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+      MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
     ],
   },
 });
@@ -1643,6 +1672,7 @@ const ownerBrief = buildOwnerBrief({
       LOCAL_FAILURE_TRACE_LATEST_PATH,
       MONOTONIC_DATA_LEDGER_LATEST_PATH,
       CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+      MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
     ],
   },
 });
@@ -1669,6 +1699,7 @@ await fs.writeFile(
     providerCouncilAccelerationCompact,
     externalChannelBindingCompact,
     externalAgentUpgradeCompact,
+    multiAgentPatternShadow,
     projectionReaderAuditCompact,
     localFailureTrace,
   })}\n`,

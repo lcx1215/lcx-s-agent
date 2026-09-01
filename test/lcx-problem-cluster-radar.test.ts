@@ -1058,6 +1058,35 @@ describe("lcx-problem-cluster-radar", () => {
     );
   });
 
+  it("only surfaces shadow failures while leaving a fresh unverified receipt non-actionable", () => {
+    const healthy = buildProblemClusterRadar({
+      multiAgentPatternShadow: owner("lcx-multi-agent-pattern-shadow", {
+        status: "fresh",
+        summary: {
+          escapedPermissionViolations: 0,
+          trialDecision: "unverified",
+        },
+      }),
+    });
+    expect(healthy.actionableClusters).not.toContain("multi_agent_pattern_shadow_cluster");
+
+    const stale = buildProblemClusterRadar({
+      multiAgentPatternShadow: owner("lcx-multi-agent-pattern-shadow", {
+        status: "stale",
+        summary: { escapedPermissionViolations: 0, trialDecision: "unverified" },
+      }),
+    });
+    expect(stale.clusters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "multi_agent_pattern_shadow_cluster",
+          severity: "P3",
+          actionability: "watch",
+        }),
+      ]),
+    );
+  });
+
   it("accepts the GitHub CLI blacktech control plane when it is gated and owner-routed", () => {
     const result = buildProblemClusterRadar({
       externalAgentUpgrade: owner("lcx-external-agent-upgrade-radar", {

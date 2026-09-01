@@ -16,6 +16,7 @@ import {
   buildReplayExperiment,
   buildShadowDeliveryKey,
   buildShadowIdempotencyKey,
+  classifyShadowLatestReceipt,
   getDefaultShadowExperimentId,
   getShadowTopology,
   normalizeExecutorResponse,
@@ -26,6 +27,26 @@ import {
 import { buildFixtureResponse } from "./fixtures/lcx-multi-agent-pattern-shadow-executor.ts";
 
 describe("LCX multi-agent pattern shadow", () => {
+  it("classifies latest receipts without allowing governance to trigger a shadow run", () => {
+    const source = buildReplayExperiment({ experimentId: "shadow-latest-status" });
+    const receipt = {
+      ...source,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      completedAt: "2026-09-01T00:00:00.000Z",
+    };
+    const snapshot = classifyShadowLatestReceipt(receipt, "2026-09-02T00:00:00.000Z");
+
+    expect(snapshot).toMatchObject({
+      status: "fresh",
+      trialDecision: "unverified",
+      latestStatePath: expect.stringContaining("lcx-multi-agent-pattern-shadow-latest.json"),
+    });
+    expect(snapshot.reason).toContain("freshness window");
+
+    const stale = classifyShadowLatestReceipt(receipt, "2026-09-10T00:00:00.000Z");
+    expect(stale.status).toBe("stale");
+  });
+
   it("keeps the protocol versioned, forward-compatible, and evidence-bounded", () => {
     const normalized = normalizeExecutorResponse({
       schemaVersion: EXECUTOR_SCHEMA_VERSION,
