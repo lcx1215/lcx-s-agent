@@ -83,8 +83,7 @@ export type ExternalBrainDistillationReviewArtifact = {
 
 export const EXTERNAL_BRAIN_DISTILLATION_CANDIDATE_DIR =
   "memory/external-brain-distillation-candidates";
-export const EXTERNAL_BRAIN_DISTILLATION_REVIEW_DIR =
-  "memory/external-brain-distillation-reviews";
+export const EXTERNAL_BRAIN_DISTILLATION_REVIEW_DIR = "memory/external-brain-distillation-reviews";
 
 const DEFAULT_RISK_BOUNDARIES = [
   "research_only",

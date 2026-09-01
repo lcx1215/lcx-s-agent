@@ -192,7 +192,8 @@ export function createFinancePromotionProposalDraftTool(options?: {
         }
         throw error;
       }
-      const parsedDecisions = parseExternalFinanceDoctrinePromotionDecisionArtifact(decisionContent);
+      const parsedDecisions =
+        parseExternalFinanceDoctrinePromotionDecisionArtifact(decisionContent);
       if (!parsedDecisions) {
         return jsonResult({
           ok: false,

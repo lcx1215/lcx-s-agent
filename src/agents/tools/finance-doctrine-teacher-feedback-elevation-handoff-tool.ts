@@ -238,7 +238,9 @@ export function createFinanceDoctrineTeacherFeedbackElevationHandoffTool(options
         teacherElevationHandoffAbsPath,
       );
       const parsedTeacherElevationHandoff = teacherElevationHandoffContent
-        ? parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(teacherElevationHandoffContent)
+        ? parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(
+            teacherElevationHandoffContent,
+          )
         : undefined;
 
       if (teacherElevationHandoffContent != null && !parsedTeacherElevationHandoff) {

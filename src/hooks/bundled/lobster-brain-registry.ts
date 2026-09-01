@@ -1954,7 +1954,9 @@ export function buildExternalFinanceDoctrineTeacherElevationHandoffsFilename(
   return `${dateStr}-external-finance-doctrine-teacher-elevation-handoffs.md`;
 }
 
-export function buildExternalFinanceDoctrineTeacherCandidateInputsFilename(dateStr: string): string {
+export function buildExternalFinanceDoctrineTeacherCandidateInputsFilename(
+  dateStr: string,
+): string {
   return `${dateStr}-external-finance-doctrine-teacher-candidate-inputs.md`;
 }
 
@@ -1994,7 +1996,9 @@ export function parseExternalFinanceDoctrineTeacherElevationHandoffsFilename(
   };
 }
 
-export function isExternalFinanceDoctrineTeacherElevationHandoffsFilename(filename: string): boolean {
+export function isExternalFinanceDoctrineTeacherElevationHandoffsFilename(
+  filename: string,
+): boolean {
   return Boolean(parseExternalFinanceDoctrineTeacherElevationHandoffsFilename(filename));
 }
 
@@ -3379,13 +3383,17 @@ export function parseExternalFinanceDoctrineCalibrationArtifact(
     ?.trim() as ExternalFinanceDoctrineCalibrationArtifact["scenarioClosestToOutcome"] | undefined;
   const baseCaseDirectionallyCloser = content
     .match(/- \*\*Base Case Directionally Closer\*\*: ([^\r\n]+)/)?.[1]
-    ?.trim() as ExternalFinanceDoctrineCalibrationArtifact["baseCaseDirectionallyCloser"] | undefined;
+    ?.trim() as
+    | ExternalFinanceDoctrineCalibrationArtifact["baseCaseDirectionallyCloser"]
+    | undefined;
   const changeMyMindTriggered = content
     .match(/- \*\*Change My Mind Triggered\*\*: ([^\r\n]+)/)?.[1]
     ?.trim() as ExternalFinanceDoctrineCalibrationArtifact["changeMyMindTriggered"] | undefined;
   const convictionLooksTooHighOrLow = content
     .match(/- \*\*Conviction Looks Too High Or Low\*\*: ([^\r\n]+)/)?.[1]
-    ?.trim() as ExternalFinanceDoctrineCalibrationArtifact["convictionLooksTooHighOrLow"] | undefined;
+    ?.trim() as
+    | ExternalFinanceDoctrineCalibrationArtifact["convictionLooksTooHighOrLow"]
+    | undefined;
   const notes = extractSectionBulletLines(content, "Notes")[0]?.trim();
   if (
     !reviewDate ||
@@ -4637,7 +4645,9 @@ function normalizeFinanceDoctrineTeacherReviewOutcome(
 
 function normalizeFinanceDoctrineTeacherElevationHandoffStatus(
   value: string | undefined,
-): ExternalFinanceDoctrineTeacherElevationHandoffArtifact["handoffs"][number]["status"] | undefined {
+):
+  | ExternalFinanceDoctrineTeacherElevationHandoffArtifact["handoffs"][number]["status"]
+  | undefined {
   if (!value) {
     return undefined;
   }
@@ -5229,7 +5239,9 @@ export function parseExternalFinanceDoctrinePromotionProposalArtifact(
       };
     })
     .filter(
-      (proposal): proposal is ExternalFinanceDoctrinePromotionProposalArtifact["proposals"][number] =>
+      (
+        proposal,
+      ): proposal is ExternalFinanceDoctrinePromotionProposalArtifact["proposals"][number] =>
         Boolean(proposal),
     );
   return {

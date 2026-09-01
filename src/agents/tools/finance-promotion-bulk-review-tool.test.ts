@@ -240,7 +240,9 @@ describe("finance_promotion_bulk_review tool", () => {
     });
     expect(await fs.readFile(path.join(receiptsDir, candidateFilename), "utf8")).toBe(seedContent);
     await expect(
-      fs.access(path.join(receiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename(dateKey))),
+      fs.access(
+        path.join(receiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename(dateKey)),
+      ),
     ).rejects.toThrow();
   });
 

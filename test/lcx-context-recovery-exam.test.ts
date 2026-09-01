@@ -219,7 +219,9 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.handoffForNewWindow.text).toContain("externalChannelBinding=");
     expect(payload.handoffForNewWindow.text).toContain("externalChannelBindingMissingProof=");
     expect(payload.handoffForNewWindow.text).toContain("legacyLiveExternalBrainBinding=");
-    expect(payload.handoffForNewWindow.text).toContain("legacyLiveExternalBrainBindingMissingProof=");
+    expect(payload.handoffForNewWindow.text).toContain(
+      "legacyLiveExternalBrainBindingMissingProof=",
+    );
     expect(payload.handoffForNewWindow.text).toContain("deferredCommands=");
     expect(payload.handoffForNewWindow.text).toContain("safetyNotes=");
     expect(payload.handoffForNewWindow.text).toContain("moduleGateCounts=");

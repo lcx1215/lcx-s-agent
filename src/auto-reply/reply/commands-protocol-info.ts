@@ -272,9 +272,7 @@ function readLatestWriteFailureEvidence(cfg?: OpenClawConfig): WriteFailureEvide
         return parsed ? [parsed] : [];
       })
       .filter(
-        (entry) =>
-          entry.category === "write_edit_failure" &&
-          entry.source.startsWith("channel."),
+        (entry) => entry.category === "write_edit_failure" && entry.source.startsWith("channel."),
       )
       .toSorted((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))[0];
     if (latest) {

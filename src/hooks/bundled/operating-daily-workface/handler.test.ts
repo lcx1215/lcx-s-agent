@@ -357,7 +357,8 @@ describe("operating-daily-workface hook", () => {
       name: buildExternalFinanceDoctrineCalibrationFilename({
         reviewDate: "2026-03-15T12:00:00.000Z",
         consumer: "holdings_thesis_revalidation",
-        linkedReceipt: "2026-03-15-external-work-receipt-100000-000Z-control_room-msg-work-stale.md",
+        linkedReceipt:
+          "2026-03-15-external-work-receipt-100000-000Z-control_room-msg-work-stale.md",
       }),
       content: renderExternalFinanceDoctrineCalibrationArtifact({
         reviewDate: "2026-03-15T12:00:00.000Z",
@@ -586,7 +587,8 @@ describe("operating-daily-workface hook", () => {
         }),
       ]),
     );
-    const promotionReviewFilename = buildExternalFinanceDoctrinePromotionReviewFilename("2026-03-25");
+    const promotionReviewFilename =
+      buildExternalFinanceDoctrinePromotionReviewFilename("2026-03-25");
     const parsedPromotionReview = parseExternalFinanceDoctrinePromotionReviewArtifact(
       await fs.readFile(path.join(workReceiptsDir, promotionReviewFilename), "utf-8"),
     );
@@ -1029,7 +1031,10 @@ describe("operating-daily-workface hook", () => {
     );
     const parsedPromotionReview = parseExternalFinanceDoctrinePromotionReviewArtifact(
       await fs.readFile(
-        path.join(workReceiptsDir, buildExternalFinanceDoctrinePromotionReviewFilename("2026-03-25")),
+        path.join(
+          workReceiptsDir,
+          buildExternalFinanceDoctrinePromotionReviewFilename("2026-03-25"),
+        ),
         "utf-8",
       ),
     );

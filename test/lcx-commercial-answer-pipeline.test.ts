@@ -271,7 +271,9 @@ describe("LCX commercial answer pipeline", () => {
         expect.objectContaining({
           scenarioId: "real_external_short_buy_canary_blocks_generic_intro",
           actualDecision: "return_failed_reason",
-          failedReasons: expect.arrayContaining(["short_external_canary_wrong_route_generic_intro"]),
+          failedReasons: expect.arrayContaining([
+            "short_external_canary_wrong_route_generic_intro",
+          ]),
         }),
         expect.objectContaining({
           scenarioId: "async_learning_receipt_visible_when_deferred",

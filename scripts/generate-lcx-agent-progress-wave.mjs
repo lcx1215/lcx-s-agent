@@ -132,7 +132,13 @@ function architectureSvg() {
 const boardCards = [
   ["Harness", "约束与验收", "权限、风险、测试、eval、live 验收", "#1557c0", "#edf4ff"],
   ["Hermes", "消息与证据流", "上下文、handoff、receipt、review artifact", "#0f8a9d", "#ecfbff"],
-  ["外部消息通道控制室", "自然语言入口", "一个主入口承接研究、学习、运维和审计", "#6a45c9", "#f4f0ff"],
+  [
+    "外部消息通道控制室",
+    "自然语言入口",
+    "一个主入口承接研究、学习、运维和审计",
+    "#6a45c9",
+    "#f4f0ff",
+  ],
   ["本地大脑", "学习沉淀", "吸收蒸馏样本、能力卡和修正笔记", "#15803d", "#effbf2"],
   ["金融研究", "research-only", "ETF、主要资产、头部公司、风险门控", "#b66a00", "#fff8e8"],
   ["Runtime", "底层执行", "gateway、channel、session、CLI、工具调用", "#be123c", "#fff1f2"],

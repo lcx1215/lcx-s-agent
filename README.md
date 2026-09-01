@@ -21,7 +21,7 @@ LCX Agent combines five layers:
 
 | Layer        | Role                                                                     |
 | ------------ | ------------------------------------------------------------------------ |
-| Control room | External Message Channel natural-language entrypoint for one real user. |
+| Control room | External Message Channel natural-language entrypoint for one real user.  |
 | Harness      | Permission, risk, eval, promotion, and user-visible proof gates.         |
 | Hermes       | Context packets, handoffs, receipts, review artifacts, and message flow. |
 | Local brain  | Qwen / MLX local adapter training, eval, and durable learning surfaces.  |
@@ -136,11 +136,11 @@ Forward status names are `core-ready`, `external-channel-bound`, and
 `legacy-live-runtime-updated`, `legacy-live-user-seen`, and
 `legacy-live-visible-fixed` compatibility labels.
 
-| State                    | Meaning                                                             |
-| ------------------------ | ------------------------------------------------------------------- |
-| `core-ready`             | Local tests, smokes, replay, or evals passed in the repo.           |
-| `external-channel-bound` | External transport routes to the selected clean LCX answer path.  |
-| `user-visible-observed`  | A real external inbound and outbound reply was observed.           |
+| State                    | Meaning                                                          |
+| ------------------------ | ---------------------------------------------------------------- |
+| `core-ready`             | Local tests, smokes, replay, or evals passed in the repo.        |
+| `external-channel-bound` | External transport routes to the selected clean LCX answer path. |
+| `user-visible-observed`  | A real external inbound and outbound reply was observed.         |
 
 The approved external-channel binding owner is:
 
@@ -277,14 +277,14 @@ corepack pnpm exec vitest run extensions/external/src/send.test.ts
 
 ## Repository Map
 
-| Path                     | Purpose                                                                                        |
-| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| Path                       | Purpose                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------------- |
 | `extensions/external/src/` | Vendor-neutral JSON webhook, routing, reply, security, and outbound delivery code. |
-| `scripts/operator/`      | Local-brain training, eval, governance, doctor, radar, and promotion tools.                    |
-| `src/agents/`            | Agent runtime, system prompt, tools, routing, and review surfaces.                             |
-| `src/auto-reply/`        | User-visible command replies, truth surfaces, and reply-flow evidence.                         |
-| `ops/local-brain/`       | Operator runbook for local-brain training, eval, guard, and recovery.                          |
-| `docs/`                  | Broader OpenClaw and LCX Agent documentation.                                                  |
+| `scripts/operator/`        | Local-brain training, eval, governance, doctor, radar, and promotion tools.        |
+| `src/agents/`              | Agent runtime, system prompt, tools, routing, and review surfaces.                 |
+| `src/auto-reply/`          | User-visible command replies, truth surfaces, and reply-flow evidence.             |
+| `ops/local-brain/`         | Operator runbook for local-brain training, eval, guard, and recovery.              |
+| `docs/`                    | Broader OpenClaw and LCX Agent documentation.                                      |
 
 ## Project Lineage
 

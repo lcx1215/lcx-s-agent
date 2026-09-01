@@ -938,7 +938,8 @@ describe("local-brain-training-plan", () => {
       selectedCleanAdapter: "/tmp/adapter-clean-r2",
       activeTrainingOrEval: false,
       status: "ready_for_apply",
-      action: "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
+      action:
+        "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
       bindingPolicy: "external_transport_may_only_route_to_selected_clean_answer_path",
       userVisibleObserved: false,
       liveTouched: false,
@@ -968,7 +969,8 @@ describe("local-brain-training-plan", () => {
       activeTrainingOrEval: false,
       guardUsesSelectedCleanAdapter: true,
       status: "ready_for_live_runtime_binding",
-      action: "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
+      action:
+        "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof",
       externalChannelPolicy: "external_transport_may_only_route_to_selected_clean_answer_path",
       liveTouched: false,
       providerConfigTouched: false,

@@ -846,7 +846,9 @@ async function loadYesterdayFinanceDoctrineCalibrations(params: {
     const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
     const parsed = await Promise.all(
       entries
-        .filter((entry) => entry.isFile() && isExternalFinanceDoctrineCalibrationFilename(entry.name))
+        .filter(
+          (entry) => entry.isFile() && isExternalFinanceDoctrineCalibrationFilename(entry.name),
+        )
         .map(async (entry) => {
           const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
           const parsedCalibration = parseExternalFinanceDoctrineCalibrationArtifact(content);
@@ -895,7 +897,9 @@ async function loadRecentFinanceDoctrineCalibrationSummary(params: {
     const entries = await fs.readdir(receiptsDir, { withFileTypes: true });
     const parsed = await Promise.all(
       entries
-        .filter((entry) => entry.isFile() && isExternalFinanceDoctrineCalibrationFilename(entry.name))
+        .filter(
+          (entry) => entry.isFile() && isExternalFinanceDoctrineCalibrationFilename(entry.name),
+        )
         .map(async (entry) => {
           const content = await fs.readFile(path.join(receiptsDir, entry.name), "utf-8");
           const parsedCalibration = parseExternalFinanceDoctrineCalibrationArtifact(content);

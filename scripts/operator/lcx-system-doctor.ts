@@ -1164,14 +1164,14 @@ checks.push(
 const trainingGuardCheck = await minimaxTrainingGuardStatusCheck();
 checks.push(trainingGuardCheck);
 checks.push(await modelCouncilProviderEvidenceCheck());
-  checks.push(
-    await runCommand({
-      name: "external-channel-status",
-      command: process.execPath,
-      args: ["--import", "tsx", "scripts/operator/lcx-external-channel-status.ts", "--json"],
-      parseJson: true,
-    }),
-  );
+checks.push(
+  await runCommand({
+    name: "external-channel-status",
+    command: process.execPath,
+    args: ["--import", "tsx", "scripts/operator/lcx-external-channel-status.ts", "--json"],
+    parseJson: true,
+  }),
+);
 checks.push(
   await runCommand({
     name: "local-brain-dataset",

@@ -328,7 +328,11 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "legacy-live-runtime-updated",
       "legacy-live-user-seen",
     ],
-    workflowTerms: ["lcx-external-channel-status", "lcx-external-channel-binding", "channels status"],
+    workflowTerms: [
+      "lcx-external-channel-status",
+      "lcx-external-channel-binding",
+      "channels status",
+    ],
     proofTerms: ["naturalProbeMessage", "userVisibleObserved", "freshInboundCount"],
     boundaryTerms: [
       "user-visible-observed",

@@ -1,13 +1,13 @@
 import { pathToFileURL } from "node:url";
-import {
-  applyVisibleAnswerAdoptionGate,
-  findVisibleAnswerAdoptionGateFailures,
-} from "../../src/agents/visible-answer-adoption-gate.js";
 import { buildAnswerAuditPolicy } from "../../src/agents/answer-audit-policy.js";
 import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
 } from "../../src/agents/finance-brain-orchestration.js";
+import {
+  applyVisibleAnswerAdoptionGate,
+  findVisibleAnswerAdoptionGateFailures,
+} from "../../src/agents/visible-answer-adoption-gate.js";
 import { LCX_ONTOLOGY_ANSWER_PIPELINE_FILTER_IDS } from "../../src/shared/lcx-ontology.js";
 import type { LcxOntologyAnswerPipelineFilterId } from "../../src/shared/lcx-ontology.js";
 

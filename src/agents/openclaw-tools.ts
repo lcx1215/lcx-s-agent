@@ -64,25 +64,6 @@ import { createTtsTool } from "./tools/tts-tool.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
-function createLazyTool(params: {
-  name: string;
-  label: string;
-  description: string;
-  parameters?: Record<string, unknown>;
-  load: () => Promise<AnyAgentTool>;
-}): AnyAgentTool {
-  return {
-    name: params.name,
-    label: params.label,
-    description: params.description,
-    parameters: params.parameters ?? {},
-    execute: async (toolCallId, args) => {
-      const tool = await params.load();
-      return tool.execute(toolCallId, args);
-    },
-  } as AnyAgentTool;
-}
-
 export function createOpenClawTools(options?: {
   sandboxBrowserBridgeUrl?: string;
   allowHostBrowserControl?: boolean;

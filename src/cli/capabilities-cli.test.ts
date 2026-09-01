@@ -137,5 +137,4 @@ describe("capabilities cli", () => {
       expect.any(Object),
     );
   });
-
 });

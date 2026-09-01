@@ -98,7 +98,8 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
         });
       }
 
-      const parsedProposals = parseExternalFinanceDoctrinePromotionProposalArtifact(proposalContent);
+      const parsedProposals =
+        parseExternalFinanceDoctrinePromotionProposalArtifact(proposalContent);
       if (!parsedProposals) {
         return jsonResult({
           ok: false,
@@ -290,7 +291,8 @@ export function createFinancePromotionDoctrineEditHandoffTool(options?: {
             "Restore the linked finance promotion decision artifact before retrying finance_promotion_doctrine_edit_handoff.",
         });
       }
-      const parsedDecisions = parseExternalFinanceDoctrinePromotionDecisionArtifact(decisionContent);
+      const parsedDecisions =
+        parseExternalFinanceDoctrinePromotionDecisionArtifact(decisionContent);
       if (!parsedDecisions) {
         return jsonResult({
           ok: false,

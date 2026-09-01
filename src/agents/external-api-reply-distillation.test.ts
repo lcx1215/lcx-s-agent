@@ -3,7 +3,9 @@ import { normalizeExternalApiReplyForDistillation } from "./external-api-reply-d
 
 describe("normalizeExternalApiReplyForDistillation", () => {
   it("keeps Chinese and English replies as semantic-family candidates", () => {
-    expect(normalizeExternalApiReplyForDistillation("以后遇到未验证来源，先标未知。")).toMatchObject({
+    expect(
+      normalizeExternalApiReplyForDistillation("以后遇到未验证来源，先标未知。"),
+    ).toMatchObject({
       outputKind: "zh_text",
       disposition: "candidate_semantic_family",
     });

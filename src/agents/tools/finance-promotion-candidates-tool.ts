@@ -314,7 +314,8 @@ export function createFinancePromotionCandidatesTool(options?: {
         | undefined;
       try {
         const teacherReviewContent = await fs.readFile(teacherReviewAbsPath, "utf8");
-        parsedTeacherReview = parseExternalFinanceDoctrineTeacherReviewArtifact(teacherReviewContent);
+        parsedTeacherReview =
+          parseExternalFinanceDoctrineTeacherReviewArtifact(teacherReviewContent);
         if (!parsedTeacherReview) {
           return jsonResult({
             ok: false,
@@ -360,9 +361,10 @@ export function createFinancePromotionCandidatesTool(options?: {
           teacherElevationHandoffAbsPath,
           "utf8",
         );
-        parsedTeacherElevationHandoffs = parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(
-          teacherElevationHandoffContent,
-        );
+        parsedTeacherElevationHandoffs =
+          parseExternalFinanceDoctrineTeacherElevationHandoffArtifact(
+            teacherElevationHandoffContent,
+          );
         if (!parsedTeacherElevationHandoffs) {
           return jsonResult({
             ok: false,

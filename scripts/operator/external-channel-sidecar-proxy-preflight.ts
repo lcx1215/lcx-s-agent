@@ -6,7 +6,8 @@ import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-
 
 const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
-const EXTERNAL_PROXY_PLIST = "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.external.proxy.plist";
+const EXTERNAL_PROXY_PLIST =
+  "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.external.proxy.plist";
 const RECEIPT_NAME = "external-channel-sidecar-external-proxy-preflight-receipt.json";
 
 const REQUIRED_FILES = [
@@ -182,9 +183,10 @@ function runSmoke(targetRoot: string, smokePort: number): ExternalProxyPreflight
     command: `LOBSTER_PROXY_PORT=${smokePort} python3 external_event_proxy.py + curl /healthz`,
     code: child.status,
     stdout: (child.stdout || "").slice(-4000),
-    stderr: `${child.stderr || ""}\n${readIfExists("/tmp/openclaw-external-proxy-smoke.err")}`.slice(
-      -4000,
-    ),
+    stderr:
+      `${child.stderr || ""}\n${readIfExists("/tmp/openclaw-external-proxy-smoke.err")}`.slice(
+        -4000,
+      ),
   };
   commandResults.push(smokeResult);
   return { port: smokePort, commandResults, health: parseJsonTail(smokeResult.stdout) };

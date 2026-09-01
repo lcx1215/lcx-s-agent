@@ -1,9 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import {
-  resolveDefaultAgentId,
-  resolveAgentWorkspaceDir,
-} from "../agents/agent-scope.js";
+import { resolveDefaultAgentId, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { resolveMinimaxDefaultTextModelId } from "../agents/minimax-model-catalog.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { randomIdempotencyKey, callGateway } from "../gateway/call.js";

@@ -547,7 +547,8 @@ function adapterPromotionTruthCluster(inputs: RadarInputs): ProblemCluster | und
       },
       live_external_brain_binding_deferred: {
         severity: "P3",
-        summary: "legacy live External binding alias is deferred; use external-channel binding truth",
+        summary:
+          "legacy live External binding alias is deferred; use external-channel binding truth",
       },
     }),
   );

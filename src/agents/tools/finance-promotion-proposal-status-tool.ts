@@ -80,7 +80,8 @@ export function createFinancePromotionProposalStatusTool(options?: {
         throw error;
       }
 
-      const parsedProposals = parseExternalFinanceDoctrinePromotionProposalArtifact(proposalContent);
+      const parsedProposals =
+        parseExternalFinanceDoctrinePromotionProposalArtifact(proposalContent);
       if (!parsedProposals) {
         return jsonResult({
           ok: false,

@@ -194,5 +194,4 @@ export function registerCapabilitiesCli(program: Command) {
         );
       });
     });
-
 }

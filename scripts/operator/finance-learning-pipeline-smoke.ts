@@ -290,7 +290,10 @@ async function runCase(
           "Apply the retained event triage workflow to the External adjacent ETF catalyst and regime-risk intake request.",
         keepDownrankDiscardDecision: "keep",
       });
-      assert(result.details.ok === true, "external-market-capability-intake should complete pipeline");
+      assert(
+        result.details.ok === true,
+        "external-market-capability-intake should complete pipeline",
+      );
       const retrieval = getRecord(result.details.retrievalFirstLearning, "retrievalFirstLearning");
       const applicationValidation = getRecord(
         result.details.applicationValidation,

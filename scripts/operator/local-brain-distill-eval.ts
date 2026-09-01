@@ -469,7 +469,8 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "ambiguous_repeat_no_old_context",
     userAsk: "重新来一遍。",
-    sourceSummary: "ambiguous repeat request with no current subject and old External context cleared.",
+    sourceSummary:
+      "ambiguous repeat request with no current subject and old External context cleared.",
     requiredModules: [],
     forbiddenModules: REQUIRED_FINANCE_MODULES,
     minModuleMatches: 0,
@@ -3872,7 +3873,9 @@ const EVAL_REGISTRY_SUITES = [
     targetCaseCount: 30,
     description: "short natural-language asks that must expand into the right workflow",
     matches: (evalCase: EvalCase) =>
-      /(plain|short_external|external|ambiguous|短|一句|口语)/iu.test(`${evalCase.id} ${evalCase.userAsk}`),
+      /(plain|short_external|external|ambiguous|短|一句|口语)/iu.test(
+        `${evalCase.id} ${evalCase.userAsk}`,
+      ),
   },
   {
     id: "memory_learning",

@@ -7,7 +7,6 @@ import {
 } from "../status.js";
 import { buildContextReply } from "./commands-context-report.js";
 import { buildExportSessionReply } from "./commands-export-session.js";
-import { resolveProtocolInfoQuestionKind } from "./commands-protocol-families.js";
 import { buildProtocolInfoReply } from "./commands-protocol-info.js";
 import { buildStatusReply } from "./commands-status.js";
 import type { CommandHandler } from "./commands-types.js";
@@ -15,7 +14,6 @@ export const handleHelpCommand: CommandHandler = async (params, allowTextCommand
   if (!allowTextCommands) {
     return null;
   }
-  const protocolKind = resolveProtocolInfoQuestionKind(params.command.commandBodyNormalized);
   const protocolReply = buildProtocolInfoReply({
     text: params.command.commandBodyNormalized,
     cfg: params.cfg,

@@ -91,10 +91,16 @@ repos:
   # Project checks (same commands as CI)
   - repo: local
     hooks:
-      # pnpm audit --prod --audit-level=high
+      # The two ignored advisories have no patched release as of this baseline:
+      # Pi coding agent is a required runtime dependency, and extract-zip is
+      # pulled through it. Keep these exceptions explicit so new fixable high
+      # or critical advisories still fail this hook.
       - id: pnpm-audit-prod
         name: pnpm-audit-prod
-        entry: pnpm audit --prod --audit-level=high
+        entry: >-
+          pnpm audit --prod --audit-level=high
+          --ignore GHSA-jfgx-wxx8-mp94
+          --ignore GHSA-jmr9-qjv8-65gv
         language: system
         pass_filenames: false
 
