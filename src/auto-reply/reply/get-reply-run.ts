@@ -15,6 +15,7 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
+import { planLcxEngineRequest, LCX_ENGINE_SERVICES } from "../../engine/lcx-engine.js";
 import { logVerbose } from "../../globals.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
 import { normalizeMainKey } from "../../routing/session-key.js";
@@ -47,7 +48,6 @@ import { isFeishuFamilyChannel } from "./reply-routing-helpers.js";
 import { routeReply } from "./route-reply.js";
 import { buildBareSessionResetPrompt } from "./session-reset-prompt.js";
 import { buildQueuedSystemPrompt, ensureSkillSnapshot } from "./session-updates.js";
-import { applySkillAutoCueToBody, resolveSkillAutoCue } from "./skill-autocue.js";
 import { applySkillOptAutoCueToBody, resolveSkillOptAutoCue } from "./skillopt-autocue.js";
 import { resolveTypingMode } from "./typing-mode.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
@@ -391,12 +391,13 @@ export async function runPreparedReply(
   sessionEntry = skillResult.sessionEntry ?? sessionEntry;
   currentSystemSent = skillResult.systemSent;
   const skillsSnapshot = skillResult.skillsSnapshot;
-  const skillAutoCue = resolveSkillAutoCue({
-    body: effectiveBaseBody,
+  const enginePlan = planLcxEngineRequest({
+    prompt: effectiveBaseBody,
     availableSkillNames: skillsSnapshot?.skills.map((entry) => entry.name) ?? [],
   });
+  const skillAutoCue = enginePlan.skillCue ?? null;
   if (skillAutoCue) {
-    prefixedBodyBase = applySkillAutoCueToBody({
+    prefixedBodyBase = LCX_ENGINE_SERVICES.skills.applyAutoCueToBody({
       body: prefixedBodyBase,
       cue: skillAutoCue,
     });
@@ -470,7 +471,7 @@ export async function runPreparedReply(
     sessionEntry,
     resolveSessionFilePathOptions({ agentId, storePath }),
   );
-  const skillCuedQueueBodyBase = applySkillAutoCueToBody({
+  const skillCuedQueueBodyBase = LCX_ENGINE_SERVICES.skills.applyAutoCueToBody({
     body: effectiveBaseBody,
     cue: skillAutoCue,
   });
@@ -547,6 +548,7 @@ export async function runPreparedReply(
       workspaceDir,
       config: cfg,
       skillsSnapshot,
+      enginePlan,
       provider,
       model,
       authProfileId,

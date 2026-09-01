@@ -145,6 +145,7 @@
     "ios:open": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && open OpenClaw.xcodeproj'",
     "ios:run": "bash -lc './scripts/ios-configure-signing.sh && cd apps/ios && xcodegen generate && xcodebuild -project OpenClaw.xcodeproj -scheme OpenClaw -destination \"${IOS_DEST:-platform=iOS Simulator,name=iPhone 17}\" -configuration Debug build && xcrun simctl boot \"${IOS_SIM:-iPhone 17}\" || true && xcrun simctl launch booted ai.openclaw.ios'",
     "lcx:commercial:acceptance": "node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts",
+    "lcx:engine:status": "node --import tsx scripts/operator/lcx-engine-status.ts --json",
     "lcx:external-channel": "node --import tsx scripts/operator/lcx-external-channel-binding.ts --apply --json",
     "lcx:external-channel:compat": "node --import tsx scripts/operator/lcx-external-channel-compat.ts",
     "lcx:external-channel:status": "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json",

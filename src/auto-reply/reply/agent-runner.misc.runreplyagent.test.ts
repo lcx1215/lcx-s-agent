@@ -938,8 +938,13 @@ describe("runReplyAgent claude-cli routing", () => {
     const runId = "00000000-0000-0000-0000-000000000001";
     const randomSpy = vi.spyOn(crypto, "randomUUID").mockReturnValue(runId);
     const lifecyclePhases: string[] = [];
+    let engineReceipt: Record<string, unknown> | undefined;
     const unsubscribe = onAgentEvent((evt) => {
       if (evt.runId !== runId) {
+        return;
+      }
+      if (evt.stream === "engine") {
+        engineReceipt = evt.data;
         return;
       }
       if (evt.stream !== "lifecycle") {
@@ -966,6 +971,12 @@ describe("runReplyAgent claude-cli routing", () => {
 
     expect(runCliAgentMock).toHaveBeenCalledTimes(1);
     expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
+    expect(engineReceipt).toMatchObject({
+      kind: "lcx-engine-receipt",
+      hostId: "openclaw.cli",
+      route: "general",
+      outcome: "completed",
+    });
     expect(lifecyclePhases).toEqual(["start", "end"]);
     expect(result).toMatchObject({ text: "ok" });
   });
@@ -1615,8 +1626,8 @@ describe("runReplyAgent response usage footer", () => {
     const sessionKey = "agent:main:whatsapp:dm:+1000";
     const res = await createRun({ responseUsage: "full", sessionKey });
     const payload = Array.isArray(res) ? res[0] : res;
-    expect(String(payload?.text ?? "")).toContain("Usage:");
-    expect(String(payload?.text ?? "")).toContain(`· session \`${sessionKey}\``);
+    expect(payload?.text ?? "").toContain("Usage:");
+    expect(payload?.text ?? "").toContain(`· session \`${sessionKey}\``);
   });
 
   it("does not append session key when responseUsage=tokens", async () => {
@@ -1634,8 +1645,8 @@ describe("runReplyAgent response usage footer", () => {
     const sessionKey = "agent:main:whatsapp:dm:+1000";
     const res = await createRun({ responseUsage: "tokens", sessionKey });
     const payload = Array.isArray(res) ? res[0] : res;
-    expect(String(payload?.text ?? "")).toContain("Usage:");
-    expect(String(payload?.text ?? "")).not.toContain("· session ");
+    expect(payload?.text ?? "").toContain("Usage:");
+    expect(payload?.text ?? "").not.toContain("· session ");
   });
 });
 

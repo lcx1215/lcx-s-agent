@@ -64,6 +64,9 @@ may change when the Agent host, coordinator, provider, interface, or deployment
 changes. A stale profile is a signal to rediscover the system, not a reason to
 restore an old architecture.
 
+The current LCX ownership and OpenClaw adoption decision are recorded in the
+[Engine boundary](docs/design/lcx-engine.md) and [adoption decision](docs/design/lcx-engine-adoption.md).
+
 ## Learn-and-improve loop
 
 For a new idea or replacement, use a progressively larger slice:
