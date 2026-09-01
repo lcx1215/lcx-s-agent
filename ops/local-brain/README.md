@@ -139,7 +139,14 @@ reply path. Message adapters still need their own bounded migration proof.
 Use `node --import tsx scripts/operator/lcx-projection-reader-audit.ts --json`
 to inventory known adapter entrypoints. Its `ok` field only means the listed
 entrypoints exist; `summary.readerContractReadyForAllAdapters` is the separate
-readiness gate.
+readiness gate. The same receipt separates structural routing from source-level
+consumption: `summary.messageAdapterCoverage` counts adapters bound either
+directly or through the neutral answer boundary, while
+`summary.messageAdapterDirectCoverage` counts only adapters that pass an
+explicit reader id at their own entrypoint. A `mixed` binding mode with direct
+coverage below 1 is expected when the neutral answer boundary is the canonical
+reader; it is not evidence that an adapter owns projection facts or that an
+external message was observed.
 
 The LCX Agent Flow Graph is the waterflow exam. It verifies that each task
 family has a start node, terminal node, required modules, filter valve list,

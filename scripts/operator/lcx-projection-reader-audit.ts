@@ -127,6 +127,9 @@ type ProjectionReaderAuditEntry = ProjectionReaderEntry & {
   usesReaderContract: boolean;
   passesAdapterProjectionInput: boolean;
   delegatedToAnswerBoundary: boolean;
+  /** Direct source-level contract use; delegation is reported separately. */
+  directReaderBinding: boolean;
+  bindingMode: "direct" | "delegated_to_neutral_answer_boundary" | "missing";
   readerIds: string[];
   readerIdStrategy: "literal" | "message_context_surface_or_provider";
   status: "bound" | "missing_reader_contract" | "missing_entrypoint";
@@ -154,25 +157,27 @@ async function auditEntry(
       /\bglobalEvidenceProjectionInput\s*:\s*\{[^}]*\badapterId\s*:/su.test(executableSource);
     const delegatedToAnswerBoundary =
       entry.binding === "delegated_to_neutral_answer_boundary" && answerBoundaryReady;
-    const readerIdStrategy =
-      usesReaderContract || passesAdapterProjectionInput
-        ? "literal"
-        : "message_context_surface_or_provider";
+    const directReaderBinding = usesReaderContract || passesAdapterProjectionInput;
+    const bindingMode = directReaderBinding
+      ? "direct"
+      : delegatedToAnswerBoundary
+        ? "delegated_to_neutral_answer_boundary"
+        : "missing";
+    const readerIdStrategy = directReaderBinding
+      ? "literal"
+      : "message_context_surface_or_provider";
     return {
       ...entry,
       exists: true,
       usesReaderContract,
       passesAdapterProjectionInput,
       delegatedToAnswerBoundary,
-      readerIds:
-        usesReaderContract || passesAdapterProjectionInput
-          ? readerIdsFromSource(executableSource)
-          : [],
+      directReaderBinding,
+      bindingMode,
+      readerIds: directReaderBinding ? readerIdsFromSource(executableSource) : [],
       readerIdStrategy,
       status:
-        usesReaderContract || passesAdapterProjectionInput || delegatedToAnswerBoundary
-          ? "bound"
-          : "missing_reader_contract",
+        directReaderBinding || delegatedToAnswerBoundary ? "bound" : "missing_reader_contract",
     };
   } catch {
     return {
@@ -181,6 +186,8 @@ async function auditEntry(
       usesReaderContract: false,
       passesAdapterProjectionInput: false,
       delegatedToAnswerBoundary: false,
+      directReaderBinding: false,
+      bindingMode: "missing",
       readerIds: [],
       readerIdStrategy: "message_context_surface_or_provider",
       status: "missing_entrypoint",
@@ -213,9 +220,24 @@ async function main(): Promise<void> {
   const missingEntrypoints = entries.filter((entry) => entry.status === "missing_entrypoint");
   const messageAdapters = entries.filter((entry) => entry.role === "message_adapter_entry");
   const boundMessageAdapters = messageAdapters.filter((entry) => entry.status === "bound");
+  const directBound = entries.filter((entry) => entry.directReaderBinding);
+  const directMessageAdapters = messageAdapters.filter((entry) => entry.directReaderBinding);
+  const delegatedMessageAdapters = messageAdapters.filter(
+    (entry) => entry.delegatedToAnswerBoundary,
+  );
+  const messageAdapterBindingMode =
+    directMessageAdapters.length === messageAdapters.length
+      ? "direct"
+      : directMessageAdapters.length === 0 &&
+          delegatedMessageAdapters.length === messageAdapters.length
+        ? "delegated_to_neutral_answer_boundary"
+        : "mixed";
   const coverage = entries.length === 0 ? 1 : bound.length / entries.length;
+  const directCoverage = entries.length === 0 ? 1 : directBound.length / entries.length;
   const messageAdapterCoverage =
     messageAdapters.length === 0 ? 1 : boundMessageAdapters.length / messageAdapters.length;
+  const messageAdapterDirectCoverage =
+    messageAdapters.length === 0 ? 1 : directMessageAdapters.length / messageAdapters.length;
   const result = {
     ok: missingEntrypoints.length === 0,
     boundary: "local_projection_reader_audit_only",
@@ -229,11 +251,19 @@ async function main(): Promise<void> {
       missingEntrypoints: missingEntrypoints.length,
       coverage,
       coverageStatus: missingReaderContract.length === 0 ? "complete" : "partial",
+      directReaderBound: directBound.length,
+      directReaderCoverage: directCoverage,
+      directReaderCoverageStatus: directBound.length === entries.length ? "complete" : "partial",
       messageAdapterTotal: messageAdapters.length,
       messageAdapterBound: boundMessageAdapters.length,
       messageAdapterCoverage,
       messageAdapterCoverageStatus:
         boundMessageAdapters.length === messageAdapters.length ? "complete" : "missing",
+      messageAdapterDirectBound: directMessageAdapters.length,
+      messageAdapterDirectCoverage,
+      messageAdapterDirectCoverageStatus:
+        directMessageAdapters.length === messageAdapters.length ? "complete" : "partial",
+      messageAdapterBindingMode,
       allKnownEntrypointsAudited: missingEntrypoints.length === 0,
       readerContractReadyForAllAdapters: missingReaderContract.length === 0,
       answerBoundaryReady,
