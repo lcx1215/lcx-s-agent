@@ -1550,11 +1550,11 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
   {
     id: "dev_live_evidence_cluster",
     philosophy:
-      "dev-ready, external-channel-bound, and user-visible-observed are one boundary model; old live terms are legacy aliases",
+      "core-ready, external-channel-bound, and user-visible-observed are one boundary model; old live terms are legacy aliases",
     ownerScenario: "dev_to_external_channel_lark_waterflow",
     ownerNode: "external_channel_binding",
     sameClassTerms: [
-      "dev-ready",
+      "core-ready",
       "external-channel-bound",
       "user-visible-observed",
       "legacy-live-runtime-updated",
@@ -1883,14 +1883,14 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     id: "dev_live_evidence_entrypoints",
     ownerCluster: "dev_live_evidence_cluster",
     ownerPath: "scripts/operator/lcx-external-channel-binding.ts",
-    watchedPathTerms: ["lcx-promote-live", "live-promotion", "lark-loop-diagnose"],
+    watchedPathTerms: ["lcx-external-channel-compat", "live-promotion", "lark-loop-diagnose"],
     allowedPaths: [
       "scripts/operator/lcx-external-channel-binding.ts",
       "scripts/operator/lcx-live-lark-brain-binding.ts",
-      "scripts/operator/lcx-promote-live.ts",
+      "scripts/operator/lcx-external-channel-compat.ts",
       "src/commands/capabilities.lark-loop-diagnose.test.ts",
       "src/commands/capabilities/lark-loop-diagnose.ts",
-      "test/lcx-promote-live-status.test.ts",
+      "test/lcx-external-channel-compat-status.test.ts",
     ],
   },
   {
@@ -2127,7 +2127,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "test/lcx-system-memory-sedimentation-gate.test.ts",
     "test/local-brain-distill-eval.test.ts",
     "test/local-brain-contracts.test.ts",
-    "test/lcx-promote-live-status.test.ts",
+    "test/lcx-external-channel-compat-status.test.ts",
     "test/lcx-external-channel-binding.test.ts",
   ],
   boundary: [

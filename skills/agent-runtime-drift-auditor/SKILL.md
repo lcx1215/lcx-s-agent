@@ -18,7 +18,7 @@ sync.
    authoritative.
 3. Route a possible channel change to
    `scripts/operator/lcx-external-channel-binding.ts`; use read-only status first.
-4. Report dev-ready, external-channel-bound, and user-visible-observed as
+4. Report core-ready, external-channel-bound, and user-visible-observed as
    separate states.
 
 ## Boundaries

@@ -264,14 +264,14 @@ describe("lcx-change-impact-plan", () => {
   it("treats --files as a batch file flag and routes live promotion work to the dev/live boundary", async () => {
     const payload = await runPlanArgs([
       "--files",
-      "scripts/operator/lcx-promote-live.ts",
-      "test/lcx-promote-live-status.test.ts",
+      "scripts/operator/lcx-external-channel-compat.ts",
+      "test/lcx-external-channel-compat-status.test.ts",
     ]);
 
     expect(payload.ok).toBe(true);
     expect(payload.changedFiles).toEqual([
-      "scripts/operator/lcx-promote-live.ts",
-      "test/lcx-promote-live-status.test.ts",
+      "scripts/operator/lcx-external-channel-compat.ts",
+      "test/lcx-external-channel-compat-status.test.ts",
     ]);
     expect(payload.changedFiles).not.toContain("--files");
     expect(payload.unmatchedFiles).toEqual([]);
@@ -282,18 +282,18 @@ describe("lcx-change-impact-plan", () => {
           id: "live_or_provider_boundary",
           lane: "dev_live_boundary",
           matchedFiles: [
-            "scripts/operator/lcx-promote-live.ts",
-            "test/lcx-promote-live-status.test.ts",
+            "scripts/operator/lcx-external-channel-compat.ts",
+            "test/lcx-external-channel-compat-status.test.ts",
           ],
           commands: expect.arrayContaining([
-            "pnpm vitest run test/lcx-promote-live-status.test.ts",
+            "pnpm vitest run test/lcx-external-channel-compat-status.test.ts",
             "node --import tsx scripts/operator/lcx-system-doctor.ts --json",
           ]),
         }),
         expect.objectContaining({
           id: "test_file_changed",
           lane: "test_surface",
-          matchedFiles: ["test/lcx-promote-live-status.test.ts"],
+          matchedFiles: ["test/lcx-external-channel-compat-status.test.ts"],
         }),
       ]),
     );

@@ -30,17 +30,17 @@ describe("LCX live fadeout audit", () => {
     expect(payload.ok).toBe(true);
     expect(payload.boundary).toBe("dev_live_fadeout_audit_only");
     expect(payload.statusModel).toBe(
-      "dev-ready -> external-channel-bound -> user-visible-observed",
+      "core-ready -> external-channel-bound -> user-visible-observed",
     );
     expect(payload.cloudMigrationModel).toBe(
-      "local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
+      "local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
     );
     expect(payload.summary.failed).toBe(0);
     expect(payload.summary.total).toBeGreaterThanOrEqual(10);
     expect(payload.liveReferenceInventory.totalMatches).toBeGreaterThan(0);
     expect(payload.checks.map((check) => check.id)).toEqual(
       expect.arrayContaining([
-        "cloud_migration_keeps_single_dev_core",
+        "cloud_migration_keeps_single_core",
         "binding_owner_is_canonical",
         "external_channel_status_wrapper_is_canonical_readonly",
         "commercial_acceptance_prefers_binding_owner",
@@ -73,13 +73,15 @@ describe("LCX live fadeout audit", () => {
     expect(packageJson.scripts["lcx:external-channel"]).toBe(
       "node --import tsx scripts/operator/lcx-external-channel-binding.ts --apply --json",
     );
-    expect(packageJson.scripts["lcx:live"]).toBe("pnpm lcx:external-channel");
+    expect(packageJson.scripts["lcx:external-channel:compat"]).toBe(
+      "node --import tsx scripts/operator/lcx-external-channel-compat.ts",
+    );
     expect(readme).toContain("scripts/operator/lcx-live-fadeout-audit.ts --json");
-    expect(readme).toContain("local dev core");
+    expect(readme).toContain("local LCX core");
     expect(readme).toContain("cloud-runtime-ready");
-    expect(readme).toContain("one canonical dev repo");
+    expect(readme).toContain("one canonical repository");
     expect(agents).toContain("System-wide live fadeout truth belongs");
-    expect(agents).toContain("Cloud migration must not resurrect the old `dev -> live` model");
+    expect(agents).toContain("Cloud migration must not resurrect a split-system model");
     expect(runbook).toContain("whole-system fadeout audit");
     expect(runbook).toContain("cloud-runtime-ready");
   });

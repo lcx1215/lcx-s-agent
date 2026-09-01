@@ -6,7 +6,7 @@ import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
-const RECEIPT_NAME = "live-sidecar-runtime-freshness-receipt.json";
+const RECEIPT_NAME = "external-channel-sidecar-runtime-freshness-receipt.json";
 const RUNTIME_STATE_NAME = "branches/_system/runtime_freshness.json";
 const SAMPLE_LIMIT = 50;
 

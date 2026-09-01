@@ -99,7 +99,7 @@ const WORKFLOW_SURFACES = [
   "scripts/operator/module-learning-pipeline-review.ts",
   LOCAL_OPERATOR_LOOP,
   LOCAL_CODEX_ARCHIVE,
-  "scripts/operator/lcx-promote-live.ts",
+  "scripts/operator/lcx-external-channel-compat.ts",
   "extensions/feishu/src/lark-language-handoff-receipts.ts",
   "src/auto-reply/reply/get-reply-run.ts",
   "src/auto-reply/reply/skillopt-autocue.ts",
@@ -136,7 +136,7 @@ const PROOF_SURFACES = [
   "test/lcx-learning-sedimentation-map.test.ts",
   "test/lcx-module-learning-absorption-gate.test.ts",
   "test/lcx-system-memory-sedimentation-gate.test.ts",
-  "test/lcx-promote-live-status.test.ts",
+  "test/lcx-external-channel-compat-status.test.ts",
   "src/agents/tools/module-learning-pipeline-plan-tool.test.ts",
   "src/agents/tools/module-learning-pipeline-review-tool.test.ts",
 ] as const;
@@ -146,7 +146,7 @@ const BOUNDARY_SURFACES = [
   "README.md",
   "ops/local-brain/README.md",
   "src/agents/system-prompt.ts",
-  "scripts/operator/lcx-promote-live.ts",
+  "scripts/operator/lcx-external-channel-compat.ts",
   "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   "scripts/operator/lcx-flow-graph.ts",
   "scripts/operator/lcx-governance-autopilot.ts",
@@ -288,13 +288,13 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     objective:
       "Treat Lark/Feishu as owner-agent communication transport, not a second live brain; keep dev correctness, connector routing, and user-visible proof separate.",
     headTerms: [
-      "dev-ready",
+      "core-ready",
       "external-channel-bound",
       "user-visible-observed",
       "legacy-live-runtime-updated",
       "legacy-live-user-seen",
     ],
-    workflowTerms: ["lcx-promote-live", "lark-loop-diagnose", "channels status"],
+    workflowTerms: ["lcx-external-channel-compat", "lark-loop-diagnose", "channels status"],
     proofTerms: ["naturalProbeMessage", "userVisibleObserved", "freshInboundCount"],
     boundaryTerms: [
       "user-visible-observed",
@@ -315,7 +315,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "lcx-commercial-acceptance-harness",
       "lcx-commercial-answer-pipeline",
       "lcx-problem-cluster-radar",
-      "lcx-promote-live",
+      "lcx-external-channel-compat",
     ],
     proofTerms: [
       "commercial_acceptance_harness",
@@ -648,7 +648,7 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
       "Dev proof, Lark external-channel binding, and real user-visible proof must stay separate while legacy live terms fade out.",
     termsBySurface: {
       head: [
-        "dev-ready",
+        "core-ready",
         "external-channel-bound",
         "user-visible-observed",
         "legacy-live-runtime-updated",

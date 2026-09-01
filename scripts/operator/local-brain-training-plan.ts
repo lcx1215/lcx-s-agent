@@ -156,7 +156,7 @@ type LegacyLiveLarkBrainBindingSnapshot = {
   conceptStatus: "legacy_live_terms_external_channel_owner_current";
   objective: "live_lark_reads_one_selected_clean_local_brain";
   externalChannel: {
-    boundary: "dev_external_channel_binding_plan_only";
+    boundary: "local_external_channel_binding_plan_only";
     channel: "lark";
     role: "owner_agent_communication_medium";
     objective: "lark_receives_current_best_verified_lcx_agent_answer";
@@ -210,7 +210,7 @@ type LegacyLiveLarkBrainBindingSnapshot = {
 };
 
 type ExternalChannelBindingPlanSnapshot = {
-  boundary: "dev_external_channel_binding_plan_only";
+  boundary: "local_external_channel_binding_plan_only";
   channel: "lark";
   role: "owner_agent_communication_medium";
   objective: "lark_receives_current_best_verified_lcx_agent_answer";
@@ -1147,7 +1147,7 @@ function legacyLiveLarkBrainBindingSnapshot(params: {
     conceptStatus: "legacy_live_terms_external_channel_owner_current",
     objective: "live_lark_reads_one_selected_clean_local_brain",
     externalChannel: {
-      boundary: "dev_external_channel_binding_plan_only",
+      boundary: "local_external_channel_binding_plan_only",
       channel: "lark",
       role: "owner_agent_communication_medium",
       objective: "lark_receives_current_best_verified_lcx_agent_answer",
@@ -1268,7 +1268,7 @@ function externalChannelBindingSnapshot(params: {
       "route_lark_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
   }
   return {
-    boundary: "dev_external_channel_binding_plan_only",
+    boundary: "local_external_channel_binding_plan_only",
     channel: "lark",
     role: "owner_agent_communication_medium",
     objective: "lark_receives_current_best_verified_lcx_agent_answer",

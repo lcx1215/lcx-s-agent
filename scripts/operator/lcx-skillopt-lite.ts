@@ -343,14 +343,14 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
     ],
     triggerExamples: [
       "Lark 现在是不是已经连到最好的本地脑了？",
-      "dev-ready 和 user-visible-observed 有什么区别？",
+      "core-ready 和 user-visible-observed 有什么区别？",
       "不能把 parseRecovered candidate 接进 Lark 外部通道。",
     ],
     casePatterns: [
       /live_lark|live_runtime|external_channel|user_visible|lark|feishu|live_user_seen|parse_recovered|adapter_mismatch/u,
     ],
     triggerPatterns: [
-      /飞书|Lark|LiveLark|live|外部通道|可见|sidecar|adapter|LoRA|parseRecovered|dev-ready|live-visible|user-visible/iu,
+      /飞书|Lark|LiveLark|live|外部通道|可见|sidecar|adapter|LoRA|parseRecovered|core-ready|live-visible|user-visible/iu,
     ],
     capabilityRule:
       "Lark external-channel proof requires one selected clean adapter, zero channel drift, restarted/probed channel gateway, diagnose success, and fresh real inbound/outbound user-visible evidence.",

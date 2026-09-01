@@ -1126,7 +1126,7 @@ function buildContextRecoveryHandoff({
     `- userVisibleObserved: ${inlineValue(externalChannelStatusCompact?.userVisibleObserved)}`,
     `- channelProbePassed: ${inlineValue(externalChannelStatusCompact?.channelProbePassed)}`,
     `- legacyPromoteLiveStatus: ${inlineValue(externalChannelStatusCompact?.legacyPromoteLiveStatus)}`,
-    "- boundary: dev_external_channel_status_only; read-only wrapper, no external-channel apply or sender authority",
+    "- boundary: local_external_channel_status_only; read-only wrapper, no external-channel apply or sender authority",
     "",
     "## External Channel Binding",
     `- status: ${inlineValue(externalChannelBindingCompact?.status)}`,

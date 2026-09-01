@@ -329,12 +329,11 @@ actual Codex/agent execution, canonical repo, local state, secrets, provider
 access, receipts, and audit logs must live on the supported-region control
 machine.
 
-Cloud migration must not resurrect the old `dev -> live` model. The forward
-cloud migration path is `local dev core -> cloud-runtime-ready ->
-external-channel-bound -> user-visible-observed`: one LCX Agent core moves to a
+Cloud migration must not resurrect a split-system model. The forward cloud
+migration path is `local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed`: one LCX Agent core moves to a
 supported-region runtime, then communication adapters such as Lark, WeChat, SMS,
 or Slack bind to that same selected clean answer path. Cloud runtime readiness
-means the same dev core, repo, `.openclaw` state, skills, receipts, selected
+means the same core, repository, `.openclaw` state, skills, receipts, selected
 clean adapter policy, and governance owners are available on the cloud control
 machine. It is not a second brain, not a second repo truth, and not a
 `live-visible-fixed` claim.
@@ -345,7 +344,7 @@ The preferred v1 topology is:
 China phone / Lark / SSH command
   -> Tailscale or Cloudflare Access identity gate
   -> US VPS: lcx-cloud-control
-  -> /srv/lcx/lcx-s-openclaw as the only canonical dev repo
+  -> /srv/lcx/lcx-s-openclaw as the only canonical repository
   -> ~/.openclaw as the only canonical runtime state
   -> Codex / agent runner executes on the US machine
   -> receipts / outbox / owner summaries return to Lark
@@ -355,7 +354,8 @@ Keep this architecture boring and auditable:
 
 - `/srv/lcx/lcx-s-openclaw` is the future canonical repo path after migration.
   The current local checkout may prepare and verify the move, but future cloud
-  runtime truth should converge on one dev repo, not separate dev/live repos.
+  runtime truth should converge on one canonical repository, not separate
+  local/legacy repositories.
 - `~/.openclaw` is the canonical runtime state root. Preserve receipts, logs,
   queues, selected-clean adapter proof, operator snapshots, and migration
   manifests there. Do not scatter new state roots across cloud machines.
@@ -367,17 +367,17 @@ Keep this architecture boring and auditable:
   owner and LCX Agent. It may use Lark/Feishu official APIs, SDKs, or
   open-source connector code, but that connector layer never becomes model
   authority, a second runtime truth source, or a brain. Lark does not make the
-  old live repo authoritative. If a temporary live service must stay online
+  old deployment checkout authoritative. If a temporary service must stay online
   during migration, treat it as a deployment artifact with a short read-only
   rollback window, not as a development or truth source.
 - Lark/Feishu is the owner-agent external communication channel, not a second
   live brain or second runtime truth source. The forward status words are
-  `dev-ready`, `external-channel-bound`, and `user-visible-observed`.
+  `core-ready`, `external-channel-bound`, and `user-visible-observed`.
   Historical `live-runtime-updated`, `live-user-seen`, and
   `live-visible-fixed` wording is now legacy compatibility only; when old
   owners still emit those fields, read them as `legacy-live-runtime-updated`,
   `legacy-live-user-seen`, and `legacy-live-visible-fixed`.
-- The old live repo and live sidecar drift must be retired, not maintained as a
+- The old deployment checkout and live sidecar drift must be retired, not maintained as a
   parallel lane. A controlled one-time sync is allowed only to keep service
   alive during cutover; it must not restore the live repo's status.
 - Canonical Lark channel truth belongs to
@@ -389,7 +389,7 @@ Keep this architecture boring and auditable:
   primary planner field; `liveLarkBrainBinding` is only a legacy compatibility
   alias while older owners migrate.
   `scripts/operator/lcx-external-channel-status.ts` is the canonical read-only
-  external-channel status wrapper; `scripts/operator/lcx-promote-live.ts` remains the
+  external-channel status wrapper; `scripts/operator/lcx-external-channel-compat.ts` remains the
   legacy promotion/drift compatibility surface underneath it. The status wrapper
   must not override the binding owner. Commercial acceptance may clear
   external-channel binding while still blocking release on
@@ -1027,7 +1027,7 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
   use a plain natural Lark probe plus reply-flow/answer-audit/outbound-result
   trace for real verification. A fixed acceptance phrase is only an optional
   receipt anchor, not the default diagnostic path.
-- Do not confuse `dev-ready` with `user-visible-observed`.
+- Do not confuse `core-ready` with `user-visible-observed`.
 - A change is only `user-visible-observed` after external-channel binding,
   build/restart/probe, and real-entry verification.
 - SkillOpt, eval preflight, channel probe, synthetic replay, and training
@@ -1037,7 +1037,7 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
 - No fake user-visible-observed: only fresh real Lark inbound plus a successful
   visible reply may set that state.
 - For human-facing status, prefer the simpler three-layer wording:
-  `dev-ready` means dev tests/smoke/synthetic or replay Lark checks passed;
+  `core-ready` means dev tests/smoke/synthetic or replay Lark checks passed;
   `external-channel-bound` means the Lark channel sidecar has been migrated to
   the verified dev git snapshot and restarted/probed; `user-visible-observed`
   means a real

@@ -39,7 +39,7 @@ type LiveReferenceInventory = {
 };
 
 const CANONICAL_TERMS = [
-  "dev-ready",
+  "core-ready",
   "cloud-runtime-ready",
   "external-channel-bound",
   "user-visible-observed",
@@ -51,7 +51,7 @@ const CANONICAL_TERMS = [
 const CRITICAL_OWNER_FILES = [
   "scripts/operator/lcx-external-channel-binding.ts",
   "scripts/operator/lcx-external-channel-status.ts",
-  "scripts/operator/lcx-promote-live.ts",
+  "scripts/operator/lcx-external-channel-compat.ts",
   "scripts/operator/lcx-commercial-acceptance-harness.ts",
   "scripts/operator/local-brain-training-plan.ts",
   "scripts/operator/lcx-governance-autopilot.ts",
@@ -112,12 +112,12 @@ function classifyLiveReference(file: string, text: string): LiveReferenceClass {
       : "legacy_live_compatibility";
   }
   if (
-    file.startsWith("scripts/operator/live-sidecar") ||
-    file.startsWith("test/live-sidecar") ||
+    file.startsWith("scripts/operator/external-channel-sidecar") ||
+    file.startsWith("test/external-channel-sidecar") ||
     (file.startsWith("scripts/operator/") &&
       !CRITICAL_OWNER_FILES.includes(file as (typeof CRITICAL_OWNER_FILES)[number])) ||
-    file === "scripts/operator/lcx-promote-live.ts" ||
-    file === "test/lcx-promote-live-status.test.ts"
+    file === "scripts/operator/lcx-external-channel-compat.ts" ||
+    file === "test/lcx-external-channel-compat-status.test.ts"
   ) {
     return "legacy_live_compatibility";
   }
@@ -269,7 +269,7 @@ export async function buildLcxLiveFadeoutAudit() {
     readText("package.json"),
     readText("scripts/operator/lcx-external-channel-binding.ts"),
     readText("scripts/operator/lcx-external-channel-status.ts"),
-    readText("scripts/operator/lcx-promote-live.ts"),
+    readText("scripts/operator/lcx-external-channel-compat.ts"),
     readText("scripts/operator/lcx-commercial-acceptance-harness.ts"),
     readText("scripts/operator/local-brain-training-plan.ts"),
     readText("scripts/operator/lcx-governance-autopilot.ts"),
@@ -292,30 +292,30 @@ export async function buildLcxLiveFadeoutAudit() {
       summary: "doctrine documents must teach future agents the new status model",
       text: `${agents}\n${readme}\n${runbook}`,
       nextAction:
-        "restore dev-ready/cloud-runtime-ready/external-channel-bound/user-visible-observed wording",
+        "restore core-ready/cloud-runtime-ready/external-channel-bound/user-visible-observed wording",
     }),
     checkTerms({
-      id: "cloud_migration_keeps_single_dev_core",
+      id: "cloud_migration_keeps_single_core",
       owner: "AGENTS.md + README.md + ops/local-brain/README.md",
       file: "cloud_migration_docs",
       requiredTerms: [
-        "local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
+        "local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
         "/srv/lcx/lcx-s-openclaw",
         "canonical `~/.openclaw` state",
-        "one canonical dev repo",
-        "not a second live brain",
+        "one canonical repository",
+        "not a second brain",
         "Lark, WeChat, SMS",
       ],
-      summary: "cloud migration must move the single LCX dev core, not recreate a dev/live split",
+      summary: "cloud migration must move the single LCX core, not recreate a second system",
       text: `${agents}\n${readme}\n${runbook}`,
-      nextAction: "restore cloud-runtime-ready wording and single canonical dev core boundary",
+      nextAction: "restore cloud-runtime-ready wording and single canonical core boundary",
     }),
     checkTerms({
       id: "binding_owner_is_canonical",
       owner: "scripts/operator/lcx-external-channel-binding.ts",
       file: "scripts/operator/lcx-external-channel-binding.ts",
       requiredTerms: [
-        "dev_external_channel_binding_operator_only",
+        "local_external_channel_binding_operator_only",
         "channel_runtime_probe_ok_user_visible_pending",
         "userVisibleObserved",
         "legacyLiveCompatibility",
@@ -325,13 +325,13 @@ export async function buildLcxLiveFadeoutAudit() {
     }),
     checkTerms({
       id: "legacy_promote_live_is_demoted",
-      owner: "scripts/operator/lcx-promote-live.ts",
-      file: "scripts/operator/lcx-promote-live.ts",
+      owner: "scripts/operator/lcx-external-channel-compat.ts",
+      file: "scripts/operator/lcx-external-channel-compat.ts",
       requiredTerms: [
-        "dev-ready -> external-channel-bound -> user-visible-observed",
+        "core-ready -> external-channel-bound -> user-visible-observed",
         "legacyLiveRuntimeUpdated",
         "legacyLiveUserSeen",
-        "dev_external_channel_status_only",
+        "local_external_channel_status_only",
       ],
       summary: "old promote-live status must remain a legacy compatibility surface",
       text: promoteLive,
@@ -341,7 +341,7 @@ export async function buildLcxLiveFadeoutAudit() {
       owner: "scripts/operator/lcx-external-channel-status.ts",
       file: "scripts/operator/lcx-external-channel-status.ts",
       requiredTerms: [
-        "dev_external_channel_status_only",
+        "local_external_channel_status_only",
         "legacy_promote_live_status_wrapped_by_external_channel_status",
         "legacyPromoteLiveStatus",
         "liveTouched: false",
@@ -370,7 +370,7 @@ export async function buildLcxLiveFadeoutAudit() {
       requiredTerms: [
         "ExternalChannelBindingPlanSnapshot",
         "externalChannelBinding",
-        "dev_external_channel_binding_plan_only",
+        "local_external_channel_binding_plan_only",
         "externalChannelMissingProof",
         "lark_external_channel_binding_ready",
         "route_lark_transport_to_selected_clean_answer_path",
@@ -447,22 +447,30 @@ export async function buildLcxLiveFadeoutAudit() {
           "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json" &&
         scripts["lcx:external-channel:status-probe"] ===
           "node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe" &&
-        scripts["lcx:live"] === "pnpm lcx:external-channel" &&
-        scripts["lcx:live:status"] === "pnpm lcx:external-channel:status" &&
-        scripts["lcx:live:status:probe"] === "pnpm lcx:external-channel:status-probe" &&
-        scripts["lcx:promote-live"] === "node --import tsx scripts/operator/lcx-promote-live.ts",
-      summary: "package-level LCX operator aliases should route through external-channel first",
+        scripts["lcx:external-channel:compat"] ===
+          "node --import tsx scripts/operator/lcx-external-channel-compat.ts" &&
+        !scripts["lcx:external-channel:legacy-status-probe"] &&
+        !scripts["lcx:live"] &&
+        !scripts["lcx:live:status"] &&
+        !scripts["lcx:live:status:probe"] &&
+        !scripts["lcx:promote-live"],
+      summary:
+        "package-level LCX operator aliases should expose only neutral external-channel commands",
       owner: "package.json",
       evidence: {
         "lcx:external-channel": scripts["lcx:external-channel"],
         "lcx:external-channel:status": scripts["lcx:external-channel:status"],
         "lcx:external-channel:status-probe": scripts["lcx:external-channel:status-probe"],
-        "lcx:live": scripts["lcx:live"],
-        "lcx:live:status": scripts["lcx:live:status"],
-        "lcx:live:status:probe": scripts["lcx:live:status:probe"],
-        "lcx:promote-live": scripts["lcx:promote-live"],
+        "lcx:external-channel:compat": scripts["lcx:external-channel:compat"],
+        removedLegacyAliases: [
+          "lcx:external-channel:legacy-status-probe",
+          "lcx:live",
+          "lcx:live:status",
+          "lcx:live:status:probe",
+          "lcx:promote-live",
+        ].filter((name) => scripts[name]),
       },
-      nextAction: "add external-channel scripts and make old lcx:live aliases forward to them",
+      nextAction: "remove old live/promote-live aliases and use external-channel commands",
     },
   ];
 
@@ -480,9 +488,9 @@ export async function buildLcxLiveFadeoutAudit() {
     ok: failed.length === 0 && referenceFailures.length === 0,
     boundary: "dev_live_fadeout_audit_only",
     checkedAt: new Date().toISOString(),
-    statusModel: "dev-ready -> external-channel-bound -> user-visible-observed",
+    statusModel: "core-ready -> external-channel-bound -> user-visible-observed",
     cloudMigrationModel:
-      "local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
+      "local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed",
     objective:
       "fade old live wording out of LCX authority while preserving upstream live tests, historical receipts, and temporary sidecar compatibility",
     summary: {

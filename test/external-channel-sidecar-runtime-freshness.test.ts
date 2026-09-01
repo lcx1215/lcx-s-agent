@@ -26,7 +26,7 @@ function initTrackedSource(root: string): void {
   writeFile(root, "dist/ignored.js", "generated\n");
   writeFile(
     root,
-    "ops/external-channel-artifacts/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
+    "ops/external-channel-artifacts/launchagent-candidates/external-channel-sidecar-runtime-bundle-receipt.json",
     '{"generated":true}\n',
   );
   spawnSync("git", ["init"], { cwd: root, stdio: "ignore" });

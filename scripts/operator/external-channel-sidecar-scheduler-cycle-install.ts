@@ -7,7 +7,7 @@ import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-
 const SCHEDULER_LABEL = "ai.openclaw.lobster.scheduler";
 const SCHEDULER_PLIST = `/Users/liuchengxu/Library/LaunchAgents/${SCHEDULER_LABEL}.plist`;
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
-const RECEIPT_NAME = "live-sidecar-scheduler-cycle-install-receipt.json";
+const RECEIPT_NAME = "external-channel-sidecar-scheduler-cycle-install-receipt.json";
 const DEFAULT_CYCLE_COMMAND = "pnpm exec tsx scripts/operator/agent-system-loop-smoke.ts";
 
 type Args = {

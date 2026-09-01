@@ -349,7 +349,7 @@ async function main() {
       text: readme,
       fileLabel: "README external-channel status rules",
       required: [
-        "dev-ready",
+        "core-ready",
         "user-visible-observed",
         "legacy-live-visible-fixed",
         "compatibility labels",

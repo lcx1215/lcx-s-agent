@@ -37,7 +37,7 @@ unless the user explicitly asks for them.
 
 ## Core Boundaries
 
-- `dev-ready` is not `user-visible-observed`.
+- `core-ready` is not `user-visible-observed`.
 - A stored source is not learned capability.
 - A receipt is not model-weight absorption.
 - A `parseRecovered` eval case is not a clean promotion pass.
@@ -129,17 +129,17 @@ proof is intentionally separate from dev proof. Lark official APIs, SDKs, or
 open-source connector code are connector implementations only; they do not own
 model authority, runtime truth, or brain state.
 
-Forward status names are `dev-ready`, `external-channel-bound`, and
+Forward status names are `core-ready`, `external-channel-bound`, and
 `user-visible-observed`. Legacy `live-runtime-updated`, `live-user-seen`, and
 `live-visible-fixed` fields may still appear during migration; treat them as
 `legacy-live-runtime-updated`, `legacy-live-user-seen`, and
 `legacy-live-visible-fixed` compatibility labels.
 
-| State                    | Meaning                                                             |
-| ------------------------ | ------------------------------------------------------------------- |
-| `dev-ready`              | Local tests, smokes, replay, or evals passed in the dev repo.       |
-| `external-channel-bound` | Lark/Feishu transport routes to the selected clean LCX answer path. |
-| `user-visible-observed`  | A real Lark inbound and outbound reply was observed by the owner.   |
+| State                    | Meaning                                                                   |
+| ------------------------ | ------------------------------------------------------------------------- |
+| `core-ready`             | Local tests, smokes, replay, or evals passed in the canonical repository. |
+| `external-channel-bound` | Lark/Feishu transport routes to the selected clean LCX answer path.       |
+| `user-visible-observed`  | A real Lark inbound and outbound reply was observed by the owner.         |
 
 The approved Lark external-channel binding owner is:
 
@@ -159,7 +159,7 @@ That binding owner is the canonical source for `external-channel-bound`.
 planner field; `liveLarkBrainBinding` remains only a legacy compatibility alias
 while older owners migrate.
 `lcx-external-channel-status.ts` is now the canonical read-only external-channel
-status wrapper; `lcx-promote-live.ts` remains the legacy promotion/drift
+status wrapper; `lcx-external-channel-compat.ts` remains the legacy promotion/drift
 compatibility surface underneath it. The status wrapper must not override a
 clean `lcx-external-channel-binding.ts` apply result. Commercial acceptance may
 treat the channel as bound while still blocking release on
@@ -184,17 +184,14 @@ to a supported-region cloud control station; it does not create a second live
 brain. The migration target is:
 
 ```text
-local dev core
-  -> cloud-runtime-ready
-  -> external-channel-bound
-  -> user-visible-observed
+local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed
 ```
 
-`cloud-runtime-ready` means the cloud control machine has one canonical dev
-repo, one canonical `~/.openclaw` state root, copied/synced operator skills,
+`cloud-runtime-ready` means the cloud control machine has one canonical
+repository, one canonical `~/.openclaw` state root, copied/synced operator skills,
 receipts, logs, selected-clean adapter proof, and governance owners. It does not
 mean live-visible-fixed, user-visible-observed, or model-weight absorption.
-Single repo rule: one canonical dev repo, one canonical state root, no second
+Single repo rule: one canonical repository, one canonical state root, no second
 live brain.
 
 The preferred repo path after migration is `/srv/lcx/lcx-s-openclaw`; the

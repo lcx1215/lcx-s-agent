@@ -279,7 +279,7 @@ Use this as the current 1-6 execution plan. It is owned by the existing exam,
 flow graph, runbook, and live-probe surfaces; do not create a parallel
 blueprint lane.
 
-1. External-channel closure: keep `dev-ready`, `external-channel-bound`, and
+1. External-channel closure: keep `core-ready`, `external-channel-bound`, and
    `user-visible-observed` separate. Lark/Feishu is the owner-agent external
    communication channel, not a second live brain or second runtime truth
    source. Lark official APIs, SDKs, and open-source connector code are only
@@ -352,7 +352,7 @@ blueprint lane.
 
    This binding owner is canonical for `external-channel-bound`.
    `lcx-external-channel-status.ts` is the canonical read-only external-channel
-   status wrapper; `lcx-promote-live.ts` remains the legacy promotion/drift
+   status wrapper; `lcx-external-channel-compat.ts` remains the legacy promotion/drift
    compatibility surface underneath it. The status wrapper must not override a
    clean `lcx-external-channel-binding.ts` apply result.
 
@@ -369,7 +369,7 @@ blueprint lane.
 
    Cloud migration uses the same owner boundary. Do not migrate the old
    `dev -> live` split to the cloud. The migration target is one LCX Agent core:
-   `local dev core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed`.
+   `local LCX core -> cloud-runtime-ready -> external-channel-bound -> user-visible-observed`.
    `cloud-runtime-ready` means a supported-region control machine has the
    canonical dev repo, canonical `~/.openclaw` state, operator skills, receipts,
    selected-clean adapter proof, and governance owners. It is not a second live
@@ -854,7 +854,7 @@ check. Ordinary in-progress statuses do not fail the doctor, but boundary
 violations do.
 
 The absorption gate should report `hold_at_application_ready` while same-day
-receipts are still weak. That is expected and prevents `dev-ready` learning
+receipts are still weak. That is expected and prevents `core-ready` learning
 evidence from being overstated as model-weight absorption.
 
 When clean hardened eval evidence exists and the operator intentionally wants to
@@ -1394,7 +1394,7 @@ node --import tsx scripts/operator/minimax-brain-training-guard.ts \
 
 Use these words precisely:
 
-- `dev-ready`: local scripts, dataset, smoke, eval, and receipts pass.
+- `core-ready`: local scripts, dataset, smoke, eval, and receipts pass.
 - `training-active`: guard or teacher/eval process is currently running.
 - `promotion-ready`: hardened eval passed and the adapter is selected by latest-passing.
 - `external-channel-bound`: the Lark channel sidecar has been synced to the

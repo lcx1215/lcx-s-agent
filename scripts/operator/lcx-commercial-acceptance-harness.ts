@@ -701,7 +701,7 @@ function externalChannelStatusGate(
       acceptanceMatched: visibleProof?.acceptanceMatched,
     },
     nextAction:
-      "Keep dev-ready, external-channel-bound, and user-visible-observed separate; legacy live terms remain compatibility labels.",
+      "Keep core-ready, external-channel-bound, and user-visible-observed separate; legacy live terms remain compatibility labels.",
   };
 }
 

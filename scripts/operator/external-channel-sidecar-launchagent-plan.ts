@@ -218,7 +218,7 @@ function writePlan(plan: LaunchAgentPlan): void {
     fs.writeFileSync(candidate.candidatePath, renderLaunchAgent(candidate), "utf8");
   }
   fs.writeFileSync(
-    path.join(plan.outputDir, "live-sidecar-launchagent-plan.json"),
+    path.join(plan.outputDir, "external-channel-sidecar-launchagent-plan.json"),
     `${JSON.stringify(plan, null, 2)}\n`,
     "utf8",
   );

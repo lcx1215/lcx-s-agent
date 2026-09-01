@@ -12,7 +12,7 @@ import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
-const SMOKE_RECEIPT_NAME = "live-sidecar-install-smoke-receipt.json";
+const SMOKE_RECEIPT_NAME = "external-channel-sidecar-install-smoke-receipt.json";
 
 type Args = {
   targetRoot: string;

@@ -102,7 +102,7 @@ export function parseExternalChannelStatusArgs(args: string[]): CliOptions {
     } else if (arg === "--with-probe") {
       options.withProbe = true;
     } else if (arg === "--status") {
-      // Compatibility with old lcx-promote-live status invocations.
+      // Compatibility with old lcx-external-channel-compat status invocations.
     } else if (arg === "--help" || arg === "-h") {
       usage();
     } else {
@@ -149,7 +149,13 @@ async function readLatestBindingSnapshot(): Promise<Record<string, unknown>> {
 }
 
 export async function runExternalChannelStatus(options: CliOptions) {
-  const args = ["--import", "tsx", "scripts/operator/lcx-promote-live.ts", "--status", "--json"];
+  const args = [
+    "--import",
+    "tsx",
+    "scripts/operator/lcx-external-channel-compat.ts",
+    "--status",
+    "--json",
+  ];
   if (options.withProbe) {
     args.push("--with-probe");
   }
@@ -222,7 +228,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
     return {
       ...legacy,
       ok: bindingPayload.ok !== false,
-      boundary: "dev_external_channel_status_only",
+      boundary: "local_external_channel_status_only",
       owner: "lcx-external-channel-status",
       command,
       bindingCommand,
@@ -249,8 +255,8 @@ export async function runExternalChannelStatus(options: CliOptions) {
       }),
       visibleProof,
       legacyPromoteLiveStatus: {
-        owner: "lcx-promote-live",
-        boundary: legacy.boundary ?? "dev_external_channel_status_only",
+        owner: "lcx-external-channel-compat",
+        boundary: legacy.boundary ?? "local_external_channel_status_only",
         status: legacy.status,
         liveStatus: legacy.liveStatus,
         operatorStatus: legacy.operatorStatus,
@@ -266,7 +272,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
     const details = error as { stdout?: string; stderr?: string; message?: string };
     return {
       ok: false,
-      boundary: "dev_external_channel_status_only",
+      boundary: "local_external_channel_status_only",
       owner: "lcx-external-channel-status",
       command,
       conceptStatus: "legacy_promote_live_status_wrapped_by_external_channel_status",

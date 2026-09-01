@@ -7,7 +7,7 @@ import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-
 const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
 const FEISHU_PROXY_PLIST = "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.feishu.proxy.plist";
-const RECEIPT_NAME = "live-sidecar-feishu-proxy-preflight-receipt.json";
+const RECEIPT_NAME = "external-channel-sidecar-feishu-proxy-preflight-receipt.json";
 
 const REQUIRED_FILES = [
   "feishu_event_proxy.py",

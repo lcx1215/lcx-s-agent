@@ -284,8 +284,8 @@ const PATH_RULES: PathRule[] = [
     patterns: [
       /^scripts\/operator\/lcx-external-channel-status\.ts$/u,
       /^test\/lcx-external-channel-status\.test\.ts$/u,
-      /^scripts\/operator\/lcx-promote-live\.ts$/u,
-      /^test\/lcx-promote-live-status\.test\.ts$/u,
+      /^scripts\/operator\/lcx-external-channel-compat\.ts$/u,
+      /^test\/lcx-external-channel-compat-status\.test\.ts$/u,
       /^src\/agents\/model-auth/u,
       /^src\/config\//u,
       /^extensions\/feishu\/src\/.*sender/u,
@@ -294,7 +294,7 @@ const PATH_RULES: PathRule[] = [
     requiredChecks: ["explicit-live-boundary-review", "doctor"],
     commands: [
       "node --import tsx scripts/operator/lcx-external-channel-status.ts --json",
-      "pnpm vitest run test/lcx-promote-live-status.test.ts",
+      "pnpm vitest run test/lcx-external-channel-compat-status.test.ts",
       "node --import tsx scripts/operator/lcx-system-doctor.ts --json",
     ],
     risk: "elevated",

@@ -7,7 +7,7 @@ const DEFAULT_SOURCE_ROOT = process.cwd();
 export const DEFAULT_RUNTIME_BUNDLE_ROOT =
   "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
-const RECEIPT_NAME = "live-sidecar-runtime-bundle-receipt.json";
+const RECEIPT_NAME = "external-channel-sidecar-runtime-bundle-receipt.json";
 
 type Args = {
   sourceRoot: string;

@@ -7,7 +7,7 @@ import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-
 const LABEL = "ai.openclaw.feishu.proxy";
 const PLIST_PATH = `/Users/liuchengxu/Library/LaunchAgents/${LABEL}.plist`;
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
-const RECEIPT_NAME = "live-sidecar-feishu-proxy-install-receipt.json";
+const RECEIPT_NAME = "external-channel-sidecar-feishu-proxy-install-receipt.json";
 
 type Args = {
   targetRoot: string;

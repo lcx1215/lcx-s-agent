@@ -926,7 +926,7 @@ function buildCommercialBlueprint(params: { lanes: ExamLane[]; live: boolean; l5
             : "needs_live",
       evidence: liveLane?.evidence ?? ["live lane missing"],
       nextAction:
-        "按 dev-ready -> live-runtime-updated -> live-user-seen 顺序做迁移、重启、probe、真实入站回复验收。",
+        "按 core-ready -> live-runtime-updated -> live-user-seen 顺序做迁移、重启、probe、真实入站回复验收。",
     },
     {
       id: "module_learning_absorption",
