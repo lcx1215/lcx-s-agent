@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildRuntimeFreshnessReceipt } from "../scripts/operator/live-sidecar-runtime-freshness.ts";
+import { buildRuntimeFreshnessReceipt } from "../scripts/operator/external-channel-sidecar-runtime-freshness.ts";
 
 const tmpRoots: string[] = [];
 

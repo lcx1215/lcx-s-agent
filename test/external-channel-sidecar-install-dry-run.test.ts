@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildInstallDryRunReceipt } from "../scripts/operator/live-sidecar-install-dry-run.ts";
-import type { LaunchAgentPlan } from "../scripts/operator/live-sidecar-launchagent-plan.ts";
+import { buildInstallDryRunReceipt } from "../scripts/operator/external-channel-sidecar-install-dry-run.ts";
+import type { LaunchAgentPlan } from "../scripts/operator/external-channel-sidecar-launchagent-plan.ts";
 
 const tmpRoots: string[] = [];
 

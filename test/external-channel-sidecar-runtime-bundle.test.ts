@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRuntimeBundleReceipt,
   DEFAULT_RUNTIME_BUNDLE_ROOT,
-} from "../scripts/operator/live-sidecar-runtime-bundle.ts";
+} from "../scripts/operator/external-channel-sidecar-runtime-bundle.ts";
 
 const tmpRoots: string[] = [];
 

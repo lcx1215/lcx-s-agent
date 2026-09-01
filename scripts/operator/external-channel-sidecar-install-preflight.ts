@@ -4,13 +4,16 @@ import path from "node:path";
 import {
   buildHostWatchdogDryRunReport,
   type HostWatchdogDryRunReport,
-} from "./live-sidecar-host-watchdog-dry-run.ts";
-import { buildLaunchAgentPlan, type LaunchAgentPlan } from "./live-sidecar-launchagent-plan.ts";
-import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./live-sidecar-runtime-bundle.ts";
+} from "./external-channel-sidecar-host-watchdog-dry-run.ts";
+import {
+  buildLaunchAgentPlan,
+  type LaunchAgentPlan,
+} from "./external-channel-sidecar-launchagent-plan.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 import {
   buildSchedulerDryRunReport,
   type SchedulerDryRunReport,
-} from "./live-sidecar-scheduler-dry-run.ts";
+} from "./external-channel-sidecar-scheduler-dry-run.ts";
 
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";

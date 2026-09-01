@@ -4,9 +4,12 @@ import path from "node:path";
 import {
   buildInstallPreflightReport,
   type InstallPreflightReport,
-} from "./live-sidecar-install-preflight.ts";
-import { buildLaunchAgentPlan, type LaunchAgentPlan } from "./live-sidecar-launchagent-plan.ts";
-import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./live-sidecar-runtime-bundle.ts";
+} from "./external-channel-sidecar-install-preflight.ts";
+import {
+  buildLaunchAgentPlan,
+  type LaunchAgentPlan,
+} from "./external-channel-sidecar-launchagent-plan.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";

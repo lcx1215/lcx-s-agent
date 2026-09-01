@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./live-sidecar-runtime-bundle.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";

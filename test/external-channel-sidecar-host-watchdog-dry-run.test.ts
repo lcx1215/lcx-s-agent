@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildSchedulerDryRunReport } from "../scripts/operator/live-sidecar-scheduler-dry-run.ts";
+import { buildHostWatchdogDryRunReport } from "../scripts/operator/external-channel-sidecar-host-watchdog-dry-run.ts";
 
 const tmpRoots: string[] = [];
 
@@ -19,7 +19,7 @@ function writeFile(root: string, relativePath: string, content = "") {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
-function writeSchedulerPlist(params: {
+function writeHostWatchdogPlist(params: {
   root: string;
   plistPath: string;
   workingDirectory?: string;
@@ -33,7 +33,7 @@ function writeSchedulerPlist(params: {
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>${params.root}/daily_learning_runner.py</string>
+    <string>${params.root}/scripts/lobster_host_watchdog.py</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${params.workingDirectory ?? params.root}</string>
@@ -49,57 +49,50 @@ afterEach(() => {
   }
 });
 
-describe("live sidecar scheduler dry-run", () => {
+describe("live sidecar host watchdog dry-run", () => {
   it("reports target dependency gaps without touching live state", () => {
-    const legacyRoot = makeTmpRoot("legacy");
-    const targetRoot = makeTmpRoot("target");
-    const plistDir = makeTmpRoot("plist");
-    const plistPath = path.join(plistDir, "ai.openclaw.lobster.scheduler.plist");
+    const legacyRoot = makeTmpRoot("watchdog-legacy");
+    const targetRoot = makeTmpRoot("watchdog-target");
+    const plistDir = makeTmpRoot("watchdog-plist");
+    const plistPath = path.join(plistDir, "ai.openclaw.lobster.host_watchdog.plist");
 
-    writeFile(legacyRoot, "daily_learning_runner.py");
+    writeFile(legacyRoot, "scripts/lobster_host_watchdog.py");
+    writeFile(legacyRoot, "scripts/branch_freshness.py");
     writeFile(legacyRoot, "scripts/lobster_paths.py");
-    writeFile(legacyRoot, "lobster_orchestrator.py");
-    writeFile(
-      legacyRoot,
-      "branches/_system/scheduler_heartbeat.json",
-      JSON.stringify({ status: "success", last_exit_code: 0 }),
-    );
-    writeSchedulerPlist({ root: legacyRoot, plistPath });
+    writeHostWatchdogPlist({ root: legacyRoot, plistPath });
 
-    const report = buildSchedulerDryRunReport({
+    const report = buildHostWatchdogDryRunReport({
       legacyRoot,
       targetRoot,
       plistPath,
       checkedAt: "2026-04-27T00:00:00.000Z",
     });
 
-    expect(report.mode).toBe("dry_run_no_launchagent_change_no_lark_send");
     expect(report.launchAgent.pointsAtLegacyRoot).toBe(true);
     expect(report.migrationReady).toBe(false);
     expect(report.blockedReasons).toContain(
-      "target clean repo still lacks scheduler dependency: daily_learning_runner.py, scripts/lobster_paths.py, lobster_orchestrator.py",
+      "target clean repo still lacks host watchdog dependency: scripts/lobster_host_watchdog.py, scripts/branch_freshness.py, scripts/lobster_paths.py",
     );
-    expect(report.stateFiles[0]?.summary).toEqual({ status: "success", last_exit_code: 0 });
   });
 
-  it("blocks migration when target files exist but are not tracked", () => {
-    const legacyRoot = makeTmpRoot("legacy-ready");
-    const targetRoot = makeTmpRoot("target-ready");
-    const plistDir = makeTmpRoot("plist-ready");
-    const plistPath = path.join(plistDir, "ai.openclaw.lobster.scheduler.plist");
+  it("blocks migration when target watchdog files exist but are not tracked", () => {
+    const legacyRoot = makeTmpRoot("watchdog-legacy-untracked");
+    const targetRoot = makeTmpRoot("watchdog-target-untracked");
+    const plistDir = makeTmpRoot("watchdog-plist-untracked");
+    const plistPath = path.join(plistDir, "ai.openclaw.lobster.host_watchdog.plist");
 
     for (const relativePath of [
-      "daily_learning_runner.py",
+      "scripts/lobster_host_watchdog.py",
+      "scripts/branch_freshness.py",
       "scripts/lobster_paths.py",
-      "lobster_orchestrator.py",
     ]) {
       writeFile(legacyRoot, relativePath);
       writeFile(targetRoot, relativePath);
     }
     spawnSync("git", ["init"], { cwd: targetRoot, stdio: "ignore" });
-    writeSchedulerPlist({ root: legacyRoot, plistPath });
+    writeHostWatchdogPlist({ root: legacyRoot, plistPath });
 
-    const report = buildSchedulerDryRunReport({
+    const report = buildHostWatchdogDryRunReport({
       legacyRoot,
       targetRoot,
       plistPath,
@@ -108,27 +101,27 @@ describe("live sidecar scheduler dry-run", () => {
 
     expect(report.migrationReady).toBe(false);
     expect(report.blockedReasons).toContain(
-      "target scheduler dependency exists but is not tracked by Git: daily_learning_runner.py, scripts/lobster_paths.py, lobster_orchestrator.py",
+      "target host watchdog dependency exists but is not tracked by Git: scripts/lobster_host_watchdog.py, scripts/branch_freshness.py, scripts/lobster_paths.py",
     );
   });
 
   it("accepts a non-git runtime bundle target when files exist", () => {
-    const legacyRoot = makeTmpRoot("legacy-runtime");
-    const targetRoot = makeTmpRoot("target-runtime");
-    const plistDir = makeTmpRoot("plist-runtime");
-    const plistPath = path.join(plistDir, "ai.openclaw.lobster.scheduler.plist");
+    const legacyRoot = makeTmpRoot("watchdog-legacy-runtime");
+    const targetRoot = makeTmpRoot("watchdog-target-runtime");
+    const plistDir = makeTmpRoot("watchdog-plist-runtime");
+    const plistPath = path.join(plistDir, "ai.openclaw.lobster.host_watchdog.plist");
 
     for (const relativePath of [
-      "daily_learning_runner.py",
+      "scripts/lobster_host_watchdog.py",
+      "scripts/branch_freshness.py",
       "scripts/lobster_paths.py",
-      "lobster_orchestrator.py",
     ]) {
       writeFile(legacyRoot, relativePath);
       writeFile(targetRoot, relativePath);
     }
-    writeSchedulerPlist({ root: legacyRoot, plistPath });
+    writeHostWatchdogPlist({ root: legacyRoot, plistPath });
 
-    const report = buildSchedulerDryRunReport({
+    const report = buildHostWatchdogDryRunReport({
       legacyRoot,
       targetRoot,
       plistPath,

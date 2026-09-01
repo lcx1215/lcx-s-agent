@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildLaunchAgentPlan,
   main as launchAgentPlanMain,
-} from "../scripts/operator/live-sidecar-launchagent-plan.ts";
-import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "../scripts/operator/live-sidecar-runtime-bundle.ts";
+} from "../scripts/operator/external-channel-sidecar-launchagent-plan.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "../scripts/operator/external-channel-sidecar-runtime-bundle.ts";
 
 const tmpRoots: string[] = [];
 

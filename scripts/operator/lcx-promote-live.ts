@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./live-sidecar-runtime-bundle.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;

@@ -6,8 +6,8 @@ import {
   buildInstallDryRunReceipt,
   type InstallDryRunReceipt,
   type SidecarInstallDryRunAction,
-} from "./live-sidecar-install-dry-run.ts";
-import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./live-sidecar-runtime-bundle.ts";
+} from "./external-channel-sidecar-install-dry-run.ts";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
