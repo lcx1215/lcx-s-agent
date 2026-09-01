@@ -11,6 +11,7 @@ verify_installed_cli() {
   local cmd_path=""
   local entry_path=""
   local resolved_cmd_path=""
+  local probe_dir=""
   local npm_root=""
   local package_json=""
   local raw_version=""
@@ -31,9 +32,14 @@ verify_installed_cli() {
 
   if [[ -n "$cmd_path" ]]; then
     resolved_cmd_path="$(readlink -f "$cmd_path" 2>/dev/null || true)"
-    if [[ "$resolved_cmd_path" == */dist/entry.js ]]; then
-      package_json="${resolved_cmd_path%/dist/entry.js}/package.json"
-    fi
+    probe_dir="$(dirname "$resolved_cmd_path")"
+    while [[ "$probe_dir" != "/" && -z "$package_json" ]]; do
+      if [[ -f "$probe_dir/package.json" ]]; then
+        package_json="$probe_dir/package.json"
+        break
+      fi
+      probe_dir="$(dirname "$probe_dir")"
+    done
   fi
 
   if [[ -z "$cmd_path" && -z "$entry_path" ]]; then
