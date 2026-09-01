@@ -2,18 +2,19 @@
 
 ## Status
 
-- dev-fixed: yes | no
-- live-visible-fixed: yes | no
+- core-ready: yes | no
+- external-channel-bound: yes | no
+- user-visible-observed: yes | no
 
 ## Patch
 
 - commit:
 - files:
 
-## Live sync
+## External-channel runtime
 
-- migrated to `~/.openclaw/live-sidecars/lcx-s-openclaw`: yes | no
-- live build passed: yes | no
+- runtime bundle at `~/.openclaw/external-channel-runtime/lcx-s-openclaw`: yes | no
+- runtime build passed: yes | no
 - gateway restarted: yes | no
 - `openclaw channels status --probe` passed: yes | no
 - real Feishu verified: yes | no

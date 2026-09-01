@@ -1,6 +1,6 @@
 # Feishu Acceptance Phrases
 
-Use these after a bounded live patch reaches `~/.openclaw/live-sidecars/lcx-s-openclaw`, builds, restarts, and passes probe.
+Use these after a bounded external-channel patch reaches `~/.openclaw/external-channel-runtime/lcx-s-openclaw`, builds, restarts, and passes probe.
 
 The goal is not broad chatting. The goal is to verify the exact user-visible seam that was changed.
 
@@ -9,7 +9,7 @@ The goal is not broad chatting. The goal is to verify the exact user-visible sea
 - use 1 to 2 short phrases per patch
 - verify the exact seam that changed
 - record the phrases and results in the handoff record
-- do not claim `live-visible-fixed` without a matching Feishu acceptance check
+- do not claim `user-visible-observed` without a matching Feishu acceptance check
 
 ## Display normalization
 
