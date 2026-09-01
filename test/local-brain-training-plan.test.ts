@@ -7,6 +7,7 @@ import {
   activeGuardEvolutionCooldownSnapshot,
   buildLocalBrainTrainingPlan,
   buildQwenBaseModelMigrationPlan,
+  readTargetedChallengerEvalReceipt,
 } from "../scripts/operator/local-brain-training-plan.js";
 
 async function writeJsonl(prefix: string, lines: unknown[]): Promise<string> {
@@ -27,6 +28,246 @@ async function writeJson(
 }
 
 describe("local-brain-training-plan", () => {
+  it("observes a bounded targeted challenger receipt without promoting it", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-targeted-receipt-"));
+    const receiptPath = path.join(
+      workspaceDir,
+      "state",
+      "lcx-targeted-challenger-eval-receipt-latest.json",
+    );
+    try {
+      await writeJson(workspaceDir, "state/lcx-targeted-challenger-eval-receipt-latest.json", {
+        schemaVersion: "lcx_local_brain_eval_receipt_v1",
+        generatedAt: "2026-09-01T04:14:56.265Z",
+        requested: {
+          adapter: "/tmp/adapter-r6",
+          caseIds: ["case-a"],
+          evaluationMode: "assisted_hardened_challenger",
+          learningClaim: "not_proven_by_contract_eval",
+        },
+        resolved: { adapterPath: "/tmp/adapter-r6" },
+        summary: {
+          passed: 1,
+          total: 1,
+          passRate: 1,
+          failedCaseIds: [],
+          parseErrorCaseIds: [],
+          parseRecoveredCaseIds: ["case-a"],
+          rawContractPassCount: 0,
+          modelContractReadyCaseIds: [],
+          modelContractFailureCaseIds: ["case-a"],
+        },
+        caseReceipts: [{ id: "case-a", status: "parse_recovered" }],
+        proof: {
+          subsetEval: true,
+          blindRawContract: false,
+          rawContractRequiredForPromotion: true,
+          modelContractReady: false,
+          promotionReady: false,
+          promotionProof: false,
+          modelWeightAbsorbed: false,
+          externalChannelApplied: false,
+          liveTouched: false,
+          providerConfigTouched: false,
+          protectedMemoryTouched: false,
+          learningClaim: "not_proven_by_contract_eval",
+        },
+      });
+
+      await expect(
+        readTargetedChallengerEvalReceipt({
+          receiptPath,
+          expectedAdapterPath: "/tmp/adapter-r6",
+        }),
+      ).resolves.toMatchObject({
+        status: "observed",
+        adapterPath: "/tmp/adapter-r6",
+        passed: 1,
+        total: 1,
+        parseRecoveredCaseIds: ["case-a"],
+        modelContractReady: false,
+        promotionReady: false,
+        proof: {
+          subsetEval: true,
+          promotionProof: false,
+          modelWeightAbsorbed: false,
+        },
+      });
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("separates missing, malformed, and mismatched targeted receipts", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-targeted-receipt-edge-"));
+    const receiptPath = path.join(
+      workspaceDir,
+      "state",
+      "lcx-targeted-challenger-eval-receipt-latest.json",
+    );
+    try {
+      await expect(readTargetedChallengerEvalReceipt({ receiptPath })).resolves.toMatchObject({
+        status: "missing",
+        reason: "receipt_missing",
+        promotionReady: false,
+      });
+
+      await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+      await fs.writeFile(receiptPath, "{not-json");
+      await expect(readTargetedChallengerEvalReceipt({ receiptPath })).resolves.toMatchObject({
+        status: "invalid",
+        reason: "receipt_invalid_json",
+      });
+
+      await writeJson(workspaceDir, "state/lcx-targeted-challenger-eval-receipt-latest.json", {
+        schemaVersion: "lcx_local_brain_eval_receipt_v1",
+        generatedAt: "2026-09-01T04:14:56.265Z",
+        requested: {
+          adapter: "/tmp/adapter-r6",
+          caseIds: ["case-a"],
+          evaluationMode: "assisted_hardened_challenger",
+          learningClaim: "not_proven_by_contract_eval",
+        },
+        resolved: { adapterPath: "/tmp/adapter-r6" },
+        summary: {
+          passed: 1,
+          total: 1,
+          passRate: 1,
+          failedCaseIds: [],
+          parseErrorCaseIds: [],
+          parseRecoveredCaseIds: [],
+          rawContractPassCount: 1,
+          modelContractReadyCaseIds: ["case-a"],
+          modelContractFailureCaseIds: [],
+        },
+        caseReceipts: [{ id: "case-a", status: "passed" }],
+        proof: {
+          subsetEval: true,
+          blindRawContract: false,
+          rawContractRequiredForPromotion: true,
+          modelContractReady: true,
+          promotionReady: false,
+          promotionProof: false,
+          modelWeightAbsorbed: false,
+          externalChannelApplied: false,
+          liveTouched: false,
+          providerConfigTouched: false,
+          protectedMemoryTouched: false,
+          learningClaim: "not_proven_by_contract_eval",
+        },
+      });
+      await expect(
+        readTargetedChallengerEvalReceipt({
+          receiptPath,
+          expectedAdapterPath: "/tmp/adapter-other",
+        }),
+      ).resolves.toMatchObject({
+        status: "adapter_mismatch",
+        reason: "receipt_adapter_does_not_match_latest_candidate",
+        adapterPath: "/tmp/adapter-r6",
+        promotionReady: false,
+      });
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes the observed receipt through the plan without replacing full-candidate truth", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-targeted-plan-"));
+    const guardLogPath = await writeJsonl("lcx-targeted-plan-guard-", [
+      {
+        at: "2026-09-01T04:00:00.000Z",
+        event: "step_non_passing",
+        name: "candidate_hardened_eval",
+        result: {
+          adapterPath: "/tmp/adapter-r6",
+          summary: {
+            passed: 0,
+            total: 1,
+            passRate: 0,
+            failedCaseIds: ["case-a"],
+            parseErrorCaseIds: [],
+            parseRecoveredCaseIds: [],
+            promotionReady: false,
+          },
+        },
+      },
+    ]);
+    const quotaLogPath = await writeJsonl("lcx-targeted-plan-quota-", []);
+    try {
+      await writeJson(workspaceDir, "state/lcx-targeted-challenger-eval-receipt-latest.json", {
+        schemaVersion: "lcx_local_brain_eval_receipt_v1",
+        generatedAt: "2026-09-01T04:14:56.265Z",
+        requested: {
+          adapter: "/tmp/adapter-r6",
+          caseIds: ["case-a"],
+          evaluationMode: "assisted_hardened_challenger",
+          learningClaim: "not_proven_by_contract_eval",
+        },
+        resolved: { adapterPath: "/tmp/adapter-r6" },
+        summary: {
+          passed: 1,
+          total: 1,
+          passRate: 1,
+          failedCaseIds: [],
+          parseErrorCaseIds: [],
+          parseRecoveredCaseIds: [],
+          rawContractPassCount: 1,
+          modelContractReadyCaseIds: ["case-a"],
+          modelContractFailureCaseIds: [],
+        },
+        caseReceipts: [{ id: "case-a", status: "passed" }],
+        proof: {
+          subsetEval: true,
+          blindRawContract: false,
+          rawContractRequiredForPromotion: true,
+          modelContractReady: true,
+          promotionReady: false,
+          promotionProof: false,
+          modelWeightAbsorbed: false,
+          externalChannelApplied: false,
+          liveTouched: false,
+          providerConfigTouched: false,
+          protectedMemoryTouched: false,
+          learningClaim: "not_proven_by_contract_eval",
+        },
+      });
+
+      const plan = await buildLocalBrainTrainingPlan({
+        guardLogPath,
+        quotaLogPath,
+        workspaceDir,
+        json: true,
+        processCheck: false,
+      });
+
+      expect(plan.latestCandidateEval).toMatchObject({
+        adapterPath: "/tmp/adapter-r6",
+        promotionReady: false,
+        failedCaseIds: ["case-a"],
+      });
+      expect(plan.latestTargetedChallengerEval).toMatchObject({
+        status: "observed",
+        adapterPath: "/tmp/adapter-r6",
+        passed: 1,
+        total: 1,
+        promotionReady: false,
+      });
+      expect(plan.qwenCapabilityConsolidation).toMatchObject({
+        targetedChallengerEval: {
+          status: "observed",
+          adapterPath: "/tmp/adapter-r6",
+          promotionReady: false,
+        },
+        capabilityHarvest: {
+          targetedEvalReceiptStatus: "observed",
+        },
+      });
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("only treats an adapter mismatch as active when a guard process is observed", () => {
     const active = activeGuardAdapterTruthSnapshot({
       activeProcesses: [

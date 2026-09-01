@@ -49,6 +49,46 @@ type EvalTimeoutSnapshot = {
   failedCaseIds: string[];
 };
 
+type TargetedChallengerEvalProof = {
+  subsetEval: boolean | null;
+  blindRawContract: boolean | null;
+  rawContractRequiredForPromotion: boolean | null;
+  modelContractReady: boolean | null;
+  promotionReady: boolean | null;
+  promotionProof: boolean | null;
+  modelWeightAbsorbed: boolean | null;
+  externalChannelApplied: boolean | null;
+  liveTouched: boolean | null;
+  providerConfigTouched: boolean | null;
+  protectedMemoryTouched: boolean | null;
+};
+
+type TargetedChallengerEvalSnapshot = {
+  boundary: "local_targeted_challenger_eval_receipt_only";
+  source: "workspace_state_receipt";
+  path: string;
+  status: "missing" | "invalid" | "observed" | "adapter_mismatch";
+  reason?: string;
+  generatedAt?: string;
+  adapterPath?: string;
+  evaluationMode?: string;
+  promptMode?: string;
+  blind?: boolean;
+  caseIds: string[];
+  passed: number;
+  total: number;
+  passRate: number;
+  failedCaseIds: string[];
+  parseErrorCaseIds: string[];
+  parseRecoveredCaseIds: string[];
+  rawContractPassCount: number;
+  modelContractReadyCaseIds: string[];
+  modelContractFailureCaseIds: string[];
+  modelContractReady: boolean;
+  promotionReady: false;
+  proof: TargetedChallengerEvalProof;
+};
+
 type QwenCapabilityConsolidationSnapshot = {
   boundary: "local_qwen_capability_consolidation_only";
   runtimeAdapterPolicy: "single_clean_adapter_only_no_dirty_ensemble";
@@ -63,6 +103,7 @@ type QwenCapabilityConsolidationSnapshot = {
     EvalSnapshot,
     "at" | "name" | "adapterPath" | "passed" | "total" | "promotionReady"
   >;
+  targetedChallengerEval: TargetedChallengerEvalSnapshot;
   cleanCandidateAdapterCount: number;
   blockedCandidateAdapterCount: number;
   latestCleanCandidate?: EvalSnapshot;
@@ -118,6 +159,7 @@ type QwenCapabilityConsolidationSnapshot = {
     targetedEvalFirstCaseIds: string[];
     targetedEvalCommand?: string;
     targetedEvalReceiptPath: string;
+    targetedEvalReceiptStatus: TargetedChallengerEvalSnapshot["status"];
     fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean";
     notPromotionProof: true;
     requiredNextStep: string;
@@ -476,6 +518,7 @@ const DEFAULT_LOCAL_BRAIN_DATA_DIR = path.join(
   "thought-flow-v1",
 );
 const DEFAULT_LOCAL_BRAIN_TRAIN_SLICE_DIR = `${DEFAULT_LOCAL_BRAIN_DATA_DIR}-train-slice`;
+const TARGETED_CHALLENGER_EVAL_RECEIPT_FILE = "lcx-targeted-challenger-eval-receipt-latest.json";
 
 function usage(): never {
   throw new Error(
@@ -807,6 +850,8 @@ function qwenCapabilityConsolidationSnapshot(params: {
   events: JsonRecord[];
   latestPassingEval?: EvalSnapshot;
   latestCandidateEval?: EvalSnapshot;
+  targetedChallengerEval: TargetedChallengerEvalSnapshot;
+  workspaceDir: string;
 }): QwenCapabilityConsolidationSnapshot {
   const latestVerdictByAdapter = new Map(
     latestAdapterVerdictSnapshots(params.events)
@@ -862,9 +907,9 @@ function qwenCapabilityConsolidationSnapshot(params: {
   }
   const targetedEvalFirstCaseIds = latestBlockedHarvestCaseIds.slice(0, 8);
   const targetedEvalReceiptPath = path.join(
-    DEFAULT_WORKSPACE_DIR,
+    params.workspaceDir,
     "state",
-    "lcx-targeted-challenger-eval-receipt-latest.json",
+    TARGETED_CHALLENGER_EVAL_RECEIPT_FILE,
   );
   const targetedEvalCommand =
     latestBlockedCandidate?.adapterPath && targetedEvalFirstCaseIds.length > 0
@@ -909,6 +954,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
     consolidationState,
     selectedCleanAdapter: params.latestPassingEval?.adapterPath,
     selectedCleanEval: compactEvalSnapshot(params.latestPassingEval),
+    targetedChallengerEval: params.targetedChallengerEval,
     cleanCandidateAdapterCount: cleanCandidates.length,
     blockedCandidateAdapterCount: blockedCandidates.length,
     latestCleanCandidate,
@@ -976,6 +1022,7 @@ function qwenCapabilityConsolidationSnapshot(params: {
       targetedEvalFirstCaseIds,
       targetedEvalCommand,
       targetedEvalReceiptPath,
+      targetedEvalReceiptStatus: params.targetedChallengerEval.status,
       fullEvalGate: "run_full_hardened_eval_only_after_targeted_cases_are_clean",
       notPromotionProof: true,
       requiredNextStep:
@@ -1402,6 +1449,243 @@ function stringArray(value: unknown): string[] {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function booleanField(record: JsonRecord | undefined, key: string): boolean | undefined {
+  const value = record?.[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function uniqueStringValues(values: readonly unknown[]): string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === "string"))];
+}
+
+function emptyTargetedChallengerEvalProof(): TargetedChallengerEvalProof {
+  return {
+    subsetEval: null,
+    blindRawContract: null,
+    rawContractRequiredForPromotion: null,
+    modelContractReady: null,
+    promotionReady: null,
+    promotionProof: null,
+    modelWeightAbsorbed: null,
+    externalChannelApplied: null,
+    liveTouched: null,
+    providerConfigTouched: null,
+    protectedMemoryTouched: null,
+  };
+}
+
+function emptyTargetedChallengerEvalSnapshot(
+  receiptPath: string,
+  status: TargetedChallengerEvalSnapshot["status"],
+  reason?: string,
+): TargetedChallengerEvalSnapshot {
+  return {
+    boundary: "local_targeted_challenger_eval_receipt_only",
+    source: "workspace_state_receipt",
+    path: receiptPath,
+    status,
+    reason,
+    caseIds: [],
+    passed: 0,
+    total: 0,
+    passRate: 0,
+    failedCaseIds: [],
+    parseErrorCaseIds: [],
+    parseRecoveredCaseIds: [],
+    rawContractPassCount: 0,
+    modelContractReadyCaseIds: [],
+    modelContractFailureCaseIds: [],
+    modelContractReady: false,
+    promotionReady: false,
+    proof: emptyTargetedChallengerEvalProof(),
+  };
+}
+
+/**
+ * Read the persisted targeted challenger receipt without promoting any of its
+ * claims into the full eval or runtime truth. This is intentionally a narrow
+ * adapter: owner decisions still come from the training plan and promotion
+ * audit, while this snapshot only makes the receipt observable and traceable.
+ */
+export async function readTargetedChallengerEvalReceipt(params: {
+  receiptPath: string;
+  expectedAdapterPath?: string;
+}): Promise<TargetedChallengerEvalSnapshot> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(params.receiptPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return emptyTargetedChallengerEvalSnapshot(params.receiptPath, "missing", "receipt_missing");
+    }
+    return emptyTargetedChallengerEvalSnapshot(
+      params.receiptPath,
+      "invalid",
+      "receipt_read_failed",
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return emptyTargetedChallengerEvalSnapshot(
+      params.receiptPath,
+      "invalid",
+      "receipt_invalid_json",
+    );
+  }
+  const record = recordValue(parsed);
+  if (!record) {
+    return emptyTargetedChallengerEvalSnapshot(
+      params.receiptPath,
+      "invalid",
+      "receipt_not_an_object",
+    );
+  }
+
+  const summary = recordValue(record.summary);
+  const proof = recordValue(record.proof);
+  const requested = recordValue(record.requested);
+  const resolved = recordValue(record.resolved);
+  const errors: string[] = [];
+  if (record.schemaVersion !== "lcx_local_brain_eval_receipt_v1") {
+    errors.push("unsupported_receipt_schema");
+  }
+  if (!summary) {
+    errors.push("summary_missing_or_invalid");
+  }
+  if (!proof) {
+    errors.push("proof_missing_or_invalid");
+  }
+  const generatedAt = stringField(record, "generatedAt");
+  if (!generatedAt || Number.isNaN(Date.parse(generatedAt))) {
+    errors.push("generatedAt_missing_or_invalid");
+  }
+  const adapterPath =
+    stringField(resolved, "adapterPath") ??
+    stringField(record, "adapterPath") ??
+    stringField(requested, "adapter");
+  if (!adapterPath) {
+    errors.push("adapter_path_missing");
+  }
+
+  const passed = numberValue(summary?.passed) ?? 0;
+  const total = numberValue(summary?.total) ?? 0;
+  const passRate = numberValue(summary?.passRate) ?? (total > 0 ? passed / total : 0);
+  if (numberValue(summary?.passed) === undefined || numberValue(summary?.total) === undefined) {
+    errors.push("summary_counts_missing_or_invalid");
+  }
+  if (total < 0 || passed < 0 || passed > total) {
+    errors.push("summary_counts_out_of_range");
+  }
+  const failedCaseIds = asStringArray(summary?.failedCaseIds);
+  const parseErrorCaseIds = asStringArray(summary?.parseErrorCaseIds);
+  const parseRecoveredCaseIds = asStringArray(summary?.parseRecoveredCaseIds);
+  const rawContractPassCount = numberValue(summary?.rawContractPassCount) ?? 0;
+  if (numberValue(summary?.rawContractPassCount) === undefined) {
+    errors.push("raw_contract_pass_count_missing_or_invalid");
+  }
+  const modelContractReadyCaseIds = asStringArray(summary?.modelContractReadyCaseIds);
+  const modelContractFailureCaseIds = asStringArray(summary?.modelContractFailureCaseIds);
+  const receiptCases = Array.isArray(record.caseReceipts)
+    ? record.caseReceipts
+        .map((entry) => recordValue(entry))
+        .map((entry) => stringField(entry, "id"))
+        .filter((entry): entry is string => Boolean(entry))
+    : [];
+  const caseIds = uniqueStringValues([
+    ...asStringArray(requested?.caseIds),
+    ...receiptCases,
+    ...failedCaseIds,
+    ...parseErrorCaseIds,
+    ...parseRecoveredCaseIds,
+    ...modelContractReadyCaseIds,
+    ...modelContractFailureCaseIds,
+  ]);
+  if (caseIds.length === 0) {
+    errors.push("case_ids_missing");
+  }
+
+  const normalizedProof: TargetedChallengerEvalProof = {
+    subsetEval: booleanField(proof, "subsetEval") ?? null,
+    blindRawContract: booleanField(proof, "blindRawContract") ?? null,
+    rawContractRequiredForPromotion: booleanField(proof, "rawContractRequiredForPromotion") ?? null,
+    modelContractReady: booleanField(proof, "modelContractReady") ?? null,
+    promotionReady: booleanField(proof, "promotionReady") ?? null,
+    promotionProof: booleanField(proof, "promotionProof") ?? null,
+    modelWeightAbsorbed: booleanField(proof, "modelWeightAbsorbed") ?? null,
+    externalChannelApplied: booleanField(proof, "externalChannelApplied") ?? null,
+    liveTouched: booleanField(proof, "liveTouched") ?? null,
+    providerConfigTouched: booleanField(proof, "providerConfigTouched") ?? null,
+    protectedMemoryTouched: booleanField(proof, "protectedMemoryTouched") ?? null,
+  };
+  if (normalizedProof.subsetEval !== true) {
+    errors.push("receipt_not_marked_as_subset_eval");
+  }
+  if (normalizedProof.promotionReady === true || normalizedProof.promotionProof === true) {
+    errors.push("targeted_receipt_claims_promotion_proof");
+  }
+  for (const [field, value] of [
+    ["modelWeightAbsorbed", normalizedProof.modelWeightAbsorbed],
+    ["externalChannelApplied", normalizedProof.externalChannelApplied],
+    ["liveTouched", normalizedProof.liveTouched],
+    ["providerConfigTouched", normalizedProof.providerConfigTouched],
+    ["protectedMemoryTouched", normalizedProof.protectedMemoryTouched],
+  ] as const) {
+    if (value === true) {
+      errors.push("receipt_claims_forbidden_" + field);
+    }
+  }
+  const learningClaim =
+    stringField(proof, "learningClaim") ?? stringField(requested, "learningClaim");
+  if (learningClaim !== "not_proven_by_contract_eval") {
+    errors.push("receipt_learning_claim_is_not_bounded");
+  }
+
+  const evaluationMode =
+    stringField(record, "evaluationMode") ?? stringField(requested, "evaluationMode");
+  const promptMode = stringField(record, "promptMode") ?? stringField(requested, "promptMode");
+  const blind = booleanField(record, "blind") ?? booleanField(requested, "blind");
+  const status =
+    errors.length > 0
+      ? ("invalid" as const)
+      : params.expectedAdapterPath && adapterPath !== params.expectedAdapterPath
+        ? ("adapter_mismatch" as const)
+        : ("observed" as const);
+  const reason =
+    errors.length > 0
+      ? errors.join(",")
+      : status === "adapter_mismatch"
+        ? "receipt_adapter_does_not_match_latest_candidate"
+        : undefined;
+  return {
+    boundary: "local_targeted_challenger_eval_receipt_only",
+    source: "workspace_state_receipt",
+    path: params.receiptPath,
+    status,
+    reason,
+    generatedAt,
+    adapterPath,
+    evaluationMode,
+    promptMode,
+    blind,
+    caseIds,
+    passed,
+    total,
+    passRate,
+    failedCaseIds,
+    parseErrorCaseIds,
+    parseRecoveredCaseIds,
+    rawContractPassCount,
+    modelContractReadyCaseIds,
+    modelContractFailureCaseIds,
+    modelContractReady: normalizedProof.modelContractReady === true,
+    promotionReady: false,
+    proof: normalizedProof,
+  };
 }
 
 async function readJsonRecord(filePath: string): Promise<JsonRecord | undefined> {
@@ -2630,10 +2914,21 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
   const latestCandidateEval = latestEvalSnapshot(
     guardEvents.filter((event) => event.name === "candidate_hardened_eval"),
   );
+  const targetedChallengerEvalReceiptPath = path.join(
+    workspaceDir,
+    "state",
+    TARGETED_CHALLENGER_EVAL_RECEIPT_FILE,
+  );
+  const latestTargetedChallengerEval = await readTargetedChallengerEvalReceipt({
+    receiptPath: targetedChallengerEvalReceiptPath,
+    expectedAdapterPath: latestCandidateEval?.adapterPath,
+  });
   const qwenCapabilityConsolidation = qwenCapabilityConsolidationSnapshot({
     events: guardEvents,
     latestPassingEval,
     latestCandidateEval,
+    targetedChallengerEval: latestTargetedChallengerEval,
+    workspaceDir,
   });
   const latestPromotion = latestEvent(
     guardEvents,
@@ -2755,6 +3050,7 @@ export async function buildLocalBrainTrainingPlan(options: CliOptions): Promise<
     latestStableEval,
     latestTrainingSeedEval,
     latestCandidateEval,
+    latestTargetedChallengerEval,
     qwenCapabilityConsolidation,
     activeGuardAdapterTruth,
     externalChannelBinding,
