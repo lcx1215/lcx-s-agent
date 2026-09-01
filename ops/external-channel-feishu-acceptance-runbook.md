@@ -17,7 +17,7 @@ This document is intentionally narrow:
 - live runtime repo:
   - `~/.openclaw/external-channel-runtime/lcx-s-openclaw`
 
-`dev-fixed` becomes `live-visible-fixed` only after:
+`core-ready` becomes `user-visible-observed` only after:
 
 1. bounded live port
 2. external-channel verification in `~/.openclaw/external-channel-runtime/lcx-s-openclaw`
@@ -52,7 +52,7 @@ Current observed live acceptance scripts include:
 - `lobster_command_v2.sh`
 - `feishu_event_proxy.py`
 
-If the live repo does not have the equivalent seam, stop and write a bounded live-port plan first.
+If the canonical repository does not have the equivalent seam, stop and write a bounded external-channel migration plan first.
 
 ## Step 3: Port Only The Bounded Live Equivalent
 
@@ -61,13 +61,13 @@ In `~/.openclaw/external-channel-runtime/lcx-s-openclaw`:
 1. inspect `git status --short`
 2. port only the equivalent seam
 3. do not mix unrelated cleanup
-4. do not widen scope during live migration
+4. do not widen scope during external-channel migration
 
 ## Step 4: Run Seam-Local Live Checks
 
 Use only the checks that match the seam you touched.
 
-Examples already present in the live repo:
+Examples already present in the external-channel runtime:
 
 - `python3 scripts/test_branch_acceptance_probe.py`
 - `python3 scripts/test_learning_acceptance_probe.py`
@@ -125,15 +125,15 @@ Current repo-grounded examples:
 
 ## Reporting Rule
 
-Only report `live-visible-fixed: yes` after all five are true:
+Only report `user-visible-observed: yes` after all five are true:
 
-1. live repo patched
-2. live seam-local checks passed
-3. live build passed
+1. canonical repository patched
+2. external-channel seam-local checks passed
+3. external-channel runtime build passed
 4. restart / probe passed
 5. real-entry Feishu acceptance passed
 
 If any one of those is missing, report:
 
-- `dev-fixed: yes`
-- `live-visible-fixed: no`
+- `core-ready: yes`
+- `user-visible-observed: no`

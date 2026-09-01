@@ -652,8 +652,8 @@ graph, finance data gateway, security review, skill-harvester, and
 cli-anything-harvester. This is not direct runtime authority: no direct install,
 no provider config, no external channel sender, no protected memory mutation, no wallet
 connection, no order placement, no copy trading, and no latency arbitrage.
-Treat the radar as dev-only architecture wiring until a concrete probe,
-eval/receipt, live migration, and fresh Lark visible proof all exist.
+Treat the radar as local-only architecture wiring until a concrete probe,
+eval/receipt, external-channel migration, and fresh Lark visible proof all exist.
 
 The radar also tracks six prioritized blacktech mechanisms:
 
@@ -712,7 +712,7 @@ private keys, size positions, claim forecast authority, or chase latency
 arbitrage.
 
 The default operator goal is proactive error discovery and snapshot refresh.
-For non-trivial engineering, "continue", system hardening, live migration,
+For non-trivial engineering, "continue", system hardening, external-channel migration,
 module learning, external project absorption, or memory/update work, start with
 the owner/radar/recovery stack before asking the user what to check. Repair the
 bounded owner lane when the radar marks it repairable; when a gate blocks repair,
@@ -1398,7 +1398,7 @@ Use these words precisely:
 - `training-active`: guard or teacher/eval process is currently running.
 - `promotion-ready`: hardened eval passed and the adapter is selected by latest-passing.
 - `external-channel-bound`: the Lark channel sidecar has been synced to the
-  verified dev snapshot and restarted/probed.
+  verified canonical snapshot and restarted/probed.
 - `user-visible-observed`: only after external-channel binding plus a fresh real Lark inbound plus visible reply.
 
 Do not call local training or synthetic replay `user-visible-observed`; a channel
