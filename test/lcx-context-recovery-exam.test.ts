@@ -56,7 +56,7 @@ async function runJsonScriptWithArgs(script: string, args: string[]) {
 
 describe("LCX compressed context recovery exam", () => {
   it("proves a new coding window can recover from durable evidence", async () => {
-    const { stdout } = await runJsonScript("scripts/dev/lcx-context-recovery-exam.ts");
+    const { stdout } = await runJsonScript("scripts/operator/lcx-context-recovery-exam.ts");
     const payload = JSON.parse(stdout) as {
       ok: boolean;
       boundary: string;
@@ -84,17 +84,17 @@ describe("LCX compressed context recovery exam", () => {
     expect(payload.summary.total).toBeGreaterThanOrEqual(7);
     expect(payload.requiredRecoveryCommands).toEqual(
       expect.arrayContaining([
-        "node --import tsx scripts/dev/lcx-mind-model.ts --json",
-        "node --import tsx scripts/dev/lcx-flow-graph.ts --json",
-        "node --import tsx scripts/dev/lcx-universe-index.ts --json",
-        "node --import tsx scripts/dev/lcx-governance-autopilot.ts --json",
-        "node --import tsx scripts/dev/lcx-self-repair-hands.ts --json",
-        "node --import tsx scripts/dev/lcx-system-doctor.ts --json",
-        "node --import tsx scripts/dev/local-brain-training-plan.ts --json",
-        "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
-        "node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json",
-        "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
-        "node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json",
+        "node --import tsx scripts/operator/lcx-mind-model.ts --json",
+        "node --import tsx scripts/operator/lcx-flow-graph.ts --json",
+        "node --import tsx scripts/operator/lcx-universe-index.ts --json",
+        "node --import tsx scripts/operator/lcx-governance-autopilot.ts --json",
+        "node --import tsx scripts/operator/lcx-self-repair-hands.ts --json",
+        "node --import tsx scripts/operator/lcx-system-doctor.ts --json",
+        "node --import tsx scripts/operator/local-brain-training-plan.ts --json",
+        "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json",
+        "node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json",
+        "node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json",
+        "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
       ]),
     );
     expect(Array.isArray(payload.actionableWarnings)).toBe(true);
@@ -102,10 +102,10 @@ describe("LCX compressed context recovery exam", () => {
   }, 240_000);
 
   it("can emit a compact new-window handoff from the existing recovery owner", async () => {
-    const { stdout } = await runJsonScriptWithArgs("scripts/dev/lcx-context-recovery-exam.ts", [
-      "--handoff",
-      "--json",
-    ]);
+    const { stdout } = await runJsonScriptWithArgs(
+      "scripts/operator/lcx-context-recovery-exam.ts",
+      ["--handoff", "--json"],
+    );
     const payload = JSON.parse(stdout) as {
       ok: boolean;
       handoffForNewWindow: {
@@ -248,8 +248,8 @@ describe("LCX compressed context recovery exam", () => {
     const [agents, runbook, doctorSource, recoverySource, localOperator] = await Promise.all([
       fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-context-recovery-exam.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-context-recovery-exam.ts"), "utf8"),
       fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
     ]);
 

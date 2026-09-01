@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildSchedulerDryRunReport } from "../scripts/dev/live-sidecar-scheduler-dry-run.ts";
+import { buildSchedulerDryRunReport } from "../scripts/operator/live-sidecar-scheduler-dry-run.ts";
 
 const tmpRoots: string[] = [];
 

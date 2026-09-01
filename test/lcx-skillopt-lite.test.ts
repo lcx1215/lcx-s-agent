@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-skillopt-lite.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-skillopt-lite.ts");
 
 async function seedAutopilot(workspaceDir: string) {
   const statePath = path.join(workspaceDir, "state", "lcx-governance-autopilot-latest.json");

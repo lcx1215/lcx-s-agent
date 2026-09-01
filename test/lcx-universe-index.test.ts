@@ -11,7 +11,7 @@ const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
 async function runUniverseIndex(args: string[] = ["--json", "--no-write"]) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-universe-index.ts", ...args],
+    ["--import", "tsx", "scripts/operator/lcx-universe-index.ts", ...args],
     {
       cwd: repoRoot,
       env: process.env,
@@ -98,14 +98,16 @@ describe("LCX universe index", () => {
     expect(payload.artifacts.workspaceState.exists).toBe(true);
     expect(Array.isArray(payload.artifacts.workspaceState.largestFiles)).toBe(true);
     expect(payload.artifacts.liveSidecar.path).toBe(
-      "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
+      "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw",
     );
     expect(Array.isArray(payload.garbageCandidates.untrackedRepoFiles)).toBe(true);
     expect(Array.isArray(payload.garbageCandidates.staleRuntimeFiles)).toBe(true);
     expect(Array.isArray(payload.garbageCandidates.largeRuntimeFiles)).toBe(true);
     expect(Array.isArray(payload.garbageCandidates.staleSnapshots)).toBe(true);
     expect(payload.nextSafeCommands).toEqual(
-      expect.arrayContaining(["node --import tsx scripts/dev/lcx-governance-autopilot.ts --json"]),
+      expect.arrayContaining([
+        "node --import tsx scripts/operator/lcx-governance-autopilot.ts --json",
+      ]),
     );
   }, 120_000);
 

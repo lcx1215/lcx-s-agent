@@ -81,7 +81,7 @@ def local_brain_contract_solver():
                 "node",
                 "--import",
                 "tsx",
-                "scripts/dev/local-brain-open-eval-provider.ts",
+                "scripts/operator/local-brain-open-eval-provider.ts",
                 str(state.input),
             ],
             cwd=os.getcwd(),

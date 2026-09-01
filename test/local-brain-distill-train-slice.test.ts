@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { buildLocalBrainTrainingPrompt } from "../scripts/dev/local-brain-training-contract.js";
+import { buildLocalBrainTrainingPrompt } from "../scripts/operator/local-brain-training-contract.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -87,7 +87,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",
@@ -171,7 +171,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",
@@ -234,7 +234,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",
@@ -309,7 +309,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",
@@ -388,7 +388,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",
@@ -452,7 +452,7 @@ describe("local brain distill train slice", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-train-slice.ts",
+        "scripts/operator/local-brain-distill-train-slice.ts",
         "--data",
         dataDir,
         "--out",

@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { buildCommercialAcceptanceHarness } from "../scripts/dev/lcx-commercial-acceptance-harness.js";
-import { parseJsonObjectFromOutput } from "../scripts/dev/smoke-json-output.js";
+import { buildCommercialAcceptanceHarness } from "../scripts/operator/lcx-commercial-acceptance-harness.js";
+import { parseJsonObjectFromOutput } from "../scripts/operator/smoke-json-output.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -541,7 +541,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     inputs.externalChannelStatus = {
       ok: false,
       owner: "lcx-external-channel-status",
-      command: "node --import tsx scripts/dev/lcx-external-channel-status.ts --json",
+      command: "node --import tsx scripts/operator/lcx-external-channel-status.ts --json",
       error: "legacy status probe unavailable",
     };
     inputs.externalChannelBindingStatus = owner("lcx-external-channel-binding", {
@@ -821,7 +821,7 @@ describe("lcx-commercial-acceptance-harness", () => {
   });
 
   it("runs against the current repo without sending Lark messages or touching external channel sender", async () => {
-    const { stdout } = await runJsonScript("scripts/dev/lcx-commercial-acceptance-harness.ts");
+    const { stdout } = await runJsonScript("scripts/operator/lcx-commercial-acceptance-harness.ts");
     const payload = JSON.parse(stdout) as {
       boundary: string;
       liveTouched: boolean;
@@ -836,12 +836,12 @@ describe("lcx-commercial-acceptance-harness", () => {
     expect(payload.protectedMemoryTouched).toBe(false);
     expect(payload.ownerCommands).toEqual(
       expect.arrayContaining([
-        "node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json",
-        "node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json",
-        "node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json",
+        "node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts --json",
+        "node --import tsx scripts/operator/lcx-lark-short-intent-fuzzer.ts --json",
+        "node --import tsx scripts/operator/lcx-visible-answer-quality-fuzzer.ts --json",
         "pnpm --silent openclaw capabilities lark-loop-diagnose --json",
-        "node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json",
-        "node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json",
+        "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
+        "node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json",
       ]),
     );
   }, 240_000);

@@ -3,13 +3,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { GENERALIZATION_GENERATOR_VERSION } from "../scripts/dev/local-brain-generalization-generator.js";
+import { GENERALIZATION_GENERATOR_VERSION } from "../scripts/operator/local-brain-generalization-generator.js";
 
 describe("local-brain-distill-eval", () => {
   it("supports current adapter resolution instead of requiring static adapter paths", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(
-        path.join(path.resolve(__dirname, ".."), "scripts/dev/local-brain-distill-eval.ts"),
+        path.join(path.resolve(__dirname, ".."), "scripts/operator/local-brain-distill-eval.ts"),
         "utf8",
       ),
     );
@@ -26,7 +26,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "broad_finance_module_taxonomy_coverage",
@@ -81,7 +81,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "single_stock_curve_technical_timing_preflight",
@@ -161,7 +161,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "local_memory_knowledge_activation",
@@ -197,7 +197,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "all_module_knowledge_internalization_chain",
@@ -243,7 +243,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         [
@@ -302,7 +302,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "offensive_stock_opportunity_research",
@@ -393,7 +393,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--no-adapter",
         "--python",
         fakePython,
@@ -436,7 +436,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--no-adapter",
         "--python",
         fakePython,
@@ -512,7 +512,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--no-adapter",
         "--python",
         fakePython,
@@ -600,7 +600,7 @@ describe("local-brain-distill-eval", () => {
   it("tells the local model not to emit think blocks during eval", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(
-        path.join(path.resolve(__dirname, ".."), "scripts/dev/local-brain-distill-eval.ts"),
+        path.join(path.resolve(__dirname, ".."), "scripts/operator/local-brain-distill-eval.ts"),
         "utf8",
       ),
     );
@@ -645,7 +645,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -706,7 +706,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -783,7 +783,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -860,7 +860,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -926,7 +926,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -1080,7 +1080,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -1187,7 +1187,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -1310,7 +1310,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--blind",
           "--case-file",
@@ -1343,7 +1343,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--blind",
           "--case-file",
@@ -1378,7 +1378,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -1442,7 +1442,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -1548,7 +1548,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -1644,7 +1644,7 @@ describe("local-brain-distill-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-eval.ts",
+          "scripts/operator/local-brain-distill-eval.ts",
           "--no-adapter",
           "--python",
           fakePython,
@@ -1708,7 +1708,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--no-adapter",
         "--python",
         fakePython,
@@ -1793,7 +1793,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--no-adapter",
         "--python",
         fakePython,
@@ -1912,7 +1912,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--no-adapter",
         "--python",
         fakePython,
@@ -1984,7 +1984,7 @@ describe("local-brain-distill-eval", () => {
 
   it("cleans up the active mlx child when the eval wrapper receives a termination signal", async () => {
     const source = readFileSync(
-      path.resolve(__dirname, "..", "scripts/dev/local-brain-distill-eval.ts"),
+      path.resolve(__dirname, "..", "scripts/operator/local-brain-distill-eval.ts"),
       "utf8",
     );
 
@@ -2001,7 +2001,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "commodity_fx_inflation_inventory_portfolio_loop",
@@ -2054,7 +2054,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         requestedCaseIds.join(","),
@@ -2097,7 +2097,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "full_stack_finance_stress_with_red_team,paper_claim_conflicts_with_local_memory_rule",
@@ -2145,7 +2145,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "all_domain_finance_research_loop",
@@ -2193,7 +2193,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "plain_buy_hold_research_boundary",
@@ -2234,7 +2234,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "external_knowledge_internalization_protocol",
@@ -2278,7 +2278,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "external_agent_upgrade_five_project_distillation",
@@ -2322,7 +2322,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "prediction_market_research_strategy_distillation",
@@ -2365,7 +2365,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "prediction_market_research_strategy_distillation",
@@ -2399,7 +2399,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "abstraction_transfer_repair_protocol",
@@ -2440,7 +2440,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "anthropic_financial_agent_pattern_distillation",
@@ -2485,7 +2485,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--contract-only",
         "--case-id",
         "financial_modeling_valuation_qc_chain,thesis_catalyst_lifecycle_review,data_provenance_quality_gate,research_artifact_qc_gate",
@@ -2531,7 +2531,7 @@ describe("local-brain-distill-eval", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-eval.ts",
+        "scripts/operator/local-brain-distill-eval.ts",
         "--no-adapter",
         "--python",
         fakePython,

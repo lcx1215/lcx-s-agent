@@ -12,7 +12,7 @@ That runbook is the current operational source of truth for active training
 commands, adapter selection, MiniMax teacher-sidecar settings, load limits, and
 log paths. Treat this page as the conceptual map. If a command or adapter path
 here disagrees with `ops/local-brain/README.md` or
-`scripts/dev/lcx-system-doctor.ts --json`, follow the runbook and current CLI
+`scripts/operator/lcx-system-doctor.ts --json`, follow the runbook and current CLI
 evidence.
 
 ## Role
@@ -51,7 +51,7 @@ learns to route work into concrete LCX modules instead of inventing broad labels
 Do not duplicate the taxonomy in this doc; the source of truth is:
 
 ```bash
-sed -n '1,140p' scripts/dev/local-brain-taxonomy.ts
+sed -n '1,140p' scripts/operator/local-brain-taxonomy.ts
 ```
 
 The prompt also carries hard planning hints:
@@ -80,8 +80,8 @@ models unless the runbook and current machine constraints are updated first.
 ## Build Dataset
 
 ```bash
-node --import tsx scripts/dev/local-brain-distill-dataset.ts --json
-node --import tsx scripts/dev/local-brain-distill-smoke.ts --json
+node --import tsx scripts/operator/local-brain-distill-dataset.ts --json
+node --import tsx scripts/operator/local-brain-distill-smoke.ts --json
 ```
 
 Default output:
@@ -128,19 +128,19 @@ source boundaries, and rejected-context behavior.
 Run the candidate smoke:
 
 ```bash
-node --import tsx scripts/dev/lark-brain-distillation-candidate-smoke.ts
+node --import tsx scripts/operator/lark-brain-distillation-candidate-smoke.ts
 ```
 
 Review pending candidates without writing:
 
 ```bash
-node --import tsx scripts/dev/lark-brain-distillation-review.ts --json
+node --import tsx scripts/operator/lark-brain-distillation-review.ts --json
 ```
 
 Write reviewed candidates when the pending artifacts look clean:
 
 ```bash
-node --import tsx scripts/dev/lark-brain-distillation-review.ts --write --json
+node --import tsx scripts/operator/lark-brain-distillation-review.ts --write --json
 ```
 
 The review output lives under:
@@ -166,13 +166,13 @@ distillation review directory.
 Smoke without network:
 
 ```bash
-node --import tsx scripts/dev/minimax-brain-teacher-batch.ts --mock --limit 3 --json
+node --import tsx scripts/operator/minimax-brain-teacher-batch.ts --mock --limit 3 --json
 ```
 
 Run real MiniMax teacher calls when `MINIMAX_API_KEY` is available:
 
 ```bash
-node --import tsx scripts/dev/minimax-brain-teacher-batch.ts --limit 12 --write --json
+node --import tsx scripts/operator/minimax-brain-teacher-batch.ts --limit 12 --write --json
 ```
 
 Defaults:
@@ -244,7 +244,7 @@ The trained model is only useful if it can answer an adjacent prompt with:
 Run the local acceptance probe:
 
 ```bash
-node --import tsx scripts/dev/local-brain-distill-eval.ts \
+node --import tsx scripts/operator/local-brain-distill-eval.ts \
   --model Qwen/Qwen3-0.6B \
   --adapter latest-passing \
   --json
@@ -255,7 +255,7 @@ scores the final plan after deterministic safety overlays, not the raw model
 completion:
 
 ```bash
-node --import tsx scripts/dev/local-brain-distill-eval.ts \
+node --import tsx scripts/operator/local-brain-distill-eval.ts \
   --model Qwen/Qwen3-0.6B \
   --adapter latest-passing \
   --hardened \
@@ -278,8 +278,8 @@ Current adapter selection is intentionally dynamic. Do not promote or copy a
 static adapter path from this page. Use the runbook or system doctor:
 
 ```bash
-node --import tsx scripts/dev/lcx-system-doctor.ts --json
-node --import tsx scripts/dev/minimax-brain-training-guard.ts \
+node --import tsx scripts/operator/lcx-system-doctor.ts --json
+node --import tsx scripts/operator/minimax-brain-training-guard.ts \
   --resolve-current-adapter \
   --bootstrap-if-missing \
   --model Qwen/Qwen3-0.6B \
@@ -300,7 +300,7 @@ while training improves.
 Run a read-only planning pass:
 
 ```bash
-node --import tsx scripts/dev/local-brain-plan.ts \
+node --import tsx scripts/operator/local-brain-plan.ts \
   --ask "我持有 QQQ、TLT 和 NVDA，先拆内部研究模块，不要给交易建议。" \
   --json
 ```

@@ -11,8 +11,8 @@ an applied receipt became reusable capability.
 
 ## Workflow
 
-1. Run `node --import tsx scripts/dev/module-learning-pipeline-review.ts --json --no-write`.
-2. Run `node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json`.
+1. Run `node --import tsx scripts/operator/module-learning-pipeline-review.ts --json --no-write`.
+2. Run `node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts --json`.
 3. Check each receipt for source scope, retrieval/apply evidence, adjacent
    application, eval/training proof, and keep/downrank/discard decision.
 4. Report weak receipts and the exact next proof owner; do not promote by

@@ -25,7 +25,7 @@ async function runAudit(workspaceDir: string) {
     [
       "--import",
       "tsx",
-      "scripts/dev/lcx-learning-sedimentation-audit.ts",
+      "scripts/operator/lcx-learning-sedimentation-audit.ts",
       "--workspace",
       workspaceDir,
       "--json",
@@ -74,7 +74,7 @@ async function runAuditText(workspaceDir: string) {
     [
       "--import",
       "tsx",
-      "scripts/dev/lcx-learning-sedimentation-audit.ts",
+      "scripts/operator/lcx-learning-sedimentation-audit.ts",
       "--workspace",
       workspaceDir,
     ],

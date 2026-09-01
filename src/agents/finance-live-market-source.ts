@@ -4,7 +4,7 @@
 // The gateway (`finance-data-gateway.ts`) is a pure validator/normalizer: it
 // takes already-collected observations and enforces provenance. Nothing in the
 // repo actually fetched real quotes before this module — the only inputs were
-// hard-coded fixtures in `scripts/dev/finance-data-gateway-smoke.ts`.
+// hard-coded fixtures in `scripts/operator/finance-data-gateway-smoke.ts`.
 //
 // This module adds a real fetch adapter for the Yahoo Finance public chart
 // endpoint (key-less), which serves delayed quotes. That delay is stated

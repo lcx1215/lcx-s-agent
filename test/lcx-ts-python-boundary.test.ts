@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runBoundary() {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-ts-python-boundary.ts", "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-ts-python-boundary.ts", "--json"],
     {
       cwd: repoRoot,
       env: process.env,
@@ -61,7 +61,7 @@ describe("lcx-ts-python-boundary", () => {
         expect.objectContaining({
           path: "lobster_orchestrator.py",
           plainRole: "包装",
-          targetTsOwner: "scripts/dev/lcx-system-doctor.ts",
+          targetTsOwner: "scripts/operator/lcx-system-doctor.ts",
         }),
       ]),
     );
@@ -70,7 +70,7 @@ describe("lcx-ts-python-boundary", () => {
         expect.objectContaining({
           path: "scripts/branch_freshness.py",
           plainRole: "迁走",
-          targetTsOwner: "scripts/dev/lcx-change-impact-plan.ts",
+          targetTsOwner: "scripts/operator/lcx-change-impact-plan.ts",
         }),
       ]),
     );

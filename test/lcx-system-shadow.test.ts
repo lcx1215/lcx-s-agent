@@ -3,13 +3,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildNeutralPrompt, scoreRawContract } from "../scripts/dev/lcx-system-shadow.js";
+import { buildNeutralPrompt, scoreRawContract } from "../scripts/operator/lcx-system-shadow.js";
 import {
   GENERALIZATION_CASE_SCHEMA_VERSION,
   GENERALIZATION_GENERATOR_ID,
   GENERALIZATION_GENERATOR_VERSION,
   generateCases,
-} from "../scripts/dev/local-brain-generalization-generator.js";
+} from "../scripts/operator/local-brain-generalization-generator.js";
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -117,7 +117,7 @@ describe("lcx-system-shadow", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/lcx-system-shadow.ts",
+          "scripts/operator/lcx-system-shadow.ts",
           "--python",
           fake.path,
           "--no-adapter",
@@ -213,7 +213,7 @@ describe("lcx-system-shadow", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/lcx-system-shadow.ts",
+          "scripts/operator/lcx-system-shadow.ts",
           "--python",
           fake.path,
           "--no-adapter",
@@ -250,7 +250,7 @@ describe("lcx-system-shadow", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/lcx-system-shadow.ts",
+        "scripts/operator/lcx-system-shadow.ts",
         "--no-adapter",
         "--case-id",
         "portfolio_mixed_q_t_nvda",
@@ -283,7 +283,7 @@ describe("lcx-system-shadow", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/lcx-system-shadow.ts",
+          "scripts/operator/lcx-system-shadow.ts",
           "--python",
           fakePath,
           "--no-adapter",
@@ -358,7 +358,7 @@ describe("lcx-system-shadow", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/lcx-system-shadow.ts",
+          "scripts/operator/lcx-system-shadow.ts",
           "--python",
           fake.path,
           "--no-adapter",

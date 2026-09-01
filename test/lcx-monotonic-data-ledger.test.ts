@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMonotonicDataLedgerSnapshot } from "../scripts/dev/lcx-monotonic-data-ledger.js";
+import { buildMonotonicDataLedgerSnapshot } from "../scripts/operator/lcx-monotonic-data-ledger.js";
 
 describe("LCX monotonic data ledger", () => {
   it("records dataset, train-slice, SkillOpt, rejected/downranked, and promotion truth", () => {

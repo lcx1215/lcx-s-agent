@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectLocalBrainContractHints } from "../scripts/dev/local-brain-taxonomy.js";
+import { selectLocalBrainContractHints } from "../scripts/operator/local-brain-taxonomy.js";
 
 describe("local brain contract hint selection", () => {
   it("keeps base finance and safety contracts for ordinary asks", () => {

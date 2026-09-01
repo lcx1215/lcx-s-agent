@@ -20,7 +20,7 @@ async function runBridge(workspaceDir: string, extraArgs: string[] = []) {
     [
       "--import",
       "tsx",
-      "scripts/dev/lcx-learning-sedimentation-bridge.ts",
+      "scripts/operator/lcx-learning-sedimentation-bridge.ts",
       "--workspace",
       workspaceDir,
       "--json",

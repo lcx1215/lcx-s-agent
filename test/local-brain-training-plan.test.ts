@@ -6,7 +6,7 @@ import {
   activeGuardEvolutionCooldownSnapshot,
   buildLocalBrainTrainingPlan,
   buildQwenBaseModelMigrationPlan,
-} from "../scripts/dev/local-brain-training-plan.js";
+} from "../scripts/operator/local-brain-training-plan.js";
 
 async function writeJsonl(prefix: string, lines: unknown[]): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -31,7 +31,7 @@ describe("local-brain-training-plan", () => {
       activeGuardEvolutionCooldownSnapshot([
         {
           pid: 101,
-          command: "node --import tsx scripts/dev/minimax-brain-training-guard.ts",
+          command: "node --import tsx scripts/operator/minimax-brain-training-guard.ts",
           role: "guard",
         },
       ]),
@@ -49,7 +49,7 @@ describe("local-brain-training-plan", () => {
         {
           pid: 102,
           command:
-            "node --import tsx scripts/dev/minimax-brain-training-guard.ts --evolution-cooldown-minutes 10",
+            "node --import tsx scripts/operator/minimax-brain-training-guard.ts --evolution-cooldown-minutes 10",
           role: "guard",
         },
       ]),
@@ -79,13 +79,13 @@ describe("local-brain-training-plan", () => {
         activeProcesses: [
           {
             pid: 101,
-            command: "node --import tsx scripts/dev/minimax-brain-training-guard.ts",
+            command: "node --import tsx scripts/operator/minimax-brain-training-guard.ts",
             role: "guard",
           },
           {
             pid: 102,
             ppid: 101,
-            command: "node --import tsx scripts/dev/local-brain-distill-eval.ts",
+            command: "node --import tsx scripts/operator/local-brain-distill-eval.ts",
             role: "local_brain_eval",
           },
         ],
@@ -127,7 +127,7 @@ describe("local-brain-training-plan", () => {
         activeProcesses: [
           {
             pid: 101,
-            command: "node --import tsx scripts/dev/minimax-brain-training-guard.ts",
+            command: "node --import tsx scripts/operator/minimax-brain-training-guard.ts",
             role: "guard",
           },
         ],
@@ -769,7 +769,7 @@ describe("local-brain-training-plan", () => {
           lane: "training",
           status: "ready_when_idle",
           executionClass: "idle_only_training_data",
-          command: "node --import tsx scripts/dev/local-brain-distill-train-slice.ts --json",
+          command: "node --import tsx scripts/operator/local-brain-distill-train-slice.ts --json",
         }),
       ]),
     });
@@ -949,7 +949,7 @@ describe("local-brain-training-plan", () => {
         expect.objectContaining({
           id: "lark_external_channel_binding_ready",
           lane: "external_channel",
-          nextCommand: "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
+          nextCommand: "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json",
         }),
       ]),
     );
@@ -959,7 +959,7 @@ describe("local-brain-training-plan", () => {
           id: "route_lark_transport_to_selected_clean_answer_path",
           lane: "external_channel",
           status: "ready_when_idle",
-          command: "node --import tsx scripts/dev/lcx-external-channel-binding.ts --json",
+          command: "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json",
         }),
       ]),
     );

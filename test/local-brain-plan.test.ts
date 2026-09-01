@@ -8,7 +8,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 describe("local-brain-plan adapter selection", () => {
   it("uses the guard resolver instead of a static legacy adapter", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-plan.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-plan.ts"),
       "utf8",
     );
 
@@ -21,7 +21,7 @@ describe("local-brain-plan adapter selection", () => {
 
   it("uses balanced JSON extraction for noisy local brain output", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-plan.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-plan.ts"),
       "utf8",
     );
 
@@ -32,7 +32,7 @@ describe("local-brain-plan adapter selection", () => {
 
   it("tells the local model not to emit think blocks during planning", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-plan.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-plan.ts"),
       "utf8",
     );
 
@@ -74,7 +74,7 @@ describe("local-brain-plan adapter selection", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-plan.ts",
+          "scripts/operator/local-brain-plan.ts",
           "--ask",
           "给我做一个不交易建议的季度风险框架",
           "--adapter",
@@ -122,7 +122,7 @@ describe("local-brain-plan adapter selection", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-plan.ts",
+          "scripts/operator/local-brain-plan.ts",
           "--ask",
           "我现在要做一个全市场低频研究拆解：同时看美股大盘和龙头股 QQQ SPY NVDA MSFT、中国A股政策和资金流、全球主要指数、ETF、黄金、原油、美元、人民币流动性、债券利率、信用流动性、BTC ETH 加密市场结构。必须包含 财报+宏观+仓位+技术面+反方论证+数据缺口，并明确 fresh-data gap、指数权重/成分股 gap、A股政策/资金流 gap、crypto liquidity/volatility/custody/regulatory gap、FX dollar/yuan liquidity gap、position weights/return series gap。这是训练 local brain workflow，但不要变成 agent-skill 学习任务。",
           "--source-summary",

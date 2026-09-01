@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { HostWatchdogDryRunReport } from "../scripts/dev/live-sidecar-host-watchdog-dry-run.ts";
+import type { HostWatchdogDryRunReport } from "../scripts/operator/live-sidecar-host-watchdog-dry-run.ts";
 import {
   buildInstallPreflightReport,
   type InstallPreflightCheck,
-} from "../scripts/dev/live-sidecar-install-preflight.ts";
-import type { LaunchAgentPlan } from "../scripts/dev/live-sidecar-launchagent-plan.ts";
-import type { SchedulerDryRunReport } from "../scripts/dev/live-sidecar-scheduler-dry-run.ts";
+} from "../scripts/operator/live-sidecar-install-preflight.ts";
+import type { LaunchAgentPlan } from "../scripts/operator/live-sidecar-launchagent-plan.ts";
+import type { SchedulerDryRunReport } from "../scripts/operator/live-sidecar-scheduler-dry-run.ts";
 
 function schedulerReport(overrides: Partial<SchedulerDryRunReport> = {}): SchedulerDryRunReport {
   return {

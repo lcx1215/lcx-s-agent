@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-learning-sedimentation-map.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-learning-sedimentation-map.ts");
 
 async function seedFile(workspaceDir: string, relativePath: string, body = "x") {
   const absolutePath = path.join(workspaceDir, relativePath);

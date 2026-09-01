@@ -164,7 +164,7 @@ function existingEmbryosForFamily(family: GitHubCapabilityFamily): ExistingEmbry
       return [
         {
           surface: "dev full-system smoke",
-          path: "scripts/dev/agent-system-loop-smoke.ts",
+          path: "scripts/operator/agent-system-loop-smoke.ts",
           fit: "partial",
         },
         {

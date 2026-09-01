@@ -355,7 +355,7 @@ These run `pnpm test:live` inside the repo Docker image, mounting your local con
 
 Manual ACP plain-language thread smoke (not CI):
 
-- `bun scripts/dev/discord-acp-plain-language-smoke.ts --channel <discord-channel-id> ...`
+- `bun scripts/operator/discord-acp-plain-language-smoke.ts --channel <discord-channel-id> ...`
 - Keep this script for regression/debug workflows. It may be needed again for ACP thread routing validation, so do not delete it.
 
 Useful env vars:

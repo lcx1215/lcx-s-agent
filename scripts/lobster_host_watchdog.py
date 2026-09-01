@@ -158,7 +158,7 @@ def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
     launchd = inspect_launchagent(FEISHU_PROXY_LABEL, skip_launchd=skip_launchd)
     err_tail = read_tail(FEISHU_PROXY_ERR_LOG)
     desktop_root = "/Users/liuchengxu/Desktop/openclaw"
-    runtime_root = "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw"
+    runtime_root = "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw"
     args_text = "\n".join(str(item) for item in launchd.get("program_arguments", []))
     working_directory = str(launchd.get("working_directory") or "")
     points_at_desktop = desktop_root in args_text or working_directory == desktop_root

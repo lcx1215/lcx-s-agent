@@ -35,7 +35,7 @@ async function writeValidSplits(dataDir: string): Promise<void> {
 describe("local brain distill smoke", () => {
   it("streams JSONL splits instead of loading the full training file into memory", async () => {
     const source = await fs.readFile(
-      path.resolve(import.meta.dirname, "..", "scripts/dev/local-brain-distill-smoke.ts"),
+      path.resolve(import.meta.dirname, "..", "scripts/operator/local-brain-distill-smoke.ts"),
       "utf8",
     );
 
@@ -59,7 +59,7 @@ describe("local brain distill smoke", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-smoke.ts",
+        "scripts/operator/local-brain-distill-smoke.ts",
         "--data",
         dataDir,
         "--min-train",

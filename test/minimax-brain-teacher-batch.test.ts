@@ -10,7 +10,7 @@ import {
   hardenTeacherPlanForPrompt,
   isProviderPayloadMissingFailure,
   normalizeTeacherPlan,
-} from "../scripts/dev/minimax-brain-teacher-batch.js";
+} from "../scripts/operator/minimax-brain-teacher-batch.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -58,7 +58,7 @@ describe("minimax brain teacher batch parsing", () => {
 
   it("includes current real-market stress families in proactive Qwen teacher prompts", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/minimax-brain-teacher-batch.ts"),
+      path.join(repoRoot, "scripts/operator/minimax-brain-teacher-batch.ts"),
       "utf8",
     );
 

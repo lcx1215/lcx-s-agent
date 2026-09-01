@@ -642,7 +642,7 @@ describe("operating-daily-workface hook", () => {
       "the distillation chain serves both Lobster's general agent meta-capability and the full finance research pipeline",
     );
     expect(content).toContain(
-      "Treat memory/local-memory/*.md as reusable durable cards; treat ops/live-handoff/*.md as drill-down or migration history",
+      "Treat memory/local-memory/*.md as reusable durable cards; treat ops/external-channel-history/*.md as drill-down or migration history",
     );
   });
 

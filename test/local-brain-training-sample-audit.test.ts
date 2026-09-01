@@ -7,8 +7,8 @@ import {
   buildLocalBrainTrainingPrompt,
   findAnswerBearingContractTokens,
   redactTeacherContractLabels,
-} from "../scripts/dev/local-brain-training-contract.js";
-import { auditTrainingSamples } from "../scripts/dev/local-brain-training-sample-audit.js";
+} from "../scripts/operator/local-brain-training-contract.js";
+import { auditTrainingSamples } from "../scripts/operator/local-brain-training-sample-audit.js";
 
 const completion = JSON.stringify({
   task_family: "portfolio_risk",

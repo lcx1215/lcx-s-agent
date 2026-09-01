@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPromotionAudit } from "../scripts/dev/local-brain-promotion-audit.js";
+import { buildPromotionAudit } from "../scripts/operator/local-brain-promotion-audit.js";
 
 describe("local-brain-promotion-audit", () => {
   it("marks a matching latest-passing adapter as safe without applying promotion", () => {

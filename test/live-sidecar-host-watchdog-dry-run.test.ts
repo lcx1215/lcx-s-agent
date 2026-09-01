@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildHostWatchdogDryRunReport } from "../scripts/dev/live-sidecar-host-watchdog-dry-run.ts";
+import { buildHostWatchdogDryRunReport } from "../scripts/operator/live-sidecar-host-watchdog-dry-run.ts";
 
 const tmpRoots: string[] = [];
 

@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runStatus(args: string[]) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-external-channel-status.ts", ...args],
+    ["--import", "tsx", "scripts/operator/lcx-external-channel-status.ts", ...args],
     {
       cwd: repoRoot,
       env: process.env,
@@ -69,7 +69,7 @@ describe("lcx-external-channel-status", () => {
     expect(payload.visibleProof).toEqual(
       expect.objectContaining({
         replyFlowProbeCommand:
-          "node --import tsx scripts/dev/lcx-external-channel-status.ts --json --with-probe",
+          "node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe",
         legacyReplyFlowProbeCommand: expect.stringContaining("lcx-promote-live.ts"),
       }),
     );

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRuntimeBundleReceipt,
   DEFAULT_RUNTIME_BUNDLE_ROOT,
-} from "../scripts/dev/live-sidecar-runtime-bundle.ts";
+} from "../scripts/operator/live-sidecar-runtime-bundle.ts";
 
 const tmpRoots: string[] = [];
 
@@ -82,7 +82,7 @@ describe("live sidecar runtime bundle", () => {
 
   it("uses the shared non-Desktop default runtime root", () => {
     expect(DEFAULT_RUNTIME_BUNDLE_ROOT).toBe(
-      "/Users/liuchengxu/.openclaw/live-sidecars/lcx-s-openclaw",
+      "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw",
     );
     expect(DEFAULT_RUNTIME_BUNDLE_ROOT).not.toContain("/Desktop/");
   });
@@ -93,9 +93,9 @@ describe("live sidecar runtime bundle", () => {
     const outputDir = makeTmpRoot("bundle-output-git");
     writeRequiredSource(sourceRoot);
     fs.writeFileSync(path.join(sourceRoot, "package.json"), "{}\n", "utf8");
-    fs.mkdirSync(path.join(sourceRoot, "scripts", "dev"), { recursive: true });
+    fs.mkdirSync(path.join(sourceRoot, "scripts", "operator"), { recursive: true });
     fs.writeFileSync(
-      path.join(sourceRoot, "scripts", "dev", "agent-system-loop-smoke.ts"),
+      path.join(sourceRoot, "scripts", "operator", "agent-system-loop-smoke.ts"),
       "export {}\n",
       "utf8",
     );
@@ -118,9 +118,9 @@ describe("live sidecar runtime bundle", () => {
 
     expect(receipt.readyForLaunchAgent).toBe(true);
     expect(fs.existsSync(path.join(targetRoot, "package.json"))).toBe(true);
-    expect(fs.existsSync(path.join(targetRoot, "scripts/dev/agent-system-loop-smoke.ts"))).toBe(
-      true,
-    );
+    expect(
+      fs.existsSync(path.join(targetRoot, "scripts/operator/agent-system-loop-smoke.ts")),
+    ).toBe(true);
     expect(fs.existsSync(path.join(targetRoot, "memory/ignored.md"))).toBe(false);
     expect(fs.existsSync(path.join(targetRoot, "dist/ignored.js"))).toBe(false);
   });

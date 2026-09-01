@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hardenLocalBrainPlanForAsk } from "../scripts/dev/local-brain-contracts.js";
+import { hardenLocalBrainPlanForAsk } from "../scripts/operator/local-brain-contracts.js";
 
 describe("hardenLocalBrainPlanForAsk", () => {
   it("expands short recent-market asks into scoped research preflight", () => {

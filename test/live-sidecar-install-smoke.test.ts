@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBlockedReceipt } from "../scripts/dev/live-sidecar-install-smoke.ts";
+import { buildBlockedReceipt } from "../scripts/operator/live-sidecar-install-smoke.ts";
 
 describe("live sidecar install smoke guard", () => {
   it("builds a blocked receipt without live actions when execute flag is missing", () => {

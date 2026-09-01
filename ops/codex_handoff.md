@@ -16,8 +16,8 @@ Use this file together with:
 - `MEMORY.md`
 - `memory/current-research-line.md`
 - `memory/current_state.md`
-- `ops/live-handoff/2026-03-27-workspace-division.md`
-- `ops/live-handoff/2026-03-27-workspace-role-runbook.md`
+- `ops/external-channel-history/2026-03-27-workspace-division.md`
+- `ops/external-channel-history/2026-03-27-workspace-role-runbook.md`
 
 ## Observed In This Dev Repo
 
@@ -212,12 +212,12 @@ Use this file together with:
   - `ops/codex_handoff.md`
 - This means recent system-state narration has been too distributed across:
   - chat
-  - `ops/live-handoff/*.md`
+  - `ops/external-channel-history/*.md`
   - local uncommitted changes
 - The current cleanup direction is:
   - keep previous finance-domain work
   - keep the distillation chain serving both general meta-capability and the full finance research pipeline
-  - use `MEMORY.md` plus `memory/current-research-line.md` as the fast active read path before `ops/live-handoff/*`
+  - use `MEMORY.md` plus `memory/current-research-line.md` as the fast active read path before `ops/external-channel-history/*`
   - prefer matching local durable memory cards over arbitrary recent cards
   - use `memory/feishu-work-receipts/*.md` when debugging wording/routing/self-repair drift instead of replaying whole chats
   - prefer decision-convergence over fake-precise first answers
@@ -227,11 +227,11 @@ Use this file together with:
 - Development work should start in:
   - `lcx-s-openclaw`
 - The live Feishu runtime sidecar repo is:
-  - `~/.openclaw/live-sidecars/lcx-s-openclaw`
+  - `~/.openclaw/external-channel-runtime/lcx-s-openclaw`
 - The development repo contains the editable Feishu source:
   - `extensions/feishu/src/*`
 - But Feishu behavior is only changed in practice after an equivalent bounded patch is:
-  1. ported into `~/.openclaw/live-sidecars/lcx-s-openclaw`
+  1. ported into `~/.openclaw/external-channel-runtime/lcx-s-openclaw`
   2. built there
   3. restarted there
   4. verified through probe + real Feishu acceptance
@@ -245,7 +245,7 @@ Use this file together with:
 
 ## Other-Live-Context Narrative
 
-`ops/live-handoff/*.md` is useful, but it must be read as:
+`ops/external-channel-history/*.md` is useful, but it must be read as:
 
 - handoff narrative
 - migration memory
@@ -593,7 +593,7 @@ Before changing code again:
 2. read `memory/current-research-line.md`
 3. read `memory/current_state.md`
 4. read this file
-5. read `ops/dev-to-live-feishu-acceptance-runbook.md` before claiming any Feishu/live verification plan
+5. read `ops/external-channel-feishu-acceptance-runbook.md` before claiming any Feishu/live verification plan
 6. separate:
    - observed
    - inferred

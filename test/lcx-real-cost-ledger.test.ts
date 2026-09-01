@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildRealCostLedger } from "../scripts/dev/lcx-real-cost-ledger.ts";
+import { buildRealCostLedger } from "../scripts/operator/lcx-real-cost-ledger.ts";
 
 describe("LCX real cost ledger", () => {
   it("keeps confirmed calls separate from estimated tokens and unknown billing", async () => {

@@ -7,7 +7,7 @@ creating dev receipts, running formatters that write, or starting any repair pat
 must acquire the repo-local repair lock:
 
 ```bash
-node --import tsx scripts/dev/lcx-automation-repair-lock.ts \
+node --import tsx scripts/operator/lcx-automation-repair-lock.ts \
   --mode acquire \
   --lane <automation-id> \
   --worktree /Users/liuchengxu/Desktop/lcx-s-openclaw \
@@ -27,7 +27,7 @@ If the command returns `"acquired": true`, keep the returned `token`. After the 
 verification, release the lock:
 
 ```bash
-node --import tsx scripts/dev/lcx-automation-repair-lock.ts \
+node --import tsx scripts/operator/lcx-automation-repair-lock.ts \
   --mode release \
   --lane <automation-id> \
   --token <token> \

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildAgentExamReport } from "../scripts/dev/lcx-agent-exam.js";
+import { buildAgentExamReport } from "../scripts/operator/lcx-agent-exam.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -690,10 +690,13 @@ describe("lcx-agent-exam", () => {
   });
 
   it("runs module-learning review against the local OpenClaw workspace", async () => {
-    const source = await fs.readFile(path.join(repoRoot, "scripts/dev/lcx-agent-exam.ts"), "utf8");
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts/operator/lcx-agent-exam.ts"),
+      "utf8",
+    );
 
     expect(source).toContain("DEFAULT_WORKSPACE_DIR");
-    expect(source).toContain("scripts/dev/module-learning-pipeline-review.ts");
+    expect(source).toContain("scripts/operator/module-learning-pipeline-review.ts");
     expect(source).toContain("--workspace");
   });
 });

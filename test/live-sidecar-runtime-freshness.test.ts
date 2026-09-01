@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildRuntimeFreshnessReceipt } from "../scripts/dev/live-sidecar-runtime-freshness.ts";
+import { buildRuntimeFreshnessReceipt } from "../scripts/operator/live-sidecar-runtime-freshness.ts";
 
 const tmpRoots: string[] = [];
 
@@ -26,7 +26,7 @@ function initTrackedSource(root: string): void {
   writeFile(root, "dist/ignored.js", "generated\n");
   writeFile(
     root,
-    "ops/live-handoff/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
+    "ops/external-channel-artifacts/launchagent-candidates/live-sidecar-runtime-bundle-receipt.json",
     '{"generated":true}\n',
   );
   spawnSync("git", ["init"], { cwd: root, stdio: "ignore" });

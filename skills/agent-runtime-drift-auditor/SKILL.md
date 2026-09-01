@@ -11,13 +11,13 @@ sync.
 
 ## Workflow
 
-1. Run `node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json` and
-   `node --import tsx scripts/dev/lcx-external-channel-status.ts --json`.
+1. Run `node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json` and
+   `node --import tsx scripts/operator/lcx-external-channel-status.ts --json`.
 2. Compare source commit, runtime skill snapshot, selected-clean adapter, and
    receipt timestamps; label each mismatch instead of guessing which side is
    authoritative.
 3. Route a possible channel change to
-   `scripts/dev/lcx-external-channel-binding.ts`; use read-only status first.
+   `scripts/operator/lcx-external-channel-binding.ts`; use read-only status first.
 4. Report dev-ready, external-channel-bound, and user-visible-observed as
    separate states.
 

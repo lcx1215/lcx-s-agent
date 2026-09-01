@@ -13,7 +13,7 @@ running every gate. First classify the changed files and get the required
 verification set for the affected lanes:
 
 ```bash
-node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
+node --import tsx scripts/operator/lcx-change-impact-plan.ts --json
 ```
 
 The planner reads the current git diff/status, assigns every touched file to a
@@ -25,7 +25,7 @@ Run the heavier checkpoint after the focused checks, or immediately when the
 planner reports elevated risk:
 
 ```bash
-node --import tsx scripts/dev/lcx-system-doctor.ts --json
+node --import tsx scripts/operator/lcx-system-doctor.ts --json
 ```
 
 When a change may cause Codex, Claude Code, or another future agent to see only
@@ -33,22 +33,22 @@ one local detail while missing the larger workflow, run the LCX Agent Mind Model
 god-view check:
 
 ```bash
-node --import tsx scripts/dev/lcx-mind-model.ts --json
-node --import tsx scripts/dev/lcx-flow-graph.ts --json
-node --import tsx scripts/dev/lcx-universe-index.ts --json
-node --import tsx scripts/dev/lcx-context-recovery-exam.ts --json
-node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
-node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
-node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
-node --import tsx scripts/dev/lcx-change-impact-plan.ts --json
-node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
-node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json
-node --import tsx scripts/dev/local-brain-training-plan.ts --json
-node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
-node --import tsx scripts/dev/lcx-learning-sedimentation-audit.ts --json
-node --import tsx scripts/dev/lcx-learning-sedimentation-map.ts --json
-node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json
-node --import tsx scripts/dev/lcx-system-memory-sedimentation-gate.ts --json
+node --import tsx scripts/operator/lcx-mind-model.ts --json
+node --import tsx scripts/operator/lcx-flow-graph.ts --json
+node --import tsx scripts/operator/lcx-universe-index.ts --json
+node --import tsx scripts/operator/lcx-context-recovery-exam.ts --json
+node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/operator/lcx-governance-autopilot.ts --json
+node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json
+node --import tsx scripts/operator/lcx-change-impact-plan.ts --json
+node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json
+node --import tsx scripts/operator/lcx-ts-python-boundary.ts --json
+node --import tsx scripts/operator/local-brain-training-plan.ts --json
+node --import tsx scripts/operator/lcx-learning-sedimentation-bridge.ts --json
+node --import tsx scripts/operator/lcx-learning-sedimentation-audit.ts --json
+node --import tsx scripts/operator/lcx-learning-sedimentation-map.ts --json
+node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts --json
+node --import tsx scripts/operator/lcx-system-memory-sedimentation-gate.ts --json
 ```
 
 This is a read-only `dev_mind_model_only` architecture audit. It checks whether
@@ -85,7 +85,7 @@ parallel doctor.
 The LCX Agent Universe Index is the fastest total-coverage inventory:
 
 ```bash
-node --import tsx scripts/dev/lcx-universe-index.ts --json
+node --import tsx scripts/operator/lcx-universe-index.ts --json
 ```
 
 Use it when the task says all files, all code, all artifacts, all outputs, all
@@ -100,7 +100,7 @@ The Problem Cluster Radar is the current-issue aggregator for that governance
 stack:
 
 ```bash
-node --import tsx scripts/dev/lcx-problem-cluster-radar.ts --json
+node --import tsx scripts/operator/lcx-problem-cluster-radar.ts --json
 ```
 
 It reads existing owner outputs and emits `problemClusters`,
@@ -124,7 +124,7 @@ stack.
 The Governance Autopilot is the read-only automatic trigger for the same stack:
 
 ```bash
-node --import tsx scripts/dev/lcx-governance-autopilot.ts --json
+node --import tsx scripts/operator/lcx-governance-autopilot.ts --json
 ```
 
 It runs problem radar, commercial acceptance, change impact, universe index,
@@ -167,7 +167,7 @@ direct writes, or model-weight absorption claims.
 The Commercial Acceptance Harness is the product-grade exam above those owners:
 
 ```bash
-node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json
+node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json
 ```
 
 It consumes commercial answer pipeline, problem radar, flow graph, mind model,
@@ -178,7 +178,7 @@ The short-intent fuzzer is the owner that prevents the fixed short Lark canaries
 from becoming a brittle whitelist:
 
 ```bash
-node --import tsx scripts/dev/lcx-lark-short-intent-fuzzer.ts --json
+node --import tsx scripts/operator/lcx-lark-short-intent-fuzzer.ts --json
 ```
 
 It generates terse Lark-style variants by failure family and requires unknown
@@ -187,7 +187,7 @@ reason, not a generic intro, direct action answer, or silent success.
 The visible-answer quality fuzzer is the paired positive gate:
 
 ```bash
-node --import tsx scripts/dev/lcx-visible-answer-quality-fuzzer.ts --json
+node --import tsx scripts/operator/lcx-visible-answer-quality-fuzzer.ts --json
 ```
 
 It proves the system adopts concise useful answers for status, missing data,
@@ -212,7 +212,7 @@ fallbacks.
 The focused daily finance product owner is:
 
 ```bash
-node --import tsx scripts/dev/lcx-directed-daily-research-brief.ts --json
+node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json
 ```
 
 Use `--write` only when the operator wants a durable daily packet written under
@@ -236,7 +236,7 @@ mechanisms merge into one owner scenario instead of becoming parallel systems.
 The TS/Python boundary check keeps code ownership from scattering:
 
 ```bash
-node --import tsx scripts/dev/lcx-ts-python-boundary.ts --json
+node --import tsx scripts/operator/lcx-ts-python-boundary.ts --json
 ```
 
 Plain rule: TS is the main control room; Python is the engine room. Python is
@@ -303,7 +303,7 @@ blueprint lane.
    answer or return a concrete failed reason. The dev owner is:
 
    ```bash
-   node --import tsx scripts/dev/lcx-commercial-answer-pipeline.ts --json
+   node --import tsx scripts/operator/lcx-commercial-answer-pipeline.ts --json
    ```
 
    Use it before touching answer composition, Lark visible reply wording,
@@ -333,7 +333,7 @@ blueprint lane.
    Lark external-channel binding has its own owner command:
 
    ```bash
-   node --import tsx scripts/dev/lcx-external-channel-binding.ts --json
+   node --import tsx scripts/operator/lcx-external-channel-binding.ts --json
    ```
 
    It reads `local-brain-training-plan.externalChannelBinding` first and only
@@ -342,7 +342,7 @@ blueprint lane.
    `ready_for_apply`, the bounded idle-only apply path is:
 
    ```bash
-   node --import tsx scripts/dev/lcx-external-channel-binding.ts --apply --json
+   node --import tsx scripts/operator/lcx-external-channel-binding.ts --apply --json
    ```
 
    The apply path is allowed to sync/build/restart the external-channel sidecar
@@ -359,12 +359,12 @@ blueprint lane.
    The whole-system fadeout audit is:
 
    ```bash
-   node --import tsx scripts/dev/lcx-live-fadeout-audit.ts --json
+   node --import tsx scripts/operator/lcx-live-fadeout-audit.ts --json
    ```
 
    It is read-only. It checks whether every main LCX owner and package alias
    points to external-channel/user-visible proof first, while classifying
-   upstream live tests, historical `ops/live-handoff` receipts, and temporary
+   upstream live tests, historical `ops/external-channel-history` receipts, and temporary
    sidecar compatibility as allowed legacy/platform uses.
 
    Cloud migration uses the same owner boundary. Do not migrate the old
@@ -382,7 +382,7 @@ blueprint lane.
    volatile status family needs one single factual owner and flow-graph
    consolidated entrypoint coverage.
 7. Product-grade acceptance: run
-   `node --import tsx scripts/dev/lcx-commercial-acceptance-harness.ts --json`
+   `node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json`
    to judge release readiness across answer quality, radar clusters,
    external-channel status, training overlap, provider council, real short Lark
    canaries, module-learning absorption, finance data gateway, and async receipt
@@ -420,8 +420,8 @@ For a new coding window that needs a one-screen current-state handoff, use the
 same recovery owner instead of creating a separate handoff lane:
 
 ```bash
-node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff
-node --import tsx scripts/dev/lcx-context-recovery-exam.ts --handoff --json
+node --import tsx scripts/operator/lcx-context-recovery-exam.ts --handoff
+node --import tsx scripts/operator/lcx-context-recovery-exam.ts --handoff --json
 ```
 
 The handoff snapshot includes dirty files, affected lanes, unmatched-file
@@ -444,7 +444,7 @@ Start here:
 
 ```bash
 cd /Users/liuchengxu/Desktop/lcx-s-openclaw
-node --import tsx scripts/dev/lcx-system-doctor.ts --json
+node --import tsx scripts/operator/lcx-system-doctor.ts --json
 ```
 
 Read the `minimax-brain-training-guard` check first. It summarizes:
@@ -464,7 +464,7 @@ For training-specific automation, run the unified plan immediately after the
 doctor:
 
 ```bash
-node --import tsx scripts/dev/local-brain-training-plan.ts --json
+node --import tsx scripts/operator/local-brain-training-plan.ts --json
 ```
 
 This is the shared training coordinator for future Codex windows and recurring
@@ -487,11 +487,11 @@ reviewable but not `eval_absorbed`.
 For learning sedimentation specifically, run:
 
 ```bash
-node --import tsx scripts/dev/lcx-learning-sedimentation-bridge.ts --json
-node --import tsx scripts/dev/lcx-learning-sedimentation-audit.ts --json
-node --import tsx scripts/dev/lcx-learning-sedimentation-map.ts --json
-node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json
-node --import tsx scripts/dev/lcx-system-memory-sedimentation-gate.ts --json
+node --import tsx scripts/operator/lcx-learning-sedimentation-bridge.ts --json
+node --import tsx scripts/operator/lcx-learning-sedimentation-audit.ts --json
+node --import tsx scripts/operator/lcx-learning-sedimentation-map.ts --json
+node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts --json
+node --import tsx scripts/operator/lcx-system-memory-sedimentation-gate.ts --json
 ```
 
 The bridge is a dry-run `dev_learning_sedimentation_bridge_only` check by
@@ -540,7 +540,7 @@ but by itself it is not per-module absorption proof.
 For a judge-style all-lane exam, run:
 
 ```bash
-node --import tsx scripts/dev/lcx-agent-exam.ts --json
+node --import tsx scripts/operator/lcx-agent-exam.ts --json
 ```
 
 This is read-only by default. It combines doctor, training-plan, promotion
@@ -615,7 +615,7 @@ already exists. Start with targeted search instead of inventing a parallel lane:
 
 ```bash
 rg -n "<keyword>|<task_family>|<case_id>|<module_id>" \
-  scripts/dev test ops/local-brain AGENTS.md README.md docs src extensions
+  scripts/operator test ops/local-brain AGENTS.md README.md docs src extensions
 find /Users/liuchengxu/.codex/skills -maxdepth 2 -name SKILL.md | sort
 ```
 
@@ -636,7 +636,7 @@ For broad external-agent upgrades, run the external agent upgrade radar before
 building a new path:
 
 ```bash
-node --import tsx scripts/dev/lcx-external-agent-upgrade-radar.ts --json
+node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json
 ```
 
 The current source families include AutoSkill / Skills-Coach, Agent Lightning,
@@ -763,11 +763,11 @@ module_learning_pipeline_plan
 CLI wrapper:
 
 ```bash
-node --import tsx scripts/dev/module-learning-pipeline-plan.ts \
+node --import tsx scripts/operator/module-learning-pipeline-plan.ts \
   --target-module options_volatility \
   --source <source-url-or-local-path> \
   --actual-reading-scope "<what was actually read>" \
-  --existing-artifact scripts/dev/local-brain-distill-eval.ts \
+  --existing-artifact scripts/operator/local-brain-distill-eval.ts \
   --write \
   --json
 ```
@@ -845,8 +845,8 @@ weights absorbed the lesson unless eval or training evidence is present.
 The default system doctor runs the same review in no-write mode:
 
 ```bash
-node --import tsx scripts/dev/lcx-system-doctor.ts --json
-node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json
+node --import tsx scripts/operator/lcx-system-doctor.ts --json
+node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts --json
 ```
 
 Weak module-learning receipts appear in the `module-learning-pipeline-review`
@@ -862,10 +862,10 @@ close the same-day module-learning lane, the absorption gate can write dev/local
 evidence and superseding `eval_absorbed` plan receipts:
 
 ```bash
-node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts \
+node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts \
   --write-absorbed-plan-receipts --json
-node --import tsx scripts/dev/module-learning-pipeline-review.ts --json
-node --import tsx scripts/dev/lcx-module-learning-absorption-gate.ts --json
+node --import tsx scripts/operator/module-learning-pipeline-review.ts --json
+node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts --json
 ```
 
 The review uses active receipts for `receiptFiles`, `applicationReady`,
@@ -887,7 +887,7 @@ evidence, `boundary_violation_blocks_absorption` for boundary drift, and reserve
 For the automation lane that should leave a daily dev/local receipt, run:
 
 ```bash
-node --import tsx scripts/dev/module-learning-pipeline-review.ts --json
+node --import tsx scripts/operator/module-learning-pipeline-review.ts --json
 ```
 
 Use `--no-write` for a dry run. The script writes only
@@ -899,7 +899,7 @@ alternate local workspace.
 The training coordinator also includes the same no-write review in its JSON:
 
 ```bash
-node --import tsx scripts/dev/local-brain-training-plan.ts --json
+node --import tsx scripts/operator/local-brain-training-plan.ts --json
 ```
 
 Module-learning plan/review receipts are also Qwen training material now. The
@@ -1032,8 +1032,8 @@ three separate ways, and these boundaries must stay separate:
 Fast inspection:
 
 ```bash
-node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json
-node --import tsx scripts/dev/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json --task "NVDA 还能不能拿，要不要买一点？"
+node --import tsx scripts/operator/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json
+node --import tsx scripts/operator/lcx-skillopt-lite.ts --phase candidate-edit --no-write --json --task "NVDA 还能不能拿，要不要买一点？"
 ```
 
 ## External And General Skills
@@ -1109,7 +1109,7 @@ The 1.7B path is useful only as a future shadow/bootstrap mechanism on stronger 
 Use this to see which local adapter the guard will use:
 
 ```bash
-node --import tsx scripts/dev/minimax-brain-training-guard.ts \
+node --import tsx scripts/operator/minimax-brain-training-guard.ts \
   --resolve-current-adapter \
   --bootstrap-if-missing \
   --model Qwen/Qwen3-0.6B \
@@ -1148,7 +1148,7 @@ external-channel binding readiness can settle before the next heavy round
 starts.
 
 ```bash
-node --import tsx scripts/dev/minimax-brain-training-guard.ts \
+node --import tsx scripts/operator/minimax-brain-training-guard.ts \
   --duration-minutes 285 \
   --batch-limit 20 \
   --teacher-profile minimax-plus-brain \
@@ -1179,7 +1179,7 @@ generic synthetic prompts.
 Use this when you only want MiniMax to create more reviewed teacher samples:
 
 ```bash
-node --import tsx scripts/dev/minimax-quota-brain-saturator.ts --write
+node --import tsx scripts/operator/minimax-quota-brain-saturator.ts --write
 ```
 
 This writes brain distillation review artifacts only. It must not write language corpus, external channel sender config, provider config, protected repo memory, or finance doctrine.
@@ -1189,8 +1189,8 @@ This writes brain distillation review artifacts only. It must not write language
 Rebuild and check the local brain dataset:
 
 ```bash
-node --import tsx scripts/dev/local-brain-distill-dataset.ts --json
-node --import tsx scripts/dev/local-brain-distill-smoke.ts --json
+node --import tsx scripts/operator/local-brain-distill-dataset.ts --json
+node --import tsx scripts/operator/local-brain-distill-smoke.ts --json
 ```
 
 Expected boundary:
@@ -1214,7 +1214,7 @@ finance_doctrine
 Run hardened eval against the latest selected adapter:
 
 ```bash
-node --import tsx scripts/dev/local-brain-distill-eval.ts \
+node --import tsx scripts/operator/local-brain-distill-eval.ts \
   --model Qwen/Qwen3-0.6B \
   --adapter latest-passing \
   --hardened \
@@ -1238,11 +1238,11 @@ row. Generate the holdout metadata separately; its target labels remain
 scorer-side and never enter the model prompt:
 
 ```bash
-node --import tsx scripts/dev/local-brain-generalization-harness.ts \
+node --import tsx scripts/operator/local-brain-generalization-harness.ts \
   --emit-holdout 1 --seed 20260831 --holdout-fraction 0.2 \
   > /tmp/lcx-neutral-holdout-20260831.jsonl
 
-node --import tsx scripts/dev/lcx-system-shadow.ts \
+node --import tsx scripts/operator/lcx-system-shadow.ts \
   --model Qwen/Qwen3-0.6B \
   --adapter /absolute/path/to/explicit/adapter \
   --case-id index_concentration_mag7_portfolio_risk,short_lark_commodity_scope_01 \
@@ -1272,7 +1272,7 @@ checks it against the latest guard-log eval, and reports a standardized
 decision without moving/deleting/promoting adapters, run:
 
 ```bash
-node --import tsx scripts/dev/local-brain-promotion-audit.ts --json
+node --import tsx scripts/operator/local-brain-promotion-audit.ts --json
 ```
 
 Expected boundary:
@@ -1294,7 +1294,7 @@ brain passes a hard scenario but fails the simple Lark-style ask.
 Example:
 
 ```bash
-node --import tsx scripts/dev/local-brain-distill-eval.ts \
+node --import tsx scripts/operator/local-brain-distill-eval.ts \
   --contract-only \
   --case-id commodity_fx_inflation_inventory_portfolio_loop \
   --summary-only \
@@ -1320,7 +1320,7 @@ families; extend the existing registry, keep prerequisite coverage, and prove it
 with:
 
 ```bash
-node --import tsx scripts/dev/local-brain-distill-eval.ts \
+node --import tsx scripts/operator/local-brain-distill-eval.ts \
   --contract-only \
   --summary-only \
   --json
@@ -1383,7 +1383,7 @@ is the highest-scoring retained candidate, not merely the newest adapter
 directory:
 
 ```bash
-node --import tsx scripts/dev/minimax-brain-training-guard.ts \
+node --import tsx scripts/operator/minimax-brain-training-guard.ts \
   --resolve-current-adapter \
   --bootstrap-if-missing \
   --model Qwen/Qwen3-0.6B \

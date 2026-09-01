@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOwnerControlMap } from "../scripts/dev/lcx-owner-control-map.ts";
+import { buildOwnerControlMap } from "../scripts/operator/lcx-owner-control-map.ts";
 
 describe("LCX owner control map", () => {
   it("shows what the owner can see, what Codex can safely act on, and what stays blocked", () => {

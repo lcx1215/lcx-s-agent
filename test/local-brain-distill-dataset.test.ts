@@ -19,7 +19,7 @@ async function parseJsonl(filePath: string): Promise<unknown[]> {
 describe("local brain distill dataset", () => {
   it("publishes dataset files only after atomic same-directory writes", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-distill-dataset.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-distill-dataset.ts"),
       "utf8",
     );
 
@@ -35,7 +35,7 @@ describe("local brain distill dataset", () => {
 
   it("teaches Qwen no-think compact JSON prompts in every generated dataset example", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-distill-dataset.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-distill-dataset.ts"),
       "utf8",
     );
 
@@ -49,7 +49,7 @@ describe("local brain distill dataset", () => {
 
   it("includes current real-market stress families as high-weight Qwen curated seeds", async () => {
     const source = await fs.readFile(
-      path.join(repoRoot, "scripts/dev/local-brain-distill-dataset.ts"),
+      path.join(repoRoot, "scripts/operator/local-brain-distill-dataset.ts"),
       "utf8",
     );
 
@@ -96,7 +96,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -149,7 +149,14 @@ describe("local brain distill dataset", () => {
 
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/local-brain-distill-smoke.ts", "--data", outDir, "--json"],
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/local-brain-distill-smoke.ts",
+        "--data",
+        outDir,
+        "--json",
+      ],
       {
         cwd: repoRoot,
         env: { ...process.env, HOME: fixtureRoot },
@@ -226,7 +233,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -262,7 +269,14 @@ describe("local brain distill dataset", () => {
 
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/local-brain-distill-smoke.ts", "--data", outDir, "--json"],
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/local-brain-distill-smoke.ts",
+        "--data",
+        outDir,
+        "--json",
+      ],
       {
         cwd: repoRoot,
         env: { ...process.env, HOME: fixtureRoot },
@@ -323,7 +337,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -439,7 +453,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -570,7 +584,7 @@ describe("local brain distill dataset", () => {
       [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-distill-dataset.ts",
+        "scripts/operator/local-brain-distill-dataset.ts",
         "--workspace",
         workspaceDir,
         "--out",
@@ -618,7 +632,7 @@ describe("local brain distill dataset", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-distill-dataset.ts",
+          "scripts/operator/local-brain-distill-dataset.ts",
           "--workspace",
           workspaceDir,
           "--out",

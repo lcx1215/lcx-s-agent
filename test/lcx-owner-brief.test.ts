@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOwnerBrief } from "../scripts/dev/lcx-owner-brief.ts";
+import { buildOwnerBrief } from "../scripts/operator/lcx-owner-brief.ts";
 
 describe("LCX owner brief", () => {
   it("turns machine receipts into a short plain-Chinese owner summary", () => {

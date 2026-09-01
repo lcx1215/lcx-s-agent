@@ -567,7 +567,7 @@ describe("operating-loop hook", () => {
       "file_safety_rule: refresh compact anchors first; do not replace continuity artifacts with empty or no-op rewrites",
     );
     expect(currentResearchLine).toContain(
-      "archive_rule: treat ops/live-handoff notes as drill-down only when current-research-line or MEMORY.md already defines the active brain state",
+      "archive_rule: treat ops/external-channel-history notes as drill-down only when current-research-line or MEMORY.md already defines the active brain state",
     );
     expect(currentResearchLine).toContain("## Memory Budget");
     expect(currentResearchLine).toContain(

@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 async function runRadar() {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-external-agent-upgrade-radar.ts", "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-external-agent-upgrade-radar.ts", "--json"],
     {
       cwd: repoRoot,
       env: process.env,
@@ -143,27 +143,27 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect.arrayContaining([
         expect.objectContaining({
           label: "AutoSkill / Skills-Coach",
-          ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
+          ownerEntrypoint: "scripts/operator/lcx-skillopt-lite.ts",
         }),
         expect.objectContaining({
           label: "Agent Lightning",
-          ownerEntrypoint: "scripts/dev/lcx-problem-cluster-radar.ts",
+          ownerEntrypoint: "scripts/operator/lcx-problem-cluster-radar.ts",
         }),
         expect.objectContaining({
           label: "LongMemEval-V2 / AgentRunbook",
-          ownerEntrypoint: "scripts/dev/lcx-context-recovery-exam.ts",
+          ownerEntrypoint: "scripts/operator/lcx-context-recovery-exam.ts",
         }),
         expect.objectContaining({
           label: "MemX / ground-truth-preserving memory",
-          ownerEntrypoint: "scripts/dev/lcx-learning-sedimentation-audit.ts",
+          ownerEntrypoint: "scripts/operator/lcx-learning-sedimentation-audit.ts",
         }),
         expect.objectContaining({
           label: "LightMem / LycheeMemory",
-          ownerEntrypoint: "scripts/dev/lcx-learning-sedimentation-audit.ts",
+          ownerEntrypoint: "scripts/operator/lcx-learning-sedimentation-audit.ts",
         }),
         expect.objectContaining({
           label: "OpenTelemetry GenAI / AgentSight",
-          ownerEntrypoint: "scripts/dev/lcx-governance-autopilot.ts",
+          ownerEntrypoint: "scripts/operator/lcx-governance-autopilot.ts",
         }),
         expect.objectContaining({
           label: "OWASP Agentic Top 10 / SMCP",
@@ -171,7 +171,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
         }),
         expect.objectContaining({
           label: "ClawBench / WildClawBench",
-          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
         }),
         expect.objectContaining({
           label: "Agent S / HKUDS CLI-Anything",
@@ -183,7 +183,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
         }),
         expect.objectContaining({
           label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
-          ownerEntrypoint: "scripts/dev/lcx-flow-graph.ts",
+          ownerEntrypoint: "scripts/operator/lcx-flow-graph.ts",
         }),
         expect.objectContaining({
           label: "Polymarket research intake tools",
@@ -191,7 +191,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
         }),
         expect.objectContaining({
           label: "PolyBench / PolySwarm prediction-market strategy audit",
-          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
         }),
       ]),
     );
@@ -233,7 +233,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "skillopt_v2_lifecycle",
-          ownerEntrypoint: "scripts/dev/lcx-skillopt-lite.ts",
+          ownerEntrypoint: "scripts/operator/lcx-skillopt-lite.ts",
           automaticTrigger: expect.stringContaining("SkillOpt"),
           ownerGate: expect.stringContaining("eval/MLX"),
           autopilotSurface: expect.stringContaining("lcx-governance-autopilot"),
@@ -247,14 +247,14 @@ describe("lcx-external-agent-upgrade-radar", () => {
         }),
         expect.objectContaining({
           id: "real_runtime_battery",
-          ownerEntrypoint: "scripts/dev/lcx-commercial-acceptance-harness.ts",
+          ownerEntrypoint: "scripts/operator/lcx-commercial-acceptance-harness.ts",
           automaticTrigger: expect.stringContaining("commercial acceptance"),
           autopilotSurface: expect.stringContaining("commercialAcceptance"),
           requiredProofChain: expect.arrayContaining(["side_effect_audit"]),
         }),
         expect.objectContaining({
           id: "unified_trajectory_schema",
-          ownerEntrypoint: "scripts/dev/lcx-governance-autopilot.ts",
+          ownerEntrypoint: "scripts/operator/lcx-governance-autopilot.ts",
           ownerGate: expect.stringContaining("offline evidence"),
           nextAutomationAction: expect.stringContaining("trace_schema"),
           forbiddenAuthorities: expect.arrayContaining(["runtime_rl_server"]),

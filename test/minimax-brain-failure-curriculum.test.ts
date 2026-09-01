@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildFailureCurriculumPrompts } from "../scripts/dev/minimax-brain-failure-curriculum.js";
+import { buildFailureCurriculumPrompts } from "../scripts/operator/minimax-brain-failure-curriculum.js";
 
 async function makeGuardLog(lines: unknown[]): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-failure-curriculum-"));

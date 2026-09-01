@@ -11,7 +11,7 @@ const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
 async function runAutopilot() {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "scripts/dev/lcx-governance-autopilot.ts", "--json"],
+    ["--import", "tsx", "scripts/operator/lcx-governance-autopilot.ts", "--json"],
     {
       cwd: repoRoot,
       env: process.env,
@@ -486,26 +486,26 @@ describe("LCX governance autopilot", () => {
 
   it("is wired into recovery, flow graph, mind model, doctor entrypoint inventory, and local operator", async () => {
     const [recovery, flowGraph, mindModel, doctor, localOperator, runbook] = await Promise.all([
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-context-recovery-exam.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-flow-graph.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-mind-model.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-context-recovery-exam.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-flow-graph.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-mind-model.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
       fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
     ]);
 
-    expect(recovery).toContain("scripts/dev/lcx-governance-autopilot.ts --json");
-    expect(recovery).toContain("scripts/dev/lcx-universe-index.ts --json");
-    expect(recovery).toContain("scripts/dev/lcx-external-agent-upgrade-radar.ts --json");
-    expect(recovery).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
+    expect(recovery).toContain("scripts/operator/lcx-governance-autopilot.ts --json");
+    expect(recovery).toContain("scripts/operator/lcx-universe-index.ts --json");
+    expect(recovery).toContain("scripts/operator/lcx-external-agent-upgrade-radar.ts --json");
+    expect(recovery).toContain("scripts/operator/lcx-live-fadeout-audit.ts --json");
     expect(flowGraph).toContain("governance_autopilot");
     expect(flowGraph).toContain("universe_index");
     expect(flowGraph).toContain("lcx-governance-autopilot-latest");
     expect(mindModel).toContain("governance_autopilot_auto_update");
     expect(mindModel).toContain("universe_index_total_coverage");
     expect(mindModel).toContain("autoTriggeredOwnerCommands");
-    expect(doctor).toContain("scripts/dev/lcx-governance-autopilot.ts");
-    expect(doctor).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
+    expect(doctor).toContain("scripts/operator/lcx-governance-autopilot.ts");
+    expect(doctor).toContain("scripts/operator/lcx-live-fadeout-audit.ts");
     expect(localOperator).toContain("governance_file");
     expect(localOperator).toContain("governanceAutopilot");
     expect(localOperator).toContain("NODE_GOVERNANCE_FILE");

@@ -19,7 +19,7 @@ Use it for:
 Run:
 
 ```bash
-node --import tsx scripts/dev/lcx-farm-web-server.ts --port 4788
+node --import tsx scripts/operator/lcx-farm-web-server.ts --port 4788
 ```
 
 Open:

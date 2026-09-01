@@ -30,7 +30,7 @@ async function runJsonScript(script: string) {
 
 describe("LCX mind model god-view architecture check", () => {
   it("passes current macro workflow closure surfaces", async () => {
-    const { stdout } = await runJsonScript("scripts/dev/lcx-mind-model.ts");
+    const { stdout } = await runJsonScript("scripts/operator/lcx-mind-model.ts");
     const payload = JSON.parse(stdout) as {
       ok: boolean;
       boundary: string;
@@ -137,8 +137,8 @@ describe("LCX mind model god-view architecture check", () => {
 
   it("is wired into the main doctor and head-tail gate", async () => {
     const [doctorSource, headTailSource, runbook, localOperator] = await Promise.all([
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
-      fs.readFile(path.join(repoRoot, "scripts/dev/lcx-head-tail-consistency.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
+      fs.readFile(path.join(repoRoot, "scripts/operator/lcx-head-tail-consistency.ts"), "utf8"),
       fs.readFile(path.join(repoRoot, "ops/local-brain/README.md"), "utf8"),
       fs.readFile("/Users/liuchengxu/.openclaw/bin/lcx-local-operator-loop.sh", "utf8"),
     ]);
@@ -146,10 +146,10 @@ describe("LCX mind model god-view architecture check", () => {
     expect(doctorSource).toContain('name: "mind-model-consistency"');
     expect(doctorSource).toContain('name: "flow-graph-exam"');
     expect(doctorSource).toContain('name: "context-recovery-exam"');
-    expect(doctorSource).toContain("scripts/dev/lcx-mind-model.ts");
-    expect(doctorSource).toContain("scripts/dev/lcx-flow-graph.ts");
-    expect(doctorSource).toContain("scripts/dev/lcx-governance-autopilot.ts");
-    expect(doctorSource).toContain("scripts/dev/lcx-context-recovery-exam.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-mind-model.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-flow-graph.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-governance-autopilot.ts");
+    expect(doctorSource).toContain("scripts/operator/lcx-context-recovery-exam.ts");
     expect(headTailSource).toContain("mind_model_boundary");
     expect(headTailSource).toContain("flow_graph_boundary");
     expect(headTailSource).toContain("MIND_MODEL_LANES");
@@ -172,7 +172,7 @@ describe("LCX mind model god-view architecture check", () => {
     const testHome = path.join(repoRoot, ".tmp", "openclaw-test-home");
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/lcx-mind-model.ts", "--json"],
+      ["--import", "tsx", "scripts/operator/lcx-mind-model.ts", "--json"],
       {
         cwd: repoRoot,
         env: { ...process.env, HOME: testHome },

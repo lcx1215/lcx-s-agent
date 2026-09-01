@@ -7,7 +7,7 @@ boundaries, and it must not be treated as a proof surface for mind-model,
 flow-graph, or head-tail consistency checks. Re-verify with the owner commands
 before acting on anything time-sensitive here.
 
-Method: read-only inspection of `extensions/feishu/src/`, `scripts/dev/lcx-*.ts`,
+Method: read-only inspection of `extensions/feishu/src/`, `scripts/operator/lcx-*.ts`,
 `src/auto-reply/reply/`, `ops/local-brain/`, and the `~/.openclaw/workspace/state`
 snapshots. Three independent read passes; conclusions cross-checked.
 
@@ -38,7 +38,7 @@ built.
 
 ### 2. Finance answer capability — the biggest gap ⚠️
 
-- `scripts/dev/lcx-commercial-answer-pipeline.ts` only **audits** a candidate
+- `scripts/operator/lcx-commercial-answer-pipeline.ts` only **audits** a candidate
   answer (intent classification, forbidden-phrase gate, failed-reason return).
   It does **not synthesize** an answer — there is no answer-composition logic,
   only an audit rule list.
@@ -169,7 +169,7 @@ protected memory, or claims `user-visible-observed`.
   feeds it into the existing pure validator `buildFinanceDataGatewaySnapshot`.
   The fetch impl is injectable (offline-testable) and every network/data failure
   throws `LiveMarketFetchError` so callers fail closed — no fake/empty snapshot.
-- `scripts/dev/finance-data-gateway-live-smoke.ts` — opt-in live smoke. `--live`
+- `scripts/operator/finance-data-gateway-live-smoke.ts` — opt-in live smoke. `--live`
   fetches for real; without it, dry mode prints guidance and exits 0.
 - `src/agents/finance-live-market-source.test.ts` — 11 tests (parse, map,
   compose-to-gateway, all fail-closed paths).

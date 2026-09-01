@@ -11,7 +11,7 @@ describe("LCX live fadeout audit", () => {
   it("passes and exposes the canonical external-channel status model", async () => {
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/lcx-live-fadeout-audit.ts", "--json"],
+      ["--import", "tsx", "scripts/operator/lcx-live-fadeout-audit.ts", "--json"],
       {
         cwd: repoRoot,
         maxBuffer: 32 * 1024 * 1024,
@@ -55,9 +55,9 @@ describe("LCX live fadeout audit", () => {
   it("is wired into doctor, governance autopilot, context recovery, package aliases, and docs", async () => {
     const [doctor, governance, recovery, packageJsonText, readme, agents, runbook] =
       await Promise.all([
-        fs.readFile(path.join(repoRoot, "scripts/dev/lcx-system-doctor.ts"), "utf8"),
-        fs.readFile(path.join(repoRoot, "scripts/dev/lcx-governance-autopilot.ts"), "utf8"),
-        fs.readFile(path.join(repoRoot, "scripts/dev/lcx-context-recovery-exam.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-system-doctor.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-governance-autopilot.ts"), "utf8"),
+        fs.readFile(path.join(repoRoot, "scripts/operator/lcx-context-recovery-exam.ts"), "utf8"),
         fs.readFile(path.join(repoRoot, "package.json"), "utf8"),
         fs.readFile(path.join(repoRoot, "README.md"), "utf8"),
         fs.readFile(path.join(repoRoot, "AGENTS.md"), "utf8"),
@@ -66,15 +66,15 @@ describe("LCX live fadeout audit", () => {
     const packageJson = JSON.parse(packageJsonText) as { scripts: Record<string, string> };
 
     expect(doctor).toContain('name: "live-fadeout-audit"');
-    expect(doctor).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
+    expect(doctor).toContain("scripts/operator/lcx-live-fadeout-audit.ts");
     expect(governance).toContain('"liveFadeoutAudit"');
-    expect(governance).toContain("scripts/dev/lcx-live-fadeout-audit.ts");
-    expect(recovery).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
+    expect(governance).toContain("scripts/operator/lcx-live-fadeout-audit.ts");
+    expect(recovery).toContain("scripts/operator/lcx-live-fadeout-audit.ts --json");
     expect(packageJson.scripts["lcx:external-channel"]).toBe(
-      "node --import tsx scripts/dev/lcx-external-channel-binding.ts --apply --json",
+      "node --import tsx scripts/operator/lcx-external-channel-binding.ts --apply --json",
     );
     expect(packageJson.scripts["lcx:live"]).toBe("pnpm lcx:external-channel");
-    expect(readme).toContain("scripts/dev/lcx-live-fadeout-audit.ts --json");
+    expect(readme).toContain("scripts/operator/lcx-live-fadeout-audit.ts --json");
     expect(readme).toContain("local dev core");
     expect(readme).toContain("cloud-runtime-ready");
     expect(readme).toContain("one canonical dev repo");

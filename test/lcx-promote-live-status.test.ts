@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-promote-live.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-promote-live.ts");
 
 function tempDir(label: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `lcx-${label}-`));
@@ -325,7 +325,7 @@ describe("lcx-promote-live status", () => {
       "postMigrationProbeCommand=/Users/liuchengxu/.codex/skills/lark-post-migration-probe/scripts/lark-post-migration-probe.sh --since 2099-01-01T00:00:00.000Z",
     );
     expect(stdout).toContain(
-      "replyFlowProbeCommand=node --import tsx scripts/dev/lcx-promote-live.ts --status --with-probe",
+      "replyFlowProbeCommand=node --import tsx scripts/operator/lcx-promote-live.ts --status --with-probe",
     );
     expect(stdout).toContain("liveMatchesCurrentDev=true");
     expect(stdout).toContain("liveNeedsPromotion=false");

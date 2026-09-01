@@ -1,0 +1,1188 @@
+import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildFailureCurriculumPrompts } from "./minimax-brain-failure-curriculum.js";
+import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
+
+type CliOptions = {
+  profile: "manual" | "minimax-plus-brain";
+  used?: number;
+  windowLimit?: number;
+  resetMinutes?: number;
+  reserve: number;
+  batchLimit: number;
+  maxCalls?: number;
+  durationMinutes: number;
+  write: boolean;
+  mock: boolean;
+  directApi: boolean;
+  allowPartialWrite: boolean;
+  openclawAgent: string;
+  timeoutSeconds: number;
+  concurrency: number;
+  workspaceDir: string;
+  dataDir: string;
+  logPath: string;
+  promptDir: string;
+  datasetEvery: number;
+  smokeEvery: number;
+  adaptive: boolean;
+  minConcurrency: number;
+  minBatchLimit: number;
+  rateLimitCooldownSeconds: number;
+  maxRateLimitRounds: number;
+  providerCooldownSeconds: number;
+  maxProviderInstabilityRounds: number;
+  failureFocus: boolean;
+  guardLogPath: string;
+  previewPrompts: number;
+};
+
+type TeacherPrompt = {
+  id: string;
+  userMessage: string;
+  sourceSummary: string;
+};
+
+type CommandResult = {
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  exitCode: number | null;
+};
+
+type StepResult = CommandResult & {
+  parsed: unknown;
+};
+
+const HOME = process.env.HOME ?? os.homedir();
+const DEFAULT_WORKSPACE = path.join(HOME, ".openclaw", "workspace");
+const DEFAULT_DATA_DIR = path.join(
+  HOME,
+  ".openclaw",
+  "local-brain-trainer",
+  "datasets",
+  "thought-flow-v1",
+);
+const DEFAULT_PROMPT_DIR = path.join(DEFAULT_WORKSPACE, "tmp", "minimax-quota-prompts");
+const DEFAULT_LOG = path.join(
+  DEFAULT_WORKSPACE,
+  "logs",
+  `minimax-quota-brain-saturator-${new Date().toISOString().slice(0, 10)}.jsonl`,
+);
+const DEFAULT_GUARD_LOG = path.join(
+  DEFAULT_WORKSPACE,
+  "logs",
+  "minimax-brain-training-guard-medium.jsonl",
+);
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const WORKTREE_CWD = path.resolve(SCRIPT_DIR, "..", "..");
+
+const TASK_TEMPLATES = [
+  {
+    family: "plain_language_hidden_complexity_intake",
+    message:
+      "训练本地大脑识别“短口语表层请求，隐藏复杂工作流”这一类问题：用户可能只说“分析最近股市”“持仓多少”“学习大宗商品”“读这篇论文”或“Lark 回复看不懂”。不要按字面短答，要先写 original example、abstracted failure family、adjacent non-identical scenario、shared contract 和 regression proof，再拆范围、证据、模块、记忆、review panel 和人话总结。",
+    summary:
+      "generic plain-language hidden-complexity intake; turn short user examples into failure-family abstraction, adjacent transfer cases, shared contract, and regression proof before specialized handling.",
+  },
+  {
+    family: "plain_recent_stock_market_brief",
+    message:
+      "用户只说“分析最近股市”或“最近市场怎么看”。训练本地大脑不要泛泛而谈：先确认市场范围和时间窗口，再拆美股/A股/全球指数、利率、美元/人民币流动性、信用、市场宽度、行业轮动、ETF 资金流、关键公司财报、技术 timing、情绪/新闻验证、数据时间戳、反方证据和风险门；没有实时来源就标未验证，只给 research-only 框架和下一步数据清单。",
+    summary:
+      "plain-language recent stock-market brief that expands a short user ask into timestamped market scope, macro, breadth, flows, fundamentals, timing, sentiment validation, evidence gaps, and risk gates.",
+  },
+  {
+    family: "plain_single_stock_position_sizing_preflight",
+    message:
+      "用户只说“关注 {assetA} 持仓多少”或“这个股票仓位该多少”。训练本地大脑不能直接给百分比：先要当前总资产、已有持仓权重、风险预算、时间尺度、最大回撤承受、相关性、流动性、财报/估值来源、组合集中度、单股事件风险和退出/失效条件；然后拆基本面价值锚、估值安全边际、技术 timing、组合风险和 review panel，只输出 research-only 仓位框架和缺口，不给交易建议。",
+    summary:
+      "plain-language single-stock position-sizing preflight; no invented allocation without portfolio inputs, source evidence, risk budget, and review.",
+  },
+  {
+    family: "plain_should_i_buy_or_hold_boundary",
+    message:
+      "用户只说“{assetA} 还能不能拿”“要不要买一点”。训练本地大脑必须把买卖问法转换成 research-only 决策支持：先拒绝直接交易指令，再拆用户目标、持仓成本/权重、基本面变化、估值、宏观流动性、技术 timing、风险预算、反方证据、数据缺口和可观察触发条件；最终给人话总结，不给买卖点。",
+    summary:
+      "plain buy-or-hold wording converted into research-only decision support with user constraints, fundamentals, valuation, macro, timing, risk budget, red-team, and evidence gaps.",
+  },
+  {
+    family: "portfolio_regime_risk",
+    message:
+      "我持有 {assetA}、{assetB}、{assetC}，担心未来 {horizon} 的利率、美元流动性和风险偏好切换。先拆模块，不要给买卖建议。",
+    summary:
+      "portfolio regime planning with no execution authority and incomplete current market data.",
+  },
+  {
+    family: "missing_quant_inputs",
+    message:
+      "帮我算 {assetA}/{assetB}/{assetC} 的相关性、波动、回撤和利率敏感性，但我还没给仓位权重和收益率序列。先说本地数学模块怎么做。",
+    summary: "quant math request with missing position weights and return series.",
+  },
+  {
+    family: "source_gated_learning",
+    message:
+      "去学习一篇关于 {theme} 的高质量金融论文，沉淀成可复用规则，但我没有给 URL 或本地文件。",
+    summary: "finance learning intake without safe local source path or URL.",
+  },
+  {
+    family: "factor_overfit_guard",
+    message: "学一个 {theme} 策略，但不要回测神话，要检查样本外、幸存者偏差、交易成本和失效条件。",
+    summary: "factor timing learning with overfit and out-of-sample guardrails.",
+  },
+  {
+    family: "single_company_transmission",
+    message:
+      "研究 {assetA} 的基本面和价值风险：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱和宏观传导，只输出 research-only 风险图。",
+    summary:
+      "single company fundamentals and value-investing research with portfolio transmission, margin of safety, and no trade recommendation.",
+  },
+  {
+    family: "context_reset_guard",
+    message: "重新来一遍，但这次别串到旧的 {theme} 任务；如果我没说清楚，就先问我要当前对象。",
+    summary: "ambiguous repeat requiring current subject instead of old Lark context reuse.",
+  },
+  {
+    family: "evidence_audit",
+    message:
+      "你刚才关于 {theme} 的判断证据在哪里？没有 artifact、source 或 receipt 就标 unverified。",
+    summary: "evidence audit before durable memory or user-visible conclusion.",
+  },
+  {
+    family: "review_panel_handoff",
+    message: "本地大脑先做 {theme} 分析，再让三个大模型审阅，最后给我一个可用的中文控制室总结。",
+    summary: "local planning plus multi-model review handoff with final user-facing answer.",
+  },
+  {
+    family: "human_brain_finance_decomposition",
+    message:
+      "训练本地大脑像正常人类分析师一样拆复杂金融任务：先理解 {theme} 的目标，再调本地记忆和已学规则，再按宏观、流动性、基本面、数学、风险门和审阅拆步骤。",
+    summary:
+      "human-like finance task decomposition with local memory, learned rules, causal layers, evidence gates, and review handoff.",
+  },
+  {
+    family: "cross_market_us_a_index_crypto",
+    message:
+      "未来我要同时看 {assetA}、{assetB}、{assetC}，覆盖美股、A股、指数和加密币。训练本地大脑做连贯分析：先调本地记忆和已学规则，再拆宏观利率、美元/人民币流动性、市场结构、指数权重、加密币流动性、量化验证和风险门；research-only，不要交易建议。",
+    summary:
+      "cross-market finance planning across US equities, China A-shares, global indices, crypto, FX/liquidity, quant checks, memory recall, and review handoff.",
+  },
+  {
+    family: "all_domain_finance_research_loop",
+    message:
+      "训练本地 Qwen 教本地大脑做全领域金融研究：先把公司基本面和价值投资作为核心锚点，再连接 {assetA}、{assetB}、{assetC}、宏观利率、信用、美元/人民币流动性、美股、A股、全球指数、ETF、大宗商品、期权波动率、加密币、情绪、事件风险、技术择时、量化验证、组合风险、source registry 和 review panel；先拆简单前置能力，再组合成复杂分析，research-only。",
+    summary:
+      "all-domain finance research loop with prerequisite monotonicity, broad module coverage, evidence gates, quant validation, and review handoff.",
+  },
+  {
+    family: "value_investing_fundamental_core",
+    message:
+      "以后价值投资很重要。训练本地大脑先做 {assetA} 的基本面和企业价值判断：收入质量、利润率、自由现金流、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、反方证据和组合风险都要拆清楚；技术面只能后置做 timing context，不要给买卖建议。",
+    summary:
+      "fundamentals-first value-investing loop with source evidence, business quality, valuation range, margin of safety, value-trap checks, and portfolio risk.",
+  },
+  {
+    family: "rates_credit_fx_commodity_chain",
+    message:
+      "把 {theme} 放进宏观链条：利率曲线、实际利率、信用利差、美元/人民币流动性、原油/黄金/铜、通胀和 {assetA}/{assetB}/{assetC} 组合风险怎么互相传导？只训练拆解和证据缺口。",
+    summary:
+      "rates, credit, FX, commodities, inflation, and portfolio transmission with evidence gaps.",
+  },
+  {
+    family: "options_event_company_portfolio_chain",
+    message:
+      "{assetA} 遇到财报、监管或产品事件时，怎么把公司基本面、ETF/指数权重、期权 IV/skew/gamma、技术面、仓位风险和 review panel 连成一条研究回路？不要给期权策略。",
+    summary:
+      "company event, ETF/index exposure, options volatility, technical timing, and portfolio-risk loop without options advice.",
+  },
+  {
+    family: "index_etf_constituent_concentration_chain",
+    message:
+      "训练本地大脑分析 {assetA}/{assetB}/{assetC} 这类指数、ETF 或大盘代理时，先要 constituents、权重、再平衡规则、行业/因子暴露、前十大集中度、Mag7 或单一主题拥挤度、汇率/流动性传导和用户组合重叠；没有 holdings/weight 来源就只能列缺口和 research-only 风险框架。",
+    summary:
+      "index and ETF constituent-concentration chain with holdings evidence, rebalance rules, factor overlap, portfolio transmission, and no allocation advice.",
+  },
+  {
+    family: "options_iv_skew_event_risk_preflight",
+    message:
+      "用户问 {assetA} 财报、FOMC、CPI、监管或产品事件附近要不要用期权。训练本地大脑必须先做期权研究前置：IV term structure、skew、gamma/open interest、流动性、bid-ask、事件日历、持仓权重、最大损失、替代风险控制和失效条件；不要给具体合约、方向或执行建议。",
+    summary:
+      "options IV/skew/event-risk preflight that gathers volatility, liquidity, event, and portfolio inputs without options recommendations.",
+  },
+  {
+    family: "macro_liquidity_credit_fx_dashboard",
+    message:
+      "把 {theme} 放进宏观仪表盘：名义利率、实际利率、收益率曲线、信用利差、美元指数、CNH、财政/流动性、油金铜、通胀预期、风险偏好和 {assetA}/{assetB}/{assetC} 的传导都要拆；没有 timestamped source 就不能说当前，只能列数据缺口。",
+    summary:
+      "macro liquidity, credit, FX, rates, commodities, inflation, and risk-appetite dashboard with timestamped-source discipline.",
+  },
+  {
+    family: "company_fundamental_filing_dossier",
+    message:
+      "训练本地大脑给 {assetA} 做公司基本面 dossier：先要 10-K/10-Q、earnings release、call transcript 或可靠本地 artifact，再拆收入质量、毛利率/经营杠杆、FCF、ROIC、资产负债表、护城河、管理层资本配置、估值区间、安全边际、价值陷阱、thesis invalidation 和指数/ETF 权重传导；缺来源不编财报细节。",
+    summary:
+      "company fundamental filing dossier with source-gated revenue quality, FCF, ROIC, balance sheet, moat, valuation, invalidation, and index transmission.",
+  },
+  {
+    family: "portfolio_risk_budget_stress_packet",
+    message:
+      "用户给 {assetA}/{assetB}/{assetC} 组合但没给完整仓位。训练本地大脑先要求权重、成本、时间尺度、收益率序列、相关性、波动、最大回撤、流动性和现金需求；然后做情景压力、集中度、相关性断裂、利率/美元/信用冲击和风险预算框架。没有输入不能编百分比或止损。",
+    summary:
+      "portfolio risk-budget and stress packet requiring weights, return series, liquidity, drawdown definition, scenario stress, and no invented sizing.",
+  },
+  {
+    family: "event_risk_calendar_research_loop",
+    message:
+      "训练本地大脑处理 {theme} 事件风险：先建事件日历，区分财报、监管、宏观数据、FOMC、地缘和产品发布；每个事件要有来源、时间戳、影响路径、反方证据、可观察触发条件、post-event correction note 和 review panel，不能把新闻热度当结论。",
+    summary:
+      "event-risk calendar loop with source timestamps, causal paths, red-team evidence, observable triggers, correction notes, and review.",
+  },
+  {
+    family: "quant_factor_strategy_absorption_gate",
+    message:
+      "训练本地大脑学习 {theme} 因子或量化策略时，必须先问经济含义、公式定义、数据字段、复权口径、交易成本、容量、换手、拥挤、样本外、walk-forward、幸存者偏差和失效 regime；只把通过 source registry、capability card、apply validation 和 eval absorption 的规则进入本地能力。",
+    summary:
+      "quant factor strategy absorption gate with economic rationale, data definitions, costs, capacity, crowding, sample-out checks, and eval absorption.",
+  },
+  {
+    family: "multi_source_market_data_conflict_reconciliation",
+    message:
+      "如果 {assetA}/{assetB}/{assetC} 的价格、估值、持仓、成交量、期权 IV、新闻情绪或财报字段在不同来源冲突，训练本地大脑先列供应商、字段定义、时间戳、币种、复权、更新频率、异常值和可信优先级；冲突未解决前只能输出 unverified，不写确定结论。",
+    summary:
+      "multi-source market-data conflict reconciliation across price, valuation, holdings, volume, options, sentiment, and filings before conclusions.",
+  },
+  {
+    family: "financial_modeling_valuation_qc_chain",
+    message:
+      "训练本地大脑做 {assetA} 的 DCF/comps/三表财务模型和估值敏感性 QC：每个数字要有 filing/source、字段口径、时间戳和假设说明，spreadsheet 或表格要过 artifact QC；不能凭模型编目标价、不能给买卖建议。",
+    summary:
+      "financial modeling and valuation QC chain with DCF, comps, three-statement assumptions, sensitivity, number provenance, artifact review, and no trade advice.",
+  },
+  {
+    family: "thesis_catalyst_lifecycle_review",
+    message:
+      "训练本地大脑把 {assetA}/{theme} 的研究 thesis 做成生命周期：原始论点、关键催化剂、事件日历、反方证据、失效条件、post-event correction note 和 review panel 都要在同一条链；不能把新闻热度当结论。",
+    summary:
+      "thesis and catalyst lifecycle review with original thesis, catalysts, event calendar, invalidation, post-event correction, and review.",
+  },
+  {
+    family: "data_provenance_quality_gate",
+    message:
+      "如果 {assetA}/{assetB}/{assetC} 的价格、成交量、财报字段、ETF 权重、期权 IV 或情绪数据来自不同供应商，训练本地大脑先做 data provenance quality gate：field definition、timestamp、币种、复权、更新频率、异常值和可信优先级；未解决前只能标 unverified。",
+    summary:
+      "data provenance quality gate for vendor field definitions, timestamps, currency, adjustments, update cadence, outliers, and trust priority.",
+  },
+  {
+    family: "research_artifact_qc_gate",
+    message:
+      "训练本地大脑生成研报、表格、估值模型或控制室总结前，必须做 research artifact QC：number provenance、citation、表格和文字一致性、未验证标记、人类审阅点和 visible summary boundary 都要齐。",
+    summary:
+      "research artifact QC gate for reports, tables, valuation models, visible summaries, citations, number provenance, and human review.",
+  },
+  {
+    family: "sentiment_quant_validation_layer",
+    message:
+      "如果新闻情绪、社媒情绪和价格动量都指向 {theme}，训练本地大脑不要把情绪当 alpha：要拆 source/vendor timestamp、样本外验证、过拟合、量化验证、反方论证和风险门。",
+    summary:
+      "sentiment as validation layer only, with source timestamps, sample-out validation, overfit checks, quant review, and risk gates.",
+  },
+  {
+    family: "external_knowledge_internalization_protocol",
+    message:
+      "未来本地大脑碰到一篇关于 {theme} 的论文，或者一个 GitHub/HuggingFace 开源项目，要怎么思考和内化？训练它先查以前有没有类似合同、eval、skill、receipt 或 source registry 路径，再决定复用、扩展还是新建；然后做 source registry、实际阅读范围、license/write scope、安全和 prompt-injection 审计、复现或样本外验证、能力卡、retrieval receipt、apply validation、Qwen/local-brain eval 吸收、fresh adjacent task、module_learning_pipeline_review 状态、keep/downrank/discard 决策；不能直接说已经学会。",
+    summary:
+      "unified paper and open-source project internalization protocol with prior-work reuse check, source, license, security, validation, capability, retrieval, application, eval absorption, module-learning review status, and keep/downrank/discard decisions.",
+  },
+] as const;
+
+const ASSETS = [
+  ["QQQ", "TLT", "NVDA"],
+  ["SPY", "IEF", "MSFT"],
+  ["IWM", "HYG", "AAPL"],
+  ["XLK", "XLF", "GOOGL"],
+  ["GLD", "UUP", "AMD"],
+  ["USO", "GLD", "FCX"],
+  ["DBC", "TLT", "QQQ"],
+  ["KWEB", "沪深300", "CNH liquidity"],
+  ["SPY", "沪深300", "BTC"],
+  ["NASDAQ 100", "中证500", "ETH"],
+  ["AAPL", "创业板指", "USDT liquidity"],
+] as const;
+
+const THEMES = [
+  "ETF regime timing",
+  "duration risk",
+  "fundamentals-first value investing",
+  "free cash flow ROIC and margin durability",
+  "moat management and capital allocation",
+  "valuation range and margin of safety",
+  "value trap and thesis invalidation",
+  "earnings revision quality",
+  "AI capex transmission",
+  "credit liquidity stress",
+  "volatility risk premium",
+  "fundamental moat deterioration",
+  "macro inflation re-acceleration",
+  "portfolio drawdown control",
+  "factor crowding",
+  "US equity market breadth",
+  "China A-share policy and northbound flow",
+  "global index constituent concentration",
+  "crypto liquidity and custody risk",
+  "FX dollar yuan liquidity transmission",
+  "cross-asset risk appetite regime",
+  "oil inventory term structure and roll yield",
+  "gold real-yield safe-haven regime",
+  "copper China demand and dollar sensitivity",
+  "options skew gamma and event risk",
+  "news sentiment validation not standalone alpha",
+  "A-share policy flow and US tech spillover",
+  "credit spreads refinancing and equity duration",
+] as const;
+
+const HORIZONS = ["一周", "两周", "一个月", "一个季度"] as const;
+
+const SINGLE_COMPANY_ASSETS = [
+  "NVDA",
+  "MSFT",
+  "AAPL",
+  "GOOGL",
+  "AMD",
+  "TSM",
+  "ASML",
+  "AMZN",
+] as const;
+
+function usage(): never {
+  throw new Error(
+    [
+      "Usage: node --import tsx scripts/operator/minimax-quota-brain-saturator.ts --used N --window-limit N --reset-minutes N [--write]",
+      "",
+      "Purpose:",
+      "  Generate non-sensitive MiniMax teacher prompts until the current 5h text-generation quota is mostly used.",
+      "  Accepted samples are written only as brain distillation review artifacts.",
+      "",
+      "Options:",
+      "  --used N              optional current used calls/tokens shown by MiniMax",
+      "  --window-limit N      optional current 5h window limit",
+      "  --reset-minutes N     optional minutes until reset",
+      "  --duration-minutes N  automatic run budget when quota numbers are omitted, default 285",
+      "  --reserve N           keep this much quota unused when quota numbers are supplied, default 150",
+      "  --batch-limit N       prompts per teacher batch, default 12",
+      "  --max-calls N         hard cap attempts for this run",
+      "  --profile NAME        reusable preset: minimax-plus-brain",
+      "  --adaptive            lower batch/concurrency and cool down on provider rate limits",
+      "  --min-concurrency N   adaptive floor, default 4",
+      "  --min-batch-limit N   adaptive floor, default 12",
+      "  --rate-limit-cooldown-seconds N  wait after 429/2062, default 120",
+      "  --max-rate-limit-rounds N        stop after this many limit rounds, default 4",
+      "  --provider-cooldown-seconds N    wait after fetch/timeout instability, default 90",
+      "  --max-provider-instability-rounds N  stop after this many unstable provider rounds, default 3",
+      "  --failure-focus      mix eval-failure targeted prompts into each MiniMax teacher batch",
+      "  --no-failure-focus   disable eval-failure targeted prompt mixing",
+      "  --guard-log PATH     guard JSONL for failure-focus prompts, default medium guard log",
+      "  --preview-prompts N  dry-run only: include the next N prompt ids/messages in JSON output",
+      "  --write               actually call MiniMax and write review artifacts; default is dry-run",
+      "  --mock                use mock teacher for smoke without provider quota",
+      "  --direct-api          call MiniMax directly with auth profile fallback instead of openclaw agent",
+      "  --allow-partial-write write accepted teacher samples even when some calls fail",
+      "  --openclaw-agent ID   default research-minimax",
+      "  --concurrency N       parallel MiniMax teacher calls per batch, default 8",
+      "  --data-dir DIR        dataset output/smoke directory, default ~/.openclaw/local-brain-trainer/datasets/thought-flow-v1",
+      "  --dataset-every N     rebuild dataset every N rounds, default 5",
+      "  --smoke-every N       run local smoke every N rounds, default 10",
+    ].join("\n"),
+  );
+}
+
+function readValue(args: string[], index: number): string {
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    usage();
+  }
+  return value;
+}
+
+function readNonNegativeInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    usage();
+  }
+  return parsed;
+}
+
+function readPositiveInteger(value: string): number {
+  const parsed = readNonNegativeInteger(value);
+  if (parsed <= 0) {
+    usage();
+  }
+  return parsed;
+}
+
+function parseArgs(args: string[]): CliOptions {
+  const options: CliOptions = {
+    profile: "manual",
+    used: undefined,
+    windowLimit: undefined,
+    resetMinutes: undefined,
+    reserve: 150,
+    batchLimit: 12,
+    durationMinutes: 285,
+    write: false,
+    mock: false,
+    directApi: false,
+    allowPartialWrite: false,
+    openclawAgent: "research-minimax",
+    timeoutSeconds: 600,
+    concurrency: 8,
+    workspaceDir: DEFAULT_WORKSPACE,
+    dataDir: DEFAULT_DATA_DIR,
+    logPath: DEFAULT_LOG,
+    promptDir: DEFAULT_PROMPT_DIR,
+    datasetEvery: 5,
+    smokeEvery: 10,
+    adaptive: false,
+    minConcurrency: 4,
+    minBatchLimit: 12,
+    rateLimitCooldownSeconds: 120,
+    maxRateLimitRounds: 4,
+    providerCooldownSeconds: 90,
+    maxProviderInstabilityRounds: 3,
+    failureFocus: false,
+    guardLogPath: DEFAULT_GUARD_LOG,
+    previewPrompts: 0,
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--profile") {
+      const profile = readValue(args, index);
+      if (profile !== "minimax-plus-brain") {
+        usage();
+      }
+      options.profile = profile;
+      options.directApi = true;
+      options.allowPartialWrite = true;
+      options.adaptive = true;
+      options.batchLimit = 36;
+      options.concurrency = 8;
+      options.datasetEvery = 2;
+      options.smokeEvery = 4;
+      options.minConcurrency = 2;
+      options.minBatchLimit = 8;
+      options.reserve = 100;
+      options.failureFocus = true;
+      index += 1;
+    } else if (arg === "--used") {
+      options.used = readNonNegativeInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--window-limit") {
+      options.windowLimit = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--reset-minutes") {
+      options.resetMinutes = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--reserve") {
+      options.reserve = readNonNegativeInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--batch-limit") {
+      options.batchLimit = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--max-calls") {
+      options.maxCalls = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--adaptive") {
+      options.adaptive = true;
+    } else if (arg === "--min-concurrency") {
+      options.minConcurrency = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--min-batch-limit") {
+      options.minBatchLimit = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--rate-limit-cooldown-seconds") {
+      options.rateLimitCooldownSeconds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--max-rate-limit-rounds") {
+      options.maxRateLimitRounds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--provider-cooldown-seconds") {
+      options.providerCooldownSeconds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--max-provider-instability-rounds") {
+      options.maxProviderInstabilityRounds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--failure-focus") {
+      options.failureFocus = true;
+    } else if (arg === "--no-failure-focus") {
+      options.failureFocus = false;
+    } else if (arg === "--guard-log") {
+      options.guardLogPath = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--preview-prompts") {
+      options.previewPrompts = readNonNegativeInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--duration-minutes") {
+      options.durationMinutes = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--write") {
+      options.write = true;
+    } else if (arg === "--mock") {
+      options.mock = true;
+    } else if (arg === "--direct-api") {
+      options.directApi = true;
+    } else if (arg === "--allow-partial-write") {
+      options.allowPartialWrite = true;
+    } else if (arg === "--openclaw-agent") {
+      options.openclawAgent = readValue(args, index);
+      index += 1;
+    } else if (arg === "--timeout") {
+      options.timeoutSeconds = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--concurrency") {
+      options.concurrency = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--workspace") {
+      options.workspaceDir = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--data-dir") {
+      options.dataDir = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--log") {
+      options.logPath = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--prompt-dir") {
+      options.promptDir = path.resolve(readValue(args, index));
+      index += 1;
+    } else if (arg === "--dataset-every") {
+      options.datasetEvery = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--smoke-every") {
+      options.smokeEvery = readPositiveInteger(readValue(args, index));
+      index += 1;
+    } else if (arg === "--help" || arg === "-h") {
+      usage();
+    } else {
+      usage();
+    }
+  }
+  if (options.minConcurrency > options.concurrency) {
+    throw new Error("--min-concurrency cannot exceed --concurrency");
+  }
+  if (options.minBatchLimit > options.batchLimit) {
+    throw new Error("--min-batch-limit cannot exceed --batch-limit");
+  }
+  const hasQuotaSnapshot =
+    options.used !== undefined ||
+    options.windowLimit !== undefined ||
+    options.resetMinutes !== undefined;
+  if (
+    hasQuotaSnapshot &&
+    (options.used === undefined ||
+      options.windowLimit === undefined ||
+      options.resetMinutes === undefined)
+  ) {
+    throw new Error("--used, --window-limit, and --reset-minutes must be supplied together");
+  }
+  if (
+    options.used !== undefined &&
+    options.windowLimit !== undefined &&
+    options.used >= options.windowLimit
+  ) {
+    throw new Error("used quota is already greater than or equal to the window limit");
+  }
+  options.workspaceDir = path.resolve(options.workspaceDir);
+  options.dataDir = path.resolve(options.dataDir);
+  options.guardLogPath = path.resolve(options.guardLogPath);
+  return options;
+}
+
+function targetCalls(options: CliOptions): number {
+  if (options.used === undefined || options.windowLimit === undefined) {
+    return options.maxCalls ?? 1_000_000;
+  }
+  const available = Math.max(0, options.windowLimit - options.used - options.reserve);
+  return Math.max(0, Math.min(available, options.maxCalls ?? available));
+}
+
+function quotaMode(options: CliOptions): "snapshot" | "automatic" {
+  return options.used !== undefined && options.windowLimit !== undefined ? "snapshot" : "automatic";
+}
+
+function fillTemplate(template: string, index: number): string {
+  const assets = ASSETS[index % ASSETS.length];
+  return template
+    .replaceAll("{assetA}", assets[0])
+    .replaceAll("{assetB}", assets[1])
+    .replaceAll("{assetC}", assets[2])
+    .replaceAll("{theme}", THEMES[index % THEMES.length])
+    .replaceAll("{horizon}", HORIZONS[index % HORIZONS.length]);
+}
+
+function buildPrompt(index: number): TeacherPrompt {
+  const template = TASK_TEMPLATES[index % TASK_TEMPLATES.length];
+  const variant = Math.floor(index / TASK_TEMPLATES.length);
+  const assetA =
+    template.family === "single_company_transmission"
+      ? SINGLE_COMPANY_ASSETS[variant % SINGLE_COMPANY_ASSETS.length]
+      : ASSETS[index % ASSETS.length][0];
+  const userMessage =
+    template.family === "single_company_transmission"
+      ? template.message
+          .replaceAll("{assetA}", assetA)
+          .replaceAll("{assetB}", ASSETS[index % ASSETS.length][1])
+          .replaceAll("{assetC}", ASSETS[index % ASSETS.length][2])
+          .replaceAll("{theme}", THEMES[index % THEMES.length])
+          .replaceAll("{horizon}", HORIZONS[index % HORIZONS.length])
+      : fillTemplate(template.message, index);
+  return {
+    id: `quota_${template.family}_${String(variant).padStart(5, "0")}`,
+    userMessage: `${userMessage} 验收码 minimax-quota-${String(index).padStart(5, "0")}`,
+    sourceSummary: `${template.summary} Synthetic quota-training prompt; no private user data or current market claim supplied.`,
+  };
+}
+
+function buildPrompts(start: number, count: number): TeacherPrompt[] {
+  return Array.from({ length: count }, (_unused, offset) => buildPrompt(start + offset));
+}
+
+function familyFromPromptId(id: string): string {
+  if (id.startsWith("failure_focus_")) {
+    return id.replace(/_\d{5}$/u, "");
+  }
+  return id.replace(/^quota_/u, "").replace(/_\d{5}$/u, "");
+}
+
+function promptFamilyCounts(prompts: TeacherPrompt[]): Record<string, number> {
+  return prompts.reduce<Record<string, number>>((counts, prompt) => {
+    const family = familyFromPromptId(prompt.id);
+    counts[family] = (counts[family] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+async function buildBatchPrompts(
+  options: CliOptions,
+  start: number,
+  count: number,
+): Promise<{ prompts: TeacherPrompt[]; failureFocusPrompts: number }> {
+  if (!options.failureFocus) {
+    return { prompts: buildPrompts(start, count), failureFocusPrompts: 0 };
+  }
+  const maxFailurePrompts = Math.min(Math.ceil(count / 2), 12);
+  const failurePrompts = await buildFailureCurriculumPrompts({
+    guardLogPath: options.guardLogPath,
+    maxPrompts: maxFailurePrompts,
+    startIndex: start,
+  });
+  const genericPrompts = buildPrompts(start + failurePrompts.length, count - failurePrompts.length);
+  return {
+    prompts: [...failurePrompts, ...genericPrompts],
+    failureFocusPrompts: failurePrompts.length,
+  };
+}
+
+async function appendLog(logPath: string, payload: Record<string, unknown>): Promise<void> {
+  await fs.mkdir(path.dirname(logPath), { recursive: true });
+  await fs.appendFile(logPath, `${JSON.stringify({ at: new Date().toISOString(), ...payload })}\n`);
+}
+
+function runCommand(command: string, args: string[]): Promise<CommandResult> {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: WORKTREE_CWD,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      process.stdout.write(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      process.stderr.write(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (exitCode) => {
+      resolve({ stdout, stderr, durationMs: Date.now() - started, exitCode });
+    });
+  });
+}
+
+function parseJsonFromStdout(stdout: string): unknown {
+  return parseJsonObjectFromOutput(stdout);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function runJsonStep(
+  options: CliOptions,
+  round: number,
+  name: string,
+  command: string,
+  args: string[],
+  stepOptions: { allowFailure?: boolean } = {},
+): Promise<StepResult> {
+  process.stdout.write(`\n[minimax-quota] round=${round} step=${name}\n`);
+  const result = await runCommand(command, args);
+  const parsed = parseJsonFromStdout(result.stdout);
+  await appendLog(options.logPath, {
+    event: result.exitCode === 0 ? "step_ok" : "step_failed",
+    round,
+    name,
+    command,
+    args,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    result: parsed,
+  });
+  if (result.exitCode !== 0 && !stepOptions.allowFailure) {
+    throw new Error(`${name} failed with exit code ${result.exitCode}`);
+  }
+  return { ...result, parsed };
+}
+
+async function writePromptFile(
+  options: CliOptions,
+  round: number,
+  prompts: TeacherPrompt[],
+): Promise<string> {
+  await fs.mkdir(options.promptDir, { recursive: true });
+  const promptPath = path.join(
+    options.promptDir,
+    `quota-prompts-${new Date().toISOString().replace(/[:.]/gu, "-")}-r${round}.json`,
+  );
+  await fs.writeFile(promptPath, `${JSON.stringify(prompts, null, 2)}\n`, "utf8");
+  return promptPath;
+}
+
+const options = parseArgs(process.argv.slice(2));
+const calls = targetCalls(options);
+const rounds = Math.ceil(calls / options.batchLimit);
+const deadline = Date.now() + options.durationMinutes * 60_000;
+const plan = {
+  ok: true,
+  mode: options.write ? "execute" : "dry_run",
+  boundary: "brain_distillation_review_only",
+  profile: options.profile,
+  quotaMode: quotaMode(options),
+  used: options.used,
+  windowLimit: options.windowLimit,
+  resetMinutes: options.resetMinutes,
+  reserve: options.reserve,
+  targetCalls: calls,
+  batchLimit: options.batchLimit,
+  estimatedRounds: quotaMode(options) === "snapshot" ? rounds : "until_quota_or_deadline",
+  durationMinutes: options.durationMinutes,
+  openclawAgent: options.openclawAgent,
+  concurrency: options.concurrency,
+  adaptive: options.adaptive,
+  minConcurrency: options.minConcurrency,
+  minBatchLimit: options.minBatchLimit,
+  rateLimitCooldownSeconds: options.rateLimitCooldownSeconds,
+  maxRateLimitRounds: options.maxRateLimitRounds,
+  providerCooldownSeconds: options.providerCooldownSeconds,
+  maxProviderInstabilityRounds: options.maxProviderInstabilityRounds,
+  failureFocus: options.failureFocus,
+  guardLogPath: options.guardLogPath,
+  mock: options.mock,
+  directApi: options.directApi,
+  allowPartialWrite: options.allowPartialWrite,
+  workspaceDir: options.workspaceDir,
+  dataDir: options.dataDir,
+  logPath: options.logPath,
+  promptDir: options.promptDir,
+  previewPrompts: options.previewPrompts,
+  notTouched: [
+    "external_channel_sender",
+    "provider_config",
+    "protected_repo_memory",
+    "formal_lark_routing_corpus",
+    "finance_doctrine",
+  ],
+};
+
+if (!options.write) {
+  const preview =
+    options.previewPrompts > 0
+      ? await buildBatchPrompts(options, 0, options.previewPrompts)
+      : undefined;
+  process.stdout.write(
+    `${JSON.stringify(
+      preview
+        ? {
+            ...plan,
+            preview: {
+              promptCount: preview.prompts.length,
+              failureFocusPrompts: preview.failureFocusPrompts,
+              familyCounts: promptFamilyCounts(preview.prompts),
+              prompts: preview.prompts.map((prompt) => ({
+                id: prompt.id,
+                sourceSummary: prompt.sourceSummary,
+                userMessage: prompt.userMessage,
+              })),
+              liveTouched: false,
+              providerConfigTouched: false,
+            },
+          }
+        : plan,
+      null,
+      2,
+    )}\n`,
+  );
+  process.exit(0);
+}
+
+await appendLog(options.logPath, { event: "quota_saturator_start", plan });
+
+let attempted = 0;
+let completedRounds = 0;
+let stopReason = "target_calls_reached";
+let currentBatchLimit = options.batchLimit;
+let currentConcurrency = options.concurrency;
+let consecutiveRateLimitRounds = 0;
+let consecutiveProviderUnstableRounds = 0;
+
+function isProviderLimitSignal(result: StepResult): boolean {
+  const haystack =
+    `${result.stdout}\n${result.stderr}\n${JSON.stringify(result.parsed)}`.toLowerCase();
+  return [
+    "429",
+    "rate limit",
+    "ratelimit",
+    "quota exceeded",
+    "quota limit",
+    "usage quota",
+    "insufficient quota",
+    "too many requests",
+    "usage limit",
+    "resource_exhausted",
+    "billing",
+  ].some((needle) => haystack.includes(needle));
+}
+
+function isProviderTransportSignal(result: StepResult): boolean {
+  const haystack =
+    `${result.stdout}\n${result.stderr}\n${JSON.stringify(result.parsed)}`.toLowerCase();
+  return [
+    "typeerror: fetch failed",
+    "fetch failed",
+    "timeouterror",
+    "operation was aborted due to timeout",
+    "etimedout",
+    "econnreset",
+    "econnrefused",
+    "socket hang up",
+    "network error",
+    "upstream request timeout",
+    "gateway timeout",
+    "bad gateway",
+    "service unavailable",
+    " 500 ",
+    " 502 ",
+    " 503 ",
+    " 504 ",
+  ].some((needle) => haystack.includes(needle));
+}
+
+function acceptedCandidatesFromResult(result: StepResult): number {
+  if (!result.parsed || typeof result.parsed !== "object") {
+    return 0;
+  }
+  const payload = result.parsed as { acceptedCandidates?: unknown };
+  return typeof payload.acceptedCandidates === "number" &&
+    Number.isFinite(payload.acceptedCandidates)
+    ? payload.acceptedCandidates
+    : 0;
+}
+
+function failureErrorsFromResult(result: StepResult): string[] {
+  if (!result.parsed || typeof result.parsed !== "object") {
+    return [];
+  }
+  const payload = result.parsed as { failures?: unknown };
+  if (!Array.isArray(payload.failures)) {
+    return [];
+  }
+  return payload.failures
+    .map((failure) => {
+      if (!failure || typeof failure !== "object") {
+        return "";
+      }
+      const error = (failure as { error?: unknown }).error;
+      return typeof error === "string" ? error : "";
+    })
+    .filter(Boolean);
+}
+
+function providerTransportFailureCount(result: StepResult): number {
+  const unstablePatterns = [
+    /typeerror:\s*fetch failed/iu,
+    /fetch failed/iu,
+    /timeouterror/iu,
+    /operation was aborted due to timeout/iu,
+    /etimedout/iu,
+    /econnreset/iu,
+    /econnrefused/iu,
+    /socket hang up/iu,
+    /network error/iu,
+    /(?:bad gateway|gateway timeout|service unavailable)/iu,
+    /\b50[0234]\b/u,
+  ];
+  return failureErrorsFromResult(result).filter((error) =>
+    unstablePatterns.some((pattern) => pattern.test(error)),
+  ).length;
+}
+
+async function runIntegrityChecks(round: number, force: boolean): Promise<void> {
+  if (force || round % options.datasetEvery === 0 || attempted >= calls) {
+    await runJsonStep(options, round, "dataset", "node", [
+      "--import",
+      "tsx",
+      "scripts/operator/local-brain-distill-dataset.ts",
+      "--workspace",
+      options.workspaceDir,
+      "--out",
+      options.dataDir,
+      "--json",
+    ]);
+  }
+  if (force || round % options.smokeEvery === 0 || attempted >= calls) {
+    await runJsonStep(options, round, "smoke", "node", [
+      "--import",
+      "tsx",
+      "scripts/operator/local-brain-distill-smoke.ts",
+      "--data",
+      options.dataDir,
+      "--json",
+    ]);
+  }
+}
+
+async function backOffAfterProviderPressure(
+  round: number,
+  reason: "rate_limit" | "transport_instability",
+): Promise<boolean> {
+  const previousBatchLimit = currentBatchLimit;
+  const previousConcurrency = currentConcurrency;
+  currentBatchLimit = Math.max(options.minBatchLimit, Math.floor(currentBatchLimit / 2));
+  currentConcurrency = Math.max(options.minConcurrency, Math.floor(currentConcurrency / 2));
+  const cooldownSeconds =
+    reason === "rate_limit" ? options.rateLimitCooldownSeconds : options.providerCooldownSeconds;
+  await appendLog(options.logPath, {
+    event:
+      reason === "rate_limit"
+        ? "adaptive_rate_limit_backoff"
+        : "adaptive_provider_instability_backoff",
+    round,
+    reason,
+    consecutiveRateLimitRounds,
+    consecutiveProviderUnstableRounds,
+    previousBatchLimit,
+    previousConcurrency,
+    nextBatchLimit: currentBatchLimit,
+    nextConcurrency: currentConcurrency,
+    cooldownSeconds,
+  });
+  process.stdout.write(
+    `[minimax-quota] adaptive_backoff reason=${reason} round=${round} concurrency=${previousConcurrency}->${currentConcurrency} batch=${previousBatchLimit}->${currentBatchLimit} cooldown=${cooldownSeconds}s\n`,
+  );
+  if (Date.now() + cooldownSeconds * 1_000 >= deadline) {
+    stopReason =
+      reason === "rate_limit" ? "provider_quota_or_rate_limit" : "provider_transport_instability";
+    return false;
+  }
+  await sleep(cooldownSeconds * 1_000);
+  return true;
+}
+
+try {
+  for (let round = 1; attempted < calls && Date.now() < deadline; round += 1) {
+    const remaining = calls - attempted;
+    const batchSize = Math.min(currentBatchLimit, remaining);
+    const { prompts, failureFocusPrompts } = await buildBatchPrompts(options, attempted, batchSize);
+    await appendLog(options.logPath, {
+      event: "curriculum_family_mix",
+      round,
+      totalPrompts: prompts.length,
+      failureFocusPrompts,
+      familyCounts: promptFamilyCounts(prompts),
+      liveTouched: false,
+      providerConfigTouched: false,
+    });
+    if (failureFocusPrompts > 0) {
+      await appendLog(options.logPath, {
+        event: "failure_curriculum_prompts_selected",
+        round,
+        failureFocusPrompts,
+        totalPrompts: prompts.length,
+        guardLogPath: options.guardLogPath,
+        promptIds: prompts.slice(0, failureFocusPrompts).map((prompt) => prompt.id),
+        liveTouched: false,
+        providerConfigTouched: false,
+      });
+    }
+    const promptPath = await writePromptFile(options, round, prompts);
+    const teacherResult = await runJsonStep(
+      options,
+      round,
+      "minimax_teacher_batch",
+      "node",
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/minimax-brain-teacher-batch.ts",
+        "--prompt-file",
+        promptPath,
+        "--workspace",
+        options.workspaceDir,
+        "--limit",
+        String(batchSize),
+        "--write",
+        "--json",
+        "--timeout",
+        String(options.timeoutSeconds),
+        "--concurrency",
+        String(currentConcurrency),
+        ...(options.directApi ? ["--direct-api"] : ["--openclaw-agent", options.openclawAgent]),
+        ...(options.allowPartialWrite ? ["--allow-partial-write"] : []),
+        ...(options.mock ? ["--mock"] : []),
+      ],
+      { allowFailure: true },
+    );
+    const providerLimited = isProviderLimitSignal(teacherResult);
+    const providerTransportUnstable = isProviderTransportSignal(teacherResult);
+    const transportFailureCount = providerTransportFailureCount(teacherResult);
+    if (teacherResult.exitCode !== 0) {
+      const acceptedCandidates = acceptedCandidatesFromResult(teacherResult);
+      if (options.allowPartialWrite && acceptedCandidates > 0) {
+        await appendLog(options.logPath, {
+          event: "teacher_batch_partial_ok",
+          round,
+          acceptedCandidates,
+          exitCode: teacherResult.exitCode,
+          providerLimited,
+          providerTransportUnstable,
+          transportFailureCount,
+        });
+        attempted += batchSize;
+        completedRounds = round;
+        if (providerLimited) {
+          stopReason = "provider_quota_or_rate_limit";
+          consecutiveRateLimitRounds += 1;
+          consecutiveProviderUnstableRounds = 0;
+          await runIntegrityChecks(round, true);
+          if (
+            !options.adaptive ||
+            consecutiveRateLimitRounds >= options.maxRateLimitRounds ||
+            !(await backOffAfterProviderPressure(round, "rate_limit"))
+          ) {
+            break;
+          }
+          continue;
+        }
+        if (providerTransportUnstable) {
+          stopReason = "provider_transport_instability";
+          consecutiveProviderUnstableRounds += 1;
+          consecutiveRateLimitRounds = 0;
+          await runIntegrityChecks(round, true);
+          if (
+            !options.adaptive ||
+            consecutiveProviderUnstableRounds >= options.maxProviderInstabilityRounds ||
+            !(await backOffAfterProviderPressure(round, "transport_instability"))
+          ) {
+            break;
+          }
+          continue;
+        }
+      } else if (providerLimited) {
+        stopReason = "provider_quota_or_rate_limit";
+        consecutiveRateLimitRounds += 1;
+        consecutiveProviderUnstableRounds = 0;
+        if (
+          !options.adaptive ||
+          consecutiveRateLimitRounds >= options.maxRateLimitRounds ||
+          !(await backOffAfterProviderPressure(round, "rate_limit"))
+        ) {
+          break;
+        }
+        continue;
+      } else if (providerTransportUnstable) {
+        stopReason = "provider_transport_instability";
+        consecutiveProviderUnstableRounds += 1;
+        consecutiveRateLimitRounds = 0;
+        if (
+          !options.adaptive ||
+          consecutiveProviderUnstableRounds >= options.maxProviderInstabilityRounds ||
+          !(await backOffAfterProviderPressure(round, "transport_instability"))
+        ) {
+          break;
+        }
+        continue;
+      } else {
+        throw new Error(`minimax_teacher_batch failed with exit code ${teacherResult.exitCode}`);
+      }
+    } else {
+      consecutiveRateLimitRounds = 0;
+      consecutiveProviderUnstableRounds = 0;
+      stopReason = "target_calls_reached";
+      attempted += batchSize;
+      completedRounds = round;
+    }
+
+    await runIntegrityChecks(round, false);
+  }
+  await appendLog(options.logPath, {
+    event: "quota_saturator_complete",
+    attempted,
+    completedRounds,
+    stopReason: Date.now() >= deadline ? "duration_deadline" : stopReason,
+    finalBatchLimit: currentBatchLimit,
+    finalConcurrency: currentConcurrency,
+    consecutiveRateLimitRounds,
+    consecutiveProviderUnstableRounds,
+    liveTouched: false,
+    providerConfigTouched: false,
+  });
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        ok: true,
+        attempted,
+        completedRounds,
+        stopReason: Date.now() >= deadline ? "duration_deadline" : stopReason,
+        finalBatchLimit: currentBatchLimit,
+        finalConcurrency: currentConcurrency,
+        consecutiveRateLimitRounds,
+        consecutiveProviderUnstableRounds,
+        logPath: options.logPath,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+} catch (error) {
+  await appendLog(options.logPath, {
+    event: "quota_saturator_failed",
+    attempted,
+    completedRounds,
+    finalBatchLimit: currentBatchLimit,
+    finalConcurrency: currentConcurrency,
+    consecutiveRateLimitRounds,
+    consecutiveProviderUnstableRounds,
+    error: String(error),
+    liveTouched: false,
+    providerConfigTouched: false,
+  });
+  throw error;
+}

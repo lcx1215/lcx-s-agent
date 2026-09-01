@@ -23,7 +23,7 @@ describe("local-brain-open-eval", () => {
     }
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", "scripts/dev/local-brain-open-eval.ts", ...command],
+      ["--import", "tsx", "scripts/operator/local-brain-open-eval.ts", ...command],
       { cwd: process.cwd(), maxBuffer: 1024 * 1024 },
     ).catch((error): RunResult => {
       const failure = error as ExecFailure;
@@ -83,7 +83,7 @@ describe("local-brain-open-eval", () => {
         [
           "--import",
           "tsx",
-          "scripts/dev/local-brain-open-eval.ts",
+          "scripts/operator/local-brain-open-eval.ts",
           "--json",
           "--provider-command",
           `node --import tsx test/fixtures/local-brain-open-eval-provider.ts; touch ${marker}`,
@@ -172,7 +172,7 @@ describe("local-brain-open-eval", () => {
       execFileAsync(process.execPath, [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-open-eval.ts",
+        "scripts/operator/local-brain-open-eval.ts",
         "--provider-timeout-ms",
         "-1",
       ]),
@@ -183,7 +183,7 @@ describe("local-brain-open-eval", () => {
       execFileAsync(process.execPath, [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-open-eval.ts",
+        "scripts/operator/local-brain-open-eval.ts",
         "--provider-timeout-ms",
         "abc",
       ]),
@@ -194,7 +194,7 @@ describe("local-brain-open-eval", () => {
       execFileAsync(process.execPath, [
         "--import",
         "tsx",
-        "scripts/dev/local-brain-open-eval.ts",
+        "scripts/operator/local-brain-open-eval.ts",
         "--provider-timeout-ms",
         "0",
       ]),

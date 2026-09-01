@@ -89,37 +89,37 @@ Safe demo fixtures live under `test/fixtures/finance-learning-pipeline/`.
 Run the bounded smoke path with:
 
 ```bash
-pnpm exec tsx scripts/dev/finance-learning-pipeline-smoke.ts
+pnpm exec tsx scripts/operator/finance-learning-pipeline-smoke.ts
 ```
 
 Run a single case with:
 
 ```bash
-pnpm exec tsx scripts/dev/finance-learning-pipeline-smoke.ts --case local-file
+pnpm exec tsx scripts/operator/finance-learning-pipeline-smoke.ts --case local-file
 ```
 
 Run the multi-candidate regression when the apply layer must prove it is not relying on one learned card:
 
 ```bash
-pnpm exec tsx scripts/dev/finance-learning-multi-candidate-smoke.ts
+pnpm exec tsx scripts/operator/finance-learning-multi-candidate-smoke.ts
 ```
 
 Run the fresh event application smoke when the apply layer must prove it can move from scaffold to a bounded research review draft:
 
 ```bash
-pnpm exec tsx scripts/dev/finance-learning-event-review-smoke.ts
+pnpm exec tsx scripts/operator/finance-learning-event-review-smoke.ts
 ```
 
 Run the full language-to-brain loop smoke when the whole Lark language, finance brain, analysis, and memory receipt path must be checked together:
 
 ```bash
-pnpm exec tsx scripts/dev/lark-brain-language-loop-smoke.ts
+pnpm exec tsx scripts/operator/lark-brain-language-loop-smoke.ts
 ```
 
 Run the full dev system loop when the Lark language system, finance learning brain, analysis application, memory receipt path, fail-closed cases, and language corpus review tests must be checked in one command:
 
 ```bash
-pnpm exec tsx scripts/dev/agent-system-loop-smoke.ts
+pnpm exec tsx scripts/operator/agent-system-loop-smoke.ts
 ```
 
 Run the finance data gateway smoke when sourced market, fundamental, macro, ETF,
@@ -127,8 +127,8 @@ options, index, or vendor numbers need a timestamped reconciliation contract
 before Qwen, Lark, memory, or visible summaries can use them:
 
 ```bash
-node --import tsx scripts/dev/finance-data-gateway-smoke.ts --json
-node --import tsx scripts/dev/finance-data-gateway-smoke.ts --conflict --json
+node --import tsx scripts/operator/finance-data-gateway-smoke.ts --json
+node --import tsx scripts/operator/finance-data-gateway-smoke.ts --conflict --json
 ```
 
 The gateway is the shared owner for primary/cross-check/official or issuer data
@@ -172,7 +172,7 @@ It checks:
 Run it with:
 
 ```bash
-pnpm exec tsx scripts/dev/finance-learning-pipeline-smoke.ts --case lark-market-capability-intake
+pnpm exec tsx scripts/operator/finance-learning-pipeline-smoke.ts --case lark-market-capability-intake
 ```
 
 This smoke does not promote language corpus samples. Lark language routing candidates stay under the language-routing review path, while finance learning artifacts stay under the finance learning source, capability, receipt, and review paths.

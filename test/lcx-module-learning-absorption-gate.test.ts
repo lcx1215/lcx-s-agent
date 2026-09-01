@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const scriptPath = path.join(repoRoot, "scripts/dev/lcx-module-learning-absorption-gate.ts");
+const scriptPath = path.join(repoRoot, "scripts/operator/lcx-module-learning-absorption-gate.ts");
 
 async function seedJson(workspaceDir: string, relativePath: string, payload: unknown) {
   const absolutePath = path.join(workspaceDir, relativePath);
@@ -38,7 +38,7 @@ function runReviewCli(args: string[], workspaceDir: string) {
     [
       "--import",
       "tsx",
-      path.join(repoRoot, "scripts/dev/module-learning-pipeline-review.ts"),
+      path.join(repoRoot, "scripts/operator/module-learning-pipeline-review.ts"),
       "--workspace",
       workspaceDir,
       ...args,

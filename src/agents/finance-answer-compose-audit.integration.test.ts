@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPipelineResult } from "../../scripts/dev/lcx-commercial-answer-pipeline.js";
+import { buildPipelineResult } from "../../scripts/operator/lcx-commercial-answer-pipeline.js";
 import { composeFinanceAnswer, type FinanceModelCaller } from "./finance-answer-composer.js";
 
 // Track B proof: the composer feeds the EXISTING audit (buildPipelineResult),

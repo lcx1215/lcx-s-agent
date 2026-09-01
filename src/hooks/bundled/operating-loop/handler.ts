@@ -1205,7 +1205,7 @@ function renderCurrentResearchLine(params: {
     "- protected_artifacts: current-research-line, latest carryover set, daily strategy protocol, application ledger",
     "- file_safety_rule: refresh compact anchors first; do not replace continuity artifacts with empty or no-op rewrites",
     "- compression_rule: compress or downrank older notes before adding new memory layers",
-    "- archive_rule: treat ops/live-handoff notes as drill-down only when current-research-line or MEMORY.md already defines the active brain state",
+    "- archive_rule: treat ops/external-channel-history notes as drill-down only when current-research-line or MEMORY.md already defines the active brain state",
     ...(activeArtifactConcern
       ? [
           `- active_artifact_error: ${activeArtifactConcern.error.stage}/${activeArtifactConcern.error.manifestId ?? "unknown"} x${activeArtifactConcern.error.occurrenceCount} last_seen=${activeArtifactConcern.error.lastSeenAt}`,
