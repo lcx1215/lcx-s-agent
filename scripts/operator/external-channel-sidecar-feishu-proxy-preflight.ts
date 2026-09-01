@@ -4,7 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
+// The active runtime is the default audit source. A retired source is only
+// inspected when an operator passes --legacy-root explicitly.
+const DEFAULT_SOURCE_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
 const FEISHU_PROXY_PLIST = "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.feishu.proxy.plist";
 const RECEIPT_NAME = "external-channel-sidecar-feishu-proxy-preflight-receipt.json";
@@ -68,7 +70,7 @@ function parseArgs(argv: string[]): Args {
     return index === -1 ? undefined : argv[index + 1];
   };
   return {
-    legacyRoot: path.resolve(readValue("--legacy-root") ?? DEFAULT_LEGACY_ROOT),
+    legacyRoot: path.resolve(readValue("--legacy-root") ?? DEFAULT_SOURCE_ROOT),
     targetRoot: path.resolve(readValue("--target-root") ?? DEFAULT_RUNTIME_BUNDLE_ROOT),
     outputDir: path.resolve(readValue("--output-dir") ?? DEFAULT_OUTPUT_DIR),
     writeRuntime: argv.includes("--write-runtime"),

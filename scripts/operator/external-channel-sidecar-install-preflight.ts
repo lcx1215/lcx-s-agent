@@ -16,7 +16,9 @@ import {
 } from "./external-channel-sidecar-scheduler-dry-run.ts";
 
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
+// Keep the active runtime as the default source; retired roots are explicit
+// rollback inputs only (--legacy-root).
+const DEFAULT_SOURCE_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
 const SCHEDULER_PLIST =
   "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist";
@@ -58,7 +60,7 @@ function parseArgs(argv: string[]): Args {
   };
   return {
     targetRoot: path.resolve(readValue("--target-root") ?? DEFAULT_TARGET_ROOT),
-    legacyRoot: path.resolve(readValue("--legacy-root") ?? DEFAULT_LEGACY_ROOT),
+    legacyRoot: path.resolve(readValue("--legacy-root") ?? DEFAULT_SOURCE_ROOT),
     outputDir: path.resolve(readValue("--output-dir") ?? DEFAULT_OUTPUT_DIR),
     json: argv.includes("--json"),
     requireReady: argv.includes("--require-ready"),

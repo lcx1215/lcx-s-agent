@@ -12,7 +12,9 @@ import {
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
+// Keep the active runtime as the default source; retired roots are explicit
+// rollback inputs only (--legacy-root).
+const DEFAULT_SOURCE_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
 const RECEIPT_NAME = "external-channel-sidecar-install-dry-run-receipt.json";
 
@@ -64,7 +66,7 @@ function parseArgs(argv: string[]): Args {
   };
   return {
     targetRoot: path.resolve(readValue("--target-root") ?? DEFAULT_TARGET_ROOT),
-    legacyRoot: path.resolve(readValue("--legacy-root") ?? DEFAULT_LEGACY_ROOT),
+    legacyRoot: path.resolve(readValue("--legacy-root") ?? DEFAULT_SOURCE_ROOT),
     outputDir: path.resolve(readValue("--output-dir") ?? DEFAULT_OUTPUT_DIR),
     write: argv.includes("--write"),
     json: argv.includes("--json"),

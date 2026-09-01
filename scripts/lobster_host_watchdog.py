@@ -157,11 +157,16 @@ def probe_feishu_proxy_health(timeout_seconds: float = 3.0) -> dict[str, Any]:
 def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
     launchd = inspect_launchagent(FEISHU_PROXY_LABEL, skip_launchd=skip_launchd)
     err_tail = read_tail(FEISHU_PROXY_ERR_LOG)
-    desktop_root = "/Users/liuchengxu/Desktop/openclaw"
-    runtime_root = "/Users/liuchengxu/.openclaw/external-channel-runtime/lcx-s-openclaw"
+    runtime_root = os.environ.get(
+        "LCX_EXTERNAL_CHANNEL_RUNTIME",
+        str(Path.home() / ".openclaw" / "external-channel-runtime" / "lcx-s-openclaw"),
+    )
+    legacy_root = os.environ.get("LCX_EXTERNAL_CHANNEL_LEGACY_ROOT", "").strip()
     args_text = "\n".join(str(item) for item in launchd.get("program_arguments", []))
     working_directory = str(launchd.get("working_directory") or "")
-    points_at_desktop = desktop_root in args_text or working_directory == desktop_root
+    points_at_desktop = bool(
+        legacy_root and (legacy_root in args_text or working_directory == legacy_root)
+    )
     points_at_runtime = runtime_root in args_text or working_directory == runtime_root
     error_markers = [
         marker
@@ -191,6 +196,7 @@ def build_feishu_proxy_snapshot(skip_launchd: bool = False) -> dict[str, Any]:
         "label": FEISHU_PROXY_LABEL,
         "launchd": launchd,
         "points_at_desktop": points_at_desktop,
+        "points_at_legacy_root": points_at_desktop,
         "points_at_runtime": points_at_runtime,
         "error_markers": error_markers,
         "stale_error_markers": stale_error_markers,

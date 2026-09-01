@@ -1,8 +1,11 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
+// Keep the active runtime as the default source; retired roots are explicit
+// rollback inputs only (--legacy-root).
+const DEFAULT_SOURCE_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
 const DEFAULT_SCHEDULER_PLIST =
   "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist";
 
@@ -67,8 +70,8 @@ function parseArgs(argv: string[]): Args {
     return index === -1 ? undefined : argv[index + 1];
   };
   return {
-    legacyRoot: path.resolve(readValue("--legacy-root") ?? DEFAULT_LEGACY_ROOT),
-    targetRoot: path.resolve(readValue("--target-root") ?? process.cwd()),
+    legacyRoot: path.resolve(readValue("--legacy-root") ?? DEFAULT_SOURCE_ROOT),
+    targetRoot: path.resolve(readValue("--target-root") ?? DEFAULT_RUNTIME_BUNDLE_ROOT),
     plistPath: path.resolve(readValue("--plist") ?? DEFAULT_SCHEDULER_PLIST),
     json: argv.includes("--json"),
     requireReady: argv.includes("--require-ready"),
