@@ -1,0 +1,10 @@
+{
+  "id": "lcx-engine",
+  "name": "LCX Engine",
+  "description": "LCX product control-plane preflight for an OpenClaw host.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
