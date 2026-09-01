@@ -320,6 +320,7 @@ function runCommand(
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    shell: process.platform === "win32",
     timeout: timeoutMs,
     killSignal: "SIGTERM",
     env: { ...process.env, ...extraEnv },

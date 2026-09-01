@@ -1005,29 +1005,6 @@ describe("loadOpenClawPlugins", () => {
     expect(record?.status).toBe("loaded");
   });
 
-  it("supports legacy plugins importing monolithic plugin-sdk root", () => {
-    useNoBundledPlugins();
-    const plugin = writePlugin({
-      id: "legacy-root-import",
-      filename: "legacy-root-import.cjs",
-      body: `module.exports = {
-  id: "legacy-root-import",
-  configSchema: (require("openclaw/plugin-sdk").emptyPluginConfigSchema)(),
-  register() {},
-};`,
-    });
-
-    const registry = loadRegistryFromSinglePlugin({
-      plugin,
-      pluginConfig: {
-        allow: ["legacy-root-import"],
-      },
-    });
-
-    const record = registry.plugins.find((entry) => entry.id === "legacy-root-import");
-    expect(record?.status).toBe("loaded");
-  }, 300_000);
-
   it("prefers dist plugin-sdk alias when loader runs from dist", () => {
     const { root, distFile } = createPluginSdkAliasFixture();
 

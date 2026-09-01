@@ -219,11 +219,12 @@ export function inferOpenClawRootFromGatewayCommand(
   }
   for (const arg of command?.programArguments ?? []) {
     const normalized = resolveProbePath(arg);
-    if (normalized.endsWith(path.join("dist", "index.js"))) {
-      return path.dirname(path.dirname(normalized));
+    const implementation = normalized.startsWith("/") ? path.posix : path;
+    if (normalized.endsWith(implementation.join("dist", "index.js"))) {
+      return implementation.dirname(implementation.dirname(normalized));
     }
-    if (normalized.endsWith(path.join("src", "index.ts"))) {
-      return path.dirname(path.dirname(normalized));
+    if (normalized.endsWith(implementation.join("src", "index.ts"))) {
+      return implementation.dirname(implementation.dirname(normalized));
     }
   }
   return undefined;
