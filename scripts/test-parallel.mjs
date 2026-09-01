@@ -417,6 +417,12 @@ const runOnce = (entry, extraArgs = []) =>
   });
 
 const run = async (entry) => {
+  if (entry.name === "unit-legacy-compat") {
+    if (shardIndexOverride !== null && shardIndexOverride !== 1) {
+      return 0;
+    }
+    return runOnce(entry);
+  }
   if (shardCount <= 1) {
     return runOnce(entry);
   }
