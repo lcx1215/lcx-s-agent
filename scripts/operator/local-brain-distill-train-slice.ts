@@ -117,8 +117,8 @@ function parseArgs(args: string[]): CliOptions {
     dataDir: DEFAULT_DATA_DIR,
     outDir: DEFAULT_OUT_DIR,
     maxReviewExamples: 1024,
-    curatedRepeat: 6,
-    nonReviewRepeat: 2,
+    curatedRepeat: 1,
+    nonReviewRepeat: 1,
     json: false,
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -766,10 +766,12 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
     sourceDataDir: options.dataDir,
     outDir: options.outDir,
     policy: {
-      selection: "curated_first_non_review_repeated_teacher_quality_family_dedup_sample",
+      selection: "curated_first_non_review_teacher_quality_family_dedup_sample",
       maxReviewExamples: options.maxReviewExamples,
       curatedRepeat: options.curatedRepeat,
       nonReviewRepeat: options.nonReviewRepeat,
+      defaultExactPairOversampling: false,
+      explicitRepeatFlagsAreAblationOnly: options.curatedRepeat > 1 || options.nonReviewRepeat > 1,
     },
     counts: {
       sourceTrain: counts.sourceTrain,
@@ -793,7 +795,9 @@ async function buildTrainSlice(options: CliOptions): Promise<Record<string, unkn
       duplicateGroups: [...writtenPairCounts.values()].filter((count) => count > 1).length,
       duplicateRows,
       duplicateRate: trainWritten === 0 ? 0 : Number((duplicateRows / trainWritten).toFixed(4)),
-      note: "meta.sourcePath changes do not make a duplicated prompt/completion pair novel; explicit repeat flags remain available for controlled ablations.",
+      defaultExactPairOversampling: false,
+      explicitRepeatFlagsAreAblationOnly: options.curatedRepeat > 1 || options.nonReviewRepeat > 1,
+      note: "meta.sourcePath changes do not make a duplicated prompt/completion pair novel; defaults keep each admitted pair once and explicit repeat flags are controlled ablations that should not enter a curriculum-ready slice.",
     },
     dedup: {
       method: "normalized_prompt_completion_sha256_16_before_explicit_repeats",

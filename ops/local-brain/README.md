@@ -1007,11 +1007,13 @@ node --import tsx scripts/operator/local-brain-training-plan.ts --json
 Module-learning plan/review receipts are also Qwen training material now. The
 dataset builder reads `memory/module-learning-pipeline-plan-receipts` and
 `memory/module-learning-pipeline-reviews` into source kinds
-`module_learning_plan_receipt` and `module_learning_review_receipt`; the bounded
-train-slice repeats them with the other high-signal non-review receipts. This
-only teaches the local brain the internalization contract and module-specific
-rules. It does not make `application_ready` receipts become `eval_absorbed`;
-the absorption gate above still owns that claim.
+`module_learning_plan_receipt` and `module_learning_review_receipt`. The bounded
+train-slice keeps each admitted prompt/completion pair once by default; the
+`--curated-repeat` and `--non-review-repeat` flags remain explicit ablations and
+make the resulting slice ineligible for a duplicate-free curriculum-ready gate.
+This only teaches the local brain the internalization contract and
+module-specific rules. It does not make `application_ready` receipts become
+`eval_absorbed`; the absorption gate above still owns that claim.
 
 Look at `moduleLearningReview` and the `module_learning_incomplete_evidence`
 decision before claiming cross-module learning improved. This keeps automation

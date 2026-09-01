@@ -147,6 +147,60 @@ describe("local brain distill train slice", () => {
     await expect(parseJsonl(path.join(outDir, "test.jsonl"))).resolves.toHaveLength(1);
   });
 
+  it("keeps admitted pairs unique by default", async () => {
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-train-slice-defaults-"));
+    const dataDir = path.join(fixtureRoot, "dataset");
+    const outDir = path.join(fixtureRoot, "slice");
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(
+      path.join(dataDir, "train.jsonl"),
+      [
+        line("curated_seed", "curated-1"),
+        line("curated_seed", "curated-2"),
+        line("feishu_work_receipt", "receipt-1"),
+        line("finance_learning_capability_apply_receipt", "receipt-2"),
+        line("brain_distillation_review", "review-1"),
+      ].join(""),
+      "utf8",
+    );
+    await fs.writeFile(path.join(dataDir, "valid.jsonl"), line("curated_seed", "valid"), "utf8");
+    await fs.writeFile(path.join(dataDir, "test.jsonl"), line("curated_seed", "test"), "utf8");
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/operator/local-brain-distill-train-slice.ts",
+        "--data",
+        dataDir,
+        "--out",
+        outDir,
+        "--json",
+      ],
+      { cwd: repoRoot, env: { ...process.env, HOME: fixtureRoot } },
+    );
+
+    const manifest = JSON.parse(stdout) as {
+      policy: {
+        curatedRepeat: number;
+        nonReviewRepeat: number;
+        defaultExactPairOversampling: boolean;
+        explicitRepeatFlagsAreAblationOnly: boolean;
+      };
+      counts: { trainWritten: number };
+      repetition: { duplicateRows: number; duplicateRate: number };
+    };
+    expect(manifest.policy).toMatchObject({
+      curatedRepeat: 1,
+      nonReviewRepeat: 1,
+      defaultExactPairOversampling: false,
+      explicitRepeatFlagsAreAblationOnly: false,
+    });
+    expect(manifest.counts.trainWritten).toBe(4);
+    expect(manifest.repetition).toMatchObject({ duplicateRows: 0, duplicateRate: 0 });
+  });
+
   it("repeats module-learning receipts in the bounded training slice", async () => {
     const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "lcx-module-slice-"));
     const dataDir = path.join(fixtureRoot, "dataset");
