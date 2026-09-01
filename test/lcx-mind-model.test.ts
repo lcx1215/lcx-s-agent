@@ -183,6 +183,7 @@ describe("LCX mind model god-view architecture check", () => {
         expect.objectContaining({ id: "universe_index_total_coverage", ok: true }),
         expect.objectContaining({ id: "world_class_agent_architecture", ok: true }),
         expect.objectContaining({ id: "external_agent_upgrade_distillation", ok: true }),
+        expect.objectContaining({ id: "multi_agent_pattern_shadow", ok: true }),
       ]),
     );
     expect(payload.invariants).toEqual(
@@ -225,6 +226,11 @@ describe("LCX mind model god-view architecture check", () => {
         }),
         expect.objectContaining({
           id: "external_agent_projects_cannot_be_parallel_systems",
+          ok: true,
+        }),
+        expect.objectContaining({ id: "multi_agent_shadow_is_not_runtime_authority", ok: true }),
+        expect.objectContaining({
+          id: "multi_agent_receipts_are_replayable_and_versioned",
           ok: true,
         }),
       ]),

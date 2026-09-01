@@ -348,6 +348,27 @@ describe("LCX flow graph exam", () => {
         }),
       ]),
     );
+    expect(payload.scenarios).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "multi_agent_pattern_shadow_evaluation_waterflow",
+          start: "multi_agent_pattern_intake",
+          end: "control_room_summary",
+          requiredNodeCount: 7,
+          requiredFilters: expect.arrayContaining([
+            "same_case_required",
+            "explicit_cost_basis_required",
+            "shadow_tool_permission_audit_required",
+            "shadow_recovery_receipt_required",
+            "wide_trial_not_production",
+          ]),
+          receipts: expect.arrayContaining([
+            "lcx-multi-agent-pattern-shadow",
+            "lcx-multi-agent-pattern-shadow-latest",
+          ]),
+        }),
+      ]),
+    );
     expect(payload.consolidationClusters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -412,6 +433,16 @@ describe("LCX flow graph exam", () => {
           mergeFilters: expect.arrayContaining([
             "retrieval_apply_eval_review_required",
             "promotion_ready_required",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "multi_agent_pattern_shadow_cluster",
+          ownerScenario: "multi_agent_pattern_shadow_evaluation_waterflow",
+          mergeFilters: expect.arrayContaining([
+            "same_case_required",
+            "explicit_cost_basis_required",
+            "shadow_tool_permission_audit_required",
+            "shadow_recovery_receipt_required",
           ]),
         }),
       ]),
@@ -506,6 +537,15 @@ describe("LCX flow graph exam", () => {
           allowedPaths: expect.arrayContaining([
             "scripts/operator/lcx-directed-daily-research-brief.ts",
             "test/lcx-directed-daily-research-brief.test.ts",
+          ]),
+        }),
+        expect.objectContaining({
+          id: "multi_agent_pattern_shadow_entrypoints",
+          ownerCluster: "multi_agent_pattern_shadow_cluster",
+          ownerPath: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+          allowedPaths: expect.arrayContaining([
+            "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+            "test/lcx-multi-agent-pattern-shadow.test.ts",
           ]),
         }),
       ]),
@@ -626,6 +666,20 @@ describe("LCX flow graph exam", () => {
           fastCheck:
             "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
           evidenceReceipts: expect.arrayContaining(["lcx-external-agent-upgrade-radar"]),
+        }),
+        expect.objectContaining({
+          scenarioId: "multi_agent_pattern_shadow_evaluation_waterflow",
+          ownerEntrypoint: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+          fastCheck:
+            "node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay --pattern all --case single_stock_loss_recovery_risk_triage --json",
+          evidenceReceipts: expect.arrayContaining([
+            "lcx-multi-agent-pattern-shadow-latest",
+            "commercial_answer_pipeline",
+          ]),
+          failureSignals: expect.arrayContaining([
+            "missing_or_skipped_filter:same_case_required",
+            "missing_or_skipped_filter:shadow_recovery_receipt_required",
+          ]),
         }),
         expect.objectContaining({
           scenarioId: "prediction_market_research_only_waterflow",

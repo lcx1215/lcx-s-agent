@@ -184,6 +184,22 @@ describe("lcx-external-agent-upgrade-radar", () => {
         expect.objectContaining({
           label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
           ownerEntrypoint: "scripts/operator/lcx-flow-graph.ts",
+          sourceUrls: expect.arrayContaining([
+            "https://github.com/openai/openai-agents-python",
+            "https://github.com/anthropics/claude-agent-sdk-python",
+          ]),
+          requiredReceipts: expect.arrayContaining([
+            "lcx-multi-agent-pattern-shadow-latest",
+            "lcx-multi-agent-pattern-shadow",
+          ]),
+          requiredFilters: expect.arrayContaining([
+            "same_case_required",
+            "explicit_cost_basis_required",
+            "shadow_tool_permission_audit_required",
+            "shadow_recovery_receipt_required",
+            "wide_trial_not_production",
+          ]),
+          riskBoundaries: expect.arrayContaining(["no_shadow_external_side_effects"]),
         }),
         expect.objectContaining({
           label: "Polymarket research intake tools",

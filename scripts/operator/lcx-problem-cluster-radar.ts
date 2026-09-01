@@ -1,8 +1,13 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { DEFAULT_GUARD_LOG_PATH, DEFAULT_WORKSPACE_DIR } from "./lcx-local-paths.ts";
+import {
+  DEFAULT_GUARD_LOG_PATH,
+  DEFAULT_WORKSPACE_DIR,
+  MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+} from "./lcx-local-paths.ts";
 import { buildLocalBrainTrainingPlan } from "./local-brain-training-plan.ts";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
@@ -53,6 +58,7 @@ type RadarInputs = {
   systemMemoryGate?: OwnerSnapshot;
   changeImpact?: OwnerSnapshot;
   externalAgentUpgrade?: OwnerSnapshot;
+  multiAgentPatternShadow?: OwnerSnapshot;
   repairVerification?: Record<string, RepairVerificationEvidence>;
 };
 
@@ -1102,6 +1108,92 @@ function externalAgentUpgradeCluster(inputs: RadarInputs): ProblemCluster | unde
   });
 }
 
+function multiAgentPatternShadowCluster(inputs: RadarInputs): ProblemCluster | undefined {
+  const payload = inputs.multiAgentPatternShadow?.payload;
+  if (!payload) {
+    return undefined;
+  }
+  const summary = recordValue(payload.summary);
+  const signals: ProblemSignal[] = [];
+  const completedAt = stringValue(payload.completedAt);
+  const parsedCompletedAt = completedAt ? Date.parse(completedAt) : Number.NaN;
+  const shadowAgeMs = Number.isFinite(parsedCompletedAt)
+    ? Date.now() - parsedCompletedAt
+    : Number.POSITIVE_INFINITY;
+  const liveShadow = payload.mode === "live";
+  const status =
+    stringValue(payload.status) ??
+    (summary?.trialDecision === "discard"
+      ? "blocked"
+      : shadowAgeMs > 24 * 60 * 60 * 1000
+        ? "stale"
+        : "fresh");
+  if (status === "missing") {
+    signals.push({
+      id: "multi_agent_shadow_latest_missing",
+      severity: "P3",
+      summary: "multi-agent shadow has no latest summary for governance to consume",
+      evidence: { latestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH },
+    });
+  }
+  if (status === "stale") {
+    signals.push({
+      id: "multi_agent_shadow_latest_stale",
+      severity: "P3",
+      summary: "multi-agent shadow latest summary is stale",
+      evidence: payload,
+    });
+  }
+  if (status === "blocked") {
+    signals.push({
+      id: "multi_agent_shadow_blocked",
+      severity: "P2",
+      summary: "multi-agent shadow owner is blocked or discarded",
+      evidence: payload,
+    });
+  }
+  if (liveShadow && (numberValue(summary?.escapedPermissionViolations) ?? 0) > 0) {
+    signals.push({
+      id: "multi_agent_shadow_escaped_permission_violation",
+      severity: "P1",
+      summary: "multi-agent shadow recorded an escaped permission violation",
+      evidence: { escapedPermissionViolations: summary?.escapedPermissionViolations },
+    });
+  }
+  if (liveShadow && (numberValue(summary?.externalSideEffects) ?? 0) > 0) {
+    signals.push({
+      id: "multi_agent_shadow_external_side_effect",
+      severity: "P1",
+      summary: "multi-agent shadow recorded an external side effect",
+      evidence: { externalSideEffects: summary?.externalSideEffects },
+    });
+  }
+  const recovery = recordValue(summary?.recoveryPassByPattern);
+  const failedRecoveryPatterns = recovery
+    ? Object.entries(recovery)
+        .filter(([, value]) => value === false)
+        .map(([pattern]) => pattern)
+    : [];
+  if (failedRecoveryPatterns.length > 0) {
+    signals.push({
+      id: "multi_agent_shadow_recovery_failed",
+      severity: "P2",
+      summary: "multi-agent shadow interruption recovery failed for one or more patterns",
+      evidence: { failedRecoveryPatterns },
+    });
+  }
+  return problemCluster({
+    id: "multi_agent_pattern_shadow_cluster",
+    family: "multi_agent_pattern_shadow",
+    ownerEntrypoint: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+    sourceOwners: ["lcx-multi-agent-pattern-shadow"],
+    signals,
+    nextAction:
+      "Repair or rerun the multi-agent shadow owner after the recorded blocker; do not promote a topology from a failed or stale comparison.",
+    actionability: signals.some((signal) => signal.severity === "P1") ? "repair_now" : undefined,
+  });
+}
+
 function ownerAvailabilityCluster(inputs: RadarInputs): ProblemCluster | undefined {
   const signals = [
     inputs.trainingPlan,
@@ -1140,6 +1232,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
     learningSedimentationCluster(inputs),
     systemMemoryCluster(inputs),
     externalAgentUpgradeCluster(inputs),
+    multiAgentPatternShadowCluster(inputs),
     dirtyWorktreeCluster(inputs),
   ].filter((cluster): cluster is ProblemCluster => Boolean(cluster));
   const repairableClusters = clusters.filter((cluster) => cluster.actionability === "repair_now");
@@ -1176,6 +1269,7 @@ export function buildProblemClusterRadar(inputs: RadarInputs) {
         "lcx-system-memory-sedimentation-gate",
         "lcx-change-impact-plan",
         "lcx-external-agent-upgrade-radar",
+        "lcx-multi-agent-pattern-shadow",
       ],
       evolutionCooldownActive:
         booleanValue(inputs.trainingPlan?.payload?.evolutionCooldownActive) === true,
@@ -1360,6 +1454,25 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
     ),
   ]);
   const repairVerification = await buildRepairVerification(trainingPlan.payload);
+  let multiAgentPatternShadow: OwnerSnapshot;
+  try {
+    const payload = JSON.parse(
+      await fs.readFile(MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH, "utf8"),
+    ) as Record<string, unknown>;
+    multiAgentPatternShadow = {
+      ok: true,
+      owner: "lcx-multi-agent-pattern-shadow",
+      command: `read ${MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH}`,
+      payload,
+    };
+  } catch {
+    multiAgentPatternShadow = {
+      ok: true,
+      owner: "lcx-multi-agent-pattern-shadow",
+      command: `read ${MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH}`,
+      payload: { status: "missing", latestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH },
+    };
+  }
   return {
     trainingPlan,
     moduleAbsorption,
@@ -1371,6 +1484,7 @@ async function collectOwnerSnapshots(): Promise<RadarInputs> {
     systemMemoryGate,
     changeImpact,
     externalAgentUpgrade,
+    multiAgentPatternShadow,
     repairVerification,
   };
 }

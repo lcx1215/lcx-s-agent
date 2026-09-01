@@ -3,6 +3,25 @@ import path from "node:path";
 export const LCX_USER_HOME = process.env.LCX_USER_HOME ?? "/Users/liuchengxu";
 export const DEFAULT_WORKSPACE_DIR = path.join(LCX_USER_HOME, ".openclaw", "workspace");
 export const DEFAULT_WORKSPACE_LOG_DIR = path.join(DEFAULT_WORKSPACE_DIR, "logs");
+export const MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH = path.join(
+  DEFAULT_WORKSPACE_DIR,
+  "state",
+  "lcx-multi-agent-pattern-shadow-latest.json",
+);
+export const MULTI_AGENT_PATTERN_SHADOW_JSONL_PATH = path.join(
+  DEFAULT_WORKSPACE_LOG_DIR,
+  "lcx-multi-agent-pattern-shadow.jsonl",
+);
+export const MULTI_AGENT_PATTERN_SHADOW_EXPERIMENTS_DIR = path.join(
+  DEFAULT_WORKSPACE_DIR,
+  "experiments",
+  "multi-agent-pattern-shadow",
+);
+export const MULTI_AGENT_PATTERN_SHADOW_LOCK_PATH = path.join(
+  DEFAULT_WORKSPACE_DIR,
+  "state",
+  "lcx-multi-agent-pattern-shadow.lock",
+);
 export const DEFAULT_GUARD_LOG_PATH = path.join(
   DEFAULT_WORKSPACE_LOG_DIR,
   "minimax-brain-training-guard-medium.jsonl",

@@ -35,6 +35,8 @@ import {
 import {
   LCX_ONTOLOGY_ADAPTER_IMPLEMENTATION_IDS,
   LCX_ONTOLOGY_CHANNEL_MILESTONE_ALIASES,
+  LCX_ONTOLOGY_EVOLUTION_CONTRACT,
+  LCX_ONTOLOGY_EVOLUTION_RULES,
   LCX_ONTOLOGY_FORBIDDEN_CANONICAL_TOKENS,
   LCX_ONTOLOGY_FINANCE_ALLOWED_ACTION_AUTHORITIES,
   LCX_ONTOLOGY_FINANCE_ARTICLE_SOURCE_COLLECTION_METHODS,
@@ -53,19 +55,33 @@ import {
   LCX_ONTOLOGY_FINANCE_LEARNING_SOURCE_TYPES,
   LCX_ONTOLOGY_LEGACY_COMPATIBILITY_IDS,
   LCX_ONTOLOGY_LEARNING_EVIDENCE_STATUSES,
+  LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION,
   LCX_ONTOLOGY_NON_CANONICAL_TASK_FAMILY_CLASSES,
   LCX_ONTOLOGY_NON_CANONICAL_TASK_FAMILY_IDS,
+  LCX_ONTOLOGY_AGENT_ROLES,
+  LCX_ONTOLOGY_COMMUNICATION_KINDS,
+  LCX_ONTOLOGY_CONTEXT_SCOPES,
+  LCX_ONTOLOGY_DELEGATION_MODES,
+  LCX_ONTOLOGY_EXECUTION_STATES,
+  LCX_ONTOLOGY_INTERRUPTION_RECOVERY_STATES,
+  LCX_ONTOLOGY_ORCHESTRATION_PATTERNS,
+  LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS,
+  LCX_ONTOLOGY_OWNERSHIP_MODES,
   LCX_ONTOLOGY_RELATION_CONTRACTS,
   LCX_ONTOLOGY_REGISTRY,
   LCX_ONTOLOGY_REGISTRY_POLICY,
   LCX_ONTOLOGY_SOURCE_EVIDENCE_CLASSES,
   LCX_ONTOLOGY_SOURCE_RELIABILITY_GRADES,
   LCX_ONTOLOGY_STATE_CHAINS,
+  LCX_ONTOLOGY_VOCABULARY_GROUPS,
   LCX_ONTOLOGY_VOCABULARIES,
+  LCX_ONTOLOGY_WORKSPACE_SCOPES,
   LCX_ONTOLOGY_WEAK_EVIDENCE_POLICIES,
   canonicalizeLcxOntologyValue,
+  getLcxOntologyEvolutionRule,
   getLcxOntologyRelationContract,
   isLcxOntologyRelationAllowed,
+  validateLcxOntologyMigrationManifest,
   validateLcxOntologyRegistry,
 } from "../src/shared/lcx-ontology.js";
 
@@ -78,6 +94,63 @@ describe("LCX ontology registry", () => {
       "external_channel_bound",
       "user_visible_observed",
     ]);
+  });
+
+  it("adds multi-agent shadow vocabulary without changing the ontology contract", () => {
+    expect(LCX_ONTOLOGY_VOCABULARIES.orchestrationPattern).toEqual(
+      LCX_ONTOLOGY_ORCHESTRATION_PATTERNS,
+    );
+    expect(LCX_ONTOLOGY_VOCABULARIES.agentRole).toEqual(LCX_ONTOLOGY_AGENT_ROLES);
+    expect(LCX_ONTOLOGY_VOCABULARIES.delegationMode).toEqual(LCX_ONTOLOGY_DELEGATION_MODES);
+    expect(LCX_ONTOLOGY_VOCABULARIES.executionState).toEqual(LCX_ONTOLOGY_EXECUTION_STATES);
+    expect(LCX_ONTOLOGY_VOCABULARIES.communicationKind).toEqual(LCX_ONTOLOGY_COMMUNICATION_KINDS);
+    expect(LCX_ONTOLOGY_VOCABULARIES.contextScope).toEqual(LCX_ONTOLOGY_CONTEXT_SCOPES);
+    expect(LCX_ONTOLOGY_VOCABULARIES.workspaceScope).toEqual(LCX_ONTOLOGY_WORKSPACE_SCOPES);
+    expect(LCX_ONTOLOGY_VOCABULARIES.ownershipMode).toEqual(LCX_ONTOLOGY_OWNERSHIP_MODES);
+    expect(LCX_ONTOLOGY_VOCABULARIES.orchestrationProofKind).toEqual(
+      LCX_ONTOLOGY_ORCHESTRATION_PROOF_KINDS,
+    );
+    expect(LCX_ONTOLOGY_VOCABULARIES.interruptionRecovery).toEqual(
+      LCX_ONTOLOGY_INTERRUPTION_RECOVERY_STATES,
+    );
+    expect(LCX_ONTOLOGY_VOCABULARY_GROUPS.orchestration).toEqual([
+      "orchestrationPattern",
+      "agentRole",
+      "delegationMode",
+      "executionState",
+      "communicationKind",
+      "contextScope",
+      "workspaceScope",
+      "ownershipMode",
+      "orchestrationProofKind",
+      "interruptionRecovery",
+    ]);
+    expect(LCX_ONTOLOGY_VOCABULARIES.taskFamily).toContain("multi_agent_pattern_shadow_evaluation");
+    expect(LCX_ONTOLOGY_VOCABULARIES.workflowNode).toEqual(
+      expect.arrayContaining([
+        "multi_agent_pattern_intake",
+        "shadow_replay",
+        "shadow_live",
+        "pattern_comparison",
+        "interruption_recovery_probe",
+      ]),
+    );
+    expect(LCX_ONTOLOGY_VOCABULARIES.workflowFilter).toEqual(
+      expect.arrayContaining([
+        "same_case_required",
+        "explicit_cost_basis_required",
+        "shadow_tool_permission_audit_required",
+        "shadow_recovery_receipt_required",
+      ]),
+    );
+    expect(LCX_ONTOLOGY_VOCABULARIES.workflowScenario).toContain(
+      "multi_agent_pattern_shadow_evaluation_waterflow",
+    );
+    expect(LCX_ONTOLOGY_VOCABULARIES.workflowFamily).toContain(
+      "multi_agent_pattern_shadow_evaluation",
+    );
+    expect(LCX_ONTOLOGY_REGISTRY.version).toBe("lcx_ontology_v1");
+    expect(getLcxOntologyEvolutionRule("add_canonical_value")?.action).toBe("extend_in_place");
   });
 
   it("makes module and learning vocabularies resolve through the same registry", () => {
@@ -144,6 +217,87 @@ describe("LCX ontology registry", () => {
     expect(FINANCE_EVIDENCE_CATEGORIES).toEqual(LCX_ONTOLOGY_FINANCE_EVIDENCE_CATEGORIES);
   });
 
+  it("declares one evolution contract for every vocabulary and semantic change", () => {
+    const groupedVocabularies = Object.values(LCX_ONTOLOGY_VOCABULARY_GROUPS).flat().toSorted();
+    expect(groupedVocabularies).toEqual(Object.keys(LCX_ONTOLOGY_VOCABULARIES).toSorted());
+    expect(LCX_ONTOLOGY_REGISTRY.vocabularyGroups).toEqual(LCX_ONTOLOGY_VOCABULARY_GROUPS);
+    expect(LCX_ONTOLOGY_REGISTRY.evolution).toEqual(LCX_ONTOLOGY_EVOLUTION_CONTRACT);
+    expect(LCX_ONTOLOGY_EVOLUTION_RULES).toHaveLength(10);
+    expect(getLcxOntologyEvolutionRule("add_canonical_value")).toMatchObject({
+      action: "extend_in_place",
+      requiresVersionBump: false,
+      requiresMigrationManifest: false,
+    });
+    expect(getLcxOntologyEvolutionRule("change_relation_contract")).toMatchObject({
+      action: "versioned_explicit_migration",
+      requiresVersionBump: true,
+      requiresMigrationManifest: true,
+      requiredProofs: expect.arrayContaining(["migration_manifest", "head_tail_consistency"]),
+    });
+    expect(LCX_ONTOLOGY_EVOLUTION_CONTRACT.migrationManifestSchemaVersion).toBe(
+      LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION,
+    );
+  });
+
+  it("validates future migration manifests at the persisted boundary", () => {
+    const validManifest = {
+      schemaVersion: LCX_ONTOLOGY_MIGRATION_MANIFEST_SCHEMA_VERSION,
+      fromOntologyVersion: "lcx_ontology_v1",
+      toOntologyVersion: "lcx_ontology_v2",
+      changes: [
+        {
+          changeKind: "change_relation_contract",
+          scope: "relation",
+          from: "requires:workflow->policy",
+          to: "requires:workflow->policy|module",
+        },
+      ],
+      affectedVocabularies: ["relation"],
+      reason: "Extend relation endpoints while preserving existing consumers.",
+      compatibility: "dual_read_then_cutover",
+      rollback: "available",
+      requiredProofs: [
+        "ontology_audit",
+        "change_impact_plan",
+        "focused_regression",
+        "head_tail_consistency",
+        "flow_graph",
+        "mind_model",
+        "migration_manifest",
+      ],
+    };
+    expect(validateLcxOntologyMigrationManifest(validManifest)).toEqual([]);
+    expect(
+      validateLcxOntologyMigrationManifest({
+        ...validManifest,
+        requiredProofs: ["ontology_audit"],
+      }),
+    ).toContain(
+      "ontology migration manifest is missing proof head_tail_consistency for change_relation_contract",
+    );
+    expect(
+      validateLcxOntologyMigrationManifest({
+        ...validManifest,
+        changes: [
+          {
+            changeKind: "add_canonical_value",
+            scope: "module",
+            from: "old",
+            to: "new",
+          },
+        ],
+      }),
+    ).toContain(
+      "ontology migration cannot contain non-breaking or forbidden change: add_canonical_value",
+    );
+    expect(
+      validateLcxOntologyMigrationManifest({
+        ...validManifest,
+        affectedVocabularies: ["module"],
+      }),
+    ).toContain("ontology migration change 0 scope is not listed in affectedVocabularies");
+  });
+
   it("does not promote transport or parser outcomes into task meaning", () => {
     expect(canonicalizeLcxOntologyValue("taskFamily", "unknown")).toBeUndefined();
     expect(canonicalizeLcxOntologyValue("taskFamily", "partial_json_object")).toBeUndefined();
@@ -195,6 +349,13 @@ describe("LCX ontology registry", () => {
     expect(audit.taskFamilySources.every((source) => source.ok)).toBe(true);
     expect(audit.taskFamilySources.flatMap((source) => source.unknown)).toEqual([]);
     expect(audit.canonicalSource).toBe("src/shared/lcx-ontology.ts");
+    expect(audit.evolutionContract).toEqual(
+      expect.objectContaining({
+        contractVersion: "lcx_ontology_evolution_v1",
+        registryVersion: "lcx_ontology_v1",
+        migrationManifestSchemaVersion: "lcx_ontology_migration_v1",
+      }),
+    );
     expect(audit.relationContracts.count).toBe(15);
     expect(audit.taskFamilySources.flatMap((source) => source.nonCanonicalTaskFamilies)).toEqual(
       expect.arrayContaining(["unknown", "partial_json_object"]),

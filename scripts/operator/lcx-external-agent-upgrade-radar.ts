@@ -544,8 +544,14 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     sourceUrls: [
       "https://docs.langchain.com/oss/python/langchain/multi-agent",
       "https://openai.github.io/openai-agents-python/handoffs/",
+      "https://github.com/openai/openai-agents-python",
+      "https://github.com/openai/openai-agents-python/releases",
+      "https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/multi_agents_spec.rs",
       "https://docs.crewai.com/introduction",
       "https://learn.microsoft.com/agent-framework/overview/agent-framework-overview",
+      "https://github.com/anthropics/claude-agent-sdk-python",
+      "https://github.com/anthropics/claude-agent-sdk-demos/tree/main/research-agent",
+      "https://github.com/anthropics/skills/blob/main/skills/claude-api/shared/managed-agents-multiagent.md",
     ],
     sourceKind: "docs_product_and_paper",
     claimedCapability:
@@ -566,23 +572,32 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
     distilledPattern:
       "use specialist roles and handoffs only as workflow structure while keeping volatile truth in one owner per state family",
     firstLocalProbe:
-      "classify one LCX workflow into supervisor, handoff, worker, owner-truth, and terminal-decision nodes without changing runtime",
+      "run lcx-multi-agent-pattern-shadow in replay mode on the fixed NVDA loss case, then compare manager, handoff, and parallel-worker topology before any explicit live executor",
     requiredReceipts: [
       "lcx-flow-graph",
       "lcx-commercial-answer-pipeline",
       "lcx-problem-cluster-radar",
+      "lcx-multi-agent-pattern-shadow",
+      "lcx-multi-agent-pattern-shadow-latest",
       "skill_pattern_distillation",
     ],
     requiredFilters: [
       "single_owner_required",
       "terminal_decision_required",
       "bounded_answer_review",
+      "same_case_required",
+      "explicit_cost_basis_required",
+      "shadow_tool_permission_audit_required",
+      "shadow_recovery_receipt_required",
+      "wide_trial_not_production",
       "no_provider_config_change",
       "no_external_channel_sender_change",
+      "no_shadow_external_side_effects",
     ],
     riskBoundaries: [
       "no_parallel_agent_framework",
       "no_hidden_tool_authority",
+      "no_shadow_external_side_effects",
       "no_provider_config_change",
       "no_external_channel_sender_change",
       "protected_memory_guard",

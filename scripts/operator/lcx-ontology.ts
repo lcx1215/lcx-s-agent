@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   LCX_ONTOLOGY_ADAPTER_IMPLEMENTATION_IDS,
+  LCX_ONTOLOGY_EVOLUTION_CONTRACT,
   LCX_ONTOLOGY_FORBIDDEN_CANONICAL_TOKENS,
   LCX_ONTOLOGY_LEGACY_COMPATIBILITY_IDS,
   LCX_ONTOLOGY_REGISTRY_POLICY,
@@ -43,12 +44,17 @@ const INTEGRATION_SURFACES = [
       "non-canonical task-family outcomes",
       "versioned explicit migration",
       "parallel registries are forbidden",
+      "ontology evolution contract",
+      "vocabulary groups",
+      "additive canonical values",
+      "migration manifest",
     ],
   },
   {
     path: "package.json",
     terms: [
       "lcx:ontology",
+      "lcx:multi-agent:shadow",
       "lcx:projection-reader-audit",
       LCX_ONTOLOGY_REGISTRY_POLICY.auditEntrypoint,
     ],
@@ -119,6 +125,28 @@ const INTEGRATION_SURFACES = [
     ],
   },
   {
+    path: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+    terms: [
+      "EXECUTOR_SCHEMA_VERSION",
+      "RECEIPT_SCHEMA_VERSION",
+      "METRICS_SCHEMA_VERSION",
+      "lcx_multi_agent_shadow_executor_v1",
+      "local_multi_agent_pattern_shadow_only",
+      "missingEvidenceIsUnknown",
+      "providerConfigTouched",
+      "protectedMemoryTouched",
+    ],
+  },
+  {
+    path: "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
+    terms: [
+      "multi_agent_pattern_intake_20260901",
+      "architecture pattern intake only",
+      "replay before live",
+      "lcx_ontology_v1",
+    ],
+  },
+  {
     path: "src/shared/global-evidence-projection.ts",
     terms: ["LCX_ONTOLOGY_SURFACE_IDS", "LCX_ONTOLOGY_CAPABILITY_ROLES", "isLcxOntologyValue"],
   },
@@ -129,6 +157,9 @@ const INTEGRATION_SURFACES = [
       "LcxOntologySurfaceId",
       "LcxOntologyCapabilityRole",
       "canonical_ontology_registry",
+      "ontology evolution contract",
+      "LCX_ONTOLOGY_EVOLUTION_CONTRACT",
+      "validateLcxOntologyMigrationManifest",
     ],
   },
   {
@@ -320,6 +351,7 @@ async function buildOntologyAudit() {
     ontologyVersion: LCX_ONTOLOGY_REGISTRY.version,
     canonicalSource: LCX_ONTOLOGY_REGISTRY_POLICY.canonicalSource,
     registryPolicy: LCX_ONTOLOGY_REGISTRY_POLICY,
+    evolutionContract: LCX_ONTOLOGY_EVOLUTION_CONTRACT,
     relationContracts: {
       count: LCX_ONTOLOGY_REGISTRY.relationContracts.length,
       relations: LCX_ONTOLOGY_REGISTRY.relationContracts.map((contract) => contract.relation),

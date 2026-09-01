@@ -22,6 +22,7 @@ import {
   LOCAL_FAILURE_TRACE_LATEST_PATH,
   MONOTONIC_DATA_LEDGER_JSONL_PATH,
   MONOTONIC_DATA_LEDGER_LATEST_PATH,
+  MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   OWNER_BRIEF_LATEST_JSON_PATH,
   OWNER_BRIEF_LATEST_MARKDOWN_PATH,
   OWNER_CONTROL_MAP_LATEST_JSON_PATH,
@@ -273,6 +274,22 @@ type HandoffReceipt = {
   protectedMemoryTouched: boolean;
 };
 
+type MultiAgentPatternShadowGovernance = {
+  status: "fresh" | "stale" | "missing" | "blocked";
+  latestPath: string;
+  checkedAt?: string;
+  experimentId?: string;
+  mode?: string;
+  trialDecision?: string;
+  normalPassRate?: number | null;
+  p95CriticalPathLatencyMs?: number | null;
+  usageBasis?: string;
+  escapedPermissionViolations?: number;
+  externalSideEffects?: number;
+  recoveryPassByPattern?: unknown;
+  reason: string;
+};
+
 function usage(): never {
   throw new Error(
     [
@@ -311,6 +328,74 @@ function arrayValue(value: unknown): unknown[] {
 
 function stringArray(value: unknown): string[] {
   return arrayValue(value).filter((item): item is string => typeof item === "string");
+}
+
+async function readMultiAgentPatternShadowGovernance(): Promise<MultiAgentPatternShadowGovernance> {
+  try {
+    const source = await fs.readFile(MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH, "utf8");
+    const payload = JSON.parse(source) as Record<string, unknown>;
+    const summary = recordValue(payload.summary);
+    if (
+      payload.receiptSchemaVersion !== "lcx_multi_agent_pattern_shadow_v1" ||
+      payload.boundary !== "local_multi_agent_pattern_shadow_only" ||
+      !summary
+    ) {
+      return {
+        status: "missing",
+        latestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+        reason: "shadow latest summary has an incompatible receipt or missing summary",
+      };
+    }
+    const checkedAt = typeof payload.completedAt === "string" ? payload.completedAt : undefined;
+    const parsedCheckedAt = checkedAt ? Date.parse(checkedAt) : Number.NaN;
+    const ageMs = Number.isFinite(parsedCheckedAt)
+      ? Date.now() - parsedCheckedAt
+      : Number.POSITIVE_INFINITY;
+    const trialDecision =
+      typeof summary?.trialDecision === "string" ? summary.trialDecision : undefined;
+    const blocked =
+      trialDecision === "discard" ||
+      (typeof summary?.blockedRuns === "number" &&
+        summary.blockedRuns > 0 &&
+        summary.rootRuns === 0);
+    return {
+      status:
+        blocked || payload.status === "blocked"
+          ? "blocked"
+          : ageMs > 24 * 60 * 60 * 1000
+            ? "stale"
+            : "fresh",
+      latestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+      checkedAt,
+      experimentId: typeof payload.experimentId === "string" ? payload.experimentId : undefined,
+      mode: typeof payload.mode === "string" ? payload.mode : undefined,
+      trialDecision,
+      normalPassRate: typeof summary?.normalPassRate === "number" ? summary.normalPassRate : null,
+      p95CriticalPathLatencyMs:
+        typeof summary?.p95CriticalPathLatencyMs === "number"
+          ? summary.p95CriticalPathLatencyMs
+          : null,
+      usageBasis: typeof summary?.usageBasis === "string" ? summary.usageBasis : undefined,
+      escapedPermissionViolations:
+        typeof summary?.escapedPermissionViolations === "number"
+          ? summary.escapedPermissionViolations
+          : undefined,
+      externalSideEffects:
+        typeof summary?.externalSideEffects === "number" ? summary.externalSideEffects : undefined,
+      recoveryPassByPattern: summary?.recoveryPassByPattern,
+      reason: blocked
+        ? "shadow latest summary is blocked or discarded"
+        : ageMs > 24 * 60 * 60 * 1000
+          ? "shadow latest summary is older than 24 hours"
+          : "shadow latest summary is fresh",
+    };
+  } catch {
+    return {
+      status: "missing",
+      latestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
+      reason: "shadow latest summary is missing or not valid JSON",
+    };
+  }
 }
 
 function decisionIds(value: unknown): string[] {
@@ -1159,6 +1244,15 @@ function buildContextRecoveryHandoff({
     `- nextAction: ${inlineValue(projectionReaderAuditCompact?.nextAction)}`,
     "- boundary: local_projection_reader_audit_only; inventory does not grant sender or fact authority",
     "",
+    "## Multi-agent Pattern Shadow",
+    `- status: ${inlineValue(digestMaterial.multiAgentPatternShadowStatus)}`,
+    `- decision: ${inlineValue(digestMaterial.multiAgentPatternShadowDecision)}`,
+    `- normalPassRate: ${inlineValue(digestMaterial.multiAgentPatternShadowNormalPassRate)}`,
+    `- p95CriticalPathLatencyMs: ${inlineValue(digestMaterial.multiAgentPatternShadowP95CriticalPathLatencyMs)}`,
+    `- usageBasis: ${inlineValue(digestMaterial.multiAgentPatternShadowUsageBasis)}`,
+    `- reason: ${inlineValue(digestMaterial.multiAgentPatternShadowReason)}`,
+    "- boundary: local_multi_agent_pattern_shadow_only; governance reads latest summary and never triggers live shadow",
+    "",
     "## External Channel Status",
     `- statusModel: ${inlineValue(externalChannelStatusCompact?.statusModel)}`,
     `- externalChannelBound: ${inlineValue(externalChannelStatusCompact?.externalChannelBound)}`,
@@ -1245,6 +1339,7 @@ const globalEvidenceProjectionReader = readGlobalEvidenceProjectionForAdapter(
   { adapterId: "governance-autopilot", sourceOwner: "mindModel" },
 );
 const globalEvidenceProjection: GlobalEvidenceProjectionRead = globalEvidenceProjectionReader.read;
+const multiAgentPatternShadow = await readMultiAgentPatternShadowGovernance();
 
 const receipt = {
   ok: requiredParseFailures.length === 0,
@@ -1265,6 +1360,7 @@ const receipt = {
   ownerBriefLatestMarkdownPath: OWNER_BRIEF_LATEST_MARKDOWN_PATH,
   ownerControlMapLatestJsonPath: OWNER_CONTROL_MAP_LATEST_JSON_PATH,
   ownerControlMapLatestMarkdownPath: OWNER_CONTROL_MAP_LATEST_MARKDOWN_PATH,
+  multiAgentPatternShadowLatestPath: MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   handoffLatestPath: CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
   globalEvidenceProjection,
   globalEvidenceProjectionReader: {
@@ -1320,6 +1416,8 @@ const receipt = {
     ownerControlMapWriteEnabled: true,
     noOverlappingTrainingStarted: true,
     noRepoMutationRequired: true,
+    multiAgentPatternShadowReadOnly: true,
+    multiAgentPatternShadowLiveNotTriggered: true,
   },
   summary: {
     parsedOwners: owners.filter((owner) => owner.parsed).length,
@@ -1388,8 +1486,18 @@ const receipt = {
       ?.fastestSafeNextAction,
     activeNonIdleProgress: recordValue(byOwner.trainingPlan?.compact.evolutionAcceleration)
       ?.activeNonIdleProgress,
+    multiAgentPatternShadowStatus: multiAgentPatternShadow.status,
+    multiAgentPatternShadowDecision: multiAgentPatternShadow.trialDecision,
+    multiAgentPatternShadowNormalPassRate: multiAgentPatternShadow.normalPassRate,
+    multiAgentPatternShadowP95CriticalPathLatencyMs:
+      multiAgentPatternShadow.p95CriticalPathLatencyMs,
+    multiAgentPatternShadowUsageBasis: multiAgentPatternShadow.usageBasis,
+    multiAgentPatternShadowReason: multiAgentPatternShadow.reason,
   },
-  owners: Object.fromEntries(owners.map((owner) => [owner.id, owner.compact])),
+  owners: {
+    ...Object.fromEntries(owners.map((owner) => [owner.id, owner.compact])),
+    multiAgentPatternShadow,
+  },
   notTouched: [
     "external_channel_sender",
     "provider_config",
@@ -1505,6 +1613,12 @@ const digestMaterial = {
   flowGraphFailed: recordValue(flowGraphCompact?.summary)?.failed,
   headTailFailed: recordValue(headTailCompact?.summary)?.failed,
   contextRecoveryOk: contextRecoveryCompact?.compressedContextRecovered,
+  multiAgentPatternShadowStatus: multiAgentPatternShadow.status,
+  multiAgentPatternShadowDecision: multiAgentPatternShadow.trialDecision,
+  multiAgentPatternShadowNormalPassRate: multiAgentPatternShadow.normalPassRate,
+  multiAgentPatternShadowP95CriticalPathLatencyMs: multiAgentPatternShadow.p95CriticalPathLatencyMs,
+  multiAgentPatternShadowUsageBasis: multiAgentPatternShadow.usageBasis,
+  multiAgentPatternShadowReason: multiAgentPatternShadow.reason,
   liveTouched: receipt.liveTouched,
   providerConfigTouched: receipt.providerConfigTouched,
   protectedMemoryTouched: receipt.protectedMemoryTouched,
@@ -1551,6 +1665,7 @@ const localFailureTrace = buildLocalFailureTraceReceipt({
     MONOTONIC_DATA_LEDGER_LATEST_PATH,
     MONOTONIC_DATA_LEDGER_JSONL_PATH,
     CONTEXT_RECOVERY_HANDOFF_LATEST_PATH,
+    MULTI_AGENT_PATTERN_SHADOW_LATEST_PATH,
   ],
   writtenArtifacts: [
     GOVERNANCE_AUTOPILOT_LATEST_PATH,

@@ -74,6 +74,7 @@ const HEAD_SURFACES = [
   "AGENTS.md",
   "README.md",
   "ops/local-brain/README.md",
+  "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
   "src/agents/system-prompt.ts",
 ] as const;
 
@@ -98,6 +99,8 @@ const WORKFLOW_SURFACES = [
   "scripts/operator/lcx-commercial-answer-pipeline.ts",
   "scripts/operator/lcx-self-repair-hands.ts",
   "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+  "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+  "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
   "scripts/operator/lcx-learning-sedimentation-bridge.ts",
   "scripts/operator/lcx-learning-sedimentation-audit.ts",
   "scripts/operator/lcx-learning-sedimentation-map.ts",
@@ -144,6 +147,7 @@ const PROOF_SURFACES = [
   "test/lcx-self-repair-hands.test.ts",
   "extensions/feishu/src/lark-language-handoff-receipts.test.ts",
   "test/lcx-external-agent-upgrade-radar.test.ts",
+  "test/lcx-multi-agent-pattern-shadow.test.ts",
   "test/lcx-agent-exam.test.ts",
   "test/local-brain-training-plan.test.ts",
   "test/local-brain-distill-eval.test.ts",
@@ -165,12 +169,14 @@ const BOUNDARY_SURFACES = [
   "AGENTS.md",
   "README.md",
   "ops/local-brain/README.md",
+  "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
   "src/agents/system-prompt.ts",
   "src/shared/lcx-ontology.ts",
   "src/shared/global-evidence-projection-read.ts",
   "scripts/operator/lcx-ontology.ts",
   "scripts/operator/lcx-external-channel-compat.ts",
   "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+  "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
   "scripts/operator/lcx-flow-graph.ts",
   "scripts/operator/lcx-governance-autopilot.ts",
   "scripts/operator/lcx-farm-web-server.ts",
@@ -493,22 +499,32 @@ const MIND_MODEL_LANES: MindModelLane[] = [
       "single semantic registry",
       "must not introduce a parallel vocabulary",
       "adapter implementation labels",
+      "ontology evolution contract",
+      "vocabulary groups",
+      "additive canonical values",
     ],
     workflowTerms: [
       "lcx-ontology",
       "LCX_ONTOLOGY_REGISTRY",
       "validateLcxOntologyRegistry",
       "LCX_ONTOLOGY_ADAPTER_IMPLEMENTATION_IDS",
+      "LCX_ONTOLOGY_EVOLUTION_CONTRACT",
+      "LCX_ONTOLOGY_EVOLUTION_RULES",
+      "validateLcxOntologyMigrationManifest",
     ],
     proofTerms: [
       "test/lcx-ontology.test.ts",
       "local_ontology_registry_only",
       "integrationSurfaces",
       "identifierClasses",
+      "migration_manifest",
+      "evolutionContract",
     ],
     boundaryTerms: [
       "local_ontology_registry_only",
       "forbiddenCanonicalTokens",
+      "versioned explicit migration",
+      "parallel registries are forbidden",
       "liveTouched",
       "providerConfigTouched",
       "protectedMemoryTouched",
@@ -672,6 +688,43 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     ],
     nextAction:
       "Run lcx-external-agent-upgrade-radar before absorbing external agent projects; distill only into existing owner lanes.",
+  },
+  {
+    id: "multi_agent_pattern_shadow",
+    masterLane: "agent_workflow_memory",
+    objective:
+      "Compare manager, handoff, and parallel worker as bounded architecture patterns with one case contract, explicit metrics, permission proof, and resumable receipts.",
+    headTerms: [
+      "multi-agent pattern intake",
+      "replay before live",
+      "architecture pattern intake only",
+      "not runtime authority",
+    ],
+    workflowTerms: [
+      "lcx-multi-agent-pattern-shadow",
+      "multi_agent_pattern_shadow_evaluation",
+      "shadow_replay",
+      "shadow_live",
+      "pattern_comparison",
+      "interruption_recovery_probe",
+      "same-case",
+    ],
+    proofTerms: [
+      "lcx_multi_agent_shadow_executor_v1",
+      "lcx_multi_agent_pattern_shadow_v1",
+      "lcx_multi_agent_shadow_metrics_v1",
+      "lcx-multi-agent-pattern-shadow-latest",
+      "test/lcx-multi-agent-pattern-shadow.test.ts",
+    ],
+    boundaryTerms: [
+      "local_multi_agent_pattern_shadow_only",
+      "no external side effect",
+      "providerConfigTouched",
+      "protectedMemoryTouched",
+      "wide-trial",
+    ],
+    nextAction:
+      "Run replay first; only supply an isolated JSON executor for live, keep missing evidence unknown, and allow a pass to another shadow round only.",
   },
 ];
 
@@ -1014,6 +1067,58 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Use lcx-problem-cluster-radar when owner commands are green structurally but current runtime or learning facts still expose P2/P3 clusters.",
+  },
+  {
+    id: "multi_agent_shadow_is_not_runtime_authority",
+    category: "boundary",
+    objective:
+      "Manager, handoff, and parallel worker comparisons are isolated architecture evidence, not runtime, provider, training, memory, or external-channel authority.",
+    termsBySurface: {
+      head: ["architecture pattern intake only", "replay before live", "not runtime authority"],
+      workflow: [
+        "multi_agent_pattern_shadow_evaluation_waterflow",
+        "shadow_replay",
+        "shadow_live",
+        "wide_trial_not_production",
+      ],
+      proof: [
+        "lcx_multi_agent_shadow_executor_v1",
+        "lcx_multi_agent_pattern_shadow_v1",
+        "lcx-multi-agent-pattern-shadow-latest",
+        "interruption recovery",
+      ],
+      boundary: [
+        "local_multi_agent_pattern_shadow_only",
+        "no external side effect",
+        "providerConfigTouched",
+        "protectedMemoryTouched",
+      ],
+    },
+    nextAction:
+      "Keep shadow results in the local receipt and comparison path; do not promote a topology from a wide-trial pass.",
+  },
+  {
+    id: "multi_agent_receipts_are_replayable_and_versioned",
+    category: "testing",
+    objective:
+      "Shadow receipts must identify the executor protocol, metrics protocol, idempotency key, evidence gaps, and recovery outcome so future agents can resume without guessing.",
+    termsBySurface: {
+      workflow: [
+        "experimentId",
+        "idempotencyKey",
+        "missingEvidenceIsUnknown",
+        "unknownFieldsIgnored",
+      ],
+      proof: [
+        "lcx_multi_agent_shadow_metrics_v1",
+        "duplicateFinalOutputs",
+        "lostWork",
+        "test/lcx-multi-agent-pattern-shadow.test.ts",
+      ],
+      boundary: ["canonical shadow lock", "append-only", "no full provider transcript"],
+    },
+    nextAction:
+      "Before repeating a run, check the idempotency key and prior receipt; require an explicit single retry reason for incomplete runs.",
   },
 ];
 

@@ -30,6 +30,7 @@ const HEAD_SURFACE_FILES = [
   "AGENTS.md",
   "README.md",
   "ops/local-brain/README.md",
+  "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
   "src/agents/system-prompt.ts",
 ] as const;
 
@@ -48,6 +49,7 @@ const TAIL_SURFACE_FILES = [
   "src/shared/global-evidence-projection-read.ts",
   "scripts/operator/lcx-farm-web-server.ts",
   "scripts/operator/lcx-flow-graph.ts",
+  "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
   "scripts/operator/lcx-context-recovery-exam.ts",
   "scripts/operator/lcx-self-repair-hands.ts",
   "scripts/operator/lcx-ts-python-boundary.ts",
@@ -224,6 +226,22 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
       "keep_python_engine",
       "wrap_with_ts_owner",
       "migrate_to_ts_control",
+    ],
+  },
+  {
+    id: "multi_agent_pattern_shadow_boundary",
+    headTerms: [
+      "multi-agent pattern shadow",
+      "replay before live",
+      "architecture pattern intake only",
+    ],
+    tailTerms: [
+      "lcx_multi_agent_shadow_executor_v1",
+      "lcx_multi_agent_pattern_shadow_v1",
+      "lcx_multi_agent_shadow_metrics_v1",
+      "local_multi_agent_pattern_shadow_only",
+      "missingEvidenceIsUnknown",
+      "interruptionRecovery",
     ],
   },
 ];

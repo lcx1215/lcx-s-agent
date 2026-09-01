@@ -987,6 +987,47 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "multi_agent_pattern_shadow_evaluation_waterflow",
+    family: "multi_agent_pattern_shadow_evaluation",
+    objective:
+      "The same failure case must run through replay, explicitly isolated live shadow, comparison, and interruption recovery before any topology is considered for another shadow round.",
+    start: "multi_agent_pattern_intake",
+    end: "control_room_summary",
+    requiredNodes: [
+      "multi_agent_pattern_intake",
+      "shadow_replay",
+      "shadow_live",
+      "pattern_comparison",
+      "interruption_recovery_probe",
+      "review_panel",
+      "control_room_summary",
+    ],
+    requiredFilters: [
+      "same_case_required",
+      "same_model_policy_required",
+      "replay_before_live_required",
+      "explicit_cost_basis_required",
+      "shadow_tool_permission_audit_required",
+      "no_shadow_external_side_effects",
+      "shadow_recovery_receipt_required",
+      "wide_trial_not_production",
+    ],
+    edges: [
+      ["multi_agent_pattern_intake", "shadow_replay"],
+      ["shadow_replay", "shadow_live"],
+      ["shadow_live", "pattern_comparison"],
+      ["pattern_comparison", "interruption_recovery_probe"],
+      ["interruption_recovery_probe", "review_panel"],
+      ["review_panel", "control_room_summary"],
+    ],
+    receipts: [
+      "lcx-multi-agent-pattern-shadow",
+      "lcx-multi-agent-pattern-shadow-latest",
+      "lcx-external-agent-upgrade-radar",
+      "commercial_answer_pipeline",
+    ],
+  },
+  {
     id: "prediction_market_research_only_waterflow",
     family: "prediction_market_research_and_strategy_audit",
     objective:
@@ -1279,6 +1320,30 @@ const CONSOLIDATION_CLUSTERS: ConsolidationCluster[] = [
       "license",
     ],
     mergeFilters: ["license_scope_required", "untrusted_source_isolation"],
+  },
+  {
+    id: "multi_agent_pattern_shadow_cluster",
+    philosophy:
+      "manager, handoff, and parallel worker are comparable workflow topologies that need one case contract, one permission boundary, and one recovery receipt",
+    ownerScenario: "multi_agent_pattern_shadow_evaluation_waterflow",
+    ownerNode: "pattern_comparison",
+    sameClassTerms: [
+      "multi-agent pattern intake",
+      "lcx-multi-agent-pattern-shadow",
+      "manager",
+      "handoff",
+      "parallel_worker",
+      "same_case_required",
+      "interruption recovery",
+      "wide_trial_not_production",
+    ],
+    mergeFilters: [
+      "same_case_required",
+      "explicit_cost_basis_required",
+      "shadow_tool_permission_audit_required",
+      "shadow_recovery_receipt_required",
+      "wide_trial_not_production",
+    ],
   },
   {
     id: "prediction_market_research_cluster",
@@ -1580,6 +1645,16 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     ],
   },
   {
+    id: "multi_agent_pattern_shadow_entrypoints",
+    ownerCluster: "multi_agent_pattern_shadow_cluster",
+    ownerPath: "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+    watchedPathTerms: ["multi-agent-pattern-shadow", "multi_agent_pattern", "pattern-shadow"],
+    allowedPaths: [
+      "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+      "test/lcx-multi-agent-pattern-shadow.test.ts",
+    ],
+  },
+  {
     id: "prediction_market_research_entrypoints",
     ownerCluster: "prediction_market_research_cluster",
     ownerPath: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
@@ -1652,6 +1727,8 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
   similar_engineering_consolidation_waterflow: "scripts/operator/lcx-change-impact-plan.ts",
   external_agent_skill_distillation_waterflow:
     "scripts/operator/lcx-external-agent-upgrade-radar.ts",
+  multi_agent_pattern_shadow_evaluation_waterflow:
+    "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
   prediction_market_research_only_waterflow: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   automation_repair_lock_waterflow: "scripts/operator/lcx-automation-repair-lock.ts",
 };
@@ -1693,6 +1770,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/operator/lcx-change-impact-plan.ts --json",
   external_agent_skill_distillation_waterflow:
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
+  multi_agent_pattern_shadow_evaluation_waterflow:
+    "node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay --pattern all --case single_stock_loss_recovery_risk_triage --json",
   prediction_market_research_only_waterflow:
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
   automation_repair_lock_waterflow:
@@ -1720,6 +1799,8 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/operator/lcx-learning-sedimentation-map.ts",
     "scripts/operator/lcx-module-learning-absorption-gate.ts",
     "scripts/operator/lcx-system-memory-sedimentation-gate.ts",
+    "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+    "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
     "scripts/operator/finance-data-gateway-smoke.ts",
     "scripts/operator/local-brain-training-plan.ts",
     "scripts/operator/local-brain-distill-eval.ts",
@@ -1757,6 +1838,7 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "test/local-brain-contracts.test.ts",
     "test/lcx-external-channel-compat-status.test.ts",
     "test/lcx-external-channel-binding.test.ts",
+    "test/lcx-multi-agent-pattern-shadow.test.ts",
   ],
   boundary: [
     "AGENTS.md",
@@ -1767,6 +1849,8 @@ const SURFACE_FILES: Record<SurfaceGroup, readonly string[]> = {
     "scripts/operator/lcx-skillopt-lite.ts",
     "scripts/operator/lcx-self-repair-hands.ts",
     "scripts/operator/lcx-external-channel-binding.ts",
+    "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+    "ops/external-learning/2026-09-01-multi-agent-pattern-intake.md",
     "scripts/operator/local-brain-training-plan.ts",
     "src/agents/tools/module-learning-pipeline-review-tool.ts",
     "src/auto-reply/reply/skillopt-autocue.ts",

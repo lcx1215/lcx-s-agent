@@ -93,6 +93,38 @@ describe("lcx-change-impact-plan", () => {
     );
   });
 
+  it("routes the multi-agent pattern shadow owner to bounded architecture checks", async () => {
+    const payload = await runPlanArgs([
+      "--files",
+      "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+      "test/lcx-multi-agent-pattern-shadow.test.ts",
+    ]);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.unmatchedFiles).toEqual([]);
+    expect(payload.affectedLanes).toEqual(["global_doctrine_and_runbook", "test_surface"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "architecture_supervision_stack",
+          lane: "global_doctrine_and_runbook",
+          matchedFiles: [
+            "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+            "test/lcx-multi-agent-pattern-shadow.test.ts",
+          ],
+          commands: expect.arrayContaining([
+            expect.stringContaining("lcx-multi-agent-pattern-shadow.ts --mode replay"),
+          ]),
+        }),
+        expect.objectContaining({
+          id: "test_file_changed",
+          lane: "test_surface",
+          matchedFiles: ["test/lcx-multi-agent-pattern-shadow.test.ts"],
+        }),
+      ]),
+    );
+  });
+
   it("fails the stray gate when a changed file has no owner lane", async () => {
     const payload = await runPlan("tmp/unknown-stray-output.txt");
 

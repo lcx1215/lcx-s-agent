@@ -36,6 +36,16 @@ without a registered contract is invalid. `unknown` and
 parser reporting only, never semantic task meaning.
 The registry is extended in place by default. A physical move requires a
 versioned explicit migration, and parallel registries are forbidden.
+The ontology evolution contract also assigns every vocabulary to one of five
+vocabulary groups and distinguishes additive canonical values from breaking
+semantic changes. Additive canonical values and compatibility aliases stay in
+place after ontology audit, impact planning, and focused regression; renames,
+removals, relation/state changes, classification changes, and source moves
+require a version bump, a migration manifest, and the relevant head-tail,
+flow-graph, and mind-model proofs.
+The migration manifest schema is `lcx_ontology_migration_v1`; it records the
+exact change kind, scope, before/after identifiers, affected vocabularies,
+compatibility mode, rollback posture, and required proofs.
 
 Lark/Feishu-specific identifiers in the registry are classified as adapter
 implementation labels, not as core facts; old live/dev-shaped labels are
@@ -50,6 +60,41 @@ The owner checks registry uniqueness, alias targets, contract task-family
 coverage, and integration anchors. It reports local_ontology_registry_only and
 never changes providers, training, protected memory, or external-channel
 sender state.
+
+## Multi-agent Pattern Shadow
+
+The Manager, Handoff, and Parallel Worker vocabulary is an architecture pattern
+intake only, not runtime authority. The canonical comparison is replay before
+live, with one case, one answer contract, one tool allowlist, explicit cost
+evidence, permission audit, and interruption recovery. A wide-trial pass only
+permits another shadow round; it is not a production promotion.
+
+Run the deterministic replay owner:
+
+```bash
+node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts \
+  --mode replay \
+  --pattern all \
+  --case single_stock_loss_recovery_risk_triage \
+  --json
+```
+
+The live phase requires an explicitly supplied isolated JSON executor and is
+blocked when training/eval is active, when another canonical shadow lock is
+held, or when the executor protocol is incompatible. Its append-only receipts
+and latest summary stay under the canonical `~/.openclaw/workspace` paths:
+
+```text
+state/lcx-multi-agent-pattern-shadow-latest.json
+logs/lcx-multi-agent-pattern-shadow.jsonl
+experiments/multi-agent-pattern-shadow/<experimentId>/
+```
+
+Missing usage, events, side effects, or recovery capability is recorded as
+unknown/unverified, never as zero. No full provider transcript is persisted;
+only normalized candidate answers, hashes, metrics, and locating artifacts are
+retained. The owner does not call Lark, alter provider configuration, start
+training, write protected memory, or execute trades.
 
 Run the heavier checkpoint after the focused checks, or immediately when the
 planner reports elevated risk:

@@ -214,6 +214,8 @@ describe("LCX governance autopilot", () => {
         selfRepairHandsAutoWriteTriggered: expect.any(Boolean),
         noOverlappingTrainingStarted: true,
         noRepoMutationRequired: true,
+        multiAgentPatternShadowReadOnly: true,
+        multiAgentPatternShadowLiveNotTriggered: true,
       }),
     );
     expect(payload.triggerPolicy.selfRepairHandsOwnerWritePolicy.whenAutoWrite).toEqual(
@@ -271,6 +273,16 @@ describe("LCX governance autopilot", () => {
     });
     expect(payload.owners.flowGraph?.summary).toBeTruthy();
     expect(payload.owners.headTail?.summary).toBeTruthy();
+    expect(payload.owners.multiAgentPatternShadow).toEqual(
+      expect.objectContaining({
+        status: expect.stringMatching(/^(fresh|stale|missing|blocked)$/),
+        latestPath:
+          "/Users/liuchengxu/.openclaw/workspace/state/lcx-multi-agent-pattern-shadow-latest.json",
+      }),
+    );
+    expect(payload.summary.multiAgentPatternShadowStatus).toEqual(
+      expect.stringMatching(/^(fresh|stale|missing|blocked)$/),
+    );
     expect(Array.isArray(payload.owners.trainingPlan?.decisionIds)).toBe(true);
     expect(typeof payload.owners.trainingPlan?.evolutionCooldownActive).toBe("boolean");
     expect(payload.owners.trainingPlan?.activeGuardEvolutionCooldown).toBeTruthy();
@@ -321,6 +333,9 @@ describe("LCX governance autopilot", () => {
     expect(payload.owners.contextRecovery?.compressedContextRecovered).toEqual(expect.any(Boolean));
     expect(payload.latestStatePath).toBe(
       "/Users/liuchengxu/.openclaw/workspace/state/lcx-governance-autopilot-latest.json",
+    );
+    expect(payload.multiAgentPatternShadowLatestPath).toBe(
+      "/Users/liuchengxu/.openclaw/workspace/state/lcx-multi-agent-pattern-shadow-latest.json",
     );
     expect(payload.universeIndexLatestPath).toBe(
       "/Users/liuchengxu/.openclaw/workspace/state/lcx-universe-index-latest.json",
@@ -470,6 +485,10 @@ describe("LCX governance autopilot", () => {
     expect(digest.material?.externalUpgradeBlacktechMechanismCount).toBe(7);
     expect(digest.material?.externalUpgradeBlacktechRuntimeAuthorityGrantedCount).toBe(0);
     expect(digest.material?.externalUpgradeBlacktechAutopilotRoutedCount).toBe(7);
+    expect(digest.material?.multiAgentPatternShadowStatus).toEqual(
+      expect.stringMatching(/^(fresh|stale|missing|blocked)$/),
+    );
+    expect(digest.material?.multiAgentPatternShadowDecision).toEqual(expect.anything());
     expect(digest.liveTouched).toBe(false);
     expect(digest.providerConfigTouched).toBe(false);
     expect(digest.protectedMemoryTouched).toBe(false);
@@ -504,6 +523,9 @@ describe("LCX governance autopilot", () => {
     expect(handoff).toContain("## Provider Council Acceleration");
     expect(handoff).toContain("local_provider_council_acceleration_only");
     expect(handoff).toContain("## External Channel Status");
+    expect(handoff).toContain("## Multi-agent Pattern Shadow");
+    expect(handoff).toContain("local_multi_agent_pattern_shadow_only");
+    expect(handoff).toContain("never triggers live shadow");
     expect(handoff).toContain("local_external_channel_status_only");
     expect(handoff).toContain("liveTouched: false");
     expect(handoff).toContain("providerConfigTouched: false");
