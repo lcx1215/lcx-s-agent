@@ -1652,14 +1652,14 @@ async function activeTrainingProcesses(enabled: boolean): Promise<ActiveTraining
     }
     const pid = Number(match[1]);
     const command = match[4];
-    if (
-      pid === process.pid ||
-      !/minimax-brain-training-guard|local-brain-distill-eval|minimax-quota-brain-saturator|minimax-brain-teacher-batch|mlx_lm generate/u.test(
+    const eligibleTrainingProcess =
+      pid !== process.pid &&
+      !line.includes("--resolve-current-adapter") &&
+      /minimax-brain-training-guard|local-brain-distill-eval|minimax-quota-brain-saturator|minimax-brain-teacher-batch|mlx_lm generate/u.test(
         command,
-      ) ||
-      command.includes("--resolve-current-adapter") ||
-      /\b(?:rg|grep)\s/u.test(command)
-    ) {
+      ) &&
+      !/\b(?:rg|grep)\s/u.test(command);
+    if (!eligibleTrainingProcess) {
       return [];
     }
     return [

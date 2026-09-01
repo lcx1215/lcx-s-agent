@@ -333,7 +333,7 @@ machine.
 Cloud migration must not resurrect a dual-repository model. The forward
 cloud migration path is `local LCX core -> cloud-runtime-ready ->
 external-channel-bound -> user-visible-observed`: one LCX Agent core moves to a
-supported-region runtime, then communication adapters such as external message channel, WeChat, SMS,
+supported-region runtime, then communication adapters such as External, WeChat, SMS,
 or Slack bind to that same selected clean answer path. Cloud runtime readiness
 means the same LCX core, repo, `.openclaw` state, skills, receipts, selected
 clean adapter policy, and governance owners are available on the cloud control
