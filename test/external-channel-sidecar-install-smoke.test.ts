@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildBlockedReceipt } from "../scripts/operator/external-channel-sidecar-install-smoke.ts";
 
@@ -36,8 +38,8 @@ describe("live sidecar install smoke guard", () => {
       dryRunReceipt: {
         schemaVersion: 1,
         generatedAt: "2026-04-27T00:00:00.000Z",
-        targetRoot: "/Users/liuchengxu/Desktop/lcx-s-openclaw",
-        legacyRoot: "/Users/liuchengxu/Desktop/openclaw",
+        targetRoot: path.join(os.homedir(), "Desktop", "lcx-s-openclaw"),
+        legacyRoot: path.join(os.homedir(), "Desktop", "openclaw"),
         outputDir: "/tmp/out",
         receiptPath: "/tmp/out/dry.json",
         noLiveLaunchAgentChange: true,

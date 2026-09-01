@@ -48,7 +48,7 @@ describe("LCX live fadeout audit", () => {
     expect(payload.liveReferenceInventory.totalMatches).toBeGreaterThan(0);
     expect(payload.checks.map((check) => check.id)).toEqual(
       expect.arrayContaining([
-        "active_dev_status_semantics_retired",
+        "active_local_status_semantics_retired",
         "cloud_migration_keeps_single_local_core",
         "binding_owner_is_canonical",
         "external_channel_status_wrapper_is_canonical_readonly",

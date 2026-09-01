@@ -1,6 +1,21 @@
+import os from "node:os";
 import path from "node:path";
 
-export const LCX_USER_HOME = process.env.LCX_USER_HOME?.trim() || "/Users/liuchengxu";
+export const LCX_USER_HOME = process.env.LCX_USER_HOME?.trim() || os.homedir();
+export const DEFAULT_LEGACY_ROOT = path.join(LCX_USER_HOME, "Desktop", "openclaw");
+export const DEFAULT_LAUNCH_AGENTS_DIR = path.join(LCX_USER_HOME, "Library", "LaunchAgents");
+export const DEFAULT_OPENCLAW_LOG_DIR = path.join(LCX_USER_HOME, ".openclaw", "logs");
+export const DEFAULT_LAUNCH_AGENT_PATH = [
+  path.join(LCX_USER_HOME, ".local", "bin"),
+  path.join(LCX_USER_HOME, ".npm-global", "bin"),
+  path.join(LCX_USER_HOME, "Library", "pnpm"),
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  "/usr/sbin",
+  "/sbin",
+].join(path.delimiter);
 export const DEFAULT_WORKSPACE_DIR = path.join(LCX_USER_HOME, ".openclaw", "workspace");
 export const DEFAULT_WORKSPACE_LOG_DIR = path.join(DEFAULT_WORKSPACE_DIR, "logs");
 export const DEFAULT_GUARD_LOG_PATH = path.join(

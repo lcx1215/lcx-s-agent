@@ -38,7 +38,9 @@ type LiveReferenceInventory = {
   needsReviewSamples: LiveReferenceSample[];
 };
 
-const RETIRED_DEV_SEMANTIC_PATTERN =
+// Keep the retired-token detector itself explicit: these legacy spellings are
+// inputs to the audit, never active LCX status vocabulary.
+const RETIRED_DEVELOPMENT_STATUS_PATTERN =
   /\bdev-ready\b|\bdev-fixed\b|\bdev-only\b|dev_[a-z]|[a-z]_dev_|dev\/external-channel|\bdev (?:proof|owner|repo|changes?)\b/giu;
 
 const CANONICAL_TERMS = [
@@ -313,13 +315,13 @@ export async function buildLcxLiveFadeoutAudit() {
 
   const checks: FeatureCheck[] = [
     {
-      id: "active_dev_status_semantics_retired",
-      ok: !RETIRED_DEV_SEMANTIC_PATTERN.test(activeOwnerText),
+      id: "active_local_status_semantics_retired",
+      ok: !RETIRED_DEVELOPMENT_STATUS_PATTERN.test(activeOwnerText),
       summary:
-        "active doctrine and owner contracts must use core/local/channel states instead of dev status semantics",
+        "active doctrine and owner contracts must use core/local/channel states instead of legacy development status semantics",
       owner: "scripts/operator/lcx-live-fadeout-audit.ts",
       evidence: {
-        retiredPattern: RETIRED_DEV_SEMANTIC_PATTERN.source,
+        retiredPattern: RETIRED_DEVELOPMENT_STATUS_PATTERN.source,
         allowedExamples: [
           "scripts/operator/",
           "pnpm dev",
@@ -328,7 +330,7 @@ export async function buildLcxLiveFadeoutAudit() {
         ],
       },
       nextAction:
-        "replace active dev status semantics with core-ready, core-verified, or local-only while preserving physical paths and historical receipts",
+        "replace active legacy development status semantics with core-ready, core-verified, or local-only while preserving physical paths and historical receipts",
     },
     checkTerms({
       id: "runtime_drift_skill_uses_unified_local_model",

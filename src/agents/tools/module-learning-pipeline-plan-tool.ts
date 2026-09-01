@@ -531,7 +531,7 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
     ],
     evidenceFamilies: ["visible_reply_evidence", "routing_receipt", "live_boundary_evidence"],
     moduleSpecificCapabilityRule:
-      "external message workflow learning must improve readable replies and routing while preserving dev-vs-live proof boundaries.",
+      "external message workflow learning must improve readable replies and routing while preserving core-vs-external-channel proof boundaries.",
     applicationValidationTask:
       "Apply the workflow rule to a fresh External-style message and prove no raw JSON/internal labels leak into the visible reply.",
     safetyBoundaries: [

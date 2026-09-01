@@ -8,9 +8,9 @@ import {
   type SidecarInstallDryRunAction,
 } from "./external-channel-sidecar-install-dry-run.ts";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
+import { DEFAULT_LEGACY_ROOT } from "./lcx-local-paths.ts";
 
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
 const SMOKE_RECEIPT_NAME = "external-channel-sidecar-install-smoke-receipt.json";
 

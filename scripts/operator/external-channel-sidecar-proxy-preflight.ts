@@ -3,11 +3,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
+import { DEFAULT_LAUNCH_AGENTS_DIR, DEFAULT_LEGACY_ROOT } from "./lcx-local-paths.ts";
 
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
-const EXTERNAL_PROXY_PLIST =
-  "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.external.proxy.plist";
+const EXTERNAL_PROXY_PLIST = path.join(
+  DEFAULT_LAUNCH_AGENTS_DIR,
+  "ai.openclaw.external.proxy.plist",
+);
 const RECEIPT_NAME = "external-channel-sidecar-external-proxy-preflight-receipt.json";
 
 const REQUIRED_FILES = [

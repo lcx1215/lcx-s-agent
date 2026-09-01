@@ -2,9 +2,15 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
+import {
+  DEFAULT_LAUNCH_AGENTS_DIR,
+  DEFAULT_LAUNCH_AGENT_PATH,
+  DEFAULT_LEGACY_ROOT,
+  DEFAULT_OPENCLAW_LOG_DIR,
+  LCX_USER_HOME,
+} from "./lcx-local-paths.ts";
 
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
 
 type SidecarName = "scheduler" | "host_watchdog";
@@ -114,7 +120,7 @@ ${schedule}
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>/Users/liuchengxu</string>
+    <string>${xmlEscape(LCX_USER_HOME)}</string>
     <key>LANG</key>
     <string>en_US.UTF-8</string>
     <key>LC_ALL</key>
@@ -122,7 +128,7 @@ ${schedule}
     <key>PYTHONIOENCODING</key>
     <string>utf-8</string>
     <key>PATH</key>
-    <string>/Users/liuchengxu/.local/bin:/Users/liuchengxu/.npm-global/bin:/Users/liuchengxu/Library/pnpm:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>${xmlEscape(DEFAULT_LAUNCH_AGENT_PATH)}</string>
   </dict>
 </dict>
 </plist>
@@ -130,7 +136,7 @@ ${schedule}
 }
 
 function currentPlistPath(label: string): string {
-  return `/Users/liuchengxu/Library/LaunchAgents/${label}.plist`;
+  return path.join(DEFAULT_LAUNCH_AGENTS_DIR, `${label}.plist`);
 }
 
 function buildRollbackCommands(label: string, legacyRoot: string): string[] {
@@ -166,8 +172,8 @@ export function buildLaunchAgentPlan(params: {
         "--write-receipt",
       ],
       workingDirectory: params.targetRoot,
-      standardOutPath: "/Users/liuchengxu/.openclaw/logs/lobster_scheduler.smoke.out.log",
-      standardErrorPath: "/Users/liuchengxu/.openclaw/logs/lobster_scheduler.smoke.err.log",
+      standardOutPath: path.join(DEFAULT_OPENCLAW_LOG_DIR, "lobster_scheduler.smoke.out.log"),
+      standardErrorPath: path.join(DEFAULT_OPENCLAW_LOG_DIR, "lobster_scheduler.smoke.err.log"),
       runAtLoad: false,
       startCalendarInterval: { Hour: 2, Minute: 30 },
       safetyMode: "dry_run_write_receipt",
@@ -187,8 +193,8 @@ export function buildLaunchAgentPlan(params: {
         "--write-receipt",
       ],
       workingDirectory: params.targetRoot,
-      standardOutPath: "/Users/liuchengxu/.openclaw/logs/lobster_host_watchdog.smoke.out.log",
-      standardErrorPath: "/Users/liuchengxu/.openclaw/logs/lobster_host_watchdog.smoke.err.log",
+      standardOutPath: path.join(DEFAULT_OPENCLAW_LOG_DIR, "lobster_host_watchdog.smoke.out.log"),
+      standardErrorPath: path.join(DEFAULT_OPENCLAW_LOG_DIR, "lobster_host_watchdog.smoke.err.log"),
       runAtLoad: true,
       startInterval: 1800,
       safetyMode: "dry_run_write_receipt",

@@ -307,7 +307,7 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
     id: "external_channel_boundary_preflight",
     title: "External External Channel Boundary Preflight",
     purpose:
-      "Keep dev, eval, selected clean adapter, external-channel drift, channel restart, and real External user-visible evidence separated.",
+      "Keep local evidence, eval, selected clean adapter, external-channel drift, channel restart, and real External user-visible evidence separated.",
     requiredModules: [
       "external_message_channel_binding",
       "source_registry",
@@ -835,7 +835,7 @@ function buildInstantPreflight(params: {
     matchedSkillIds: effectiveSpecs.map((spec) => spec.id),
     bestSkillPaths: effectiveSpecs.map((spec) => params.skillPaths[spec.id]),
     promptInjection: [
-      "Before answering, apply these SkillOpt-lite SOP rules as dev context only:",
+      "Before answering, apply these SkillOpt-lite SOP rules as local context only:",
       ...effectiveSpecs.map((spec) => `- ${spec.title} (${spec.id}): ${spec.capabilityRule}`),
       "- This preflight is immediate guidance, not model-weight absorption and not user-visible-observed proof.",
     ].join("\n"),

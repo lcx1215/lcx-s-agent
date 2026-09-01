@@ -39,7 +39,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-learning-sedimentation-map.ts [--workspace DIR] [--json]",
       "",
       "Separates learning sedimentation lanes so module learning, system memory, training material, finance source learning, and language corpus boundaries are not confused.",
-      "This is read-only dev evidence and never writes memory, touches live, changes providers, or promotes adapters.",
+      "This is read-only local evidence and never writes memory, touches the external channel, changes providers, or promotes adapters.",
     ].join("\n"),
   );
 }

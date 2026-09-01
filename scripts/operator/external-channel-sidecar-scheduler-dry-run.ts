@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { DEFAULT_LAUNCH_AGENTS_DIR, DEFAULT_LEGACY_ROOT } from "./lcx-local-paths.ts";
 
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
-const DEFAULT_SCHEDULER_PLIST =
-  "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist";
+const DEFAULT_SCHEDULER_PLIST = path.join(
+  DEFAULT_LAUNCH_AGENTS_DIR,
+  "ai.openclaw.lobster.scheduler.plist",
+);
 
 const REQUIRED_SCHEDULER_FILES = [
   "daily_learning_runner.py",

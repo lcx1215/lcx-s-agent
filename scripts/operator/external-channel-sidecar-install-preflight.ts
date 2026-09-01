@@ -14,14 +14,15 @@ import {
   buildSchedulerDryRunReport,
   type SchedulerDryRunReport,
 } from "./external-channel-sidecar-scheduler-dry-run.ts";
+import { DEFAULT_LAUNCH_AGENTS_DIR, DEFAULT_LEGACY_ROOT } from "./lcx-local-paths.ts";
 
 const DEFAULT_TARGET_ROOT = DEFAULT_RUNTIME_BUNDLE_ROOT;
-const DEFAULT_LEGACY_ROOT = "/Users/liuchengxu/Desktop/openclaw";
 const DEFAULT_OUTPUT_DIR = "ops/external-channel-artifacts/launchagent-candidates";
-const SCHEDULER_PLIST =
-  "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.scheduler.plist";
-const HOST_WATCHDOG_PLIST =
-  "/Users/liuchengxu/Library/LaunchAgents/ai.openclaw.lobster.host_watchdog.plist";
+const SCHEDULER_PLIST = path.join(DEFAULT_LAUNCH_AGENTS_DIR, "ai.openclaw.lobster.scheduler.plist");
+const HOST_WATCHDOG_PLIST = path.join(
+  DEFAULT_LAUNCH_AGENTS_DIR,
+  "ai.openclaw.lobster.host_watchdog.plist",
+);
 
 type CheckStatus = "pass" | "fail";
 

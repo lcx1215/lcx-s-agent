@@ -110,10 +110,10 @@ async function main() {
     readOptionalText(path.join(repoRoot, "ops", "local-brain", "README.md")),
     readOptionalText(path.join(repoRoot, "docs", "tools", "local-brain-distillation.md")),
     readOptionalText(path.join(repoRoot, "package.json")),
-    readOptionalText(path.join(repoRoot, "scripts", "dev", "lcx-system-doctor.ts")),
+    readOptionalText(path.join(repoRoot, "scripts", "operator", "lcx-system-doctor.ts")),
     readOptionalText(path.join(repoRoot, "src", "agents", "system-prompt.ts")),
-    readOptionalText(path.join(repoRoot, "scripts", "dev", "local-brain-distill-eval.ts")),
-    readOptionalText(path.join(repoRoot, "scripts", "dev", "local-brain-plan.ts")),
+    readOptionalText(path.join(repoRoot, "scripts", "operator", "local-brain-distill-eval.ts")),
+    readOptionalText(path.join(repoRoot, "scripts", "operator", "local-brain-plan.ts")),
     readOptionalText(path.join(codexSkillsRoot, "lcx-baseline-hardening", "SKILL.md")),
     readOptionalText(path.join(codexSkillsRoot, "lcx-evolution-loop", "SKILL.md")),
     readOptionalText(path.join(codexSkillsRoot, "l5-regression-batterer", "SKILL.md")),
@@ -268,7 +268,7 @@ async function main() {
   checks.push({
     id: "no_active_l3_l4_stage_language",
     ok: l4StageMatches.length === 0,
-    summary: "active LCX doctrine and dev entrypoints should not describe the system as L3/L4",
+    summary: "active LCX doctrine and local entrypoints should not describe the system as L3/L4",
     evidence: l4StageMatches,
   });
 

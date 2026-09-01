@@ -79,6 +79,7 @@ const PATH_RULES: PathRule[] = [
       /^README\.md$/u,
       /^ops\/local-brain\/README\.md$/u,
       /^ops\/codex_handoff\.md$/u,
+      /^ops\/automation\/repair-lock-protocol\.md$/u,
       /^ops\/external-channel-acceptance-runbook\.md$/u,
       /^ops\/lobster-l4-system-map\.md$/u,
       /^docs\/tools\/finance-learning-pipeline-runbook\.md$/u,
@@ -266,7 +267,7 @@ const PATH_RULES: PathRule[] = [
       /^extensions\/external\/src\/(?:channel|monitor|protocol|send)\.ts$/u,
       /^src\/commands\/capabilities\/l5-system-eval\.ts$/u,
     ],
-    requiredChecks: ["external-regression-tests", "dev-live-boundary-check"],
+    requiredChecks: ["external-regression-tests", "core-external-channel-boundary-check"],
     commands: [
       "pnpm vitest run src/auto-reply/reply/skill-autocue.test.ts src/auto-reply/reply/skillopt-autocue.test.ts",
       "pnpm exec vitest run extensions/external/src/accounts.test.ts extensions/external/src/monitor.test.ts extensions/external/src/protocol.test.ts extensions/external/src/security.test.ts extensions/external/src/send.test.ts",

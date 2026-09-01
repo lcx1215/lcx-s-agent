@@ -203,7 +203,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "no_direct_training_start",
     ],
     liveBoundary:
-      "external channel can surface the dev radar result after migration, but no external-channel model behavior is changed by this radar alone",
+      "external channel can surface the local radar result after migration, but no external-channel model behavior is changed by this radar alone",
   },
   {
     id: "longmemeval_agentrunbook_memory_regression",
@@ -370,7 +370,7 @@ const CANDIDATES: ExternalUpgradeCandidate[] = [
       "protected_memory_guard",
     ],
     liveBoundary:
-      "Live trace summaries require explicit migration and redaction; dev trace receipts alone are not user-visible proof",
+      "External-channel trace summaries require explicit migration and redaction; local trace receipts alone are not user-visible proof",
   },
   {
     id: "secure_tool_skill_permission_layer",
@@ -782,7 +782,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
     automaticTrigger:
       "When a task claims product-grade, user-visible, long-horizon, runtime, or commercial acceptance readiness, autopilot includes the commercial acceptance harness.",
     ownerGate:
-      "canary tasks may inspect dev/runtime state, but cannot create user-visible-observed, install untrusted tasks, or mutate provider/external-channel/protected surfaces",
+      "canary tasks may inspect local runtime state, but cannot create user-visible-observed, install untrusted tasks, or mutate provider/external-channel/protected surfaces",
     autopilotSurface:
       "lcx-governance-autopilot owners.commercialAcceptance and context handoff commercial gates",
     doctrineTerms: [
@@ -853,7 +853,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "protected_memory_write",
     ],
     liveBoundary:
-      "Trajectory export is offline dev evidence; external-channel behavior changes only after normal eval, promotion, and external-channel gates.",
+      "Trajectory export is offline local evidence; external-channel behavior changes only after normal eval, promotion, and external-channel gates.",
   },
   {
     id: "local_first_memory_provenance",
@@ -1034,7 +1034,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "external_channel_sender_change",
     ],
     liveBoundary:
-      "GitHub CLI control-plane proof is dev/operator-only; it cannot prove user-visible-observed or grant remote repository write authority by itself.",
+      "GitHub CLI control-plane proof is local/operator-only; it cannot prove user-visible-observed or grant remote repository write authority by itself.",
   },
 ];
 
@@ -1399,7 +1399,7 @@ export function buildExternalAgentUpgradeRadar() {
     },
     architectureFit: "fully_integrated_into_existing_lcx_owner_stack",
     perfectIntegrationReason:
-      "No external project should be called perfectly integrated until a concrete dev probe, eval/receipt, external-channel migration, and fresh External visible proof all pass. This radar proves architecture wiring, not user-visible-observed behavior.",
+      "No external project should be called perfectly integrated until a concrete local probe, eval/receipt, external-channel migration, and fresh External visible proof all pass. This radar proves architecture wiring, not user-visible-observed behavior.",
     checks,
     candidates,
     blacktechMechanisms,

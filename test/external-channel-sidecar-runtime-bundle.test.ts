@@ -7,6 +7,7 @@ import {
   buildRuntimeBundleReceipt,
   DEFAULT_RUNTIME_BUNDLE_ROOT,
 } from "../scripts/operator/external-channel-sidecar-runtime-bundle.ts";
+import { LCX_USER_HOME } from "../scripts/operator/lcx-local-paths.ts";
 
 const tmpRoots: string[] = [];
 
@@ -82,12 +83,7 @@ describe("live sidecar runtime bundle", () => {
 
   it("uses the shared non-Desktop default runtime root", () => {
     expect(DEFAULT_RUNTIME_BUNDLE_ROOT).toBe(
-      path.join(
-        process.env.LCX_USER_HOME ?? "/Users/liuchengxu",
-        ".openclaw",
-        "external-channel-runtime",
-        "lcx-s-openclaw",
-      ),
+      path.join(LCX_USER_HOME, ".openclaw", "external-channel-runtime", "lcx-s-openclaw"),
     );
     expect(DEFAULT_RUNTIME_BUNDLE_ROOT).not.toContain("/Desktop/");
   });

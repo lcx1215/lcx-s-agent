@@ -398,10 +398,10 @@ async function main(): Promise<void> {
         executionAuthorityGranted: false,
         summary:
           evaluation.status === "passed"
-            ? "Full dev loop passed: external message channel contract, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, and fail-closed cases."
+            ? "Full local loop passed: external message channel contract, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, and fail-closed cases."
             : evaluation.status === "blocked"
-              ? `Full dev loop blocked: ${evaluation.skippedCheckCount} required check(s) were skipped and need a successful fallback.`
-              : `Full dev loop failed: ${evaluation.failedCheckCount} required check(s) failed.`,
+              ? `Full local loop blocked: ${evaluation.skippedCheckCount} required check(s) were skipped and need a successful fallback.`
+              : `Full local loop failed: ${evaluation.failedCheckCount} required check(s) failed.`,
       },
       null,
       2,

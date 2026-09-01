@@ -27,7 +27,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-system-memory-sedimentation-gate.ts [--workspace DIR] [--repo DIR] [--protected-status PATH] [--json]",
       "",
       "Checks system-memory/correction/downrank sedimentation separately from module learning.",
-      "This is read-only dev evidence and never writes memory, touches live, changes providers, or promotes adapters.",
+      "This is read-only local evidence and never writes memory, touches the external channel, changes providers, or promotes adapters.",
     ].join("\n"),
   );
 }

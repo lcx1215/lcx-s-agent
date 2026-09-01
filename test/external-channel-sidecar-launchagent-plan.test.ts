@@ -7,6 +7,13 @@ import {
   main as launchAgentPlanMain,
 } from "../scripts/operator/external-channel-sidecar-launchagent-plan.ts";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "../scripts/operator/external-channel-sidecar-runtime-bundle.ts";
+import {
+  DEFAULT_LAUNCH_AGENTS_DIR,
+  DEFAULT_LAUNCH_AGENT_PATH,
+  DEFAULT_LEGACY_ROOT,
+  DEFAULT_OPENCLAW_LOG_DIR,
+  LCX_USER_HOME,
+} from "../scripts/operator/lcx-local-paths.ts";
 
 const tmpRoots: string[] = [];
 
@@ -57,6 +64,27 @@ describe("live sidecar launchagent plan", () => {
     const payload = JSON.parse(String(write.mock.calls[0]?.[0] ?? "{}"));
     expect(path.resolve(payload.targetRoot)).toBe(path.resolve(DEFAULT_RUNTIME_BUNDLE_ROOT));
     expect(payload.targetRoot).not.toContain("/Desktop/");
+    write.mockRestore();
+  });
+
+  it("derives user-specific LaunchAgent and log paths from the shared home", () => {
+    const outputDir = makeTmpRoot("launchagent-portable");
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const exitCode = launchAgentPlanMain(["--json", "--write", "--output-dir", outputDir]);
+    const payload = JSON.parse(String(write.mock.calls[0]?.[0] ?? "{}"));
+    const scheduler = payload.candidates[0];
+    const plist = fs.readFileSync(scheduler.candidatePath, "utf8");
+
+    expect(exitCode).toBe(0);
+    expect(path.resolve(payload.legacyRoot)).toBe(path.resolve(DEFAULT_LEGACY_ROOT));
+    expect(scheduler.currentPlistPath).toBe(
+      path.join(DEFAULT_LAUNCH_AGENTS_DIR, "ai.openclaw.lobster.scheduler.plist"),
+    );
+    expect(scheduler.standardOutPath).toBe(
+      path.join(DEFAULT_OPENCLAW_LOG_DIR, "lobster_scheduler.smoke.out.log"),
+    );
+    expect(plist).toContain(`<string>${LCX_USER_HOME}</string>`);
+    expect(plist).toContain(`<string>${DEFAULT_LAUNCH_AGENT_PATH}</string>`);
     write.mockRestore();
   });
 });
