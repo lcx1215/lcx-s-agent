@@ -331,7 +331,7 @@ const SKILL_SPECS: Record<string, SkillSpec> = {
       "selected_clean_adapter",
       "external_channel_source_drift_zero_after_selected_adapter",
       "external_message_channel_gateway_restarted_after_selected_adapter",
-      "external_message_channel_diagnose_ok_after_restart",
+      "external_message_channel_status_ok_after_restart",
       "fresh_real_external_inbound_and_outbound_user_visible_observed",
     ],
     regressionCaseIds: [
@@ -906,7 +906,7 @@ function buildProofChain(params: {
         "selected_clean_adapter_only",
         "external_channel_source_drift_zero_after_selected_adapter",
         "external_message_channel_gateway_restarted_after_selected_adapter",
-        "external_message_channel_diagnose_ok_after_restart",
+        "external_message_channel_status_ok_after_restart",
         "fresh_real_external_inbound_and_outbound_user_visible_observed",
       ],
     },

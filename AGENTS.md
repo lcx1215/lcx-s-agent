@@ -93,9 +93,9 @@ node --import tsx scripts/operator/lcx-commercial-acceptance-harness.ts --json
 
 It consumes existing owners for answer quality, problem clusters, architecture,
 external-channel status, training overlap, and provider council evidence. It must not
-  replace those owners, send external messages, start training, change provider
+replace those owners, send external messages, start training, change provider
 config, touch protected memory, or claim `user-visible-observed` without real
-  post-migration external-channel evidence.
+post-migration external-channel evidence.
 Commercial answer quality must be judged against frontier peer-level finance
 assistant behavior, not against "does not crash" or a few hard-coded short
 phrases. For the External Message Channel or any future communication adapter, the owner expectation is:
@@ -318,7 +318,7 @@ Use the universe index before broad cleanup, broad architecture review,
 compressed-context recovery, or a future-agent "read everything fast" request.
 Then route each candidate to its owner lane: change-impact for changed files,
 mind model and flow graph for architecture coverage, training plan for volatile
-Qwen/MiniMax/MLX truth, external-channel binding/probe owner for external message channel channel
+Qwen/MiniMax/MLX truth, external-channel binding/probe owner for external channel
 truth, and module learning owners for stored/learned capability boundaries.
 
 ## Cross-Border Cloud Control Doctrine

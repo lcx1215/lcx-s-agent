@@ -218,6 +218,7 @@ type ExternalChannelBindingPlanSnapshot = {
   channel: "external";
   role: "owner_agent_communication_medium";
   objective: "external_receives_current_best_verified_lcx_agent_answer";
+  readiness: "external_channel_binding_ready";
   selectedCleanAdapter?: string;
   selectedCleanEval?: LegacyLiveExternalBrainBindingSnapshot["selectedCleanEval"];
   activeTrainingOrEval: boolean;
@@ -1117,7 +1118,7 @@ function legacyLiveExternalBrainBindingSnapshot(params: {
       : undefined,
     "live_sidecar_source_drift_zero_after_selected_adapter",
     "live_gateway_and_external_proxy_restarted_after_selected_adapter",
-    "live_external_loop_diagnose_ok_after_restart",
+    "live_external_channel_status_ok_after_restart",
     "fresh_real_external_inbound_and_outbound_seen",
   ].filter((entry): entry is string => Boolean(entry));
   const externalChannelMissingProof = missingProof.map((entry) =>
@@ -1131,8 +1132,8 @@ function legacyLiveExternalBrainBindingSnapshot(params: {
         "external_message_channel_gateway_restarted_after_selected_adapter",
       )
       .replace(
-        "live_external_loop_diagnose_ok_after_restart",
-        "external_message_channel_diagnose_ok_after_restart",
+        "live_external_channel_status_ok_after_restart",
+        "external_message_channel_status_ok_after_restart",
       )
       .replace(
         "fresh_real_external_inbound_and_outbound_seen",
@@ -1155,7 +1156,8 @@ function legacyLiveExternalBrainBindingSnapshot(params: {
     action = "run_promotion_audit_then_bind_live_to_selected_clean_adapter";
   } else {
     status = "ready_for_live_runtime_binding";
-    action = "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
+    action =
+      "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
   }
   return {
     boundary: "local_live_external_brain_binding_plan_only",
@@ -1167,7 +1169,8 @@ function legacyLiveExternalBrainBindingSnapshot(params: {
       role: "owner_agent_communication_medium",
       objective: "external_receives_current_best_verified_lcx_agent_answer",
       bindingPolicy: "external_transport_may_only_route_to_selected_clean_answer_path",
-      userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_external_inbound_and_outbound",
+      userVisibleProofPolicy:
+        "user_visible_observed_requires_fresh_real_external_inbound_and_outbound",
       legacyLiveTerms: {
         liveExternalBrainBinding: "legacy_compatibility_field",
         liveRuntimeUpdated: "legacy_external_channel_bound_equivalent",
@@ -1248,7 +1251,7 @@ function externalChannelBindingSnapshot(params: {
       : undefined,
     "external_channel_source_drift_zero_after_selected_adapter",
     "external_message_channel_gateway_restarted_after_selected_adapter",
-    "external_message_channel_diagnose_ok_after_restart",
+    "external_message_channel_status_ok_after_restart",
     "fresh_real_external_inbound_and_outbound_user_visible_observed",
   ].filter((entry): entry is string => Boolean(entry));
   let status: ExternalChannelBindingPlanSnapshot["status"];
@@ -1277,7 +1280,8 @@ function externalChannelBindingSnapshot(params: {
     legacyAction = "run_promotion_audit_then_bind_live_to_selected_clean_adapter";
   } else {
     status = "ready_for_apply";
-    action = "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
+    action =
+      "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
     legacyStatus = "ready_for_live_runtime_binding";
     legacyAction =
       "route_external_transport_to_selected_clean_answer_path_and_collect_user_visible_proof";
@@ -1287,6 +1291,7 @@ function externalChannelBindingSnapshot(params: {
     channel: "external",
     role: "owner_agent_communication_medium",
     objective: "external_receives_current_best_verified_lcx_agent_answer",
+    readiness: "external_channel_binding_ready",
     selectedCleanAdapter,
     selectedCleanEval: params.qwenCapabilityConsolidation.selectedCleanEval,
     activeTrainingOrEval,
@@ -1298,12 +1303,13 @@ function externalChannelBindingSnapshot(params: {
       "no active local-brain-distill-eval, mlx_lm generate, mlx_lm lora, or guard restart window",
       "active guard uses selectedCleanAdapter or is restarted from it after idle",
       "External transport connector routes to the selected clean LCX answer path with zero source drift",
-      "external message channel diagnose is ok",
+      "external channel status is ok",
       "user-visible-observed remains false until fresh real External inbound/outbound evidence exists",
     ],
     statusCommand: "node --import tsx scripts/operator/lcx-external-channel-binding.ts --json",
     bindingPolicy: "external_transport_may_only_route_to_selected_clean_answer_path",
-    userVisibleProofPolicy: "user_visible_observed_requires_fresh_real_external_inbound_and_outbound",
+    userVisibleProofPolicy:
+      "user_visible_observed_requires_fresh_real_external_inbound_and_outbound",
     userVisibleObserved: false,
     legacyLiveCompatibility: {
       liveExternalBrainBinding: "legacy_compatibility_field",

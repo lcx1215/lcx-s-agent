@@ -282,8 +282,10 @@ describe("lcx-skillopt-lite CLI", () => {
     expect(bestSkill).toContain("channel_probe_as_user_visible_observed");
     expect(bestSkill).toContain("dirty_candidate_external_channel_binding");
     expect(bestSkill).toContain("external_channel_source_drift_zero_after_selected_adapter");
-    expect(bestSkill).toContain("external_message_channel_gateway_restarted_after_selected_adapter");
-    expect(bestSkill).toContain("external_message_channel_diagnose_ok_after_restart");
+    expect(bestSkill).toContain(
+      "external_message_channel_gateway_restarted_after_selected_adapter",
+    );
+    expect(bestSkill).toContain("external_message_channel_status_ok_after_restart");
     expect(bestSkill).toContain("fresh_real_external_inbound_and_outbound_user_visible_observed");
   });
 

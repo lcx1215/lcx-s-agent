@@ -132,32 +132,9 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
     ],
   },
   {
-    skillName: "external-post-migration-probe",
-    reason:
-      "the request asks for post-migration external-channel proof or user-visible-observed validation",
-    patterns: [
-      /external.{0,16}(迁移|probe|验收|live)/i,
-      /external.{0,16}(迁移|probe|验收|live)/i,
-      /外部消息通道.{0,16}(迁移|探针|验收|真实)/,
-      /user-visible-observed/i,
-      /真实.{0,8}(发消息|收消息|验证|验收)/,
-    ],
-  },
-  {
-    skillName: "external-live-loop-debugger",
-    reason: "the request is about external message reply-flow debugging or visible reply behavior",
-    patterns: [
-      /external.{0,16}(回复|消息|回路|debug|weird|bug)/i,
-      /external.{0,16}(回复|消息|回路|debug|weird|bug)/i,
-      /外部消息通道.{0,16}(回复|消息|回路|调试|异常)/,
-      /可见.{0,8}回复/,
-      /reply-flow/i,
-    ],
-  },
-  {
     skillName: "agent-runtime-drift-auditor",
     reason:
-      "the request is about one-system worktree/runtime drift, sidecar sync, or external-channel migration boundary checks",
+      "the request is about runtime drift, sidecar sync, external-channel status, or visible reply proof",
     patterns: [
       // Keep legacy input aliases for routing old requests; current architecture remains one local system/factory.
       /dev.{0,8}live/i,
@@ -167,6 +144,14 @@ const AUTO_CUE_RULES: SkillAutoCueRule[] = [
       /同步.{0,8}live/,
       /迁移.{0,8}live/,
       /漂移/,
+      /external.{0,16}(迁移|probe|验收|live)/i,
+      /外部消息通道.{0,16}(迁移|探针|验收|真实)/,
+      /user-visible-observed/i,
+      /真实.{0,8}(发消息|收消息|验证|验收)/,
+      /external.{0,16}(回复|消息|回路|debug|weird|bug)/i,
+      /外部消息通道.{0,16}(回复|消息|回路|调试|异常)/,
+      /可见.{0,8}回复/,
+      /reply-flow/i,
     ],
   },
   {

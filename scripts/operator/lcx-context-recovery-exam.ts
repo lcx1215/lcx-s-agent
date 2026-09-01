@@ -27,8 +27,6 @@ const REQUIRED_RUNTIME_SKILLS = [
   "lcx-qwen-training-operator",
   "lcx-workflow-waterflow-auditor",
   "finance-learning-researcher",
-  "external-live-loop-debugger",
-  "external-post-migration-probe",
   "agent-runtime-drift-auditor",
   "lcx-baseline-hardening",
   "lcx-evolution-loop",

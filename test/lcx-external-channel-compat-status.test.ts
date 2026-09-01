@@ -322,7 +322,7 @@ describe("lcx-promote-live status", () => {
       )}，用于精确匹配这次通道验收。`,
     );
     expect(stdout).toContain(
-      "postMigrationProbeCommand=bash \"${LCX_POST_MIGRATION_PROBE_SCRIPT:-${LCX_SKILLS_ROOT:-$HOME/.codex/skills}/external-post-migration-probe/scripts/external-post-migration-probe.sh}\" --since '2099-01-01T00:00:00.000Z'",
+      "postMigrationProbeCommand=node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe",
     );
     expect(stdout).toContain(
       "replyFlowProbeCommand=node --import tsx scripts/operator/lcx-external-channel-compat.ts --status --with-probe",
@@ -417,7 +417,10 @@ describe("lcx-promote-live status", () => {
   it("counts a real post-migration External reply as live-user-seen without requiring the fixed acceptance phrase", () => {
     const sourceRoot = tempDir("promote-live-source");
     const targetRoot = tempDir("promote-live-target");
-    const replyFlowLog = path.join(tempDir("promote-live-reply-flow"), "external-message-flow.jsonl");
+    const replyFlowLog = path.join(
+      tempDir("promote-live-reply-flow"),
+      "external-message-flow.jsonl",
+    );
     git(sourceRoot, ["init", "--quiet"]);
     git(sourceRoot, ["config", "user.email", "lcx@example.test"]);
     git(sourceRoot, ["config", "user.name", "LCX Test"]);

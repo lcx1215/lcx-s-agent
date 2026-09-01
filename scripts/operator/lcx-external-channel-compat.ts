@@ -21,7 +21,6 @@ const DEFAULT_REPLY_FLOW_LOG =
   path.join(os.homedir(), ".openclaw", "logs", "external-message-flow.jsonl");
 const CHANNEL_PROBE_UNREACHABLE_PATTERN =
   /Gateway not reachable|config-only status|abnormal closure/iu;
-const quoteShellArg = (value: string): string => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
 type StepStatus = "skipped" | "passed" | "failed";
 
@@ -685,6 +684,15 @@ function makeAcceptancePhrase(commit: string): string {
   return `external-acceptance-${shortSha}`;
 }
 
+function normalizeExternalChannelText(value: string): string {
+  return value.replace(/\b(?:lark|feishu)\b/gi, "external").replaceAll("飞书", "外部通道");
+}
+
+function normalizeExternalAcceptancePhrase(value: string): string {
+  const normalized = normalizeExternalChannelText(value.trim());
+  return normalized || "external-acceptance-unknown";
+}
+
 function makeAcceptanceMessage(acceptancePhrase: string): string {
   return `可选收据锚点：请回复 ${acceptancePhrase}，用于精确匹配这次通道验收。`;
 }
@@ -693,8 +701,8 @@ function makeNaturalProbeMessage(): string {
   return "现在状态怎么样？";
 }
 
-function makePostMigrationProbeCommand(since: string): string {
-  return `bash "\${LCX_POST_MIGRATION_PROBE_SCRIPT:-\${LCX_SKILLS_ROOT:-$HOME/.codex/skills}/external-post-migration-probe/scripts/external-post-migration-probe.sh}" --since ${quoteShellArg(since)}`;
+function makePostMigrationProbeCommand(): string {
+  return "node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe";
 }
 
 function makeReplyFlowProbeCommand(): string {
@@ -707,7 +715,10 @@ function summarizeReplyFlowRecord(record: Record<string, unknown>): ReplyFlowSum
     messageId: typeof record.messageId === "string" ? record.messageId : null,
     correlationId: typeof record.correlationId === "string" ? record.correlationId : null,
     chatId: typeof record.chatId === "string" ? record.chatId : null,
-    textPreview: typeof record.textPreview === "string" ? record.textPreview : null,
+    textPreview:
+      typeof record.textPreview === "string"
+        ? normalizeExternalChannelText(record.textPreview)
+        : null,
     deliveryStatus: typeof record.deliveryStatus === "string" ? record.deliveryStatus : null,
   };
 }
@@ -721,7 +732,7 @@ function readLiveVisibleProof(params: {
   const sinceMs = Date.parse(params.since);
   const acceptanceMessage = makeAcceptanceMessage(params.acceptancePhrase);
   const naturalProbeMessage = makeNaturalProbeMessage();
-  const postMigrationProbeCommand = makePostMigrationProbeCommand(params.since);
+  const postMigrationProbeCommand = makePostMigrationProbeCommand();
   const replyFlowProbeCommand = makeReplyFlowProbeCommand();
   if (!fs.existsSync(logPath)) {
     return {
@@ -856,7 +867,9 @@ function buildReceipt(params: {
         : params.args.apply
           ? "promoted"
           : "ready";
-  const acceptancePhrase = params.args.acceptancePhrase ?? makeAcceptancePhrase(params.git.commit);
+  const acceptancePhrase = normalizeExternalAcceptancePhrase(
+    params.args.acceptancePhrase ?? makeAcceptancePhrase(params.git.commit),
+  );
   return {
     schemaVersion: 1,
     generatedAt: params.generatedAt,
@@ -882,7 +895,7 @@ function buildReceipt(params: {
           acceptancePhrase,
           acceptanceMessage: makeAcceptanceMessage(acceptancePhrase),
           naturalProbeMessage: makeNaturalProbeMessage(),
-          postMigrationProbeCommand: makePostMigrationProbeCommand(params.generatedAt),
+          postMigrationProbeCommand: makePostMigrationProbeCommand(),
           replyFlowProbeCommand: makeReplyFlowProbeCommand(),
           freshInboundCount: 0,
           freshOutboundResultCount: 0,
@@ -903,7 +916,7 @@ function buildReceipt(params: {
       `Optional exact receipt anchor only if a deterministic match is needed: ${makeAcceptanceMessage(
         acceptancePhrase,
       )}`,
-      `Then run: ${makePostMigrationProbeCommand(params.generatedAt)}`,
+      `Then run: ${makePostMigrationProbeCommand()}`,
       `Status/probe command: ${makeReplyFlowProbeCommand()}`,
       "Only mark user-visible-observed after fresh real external message inbound and outbound evidence; the exact anchor is optional and legacy live-visible-fixed wording is compatibility only.",
     ],
@@ -1057,6 +1070,7 @@ function summarizePromotionStateForStatus(
   const { fileActions, commands, visibleProof: _visibleProof, ...rest } = state;
   return {
     ...rest,
+    acceptancePhrase: normalizeExternalAcceptancePhrase(state.acceptancePhrase),
     fileActionSummary: {
       storedLimit: 200,
       storedCount: fileActions.length,
@@ -1082,7 +1096,28 @@ function summarizePromotionReceiptForOutput(
 ): PromotionReceiptOutputSummary {
   return {
     ...summarizePromotionStateForStatus(receipt)!,
-    visibleProof: receipt.visibleProof,
+    visibleProof: {
+      ...receipt.visibleProof,
+      acceptancePhrase: normalizeExternalAcceptancePhrase(receipt.visibleProof.acceptancePhrase),
+      acceptanceMessage: normalizeExternalChannelText(receipt.visibleProof.acceptanceMessage),
+      naturalProbeMessage: normalizeExternalChannelText(receipt.visibleProof.naturalProbeMessage),
+      latestInbound: receipt.visibleProof.latestInbound
+        ? {
+            ...receipt.visibleProof.latestInbound,
+            textPreview: receipt.visibleProof.latestInbound.textPreview
+              ? normalizeExternalChannelText(receipt.visibleProof.latestInbound.textPreview)
+              : null,
+          }
+        : null,
+      latestOutboundResult: receipt.visibleProof.latestOutboundResult
+        ? {
+            ...receipt.visibleProof.latestOutboundResult,
+            textPreview: receipt.visibleProof.latestOutboundResult.textPreview
+              ? normalizeExternalChannelText(receipt.visibleProof.latestOutboundResult.textPreview)
+              : null,
+          }
+        : null,
+    },
   };
 }
 
@@ -1232,7 +1267,7 @@ export function main(argv = process.argv.slice(2)): number {
     const visibleProof = state
       ? readLiveVisibleProof({
           since: state.generatedAt,
-          acceptancePhrase: state.acceptancePhrase,
+          acceptancePhrase: normalizeExternalAcceptancePhrase(state.acceptancePhrase),
           logPath: initialArgs.replyFlowLog,
         })
       : null;

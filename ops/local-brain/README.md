@@ -271,7 +271,7 @@ rejection machine.
 The real external message channel candidate capture/replay gate is the field-proof companion:
 
 ```bash
-pnpm --silent openclaw capabilities external-loop-diagnose --json
+node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe
 ```
 
 It must show that real external message channel user utterances and final visible replies are
@@ -398,12 +398,12 @@ blueprint lane.
    pressure before the local adoption gate. Do not spend that pressure on tiny
    factual replies or let the visible answer mention internal agent machinery.
 
-5. External-channel observability summary: external message channel proof must converge through
-   `external-loop-diagnose`, channel probe, `external-reply-flow.jsonl`, and fresh
+5. External-channel observability summary: external channel proof must converge through
+   `external-channel-status`, channel probe, `external-message-flow.jsonl`, and fresh
    real-user inbound/reply evidence. Synthetic replay and local smoke stay
    local-only.
 
-   external message channel external-channel binding has its own owner command:
+   External-channel binding has its own owner command:
 
    ```bash
    node --import tsx scripts/operator/lcx-external-channel-binding.ts --json
@@ -419,7 +419,7 @@ blueprint lane.
    ```
 
    The apply path is allowed to sync/build/restart the external-channel sidecar
-   and run `external-loop-diagnose` only when eval/MLX is idle. It may prove
+   and run `node --import tsx scripts/operator/lcx-external-channel-status.ts --json --with-probe` only when eval/MLX is idle. It may prove
    `external-channel-bound`, but it must still keep `user-visible-observed=false`
    until fresh real external message channel inbound/outbound evidence exists.
 
@@ -1041,8 +1041,6 @@ When context is missing, load only the skills that match the current question. T
 /Users/liuchengxu/.codex/skills/lcx-evolution-loop/SKILL.md
 /Users/liuchengxu/.codex/skills/agent-brain-eval/SKILL.md
 /Users/liuchengxu/.codex/skills/finance-learning-researcher/SKILL.md
-/Users/liuchengxu/.codex/skills/external-live-loop-debugger/SKILL.md
-/Users/liuchengxu/.codex/skills/external-post-migration-probe/SKILL.md
 /Users/liuchengxu/.codex/skills/agent-runtime-drift-auditor/SKILL.md
 /Users/liuchengxu/.codex/skills/lcx-qwen-training-operator/SKILL.md
 /Users/liuchengxu/.codex/skills/lcx-workflow-waterflow-auditor/SKILL.md
@@ -1067,8 +1065,6 @@ Use them like this:
 - `lcx-evolution-loop`: realistic self-improvement loop from a user/external message channel-style prompt.
 - `agent-brain-eval`: judge whether the local brain actually learned and can apply a capability.
 - `finance-learning-researcher`: finance, ETF, quant, factor timing, source-gated learning.
-- `external-live-loop-debugger`: External Message Channel live message, reply flow, routing, and visible reply diagnosis.
-- `external-post-migration-probe`: prove post-migration real external message channel inbound plus visible reply.
 - `agent-runtime-drift-auditor`: compare repo, live sidecar, daemon/runtime, and receipts for drift.
 - `lcx-qwen-training-operator`: check Qwen 24-hour training/eval/backoff/restart supervision without creating overlap.
 - `lcx-workflow-waterflow-auditor`: check god-view workflow closure, waterflow routing, head-tail consistency, and memory sedimentation gaps.
@@ -1451,7 +1447,7 @@ Use these words precisely:
 - `core-ready`: local scripts, dataset, smoke, eval, and receipts pass.
 - `training-active`: guard or teacher/eval process is currently running.
 - `promotion-ready`: hardened eval passed and the adapter is selected by latest-passing.
-- `external-channel-bound`: the external message channel channel sidecar has been synced to the
+- `external-channel-bound`: the external channel sidecar has been synced to the
   verified dev snapshot and restarted/probed.
 - `user-visible-observed`: only after external-channel binding plus a fresh real external message channel inbound plus visible reply.
 
