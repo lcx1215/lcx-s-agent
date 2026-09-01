@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildPipelineResult } from "../../scripts/operator/lcx-commercial-answer-pipeline.js";
-import { composeFinanceAnswer, type FinanceModelCaller } from "./finance-answer-composer.js";
+import { composeAndAuditFinanceAnswer } from "../../scripts/operator/lcx-commercial-answer-pipeline.js";
+import type { FinanceModelCaller } from "./finance-answer-composer.js";
 
 // Track B proof: the composer feeds the EXISTING audit (buildPipelineResult),
 // and a grounded research-grade answer is ADOPTED while a trade-instruction
@@ -15,7 +15,7 @@ const modelReplying =
 describe("compose -> audit integration", () => {
   it("adopts a grounded, research-grade composed answer", async () => {
     const ask = "分析一下半导体板块最近的风险";
-    const composed = await composeFinanceAnswer({
+    const result = await composeAndAuditFinanceAnswer({
       ask,
       model: "moonshot/kimi-k2.5",
       callModel: modelReplying(
@@ -25,20 +25,18 @@ describe("compose -> audit integration", () => {
           "下一步:补齐实时数据网关快照再定量。",
       ),
     });
-    const audited = buildPipelineResult(ask, composed.candidateAnswer);
-    expect(audited.terminalDecision).toBe("adopt_visible_answer");
-    expect(audited.ok).toBe(true);
+    expect(result.terminalDecision).toBe("adopt_visible_answer");
+    expect(result.audited.ok).toBe(true);
   });
 
   it("rejects a composed answer that carries a direct trade instruction", async () => {
     const ask = "分析一下半导体板块最近的风险";
-    const composed = await composeFinanceAnswer({
+    const result = await composeAndAuditFinanceAnswer({
       ask,
       model: "moonshot/kimi-k2.5",
       callModel: modelReplying("现在直接满仓买入 NVDA,加仓到 50% 仓位。"),
     });
-    const audited = buildPipelineResult(ask, composed.candidateAnswer);
-    expect(audited.terminalDecision).toBe("return_failed_reason");
-    expect(audited.ok).toBe(false);
+    expect(result.terminalDecision).toBe("return_failed_reason");
+    expect(result.audited.ok).toBe(false);
   });
 });

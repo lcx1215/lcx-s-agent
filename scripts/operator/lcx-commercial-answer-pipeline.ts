@@ -5,6 +5,10 @@ import {
   findVisibleAnswerAdoptionGateFailures,
 } from "../../extensions/feishu/src/visible-answer-adoption-gate.js";
 import {
+  composeFinanceAnswer,
+  type FinanceComposeRequest,
+} from "../../src/agents/finance-answer-composer.js";
+import {
   planFinanceBrainOrchestration,
   type FinanceBrainOrchestrationPlan,
 } from "../../src/agents/finance-brain-orchestration.js";
@@ -1304,6 +1308,22 @@ export function buildPipelineResult(ask: string, candidateAnswer: string) {
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
+  };
+}
+
+/**
+ * Canonical candidate path for finance answers: compose from grounded context,
+ * then run the existing deterministic audit/adoption gate. The composer never
+ * becomes final authority and this helper performs no sending or persistence.
+ */
+export async function composeAndAuditFinanceAnswer(request: FinanceComposeRequest) {
+  const composed = await composeFinanceAnswer(request);
+  const audited = buildPipelineResult(request.ask, composed.candidateAnswer);
+  return {
+    composed,
+    audited,
+    executionId: composed.executionId,
+    terminalDecision: audited.terminalDecision,
   };
 }
 
