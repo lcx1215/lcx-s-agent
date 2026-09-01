@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { DEFAULT_RUNTIME_BUNDLE_ROOT } from "./external-channel-sidecar-runtime-bundle.ts";
 
 const DEFAULT_SOURCE_ROOT = process.cwd();
@@ -16,6 +17,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const RESTART_COMMAND_TIMEOUT_MS = 2 * 60 * 1000;
 const LIVE_RESTART_HEALTH_TIMEOUT_MS = 90_000;
 const PROBE_COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
+const PACKAGE_MANAGER_EXECUTABLE = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const DEFAULT_REPLY_FLOW_LOG =
   process.env.LCX_REPLY_FLOW_LOG ??
   path.join(os.homedir(), ".openclaw", "logs", "external-message-flow.jsonl");
@@ -332,6 +334,19 @@ function runCommand(
     code: result.status,
     stdout: (result.stdout || "").slice(-4000),
     stderr: `${result.stderr || ""}${errorText}`.slice(-4000),
+  };
+}
+
+function runPackageManagerCommand(
+  args: string[],
+  cwd: string,
+  timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  extraEnv: NodeJS.ProcessEnv = {},
+): CommandResult {
+  const result = runCommand(PACKAGE_MANAGER_EXECUTABLE, args, cwd, timeoutMs, extraEnv);
+  return {
+    ...result,
+    command: ["pnpm", ...args].join(" "),
   };
 }
 
@@ -1329,8 +1344,7 @@ export function main(argv = process.argv.slice(2)): number {
       !initialArgs.statusProbe || initialArgs.skipProbe || !state
         ? null
         : normalizeChannelProbeResult(
-            runCommand(
-              "pnpm",
+            runPackageManagerCommand(
               ["--silent", "openclaw", "channels", "status", "--probe"],
               initialArgs.targetRoot,
               PROBE_COMMAND_TIMEOUT_MS,
@@ -1439,8 +1453,8 @@ function runPromotion(initialArgs: Args): number {
   let restartFailed = false;
 
   if (blockedReasons.length === 0 && !args.skipSourceChecks) {
-    commands.sourceChecks.push(runCommand("pnpm", ["tsgo"], args.sourceRoot));
-    commands.sourceChecks.push(runCommand("pnpm", ["build"], args.sourceRoot));
+    commands.sourceChecks.push(runPackageManagerCommand(["tsgo"], args.sourceRoot));
+    commands.sourceChecks.push(runPackageManagerCommand(["build"], args.sourceRoot));
     for (const command of commands.sourceChecks) {
       if (command.status === "failed") {
         blockedReasons.push(`source check failed: ${command.command}`);
@@ -1477,7 +1491,7 @@ function runPromotion(initialArgs: Args): number {
   if (blockedReasons.length === 0 && args.apply) {
     commands.install = args.skipInstall
       ? skippedCommand("pnpm install --frozen-lockfile", args.targetRoot)
-      : runCommand("pnpm", ["install", "--frozen-lockfile"], args.targetRoot);
+      : runPackageManagerCommand(["install", "--frozen-lockfile"], args.targetRoot);
     if (commands.install.status === "failed") {
       applyFailed = true;
       blockedReasons.push("target install failed");
@@ -1487,7 +1501,7 @@ function runPromotion(initialArgs: Args): number {
   if (blockedReasons.length === 0 && args.apply) {
     commands.targetBuild = args.skipTargetBuild
       ? skippedCommand("pnpm build", args.targetRoot)
-      : runCommand("pnpm", ["build"], args.targetRoot);
+      : runPackageManagerCommand(["build"], args.targetRoot);
     if (commands.targetBuild.status === "failed") {
       applyFailed = true;
       blockedReasons.push("target build failed");
@@ -1497,7 +1511,7 @@ function runPromotion(initialArgs: Args): number {
   if (blockedReasons.length === 0 && args.apply) {
     commands.targetUiBuild = args.skipTargetBuild
       ? skippedCommand("pnpm ui:build", args.targetRoot)
-      : runCommand("pnpm", ["ui:build"], args.targetRoot);
+      : runPackageManagerCommand(["ui:build"], args.targetRoot);
     if (commands.targetUiBuild.status === "failed") {
       applyFailed = true;
       blockedReasons.push("target ui build failed");
@@ -1510,8 +1524,7 @@ function runPromotion(initialArgs: Args): number {
           "pnpm --silent openclaw gateway install --force --runtime node",
           args.targetRoot,
         )
-      : runCommand(
-          "pnpm",
+      : runPackageManagerCommand(
           [
             "--silent",
             "openclaw",
@@ -1534,8 +1547,7 @@ function runPromotion(initialArgs: Args): number {
   if (blockedReasons.length === 0 && args.apply) {
     commands.restart = args.skipRestart
       ? skippedCommand("pnpm --silent openclaw daemon restart", args.targetRoot)
-      : runCommand(
-          "pnpm",
+      : runPackageManagerCommand(
           ["--silent", "openclaw", "daemon", "restart"],
           args.targetRoot,
           RESTART_COMMAND_TIMEOUT_MS,
@@ -1552,8 +1564,7 @@ function runPromotion(initialArgs: Args): number {
     commands.probe = args.skipProbe
       ? skippedCommand("pnpm --silent openclaw channels status --probe", args.targetRoot)
       : normalizeChannelProbeResult(
-          runCommand(
-            "pnpm",
+          runPackageManagerCommand(
             ["--silent", "openclaw", "channels", "status", "--probe"],
             args.targetRoot,
             PROBE_COMMAND_TIMEOUT_MS,
@@ -1597,6 +1608,6 @@ function runPromotion(initialArgs: Args): number {
   return receipt.status === "blocked" || receipt.status === "failed" ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = main();
 }

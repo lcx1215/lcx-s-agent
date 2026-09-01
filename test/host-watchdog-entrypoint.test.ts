@@ -172,34 +172,37 @@ describe("host watchdog clean-root entrypoint", () => {
     cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
   });
 
-  it("includes External proxy health when launchd inspection is enabled", () => {
-    writeState("scheduler_cycle_report.json", {
-      status: "cycle_completed",
-      generatedAt: new Date().toISOString(),
-      cycleResult: {
-        checkCount: 5,
-        checks: [
-          { name: "finance-pipeline-all", ok: true },
-          { name: "finance-multi-candidate", ok: true },
-          { name: "finance-event-review", ok: true },
-          { name: "external-message-learning-loop", ok: true },
-          { name: "external-routing-and-distillation-tests", ok: true },
-        ],
-        liveTouched: false,
-        providerConfigTouched: false,
-        protectedMemoryTouched: false,
-        remoteFetchOccurred: false,
-        executionAuthorityGranted: false,
-      },
-    });
-    writeFreshRuntimeState();
-    const result = runPython(["scripts/lobster_host_watchdog.py", "--dry-run", "--json"]);
-    expect(result.status).toBe(0);
-    const payload = JSON.parse(result.stdout);
-    expect(payload.external_channel_proxy.label).toBe("ai.openclaw.external.proxy");
-    expect(typeof payload.external_channel_proxy.status).toBe("string");
-    cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
-  });
+  it.skipIf(process.platform !== "darwin")(
+    "includes External proxy health when launchd inspection is enabled",
+    () => {
+      writeState("scheduler_cycle_report.json", {
+        status: "cycle_completed",
+        generatedAt: new Date().toISOString(),
+        cycleResult: {
+          checkCount: 5,
+          checks: [
+            { name: "finance-pipeline-all", ok: true },
+            { name: "finance-multi-candidate", ok: true },
+            { name: "finance-event-review", ok: true },
+            { name: "external-message-learning-loop", ok: true },
+            { name: "external-routing-and-distillation-tests", ok: true },
+          ],
+          liveTouched: false,
+          providerConfigTouched: false,
+          protectedMemoryTouched: false,
+          remoteFetchOccurred: false,
+          executionAuthorityGranted: false,
+        },
+      });
+      writeFreshRuntimeState();
+      const result = runPython(["scripts/lobster_host_watchdog.py", "--dry-run", "--json"]);
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout);
+      expect(payload.external_channel_proxy.label).toBe("ai.openclaw.external.proxy");
+      expect(typeof payload.external_channel_proxy.status).toBe("string");
+      cleanupState("scheduler_cycle_report.json", "runtime_freshness.json");
+    },
+  );
 
   it("flags stale live runtime freshness receipts", () => {
     writeState("scheduler_cycle_report.json", {
