@@ -179,8 +179,6 @@ function neutralizeIdentifier(value: string): string {
 }
 function neutralizeText(value: string): string {
   return value
-    .replace(/\b(?:External\s*\/\s*External|External\s*\/\s*External)\b/giu, "message adapter")
-    .replace(/(?<![A-Za-z0-9])(?:External|External)(?=[A-Z_-]|\b)/giu, "message_adapter")
     .replace(/\bdev[/-]live\b/giu, "core/adapter")
     .replace(/\blive-visible-fixed\b/giu, "observed")
     .replace(/\bdev-only\b/giu, "core-scoped")

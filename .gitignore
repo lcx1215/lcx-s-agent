@@ -114,7 +114,6 @@ dist/protocol.schema.json
 .ant-colony/
 
 # Generated extension declaration output
-extensions/feishu/src/*.d.ts
 ops/external-channel-artifacts/promotions/
 
 # Eclipse

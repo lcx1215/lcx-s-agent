@@ -1130,10 +1130,11 @@ export function hardenLocalBrainPlanForAsk(
       task_family: "external_context_pollution_audit",
       primary_modules: ["ops_audit"],
       supporting_modules: ["control_room_summary", "review_panel"],
-      required_tools: ["external_loop_diagnose", "sessions_history", "review_panel"],
+      required_tools: ["external_channel_status", "sessions_history", "review_panel"],
       missing_data: ["fresh_external_message_id_or_visible_reply_text"],
       risk_boundaries: ["no_execution_authority", "evidence_required"],
-      next_step: "inspect_external_session_store_and_candidate_replay_before_claiming_live_fixed",
+      next_step:
+        "inspect_external_session_store_and_candidate_replay_before_claiming_user_visible_observed",
       rejected_context: [
         "old_external_conversation_history",
         "language_routing_candidate_artifacts",

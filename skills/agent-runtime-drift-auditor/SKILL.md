@@ -28,6 +28,6 @@ feature branches are remote collaboration, review, and release concepts only.
 
 ## Boundaries
 
-- Do not apply sidecar migration, restart a daemon, or send Lark messages from
+- Do not apply sidecar migration, restart a daemon, or send external messages from
   an audit.
 - Historical live receipts are not current user-visible evidence.

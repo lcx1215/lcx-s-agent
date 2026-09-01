@@ -49,7 +49,7 @@ struct LCXAgentControlRoomTests {
                     "externalChannelBindingStatus": "deferred_active_training_or_eval",
                     "externalChannelMissingProof": [
                         "current_training_eval_or_mlx_finished",
-                        "fresh_real_lark_inbound_and_outbound_seen",
+                        "fresh_real_external_inbound_and_outbound_seen",
                     ],
                     "skillOptLiteStatus": "candidate_edit_static_accepted_pending_eval",
                     "skillOptLiteMatchedSkillIds": [

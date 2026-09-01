@@ -140,7 +140,7 @@ describe("LCX mind model god-view architecture check", () => {
           adaptability: "adapter_neutral",
         }),
         expect.objectContaining({
-          id: "external_delivery_boundary",
+          id: "external_message_adapter_boundary",
           coverage: "complete",
           maturity: "structural",
           adaptability: "adapter_neutral",

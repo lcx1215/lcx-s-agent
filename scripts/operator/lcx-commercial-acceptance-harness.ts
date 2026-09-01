@@ -40,6 +40,7 @@ type HarnessInputs = {
   mindModel?: OwnerSnapshot;
   externalChannelStatus?: OwnerSnapshot;
   externalChannelBindingStatus?: OwnerSnapshot;
+  externalCandidateCapture?: OwnerSnapshot;
   trainingPlan?: OwnerSnapshot;
   systemDoctor?: OwnerSnapshot;
   providerCouncilAcceleration?: OwnerSnapshot;
@@ -311,6 +312,117 @@ function visibleAnswerQualityFuzzerGate(snapshot: OwnerSnapshot | undefined): Ac
     },
     nextAction:
       "Keep product answer quality as a positive acceptance gate, not only a bad-answer rejection gate.",
+  };
+}
+
+function externalCandidateCaptureGate(snapshot: OwnerSnapshot | undefined): AcceptanceGate {
+  if (!ownerOk(snapshot)) {
+    return ownerUnavailableGate("lcx-external-channel-status", snapshot);
+  }
+  const capture = recordValue(
+    snapshot!.payload!.externalCandidateCapture ?? snapshot!.payload!.candidateCapture,
+  );
+  const replay = recordValue(capture?.currentReplay);
+  const loop = recordValue(capture?.replayLoop);
+  const handoffReceiptCount = numberValue(capture?.handoffReceiptCount) ?? 0;
+  const candidateArtifactCount = numberValue(capture?.candidateArtifactCount) ?? 0;
+  const candidateCount = numberValue(capture?.candidateCount) ?? 0;
+  const currentReplaySource = stringValue(replay?.source);
+  const currentReplayCandidateCount = numberValue(replay?.candidateCount) ?? 0;
+  const currentReplayRejectedRate = numberValue(replay?.rejectedRate) ?? 0;
+  const replayStatus = stringValue(loop?.status);
+  const latestCandidatePath = stringValue(capture?.latestCandidatePath);
+  const latestCandidateGeneratedAt = stringValue(capture?.latestCandidateGeneratedAt);
+  const topRejectedReason = stringValue(loop?.topRejectedReason);
+  const topRejectedSemanticFamily = stringValue(loop?.topRejectedSemanticFamily);
+
+  if (candidateArtifactCount === 0) {
+    const hasHandoffOnlyGap = handoffReceiptCount > 0;
+    return {
+      id: hasHandoffOnlyGap
+        ? "external_candidate_capture_missing"
+        : "external_candidate_capture_not_observed",
+      status: hasHandoffOnlyGap ? "blocked" : "watch",
+      severity: hasHandoffOnlyGap ? "P1" : "P2",
+      owner: "scripts/operator/lcx-external-channel-status.ts",
+      evidence: {
+        handoffReceiptCount,
+        candidateArtifactCount,
+        candidateCount,
+        currentReplaySource,
+        currentReplayCandidateCount,
+        replayStatus,
+        latestHandoffPath: capture?.latestHandoffPath,
+      },
+      nextAction: hasHandoffOnlyGap
+        ? "Persist real external user-message and final-visible-reply candidate artifacts before trusting replay, fuzzer, or user-visible quality claims."
+        : "Capture a real external user message and its final visible reply before treating the channel as observed.",
+    };
+  }
+  if (candidateArtifactCount > 0 && candidateCount < 10) {
+    return {
+      id: "external_candidate_capture_too_thin",
+      status: "watch",
+      severity: "P2",
+      owner: "scripts/operator/lcx-external-channel-status.ts",
+      evidence: {
+        candidateArtifactCount,
+        candidateCount,
+        latestCandidatePath,
+        latestCandidateGeneratedAt,
+        replayStatus,
+        currentReplayRejectedRate,
+        topRejectedReason,
+        topRejectedSemanticFamily,
+      },
+      nextAction:
+        "Keep capturing real external turns until the replay pool is broad enough to catch wrong routing, silent fallback, and poor visible replies.",
+    };
+  }
+  if (
+    replayStatus === "needs_route_family_hardening" ||
+    currentReplayRejectedRate >= 0.3 ||
+    topRejectedReason === "semantic_family_unknown" ||
+    topRejectedReason === "deterministic_route_failed"
+  ) {
+    return {
+      id: "external_candidate_replay_regression",
+      status: "failed",
+      severity: "P2",
+      owner: "scripts/operator/lcx-external-channel-status.ts",
+      evidence: {
+        candidateArtifactCount,
+        candidateCount,
+        latestCandidatePath,
+        latestCandidateGeneratedAt,
+        replayStatus,
+        currentReplayRejectedRate,
+        topRejectedReason,
+        topRejectedSemanticFamily,
+        rejectedExamples: capture?.rejectedExamples,
+      },
+      nextAction:
+        "Repair the shared routing and visible-answer contracts from rejected real external candidates before adding one-off prompt exceptions.",
+    };
+  }
+  return {
+    id: "external_candidate_capture_replay_clean",
+    status: "passed",
+    severity: "info",
+    owner: "scripts/operator/lcx-external-channel-status.ts",
+    evidence: {
+      handoffReceiptCount,
+      candidateArtifactCount,
+      candidateCount,
+      latestCandidatePath,
+      latestCandidateGeneratedAt,
+      replayStatus,
+      currentReplayRejectedRate,
+      topRejectedReason,
+      topRejectedSemanticFamily,
+    },
+    nextAction:
+      "Keep real external candidate capture tied to the visible answer gate; fuzzer-only proof is not enough.",
   };
 }
 
@@ -872,6 +984,7 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
     commercialAnswerGate(inputs.commercialAnswerPipeline),
     shortIntentFuzzerGate(inputs.shortIntentFuzzer),
     visibleAnswerQualityFuzzerGate(inputs.visibleAnswerQualityFuzzer),
+    externalCandidateCaptureGate(inputs.externalCandidateCapture ?? inputs.externalChannelStatus),
     directedDailyResearchBriefGate(inputs.directedDailyResearchBrief),
     architectureGate(inputs.flowGraph, inputs.mindModel),
     radarGate(inputs.problemRadar),
@@ -908,14 +1021,16 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
         id: "natural_plain_probe",
         purpose:
           "prove ordinary owner-to-agent UX and inspect inbound, answer-audit, and outbound result evidence for the internal route",
-        owner: "scripts/operator/lcx-external-channel-status.ts + extensions/external/src/monitor.ts",
+        owner:
+          "scripts/operator/lcx-external-channel-status.ts + extensions/external/src/monitor.ts",
         requiredFor: "user_visible_observed",
       },
       {
         id: "external_message_channel_contract",
         purpose:
           "prove the vendor-neutral JSON webhook and HTTP sender contract before binding a real external software endpoint",
-        owner: "extensions/external/src/protocol.ts + extensions/external/src/monitor.ts + extensions/external/src/send.ts",
+        owner:
+          "extensions/external/src/protocol.ts + extensions/external/src/monitor.ts + extensions/external/src/send.ts",
         requiredFor: "external_channel_bound",
       },
       {
@@ -936,6 +1051,13 @@ export function buildCommercialAcceptanceHarness(inputs: HarnessInputs) {
           "prove the main product can produce a daily index-options plus semiconductor/AI compute-chain research packet without relying on open-ended chat",
         owner: "scripts/operator/lcx-directed-daily-research-brief.ts",
         requiredFor: "focused_daily_research_product",
+      },
+      {
+        id: "real_external_candidate_capture_replay",
+        purpose:
+          "prove real external user utterances and final visible replies are persisted as replayable candidate artifacts, not only inferred from handoff receipts",
+        owner: "scripts/operator/lcx-external-channel-status.ts",
+        requiredFor: "entry_exit_quality",
       },
       {
         id: "real_short_external_canary_suite",
@@ -1010,42 +1132,6 @@ async function runJsonOwner(owner: string, script: string, args: readonly string
   const command = `node --import tsx ${script} ${args.join(" ")}`.trim();
   try {
     const result = await execFileAsync(process.execPath, ["--import", "tsx", script, ...args], {
-      cwd: repoRoot,
-      env: process.env,
-      maxBuffer: EXEC_MAX_BUFFER,
-      timeout: 120_000,
-    });
-    const payload = parseJsonObjectFromOutput(result.stdout);
-    return { ok: booleanValue(payload.ok) !== false, owner, command, payload };
-  } catch (error) {
-    const details = error as { stdout?: string; stderr?: string; message?: string };
-    if (details.stdout) {
-      try {
-        const payload = parseJsonObjectFromOutput(details.stdout);
-        return {
-          ok: false,
-          owner,
-          command,
-          payload,
-          error: details.message ?? "owner command returned nonzero",
-        };
-      } catch {
-        // Fall through to the raw error snapshot.
-      }
-    }
-    return {
-      ok: false,
-      owner,
-      command,
-      error: [details.message, details.stderr?.slice(-500)].filter(Boolean).join("\n"),
-    };
-  }
-}
-
-async function runPnpmJsonOwner(owner: string, args: readonly string[]) {
-  const command = `pnpm --silent ${args.join(" ")}`;
-  try {
-    const result = await execFileAsync("pnpm", ["--silent", ...args], {
       cwd: repoRoot,
       env: process.env,
       maxBuffer: EXEC_MAX_BUFFER,
@@ -1174,6 +1260,7 @@ async function collectOwnerSnapshots(options: CliOptions): Promise<HarnessInputs
     mindModel,
     externalChannelStatus,
     externalChannelBindingStatus,
+    externalCandidateCapture: externalChannelStatus,
     trainingPlan,
     systemDoctor,
     providerCouncilAcceleration,

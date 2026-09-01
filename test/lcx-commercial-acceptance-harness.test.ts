@@ -201,6 +201,25 @@ function baseInputs() {
         missingProof: [],
       },
     }),
+    externalCandidateCapture: owner("lcx-external-channel-status", {
+      externalCandidateCapture: {
+        handoffReceiptCount: 8,
+        candidateArtifactCount: 4,
+        candidateCount: 12,
+        latestCandidatePath: "memory/external-message-intent-candidates/2026-05-31/clean.json",
+        latestCandidateGeneratedAt: "2026-05-31T12:00:00.000Z",
+        currentReplay: {
+          source: "candidate_artifacts",
+          candidateCount: 12,
+          rejectedRate: 0.08,
+        },
+        replayLoop: {
+          status: "ready_for_reviewed_batch_absorption",
+          topRejectedReason: null,
+          topRejectedSemanticFamily: null,
+        },
+      },
+    }),
     trainingPlan: owner("local-brain-training-plan", {
       activeProcesses: [],
       overlappingHeavyEval: false,
@@ -326,6 +345,7 @@ describe("lcx-commercial-acceptance-harness", () => {
     );
     expect(result.canaryPlan.map((entry) => entry.id)).toEqual([
       "natural_plain_probe",
+      "external_message_channel_contract",
       "optional_fixed_receipt_anchor",
       "finance_research_prompt",
       "directed_daily_research_brief",
@@ -708,6 +728,66 @@ describe("lcx-commercial-acceptance-harness", () => {
           id: "directed_daily_research_brief_regression",
           status: "failed",
           severity: "P1",
+        }),
+      ]),
+    );
+  });
+
+  it("blocks release when external handoffs exist but candidate capture is missing", () => {
+    const inputs = baseInputs();
+    inputs.externalCandidateCapture = owner("lcx-external-channel-status", {
+      externalCandidateCapture: {
+        handoffReceiptCount: 12,
+        latestHandoffPath: "memory/external-message-handoff-receipts/2026-06-01/real.json",
+        candidateArtifactCount: 0,
+        candidateCount: 0,
+        currentReplay: {
+          source: "handoff_receipt_derived",
+          candidateCount: 24,
+        },
+        replayLoop: {
+          status: "needs_candidate_capture",
+        },
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(false);
+    expect(result.blockedGates).toContain("external_candidate_capture_missing");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "external_candidate_capture_missing",
+          status: "blocked",
+          severity: "P1",
+        }),
+      ]),
+    );
+  });
+
+  it("watches release when no real external candidates have been observed", () => {
+    const inputs = baseInputs();
+    inputs.externalCandidateCapture = owner("lcx-external-channel-status", {
+      externalCandidateCapture: {
+        handoffReceiptCount: 0,
+        candidateArtifactCount: 0,
+        candidateCount: 0,
+        currentReplay: { source: "none", candidateCount: 0, rejectedRate: 0 },
+        replayLoop: { status: "not_observed" },
+      },
+    });
+
+    const result = buildCommercialAcceptanceHarness(inputs);
+
+    expect(result.ok).toBe(true);
+    expect(result.watchGates).toContain("external_candidate_capture_not_observed");
+    expect(result.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "external_candidate_capture_not_observed",
+          status: "watch",
+          severity: "P2",
         }),
       ]),
     );

@@ -14,9 +14,7 @@ These are local skills derived from public GitHub patterns, not vendored third-p
 
 | Skill                             | Local path                               | Source inspiration                                                                                                                                           | Why installed                                                                                                  | Uninstall                                       |
 | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `lark-understanding`              | `skills/lark-understanding`              | `https://github.com/anthropics/skills`                                                                                                                       | Keeps Lark language work family-based, tested, and honest about core versus external-channel proof.            | `rm -rf skills/lark-understanding`              |
 | `semantic-routing`                | `skills/semantic-routing`                | `https://github.com/aurelio-labs/semantic-router`                                                                                                            | Guides semantic-family routing before adding more one-off regex phrases.                                       | `rm -rf skills/semantic-routing`                |
-| `lark-routing-evals`              | `skills/lark-routing-evals`              | `https://github.com/AI-App/PromptFoo` and `https://github.com/anthropics/skills`                                                                             | Makes Lark utterance classification measurable with positives, near-misses, and regression tests.              | `rm -rf skills/lark-routing-evals`              |
 | `skill-quality-audit`             | `skills/skill-quality-audit`             | `https://github.com/anthropics/skills`                                                                                                                       | Prevents bulk skill imports, overtriggering, and prompt/context pollution.                                     | `rm -rf skills/skill-quality-audit`             |
 | `ml-research-loop`                | `skills/ml-research-loop`                | `https://github.com/huggingface/ml-intern`                                                                                                                   | Adapts ML-intern-style paper-to-experiment-to-report loops without vendoring or executing code.                | `rm -rf skills/ml-research-loop`                |
 | `hf-paper-intake`                 | `skills/hf-paper-intake`                 | `https://github.com/huggingface/skills/tree/main/skills/huggingface-papers`                                                                                  | Adds bounded paper metadata intake for arXiv/Hugging Face papers before research-loop handoff.                 | `rm -rf skills/hf-paper-intake`                 |
@@ -39,7 +37,7 @@ python3 skills/skill-creator/scripts/quick_validate.py skills/skill-creator
 git diff --check -- skills
 ```
 
-If the removed skill affected Lark routing behavior, also run the Feishu/Lark routing tests.
+If the removed skill affected external-message routing behavior, also run the relevant external-channel routing tests.
 
 ## Install Rule
 

@@ -205,8 +205,8 @@ struct LCXAgentControlRoomSnapshot: Equatable {
                 tone: skillTone),
             LCXAgentDepartment(
                 id: "external-channel",
-                title: "Lark 外部通道",
-                subtitle: "Real Lark Shipping Dock",
+                title: "通用外部消息通道",
+                subtitle: "Real External Message Shipping Dock",
                 status: self.externalChannelStatus,
                 detail: self.userVisibleObserved
                     ? "已有真实 inbound/outbound 证据。"

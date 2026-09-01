@@ -25,7 +25,7 @@ const team = [
   ["governance", "总控", "看全局"],
   ["training", "训练", "写入权重"],
   ["eval", "评测", "小考验收"],
-  ["lark", "Lark", "真实可见"],
+  ["external", "外部消息", "真实可见"],
   ["provider", "外部模型", "高额度评审"],
   ["learning", "资料学习", "吸收证据"],
   ["worktree", "脏文件", "归类收口"],

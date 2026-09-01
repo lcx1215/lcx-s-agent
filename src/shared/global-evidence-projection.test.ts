@@ -16,7 +16,7 @@ import {
 
 function hasLegacyArchitectureTerm(value: unknown): boolean {
   if (typeof value === "string") {
-    return /(?<![A-Za-z0-9])(?:external|external|dev|live|channels?)(?=[A-Z_-]|\b)/iu.test(value);
+    return /(?<![A-Za-z0-9])(?:dev|live|channels?)(?=[A-Z_-]|\b)/iu.test(value);
   }
   if (Array.isArray(value)) {
     return value.some((item) => hasLegacyArchitectureTerm(item));
@@ -25,7 +25,7 @@ function hasLegacyArchitectureTerm(value: unknown): boolean {
     return Object.entries(value).some(
       ([key, item]) =>
         !["adapterId", "receiptId"].includes(key) &&
-        (/(?<![A-Za-z0-9])(?:external|external|dev|live|channels?)(?=[A-Z_-]|\b)/iu.test(key) ||
+        (/(?<![A-Za-z0-9])(?:dev|live|channels?)(?=[A-Z_-]|\b)/iu.test(key) ||
           hasLegacyArchitectureTerm(item)),
     );
   }
@@ -135,7 +135,7 @@ describe("Global Evidence Projection", () => {
       sourceOwners: ["mind-model"],
       lanes: [
         {
-          id: "external_message_live_boundary",
+          id: "external_message_channel_boundary",
           masterLane: "external_channel_boundary",
           objective: "Keep external message as a replaceable message medium.",
           ok: false,
@@ -154,25 +154,25 @@ describe("Global Evidence Projection", () => {
     const projection = buildGlobalEvidenceProjection(params);
     const capability = projection.capabilities[0];
     expect(capability).toMatchObject({
-      id: "external_delivery_boundary",
+      id: "external_message_adapter_boundary",
       coverage: "partial",
       domain: "external_adapter_boundary",
     });
     expect(projection.evidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "external_delivery_boundary:boundary",
+          id: "external_message_adapter_boundary:boundary",
           status: "missing",
         }),
       ]),
     );
     expect(projection.actions).toEqual([
       expect.objectContaining({
-        id: "repair:external_delivery_boundary",
+        id: "repair:external_message_adapter_boundary",
         kind: "repair",
         status: "blocked",
-        capabilityId: "external_delivery_boundary",
-        evidenceRefs: ["external_delivery_boundary:boundary"],
+        capabilityId: "external_message_adapter_boundary",
+        evidenceRefs: ["external_message_adapter_boundary:boundary"],
       }),
     ]);
     expect(hasLegacyArchitectureTerm(projection)).toBe(false);
@@ -474,13 +474,19 @@ describe("Global Evidence Projection", () => {
 
   it("derives adapter-neutral reader ids from message context", () => {
     expect(
-      resolveGlobalEvidenceProjectionAdapterId({ surface: "External / External", provider: "telegram" }),
+      resolveGlobalEvidenceProjectionAdapterId({
+        surface: "External / External",
+        provider: "telegram",
+      }),
     ).toBe("message-adapter:external-external");
     expect(
       resolveGlobalEvidenceProjectionAdapterId({ provider: "Telegram", fallback: "unknown" }),
     ).toBe("message-adapter:telegram");
     expect(
-      resolveGlobalEvidenceProjectionAdapterId({ adapterId: "  future-medium  ", surface: "external" }),
+      resolveGlobalEvidenceProjectionAdapterId({
+        adapterId: "  future-medium  ",
+        surface: "external",
+      }),
     ).toBe("future-medium");
   });
 

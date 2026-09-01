@@ -2,13 +2,13 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
 import {
   buildExternalBrainDistillationCandidate,
   EXTERNAL_BRAIN_DISTILLATION_REVIEW_DIR,
   type ExternalBrainDistillationCandidate,
   type ExternalBrainDistillationReviewArtifact,
 } from "../../src/agents/external-brain-distillation-candidates.js";
-import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
 import { resolveApiKeyForProvider } from "../../src/agents/model-auth.js";
 import { loadConfig } from "../../src/config/config.js";
 import { canonicalizeLcxOntologyValue } from "../../src/shared/lcx-ontology.js";
@@ -805,10 +805,11 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       task_family: "external_context_pollution_audit",
       primary_modules: ["ops_audit"],
       supporting_modules: ["control_room_summary", "review_panel"],
-      required_tools: ["external_loop_diagnose", "sessions_history", "review_panel"],
+      required_tools: ["external_channel_status", "sessions_history", "review_panel"],
       missing_data: ["fresh_external_message_id_or_visible_reply_text"],
       risk_boundaries: ["no_execution_authority", "evidence_required"],
-      next_step: "inspect_external_session_store_and_candidate_replay_before_claiming_live_fixed",
+      next_step:
+        "inspect_external_session_store_and_candidate_replay_before_claiming_user_visible_observed",
       rejected_context: ["old_external_conversation_history"],
     };
   }
@@ -1241,7 +1242,10 @@ function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
       ],
       next_step:
         "review_repo_license_data_sources_and_validation_plan_then_distill_sentiment_as_one_evidence_layer_with_eval_gate",
-      rejected_context: ["old_external_conversation_history", "sentiment_as_standalone_trade_signal"],
+      rejected_context: [
+        "old_external_conversation_history",
+        "sentiment_as_standalone_trade_signal",
+      ],
     };
   }
   if (
@@ -2148,7 +2152,8 @@ export function hardenTeacherPlanForPrompt(input: TeacherPrompt, plan: TeacherPl
   const isAllModuleKnowledgeInternalization =
     /(不止是因子|所有模块|全部模块|all[- ]?module|target module|目标模块).{0,120}(内化|吸收|学习|learn|internalization|source registry|retrieval receipt|apply validation)/iu.test(
       ask,
-    ) || /(期权|指数|宏观|基本面|External|External|记忆|ops|skill).{0,120}(同一条|内化链)/iu.test(ask);
+    ) ||
+    /(期权|指数|宏观|基本面|External|External|记忆|ops|skill).{0,120}(同一条|内化链)/iu.test(ask);
   const isAbstractionTransfer =
     /(抽象能力|人类的抽象|抽象迁移|问题族|failure family|problem family|同类问题|同类接口|shared contract|共享契约|original example|regression proof|adjacent non-identical|相邻非同类)/iu.test(
       ask,

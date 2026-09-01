@@ -1455,6 +1455,7 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
       "src/auto-reply/reply/skillopt-autocue.ts",
       "scripts/operator/lcx-commercial-answer-pipeline.ts",
       "scripts/operator/lcx-external-channel-status.ts",
+      "test/lcx-external-channel-status.test.ts",
       "test/lcx-commercial-answer-pipeline.test.ts",
     ],
   },
@@ -1514,13 +1515,18 @@ const CONSOLIDATED_ENTRYPOINT_FAMILIES: ConsolidatedEntrypointFamily[] = [
     id: "local_live_evidence_entrypoints",
     ownerCluster: "local_live_evidence_cluster",
     ownerPath: "scripts/operator/lcx-external-channel-binding.ts",
-    watchedPathTerms: ["lcx-external-channel-compat", "external-channel-binding", "external-channel-status"],
+    watchedPathTerms: [
+      "lcx-external-channel-compat",
+      "external-channel-binding",
+      "external-channel-status",
+    ],
     allowedPaths: [
       "scripts/operator/lcx-external-channel-binding.ts",
       "scripts/operator/lcx-external-channel-compat.ts",
       "scripts/operator/lcx-external-channel-status.ts",
       "test/lcx-external-channel-compat-status.test.ts",
       "test/lcx-external-channel-binding.test.ts",
+      "test/lcx-external-channel-status.test.ts",
     ],
   },
   {
@@ -1608,6 +1614,18 @@ const SHARED_ENTRYPOINT_OWNERS: SharedEntrypointOwner[] = [
       "external-channel status is the shared proof surface for visible answer audit and channel-boundary evidence.",
   },
   {
+    path: "test/lcx-external-channel-binding.test.ts",
+    familyIds: ["architecture_supervision_entrypoints", "local_live_evidence_entrypoints"],
+    reason:
+      "the external-channel binding test covers both architecture wiring and the local live evidence owner.",
+  },
+  {
+    path: "test/lcx-external-channel-status.test.ts",
+    familyIds: ["local_live_evidence_entrypoints", "external_visible_reply_audit_entrypoints"],
+    reason:
+      "the external-channel status test covers both local binding evidence and visible reply status reporting.",
+  },
+  {
     path: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
     familyIds: ["external_skill_learning_entrypoints", "prediction_market_research_entrypoints"],
     reason: "external-agent upgrade radar also owns prediction-market source intake boundaries.",
@@ -1652,7 +1670,8 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
 };
 
 const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
-  external_finance_research_waterflow: "node --import tsx scripts/operator/lcx-flow-graph.ts --json",
+  external_finance_research_waterflow:
+    "node --import tsx scripts/operator/lcx-flow-graph.ts --json",
   directed_daily_research_brief_waterflow:
     "node --import tsx scripts/operator/lcx-directed-daily-research-brief.ts --json",
   module_learning_internalization_waterflow:

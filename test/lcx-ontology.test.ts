@@ -296,11 +296,11 @@ describe("LCX ontology registry", () => {
     expect(audit.taskFamilySources.flatMap((source) => source.aliases)).toEqual(
       expect.arrayContaining([
         {
-          source: "external_source_learning_planning",
+          source: "learning_external_source",
           canonical: "external_knowledge_internalization_protocol",
         },
         {
-          source: "portfolio_multi_module_risk_planning",
+          source: "portfolio_multi_module_risk_decomposition",
           canonical: "full_stack_finance_stress_research_planning",
         },
       ]),

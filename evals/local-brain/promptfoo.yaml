@@ -14,7 +14,7 @@ defaultTest:
     - type: contains
       value: "no_execution_authority"
     - type: contains
-      value: "old_lark_conversation_history"
+      value: "old_external_conversation_history"
 
 tests:
   - description: Cross-market US/A-share/index/crypto planning
@@ -63,9 +63,9 @@ tests:
         value: "position_weights_and_return_series"
   - description: Ops audit does not become finance analysis
     vars:
-      ask: "它刚才又像串到旧任务了，先审计是不是 Lark 上下文污染，不要继续金融分析。"
+      ask: "它刚才又像串到旧任务了，先审计是不是外部消息上下文污染，不要继续金融分析。"
     assert:
       - type: contains
         value: "ops_audit"
       - type: contains
-        value: "fresh_lark_message_id_or_visible_reply_text"
+        value: "fresh_external_message_id_or_visible_reply_text"

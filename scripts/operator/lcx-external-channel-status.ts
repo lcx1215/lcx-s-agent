@@ -15,6 +15,11 @@ const BINDING_LATEST_PATH = path.join(
   "state",
   "lcx-external-channel-binding-latest.json",
 );
+const EXTERNAL_CANDIDATE_ROOTS = [
+  "memory/external-message-intent-candidates",
+  "memory/external-brain-distillation-candidates",
+] as const;
+const EXTERNAL_HANDOFF_ROOT = "memory/external-message-handoff-receipts";
 
 type CliOptions = {
   json: boolean;
@@ -188,6 +193,187 @@ export function selectBindingOwnerPayload(params: {
   return { payload: params.payload, source: "command" };
 }
 
+type ExternalCandidateCaptureStatus = {
+  candidateRoots: string[];
+  handoffRoot: string;
+  handoffReceiptCount: number;
+  candidateArtifactCount: number;
+  invalidArtifactCount: number;
+  candidateCount: number;
+  acceptedCandidateCount: number;
+  rejectedCandidateCount: number;
+  discardedCandidateCount: number;
+  latestCandidatePath: string | null;
+  latestCandidateGeneratedAt: string | null;
+  latestHandoffPath: string | null;
+  currentReplay: {
+    source: "candidate_artifacts" | "handoff_receipt_derived" | "none";
+    candidateCount: number;
+    rejectedRate: number;
+  };
+  replayLoop: {
+    status:
+      | "not_observed"
+      | "needs_candidate_capture"
+      | "needs_route_family_hardening"
+      | "needs_review_promotion"
+      | "ready_for_reviewed_batch_absorption";
+    topRejectedReason: string | null;
+    topRejectedSemanticFamily: string | null;
+  };
+};
+
+async function listJsonFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  async function walk(directory: string): Promise<void> {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith(".json")) {
+        files.push(fullPath);
+      }
+    }
+  }
+  await walk(root);
+  return files;
+}
+
+function candidateEntries(value: Record<string, unknown>): Record<string, unknown>[] {
+  if (Array.isArray(value.candidates)) {
+    return value.candidates.filter(
+      (candidate): candidate is Record<string, unknown> =>
+        candidate !== null && typeof candidate === "object" && !Array.isArray(candidate),
+    );
+  }
+  return typeof value.id === "string" && value.id.trim().length > 0 ? [value] : [];
+}
+
+function candidateStatusCounts(candidates: readonly Record<string, unknown>[]) {
+  let accepted = 0;
+  let rejected = 0;
+  let discarded = 0;
+  for (const candidate of candidates) {
+    const status = typeof candidate.status === "string" ? candidate.status : "";
+    if (status === "accepted_brain_plan" || status === "accepted") {
+      accepted += 1;
+    } else if (status === "rejected_brain_plan" || status === "rejected") {
+      rejected += 1;
+    } else if (status === "discarded") {
+      discarded += 1;
+    }
+  }
+  return { accepted, rejected, discarded };
+}
+
+async function readExternalCandidateCapture(): Promise<ExternalCandidateCaptureStatus> {
+  const candidateFiles = (
+    await Promise.all(
+      EXTERNAL_CANDIDATE_ROOTS.map((relativeRoot) =>
+        listJsonFiles(path.join(WORKSPACE_DIR, relativeRoot)),
+      ),
+    )
+  ).flat();
+  const handoffFiles = await listJsonFiles(path.join(WORKSPACE_DIR, EXTERNAL_HANDOFF_ROOT));
+  let candidateArtifactCount = 0;
+  let invalidArtifactCount = 0;
+  let candidateCount = 0;
+  let acceptedCandidateCount = 0;
+  let rejectedCandidateCount = 0;
+  let discardedCandidateCount = 0;
+  let latestCandidatePath: string | null = null;
+  let latestCandidateGeneratedAt: string | null = null;
+  for (const file of candidateFiles) {
+    let parsed: Record<string, unknown>;
+    try {
+      const value = JSON.parse(await fs.readFile(file, "utf8")) as unknown;
+      const record = recordValue(value);
+      if (!record) {
+        invalidArtifactCount += 1;
+        continue;
+      }
+      parsed = record;
+    } catch {
+      invalidArtifactCount += 1;
+      continue;
+    }
+    const candidates = candidateEntries(parsed);
+    if (candidates.length === 0) {
+      invalidArtifactCount += 1;
+      continue;
+    }
+    candidateArtifactCount += 1;
+    candidateCount += candidates.length;
+    const counts = candidateStatusCounts(candidates);
+    acceptedCandidateCount += counts.accepted;
+    rejectedCandidateCount += counts.rejected;
+    discardedCandidateCount += counts.discarded;
+    const generatedAt = typeof parsed.generatedAt === "string" ? parsed.generatedAt : null;
+    if (generatedAt && (!latestCandidateGeneratedAt || generatedAt > latestCandidateGeneratedAt)) {
+      latestCandidateGeneratedAt = generatedAt;
+      latestCandidatePath = path.relative(WORKSPACE_DIR, file).replaceAll(path.sep, "/");
+    }
+  }
+  let latestHandoffPath: string | null = null;
+  if (handoffFiles.length > 0) {
+    const latestHandoffFile = handoffFiles.toSorted().at(-1);
+    if (latestHandoffFile) {
+      latestHandoffPath = path.relative(WORKSPACE_DIR, latestHandoffFile).replaceAll(path.sep, "/");
+    }
+  }
+  const rejectedRate =
+    candidateCount > 0 ? Number((rejectedCandidateCount / candidateCount).toFixed(4)) : 0;
+  const source =
+    candidateArtifactCount > 0
+      ? "candidate_artifacts"
+      : handoffFiles.length > 0
+        ? "handoff_receipt_derived"
+        : "none";
+  const status =
+    candidateArtifactCount === 0
+      ? handoffFiles.length > 0
+        ? "needs_candidate_capture"
+        : "not_observed"
+      : rejectedRate >= 0.3
+        ? "needs_route_family_hardening"
+        : candidateArtifactCount > 0 && (acceptedCandidateCount === 0 || candidateCount < 10)
+          ? "needs_review_promotion"
+          : "ready_for_reviewed_batch_absorption";
+  return {
+    candidateRoots: [...EXTERNAL_CANDIDATE_ROOTS],
+    handoffRoot: EXTERNAL_HANDOFF_ROOT,
+    handoffReceiptCount: handoffFiles.length,
+    candidateArtifactCount,
+    invalidArtifactCount,
+    candidateCount,
+    acceptedCandidateCount,
+    rejectedCandidateCount,
+    discardedCandidateCount,
+    latestCandidatePath,
+    latestCandidateGeneratedAt,
+    latestHandoffPath,
+    currentReplay: {
+      source,
+      candidateCount: candidateArtifactCount > 0 ? candidateCount : 0,
+      rejectedRate,
+    },
+    replayLoop: {
+      status,
+      topRejectedReason: null,
+      topRejectedSemanticFamily: null,
+    },
+  };
+}
+
 export async function runExternalChannelStatus(options: CliOptions) {
   const args = [
     "--import",
@@ -260,6 +446,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
       canonicalBindingSelectedCleanAdapter: binding?.selectedCleanAdapter,
       canonicalBindingOwner: "lcx-external-channel-binding",
     };
+    const externalCandidateCapture = await readExternalCandidateCapture();
     return {
       ok: bindingOwnerAvailable && bindingPayload.ok !== false,
       boundary: "local_external_channel_status_only",
@@ -268,6 +455,7 @@ export async function runExternalChannelStatus(options: CliOptions) {
       bindingCommand,
       conceptStatus: "legacy_promote_live_status_wrapped_by_external_channel_status",
       externalChannelStatus,
+      externalCandidateCapture,
       externalChannelBinding: binding,
       ownerChildStatus: {
         timeoutMs: OWNER_CHILD_TIMEOUT_MS,

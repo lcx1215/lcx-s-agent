@@ -267,7 +267,7 @@ export const LCX_ONTOLOGY_MODULE_ALIASES: Readonly<Record<string, LcxOntologyMod
   finance_framework_core_inspect: "source_registry",
   finance_learning_capability_apply: "finance_learning_memory",
   l5_regression_batterer: "eval_harness_design",
-  external_loop_diagnose: "ops_audit",
+  external_channel_status: "ops_audit",
   local_brain_eval: "eval_harness_design",
   local_memory_retrieval: "finance_learning_memory",
   review_tier: "review_panel",

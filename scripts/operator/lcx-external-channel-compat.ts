@@ -686,13 +686,9 @@ function makeAcceptancePhrase(commit: string): string {
   return `external-acceptance-${shortSha}`;
 }
 
-function normalizeExternalChannelText(value: string): string {
-  return value.replace(/\b(?:lark|feishu)\b/gi, "external").replaceAll("飞书", "外部通道");
-}
-
 function normalizeExternalAcceptancePhrase(value: string): string {
-  const normalized = normalizeExternalChannelText(value.trim());
-  return normalized || "external-acceptance-unknown";
+  const normalized = value.trim();
+  return /^external-[a-z0-9-]+$/iu.test(normalized) ? normalized : "external-acceptance-unknown";
 }
 
 function makeAcceptanceMessage(acceptancePhrase: string): string {
@@ -800,10 +796,8 @@ function summarizeReplyFlowRecord(record: Record<string, unknown>): ReplyFlowSum
     correlationId: readReplyFlowIdentifier(record, REPLY_FLOW_CORRELATION_ID_KEYS),
     chatId: readReplyFlowIdentifier(record, ["chatId", "chat_id"]),
     conversationId: readReplyFlowIdentifier(record, ["conversationId", "conversation_id"]),
-    textPreview:
-      typeof record.textPreview === "string"
-        ? normalizeExternalChannelText(record.textPreview)
-        : null,
+    // Status output carries counts and timestamps, not historical message text.
+    textPreview: null,
     deliveryStatus: typeof record.deliveryStatus === "string" ? record.deliveryStatus : null,
   };
 }
@@ -1175,27 +1169,24 @@ function summarizePromotionStateForStatus(
 function summarizePromotionReceiptForOutput(
   receipt: PromotionReceipt,
 ): PromotionReceiptOutputSummary {
+  const acceptancePhrase = normalizeExternalAcceptancePhrase(receipt.visibleProof.acceptancePhrase);
   return {
     ...summarizePromotionStateForStatus(receipt)!,
     visibleProof: {
       ...receipt.visibleProof,
-      acceptancePhrase: normalizeExternalAcceptancePhrase(receipt.visibleProof.acceptancePhrase),
-      acceptanceMessage: normalizeExternalChannelText(receipt.visibleProof.acceptanceMessage),
-      naturalProbeMessage: normalizeExternalChannelText(receipt.visibleProof.naturalProbeMessage),
+      acceptancePhrase,
+      acceptanceMessage: makeAcceptanceMessage(acceptancePhrase),
+      naturalProbeMessage: makeNaturalProbeMessage(),
       latestInbound: receipt.visibleProof.latestInbound
         ? {
             ...receipt.visibleProof.latestInbound,
-            textPreview: receipt.visibleProof.latestInbound.textPreview
-              ? normalizeExternalChannelText(receipt.visibleProof.latestInbound.textPreview)
-              : null,
+            textPreview: null,
           }
         : null,
       latestOutboundResult: receipt.visibleProof.latestOutboundResult
         ? {
             ...receipt.visibleProof.latestOutboundResult,
-            textPreview: receipt.visibleProof.latestOutboundResult.textPreview
-              ? normalizeExternalChannelText(receipt.visibleProof.latestOutboundResult.textPreview)
-              : null,
+            textPreview: null,
           }
         : null,
     },

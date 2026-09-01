@@ -521,7 +521,10 @@ function buildWorkStatusBoundaryLane(sources?: CognitiveIntegritySources): ExamL
     status,
     severity: status === "pass" ? "info" : "P1",
     boundary: "local_static_workflow_contract",
-    evidence: [`externalSurfaceBoundary=${String(externalOk)}`, `runbookBoundary=${String(runbookOk)}`],
+    evidence: [
+      `externalSurfaceBoundary=${String(externalOk)}`,
+      `runbookBoundary=${String(runbookOk)}`,
+    ],
     issue:
       status === "pass"
         ? "工作状态有明确边界：core、external-channel、started/completed 不能混成一个成功词。"
@@ -722,12 +725,11 @@ function buildExternalLane(externalCommand: CommandResult | undefined, live: boo
       `userVisibleObserved=${String(userVisibleObserved)}`,
       "user-visible-observed requires observation at the target software",
     ],
-    issue:
-      userVisibleObserved
-        ? "外部软件已回读目标回复，可记录 user-visible-observed。"
-        : externalChannelBound
-          ? "通道已绑定，但仍缺目标软件的真实入站和回读回复。"
-          : "外部通道状态不可用，不能说入口正常。",
+    issue: userVisibleObserved
+      ? "外部软件已回读目标回复，可记录 user-visible-observed。"
+      : externalChannelBound
+        ? "通道已绑定，但仍缺目标软件的真实入站和回读回复。"
+        : "外部通道状态不可用，不能说入口正常。",
     nextAction: userVisibleObserved
       ? "保持 messageId、replyToId 和幂等键的可追溯性。"
       : "用受控 JSON 入站消息做真实入站+回复检查，命中后才能标 user-visible-observed。",
@@ -777,7 +779,8 @@ function buildLiveBoundaryLane(live: boolean, channelCommand: CommandResult | un
       boundary: "core_verified_not_user_visible_observed",
       evidence: ["liveTouched=false", "providerConfigTouched=false", "trainingStarted=false"],
       issue: "本次 exam 明确没有把 core 证据升级成 user-visible-observed。",
-      nextAction: "只有 migration/build/restart/probe/真实 External 入站回复全有，才改外部通道状态。",
+      nextAction:
+        "只有 migration/build/restart/probe/真实 External 入站回复全有，才改外部通道状态。",
     };
   }
   if (!channelCommand) {
@@ -999,7 +1002,7 @@ export function buildAgentExamReport(params: {
   moduleLearningReview: CommandResult;
   learningSedimentationAudit?: CommandResult;
   cognitiveIntegritySources?: CognitiveIntegritySources;
-  externalDiagnose?: CommandResult;
+  externalChannelStatus?: CommandResult;
   channelProbe?: CommandResult;
   l5Battery?: CommandResult;
 }): ExamReport {
@@ -1015,7 +1018,7 @@ export function buildAgentExamReport(params: {
     buildAnswerAuditPipelineLane(params.cognitiveIntegritySources),
     buildControlRoomProductLane(params.cognitiveIntegritySources),
     buildAutomationLane(params.trainingPlan, params.doctor),
-    buildExternalLane(params.externalDiagnose, params.live),
+    buildExternalLane(params.externalChannelStatus, params.live),
     buildLiveBoundaryLane(params.live, params.channelProbe),
     buildL5Lane(params.l5Battery, params.l5),
   ];
@@ -1051,7 +1054,9 @@ export function buildAgentExamReport(params: {
       ...(params.learningSedimentationAudit
         ? { learningSedimentationAudit: params.learningSedimentationAudit }
         : {}),
-      ...(params.externalDiagnose ? { externalDiagnose: params.externalDiagnose } : {}),
+      ...(params.externalChannelStatus
+        ? { externalChannelStatus: params.externalChannelStatus }
+        : {}),
       ...(params.channelProbe ? { channelProbe: params.channelProbe } : {}),
       ...(params.l5Battery ? { l5Battery: params.l5Battery } : {}),
     },
@@ -1261,7 +1266,7 @@ export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
   });
   const cognitiveIntegritySources = await cognitiveIntegritySourcesPromise;
 
-  const [externalDiagnose, channelProbe] = options.live
+  const [externalChannelStatus, channelProbe] = options.live
     ? await Promise.all([
         runCommand({
           name: "external-channel-status",
@@ -1305,7 +1310,7 @@ export async function runAgentExam(options: CliOptions): Promise<ExamReport> {
     moduleLearningReview,
     learningSedimentationAudit,
     cognitiveIntegritySources,
-    externalDiagnose,
+    externalChannelStatus,
     channelProbe,
     l5Battery,
   });

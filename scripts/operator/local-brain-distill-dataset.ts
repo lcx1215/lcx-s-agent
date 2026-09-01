@@ -2259,12 +2259,12 @@ function buildSeedExamples(): DistillExample[] {
       sourceSummary:
         "worktree/external-channel boundary seed; receipts prove local artifacts, not user-visible External behavior.",
       taskFamily: "receipt_not_live_visible_boundary",
-      primaryModules: ["ops_audit", "external_live_loop_debugger", "review_panel"],
+      primaryModules: ["ops_audit", "review_panel"],
       supportingModules: ["control_room_summary"],
-      requiredTools: ["external_loop_diagnose", "external_reply_flow_audit"],
+      requiredTools: ["external_channel_status", "reply_flow_audit"],
       missingData: ["fresh_real_external_inbound_and_outbound_seen", "live_runtime_restart_proof"],
-      riskBoundaries: [...BOUNDARIES, "local_fixed_not_live_visible_fixed"],
-      nextStep: "require_fresh_external_inbound_outbound_before_live_visible_claim",
+      riskBoundaries: [...BOUNDARIES, "local_core_not_user_visible_observed"],
+      nextStep: "require_fresh_external_inbound_outbound_before_user_visible_observed_claim",
     },
     {
       userAsk: "能不能把 r6 的能力和 r2 一起用，两个 LoRA 不是更强吗？",
@@ -2429,15 +2429,16 @@ function buildSeedExamples(): DistillExample[] {
         "ops audit request for dirty External context; must inspect session and language-candidate state.",
       taskFamily: "ops_source_grounding",
       primaryModules: ["ops_audit", "control_room"],
-      supportingModules: ["external_live_loop_debugger"],
+      supportingModules: ["ops_audit"],
       requiredTools: [
         "sessions_list",
         "sessions_history",
-        "external_loop_diagnose",
+        "external_channel_status",
         "channels_status_probe",
       ],
       missingData: ["fresh_external_message_id_or_visible_reply_text"],
-      nextStep: "inspect_external_session_store_and_candidate_replay_before_claiming_live_fixed",
+      nextStep:
+        "inspect_external_session_store_and_candidate_replay_before_claiming_user_visible_observed",
     },
     {
       userAsk:
@@ -2447,7 +2448,7 @@ function buildSeedExamples(): DistillExample[] {
       taskFamily: "ops_source_grounding",
       primaryModules: ["ops_audit", "source_registry", "control_room_summary"],
       supportingModules: ["review_panel"],
-      requiredTools: ["external_loop_diagnose", "source_registry_lookup", "review_panel"],
+      requiredTools: ["external_channel_status", "source_registry_lookup", "review_panel"],
       missingData: ["claim_to_verify", "artifact_or_source_path"],
       nextStep: "verify_claim_against_receipts_or_mark_unverified_before_answering",
     },

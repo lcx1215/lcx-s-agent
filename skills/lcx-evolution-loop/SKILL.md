@@ -6,7 +6,7 @@ metadata: { "openclaw": { "emoji": "🔁" } }
 
 # LCX Evolution Loop
 
-Use this when the agent must improve from a real failure or user/Lark-style
+Use this when the agent must improve from a real failure or user/external-message-style
 request.
 
 ## Workflow

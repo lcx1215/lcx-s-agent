@@ -19,6 +19,6 @@ Use this for an explicit L5 pressure test or after a shared contract repair.
 
 ## Boundaries
 
-- This battery does not prove real Lark visibility or provider quality.
+- This battery does not prove real external-message visibility or provider quality.
 - Never launch it concurrently with a guard, teacher, MLX eval, or heavy
   training process.

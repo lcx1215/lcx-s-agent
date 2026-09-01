@@ -541,8 +541,8 @@ const MODULE_SCHEMAS: Record<ModuleLearningTarget, ModuleLearningSchema> = {
       "no_raw_json_visible_reply",
     ],
     existingToolBridge: {
-      primaryTool: "external_loop_diagnose",
-      supportTools: ["external_language_corpus_review", "review_panel", "local_brain_eval"],
+      primaryTool: "external_channel_status",
+      supportTools: ["reply_flow_audit", "review_panel", "local_brain_eval"],
       bridgeStatus: "module_specific_receipt_required",
       closestExistingFinanceDomains: [],
     },

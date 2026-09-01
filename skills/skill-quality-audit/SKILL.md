@@ -50,7 +50,7 @@ For local repo skills, run:
 python3 skills/skill-creator/scripts/quick_validate.py skills/<skill-name>
 ```
 
-For Lark-facing skills, also run the relevant Feishu/Lark regression tests after behavior changes.
+For external-message-facing skills, also run the relevant external-channel regression tests after behavior changes.
 
 ## Public Patterns Reviewed
 

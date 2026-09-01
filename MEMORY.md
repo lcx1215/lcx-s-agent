@@ -23,7 +23,7 @@
 4. `memory/unified-risk-view.md` when present
 5. latest `lobster-workface` carryover cue and correction notes
 6. matching `memory/local-memory/*.md` durable cards, selected by subject match or `Use This Card When`
-7. `memory/feishu-work-receipts/repair-queue.md` and `index.md` first, then only the specific recent `memory/feishu-work-receipts/*.md` you need when diagnosing operator phrasing, routing drift, or self-repair failures
+7. `memory/external-work-receipts/repair-queue.md` and `index.md` first, then only the specific recent `memory/external-work-receipts/*.md` you need when diagnosing operator phrasing, routing drift, or self-repair failures
 8. recent weekly/workface/branch artifacts that directly support the question
 9. `bank/fundamental/*` only when issuer/company research artifacts are actually needed
 10. `ops/external-channel-history/*` only for migration history, probe history, or old ticket drill-down
@@ -71,8 +71,8 @@
 - `bank/fundamental/*` is the research factory. Trust the newest concrete artifacts, not the mere presence of folders.
 - `memory/local-memory/*.md` is reusable medium-term memory. It can sharpen recall, but it must not overwrite protected summaries by itself.
 - Local durable memory is only active when it matches the current ask. Do not load arbitrary recent cards just because they are newer.
-- `memory/feishu-work-receipts/index.md` and `repair-queue.md` are the first stop for workflow debugging. Only drill into individual receipt files when the index or repair queue points to a specific turn.
-- `memory/feishu-work-receipts/*.md` is bounded workflow evidence. Use it to debug wording drift, routing mistakes, or repeated repair failures without replaying whole chats.
+- `memory/external-work-receipts/index.md` and `repair-queue.md` are the first stop for workflow debugging. Only drill into individual receipt files when the index or repair queue points to a specific turn.
+- `memory/external-work-receipts/*.md` is bounded workflow evidence. Use it to debug wording drift, routing mistakes, or repeated repair failures without replaying whole chats.
 
 ## What The Previous Work Was Trying To Build
 

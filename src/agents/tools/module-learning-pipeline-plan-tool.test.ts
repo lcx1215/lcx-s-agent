@@ -81,7 +81,7 @@ describe("module learning pipeline plan tool", () => {
     expect(result.details).toEqual(
       expect.objectContaining({
         existingToolBridge: expect.objectContaining({
-          primaryTool: "external_loop_diagnose",
+          primaryTool: "external_channel_status",
           bridgeStatus: "module_specific_receipt_required",
         }),
         safetyBoundaries: expect.arrayContaining([

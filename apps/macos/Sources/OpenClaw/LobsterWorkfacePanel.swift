@@ -243,7 +243,7 @@ enum LobsterWorkfacePanel {
             watchtowerSignals: self.extractTopLevelValue(from: normalized, label: "Watchtower Signals") ?? "0",
             codexEscalations: self.extractTopLevelValue(from: normalized, label: "Codex Escalations") ?? "0",
             activeSurfaceLanes: self.extractTopLevelValue(from: normalized, label: "Active Surface Lanes")
-                ?? self.extractSectionValue(from: self.extractSectionLines(from: normalized, heading: "Feishu Lane Panel"), label: "Active Lanes")
+                ?? self.extractSectionValue(from: self.extractSectionLines(from: normalized, heading: "External Message Lane Panel"), label: "Active Lanes")
                 ?? "0",
             portfolioScorecard: self.extractTopLevelValue(from: normalized, label: "Portfolio Scorecard") ?? "not scored",
             totalTokens: self.extractTopLevelValue(from: normalized, label: "Total Tokens") ?? "0",
@@ -256,7 +256,7 @@ enum LobsterWorkfacePanel {
             learningReplay: self.extractSectionValue(from: learnedLines, label: "replay") ?? "Not recorded yet",
             learningNextEval: self.extractSectionValue(from: learnedLines, label: "next eval") ?? "Not recorded yet",
             dashboardSnapshotLines: self.extractSectionLines(from: normalized, heading: "Dashboard Snapshot"),
-            lanePanelLines: self.extractSectionLines(from: normalized, heading: "Feishu Lane Panel"),
+            lanePanelLines: self.extractSectionLines(from: normalized, heading: "External Message Lane Panel"),
             yesterdayLearnedLines: learnedLines,
             yesterdayCorrectedLines: self.extractSectionLines(from: normalized, heading: "Yesterday Corrected"),
             yesterdayWatchtowerLines: self.extractSectionLines(from: normalized, heading: "Yesterday Watchtower"),
@@ -564,7 +564,7 @@ enum LobsterWorkfacePanel {
                     "\($0.present ? "present" : "missing"): \($0.path)"
                 }))
                 \(self.renderListPanel(title: "Dashboard Snapshot", lines: parsed.dashboardSnapshotLines))
-                \(self.renderListPanel(title: "Feishu Lane Panel", lines: parsed.lanePanelLines))
+                \(self.renderListPanel(title: "External Message Lane Panel", lines: parsed.lanePanelLines))
                 \(self.renderListPanel(title: "Yesterday Learned", lines: parsed.yesterdayLearnedLines))
                 \(self.renderListPanel(title: "Yesterday Corrected", lines: parsed.yesterdayCorrectedLines))
                 \(self.renderListPanel(title: "Yesterday Watchtower", lines: parsed.yesterdayWatchtowerLines))
