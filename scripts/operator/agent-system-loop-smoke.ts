@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CommandCheck = {
@@ -359,33 +359,56 @@ const checks: CommandCheck[] = [
   },
 ];
 
-const results: CommandResult[] = [];
-let skipCount = 0;
-for (const check of checks) {
-  const result = await runCommand(check);
-  results.push(result);
-  if (result.skipped) {
-    skipCount++;
-  }
+export function evaluateAgentSystemLoop(
+  results: readonly Pick<CommandResult, "ok" | "skipped">[],
+): {
+  ok: boolean;
+  status: "passed" | "blocked" | "failed";
+  skippedCheckCount: number;
+  failedCheckCount: number;
+} {
+  const skippedCheckCount = results.filter((result) => result.skipped).length;
+  const failedCheckCount = results.filter((result) => !result.ok).length;
+  const ok = results.length > 0 && results.every((result) => result.ok && !result.skipped);
+  return {
+    ok,
+    status: ok ? "passed" : skippedCheckCount > 0 ? "blocked" : "failed",
+    skippedCheckCount,
+    failedCheckCount,
+  };
 }
-const allChecksPassed = results.every((result) => result.ok || result.skipped);
 
-process.stdout.write(
-  `${JSON.stringify(
-    {
-      ok: allChecksPassed,
-      scope: "local_full_system_external_message_finance_memory_loop",
-      checks: results,
-      skippedCheckCount: skipCount,
-      liveTouched: false,
-      providerConfigTouched: false,
-      protectedMemoryTouched: false,
-      remoteFetchOccurred: false,
-      executionAuthorityGranted: false,
-      summary:
-        "Full dev loop passed: external message channel contract, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, and fail-closed cases.",
-    },
-    null,
-    2,
-  )}\n`,
-);
+async function main(): Promise<void> {
+  const results: CommandResult[] = [];
+  for (const check of checks) {
+    results.push(await runCommand(check));
+  }
+  const evaluation = evaluateAgentSystemLoop(results);
+
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        ...evaluation,
+        scope: "local_full_system_external_message_finance_memory_loop",
+        checks: results,
+        liveTouched: false,
+        providerConfigTouched: false,
+        protectedMemoryTouched: false,
+        remoteFetchOccurred: false,
+        executionAuthorityGranted: false,
+        summary:
+          evaluation.status === "passed"
+            ? "Full dev loop passed: external message channel contract, finance learning intake, multi-capability brain synthesis, fresh event analysis, receipt memory, and fail-closed cases."
+            : evaluation.status === "blocked"
+              ? `Full dev loop blocked: ${evaluation.skippedCheckCount} required check(s) were skipped and need a successful fallback.`
+              : `Full dev loop failed: ${evaluation.failedCheckCount} required check(s) failed.`,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}
