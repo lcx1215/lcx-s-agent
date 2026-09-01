@@ -10,8 +10,10 @@ verify_installed_cli() {
   local cli_name="$package_name"
   local cmd_path=""
   local entry_path=""
+  local resolved_cmd_path=""
   local npm_root=""
   local package_json=""
+  local raw_version=""
   local installed_version=""
 
   cmd_path="$(command -v "$cli_name" || true)"
@@ -27,18 +29,33 @@ verify_installed_cli() {
     package_json="$npm_root/$package_name/package.json"
   fi
 
+  if [[ -n "$cmd_path" ]]; then
+    resolved_cmd_path="$(readlink -f "$cmd_path" 2>/dev/null || true)"
+    if [[ "$resolved_cmd_path" == */dist/entry.js ]]; then
+      package_json="${resolved_cmd_path%/dist/entry.js}/package.json"
+    fi
+  fi
+
   if [[ -z "$cmd_path" && -z "$entry_path" ]]; then
     echo "ERROR: $package_name is not on PATH" >&2
     return 1
   fi
 
   if [[ -n "$cmd_path" ]]; then
-    installed_version="$("$cmd_path" --version 2>/dev/null || true)"
+    raw_version="$("$cmd_path" --version 2>/dev/null || true)"
   else
-    installed_version="$(node "$entry_path" --version 2>/dev/null || true)"
+    raw_version="$(node "$entry_path" --version 2>/dev/null || true)"
   fi
 
-  installed_version="$(printf '%s\n' "$installed_version" | head -n 1 | tr -d '\r')"
+  installed_version="$(printf '%s\n' "$raw_version" | head -n 1 | tr -d '\r')"
+  installed_version="$(extract_openclaw_semver "$installed_version")"
+
+  if [[ -z "$installed_version" && -n "$cmd_path" ]]; then
+    raw_version="$("$cmd_path" version 2>/dev/null || true)"
+    installed_version="$(printf '%s\n' "$raw_version" | head -n 1 | tr -d '\r')"
+    installed_version="$(extract_openclaw_semver "$installed_version")"
+  fi
+
   if [[ -z "$installed_version" ]]; then
     if [[ -z "$package_json" ]]; then
       npm_root="$(npm root -g 2>/dev/null || true)"
