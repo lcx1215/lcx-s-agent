@@ -1013,6 +1013,7 @@ async function entrypointCheck(): Promise<CheckResult> {
     "scripts/operator/local-brain-distill-eval.ts",
     "scripts/operator/local-brain-training-contract.ts",
     "scripts/operator/local-brain-training-sample-audit.ts",
+    "scripts/operator/minimax-brain-teacher-batch.ts",
     "scripts/operator/local-brain-plan.ts",
     "scripts/operator/local-brain-promotion-audit.ts",
     "scripts/operator/lcx-external-channel-binding.ts",
