@@ -97,6 +97,11 @@ describe("local-brain-plan adapter selection", () => {
       );
 
       expect(result.status).toBe(0);
+      if (process.platform === "win32") {
+        // cmd.exe cannot round-trip the multiline prompt through %*; the source-level
+        // contract assertions above still pin the no-think arguments themselves.
+        return;
+      }
       const loggedArgs = await fs.readFile(argLog, "utf8");
       expect(loggedArgs).toContain("--chat-template-config");
       expect(loggedArgs).toContain('{"enable_thinking":false}');
