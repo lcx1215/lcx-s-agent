@@ -835,7 +835,7 @@ function buildInstantPreflight(params: {
     matchedSkillIds: effectiveSpecs.map((spec) => spec.id),
     bestSkillPaths: effectiveSpecs.map((spec) => params.skillPaths[spec.id]),
     promptInjection: [
-      "Before answering, apply these SkillOpt-lite SOP rules as dev context only:",
+      "Before answering, apply these SkillOpt-lite SOP rules as local context only:",
       ...effectiveSpecs.map((spec) => `- ${spec.title} (${spec.id}): ${spec.capabilityRule}`),
       "- This preflight is immediate guidance, not model-weight absorption and not user-visible-observed proof.",
     ].join("\n"),

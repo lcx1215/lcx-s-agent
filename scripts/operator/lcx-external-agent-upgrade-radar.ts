@@ -853,7 +853,7 @@ const BLACKTECH_MECHANISMS: BlacktechMechanism[] = [
       "protected_memory_write",
     ],
     liveBoundary:
-      "Trajectory export is offline dev evidence; external-channel behavior changes only after normal eval, promotion, and external-channel gates.",
+      "Trajectory export is offline local evidence; external-channel behavior changes only after normal eval, promotion, and external-channel gates.",
   },
   {
     id: "local_first_memory_provenance",

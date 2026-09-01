@@ -97,7 +97,7 @@ describe("LCX system doctor train slice observability", () => {
     expect(source).toContain("LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS");
     expect(source).toContain("async function liveOpenClawInvocation");
     expect(source).toContain("LIVE_SIDECAR_DIST_ENTRY");
-    expect(source).toContain('source: "live-sidecar-dist"');
+    expect(source).toContain('source: "external-channel-runtime-dist"');
     expect(source).toContain("String(LIVE_CHANNEL_STATUS_STEP_TIMEOUT_MS)");
     expect(source).toContain("error: `${params.name} timed out after ${params.timeoutMs}ms`");
     expect(source).toMatch(

@@ -66,7 +66,7 @@ function usage(): never {
     [
       "Usage: node --import tsx scripts/operator/lcx-system-doctor.ts [--json] [--deep] [--live] [--brain-plan]",
       "",
-      "Summarizes LCX Agent dev observability without touching live surfaces by default.",
+      "Summarizes LCX Agent local observability without touching external-channel surfaces by default.",
     ].join("\n"),
   );
 }
@@ -928,13 +928,13 @@ async function liveOpenClawInvocation(args: string[]): Promise<{
   command: string;
   args: string[];
   cwd: string;
-  source: "live-sidecar-dist" | "dev-pnpm-fallback";
+  source: "external-channel-runtime-dist" | "canonical-pnpm-fallback";
 }> {
   if (await fileExists(LIVE_SIDECAR_DIST_ENTRY)) {
     return {
       command: process.execPath,
       args: [LIVE_SIDECAR_DIST_ENTRY, ...args],
-      source: "live-sidecar-dist",
+      source: "external-channel-runtime-dist",
       cwd: EXTERNAL_CHANNEL_RUNTIME_REPO,
     };
   }
@@ -942,7 +942,7 @@ async function liveOpenClawInvocation(args: string[]): Promise<{
     command: "pnpm",
     args: ["--silent", "openclaw", ...args],
     cwd: WORKTREE_CWD,
-    source: "dev-pnpm-fallback",
+    source: "canonical-pnpm-fallback",
   };
 }
 

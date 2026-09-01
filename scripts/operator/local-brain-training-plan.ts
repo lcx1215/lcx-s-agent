@@ -2097,7 +2097,7 @@ export async function buildQwenBaseModelMigrationPlan(params: {
     notes: [
       "Qwen3-0.6B adapters cannot be directly reused on Qwen3-1.7B; migrate data, curriculum, evals, and gates, then train a new adapter.",
       "The first safe step is a no-adapter load/inference smoke, not LoRA training.",
-      "A successful smoke is dev evidence only; runtime stays on the latest-passing clean adapter until a new adapter passes hardened eval and promotion audit.",
+      "A successful smoke is local evidence only; runtime stays on the latest-passing clean adapter until a new adapter passes hardened eval and promotion audit.",
     ],
   };
 }
