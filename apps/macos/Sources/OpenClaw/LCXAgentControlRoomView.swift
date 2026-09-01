@@ -396,7 +396,7 @@ struct LCXAgentControlRoomView_Previews: PreviewProvider {
                     "repoDirtyCount": 35,
                     "activeHeavy": true,
                     "activePidCounts": ["guard": 1, "eval": 1, "mlx": 1],
-                    "liveLarkBrainBindingStatus": "deferred_active_training_or_eval",
+                    "externalChannelBindingStatus": "deferred_active_training_or_eval",
                     "skillOptLiteStatus": "candidate_edit_static_accepted_pending_eval",
                     "providerCouncilAccelerationStatus": "ready_plan",
                     "providerCouncilAccelerationAction": "dry_run_plan_only",

@@ -46,7 +46,8 @@ struct LCXAgentControlRoomTests {
                             "case_b",
                         ],
                     ],
-                    "liveLarkBrainBindingStatus": "deferred_active_training_or_eval",
+                    "liveLarkBrainBindingStatus": "legacy_status_should_not_win",
+                    "externalChannelBindingStatus": "deferred_active_training_or_eval",
                     "liveBindingMissingProof": [
                         "current_training_eval_or_mlx_finished",
                         "fresh_real_lark_inbound_and_outbound_seen",

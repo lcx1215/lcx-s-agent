@@ -55,7 +55,9 @@ private struct FarmSnapshot {
             selectedCleanAdapter: lastPath(string(material, "selectedCleanAdapter") ?? "not selected"),
             candidateAdapter: lastPath(string(candidate, "adapterPath") ?? "not available"),
             parseRecoveredCount: strings(candidate, "parseRecoveredCaseIds").count,
-            liveStatus: string(material, "liveLarkBrainBindingStatus") ?? "unknown",
+            liveStatus: string(material, "externalChannelBindingStatus")
+                ?? string(material, "liveLarkBrainBindingStatus")
+                ?? "unknown",
             missingLiveProofCount: liveProof.count,
             skillOptStatus: string(material, "skillOptLiteStatus") ?? string(summary, "skillOptLiteStatus") ?? "unknown",
             skillOptSkills: strings(material, "skillOptLiteMatchedSkillIds"),
@@ -127,8 +129,8 @@ private struct FarmSnapshot {
                 tone: self.skillOptStatus.contains("pending") ? .waiting : .good),
             Department(
                 id: "lark",
-                title: "LiveLark 渔港",
-                subtitle: "Real Lark Shipping Dock",
+                title: "外部通道",
+                subtitle: "External Channel Dock",
                 status: self.liveStatus,
                 detail: "还缺 \(self.missingLiveProofCount) 张出港单，不能冒充 live-fixed。",
                 image: "sailboat",
@@ -492,7 +494,7 @@ private struct StatusSign: View {
                     .font(.headline.weight(.black))
                 Divider().overlay(Color(red: 0.54, green: 0.28, blue: 0.10))
                 statusLine("大脑温室", "\(self.snapshot.activeHeavyCount) 个重任务")
-                statusLine("LiveLark 渔港", self.snapshot.liveStatus)
+                statusLine("外部通道", self.snapshot.liveStatus)
                 statusLine("SkillOpt 工坊", self.snapshot.skillOptStatus)
                 statusLine("黑科技发明棚", "\(self.snapshot.blacktechRouted)/\(self.snapshot.blacktechTotal)")
                 Text(self.snapshot.nextAction)

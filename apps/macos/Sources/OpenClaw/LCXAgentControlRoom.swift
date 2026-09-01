@@ -77,7 +77,10 @@ struct LCXAgentControlRoomSnapshot: Equatable {
         let digestAutopilotSummary = JSONPath.dictionary(digest, "autopilot", "summary")
         let summary = autopilotSummary.isEmpty ? digestAutopilotSummary : autopilotSummary
         let material = JSONPath.dictionary(digest, "material")
-        let liveBinding = JSONPath.dictionary(digest, "liveLarkBrainBinding")
+        let externalBinding = JSONPath.dictionary(digest, "externalChannelBinding")
+        let liveBinding = externalBinding.isEmpty
+            ? JSONPath.dictionary(digest, "liveLarkBrainBinding")
+            : externalBinding
         let latestCandidate = JSONPath.dictionary(material, "latestCandidateEval")
         let repo = JSONPath.dictionary(digest, "repo")
 
@@ -130,7 +133,8 @@ struct LCXAgentControlRoomSnapshot: Equatable {
             fastestSafeNextAction: JSONPath.string(summary, "fastestSafeNextAction")
                 ?? JSONPath.string(material, "fastestSafeNextAction")
                 ?? "refresh owner state",
-            liveBindingStatus: JSONPath.string(material, "liveLarkBrainBindingStatus")
+            liveBindingStatus: JSONPath.string(material, "externalChannelBindingStatus")
+                ?? JSONPath.string(material, "liveLarkBrainBindingStatus")
                 ?? JSONPath.string(liveBinding, "status")
                 ?? "unknown",
             liveBindingMissingProof: liveMissingProof,
@@ -205,8 +209,8 @@ struct LCXAgentControlRoomSnapshot: Equatable {
                 tone: skillTone),
             LCXAgentDepartment(
                 id: "live",
-                title: "LiveLark 渔港",
-                subtitle: "Real Lark Shipping Dock",
+                title: "外部通道",
+                subtitle: "External Channel Dock",
                 status: self.liveBindingStatus,
                 detail: self.liveUserSeen
                     ? "已有真实 inbound/outbound 证据。"
