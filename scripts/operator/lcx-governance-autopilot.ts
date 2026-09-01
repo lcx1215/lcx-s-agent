@@ -984,7 +984,7 @@ function buildContextRecoveryHandoff({
     "# LCX Context Recovery Handoff",
     "",
     `generatedAt: ${receipt.checkedAt}`,
-    "boundary: dev_context_recovery_handoff_only",
+    "boundary: local_context_recovery_handoff_only",
     "owner: lcx-governance-autopilot",
     `repo: ${repoRoot}`,
     `branch: ${gitStatusLines[0] ?? "unknown"}`,

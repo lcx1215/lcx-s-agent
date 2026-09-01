@@ -69,7 +69,7 @@ function usage(): never {
       "Usage: node --import tsx scripts/operator/lcx-module-learning-absorption-gate.ts [--workspace DIR] [--date YYYY-MM-DD] [--guard-log PATH] [--eval-summary PATH] [--json]",
       "",
       "Reads module-learning review receipts and hardened eval evidence, then decides whether module-learning may be called eval_absorbed.",
-      "Default is read-only. --write-absorbed-plan-receipts writes dev/local evidence and superseding eval_absorbed plan receipts only when hardened eval is clean.",
+      "Default is read-only. --write-absorbed-plan-receipts writes local evidence and superseding eval_absorbed plan receipts only when hardened eval is clean.",
     ].join("\n"),
   );
 }

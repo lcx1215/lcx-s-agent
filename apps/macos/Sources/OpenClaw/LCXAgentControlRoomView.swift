@@ -402,7 +402,7 @@ struct LCXAgentControlRoomView_Previews: PreviewProvider {
                     "providerCouncilAccelerationAction": "dry_run_plan_only",
                 ],
             ],
-            handoff: "generatedAt: 2026-05-27T22:44:40Z\nboundary: dev_context_recovery_handoff_only\n",
+            handoff: "generatedAt: 2026-05-27T22:44:40Z\nboundary: local_context_recovery_handoff_only\n",
             handoffPath: "/tmp/lcx-context-recovery-handoff-latest.md")))
     }
 }

@@ -96,6 +96,10 @@ type RecoveryWarning = {
   evidence?: unknown;
 };
 
+function boundaryMatches(value: unknown, ...accepted: string[]): boolean {
+  return typeof value === "string" && accepted.includes(value);
+}
+
 function usage(): never {
   throw new Error(
     [
@@ -862,7 +866,7 @@ function buildNewWindowHandoffText(params: {
     `recoveryChecks=${params.result.summary.passed}/${params.result.summary.total}`,
     "",
     "## Boundaries",
-    "- context handoff is dev/local evidence; external-channel status below is read-only",
+    "- context handoff is local evidence; external-channel status below is read-only",
     "- do not claim user-visible-observed unless fresh real Lark inbound and reply proof exists",
     "- legacy liveRuntimeUpdated/liveUserSeen terms are compatibility labels only",
     "- liveTouched=false; providerConfigTouched=false; protectedMemoryTouched=false",
@@ -1047,7 +1051,9 @@ async function universeIndexCheck(): Promise<RecoveryCheck> {
     const ownerCoverage = payload.ownerCoverage as Record<string, unknown> | undefined;
     return {
       id: "universe_index_recovers_total_inventory",
-      ok: payload.ok === true && payload.boundary === "dev_universe_index_only",
+      ok:
+        payload.ok === true &&
+        boundaryMatches(payload.boundary, "local_universe_index_only", "dev_universe_index_only"),
       summary:
         "lcx-universe-index must recover repo files, runtime artifacts, live sidecar inventory, and owner coverage without chat context",
       evidence: {
@@ -1107,7 +1113,7 @@ async function main() {
   const currentFlowEvidence = flowGraph.evidence as Record<string, unknown> | undefined;
   const operatorFlowMatchesCurrent =
     latestState !== undefined &&
-    latestFlowGraph?.boundary === "dev_flow_graph_only" &&
+    boundaryMatches(latestFlowGraph?.boundary, "local_flow_graph_only", "dev_flow_graph_only") &&
     numberField(latestFlowGraph, "nodes") === numberField(currentFlowEvidence, "nodes") &&
     numberField(latestFlowGraph, "filters") === numberField(currentFlowEvidence, "filters") &&
     numberField(latestFlowGraph, "scenarios") === numberField(currentFlowEvidence, "scenarios");
@@ -1184,7 +1190,11 @@ async function main() {
       id: "local_operator_latest_is_readable",
       ok:
         latestState !== undefined &&
-        latestState.boundary === "dev_local_observability_only" &&
+        boundaryMatches(
+          latestState.boundary,
+          "local_observability_only",
+          "dev_local_observability_only",
+        ) &&
         nestedBoolean(latestState, "liveTouched") === false &&
         nestedBoolean(latestState, "providerConfigTouched") === false &&
         nestedBoolean(latestState, "protectedMemoryTouched") === false,
@@ -1241,14 +1251,26 @@ async function main() {
       id: "local_operator_digest_contains_mind_model",
       ok:
         latestState === undefined ||
-        (latestMindModel?.boundary === "dev_mind_model_only" &&
+        (boundaryMatches(
+          latestMindModel?.boundary,
+          "local_mind_model_only",
+          "dev_mind_model_only",
+        ) &&
           typeof latestMindModel.passed === "number" &&
           typeof latestMindModel.failed === "number" &&
-          ((latestFlowGraph?.boundary === "dev_flow_graph_only" &&
+          ((boundaryMatches(
+            latestFlowGraph?.boundary,
+            "local_flow_graph_only",
+            "dev_flow_graph_only",
+          ) &&
             typeof latestFlowGraph.passed === "number" &&
             typeof latestFlowGraph.failed === "number") ||
             flowGraph.ok) &&
-          latestContextRecovery?.boundary === "dev_context_recovery_exam_only"),
+          boundaryMatches(
+            latestContextRecovery?.boundary,
+            "local_context_recovery_exam_only",
+            "dev_context_recovery_exam_only",
+          )),
       summary: "operator digest should expose mind-model, flow-graph, and context-recovery status",
       evidence: {
         mindModel: latestMindModel,
@@ -1260,7 +1282,11 @@ async function main() {
       id: "fresh_training_plan_decision_visible_after_recovery",
       ok:
         currentTrainingPlan.ok &&
-        currentTrainingPlan.payload?.boundary === "dev_local_brain_training_plan_only" &&
+        boundaryMatches(
+          currentTrainingPlan.payload?.boundary,
+          "local_brain_training_plan_only",
+          "dev_local_brain_training_plan_only",
+        ) &&
         currentTrainingDecisionIds.length > 0,
       summary:
         "compressed recovery must use fresh local-brain-training-plan for volatile training decisions, not only operator latest",
@@ -1310,7 +1336,11 @@ async function main() {
       ok:
         currentSelfRepairHands.ok &&
         selfRepairHands?.ok === true &&
-        selfRepairHands.boundary === "dev_self_repair_hands_only" &&
+        boundaryMatches(
+          selfRepairHands.boundary,
+          "local_self_repair_hands_only",
+          "dev_self_repair_hands_only",
+        ) &&
         selfRepairHands.absorptionStatus === "candidate_only_not_in_train_slice" &&
         selfRepairHands.latestJsonPath === SELF_REPAIR_HANDS_LATEST_PATH &&
         selfRepairHands.latestMarkdownPath === SELF_REPAIR_HANDS_MARKDOWN_PATH &&
@@ -1360,7 +1390,7 @@ async function main() {
   );
   const result = {
     ok: failed.length === 0,
-    boundary: "dev_context_recovery_exam_only",
+    boundary: "local_context_recovery_exam_only",
     checkedAt: new Date().toISOString(),
     compressedContextRecovered: failed.length === 0,
     summary: {
@@ -1421,7 +1451,7 @@ async function main() {
     : undefined;
   const handoffForNewWindow = options.handoff
     ? {
-        boundary: "dev_context_recovery_handoff_only",
+        boundary: "local_context_recovery_handoff_only",
         owner: "lcx-context-recovery-exam",
         purpose:
           "compact current-state snapshot for future Codex windows; reuses context recovery instead of creating a parallel memory lane",

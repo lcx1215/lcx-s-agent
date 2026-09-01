@@ -66,7 +66,7 @@ struct LCXAgentControlRoomTests {
             ],
             handoff: """
             generatedAt: 2026-05-27T22:44:40.279Z
-            boundary: dev_context_recovery_handoff_only
+            boundary: local_context_recovery_handoff_only
             """,
             handoffPath: "/tmp/lcx-context-recovery-handoff-latest.md")
 

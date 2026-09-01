@@ -373,7 +373,7 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     ],
     boundaryTerms: [
       "dev_automation_coordination_only",
-      "dev_context_recovery_exam_only",
+      "local_context_recovery_exam_only",
       "liveTouched",
     ],
     nextAction: "Read local operator receipts first; keep Codex visible automation as one digest.",

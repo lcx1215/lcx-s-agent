@@ -437,7 +437,7 @@ describe("LCX governance autopilot", () => {
 
     const handoff = await fs.readFile(payload.handoffLatestPath, "utf8");
     expect(handoff).toContain("# LCX Context Recovery Handoff");
-    expect(handoff).toContain("boundary: dev_context_recovery_handoff_only");
+    expect(handoff).toContain("boundary: local_context_recovery_handoff_only");
     expect(handoff).toContain("activeTrainingOrEval");
     expect(handoff).toContain("evolutionCooldownActive");
     expect(handoff).toContain("latestEvolutionCooldown");

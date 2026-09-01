@@ -426,9 +426,9 @@ node --import tsx scripts/operator/lcx-context-recovery-exam.ts --handoff --json
 
 The handoff snapshot includes dirty files, affected lanes, unmatched-file
 checks, fresh training-plan decisions, module-learning absorption blockers,
-flow-graph counts, strict dev/external-channel/user-visible/protected-memory
-boundaries, and the exact recovery commands. It is still dev/local evidence
-only; it does not prove `external-channel-bound`, `user-visible-observed`,
+flow-graph counts, strict local/external-channel/user-visible/protected-memory
+boundaries, and the exact recovery commands. It is local evidence only; it does
+not prove `external-channel-bound`, `user-visible-observed`,
 legacy `live-runtime-updated`, legacy `live-user-seen`, or Qwen model-weight
 absorption.
 The governance autopilot also refreshes a shorter machine-written handoff
