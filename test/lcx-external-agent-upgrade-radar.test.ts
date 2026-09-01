@@ -2,9 +2,12 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { LCX_USER_HOME } from "../scripts/operator/lcx-local-paths.ts";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
+const skillEntrypoint = (name: string) =>
+  path.join(LCX_USER_HOME, ".codex", "skills", name, "SKILL.md");
 
 async function runRadar() {
   const { stdout } = await execFileAsync(
@@ -182,7 +185,7 @@ describe("lcx-external-agent-upgrade-radar", () => {
         }),
         expect.objectContaining({
           label: "OWASP Agentic Top 10 / SMCP",
-          ownerEntrypoint: "/Users/liuchengxu/.codex/skills/security-threat-model/SKILL.md",
+          ownerEntrypoint: skillEntrypoint("security-threat-model"),
         }),
         expect.objectContaining({
           label: "ClawBench / WildClawBench",
@@ -190,11 +193,11 @@ describe("lcx-external-agent-upgrade-radar", () => {
         }),
         expect.objectContaining({
           label: "Agent S / HKUDS CLI-Anything",
-          ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+          ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
         }),
         expect.objectContaining({
           label: "GitHub CLI / GitHub Agentic Workflows",
-          ownerEntrypoint: "/Users/liuchengxu/.codex/skills/cli-anything-harvester/SKILL.md",
+          ownerEntrypoint: skillEntrypoint("cli-anything-harvester"),
         }),
         expect.objectContaining({
           label: "LangGraph / OpenAI Agents / CrewAI / Microsoft Agent Framework",
