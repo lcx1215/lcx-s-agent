@@ -17,6 +17,7 @@ import {
   normalizeLocalBrainModuleList,
   packLocalBrainModuleFields,
 } from "./local-brain-taxonomy.js";
+import { redactTeacherContractLabels } from "./local-brain-training-contract.js";
 import { parseJsonObjectFromOutput } from "./smoke-json-output.ts";
 
 type CliOptions = {
@@ -482,6 +483,7 @@ export function buildTeacherSystemPrompt(): string {
     "Keep task_family as concise snake_case, keep next_step under 160 characters, and never copy the full user prompt into JSON values.",
     "Keep primary_modules, supporting_modules, required_tools, missing_data, risk_boundaries, and rejected_context to the smallest useful arrays; prefer 3-5 items per array and 10 total module ids across primary/supporting/required.",
     "Do not copy or enumerate the full module taxonomy into the answer; choose only the few ids directly needed for this task.",
+    "The user payload deliberately withholds source receipts, case ids, and answer-bearing contract labels; infer only from the natural-language request.",
     "Do not answer the finance question. Produce a planning packet for the local agent brain.",
     "The local brain should behave like a careful human analyst: clarify the objective, recall local memory and learned rules, split the problem into causal finance layers, identify missing evidence, then hand hard reasoning to review models.",
     "Use only these module ids:",
@@ -514,12 +516,13 @@ export function buildTeacherSystemPrompt(): string {
   ].join("\n");
 }
 
-function buildTeacherUserPayload(input: TeacherPrompt): string {
+export function buildTeacherUserPayload(input: TeacherPrompt): string {
   return [
     "Produce the teacher JSON for this local-brain distillation input.",
+    "The source receipt, case id, and answer-bearing contract labels are withheld; infer only from the natural-language request.",
     "",
-    `user_message: ${input.userMessage}`,
-    `source_summary: ${input.sourceSummary}`,
+    `user_message: ${redactTeacherContractLabels(input.userMessage)}`,
+    "source_provenance: withheld_from_model_prompt",
   ].join("\n");
 }
 
@@ -787,7 +790,7 @@ async function callMinimaxTeacher(
 }
 
 function mockTeacherPlan(input: TeacherPrompt): TeacherPlan {
-  const text = `${input.userMessage}\n${input.sourceSummary}`;
+  const text = redactTeacherContractLabels(input.userMessage);
   if (/重新来一遍/u.test(text)) {
     return {
       task_family: "ambiguous_repeat_without_current_subject",
@@ -2762,7 +2765,11 @@ function makeAcceptedCandidate(
   const candidate = buildLarkBrainDistillationCandidate({
     source: "teacher_review",
     userMessage: input.userMessage,
-    payload: JSON.stringify({ teacher: "MiniMax-M2.7", sourceSummary: input.sourceSummary }),
+    payload: JSON.stringify({
+      teacher: "MiniMax-M2.7",
+      promptId: input.id,
+      sourceSummaryOmitted: true,
+    }),
     createdAt: new Date().toISOString(),
     review: {
       accepted: true,
@@ -2854,7 +2861,11 @@ async function main(): Promise<void> {
           acceptedCandidates.push(
             makeAcceptedCandidate(
               prompt,
-              hardenTeacherPlanForPrompt(prompt, normalizeTeacherPlan(extractJson(teacherText))),
+              // Keep this path honest: normalize the teacher output for the
+              // shared JSON contract, then let dataset admission decide if it
+              // is semantically fit for training. Do not use a case-specific
+              // hardener to manufacture a passing answer from hidden labels.
+              normalizeTeacherPlan(extractJson(teacherText)),
             ),
           );
           lastError = undefined;
