@@ -76,12 +76,14 @@ const NON_REVIEW_SOURCE_KINDS_TO_REPEAT = new Set([
 ]);
 const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
   [CURATED_SOURCE_KIND]: "gold_curated",
+  brain_distillation_candidate_review: "teacher_distillation_candidate",
   [REVIEW_SOURCE_KIND]: "teacher_distillation_review",
   finance_learning_capability_apply_receipt: "workflow_receipt",
   feishu_work_receipt: "workflow_receipt",
   lark_language_handoff_receipt: "workflow_receipt",
   module_learning_plan_receipt: "plan_only_receipt",
   module_learning_review_receipt: "review_only_receipt",
+  generalization_generator: "synthetic_rule_generated",
 };
 
 function usage(): never {

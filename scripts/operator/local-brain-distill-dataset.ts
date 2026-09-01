@@ -98,6 +98,7 @@ const DEFAULT_REJECTED_CONTEXT = [
 ];
 const SOURCE_KIND_TRUST_TIERS: Record<string, string> = {
   curated_seed: "gold_curated",
+  brain_distillation_candidate_review: "teacher_distillation_candidate",
   brain_distillation_review: "teacher_distillation_review",
   finance_learning_capability_apply_receipt: "workflow_receipt",
   feishu_work_receipt: "workflow_receipt",
