@@ -1,0 +1,5 @@
+# Current repository owner from the configured Git remote. Keep security and
+# automation changes reviewable when the Agent implementation is replaced.
+* @lcx1215
+/SECURITY.md @lcx1215
+/.github/ @lcx1215

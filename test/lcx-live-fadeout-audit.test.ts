@@ -87,17 +87,17 @@ describe("LCX live fadeout audit", () => {
     expect(packageJson.scripts["lcx:live:status"]).toBeUndefined();
     expect(packageJson.scripts["lcx:live:status:probe"]).toBeUndefined();
     expect(packageJson.scripts["lcx:promote-live"]).toBeUndefined();
-    expect(readme).toContain("scripts/operator/lcx-live-fadeout-audit.ts --json");
-    expect(readme).toContain("local LCX core");
-    expect(readme).toContain("cloud-runtime-ready");
-    expect(readme).toContain("one canonical repository");
-    expect(readme).toContain("Local system/factory rule");
-    expect(readme).toContain("Feature branches belong to GitHub/GitLab collaboration");
-    expect(agents).toContain("System-wide live fadeout truth belongs");
-    expect(agents).toContain("Cloud migration must not resurrect a dual-repository model");
-    expect(agents).toContain("Local system/factory rule");
-    expect(normalizedAgents).toContain("Feature branches belong to");
-    expect(normalizedAgents).toContain("GitHub/GitLab collaboration");
+    expect(readme).toContain("implementation-neutral");
+    expect(readme).toContain("Learn-and-improve loop");
+    expect(readme).toContain("external binding");
+    expect(agents).toContain("compatibility-first");
+    expect(agents).toContain("Learn by doing");
+    expect(agents).toContain("external-channel binding");
+    expect(normalizedAgents).toContain("implementation-neutral");
+    expect(normalizedAgents).toContain(
+      "Branches, worktrees, and branch prefixes are implementation choices",
+    );
+    expect(runbook).toContain("scripts/operator/lcx-live-fadeout-audit.ts --json");
     expect(runbook).toContain("whole-system fadeout audit");
     expect(runbook).toContain("cloud-runtime-ready");
   });

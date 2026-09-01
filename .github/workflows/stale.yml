@@ -7,6 +7,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: repository-maintenance-stale
+  cancel-in-progress: false
+
 jobs:
   stale:
     permissions:
@@ -27,7 +31,7 @@ jobs:
           app-id: "2971289"
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK }}
       - name: Mark stale issues and pull requests
-        uses: actions/stale@v9
+        uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9.1.0
         with:
           repo-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
           days-before-issue-stale: 7
@@ -38,7 +42,7 @@ jobs:
           stale-pr-label: stale
           exempt-issue-labels: enhancement,maintainer,pinned,security,no-stale
           exempt-pr-labels: maintainer,no-stale
-          operations-per-run: 10000
+          operations-per-run: 100
           exempt-all-assignees: true
           remove-stale-when-updated: true
           stale-issue-message: |
@@ -49,13 +53,13 @@ jobs:
             Please add updates or it will be closed.
           close-issue-message: |
             Closing due to inactivity.
-            If this is still an issue, please retry on the latest OpenClaw release and share updated details.
+            If this is still an issue, please retry on the latest repository release and share updated details.
             If you are absolutely sure it still happens on the latest release, open a new issue with fresh repro steps.
           close-issue-reason: not_planned
           close-pr-message: |
             Closing due to inactivity.
-            If you believe this PR should be revived, post in #pr-thunderdome-dangerzone on Discord to talk to a maintainer.
-            That channel is the escape hatch for high-quality PRs that get auto-closed.
+            If you believe this PR should be revived, add a fresh comment and mention a repository maintainer.
+            Include current reproduction and review context so it can be reopened deliberately.
 
   lock-closed-issues:
     permissions:

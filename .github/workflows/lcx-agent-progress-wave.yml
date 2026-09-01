@@ -2,21 +2,29 @@ name: LCX Agent progress wave
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Commit and push the generated assets after reviewing the artifact"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  refresh:
+  generate:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
@@ -24,13 +32,41 @@ jobs:
         run: corepack enable
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Generate progress wave
         run: node scripts/generate-lcx-agent-progress-wave.mjs
 
-      - name: Commit refreshed image
+      - name: Upload generated assets for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lcx-agent-progress-wave
+          if-no-files-found: error
+          path: |
+            docs/assets/lcx-agent-daily-progress-wave.svg
+            docs/assets/lobster-daily-progress-wave.svg
+
+  publish:
+    if: inputs.publish == true
+    needs: generate
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Download reviewed assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: lcx-agent-progress-wave
+          path: docs/assets
+
+      - name: Commit reviewed image
         run: |
+          set -euo pipefail
           if git diff --quiet -- docs/assets/lcx-agent-daily-progress-wave.svg docs/assets/lobster-daily-progress-wave.svg; then
             echo "Progress wave is already current."
             exit 0
@@ -38,5 +74,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/assets/lcx-agent-daily-progress-wave.svg docs/assets/lobster-daily-progress-wave.svg
+          git diff --cached --check
           git commit -m "Docs: refresh LCX Agent progress wave"
           git push

@@ -52,21 +52,21 @@ runs:
 
     - name: Mount pnpm store sticky disk
       if: inputs.use-sticky-disk == 'true'
-      uses: useblacksmith/stickydisk@v1
+      uses: useblacksmith/stickydisk@89a84c3abfb0e2ccb5fcc46b72018c03e4d6ed6f # v1.6.0
       with:
         key: ${{ github.repository }}-pnpm-store-${{ runner.os }}-${{ inputs.cache-key-suffix }}
         path: ${{ steps.pnpm-store.outputs.path }}
 
     - name: Restore pnpm store cache (exact key only)
       if: inputs.use-actions-cache == 'true' && inputs.use-sticky-disk != 'true' && inputs.use-restore-keys != 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ steps.pnpm-store.outputs.path }}
         key: ${{ runner.os }}-pnpm-store-${{ inputs.cache-key-suffix }}-${{ hashFiles('pnpm-lock.yaml') }}
 
     - name: Restore pnpm store cache (with fallback keys)
       if: inputs.use-actions-cache == 'true' && inputs.use-sticky-disk != 'true' && inputs.use-restore-keys == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ steps.pnpm-store.outputs.path }}
         key: ${{ runner.os }}-pnpm-store-${{ inputs.cache-key-suffix }}-${{ hashFiles('pnpm-lock.yaml') }}

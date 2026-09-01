@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "authority": "compatibility-only",
+  "owner": "lcx-compat-skill-audit",
+  "purpose": "Track regular Skill copies that are discovered outside the repository without making them primary runtime authority.",
+  "review": {
+    "method": "per-entry-static-triage",
+    "runtimeApproval": false,
+    "disposition": "retain-unchanged-until-individually-rehomed-or-retired"
+  },
+  "rules": [
+    "A regular copy is compatibility material until its source, registration, and owner are proven.",
+    "A primary-root name collision is drift and must be reviewed before either copy is changed.",
+    "Deletion, relocation, or bulk rewriting requires a separately authorized exact target and a reversible migration step."
+  ],
+  "entries": [
+    { "name": "ask", "status": "compatibility-only" },
+    { "name": "autopilot", "status": "compatibility-only" },
+    { "name": "autoresearch", "status": "compatibility-only" },
+    { "name": "cancel", "status": "compatibility-only" },
+    { "name": "ccg", "status": "compatibility-only" },
+    { "name": "configure-notifications", "status": "compatibility-only" },
+    { "name": "deep-dive", "status": "compatibility-only" },
+    { "name": "deep-interview", "status": "compatibility-only" },
+    { "name": "deepinit", "status": "compatibility-only" },
+    { "name": "external-context", "status": "compatibility-only" },
+    { "name": "hud", "status": "compatibility-only" },
+    { "name": "lane-safe-work", "status": "compatibility-only" },
+    { "name": "learner", "status": "compatibility-only" },
+    { "name": "local-build-reminder", "status": "compatibility-only" },
+    { "name": "omc-doctor", "status": "compatibility-only" },
+    { "name": "omc-plan", "status": "compatibility-only" },
+    { "name": "omc-reference", "status": "compatibility-only" },
+    { "name": "omc-setup", "status": "compatibility-only" },
+    { "name": "omc-teams", "status": "compatibility-only" },
+    { "name": "project-session-manager", "status": "compatibility-only" },
+    { "name": "ralph", "status": "compatibility-only" },
+    { "name": "ralplan", "status": "compatibility-only" },
+    { "name": "release", "status": "compatibility-only" },
+    { "name": "sciomc", "status": "compatibility-only" },
+    { "name": "self-improve", "status": "compatibility-only" },
+    { "name": "setup", "status": "compatibility-only" },
+    { "name": "skillify", "status": "compatibility-only" },
+    { "name": "team", "status": "compatibility-only" },
+    { "name": "trace", "status": "compatibility-only" },
+    { "name": "ultragoal", "status": "compatibility-only" },
+    { "name": "ultraqa", "status": "compatibility-only" },
+    { "name": "ultrawork", "status": "compatibility-only" },
+    { "name": "wiki", "status": "compatibility-only" },
+    { "name": "writer-memory", "status": "compatibility-only" }
+  ]
+}
