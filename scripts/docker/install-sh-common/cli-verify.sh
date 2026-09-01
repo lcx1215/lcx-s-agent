@@ -11,6 +11,7 @@ verify_installed_cli() {
   local cmd_path=""
   local entry_path=""
   local npm_root=""
+  local package_json=""
   local installed_version=""
 
   cmd_path="$(command -v "$cli_name" || true)"
@@ -23,6 +24,7 @@ verify_installed_cli() {
     if [[ -n "$npm_root" && -f "$npm_root/$package_name/dist/entry.js" ]]; then
       entry_path="$npm_root/$package_name/dist/entry.js"
     fi
+    package_json="$npm_root/$package_name/package.json"
   fi
 
   if [[ -z "$cmd_path" && -z "$entry_path" ]]; then
@@ -37,6 +39,15 @@ verify_installed_cli() {
   fi
 
   installed_version="$(printf '%s\n' "$installed_version" | head -n 1 | tr -d '\r')"
+  if [[ -z "$installed_version" ]]; then
+    if [[ -z "$package_json" ]]; then
+      npm_root="$(npm root -g 2>/dev/null || true)"
+      package_json="$npm_root/$package_name/package.json"
+    fi
+    if [[ -f "$package_json" ]]; then
+      installed_version="$(node -p 'require(process.argv[1]).version' "$package_json" 2>/dev/null || true)"
+    fi
+  fi
   installed_version="$(extract_openclaw_semver "$installed_version")"
 
   echo "cli=$cli_name installed=$installed_version expected=$expected_version"
