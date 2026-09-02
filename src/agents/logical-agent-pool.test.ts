@@ -255,6 +255,35 @@ describe("logical agent pool", () => {
     expect(pool.status.activeRuns).toBe(0);
   });
 
+  it("waits for executor termination before resolving a timed-out task", async () => {
+    let terminated = false;
+    const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [{ id: "slow-timeout", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: async ({ signal }) => {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              setTimeout(() => {
+                terminated = true;
+                resolve();
+              }, 10);
+            },
+            { once: true },
+          );
+        });
+        return { output: "late", sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(terminated).toBe(true);
+    expect(result.tasks[0]?.error).toContain("timed out");
+    expect(result.pool.activeRuns).toBe(0);
+  });
+
   it("does not reuse a slot until a timed-out executor has terminated", async () => {
     const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
     let active = 0;
@@ -445,6 +474,46 @@ describe("logical agent pool", () => {
 
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.error).toContain("unstringifiable");
+  });
+
+  it("contains errors from hostile proxy objects", async () => {
+    const hostile = new Proxy(Object.create(null), {
+      getPrototypeOf: () => {
+        throw new Error("prototype trap failed");
+      },
+      get: () => {
+        throw new Error("string conversion trap failed");
+      },
+    });
+    const result = await runLogicalAgentPlan({
+      tasks: [{ id: "hostile-error", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: () => {
+        throw hostile;
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toContain("unstringifiable");
+  });
+
+  it("enforces the measured model-invocation memory delta", async () => {
+    const pool = new LogicalAgentPool({
+      memoryBudgetMb: 1,
+      modelInvoker: async () => Buffer.alloc(5 * 1024 * 1024),
+    });
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [{ id: "memory-budget", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: async ({ modelSlot, signal }) => ({
+        output: await modelSlot.invoke("large-output", signal),
+        sideEffects: [],
+      }),
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toContain("exceeded memory budget");
+    expect(result.pool.memoryBudgetEnforcement).toBe("measured_invocation_delta");
+    expect(result.pool.activeModelInvocations).toBe(0);
   });
 
   it("requires every executor to declare side effects", async () => {

@@ -177,7 +177,9 @@ export type LocalModelPoolConfig = Readonly<{
   modelId: string;
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
+  /** Requested per-invocation delta; the enforcement mode is reported below. */
   memoryBudgetMb: number;
+  memoryBudgetEnforcement: "measured_invocation_delta";
   taskTimeoutMs: number;
 }>;
 
@@ -190,6 +192,7 @@ export const DEFAULT_LOCAL_MODEL_POOL: LocalModelPoolConfig = Object.freeze({
   maxLoadedModels: 1,
   maxConcurrency: 1,
   memoryBudgetMb: 3072,
+  memoryBudgetEnforcement: "measured_invocation_delta",
   taskTimeoutMs: 30_000,
 });
 
@@ -247,6 +250,7 @@ export type LogicalAgentPoolStatus = {
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
   memoryBudgetMb: number;
+  memoryBudgetEnforcement: "measured_invocation_delta";
   taskTimeoutMs: number;
   queuedRuns: number;
   activeRuns: number;
@@ -321,6 +325,7 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
     maxLoadedModels: 1,
     maxConcurrency,
     memoryBudgetMb,
+    memoryBudgetEnforcement: "measured_invocation_delta",
     taskTimeoutMs,
   });
 }
@@ -357,6 +362,7 @@ export class LogicalAgentPool<TInput, TResult> {
       maxLoadedModels: 1,
       maxConcurrency: this.#config.maxConcurrency,
       memoryBudgetMb: this.#config.memoryBudgetMb,
+      memoryBudgetEnforcement: this.#config.memoryBudgetEnforcement,
       taskTimeoutMs: this.#config.taskTimeoutMs,
       queuedRuns: this.#queue.length,
       activeRuns: this.#activeRuns,
@@ -508,13 +514,35 @@ export class LogicalAgentPool<TInput, TResult> {
         this.#activeModelInvocations,
       );
       void Promise.resolve()
-        .then(() => this.#modelInvoker(job.request, job.signal))
+        .then(() => this.#invokeModelWithinBudget(job))
         .then(job.resolve, job.reject)
         .then(() => {
           this.#activeModelInvocations -= 1;
           this.#pumpModelInvocations();
         });
     }
+  }
+
+  async #invokeModelWithinBudget(job: ModelInvocationJob): Promise<unknown> {
+    const beforeBytes = measuredProcessMemoryBytes();
+    let result: unknown;
+    let invocationError: unknown;
+    let succeeded = false;
+    try {
+      result = await this.#modelInvoker(job.request, job.signal);
+      succeeded = true;
+    } catch (error: unknown) {
+      invocationError = error;
+    }
+    const observedDeltaBytes = Math.max(0, measuredProcessMemoryBytes() - beforeBytes);
+    const budgetBytes = this.#config.memoryBudgetMb * 1024 * 1024;
+    if (observedDeltaBytes > budgetBytes) {
+      throw new LogicalAgentMemoryBudgetError(this.#config.memoryBudgetMb, observedDeltaBytes);
+    }
+    if (!succeeded) {
+      throw invocationError;
+    }
+    return result;
   }
 }
 
@@ -613,12 +641,51 @@ class LogicalAgentCapabilityError extends Error {
   }
 }
 
+class LogicalAgentMemoryBudgetError extends Error {
+  constructor(
+    readonly budgetMb: number,
+    readonly observedDeltaBytes: number,
+  ) {
+    super(
+      `logical-agent model invocation exceeded memory budget of ${budgetMb}MiB ` +
+        `(observed delta ${Math.ceil(observedDeltaBytes / (1024 * 1024))}MiB)`,
+    );
+    this.name = "LogicalAgentMemoryBudgetError";
+  }
+}
+
+function measuredProcessMemoryBytes(): number {
+  const usage = process.memoryUsage();
+  // external includes ArrayBuffer memory in Node, so do not add arrayBuffers twice.
+  return usage.heapUsed + usage.external;
+}
+
+type CapabilityViolation = Readonly<{
+  sideEffects: readonly LogicalAgentSideEffect[];
+  message: string;
+}>;
+
+function readCapabilityViolation(error: unknown): CapabilityViolation | undefined {
+  try {
+    if (!(error instanceof LogicalAgentCapabilityError)) {
+      return undefined;
+    }
+    return {
+      sideEffects: error.sideEffects,
+      message: error.message,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function failedTaskResult<TResult>(
   task: LogicalAgentTask<unknown>,
   modelId: string,
   startedAt: number,
   error: unknown,
 ): LogicalAgentTaskResult<TResult> {
+  const capabilityViolation = readCapabilityViolation(error);
   return {
     taskId: task.id,
     agentId: task.agentId,
@@ -626,19 +693,23 @@ function failedTaskResult<TResult>(
     modelId,
     startedAt,
     completedAt: Date.now(),
-    sideEffects: error instanceof LogicalAgentCapabilityError ? error.sideEffects : [],
+    sideEffects: capabilityViolation?.sideEffects ?? [],
     error: formatUnknownError(error),
-    ...(error instanceof LogicalAgentCapabilityError ? { capabilityViolation: error.message } : {}),
+    ...(capabilityViolation ? { capabilityViolation: capabilityViolation.message } : {}),
   };
 }
 
 function formatUnknownError(error: unknown): string {
-  if (error instanceof Error) {
-    try {
-      return error.message;
-    } catch {
-      // Fall through to the defensive string conversion below.
+  try {
+    if (error instanceof Error) {
+      try {
+        return error.message;
+      } catch {
+        // Fall through to the defensive string conversion below.
+      }
     }
+  } catch {
+    // A hostile proxy can throw while evaluating instanceof.
   }
   try {
     return String(error);
@@ -708,7 +779,10 @@ function executeWithTimeout<TResult>(
         cancellationErrors.length === 0
           ? ""
           : `; abort listener failures: ${cancellationErrors.map(formatUnknownError).join("; ")}`;
-      reject(new Error(`logical-agent task timed out after ${timeoutMs}ms${cancellationDetail}`));
+      const timeoutError = new Error(
+        `logical-agent task timed out after ${timeoutMs}ms${cancellationDetail}`,
+      );
+      void termination.then(() => reject(timeoutError));
     }, timeoutMs);
     execution.then(
       (value) => {
