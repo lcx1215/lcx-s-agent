@@ -44,16 +44,33 @@ export const LOGICAL_AGENT_LOCAL_CAPABILITIES: LogicalAgentCapabilities = Object
   ] as const),
 });
 
-export type LogicalAgentDefinition = {
+export type LogicalAgentDefinition = Readonly<{
   id: LogicalAgentId;
   label: string;
   purpose: string;
   ontologyRole: LcxOntologyAgentRole;
   modelBinding: "shared_local_model";
   capabilities: LogicalAgentCapabilities;
-};
+}>;
 
-export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
+function freezeLogicalAgentCapabilities(
+  capabilities: LogicalAgentCapabilities,
+): LogicalAgentCapabilities {
+  return Object.freeze({
+    allowedTools: Object.freeze([...capabilities.allowedTools]),
+    allowedSideEffects: Object.freeze([...capabilities.allowedSideEffects]),
+    forbiddenSideEffects: Object.freeze([...capabilities.forbiddenSideEffects]),
+  });
+}
+
+function freezeLogicalAgentDefinition(definition: LogicalAgentDefinition): LogicalAgentDefinition {
+  return Object.freeze({
+    ...definition,
+    capabilities: freezeLogicalAgentCapabilities(definition.capabilities),
+  });
+}
+
+const RAW_LOGICAL_AGENT_DEFINITIONS = [
   {
     id: "data_cleaning",
     label: "数据清洗 Agent",
@@ -136,6 +153,10 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
   },
 ] as const satisfies readonly LogicalAgentDefinition[];
 
+export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = Object.freeze(
+  RAW_LOGICAL_AGENT_DEFINITIONS.map(freezeLogicalAgentDefinition),
+);
+
 const ONTOLOGY_ROLE_SET = new Set<string>(LCX_ONTOLOGY_AGENT_ROLES);
 for (const definition of LOGICAL_AGENT_DEFINITIONS) {
   if (!ONTOLOGY_ROLE_SET.has(definition.ontologyRole)) {
@@ -174,7 +195,7 @@ export type LogicalAgentTask<TInput = LogicalAgentRequest> = {
 
 export type LogicalAgentTaskStatus = "queued" | "running" | "completed" | "failed" | "blocked";
 
-export type LogicalAgentTaskResult<TResult = unknown> = {
+export type LogicalAgentTaskResult<TResult = unknown> = Readonly<{
   taskId: string;
   agentId: LogicalAgentId;
   status: Exclude<LogicalAgentTaskStatus, "queued" | "running">;
@@ -185,7 +206,7 @@ export type LogicalAgentTaskResult<TResult = unknown> = {
   sideEffects: readonly LogicalAgentSideEffect[];
   error?: string;
   capabilityViolation?: string;
-};
+}>;
 
 export type LogicalAgentExecutionContext<TInput, TResult> = {
   task: LogicalAgentTask<TInput>;
@@ -302,7 +323,7 @@ export class LogicalAgentPool<TInput, TResult> {
   ): Promise<LogicalAgentTaskResult<TResult>> {
     getLogicalAgentDefinition(task.agentId);
     const taskSnapshot = snapshotTask(task);
-    const dependencySnapshot = Object.freeze({ ...dependencyResults });
+    const dependencySnapshot = snapshotDependencyResults(dependencyResults);
     return new Promise((resolve) => {
       this.#queue.push({
         task: taskSnapshot,
@@ -323,8 +344,13 @@ export class LogicalAgentPool<TInput, TResult> {
       this.#activeRuns += 1;
       this.#maxObservedConcurrency = Math.max(this.#maxObservedConcurrency, this.#activeRuns);
       const startedAt = Date.now();
-      const agent = getLogicalAgentDefinition(job.task.agentId);
-      void executeWithTimeout(
+      const registeredAgent = getLogicalAgentDefinition(job.task.agentId);
+      const capabilities = freezeLogicalAgentCapabilities(registeredAgent.capabilities);
+      const agent = freezeLogicalAgentDefinition({
+        ...registeredAgent,
+        capabilities,
+      });
+      const attempt = executeWithTimeout(
         (signal) =>
           job.executor({
             task: job.task,
@@ -332,15 +358,16 @@ export class LogicalAgentPool<TInput, TResult> {
             input: job.task.input,
             dependencyResults: job.dependencyResults,
             modelPool: this.#config,
-            capabilities: agent.capabilities,
+            capabilities,
             signal,
           }),
         this.#config.taskTimeoutMs,
-      )
+      );
+      void attempt.outcome
         .then(
           (execution): LogicalAgentTaskResult<TResult> => {
             try {
-              const normalized = normalizeExecutionResult<TResult>(execution, agent.capabilities);
+              const normalized = normalizeExecutionResult<TResult>(execution, capabilities);
               return {
                 taskId: job.task.id,
                 agentId: job.task.agentId,
@@ -359,10 +386,12 @@ export class LogicalAgentPool<TInput, TResult> {
             failedTaskResult<TResult>(job.task, this.#config.modelId, startedAt, error),
         )
         .then((result) => {
-          this.#activeRuns -= 1;
-          this.#pump();
           job.resolve(result);
         });
+      void attempt.termination.then(() => {
+        this.#activeRuns -= 1;
+        this.#pump();
+      });
     }
   }
 }
@@ -372,6 +401,78 @@ function snapshotTask<TInput>(task: LogicalAgentTask<TInput>): LogicalAgentTask<
     ...task,
     dependsOn: task.dependsOn === undefined ? undefined : Object.freeze([...task.dependsOn]),
   });
+}
+
+function snapshotDependencyResults<TResult>(
+  dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>>,
+): Readonly<Record<string, LogicalAgentTaskResult<TResult>>> {
+  const snapshot = Object.create(null) as Record<string, LogicalAgentTaskResult<TResult>>;
+  for (const [taskId, result] of Object.entries(dependencyResults)) {
+    Object.defineProperty(snapshot, taskId, {
+      configurable: false,
+      enumerable: true,
+      value: snapshotTaskResult(result),
+      writable: false,
+    });
+  }
+  return Object.freeze(snapshot);
+}
+
+function snapshotTaskResult<TResult>(
+  result: LogicalAgentTaskResult<TResult>,
+): LogicalAgentTaskResult<TResult> {
+  return Object.freeze({
+    ...result,
+    ...(result.output === undefined ? {} : { output: cloneAndFreeze(result.output) }),
+    sideEffects: Object.freeze([...result.sideEffects]),
+  });
+}
+
+function cloneAndFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  try {
+    return deepFreeze(structuredClone(value));
+  } catch {
+    return deepFreeze(cloneObjectFallback(value));
+  }
+}
+
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== "object" || seen.has(value)) {
+    return value;
+  }
+  seen.add(value);
+  Object.freeze(value);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && "value" in descriptor) {
+      deepFreeze(descriptor.value, seen);
+    }
+  }
+  return value;
+}
+
+function cloneObjectFallback<T extends object>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneAndFreeze(item)) as T;
+  }
+  if (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null) {
+    const copy = Object.create(Object.getPrototypeOf(value)) as Record<PropertyKey, unknown>;
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor) {
+        continue;
+      }
+      Object.defineProperty(copy, key, {
+        ...descriptor,
+        ...("value" in descriptor ? { value: cloneAndFreeze(descriptor.value) } : {}),
+      });
+    }
+    return copy as T;
+  }
+  return value;
 }
 
 function isLogicalAgentSideEffect(value: unknown): value is LogicalAgentSideEffect {
@@ -404,9 +505,20 @@ function failedTaskResult<TResult>(
     startedAt,
     completedAt: Date.now(),
     sideEffects: error instanceof LogicalAgentCapabilityError ? error.sideEffects : [],
-    error: error instanceof Error ? error.message : String(error),
+    error: formatUnknownError(error),
     ...(error instanceof LogicalAgentCapabilityError ? { capabilityViolation: error.message } : {}),
   };
+}
+
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  try {
+    return String(error);
+  } catch {
+    return "logical-agent executor failed with an unstringifiable error";
+  }
 }
 
 function normalizeExecutionResult<TResult>(
@@ -448,38 +560,36 @@ function normalizeExecutionResult<TResult>(
 function executeWithTimeout<TResult>(
   executor: (signal: AbortSignal) => TResult | Promise<TResult>,
   timeoutMs: number,
-): Promise<TResult> {
+): { outcome: Promise<TResult>; termination: Promise<void> } {
   const controller = new AbortController();
-  return new Promise<TResult>((resolve, reject) => {
-    let settled = false;
+  let timedOut = false;
+  const execution = Promise.resolve().then(() => executor(controller.signal));
+  const termination = execution.then(
+    () => undefined,
+    () => undefined,
+  );
+  const outcome = new Promise<TResult>((resolve, reject) => {
     const timer = setTimeout(() => {
+      timedOut = true;
       controller.abort();
-      if (!settled) {
-        settled = true;
-        reject(new Error(`logical-agent task timed out after ${timeoutMs}ms`));
-      }
+      reject(new Error(`logical-agent task timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-    void Promise.resolve()
-      .then(() => executor(controller.signal))
-      .then(
-        (value) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          clearTimeout(timer);
+    execution.then(
+      (value) => {
+        clearTimeout(timer);
+        if (!timedOut) {
           resolve(value);
-        },
-        (error: unknown) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          clearTimeout(timer);
+        }
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        if (!timedOut) {
           reject(error);
-        },
-      );
+        }
+      },
+    );
   });
+  return { outcome, termination };
 }
 
 function validatePlan<TInput>(tasks: readonly LogicalAgentTask<TInput>[]) {
@@ -609,7 +719,10 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
           if (!dependencies.every((dependency) => state.get(dependency) === "completed")) {
             continue;
           }
-          const dependencyResults: Record<string, LogicalAgentTaskResult<TResult>> = {};
+          const dependencyResults = Object.create(null) as Record<
+            string,
+            LogicalAgentTaskResult<TResult>
+          >;
           for (const dependency of dependencies) {
             const result = results.get(dependency);
             if (!result) {

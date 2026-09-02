@@ -153,14 +153,43 @@ describe("logical agent pool", () => {
     const result = await runLogicalAgentPlan({
       pool,
       tasks: [{ id: "timeout", agentId: "data_cleaning", input: { ask: "x" } }],
-      executor: async () => {
-        await new Promise<never>(() => undefined);
+      executor: async ({ signal }) => {
+        await new Promise<never>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        });
         return { output: "unreachable", sideEffects: [] };
       },
     });
 
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.error).toContain("timed out");
+    expect(pool.status.activeRuns).toBe(0);
+  });
+
+  it("does not reuse a slot until a timed-out executor has terminated", async () => {
+    const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
+    let active = 0;
+    let overlapped = false;
+    const first = pool.submit(
+      { id: "first", agentId: "data_cleaning", input: { ask: "x" } },
+      async () => {
+        active += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+        return { output: "first", sideEffects: [] };
+      },
+    );
+    const second = pool.submit(
+      { id: "second", agentId: "news_classification", input: { ask: "y" } },
+      async () => {
+        overlapped = active > 0;
+        return { output: "second", sideEffects: [] };
+      },
+    );
+
+    expect((await first).status).toBe("failed");
+    expect((await second).status).toBe("completed");
+    expect(overlapped).toBe(false);
     expect(pool.status.activeRuns).toBe(0);
   });
 
@@ -177,6 +206,86 @@ describe("logical agent pool", () => {
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.capabilityViolation).toContain("provider_call");
     expect(result.tasks[0]?.sideEffects).toEqual(["provider_call"]);
+  });
+
+  it("validates side effects against an immutable capability snapshot", async () => {
+    const result = await runLogicalAgentPlan({
+      tasks: [{ id: "mutated-capabilities", agentId: "risk_check", input: { ask: "x" } }],
+      executor: ({ agent }) => {
+        try {
+          (agent as unknown as { capabilities: unknown }).capabilities = {
+            allowedSideEffects: ["provider_call"],
+          };
+        } catch {
+          // Frozen definitions are expected to reject mutation in strict mode.
+        }
+        return { output: "unsafe", sideEffects: ["provider_call"] } as const;
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.capabilityViolation).toContain("provider_call");
+  });
+
+  it("keeps dependency result fields immutable for downstream executors", async () => {
+    const result = await runLogicalAgentPlan({
+      tasks: [
+        { id: "root", agentId: "data_cleaning", input: { ask: "x" } },
+        {
+          id: "terminal",
+          agentId: "final_precheck",
+          input: { ask: "x" },
+          dependsOn: ["root"],
+        },
+      ],
+      executor: ({ task, dependencyResults }) => {
+        if (task.id === "terminal") {
+          try {
+            (dependencyResults.root as unknown as { status: string }).status = "failed";
+          } catch {
+            // Frozen dependency snapshots are expected to reject mutation.
+          }
+        }
+        return { output: task.id, sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.tasks.find((task) => task.taskId === "root")?.status).toBe("completed");
+  });
+
+  it("preserves special task IDs in dependency results", async () => {
+    let dependencyKeys: string[] = [];
+    const result = await runLogicalAgentPlan({
+      tasks: [
+        { id: "__proto__", agentId: "data_cleaning", input: { ask: "x" } },
+        {
+          id: "terminal",
+          agentId: "final_precheck",
+          input: { ask: "x" },
+          dependsOn: ["__proto__"],
+        },
+      ],
+      executor: ({ task, dependencyResults }) => {
+        dependencyKeys = Object.keys(dependencyResults);
+        return { output: task.id, sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(dependencyKeys).toEqual(["__proto__"]);
+  });
+
+  it("contains unstringifiable thrown values in a failed receipt", async () => {
+    const result = await runLogicalAgentPlan({
+      tasks: [{ id: "unstringifiable", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: () => {
+        throw Object.create(null);
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toContain("unstringifiable");
   });
 
   it("requires every executor to declare side effects", async () => {
