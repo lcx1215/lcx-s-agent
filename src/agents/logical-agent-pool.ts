@@ -33,6 +33,14 @@ export type LogicalAgentCapabilities = Readonly<{
   forbiddenSideEffects: readonly LogicalAgentSideEffect[];
 }>;
 
+export type LogicalAgentModelInvoker = (request: unknown, signal: AbortSignal) => unknown;
+
+export type LogicalAgentModelSlot = Readonly<{
+  modelId: string;
+  maxLoadedModels: 1;
+  invoke: LogicalAgentModelInvoker;
+}>;
+
 export const LOGICAL_AGENT_LOCAL_CAPABILITIES: LogicalAgentCapabilities = Object.freeze({
   allowedTools: Object.freeze(["local_model_inference"] as const),
   allowedSideEffects: Object.freeze(["local_read", "local_compute", "local_output"] as const),
@@ -172,6 +180,10 @@ export type LocalModelPoolConfig = Readonly<{
   taskTimeoutMs: number;
 }>;
 
+export type LocalModelPoolOptions = Partial<LocalModelPoolConfig> & {
+  modelInvoker?: LogicalAgentModelInvoker;
+};
+
 export const DEFAULT_LOCAL_MODEL_POOL: LocalModelPoolConfig = Object.freeze({
   modelId: "Qwen/Qwen3-0.6B",
   maxLoadedModels: 1,
@@ -214,6 +226,7 @@ export type LogicalAgentExecutionContext<TInput, TResult> = {
   input: TInput;
   dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>>;
   modelPool: LocalModelPoolConfig;
+  modelSlot: LogicalAgentModelSlot;
   capabilities: LogicalAgentCapabilities;
   signal: AbortSignal;
 };
@@ -237,6 +250,10 @@ export type LogicalAgentPoolStatus = {
   queuedRuns: number;
   activeRuns: number;
   maxObservedConcurrency: number;
+};
+
+const UNAVAILABLE_MODEL_INVOKER: LogicalAgentModelInvoker = () => {
+  throw new Error("logical-agent model slot has no local model invoker");
 };
 
 export type LogicalAgentPlanResult<TResult> = {
@@ -290,12 +307,18 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
 
 export class LogicalAgentPool<TInput, TResult> {
   #config: LocalModelPoolConfig;
+  #modelSlot: LogicalAgentModelSlot;
   #queue: Array<QueueJob<TInput, TResult>> = [];
   #activeRuns = 0;
   #maxObservedConcurrency = 0;
 
-  constructor(config?: Partial<LocalModelPoolConfig>) {
-    this.#config = normalizePoolConfig(config);
+  constructor(options?: LocalModelPoolOptions) {
+    this.#config = normalizePoolConfig(options);
+    this.#modelSlot = Object.freeze({
+      modelId: this.#config.modelId,
+      maxLoadedModels: 1,
+      invoke: options?.modelInvoker ?? UNAVAILABLE_MODEL_INVOKER,
+    });
   }
 
   get config(): LocalModelPoolConfig {
@@ -358,6 +381,7 @@ export class LogicalAgentPool<TInput, TResult> {
             input: job.task.input,
             dependencyResults: job.dependencyResults,
             modelPool: this.#config,
+            modelSlot: this.#modelSlot,
             capabilities,
             signal,
           }),
@@ -375,7 +399,7 @@ export class LogicalAgentPool<TInput, TResult> {
                 modelId: this.#config.modelId,
                 startedAt,
                 completedAt: Date.now(),
-                output: normalized.output,
+                output: cloneAndFreeze(normalized.output),
                 sideEffects: normalized.sideEffects,
               };
             } catch (error: unknown) {

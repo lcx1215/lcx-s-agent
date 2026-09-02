@@ -58,13 +58,15 @@ describe("logical agent pool", () => {
     const pool = new LogicalAgentPool<{ value: number }, number>({ maxConcurrency: 2 });
     let active = 0;
     let maxActive = 0;
+    const modelSlots = new Set<unknown>();
     const result = await runLogicalAgentPlan({
       pool,
       tasks: [
         { id: "a", agentId: "data_cleaning", input: { value: 1 } },
         { id: "b", agentId: "news_classification", input: { value: 2 } },
       ],
-      executor: async ({ input }) => {
+      executor: async ({ input, modelSlot }) => {
+        modelSlots.add(modelSlot);
         active += 1;
         maxActive = Math.max(maxActive, active);
         await new Promise((resolve) => setTimeout(resolve, 5));
@@ -76,6 +78,34 @@ describe("logical agent pool", () => {
     expect(result.status).toBe("completed");
     expect(maxActive).toBe(2);
     expect(result.pool.maxLoadedModels).toBe(1);
+    expect(modelSlots.size).toBe(1);
+    expect([...modelSlots][0]).toMatchObject({ modelId: "Qwen/Qwen3-0.6B", maxLoadedModels: 1 });
+  });
+
+  it("shares one injected model slot instead of exposing a per-task loader", async () => {
+    const invocations: unknown[] = [];
+    const pool = new LogicalAgentPool({
+      maxConcurrency: 2,
+      modelInvoker: async (request) => {
+        invocations.push(request);
+        return "model-output";
+      },
+    });
+
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [
+        { id: "a", agentId: "data_cleaning", input: { ask: "a" } },
+        { id: "b", agentId: "news_classification", input: { ask: "b" } },
+      ],
+      executor: async ({ modelSlot, task }) => ({
+        output: await modelSlot.invoke(task.id, new AbortController().signal),
+        sideEffects: [],
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(invocations).toEqual(["a", "b"]);
   });
 
   it("blocks descendants after a failed role without running them", async () => {
