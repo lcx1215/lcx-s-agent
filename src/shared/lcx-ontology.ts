@@ -558,6 +558,7 @@ export const LCX_ONTOLOGY_TASK_FAMILY_IDS = [
   "all_domain_finance_research_loop",
   "finance_memory_training_self_repair",
   "multi_agent_pattern_shadow_evaluation",
+  "logical_agent_pool",
   "generated_router_task",
 ] as const;
 export type LcxOntologyTaskFamilyId = (typeof LCX_ONTOLOGY_TASK_FAMILY_IDS)[number];
@@ -994,6 +995,10 @@ export const LCX_ONTOLOGY_WORKFLOW_NODE_IDS = [
   "shadow_live",
   "pattern_comparison",
   "interruption_recovery_probe",
+  "logical_agent_pool_intake",
+  "logical_agent_pool_schedule",
+  "logical_agent_task_executor",
+  "logical_agent_pool_terminal",
   "local_skill_candidate",
   "trajectory_or_trace_receipt",
   "security_permission_review",
@@ -1122,6 +1127,12 @@ export const LCX_ONTOLOGY_WORKFLOW_FILTER_IDS = [
   "no_shadow_external_side_effects",
   "shadow_recovery_receipt_required",
   "wide_trial_not_production",
+  "logical_agent_task_identity_snapshot_required",
+  "logical_agent_pool_timeout_required",
+  "logical_agent_capability_boundary_required",
+  "logical_agent_config_immutable_required",
+  "logical_agent_terminal_sink_required",
+  "no_logical_agent_external_side_effects",
 ] as const;
 export type LcxOntologyWorkflowFilterId = (typeof LCX_ONTOLOGY_WORKFLOW_FILTER_IDS)[number];
 
@@ -1146,6 +1157,7 @@ export const LCX_ONTOLOGY_WORKFLOW_SCENARIO_IDS = [
   "similar_engineering_consolidation_waterflow",
   "external_agent_skill_distillation_waterflow",
   "multi_agent_pattern_shadow_evaluation_waterflow",
+  "logical_agent_pool_waterflow",
   "prediction_market_research_only_waterflow",
   "automation_repair_lock_waterflow",
 ] as const;
@@ -1172,6 +1184,7 @@ export const LCX_ONTOLOGY_WORKFLOW_FAMILY_IDS = [
   "same_philosophy_engineering_merge",
   "external_agent_or_skill_learning",
   "multi_agent_pattern_shadow_evaluation",
+  "logical_agent_pool",
   "prediction_market_research_and_strategy_audit",
   "codex_auto_repair_and_schedule_guard",
 ] as const;

@@ -111,6 +111,23 @@ describe("lcx-change-impact-plan", () => {
     expect(payload.unmatchedFiles).toEqual([]);
   });
 
+  it("routes logical agent pool artifacts through the dedicated owner lane", async () => {
+    const payload = await runPlan("src/agents/logical-agent-pool.ts");
+
+    expect(payload.ok).toBe(true);
+    expect(payload.affectedLanes).toEqual(["agent_workflow_memory"]);
+    expect(payload.impacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "logical_agent_pool",
+          requiredChecks: expect.arrayContaining(["logical-agent-pool-tests"]),
+          headTailRequired: true,
+        }),
+      ]),
+    );
+    expect(payload.unmatchedFiles).toEqual([]);
+  });
+
   it("fails the stray gate when a changed file has no owner lane", async () => {
     const payload = await runPlan("tmp/unknown-stray-output.txt");
 

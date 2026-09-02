@@ -47,6 +47,14 @@ The migration manifest schema is `lcx_ontology_migration_v1`; it records the
 exact change kind, scope, before/after identifiers, affected vocabularies,
 compatibility mode, rollback posture, and required proofs.
 
+The logical agent pool is a bounded orchestration surface for ten logical roles
+sharing one shared local model. It is local-only and permits no external side
+effects: executor integrations must declare capabilities, task timeout,
+identity snapshots, and a derived terminal sink before they can be evaluated.
+Boundary marker: `no external side effects`.
+The pool is an implementation lane observed by the governance stack, not a
+provider, training, external-message, protected-memory, or trading authority.
+
 External Message Channel-specific identifiers in the registry are classified as adapter
 implementation labels, not as core facts; old live/development-shaped labels are
 compatibility labels only. New semantic objects should use neutral adapter,

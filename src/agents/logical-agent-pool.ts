@@ -15,12 +15,42 @@ export const LOGICAL_AGENT_IDS = [
 
 export type LogicalAgentId = (typeof LOGICAL_AGENT_IDS)[number];
 
+export const LOGICAL_AGENT_SIDE_EFFECTS = [
+  "local_read",
+  "local_compute",
+  "local_output",
+  "provider_call",
+  "external_message",
+  "protected_memory_write",
+  "trading_action",
+] as const;
+
+export type LogicalAgentSideEffect = (typeof LOGICAL_AGENT_SIDE_EFFECTS)[number];
+
+export type LogicalAgentCapabilities = Readonly<{
+  allowedTools: readonly string[];
+  allowedSideEffects: readonly LogicalAgentSideEffect[];
+  forbiddenSideEffects: readonly LogicalAgentSideEffect[];
+}>;
+
+export const LOGICAL_AGENT_LOCAL_CAPABILITIES: LogicalAgentCapabilities = Object.freeze({
+  allowedTools: Object.freeze(["local_model_inference"] as const),
+  allowedSideEffects: Object.freeze(["local_read", "local_compute", "local_output"] as const),
+  forbiddenSideEffects: Object.freeze([
+    "provider_call",
+    "external_message",
+    "protected_memory_write",
+    "trading_action",
+  ] as const),
+});
+
 export type LogicalAgentDefinition = {
   id: LogicalAgentId;
   label: string;
   purpose: string;
   ontologyRole: LcxOntologyAgentRole;
   modelBinding: "shared_local_model";
+  capabilities: LogicalAgentCapabilities;
 };
 
 export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
@@ -30,6 +60,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "整理输入、去重、标出缺失字段和未经验证的数字。",
     ontologyRole: "worker",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "financial_extraction",
@@ -37,6 +68,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "从已提供材料中抽取公司、财务和时间字段，不补造数据。",
     ontologyRole: "specialist",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "risk_check",
@@ -44,6 +76,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "检查下行风险、约束条件、杠杆和需要补证的判断。",
     ontologyRole: "risk_gate",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "adversarial_challenge",
@@ -51,6 +84,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "主动寻找反例、冲突证据和过度自信的结论。",
     ontologyRole: "evaluator",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "news_classification",
@@ -58,6 +92,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "对输入新闻按主题、时效和影响方向分类，不替代来源核验。",
     ontologyRole: "specialist",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "portfolio_exposure",
@@ -65,6 +100,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "整理持仓暴露、集中度和情景影响；缺少持仓字段时明确缺口。",
     ontologyRole: "specialist",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "evidence_integrity",
@@ -72,6 +108,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "检查来源、时间戳、分母、单位和证据链是否足够。",
     ontologyRole: "evaluator",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "research_draft",
@@ -79,6 +116,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "把前置结果组合成研究级草稿，保留正方、反方和不确定性。",
     ontologyRole: "coordinator",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "formatting",
@@ -86,6 +124,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "将草稿整理为清晰、短、可审阅的输出结构。",
     ontologyRole: "worker",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
   {
     id: "final_precheck",
@@ -93,6 +132,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = [
     purpose: "在输出前检查直接交易指令、虚构当前数据和证据越权。",
     ontologyRole: "risk_gate",
     modelBinding: "shared_local_model",
+    capabilities: LOGICAL_AGENT_LOCAL_CAPABILITIES,
   },
 ] as const satisfies readonly LogicalAgentDefinition[];
 
@@ -103,19 +143,21 @@ for (const definition of LOGICAL_AGENT_DEFINITIONS) {
   }
 }
 
-export type LocalModelPoolConfig = {
+export type LocalModelPoolConfig = Readonly<{
   modelId: string;
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
   memoryBudgetMb: number;
-};
+  taskTimeoutMs: number;
+}>;
 
-export const DEFAULT_LOCAL_MODEL_POOL: LocalModelPoolConfig = {
+export const DEFAULT_LOCAL_MODEL_POOL: LocalModelPoolConfig = Object.freeze({
   modelId: "Qwen/Qwen3-0.6B",
   maxLoadedModels: 1,
   maxConcurrency: 1,
   memoryBudgetMb: 3072,
-};
+  taskTimeoutMs: 30_000,
+});
 
 export type LogicalAgentRequest = {
   ask: string;
@@ -140,7 +182,9 @@ export type LogicalAgentTaskResult<TResult = unknown> = {
   startedAt?: number;
   completedAt: number;
   output?: TResult;
+  sideEffects: readonly LogicalAgentSideEffect[];
   error?: string;
+  capabilityViolation?: string;
 };
 
 export type LogicalAgentExecutionContext<TInput, TResult> = {
@@ -149,11 +193,18 @@ export type LogicalAgentExecutionContext<TInput, TResult> = {
   input: TInput;
   dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>>;
   modelPool: LocalModelPoolConfig;
+  capabilities: LogicalAgentCapabilities;
+  signal: AbortSignal;
 };
+
+export type LogicalAgentExecutionResult<TResult> = Readonly<{
+  output: TResult;
+  sideEffects: readonly LogicalAgentSideEffect[];
+}>;
 
 export type LogicalAgentExecutor<TInput, TResult> = (
   context: LogicalAgentExecutionContext<TInput, TResult>,
-) => TResult | Promise<TResult>;
+) => LogicalAgentExecutionResult<TResult> | Promise<LogicalAgentExecutionResult<TResult>>;
 
 export type LogicalAgentPoolStatus = {
   modelId: string;
@@ -161,6 +212,7 @@ export type LogicalAgentPoolStatus = {
   maxLoadedModels: 1;
   maxConcurrency: 1 | 2;
   memoryBudgetMb: number;
+  taskTimeoutMs: number;
   queuedRuns: number;
   activeRuns: number;
   maxObservedConcurrency: number;
@@ -201,27 +253,42 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
   if (!Number.isFinite(memoryBudgetMb) || memoryBudgetMb <= 0) {
     throw new Error("local logical-agent pool memoryBudgetMb must be positive");
   }
+  const taskTimeoutMs = config?.taskTimeoutMs ?? DEFAULT_LOCAL_MODEL_POOL.taskTimeoutMs;
+  if (!Number.isFinite(taskTimeoutMs) || taskTimeoutMs <= 0) {
+    throw new Error("local logical-agent pool taskTimeoutMs must be positive");
+  }
   const modelId = config?.modelId?.trim() || DEFAULT_LOCAL_MODEL_POOL.modelId;
-  return { modelId, maxLoadedModels: 1, maxConcurrency, memoryBudgetMb };
+  return Object.freeze({
+    modelId,
+    maxLoadedModels: 1,
+    maxConcurrency,
+    memoryBudgetMb,
+    taskTimeoutMs,
+  });
 }
 
 export class LogicalAgentPool<TInput, TResult> {
-  readonly config: LocalModelPoolConfig;
+  #config: LocalModelPoolConfig;
   #queue: Array<QueueJob<TInput, TResult>> = [];
   #activeRuns = 0;
   #maxObservedConcurrency = 0;
 
   constructor(config?: Partial<LocalModelPoolConfig>) {
-    this.config = normalizePoolConfig(config);
+    this.#config = normalizePoolConfig(config);
+  }
+
+  get config(): LocalModelPoolConfig {
+    return this.#config;
   }
 
   get status(): LogicalAgentPoolStatus {
     return {
-      modelId: this.config.modelId,
+      modelId: this.#config.modelId,
       sharedModel: true,
       maxLoadedModels: 1,
-      maxConcurrency: this.config.maxConcurrency,
-      memoryBudgetMb: this.config.memoryBudgetMb,
+      maxConcurrency: this.#config.maxConcurrency,
+      memoryBudgetMb: this.#config.memoryBudgetMb,
+      taskTimeoutMs: this.#config.taskTimeoutMs,
       queuedRuns: this.#queue.length,
       activeRuns: this.#activeRuns,
       maxObservedConcurrency: this.#maxObservedConcurrency,
@@ -234,14 +301,21 @@ export class LogicalAgentPool<TInput, TResult> {
     dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>> = {},
   ): Promise<LogicalAgentTaskResult<TResult>> {
     getLogicalAgentDefinition(task.agentId);
+    const taskSnapshot = snapshotTask(task);
+    const dependencySnapshot = Object.freeze({ ...dependencyResults });
     return new Promise((resolve) => {
-      this.#queue.push({ task, dependencyResults, executor, resolve });
+      this.#queue.push({
+        task: taskSnapshot,
+        dependencyResults: dependencySnapshot,
+        executor,
+        resolve,
+      });
       this.#pump();
     });
   }
 
   #pump() {
-    while (this.#activeRuns < this.config.maxConcurrency && this.#queue.length > 0) {
+    while (this.#activeRuns < this.#config.maxConcurrency && this.#queue.length > 0) {
       const job = this.#queue.shift();
       if (!job) {
         return;
@@ -250,35 +324,39 @@ export class LogicalAgentPool<TInput, TResult> {
       this.#maxObservedConcurrency = Math.max(this.#maxObservedConcurrency, this.#activeRuns);
       const startedAt = Date.now();
       const agent = getLogicalAgentDefinition(job.task.agentId);
-      void Promise.resolve()
-        .then(() =>
+      void executeWithTimeout(
+        (signal) =>
           job.executor({
             task: job.task,
             agent,
             input: job.task.input,
             dependencyResults: job.dependencyResults,
-            modelPool: this.config,
+            modelPool: this.#config,
+            capabilities: agent.capabilities,
+            signal,
           }),
-        )
+        this.#config.taskTimeoutMs,
+      )
         .then(
-          (output): LogicalAgentTaskResult<TResult> => ({
-            taskId: job.task.id,
-            agentId: job.task.agentId,
-            status: "completed",
-            modelId: this.config.modelId,
-            startedAt,
-            completedAt: Date.now(),
-            output,
-          }),
-          (error: unknown): LogicalAgentTaskResult<TResult> => ({
-            taskId: job.task.id,
-            agentId: job.task.agentId,
-            status: "failed",
-            modelId: this.config.modelId,
-            startedAt,
-            completedAt: Date.now(),
-            error: error instanceof Error ? error.message : String(error),
-          }),
+          (execution): LogicalAgentTaskResult<TResult> => {
+            try {
+              const normalized = normalizeExecutionResult<TResult>(execution, agent.capabilities);
+              return {
+                taskId: job.task.id,
+                agentId: job.task.agentId,
+                status: "completed",
+                modelId: this.#config.modelId,
+                startedAt,
+                completedAt: Date.now(),
+                output: normalized.output,
+                sideEffects: normalized.sideEffects,
+              };
+            } catch (error: unknown) {
+              return failedTaskResult<TResult>(job.task, this.#config.modelId, startedAt, error);
+            }
+          },
+          (error: unknown) =>
+            failedTaskResult<TResult>(job.task, this.#config.modelId, startedAt, error),
         )
         .then((result) => {
           this.#activeRuns -= 1;
@@ -287,6 +365,121 @@ export class LogicalAgentPool<TInput, TResult> {
         });
     }
   }
+}
+
+function snapshotTask<TInput>(task: LogicalAgentTask<TInput>): LogicalAgentTask<TInput> {
+  return Object.freeze({
+    ...task,
+    dependsOn: task.dependsOn === undefined ? undefined : Object.freeze([...task.dependsOn]),
+  });
+}
+
+function isLogicalAgentSideEffect(value: unknown): value is LogicalAgentSideEffect {
+  return (
+    typeof value === "string" && (LOGICAL_AGENT_SIDE_EFFECTS as readonly string[]).includes(value)
+  );
+}
+
+class LogicalAgentCapabilityError extends Error {
+  constructor(
+    message: string,
+    readonly sideEffects: readonly LogicalAgentSideEffect[],
+  ) {
+    super(message);
+    this.name = "LogicalAgentCapabilityError";
+  }
+}
+
+function failedTaskResult<TResult>(
+  task: LogicalAgentTask<unknown>,
+  modelId: string,
+  startedAt: number,
+  error: unknown,
+): LogicalAgentTaskResult<TResult> {
+  return {
+    taskId: task.id,
+    agentId: task.agentId,
+    status: "failed",
+    modelId,
+    startedAt,
+    completedAt: Date.now(),
+    sideEffects: error instanceof LogicalAgentCapabilityError ? error.sideEffects : [],
+    error: error instanceof Error ? error.message : String(error),
+    ...(error instanceof LogicalAgentCapabilityError ? { capabilityViolation: error.message } : {}),
+  };
+}
+
+function normalizeExecutionResult<TResult>(
+  value: unknown,
+  capabilities: LogicalAgentCapabilities,
+): LogicalAgentExecutionResult<TResult> {
+  if (typeof value !== "object" || value === null || !("output" in value)) {
+    throw new Error("logical-agent executor must return output and sideEffects");
+  }
+  const candidate = value as { output: TResult; sideEffects?: unknown };
+  if (!Array.isArray(candidate.sideEffects)) {
+    throw new Error("logical-agent executor must declare sideEffects");
+  }
+  const sideEffects = [...candidate.sideEffects];
+  const unknownSideEffectIndex = sideEffects.findIndex(
+    (sideEffect) => !isLogicalAgentSideEffect(sideEffect),
+  );
+  if (unknownSideEffectIndex >= 0) {
+    throw new Error(
+      `logical-agent executor declared unknown side effect: ${String(sideEffects[unknownSideEffectIndex])}`,
+    );
+  }
+  const declaredSideEffects = sideEffects as LogicalAgentSideEffect[];
+  const disallowed = declaredSideEffects.filter(
+    (sideEffect) => !capabilities.allowedSideEffects.includes(sideEffect),
+  );
+  if (disallowed.length > 0) {
+    throw new LogicalAgentCapabilityError(
+      `logical-agent capability violation: ${disallowed.join(", ")}`,
+      Object.freeze(disallowed),
+    );
+  }
+  return {
+    output: candidate.output,
+    sideEffects: Object.freeze(declaredSideEffects),
+  };
+}
+
+function executeWithTimeout<TResult>(
+  executor: (signal: AbortSignal) => TResult | Promise<TResult>,
+  timeoutMs: number,
+): Promise<TResult> {
+  const controller = new AbortController();
+  return new Promise<TResult>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      controller.abort();
+      if (!settled) {
+        settled = true;
+        reject(new Error(`logical-agent task timed out after ${timeoutMs}ms`));
+      }
+    }, timeoutMs);
+    void Promise.resolve()
+      .then(() => executor(controller.signal))
+      .then(
+        (value) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error: unknown) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+  });
 }
 
 function validatePlan<TInput>(tasks: readonly LogicalAgentTask<TInput>[]) {
@@ -343,6 +536,7 @@ function blockedResult<TResult>(
     status: "blocked",
     modelId,
     completedAt: Date.now(),
+    sideEffects: [],
     error: `blocked by dependency: ${dependencies.join(", ")}`,
   };
 }
@@ -351,19 +545,22 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
   tasks: readonly LogicalAgentTask<TInput>[];
   executor: LogicalAgentExecutor<TInput, TResult>;
   pool?: LogicalAgentPool<TInput, TResult>;
+  finalTaskId?: string;
 }): Promise<LogicalAgentPlanResult<TResult>> {
-  validatePlan(params.tasks);
+  const tasks = params.tasks.map(snapshotTask);
+  validatePlan(tasks);
+  const finalTaskId = resolveFinalTaskId(tasks, params.finalTaskId);
   const pool = params.pool ?? new LogicalAgentPool<TInput, TResult>();
-  if (params.tasks.length === 0) {
+  if (tasks.length === 0) {
     return { status: "completed", finalTaskId: null, tasks: [], pool: pool.status };
   }
 
   type PlanState = "pending" | "queued" | "completed" | "failed" | "blocked";
-  const state = new Map<string, PlanState>(params.tasks.map((task) => [task.id, "pending"]));
+  const state = new Map<string, PlanState>(tasks.map((task) => [task.id, "pending"]));
   const results = new Map<string, LogicalAgentTaskResult<TResult>>();
 
   return new Promise((resolve) => {
-    let remaining = params.tasks.length;
+    let remaining = tasks.length;
     let finished = false;
 
     const finish = () => {
@@ -372,7 +569,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
       }
       finished = true;
       const orderedResults: Array<LogicalAgentTaskResult<TResult>> = [];
-      for (const task of params.tasks) {
+      for (const task of tasks) {
         const result = results.get(task.id);
         if (!result) {
           throw new Error("logical-agent plan finished without a result for every task");
@@ -383,7 +580,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
       const hasBlocked = orderedResults.some((result) => result.status === "blocked");
       resolve({
         status: hasFailure ? "failed" : hasBlocked ? "blocked" : "completed",
-        finalTaskId: params.tasks.at(-1)?.id ?? null,
+        finalTaskId,
         tasks: orderedResults,
         pool: pool.status,
       });
@@ -393,7 +590,7 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
       let changed = true;
       while (changed) {
         changed = false;
-        for (const task of params.tasks) {
+        for (const task of tasks) {
           if (state.get(task.id) !== "pending") {
             continue;
           }
@@ -436,6 +633,22 @@ export async function runLogicalAgentPlan<TInput, TResult>(params: {
 
     schedule();
   });
+}
+
+function resolveFinalTaskId<TInput>(
+  tasks: readonly LogicalAgentTask<TInput>[],
+  requestedFinalTaskId?: string,
+): string | null {
+  const taskIds = new Set(tasks.map((task) => task.id));
+  if (requestedFinalTaskId !== undefined) {
+    if (!taskIds.has(requestedFinalTaskId)) {
+      throw new Error(`final logical-agent task does not exist: ${requestedFinalTaskId}`);
+    }
+    return requestedFinalTaskId;
+  }
+  const referenced = new Set(tasks.flatMap((task) => task.dependsOn ?? []));
+  const sinks = tasks.filter((task) => !referenced.has(task.id));
+  return sinks.length === 1 ? sinks[0].id : null;
 }
 
 export function buildDefaultLogicalAgentPlan(input: LogicalAgentRequest): Array<LogicalAgentTask> {

@@ -186,6 +186,7 @@ describe("LCX mind model god-view architecture check", () => {
         expect.objectContaining({ id: "world_class_agent_architecture", ok: true }),
         expect.objectContaining({ id: "external_agent_upgrade_distillation", ok: true }),
         expect.objectContaining({ id: "multi_agent_pattern_shadow", ok: true }),
+        expect.objectContaining({ id: "logical_agent_pool", ok: true }),
       ]),
     );
     expect(payload.invariants).toEqual(
@@ -230,6 +231,7 @@ describe("LCX mind model god-view architecture check", () => {
           id: "external_agent_projects_cannot_be_parallel_systems",
           ok: true,
         }),
+        expect.objectContaining({ id: "logical_agent_pool_is_bounded", ok: true }),
       ]),
     );
   });
@@ -252,6 +254,7 @@ describe("LCX mind model god-view architecture check", () => {
     expect(headTailSource).toContain("mind_model_boundary");
     expect(headTailSource).toContain("flow_graph_boundary");
     expect(headTailSource).toContain("MIND_MODEL_LANES");
+    expect(headTailSource).toContain("logical_agent_pool_boundary");
     expect(headTailSource).toContain("compressedContextRecovered");
     expect(runbook).toContain("LCX Agent Mind Model");
     expect(runbook).toContain("Canonical Ontology");
@@ -260,6 +263,8 @@ describe("LCX mind model god-view architecture check", () => {
     expect(runbook).toContain("single factual owner");
     expect(runbook).toContain("workflow closure");
     expect(runbook).toContain("lcx-context-recovery-exam");
+    expect(runbook).toContain("logical agent pool");
+    expect(runbook).toContain("no external side effects");
     if (localOperator) {
       expect(localOperator).toContain("mind_file");
       expect(localOperator).toContain("governance_file");

@@ -98,6 +98,8 @@ const WORKFLOW_SURFACES = [
   "scripts/operator/lcx-commercial-acceptance-harness.ts",
   "scripts/operator/lcx-commercial-answer-pipeline.ts",
   "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+  "src/agents/logical-agent-pool.ts",
+  "scripts/operator/lcx-logical-agent-pool.ts",
   "scripts/operator/lcx-self-repair-hands.ts",
   "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   "scripts/operator/lcx-learning-sedimentation-bridge.ts",
@@ -144,6 +146,7 @@ const PROOF_SURFACES = [
   "test/lcx-head-tail-consistency.test.ts",
   "test/lcx-mind-model.test.ts",
   "test/lcx-multi-agent-pattern-shadow.test.ts",
+  "src/agents/logical-agent-pool.test.ts",
   "test/lcx-problem-cluster-radar.test.ts",
   "test/lcx-commercial-acceptance-harness.test.ts",
   "test/lcx-commercial-answer-pipeline.test.ts",
@@ -188,6 +191,8 @@ const BOUNDARY_SURFACES = [
   "scripts/operator/lcx-commercial-acceptance-harness.ts",
   "scripts/operator/lcx-commercial-answer-pipeline.ts",
   "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+  "src/agents/logical-agent-pool.ts",
+  "scripts/operator/lcx-logical-agent-pool.ts",
   "scripts/operator/lcx-self-repair-hands.ts",
   "scripts/operator/lcx-system-doctor.ts",
   "scripts/operator/lcx-context-recovery-exam.ts",
@@ -725,6 +730,32 @@ const MIND_MODEL_LANES: MindModelLane[] = [
     nextAction:
       "Run deterministic replay first; only an explicitly supplied isolated executor may proceed, and missing usage or recovery evidence stays unknown or unverified.",
   },
+  {
+    id: "logical_agent_pool",
+    masterLane: "agent_workflow_memory",
+    objective:
+      "Run ten logical roles through one bounded shared local model without granting external side effects.",
+    headTerms: ["logical agent pool", "shared local model", "ten logical roles"],
+    workflowTerms: [
+      "lcx-logical-agent-pool.ts",
+      "runLogicalAgentPlan",
+      "taskTimeoutMs",
+      "capabilities",
+    ],
+    proofTerms: [
+      "src/agents/logical-agent-pool.test.ts",
+      "logical-agent-pool-tests",
+      "finalTaskId",
+    ],
+    boundaryTerms: [
+      "local_logical_agent_pool_only",
+      "no external side effects",
+      "providerConfigTouched",
+      "protectedMemoryTouched",
+    ],
+    nextAction:
+      "Keep the pool bounded and verify timeout, identity snapshot, capability, and terminal-sink contracts before any executor integration.",
+  },
 ];
 
 const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
@@ -739,6 +770,24 @@ const MIND_MODEL_INVARIANTS: MindModelInvariant[] = [
     },
     nextAction:
       "Keep repository surfaces hard-failing; report optional local operator surfaces separately when unavailable.",
+  },
+  {
+    id: "logical_agent_pool_is_bounded",
+    category: "boundary",
+    objective:
+      "The logical-agent pool may coordinate local work, but immutable configuration, bounded tasks, explicit capabilities, and terminal-sink proof must precede executor integration.",
+    termsBySurface: {
+      head: ["logical agent pool", "shared local model", "no external side effects"],
+      workflow: ["runLogicalAgentPlan", "taskTimeoutMs", "capabilities"],
+      proof: ["src/agents/logical-agent-pool.test.ts", "finalTaskId", "capabilityViolation"],
+      boundary: [
+        "local_logical_agent_pool_only",
+        "providerConfigTouched",
+        "protectedMemoryTouched",
+      ],
+    },
+    nextAction:
+      "Keep executor integrations local and fail closed when timeout, identity, capability, or terminal-sink evidence is missing.",
   },
   {
     id: "compressed_recovery_requires_fresh_operator_state",

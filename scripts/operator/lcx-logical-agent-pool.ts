@@ -66,9 +66,12 @@ export async function buildLogicalAgentPoolPayload(options: Options) {
         pool,
         tasks: plan,
         executor: ({ task, dependencyResults }) => ({
-          taskId: task.id,
-          dependencyCount: Object.keys(dependencyResults).length,
-          execution: "deterministic_demo_only",
+          output: {
+            taskId: task.id,
+            dependencyCount: Object.keys(dependencyResults).length,
+            execution: "deterministic_demo_only",
+          },
+          sideEffects: [],
         }),
       })
     : null;
