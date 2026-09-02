@@ -1037,6 +1037,41 @@ const FLOW_SCENARIOS: FlowScenario[] = [
     ],
   },
   {
+    id: "logical_agent_pool_waterflow",
+    family: "logical_agent_pool",
+    objective:
+      "Ten logical roles must share one bounded local model pool through immutable configuration, identity snapshots, task deadlines, capability checks, and a derived terminal sink.",
+    start: "logical_agent_pool_intake",
+    end: "logical_agent_pool_terminal",
+    requiredNodes: [
+      "logical_agent_pool_intake",
+      "logical_agent_pool_schedule",
+      "logical_agent_task_executor",
+      "logical_agent_pool_terminal",
+    ],
+    requiredFilters: [
+      "logical_agent_task_identity_snapshot_required",
+      "logical_agent_pool_timeout_required",
+      "logical_agent_capability_boundary_required",
+      "logical_agent_config_immutable_required",
+      "logical_agent_terminal_sink_required",
+      "no_logical_agent_external_side_effects",
+      "no_provider_config_change",
+      "no_external_channel_sender_change",
+      "protected_memory_guard",
+    ],
+    edges: [
+      ["logical_agent_pool_intake", "logical_agent_pool_schedule"],
+      ["logical_agent_pool_schedule", "logical_agent_task_executor"],
+      ["logical_agent_task_executor", "logical_agent_pool_terminal"],
+    ],
+    receipts: [
+      "logical-agent-pool",
+      "lcx-logical-agent-pool",
+      "src/agents/logical-agent-pool.test.ts",
+    ],
+  },
+  {
     id: "prediction_market_research_only_waterflow",
     family: "prediction_market_research_and_strategy_audit",
     objective:
@@ -1717,6 +1752,7 @@ const FLOW_DIAGNOSTIC_OWNER_BY_SCENARIO_ID: Record<string, string> = {
     "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   multi_agent_pattern_shadow_evaluation_waterflow:
     "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+  logical_agent_pool_waterflow: "scripts/operator/lcx-logical-agent-pool.ts",
   prediction_market_research_only_waterflow: "scripts/operator/lcx-external-agent-upgrade-radar.ts",
   automation_repair_lock_waterflow: "scripts/operator/lcx-automation-repair-lock.ts",
 };
@@ -1761,6 +1797,8 @@ const FLOW_DIAGNOSTIC_FAST_CHECK_BY_SCENARIO_ID: Record<string, string> = {
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
   multi_agent_pattern_shadow_evaluation_waterflow:
     "node --import tsx scripts/operator/lcx-multi-agent-pattern-shadow.ts --mode replay --pattern all --case single_stock_loss_recovery_risk_triage --json",
+  logical_agent_pool_waterflow:
+    "node --import tsx scripts/operator/lcx-logical-agent-pool.ts --demo --json",
   prediction_market_research_only_waterflow:
     "node --import tsx scripts/operator/lcx-external-agent-upgrade-radar.ts --json",
   automation_repair_lock_waterflow:

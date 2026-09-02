@@ -59,6 +59,9 @@ const TAIL_SURFACE_FILES = [
   "src/agents/tools/finance-data-gateway-tool.ts",
   "scripts/operator/lcx-external-channel-status.ts",
   "scripts/operator/lcx-multi-agent-pattern-shadow.ts",
+  "src/agents/logical-agent-pool.ts",
+  "src/agents/logical-agent-pool.test.ts",
+  "scripts/operator/lcx-logical-agent-pool.ts",
 ] as const;
 
 const MODULE_LEARNING_TARGET_EXEMPTIONS: Record<string, string> = {
@@ -235,6 +238,11 @@ const ENGINEERING_MICRO_CONTRACTS: CriticalModuleContract[] = [
       "local_multi_agent_pattern_shadow_only",
       "shadow_recovery_receipt_required",
     ],
+  },
+  {
+    id: "logical_agent_pool_boundary",
+    headTerms: ["logical agent pool", "shared local model", "no external side effects"],
+    tailTerms: ["taskTimeoutMs", "capabilities", "finalTaskId", "logical-agent-pool-tests"],
   },
 ];
 

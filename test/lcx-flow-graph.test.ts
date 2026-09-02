@@ -334,6 +334,18 @@ describe("LCX flow graph exam", () => {
           receipts: expect.arrayContaining(["lcx-multi-agent-pattern-shadow"]),
         }),
         expect.objectContaining({
+          id: "logical_agent_pool_waterflow",
+          requiredFilters: expect.arrayContaining([
+            "logical_agent_task_identity_snapshot_required",
+            "logical_agent_pool_timeout_required",
+            "logical_agent_capability_boundary_required",
+            "logical_agent_config_immutable_required",
+            "logical_agent_terminal_sink_required",
+            "no_logical_agent_external_side_effects",
+          ]),
+          receipts: expect.arrayContaining(["logical-agent-pool"]),
+        }),
+        expect.objectContaining({
           id: "prediction_market_research_only_waterflow",
           receipts: expect.arrayContaining([
             "lcx-external-agent-upgrade-radar",
