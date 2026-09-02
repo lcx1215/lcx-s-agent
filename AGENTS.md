@@ -1285,11 +1285,13 @@ Repair the failure family with the smallest coherent system upgrade over a tiny 
 ## GitHub Search (`gh`)
 
 - Prefer targeted keyword search before proposing new work or duplicating fixes.
-- Use `--repo openclaw/openclaw` + `--match title,body` first; add `--match comments` when triaging follow-up threads.
-- PRs: `gh search prs --repo openclaw/openclaw --match title,body --limit 50 -- "auto-update"`
-- Issues: `gh search issues --repo openclaw/openclaw --match title,body --limit 50 -- "auto-update"`
+- Verify the target before every repository operation with `git remote get-url origin` and `git remote get-url upstream`; a checkout may have both remotes, and bare `gh pr`, `gh run`, or `gh repo` can resolve the wrong repository.
+- For this fork's normal issues, PRs, checks, and Actions, pass the current origin repository explicitly: `--repo lcx1215/lcx-s-agent` (or `-R lcx1215/lcx-s-agent`). Use `openclaw/openclaw` only when the task explicitly concerns upstream lineage or an upstream security advisory.
+- Use `--match title,body` first; add `--match comments` when triaging follow-up threads.
+- PRs: `gh search prs --repo lcx1215/lcx-s-agent --match title,body --limit 50 -- "auto-update"`
+- Issues: `gh search issues --repo lcx1215/lcx-s-agent --match title,body --limit 50 -- "auto-update"`
 - Structured output example:
-  `gh search issues --repo openclaw/openclaw --match title,body --limit 50 --json number,title,state,url,updatedAt -- "auto update" --jq '.[] | "\(.number) | \(.state) | \(.title) | \(.url)"'`
+  `gh search issues --repo lcx1215/lcx-s-agent --match title,body --limit 50 --json number,title,state,url,updatedAt -- "auto update" --jq '.[] | "\(.number) | \(.state) | \(.title) | \(.url)"'`
 
 ## Security & Configuration Tips
 

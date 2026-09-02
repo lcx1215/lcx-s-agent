@@ -72,6 +72,16 @@ describe("lcx-github-cli-capability-inventory", () => {
     expect(payload.allowedByDefault).toEqual(
       expect.arrayContaining(["gh --version", "gh extension list"]),
     );
+    if (payload.repo.githubRepo) {
+      expect(payload.allowedByDefault).toEqual(
+        expect.arrayContaining([
+          `gh repo view --repo ${payload.repo.githubRepo} --json nameWithOwner,visibility,defaultBranchRef`,
+          `gh issue list --repo ${payload.repo.githubRepo} --limit <n>`,
+          `gh pr list --repo ${payload.repo.githubRepo} --limit <n>`,
+        ]),
+      );
+      expect(payload.nextSafeLocalProbe).toContain(`--repo ${payload.repo.githubRepo}`);
+    }
     expect(payload.blockedRemoteWriteCommands).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

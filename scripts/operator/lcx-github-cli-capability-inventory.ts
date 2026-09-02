@@ -129,6 +129,8 @@ export async function buildGithubCliCapabilityInventory() {
     runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"]),
   ]);
   const remoteUrl = firstLine(gitRemote.stdout);
+  const githubRepo = parseGitHubRemote(remoteUrl);
+  const verifiedRepoTarget = githubRepo ?? "<verified-origin-owner>/<verified-origin-repo>";
   const installedExtensions = extensionList.ok ? parseExtensions(extensionList.stdout) : [];
   const hasAgenticExtension = installedExtensions.some((extension) =>
     /copilot|aw|agent|mcp/i.test(extension),
@@ -148,19 +150,20 @@ export async function buildGithubCliCapabilityInventory() {
     repo: {
       branch: firstLine(gitBranch.stdout),
       remoteUrl,
-      githubRepo: parseGitHubRemote(remoteUrl),
+      githubRepo,
     },
     allowedByDefault: [
       "gh --version",
       "gh auth status --show-token-scopes",
       "gh extension list",
-      "gh repo view --json nameWithOwner,visibility,defaultBranchRef",
-      "gh issue list --limit <n>",
-      "gh pr list --limit <n>",
+      `gh repo view --repo ${verifiedRepoTarget} --json nameWithOwner,visibility,defaultBranchRef`,
+      `gh issue list --repo ${verifiedRepoTarget} --limit <n>`,
+      `gh pr list --repo ${verifiedRepoTarget} --limit <n>`,
     ],
     blockedRemoteWriteCommands: REMOTE_WRITE_BLOCKS,
-    nextSafeLocalProbe:
-      "Use read-only gh issue/pr/repo inventory, then create a JSON wrapper contract before any remote write or agent delegation.",
+    nextSafeLocalProbe: githubRepo
+      ? `Use read-only gh issue/pr/repo inventory with --repo ${githubRepo}, then create a JSON wrapper contract before any remote write or agent delegation.`
+      : "First verify and parse git remote origin as the target repository; then use read-only gh issue/pr/repo inventory with --repo <verified-origin-owner>/<verified-origin-repo> before any remote write or agent delegation.",
     liveTouched: false,
     providerConfigTouched: false,
     protectedMemoryTouched: false,
