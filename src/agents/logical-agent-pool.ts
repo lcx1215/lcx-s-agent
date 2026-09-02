@@ -166,6 +166,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = Obje
 );
 
 const ONTOLOGY_ROLE_SET = new Set<string>(LCX_ONTOLOGY_AGENT_ROLES);
+const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 for (const definition of LOGICAL_AGENT_DEFINITIONS) {
   if (!ONTOLOGY_ROLE_SET.has(definition.ontologyRole)) {
     throw new Error(`logical agent has an unknown ontology role: ${definition.ontologyRole}`);
@@ -294,6 +295,11 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
   const taskTimeoutMs = config?.taskTimeoutMs ?? DEFAULT_LOCAL_MODEL_POOL.taskTimeoutMs;
   if (!Number.isFinite(taskTimeoutMs) || taskTimeoutMs <= 0) {
     throw new Error("local logical-agent pool taskTimeoutMs must be positive");
+  }
+  if (taskTimeoutMs > NODE_MAX_TIMEOUT_MS) {
+    throw new Error(
+      `local logical-agent pool taskTimeoutMs must not exceed ${NODE_MAX_TIMEOUT_MS}ms`,
+    );
   }
   const modelId = config?.modelId?.trim() || DEFAULT_LOCAL_MODEL_POOL.modelId;
   return Object.freeze({
@@ -586,8 +592,10 @@ function executeWithTimeout<TResult>(
   timeoutMs: number,
 ): { outcome: Promise<TResult>; termination: Promise<void> } {
   const controller = new AbortController();
+  const cancellationErrors: unknown[] = [];
+  const signal = createSafeAbortSignal(controller, cancellationErrors);
   let timedOut = false;
-  const execution = Promise.resolve().then(() => executor(controller.signal));
+  const execution = Promise.resolve().then(() => executor(signal));
   const termination = execution.then(
     () => undefined,
     () => undefined,
@@ -595,8 +603,16 @@ function executeWithTimeout<TResult>(
   const outcome = new Promise<TResult>((resolve, reject) => {
     const timer = setTimeout(() => {
       timedOut = true;
-      controller.abort();
-      reject(new Error(`logical-agent task timed out after ${timeoutMs}ms`));
+      try {
+        controller.abort();
+      } catch (error: unknown) {
+        cancellationErrors.push(error);
+      }
+      const cancellationDetail =
+        cancellationErrors.length === 0
+          ? ""
+          : `; abort listener failures: ${cancellationErrors.map(formatUnknownError).join("; ")}`;
+      reject(new Error(`logical-agent task timed out after ${timeoutMs}ms${cancellationDetail}`));
     }, timeoutMs);
     execution.then(
       (value) => {
@@ -614,6 +630,100 @@ function executeWithTimeout<TResult>(
     );
   });
   return { outcome, termination };
+}
+
+function createSafeAbortSignal(
+  controller: AbortController,
+  cancellationErrors: unknown[],
+): AbortSignal {
+  const target = controller.signal;
+  const listeners = new WeakMap<object, EventListener>();
+  let guardedOnAbort: EventListener | null = null;
+
+  return new Proxy(target, {
+    get(signal, property, receiver) {
+      if (property === "addEventListener") {
+        return (
+          type: string,
+          listener: EventListenerOrEventListenerObject | null,
+          options?: boolean | AddEventListenerOptions,
+        ) => {
+          if (listener === null) {
+            return;
+          }
+          if (
+            type !== "abort" ||
+            (typeof listener !== "object" && typeof listener !== "function")
+          ) {
+            return signal.addEventListener(type, listener, options);
+          }
+          const guarded: EventListener = (event) => {
+            try {
+              if (typeof listener === "function") {
+                listener.call(signal, event);
+              } else {
+                listener.handleEvent(event);
+              }
+            } catch (error: unknown) {
+              cancellationErrors.push(error);
+            }
+          };
+          listeners.set(listener, guarded);
+          signal.addEventListener(type, guarded, options);
+        };
+      }
+      if (property === "removeEventListener") {
+        return (
+          type: string,
+          listener: EventListenerOrEventListenerObject | null,
+          options?: boolean | EventListenerOptions,
+        ) => {
+          if (listener === null) {
+            return;
+          }
+          const guarded =
+            typeof listener === "object" || typeof listener === "function"
+              ? listeners.get(listener)
+              : undefined;
+          if (guarded !== undefined) {
+            signal.removeEventListener(type, guarded, options);
+          } else {
+            signal.removeEventListener(type, listener, options);
+          }
+        };
+      }
+      if (typeof signal[property as keyof AbortSignal] === "function") {
+        return (signal[property as keyof AbortSignal] as (...args: never[]) => unknown).bind(
+          signal,
+        );
+      }
+      return Reflect.get(signal, property, receiver);
+    },
+    set(signal, property, value, receiver) {
+      if (property === "onabort") {
+        if (guardedOnAbort !== null) {
+          signal.removeEventListener("abort", guardedOnAbort);
+        }
+        if (value === null) {
+          guardedOnAbort = null;
+          return true;
+        }
+        if (typeof value !== "function") {
+          return false;
+        }
+        guardedOnAbort = (event) => {
+          try {
+            value.call(signal, event);
+          } catch (error: unknown) {
+            cancellationErrors.push(error);
+          }
+        };
+        signal.addEventListener("abort", guardedOnAbort);
+        return true;
+      }
+      return Reflect.set(signal, property, value, receiver);
+    },
+  });
 }
 
 function validatePlan<TInput>(tasks: readonly LogicalAgentTask<TInput>[]) {

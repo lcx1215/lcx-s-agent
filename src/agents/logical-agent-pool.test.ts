@@ -223,6 +223,33 @@ describe("logical agent pool", () => {
     expect(pool.status.activeRuns).toBe(0);
   });
 
+  it("contains exceptions raised by abort listeners", async () => {
+    const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [{ id: "abort-listener", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: async ({ signal }) => {
+        signal.addEventListener("abort", () => {
+          throw new Error("faulty cleanup");
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { output: "late", sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toContain("timed out");
+    expect(result.tasks[0]?.error).toContain("abort listener failures: faulty cleanup");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(pool.status.activeRuns).toBe(0);
+  });
+
+  it("rejects timer values that Node would truncate", () => {
+    expect(() => new LogicalAgentPool({ taskTimeoutMs: 2_147_483_648 })).toThrow(
+      "must not exceed 2147483647ms",
+    );
+  });
+
   it("rejects undeclared side effects at the capability boundary", async () => {
     const result = await runLogicalAgentPlan({
       tasks: [{ id: "unsafe", agentId: "risk_check", input: { ask: "x" } }],
