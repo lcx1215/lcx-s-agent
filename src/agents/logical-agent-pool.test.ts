@@ -166,6 +166,55 @@ describe("logical agent pool", () => {
     expect(modelSettled).toBe(true);
   });
 
+  it("fails a task when an unawaited model call rejects", async () => {
+    const pool = new LogicalAgentPool({
+      modelInvoker: async () => {
+        throw new Error("late model failure");
+      },
+    });
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [{ id: "unawaited-rejection", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: ({ modelSlot, signal }) => {
+        void modelSlot.invoke("late", signal);
+        return { output: "task-output", sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toBe("late model failure");
+  });
+
+  it("serializes shared model calls across concurrent task runs", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const pool = new LogicalAgentPool({
+      maxConcurrency: 2,
+      modelInvoker: async (request) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return request;
+      },
+    });
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [
+        { id: "first-model", agentId: "data_cleaning", input: { ask: "x" } },
+        { id: "second-model", agentId: "news_classification", input: { ask: "y" } },
+      ],
+      executor: async ({ modelSlot, signal, task }) => ({
+        output: await modelSlot.invoke(task.id, signal),
+        sideEffects: [],
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(maxActive).toBe(1);
+    expect(result.pool.maxObservedModelConcurrency).toBe(1);
+  });
+
   it("blocks descendants after a failed role without running them", async () => {
     const plan = buildDefaultLogicalAgentPlan({ ask: "失败传播测试" });
     const executed: string[] = [];

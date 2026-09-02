@@ -167,6 +167,7 @@ export const LOGICAL_AGENT_DEFINITIONS: readonly LogicalAgentDefinition[] = Obje
 
 const ONTOLOGY_ROLE_SET = new Set<string>(LCX_ONTOLOGY_AGENT_ROLES);
 const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
+const SHARED_MODEL_INVOCATION_CONCURRENCY = 1;
 for (const definition of LOGICAL_AGENT_DEFINITIONS) {
   if (!ONTOLOGY_ROLE_SET.has(definition.ontologyRole)) {
     throw new Error(`logical agent has an unknown ontology role: ${definition.ontologyRole}`);
@@ -286,6 +287,7 @@ type ModelInvocationJob = {
 
 type TaskModelInvocationScope = {
   pending: Set<Promise<void>>;
+  errors: unknown[];
   closed: boolean;
 };
 
@@ -406,7 +408,11 @@ export class LogicalAgentPool<TInput, TResult> {
         ...registeredAgent,
         capabilities,
       });
-      const modelScope: TaskModelInvocationScope = { pending: new Set(), closed: false };
+      const modelScope: TaskModelInvocationScope = {
+        pending: new Set(),
+        errors: [],
+        closed: false,
+      };
       const modelSlot = this.#createTaskModelSlot(modelScope);
       const attempt = executeWithTimeout(async (signal) => {
         try {
@@ -480,7 +486,9 @@ export class LogicalAgentPool<TInput, TResult> {
         const invocation = this.#invokeModel(request, signal);
         const observed = invocation.then(
           () => undefined,
-          () => undefined,
+          (error: unknown) => {
+            scope.errors.push(error);
+          },
         );
         scope.pending.add(observed);
         void observed.then(() => scope.pending.delete(observed));
@@ -493,11 +501,14 @@ export class LogicalAgentPool<TInput, TResult> {
     while (scope.pending.size > 0) {
       await Promise.all(scope.pending);
     }
+    if (scope.errors.length > 0) {
+      throw scope.errors[0];
+    }
   }
 
   #pumpModelInvocations() {
     while (
-      this.#activeModelInvocations < this.#config.maxConcurrency &&
+      this.#activeModelInvocations < SHARED_MODEL_INVOCATION_CONCURRENCY &&
       this.#modelInvocationQueue.length > 0
     ) {
       const job = this.#modelInvocationQueue.shift();
