@@ -629,12 +629,25 @@ function compactExternalChannelStatus(value: unknown) {
     record.externalChannelStatus && typeof record.externalChannelStatus === "object"
       ? (record.externalChannelStatus as Record<string, unknown>)
       : {};
+  // The neutral external-channel wrapper owns the current names, while its
+  // compatibility projection carries the historical live aliases. Older
+  // snapshots expose the same aliases under operatorStatus. Preserve both
+  // shapes in the handoff so compressed windows never lose a boolean boundary
+  // signal during the migration.
+  const liveRuntimeUpdated =
+    operatorStatus.liveRuntimeUpdated ??
+    externalChannelStatus.legacyLiveRuntimeUpdated ??
+    externalChannelStatus.externalChannelBound;
+  const liveUserSeen =
+    operatorStatus.liveUserSeen ??
+    externalChannelStatus.legacyLiveUserSeen ??
+    externalChannelStatus.userVisibleObserved;
   return {
     externalChannelBound: externalChannelStatus.externalChannelBound,
     userVisibleObserved: externalChannelStatus.userVisibleObserved,
     externalChannelStatusModel: externalChannelStatus.statusModel,
-    liveRuntimeUpdated: operatorStatus.liveRuntimeUpdated,
-    liveUserSeen: operatorStatus.liveUserSeen,
+    liveRuntimeUpdated,
+    liveUserSeen,
     liveMatchesCurrentCanonical: devLiveDrift.liveMatchesCurrentCanonical,
     liveNeedsPromotion: devLiveDrift.liveNeedsPromotion,
     visibleStatus: visibleProof.status,
