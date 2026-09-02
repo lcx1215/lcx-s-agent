@@ -98,14 +98,46 @@ describe("logical agent pool", () => {
         { id: "a", agentId: "data_cleaning", input: { ask: "a" } },
         { id: "b", agentId: "news_classification", input: { ask: "b" } },
       ],
-      executor: async ({ modelSlot, task }) => ({
-        output: await modelSlot.invoke(task.id, new AbortController().signal),
+      executor: async ({ modelSlot, task, signal }) => ({
+        output: await modelSlot.invoke(task.id, signal),
         sideEffects: [],
       }),
     });
 
     expect(result.status).toBe("completed");
     expect(invocations).toEqual(["a", "b"]);
+  });
+
+  it("serializes multiple model calls made by one executor", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const pool = new LogicalAgentPool({
+      maxConcurrency: 1,
+      modelInvoker: async (request) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return request;
+      },
+    });
+
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [{ id: "fan-out", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: async ({ modelSlot, signal }) => ({
+        output: await Promise.all([
+          modelSlot.invoke("one", signal),
+          modelSlot.invoke("two", signal),
+          modelSlot.invoke("three", signal),
+        ]),
+        sideEffects: [],
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(maxActive).toBe(1);
+    expect(result.pool.maxObservedModelConcurrency).toBe(1);
   });
 
   it("blocks descendants after a failed role without running them", async () => {
@@ -338,6 +370,25 @@ describe("logical agent pool", () => {
       tasks: [{ id: "unstringifiable", agentId: "data_cleaning", input: { ask: "x" } }],
       executor: () => {
         throw Object.create(null);
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.tasks[0]?.error).toContain("unstringifiable");
+  });
+
+  it("contains an Error with an unsafe message accessor", async () => {
+    const result = await runLogicalAgentPlan({
+      tasks: [{ id: "unsafe-error-message", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: () => {
+        const error = Object.create(Error.prototype) as Error;
+        Object.defineProperty(error, "message", {
+          configurable: true,
+          get: () => {
+            throw new Error("message accessor failed");
+          },
+        });
+        throw error;
       },
     });
 

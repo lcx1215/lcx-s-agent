@@ -251,6 +251,8 @@ export type LogicalAgentPoolStatus = {
   queuedRuns: number;
   activeRuns: number;
   maxObservedConcurrency: number;
+  activeModelInvocations: number;
+  maxObservedModelConcurrency: number;
 };
 
 const UNAVAILABLE_MODEL_INVOKER: LogicalAgentModelInvoker = () => {
@@ -269,6 +271,13 @@ type QueueJob<TInput, TResult> = {
   dependencyResults: Readonly<Record<string, LogicalAgentTaskResult<TResult>>>;
   executor: LogicalAgentExecutor<TInput, TResult>;
   resolve: (result: LogicalAgentTaskResult<TResult>) => void;
+};
+
+type ModelInvocationJob = {
+  request: unknown;
+  signal: AbortSignal;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
 };
 
 function getLogicalAgentDefinition(agentId: LogicalAgentId): LogicalAgentDefinition {
@@ -313,17 +322,22 @@ function normalizePoolConfig(config?: Partial<LocalModelPoolConfig>): LocalModel
 
 export class LogicalAgentPool<TInput, TResult> {
   #config: LocalModelPoolConfig;
+  #modelInvoker: LogicalAgentModelInvoker;
   #modelSlot: LogicalAgentModelSlot;
   #queue: Array<QueueJob<TInput, TResult>> = [];
+  #modelInvocationQueue: ModelInvocationJob[] = [];
   #activeRuns = 0;
   #maxObservedConcurrency = 0;
+  #activeModelInvocations = 0;
+  #maxObservedModelConcurrency = 0;
 
   constructor(options?: LocalModelPoolOptions) {
     this.#config = normalizePoolConfig(options);
+    this.#modelInvoker = options?.modelInvoker ?? UNAVAILABLE_MODEL_INVOKER;
     this.#modelSlot = Object.freeze({
       modelId: this.#config.modelId,
       maxLoadedModels: 1,
-      invoke: options?.modelInvoker ?? UNAVAILABLE_MODEL_INVOKER,
+      invoke: (request, signal) => this.#invokeModel(request, signal),
     });
   }
 
@@ -342,6 +356,8 @@ export class LogicalAgentPool<TInput, TResult> {
       queuedRuns: this.#queue.length,
       activeRuns: this.#activeRuns,
       maxObservedConcurrency: this.#maxObservedConcurrency,
+      activeModelInvocations: this.#activeModelInvocations,
+      maxObservedModelConcurrency: this.#maxObservedModelConcurrency,
     };
   }
 
@@ -422,6 +438,41 @@ export class LogicalAgentPool<TInput, TResult> {
         this.#activeRuns -= 1;
         this.#pump();
       });
+    }
+  }
+
+  #invokeModel(request: unknown, signal: AbortSignal): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      this.#modelInvocationQueue.push({ request, signal, resolve, reject });
+      this.#pumpModelInvocations();
+    });
+  }
+
+  #pumpModelInvocations() {
+    while (
+      this.#activeModelInvocations < this.#config.maxConcurrency &&
+      this.#modelInvocationQueue.length > 0
+    ) {
+      const job = this.#modelInvocationQueue.shift();
+      if (!job) {
+        return;
+      }
+      if (job.signal.aborted) {
+        job.reject(new Error("logical-agent model invocation aborted before start"));
+        continue;
+      }
+      this.#activeModelInvocations += 1;
+      this.#maxObservedModelConcurrency = Math.max(
+        this.#maxObservedModelConcurrency,
+        this.#activeModelInvocations,
+      );
+      void Promise.resolve()
+        .then(() => this.#modelInvoker(job.request, job.signal))
+        .then(job.resolve, job.reject)
+        .then(() => {
+          this.#activeModelInvocations -= 1;
+          this.#pumpModelInvocations();
+        });
     }
   }
 }
@@ -542,7 +593,11 @@ function failedTaskResult<TResult>(
 
 function formatUnknownError(error: unknown): string {
   if (error instanceof Error) {
-    return error.message;
+    try {
+      return error.message;
+    } catch {
+      // Fall through to the defensive string conversion below.
+    }
   }
   try {
     return String(error);
