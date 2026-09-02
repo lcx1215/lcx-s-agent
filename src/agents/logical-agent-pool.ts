@@ -33,7 +33,7 @@ export type LogicalAgentCapabilities = Readonly<{
   forbiddenSideEffects: readonly LogicalAgentSideEffect[];
 }>;
 
-export type LogicalAgentModelInvoker = (request: unknown, signal: AbortSignal) => unknown;
+export type LogicalAgentModelInvoker = (request: unknown, signal: AbortSignal) => Promise<unknown>;
 
 export type LogicalAgentModelSlot = Readonly<{
   modelId: string;
@@ -255,7 +255,7 @@ export type LogicalAgentPoolStatus = {
   maxObservedModelConcurrency: number;
 };
 
-const UNAVAILABLE_MODEL_INVOKER: LogicalAgentModelInvoker = () => {
+const UNAVAILABLE_MODEL_INVOKER: LogicalAgentModelInvoker = async () => {
   throw new Error("logical-agent model slot has no local model invoker");
 };
 
@@ -278,6 +278,11 @@ type ModelInvocationJob = {
   signal: AbortSignal;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
+};
+
+type TaskModelInvocationScope = {
+  pending: Set<Promise<void>>;
+  closed: boolean;
 };
 
 function getLogicalAgentDefinition(agentId: LogicalAgentId): LogicalAgentDefinition {
@@ -395,20 +400,29 @@ export class LogicalAgentPool<TInput, TResult> {
         ...registeredAgent,
         capabilities,
       });
-      const attempt = executeWithTimeout(
-        (signal) =>
-          job.executor({
+      const modelScope: TaskModelInvocationScope = { pending: new Set(), closed: false };
+      const modelSlot = this.#createTaskModelSlot(modelScope);
+      const attempt = executeWithTimeout(async (signal) => {
+        try {
+          const execution = await job.executor({
             task: job.task,
             agent,
             input: job.task.input,
             dependencyResults: job.dependencyResults,
             modelPool: this.#config,
-            modelSlot: this.#modelSlot,
+            modelSlot,
             capabilities,
             signal,
-          }),
-        this.#config.taskTimeoutMs,
-      );
+          });
+          modelScope.closed = true;
+          await this.#waitForTaskModelInvocations(modelScope);
+          return execution;
+        } catch (error: unknown) {
+          modelScope.closed = true;
+          await this.#waitForTaskModelInvocations(modelScope);
+          throw error;
+        }
+      }, this.#config.taskTimeoutMs);
       void attempt.outcome
         .then(
           (execution): LogicalAgentTaskResult<TResult> => {
@@ -446,6 +460,33 @@ export class LogicalAgentPool<TInput, TResult> {
       this.#modelInvocationQueue.push({ request, signal, resolve, reject });
       this.#pumpModelInvocations();
     });
+  }
+
+  #createTaskModelSlot(scope: TaskModelInvocationScope): LogicalAgentModelSlot {
+    return Object.freeze({
+      ...this.#modelSlot,
+      invoke: (request: unknown, signal: AbortSignal) => {
+        if (scope.closed) {
+          return Promise.reject(
+            new Error("logical-agent model invocation started after task exit"),
+          );
+        }
+        const invocation = this.#invokeModel(request, signal);
+        const observed = invocation.then(
+          () => undefined,
+          () => undefined,
+        );
+        scope.pending.add(observed);
+        void observed.then(() => scope.pending.delete(observed));
+        return invocation;
+      },
+    });
+  }
+
+  async #waitForTaskModelInvocations(scope: TaskModelInvocationScope): Promise<void> {
+    while (scope.pending.size > 0) {
+      await Promise.all(scope.pending);
+    }
   }
 
   #pumpModelInvocations() {
@@ -692,7 +733,7 @@ function createSafeAbortSignal(
   cancellationErrors: unknown[],
 ): AbortSignal {
   const target = controller.signal;
-  const listeners = new WeakMap<object, EventListener>();
+  const listeners = new WeakMap<object, Map<boolean, EventListener>>();
   let guardedOnAbort: EventListener | null = null;
 
   return new Proxy(target, {
@@ -712,6 +753,12 @@ function createSafeAbortSignal(
           ) {
             return signal.addEventListener(type, listener, options);
           }
+          const capture = typeof options === "boolean" ? options : (options?.capture ?? false);
+          const listenerKey = listener as object;
+          const existing = listeners.get(listenerKey);
+          if (existing?.has(capture)) {
+            return;
+          }
           const guarded: EventListener = (event) => {
             try {
               if (typeof listener === "function") {
@@ -723,7 +770,9 @@ function createSafeAbortSignal(
               cancellationErrors.push(error);
             }
           };
-          listeners.set(listener, guarded);
+          const registrations = existing ?? new Map<boolean, EventListener>();
+          registrations.set(capture, guarded);
+          listeners.set(listenerKey, registrations);
           signal.addEventListener(type, guarded, options);
         };
       }
@@ -736,12 +785,13 @@ function createSafeAbortSignal(
           if (listener === null) {
             return;
           }
-          const guarded =
-            typeof listener === "object" || typeof listener === "function"
-              ? listeners.get(listener)
-              : undefined;
+          const capture = typeof options === "boolean" ? options : (options?.capture ?? false);
+          const listenerKey = listener as object;
+          const registrations = listeners.get(listenerKey);
+          const guarded = registrations?.get(capture);
           if (guarded !== undefined) {
             signal.removeEventListener(type, guarded, options);
+            registrations?.delete(capture);
           } else {
             signal.removeEventListener(type, listener, options);
           }

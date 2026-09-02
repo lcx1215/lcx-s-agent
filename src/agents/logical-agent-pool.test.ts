@@ -78,8 +78,11 @@ describe("logical agent pool", () => {
     expect(result.status).toBe("completed");
     expect(maxActive).toBe(2);
     expect(result.pool.maxLoadedModels).toBe(1);
-    expect(modelSlots.size).toBe(1);
-    expect([...modelSlots][0]).toMatchObject({ modelId: "Qwen/Qwen3-0.6B", maxLoadedModels: 1 });
+    expect(modelSlots.size).toBe(2);
+    expect([...modelSlots].map((slot) => (slot as { modelId: string }).modelId)).toEqual([
+      "Qwen/Qwen3-0.6B",
+      "Qwen/Qwen3-0.6B",
+    ]);
   });
 
   it("shares one injected model slot instead of exposing a per-task loader", async () => {
@@ -138,6 +141,29 @@ describe("logical agent pool", () => {
     expect(result.status).toBe("completed");
     expect(maxActive).toBe(1);
     expect(result.pool.maxObservedModelConcurrency).toBe(1);
+  });
+
+  it("waits for unawaited model calls before completing a task", async () => {
+    let modelSettled = false;
+    const pool = new LogicalAgentPool({
+      modelInvoker: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return "late-model-output";
+      },
+    });
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [{ id: "unawaited", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: ({ modelSlot, signal }) => {
+        void modelSlot.invoke("late", signal).then(() => {
+          modelSettled = true;
+        });
+        return { output: "task-output", sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(modelSettled).toBe(true);
   });
 
   it("blocks descendants after a failed role without running them", async () => {
@@ -225,6 +251,7 @@ describe("logical agent pool", () => {
 
     expect(result.status).toBe("failed");
     expect(result.tasks[0]?.error).toContain("timed out");
+    await new Promise((resolve) => setTimeout(resolve, 25));
     expect(pool.status.activeRuns).toBe(0);
   });
 
@@ -274,6 +301,30 @@ describe("logical agent pool", () => {
     expect(result.tasks[0]?.error).toContain("abort listener failures: faulty cleanup");
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(pool.status.activeRuns).toBe(0);
+  });
+
+  it("preserves AbortSignal listener identity across duplicate registration and removal", async () => {
+    const pool = new LogicalAgentPool({ taskTimeoutMs: 5 });
+    let abortCalls = 0;
+    const listener = () => {
+      abortCalls += 1;
+    };
+    const result = await runLogicalAgentPlan({
+      pool,
+      tasks: [{ id: "listener-identity", agentId: "data_cleaning", input: { ask: "x" } }],
+      executor: async ({ signal }) => {
+        signal.addEventListener("abort", listener);
+        signal.addEventListener("abort", listener);
+        signal.removeEventListener("abort", listener);
+        signal.addEventListener("abort", listener);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { output: "late", sideEffects: [] };
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(abortCalls).toBe(1);
   });
 
   it("rejects timer values that Node would truncate", () => {
